@@ -19,9 +19,10 @@ export function anthropic(client: Anthropic): Provider {
       return { content: message.content, stop: message.stop_reason === "tool_use" ? "tool_use" : "end" };
     },
     async models() {
-      const ids: string[] = [];
-      for await (const m of client.models.list()) ids.push(m.id);
-      return ids;
+      const all: { id: string; created_at: string }[] = [];
+      for await (const m of client.models.list()) all.push(m);
+      // Newest first, so callers can take the head as "recent".
+      return all.sort((a, b) => b.created_at.localeCompare(a.created_at)).map((m) => m.id);
     },
   };
 }

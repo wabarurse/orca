@@ -1,6 +1,6 @@
 // A thin REPL over the orchestrator. Type to talk; worker and reviewer
 // reports arrive through the same inbox and trigger a turn while you wait.
-// /agents lists agents, /attach <name> shows one's transcript live, /back returns.
+// /agents, /accounts and /models open arrow-key menus; /attach <name> shows a transcript live, /back returns.
 
 import { readdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
@@ -9,12 +9,19 @@ import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
 import { loadConfig, paths, saveConfig } from "./config";
 import type { Orchestrator } from "./orchestrator";
+import { bold, dim, pick } from "./picker";
 import type { ProviderName } from "./providers/index";
 import { sessionName, tmux } from "./runner";
 import { follow } from "./view";
 
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
+/** How many of each provider's newest models /models offers. */
+export const RECENT_MODELS = 6;
+
+/** The newest `limit` ids, keeping `current` in the list even when it is older. */
+export function recentModels(ids: string[], current: string, limit = RECENT_MODELS): string[] {
+  const head = ids.slice(0, limit);
+  return ids.includes(current) && !head.includes(current) ? [...head, current] : head;
+}
 
 /** Every agent that has a transcript, marked live when its tmux window is still open. */
 export async function listAgents(project: string): Promise<{ name: string; live: boolean }[]> {
@@ -88,10 +95,20 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     out(dim("usage: /login anthropic [profile] [--from-claude-code]  |  /login openai [profile] [--from-codex]"));
   }
 
+  /** Arrow keys choose an account: a signed-in one becomes active, any other starts /login. */
   async function showAccounts() {
     const { model } = await loadConfig();
-    for (const a of await accounts()) out(`${a.active ? "●" : a.ok ? "○" : "✗"} ${a.id.padEnd(22)} ${dim(a.source)}`);
-    out(dim(`model: ${model}   /use <account> to switch where tokens come from`));
+    const list = await accounts();
+    const picked = await pick(
+      list.map((a) => ({ value: a, current: a.active, label: `${a.ok ? "○" : "✗"} ${a.id.padEnd(22)} ${dim(a.source)}` })),
+      { title: dim(`model: ${model}   ↑↓ then Enter to use an account or sign in; Esc to cancel`) },
+    );
+    if (!picked) return;
+    if (picked.ok) return use(picked.id);
+    loggingIn = true;
+    try { await login(`${picked.provider} ${picked.id.split(":")[1]}`); }
+    catch (err) { out(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
+    finally { loggingIn = false; }
   }
 
   async function use(id: string) {
@@ -104,22 +121,36 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     out(`using ${account.id} ${dim("(takes effect next turn; running agents keep theirs)")}`);
   }
 
-  async function models(pick?: string) {
-    if (pick) {
-      await saveConfig({ model: pick });
-      return out(`model set to ${bold(pick)} ${dim("(takes effect next turn; running agents keep theirs)")}`);
+  async function models(id?: string) {
+    if (id) {
+      await saveConfig({ model: id });
+      return out(`model set to ${bold(id)} ${dim("(takes effect next turn; running agents keep theirs)")}`);
     }
     const { model } = await loadConfig();
+    const choices: { value: string; label: string; current?: boolean }[] = [];
     for (const a of await accounts()) {
       if (!a.active) continue;
       try {
         const ids = await (await provider(a.provider as ProviderName)).models();
-        out(`${bold(a.provider)}\n` + ids.map((id) => `  ${id === model ? "●" : " "} ${id}`).join("\n"));
+        for (const id of recentModels(ids, model)) choices.push({ value: id, current: id === model, label: `${id}  ${dim(a.provider)}` });
       } catch (err) {
         out(`${bold(a.provider)}  ${dim(err instanceof Error ? err.message : String(err))}`);
       }
     }
-    out(dim("/models <id> to switch"));
+    if (!choices.length) return out(dim("no models available; sign in with /login first"));
+    const picked = await pick(choices, { title: dim("↑↓ then Enter to switch model; Esc to cancel   (/models <id> for any other id)") });
+    if (picked && picked !== model) await models(picked);
+  }
+
+  /** Arrow keys choose an agent to attach to. */
+  async function showAgents() {
+    const agents = await listAgents(project);
+    if (!agents.length) return out(dim("no agents yet"));
+    const picked = await pick(
+      agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })),
+      { title: dim("↑↓ then Enter to attach; Esc to cancel") },
+    );
+    if (picked) await attach(picked);
   }
 
   out(`${bold("parallels")} ${dim(project)}  ${dim("/agents  /attach <name>  /models  /accounts  /use  /login  /quit")}`);
@@ -139,8 +170,7 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     }
     if (text === "/quit") return rl.close();
     if (text === "/agents") {
-      const agents = await listAgents(project);
-      out(agents.length ? agents.map((a) => `${a.name}  ${dim(a.live ? "live" : "finished")}`).join("\n") : dim("no agents yet"));
+      await showAgents();
       return prompt();
     }
     if (text.startsWith("/attach ")) {
