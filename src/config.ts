@@ -26,6 +26,8 @@ export const paths = {
 
 export interface Config {
   model: string;
+  /** Anthropic profile (from `ant auth login --profile <name>`) whose tokens are used. Empty = ant's active profile. */
+  account: string;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
   /** Max review rounds before the reviewer gives up and reports to the orchestrator. */
@@ -34,6 +36,7 @@ export interface Config {
 
 export const defaults: Config = {
   model: "claude-sonnet-5-5",
+  account: "",
   maxToolResultBytes: 16 * 1024,
   maxReviewRounds: 2,
 };

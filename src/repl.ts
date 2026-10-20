@@ -4,7 +4,7 @@
 
 import { readdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import { accounts, provider, saveKey } from "./accounts";
+import { accounts, anthropicProfiles, provider, saveKey } from "./accounts";
 import { loadConfig, paths, saveConfig } from "./config";
 import type { Orchestrator } from "./orchestrator";
 import type { ProviderName } from "./providers/index";
@@ -71,13 +71,16 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
   /** Ask one question on the REPL's own readline; the answer never goes to the orchestrator. */
   const ask = (q: string) => new Promise<string>((r) => rl.question(q, (a) => r(a.trim())));
 
-  async function login(name: string) {
+  async function login(arg: string) {
+    const [name, profile = "default"] = arg.split(/\s+/);
     if (name === "anthropic") {
-      out(dim("running `ant auth login` (opens your browser)…"));
+      out(dim(`running \`ant auth login --profile ${profile}\` (opens your browser)…`));
       rl.pause();
-      const code = Bun.spawnSync(["ant", "auth", "login"], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exitCode;
+      const code = Bun.spawnSync(["ant", "auth", "login", "--profile", profile], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exitCode;
       rl.resume();
-      return out(code === 0 ? "signed in to anthropic" : dim(`ant auth login exited ${code}; is ant installed? brew install anthropics/tap/ant`));
+      if (code !== 0) return out(dim(`ant auth login exited ${code}; is ant installed? brew install anthropics/tap/ant`));
+      await saveConfig({ account: profile });
+      return out(`signed in; now using anthropic:${profile}`);
     }
     if (name === "openai") {
       const key = await ask("OpenAI API key (stored in ~/.parallels/credentials.json, mode 600): ");
@@ -85,13 +88,22 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
       await saveKey("openai", key);
       return out("saved; openai is signed in");
     }
-    out(dim("usage: /login anthropic | /login openai"));
+    out(dim("usage: /login anthropic [profile]  |  /login openai"));
   }
 
   async function showAccounts() {
     const { model } = await loadConfig();
-    for (const a of await accounts()) out(`${a.ok ? "●" : "○"} ${a.provider.padEnd(10)} ${dim(a.source)}`);
-    out(dim(`model: ${model}`));
+    for (const a of await accounts()) out(`${a.active ? "●" : a.ok ? "○" : "✗"} ${a.id.padEnd(22)} ${dim(a.source)}`);
+    out(dim(`model: ${model}   /use <account> to switch where tokens come from`));
+  }
+
+  async function use(id: string) {
+    const profile = id.replace(/^anthropic:/, "");
+    if (!profile || !anthropicProfiles().includes(profile)) {
+      return out(dim(`no such account; anthropic profiles: ${anthropicProfiles().join(", ") || "none"}. /login anthropic <name> adds one`));
+    }
+    await saveConfig({ account: profile });
+    out(`using anthropic:${profile} ${dim("(takes effect next turn; running agents keep theirs)")}`);
   }
 
   async function models(pick?: string) {
@@ -101,10 +113,7 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     }
     const { model } = await loadConfig();
     for (const a of await accounts()) {
-      if (!a.ok) {
-        out(`${bold(a.provider)}  ${dim(a.source)}`);
-        continue;
-      }
+      if (!a.active) continue;
       try {
         const ids = await (await provider(a.provider as ProviderName)).models();
         out(`${bold(a.provider)}\n` + ids.map((id) => `  ${id === model ? "●" : " "} ${id}`).join("\n"));
@@ -115,7 +124,7 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     out(dim("/models <id> to switch"));
   }
 
-  out(`${bold("parallels")} ${dim(project)}  ${dim("/agents  /attach <name>  /models  /accounts  /login  /quit")}`);
+  out(`${bold("parallels")} ${dim(project)}  ${dim("/agents  /attach <name>  /models  /accounts  /use  /login  /quit")}`);
   rl.setPrompt(dim("> "));
   prompt();
 
@@ -142,6 +151,10 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     }
     if (text === "/models" || text.startsWith("/models ")) {
       await models(text.slice(7).trim() || undefined);
+      return prompt();
+    }
+    if (text.startsWith("/use ")) {
+      await use(text.slice(5).trim());
       return prompt();
     }
     if (text === "/login" || text.startsWith("/login ")) {
