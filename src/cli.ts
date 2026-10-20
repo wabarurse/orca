@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
-// parallels start <project>            start or attach to the orchestrator
-// parallels msg <project> <text>       send a message to the orchestrator
+// parallels start <project> [git-url]   start the orchestrator REPL (clones on first run)
+// parallels msg <project> <text>        drop a message in the orchestrator's inbox
 // parallels agent --project p --role r [--task id]   internal: what spawn runs
 
 import { runAgent } from "./agent";
 import { put } from "./inbox";
+import { createOrchestrator, ensureProject } from "./orchestrator";
+import { repl } from "./repl";
 import type { Role } from "./transcript";
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -16,7 +18,7 @@ function flag(name: string): string | undefined {
 
 function usage(): never {
   console.error(`usage:
-  parallels start <project>
+  parallels start <project> [git-url]
   parallels msg <project> <text>
   parallels agent --project <name> --role <orchestrator|worker|reviewer> [--task <id>]`);
   process.exit(1);
@@ -25,9 +27,9 @@ function usage(): never {
 switch (cmd) {
   case "start": {
     const project = rest[0] ?? usage();
-    // TODO(PR7): ensure the project exists under ~/.parallels, start the
-    // orchestrator via the runner, then drop into a thin REPL.
-    console.log(`start ${project}: not implemented`);
+    await ensureProject(project, rest[1]);
+    const orch = await createOrchestrator({ project });
+    await repl(project, orch);
     break;
   }
   case "msg": {
