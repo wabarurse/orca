@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { accounts, provider } from "./accounts";
 import { CLAUDE_BETAS, CLAUDE_TOKEN_URL, saveClaudeTokens } from "./claude-auth";
 import { saveConfig } from "./config";
+import { saveCodexTokens } from "./codex-auth";
+import { fakeCodexTokens } from "./test/codex";
 
-const keys = ["PARALLELS_HOME", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY"];
+const keys = ["PARALLELS_HOME", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_CUSTOM_HEADERS", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
 let original: Record<string, string | undefined>;
 let home: string;
 let mockFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
@@ -97,24 +99,69 @@ test("subscription requests use Bearer auth, Claude Code compatibility, streamin
   expect(req).not.toHaveProperty("system");
 });
 
-test("API-key override is explicit in account listing and never sends subscription headers or identity", async () => {
+test("API keys cannot override Claude Code subscription credentials", async () => {
   await saveProfile("personal");
   await saveConfig({ account: "personal" });
   process.env.ANTHROPIC_API_KEY = "test-api-key";
   process.env.ANTHROPIC_AUTH_TOKEN = "unused-token";
+  process.env.ANTHROPIC_CUSTOM_HEADERS = "X-Api-Key: unused-custom-key";
   let request: Request | undefined;
   interceptFetch(async (incoming) => {
     request = incoming;
     return streamResponse();
   });
   const listed = await accounts();
-  expect(listed.find((a) => a.id === "anthropic:env")).toMatchObject({ active: true, source: expect.stringContaining("API billing") });
-  expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(false);
+  expect(listed.find((a) => a.id === "anthropic:env")).toBeUndefined();
+  expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(true);
   await (await provider("anthropic")).complete(turn());
-  expect(request!.headers.get("x-api-key")).toBe("test-api-key");
-  expect(request!.headers.get("authorization")).toBeNull();
-  expect(request!.headers.get("anthropic-beta")).toBeNull();
-  expect(await request!.json()).not.toHaveProperty("system");
+  expect(request!.headers.get("x-api-key")).toBeNull();
+  expect(request!.headers.get("authorization")).toBe("Bearer subscription-access");
+  expect(request!.headers.get("anthropic-beta")).toBe(CLAUDE_BETAS);
+  expect(await request!.json()).toHaveProperty("system");
+});
+
+test("environment and legacy saved API keys cannot authenticate either provider", async () => {
+  process.env.ANTHROPIC_API_KEY = "unused-anthropic-key";
+  process.env.OPENAI_API_KEY = "unused-openai-key";
+  await Bun.write(join(home, "credentials.json"), JSON.stringify({ openai: "unused-saved-key" }));
+  await expect(provider("anthropic")).rejects.toThrow("not signed in");
+  await expect(provider("openai")).rejects.toThrow("not signed in");
+  expect((await accounts()).every((account) => !account.ok && !account.active)).toBe(true);
+});
+
+test("Codex account selection stays independent of Claude and ignores API credentials", async () => {
+  process.env.OPENAI_API_KEY = "unused-openai-key";
+  process.env.OPENAI_ADMIN_KEY = "unused-admin-key";
+  process.env.OPENAI_CUSTOM_HEADERS = "Authorization: Bearer unused-header-key\nX-Api-Key: unused-custom-key";
+  process.env.OPENAI_BASE_URL = "https://api.openai.com/v1";
+  process.env.OPENAI_ORG_ID = "unused-org";
+  process.env.OPENAI_PROJECT_ID = "unused-project";
+  await saveProfile("personal");
+  await saveCodexTokens("work", fakeCodexTokens("work-account"));
+  await saveCodexTokens("personal", fakeCodexTokens("personal-account"));
+  await saveConfig({ account: "personal", openaiAccount: "work" });
+  const listed = await accounts();
+  expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(true);
+  expect(listed.find((a) => a.id === "openai:work")).toMatchObject({ active: true, source: "Codex (ChatGPT subscription)" });
+  expect(listed.find((a) => a.id === "openai:personal")?.active).toBe(false);
+  interceptFetch(async (request) => {
+    expect(request.url).toStartWith("https://chatgpt.com/backend-api/codex/models?");
+    expect(request.headers.get("chatgpt-account-id")).toBe("work-account");
+    expect(request.headers.get("authorization")).not.toContain("unused");
+    expect(request.headers.get("x-api-key")).toBeNull();
+    expect(request.headers.get("openai-organization")).toBeNull();
+    expect(request.headers.get("openai-project")).toBeNull();
+    return Response.json({ models: [{ slug: "gpt-test", visibility: "list" }] });
+  });
+  expect(await (await provider("openai")).models()).toEqual(["gpt-test"]);
+  await saveConfig({ openaiAccount: "missing" });
+  await expect(provider("openai")).rejects.toThrow("not signed in");
+});
+
+test("custom Anthropic Authorization headers cannot select a different authentication flow", async () => {
+  await saveProfile("default");
+  process.env.ANTHROPIC_CUSTOM_HEADERS = "Authorization: Bearer platform-token";
+  await expect(provider("anthropic")).rejects.toThrow("Custom Anthropic Authorization headers are unsupported");
 });
 
 test("a 401 refreshes the subscription token once and retries with the rotated token", async () => {

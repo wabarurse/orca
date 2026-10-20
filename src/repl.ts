@@ -4,8 +4,9 @@
 
 import { readdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import { accounts, anthropicProfiles, provider, saveKey } from "./accounts";
+import { accounts, provider } from "./accounts";
 import { importClaudeCode, loginClaude } from "./claude-auth";
+import { importCodex, loginCodex } from "./codex-auth";
 import { loadConfig, paths, saveConfig } from "./config";
 import type { Orchestrator } from "./orchestrator";
 import type { ProviderName } from "./providers/index";
@@ -71,29 +72,20 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     }
   }
 
-  /** Ask one question on the REPL's own readline; the answer never goes to the orchestrator. */
-  const ask = (q: string) => new Promise<string>((r) => rl.question(q, (a) => r(a.trim())));
-
   async function login(arg: string) {
-    const [name, ...args] = arg.split(/\s+/);
-    if (name === "anthropic") {
-      const names = args.filter((a) => a !== "--from-claude-code");
-      if (names.length > 1 || names.some((n) => n.startsWith("--"))) return out(dim("usage: /login anthropic [profile] [--from-claude-code]"));
+    const [alias, ...args] = arg.split(/\s+/);
+    const name = alias === "claude" ? "anthropic" : alias === "codex" ? "openai" : alias;
+    if (name === "anthropic" || name === "openai") {
+      const importFlag = name === "anthropic" ? "--from-claude-code" : "--from-codex";
+      const names = args.filter((a) => a !== importFlag);
+      if (names.length > 1 || names.some((n) => n.startsWith("--"))) return out(dim(`usage: /login ${name} [profile] [${importFlag}]`));
       const profile = names[0] ?? "default";
-      if (args.includes("--from-claude-code")) await importClaudeCode(profile);
-      else await loginClaude(profile, { write: out, signal: loginAbort.signal });
-      await saveConfig({ account: profile });
-      return out(process.env.ANTHROPIC_API_KEY
-        ? `saved anthropic:${profile}; ANTHROPIC_API_KEY still overrides it with API billing. Unset it to use your subscription.`
-        : `signed in; now using anthropic:${profile} (Claude subscription)`);
+      if (args.includes(importFlag)) await (name === "anthropic" ? importClaudeCode : importCodex)(profile);
+      else await (name === "anthropic" ? loginClaude : loginCodex)(profile, { write: out, signal: loginAbort.signal });
+      await saveConfig(name === "anthropic" ? { account: profile } : { openaiAccount: profile });
+      return out(`signed in; now using ${name}:${profile} (${name === "anthropic" ? "Claude Code / Claude subscription" : "Codex / ChatGPT subscription"})`);
     }
-    if (name === "openai") {
-      const key = await ask("OpenAI API key (stored in ~/.parallels/credentials.json, mode 600): ");
-      if (!key) return out(dim("no key given"));
-      await saveKey("openai", key);
-      return out("saved; openai is signed in");
-    }
-    out(dim("usage: /login anthropic [profile] [--from-claude-code]  |  /login openai"));
+    out(dim("usage: /login anthropic [profile] [--from-claude-code]  |  /login openai [profile] [--from-codex]"));
   }
 
   async function showAccounts() {
@@ -103,14 +95,13 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
   }
 
   async function use(id: string) {
-    const profile = id.replace(/^anthropic:/, "");
-    if (!profile || !anthropicProfiles().includes(profile)) {
-      return out(dim(`no such account; anthropic profiles: ${anthropicProfiles().join(", ") || "none"}. /login anthropic <name> adds one`));
-    }
-    await saveConfig({ account: profile });
-    out(process.env.ANTHROPIC_API_KEY
-      ? `selected anthropic:${profile}; unset ANTHROPIC_API_KEY to use the subscription instead of API billing.`
-      : `using anthropic:${profile} ${dim("(takes effect next turn; running agents keep theirs)")}`);
+    const normalized = id.replace(/^claude:/, "anthropic:").replace(/^codex:/, "openai:");
+    const target = normalized.includes(":") ? normalized : `anthropic:${normalized}`;
+    const account = (await accounts()).find((a) => a.id === target && a.ok);
+    if (!account) return out(dim("no such subscription account; try /accounts or /login"));
+    const profile = account.id.split(":")[1]!;
+    await saveConfig(account.provider === "anthropic" ? { account: profile } : { openaiAccount: profile });
+    out(`using ${account.id} ${dim("(takes effect next turn; running agents keep theirs)")}`);
   }
 
   async function models(pick?: string) {

@@ -15,7 +15,7 @@ test("`parallels version` prints the package.json version", async () => {
   expect(out).toBe(`${pkg.version}\n`);
 });
 
-test("REPL imports a named Claude login, reports API billing, and survives invalid login input", async () => {
+test("REPL uses subscriptions despite API keys and survives invalid login input", async () => {
   const home = await mkdtemp(join(tmpdir(), "parallels-repl-auth-"));
   await mkdir(join(home, "projects", "p", "repo"), { recursive: true });
   await Bun.write(join(home, "claude", ".credentials.json"), JSON.stringify({
@@ -43,16 +43,19 @@ test("REPL imports a named Claude login, reports API billing, and survives inval
   try {
     await waitFor("/quit");
     await send("/login anthropic personal --from-claude-code");
-    await waitFor("saved anthropic:personal");
-    expect(output).toContain("API billing");
+    await waitFor("now using anthropic:personal");
+    expect(output).not.toContain("API billing");
     const config = Bun.TOML.parse(await Bun.file(join(home, "config.toml")).text());
     expect(config).toMatchObject({ account: "personal" });
     const tokens = await Bun.file(join(home, "auth", "anthropic", "personal.json")).json();
     expect(tokens.accessToken).toBe("test-access");
     await send("/accounts");
-    await waitFor("Claude subscription OAuth");
+    await waitFor("Claude Code (Claude subscription)");
     await send("/use anthropic:personal");
-    await waitFor("unset ANTHROPIC_API_KEY");
+    await waitFor("takes effect next turn");
+    await send("/login codex --api-key");
+    await waitFor("usage: /login openai [profile] [--from-codex]");
+    expect(output).not.toContain("OpenAI API key");
     await send("/login anthropic ../outside --from-claude-code");
     await waitFor("login failed: Profile must");
     await send("/quit");

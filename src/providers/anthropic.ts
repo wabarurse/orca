@@ -1,8 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Provider } from "./index";
 
-// accounts.ts supplies explicit API-key or Claude subscription credentials.
-export function anthropic(client: Anthropic, options: { subscription?: boolean } = {}): Provider {
+// accounts.ts supplies Claude Code subscription credentials. There is no API-key mode.
+export function anthropic(client: Anthropic): Provider {
   return {
     name: "anthropic",
     async complete(req) {
@@ -10,9 +10,8 @@ export function anthropic(client: Anthropic, options: { subscription?: boolean }
         model: req.model,
         max_tokens: req.maxTokens,
         messages: req.messages,
-        // Required by the Claude Code OAuth compatibility path; not persisted
-        // in the transcript or sent for API-key requests.
-        ...(options.subscription ? { system: [{ type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." }] } : {}),
+        // Required by the Claude Code OAuth path; not persisted in the transcript.
+        system: [{ type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." }],
         ...(req.tools.length ? { tools: req.tools } : {}),
       });
       stream.on("text", req.onText);
