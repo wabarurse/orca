@@ -1,8 +1,23 @@
+import { loadConfig } from "../config";
 import type { Tool } from "./index";
 
-// TODO(PR3): run the command in ctx.cwd, cap output at config.maxToolResultBytes
-// by truncating the middle (errors are usually at the end), and refuse commands
-// that mention sudo. The text check is a nudge; the sandbox user is the real guard.
+const TIMEOUT_MS = 10 * 60 * 1000;
+
+// The sudo check is a nudge to the model, not a security boundary; the sandbox
+// user is the real guard.
+const SUDO = /\bsudo\b/;
+
+/** Keep the first and last halves of `text` (by bytes) when it exceeds `max`. */
+export function truncateMiddle(text: string, max: number): string {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= max) return text;
+  const half = Math.floor(max / 2);
+  const dropped = bytes.length - half * 2;
+  const head = bytes.subarray(0, half).toString();
+  const tail = bytes.subarray(bytes.length - half).toString();
+  return `${head}\n...[truncated ${dropped} bytes]...\n${tail}`;
+}
+
 export const bash: Tool = {
   spec: {
     name: "bash",
@@ -13,7 +28,23 @@ export const bash: Tool = {
       required: ["command"],
     },
   },
-  async run() {
-    throw new Error("bash: not implemented");
+  async run(input, ctx) {
+    const command = String(input.command ?? "");
+    if (SUDO.test(command)) return "refused: sudo is not allowed";
+
+    const proc = Bun.spawn(["sh", "-c", `exec 2>&1\n${command}`], {
+      cwd: ctx.cwd,
+      stdout: "pipe",
+      stdin: "ignore",
+      timeout: TIMEOUT_MS,
+    });
+    const [output, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+
+    let result = output;
+    if (proc.signalCode === "SIGTERM" && proc.killed) result += `\n[timed out after ${TIMEOUT_MS / 1000}s]`;
+    if (code !== 0) result += `${result.endsWith("\n") || result === "" ? "" : "\n"}[exit ${code}]`;
+
+    const { maxToolResultBytes } = await loadConfig();
+    return truncateMiddle(result, maxToolResultBytes);
   },
 };
