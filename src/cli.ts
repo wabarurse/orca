@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 // parallels start <project> [git-url]   start the orchestrator REPL (clones on first run)
 // parallels msg <project> <text>        drop a message in the orchestrator's inbox
+// parallels version                    print the package.json version
 // parallels agent --project p --role r [--task id]   internal: what spawn runs
 
+import pkg from "../package.json";
 import { runAgent } from "./agent";
 import { put } from "./inbox";
 import { createOrchestrator, ensureProject } from "./orchestrator";
@@ -20,6 +22,7 @@ function usage(): never {
   console.error(`usage:
   parallels start <project> [git-url]
   parallels msg <project> <text>
+  parallels version
   parallels agent --project <name> --role <orchestrator|worker|reviewer> [--task <id>]`);
   process.exit(1);
 }
@@ -44,6 +47,9 @@ switch (cmd) {
     await runAgent({ project, role, taskId: flag("task") });
     break;
   }
+  case "version":
+    console.log(pkg.version);
+    break;
   default:
     usage();
 }
