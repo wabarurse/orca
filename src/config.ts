@@ -28,6 +28,8 @@ export interface Config {
   model: string;
   /** Claude subscription profile saved by /login anthropic. Empty = default. */
   account: string;
+  /** Codex/ChatGPT subscription profile saved by /login openai. Empty = default. */
+  openaiAccount: string;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
   /** Max review rounds before the reviewer gives up and reports to the orchestrator. */
@@ -37,6 +39,7 @@ export interface Config {
 export const defaults: Config = {
   model: "claude-sonnet-5-5",
   account: "",
+  openaiAccount: "",
   maxToolResultBytes: 16 * 1024,
   maxReviewRounds: 2,
 };

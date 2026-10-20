@@ -9,48 +9,77 @@ bun src/cli.ts start <project>
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
 
-## Claude subscription login
+## Subscription login
 
-In the REPL, sign in with a Claude Pro/Max account:
+Parallels always connects as **Claude Code** for Claude models and **Codex** for
+OpenAI models. Those are its only authentication and inference paths.
+
+In the REPL:
 
 ```text
-/login anthropic personal
+/login claude personal
+/login codex personal
 /accounts
-/use anthropic:personal
 ```
 
-Login opens `claude.ai` in your browser and receives the OAuth callback on
-`localhost:53692`. The browser must run on the same machine as parallels.
-Omit the profile name to use `default`; repeat with another name for another account.
-The selected account takes effect on the next orchestrator turn. Running workers
-keep their selected account and refresh its tokens automatically.
+`claude` is an alias for `anthropic`; `codex` is an alias for `openai`. Both commands
+open the provider's subscription sign-in page. Omit the profile name to use
+`default`, or use different names for multiple accounts.
 
-To bootstrap a profile from an existing Claude Code login:
+Select the account for each provider independently:
 
 ```text
-/login anthropic personal --from-claude-code
+/use anthropic:personal
+/use openai:personal
+/models
+/models <model-id>
 ```
 
-This copies tokens from `CLAUDE_CONFIG_DIR` (default `~/.claude`) credential files,
-or the macOS `Claude Code-credentials` keychain entry when using the default
-directory. It does not modify Claude Code's store. For independent refresh tokens,
-use the browser login instead of importing an account used concurrently in Claude Code.
+Claude models use the selected Claude subscription. Other models use the selected
+ChatGPT/Codex subscription. Account and model changes take effect on the next
+orchestrator turn; running workers keep their selection and refresh its tokens
+automatically. `/models` reads the providers' catalogs; a listed model can still
+require an entitlement your account does not have.
 
-Subscription profiles are stored under `~/.parallels/auth/anthropic/` with private
-file permissions (0600), atomic replacement, and a per-profile lock shared by
-workers. `PARALLELS_HOME` relocates parallels' state. Failed logins leave the
-previous profile intact; `/quit` cancels a pending browser login.
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, developer-platform profiles, and keys from
+an old `~/.parallels/credentials.json` are never used. There is no API-key prompt,
+override, billing mode, or fallback. Existing OpenAI users must run `/login codex`
+once. Old key files are left untouched and can be removed manually.
 
-This follows [zeta's Claude subscription OAuth implementation](https://github.com/hwang2409/zeta/blob/4ba6ea9af9f5cee1839fdf99df50851d8a1a7cd1/src/zeta/providers/anthropic.py):
-Claude Code's public OAuth client ID, PKCE, Bearer authentication,
+## Existing CLI logins
+
+You can copy an existing subscription session instead of opening a new login:
+
+```text
+/login claude personal --from-claude-code
+/login codex personal --from-codex
+```
+
+Claude import reads credential files under `CLAUDE_CONFIG_DIR` (default
+`~/.claude`), then the macOS `Claude Code-credentials` keychain entry when using
+the default directory. Codex import reads `auth.json` under `CODEX_HOME` (default
+`~/.codex`) and accepts only ChatGPT subscription tokens. If Codex uses an OS
+credential store, use `/login codex` to create a separate browser session.
+Imports do not modify either CLI's original store. Browser login gives parallels
+independent refresh tokens when you also use the native CLI concurrently.
+
+Browser login requires a browser on the same machine: Claude receives its callback
+on `localhost:53692`, Codex on `localhost:1455`. `/quit` cancels a pending login.
+Credentials live under `~/.parallels/auth/{anthropic,openai}/` in private (0600)
+files with atomic writes and a per-profile lock shared across workers.
+`PARALLELS_HOME` relocates parallels' state. Failed login and refresh attempts
+preserve the previous credentials.
+
+## Provider implementation
+
+Claude uses Claude Code's public OAuth client ID, PKCE, Bearer authentication,
 `claude-code-20250219` / `oauth-2025-04-20` beta headers, and its compatibility
-identity in subscription requests. This compatibility path can change upstream.
+identity. Codex uses its public OAuth client ID and ChatGPT account routing,
+with streamed Responses at `chatgpt.com/backend-api/codex/responses`, `store: false`,
+and encrypted reasoning replay across tool turns. Neither provider uses OpenAI's
+platform Chat Completions or developer-platform OAuth profiles.
 
-`ANTHROPIC_API_KEY` explicitly overrides subscription profiles and uses API
-billing. `/accounts`, `/login`, and `/use` show that override; unset the variable
-to use your subscription. Developer-platform `ant auth login` profiles and
-`ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_PROFILE` are no longer used. Existing users
-should run `/login anthropic <name>` once to replace their old profile selection.
-There is no fallback from a failed subscription login to API billing.
-
-OpenAI still uses `OPENAI_API_KEY` or `/login openai`.
+The implementation follows [zeta's subscription providers](https://github.com/hwang2409/zeta)
+and the [Codex authentication documentation](https://learn.chatgpt.com/docs/auth).
+The upstream compatibility contracts can change. Live login and subscription
+inference require validation with your account; automated tests use fake tokens.
