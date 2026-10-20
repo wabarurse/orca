@@ -1,14 +1,10 @@
-// Which accounts are signed in, and which one tokens come from. Anthropic
-// accounts are `ant auth login --profile <name>` profiles (any number; each
-// is its own org/workspace and token). OpenAI has no OAuth for third-party
-// tools, so it is one API key: OPENAI_API_KEY, or one saved here with mode 0600.
+// Named Claude subscription logins, plus explicit Anthropic/OpenAI API keys.
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { chmod } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { CLAUDE_BETAS, claudeCredentials, claudeProfiles, readClaudeTokens, validateProfile } from "./claude-auth";
 import { loadConfig, paths } from "./config";
 import { anthropic } from "./providers/anthropic";
 import type { Provider, ProviderName } from "./providers/index";
@@ -43,36 +39,25 @@ export async function openaiKey(): Promise<string | undefined> {
   return process.env.OPENAI_API_KEY || (await saved()).openai;
 }
 
-const anthropicDir = () => process.env.ANTHROPIC_CONFIG_DIR ?? join(homedir(), ".config", "anthropic");
+export const anthropicProfiles = claudeProfiles;
 
-/** Every profile `ant auth login` has stored. */
-export function anthropicProfiles(): string[] {
-  const creds = join(anthropicDir(), "credentials");
-  if (!existsSync(creds)) return [];
-  return readdirSync(creds).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).sort();
-}
-
-/** The profile tokens come from: config `account`, else ANTHROPIC_PROFILE, else ant's active_config. */
-export function activeProfile(configured: string): string | null {
-  if (configured) return configured;
-  if (process.env.ANTHROPIC_PROFILE) return process.env.ANTHROPIC_PROFILE;
-  const f = join(anthropicDir(), "active_config");
-  return existsSync(f) ? readFileSync(f, "utf8").trim() || null : null;
-}
+/** Profile selection is local to parallels; `ant` org/workspace profiles are never used. */
+export const activeProfile = (configured: string) => validateProfile(configured || "default");
 
 export async function accounts(): Promise<Account[]> {
   const { account } = await loadConfig();
   const out: Account[] = [];
   if (process.env.ANTHROPIC_API_KEY) {
-    out.push({ id: "anthropic:env", provider: "anthropic", ok: true, active: true, source: "ANTHROPIC_API_KEY (overrides every profile)" });
+    out.push({ id: "anthropic:env", provider: "anthropic", ok: true, active: true, source: "ANTHROPIC_API_KEY — API billing (overrides subscription profiles)" });
   }
   const profiles = anthropicProfiles();
   const active = activeProfile(account);
   for (const p of profiles) {
-    out.push({ id: `anthropic:${p}`, provider: "anthropic", ok: true, active: !process.env.ANTHROPIC_API_KEY && p === active, source: `ant profile "${p}"` });
+    const ok = await readClaudeTokens(p).then(Boolean).catch(() => false);
+    out.push({ id: `anthropic:${p}`, provider: "anthropic", ok, active: ok && !process.env.ANTHROPIC_API_KEY && p === active, source: ok ? "Claude subscription OAuth" : `invalid credentials; /login anthropic ${p}` });
   }
-  if (profiles.length === 0 && !process.env.ANTHROPIC_API_KEY) {
-    out.push({ id: "anthropic", provider: "anthropic", ok: false, active: false, source: "not signed in; /login anthropic [name]" });
+  if (!profiles.includes(active) && !process.env.ANTHROPIC_API_KEY) {
+    out.push({ id: `anthropic:${active}`, provider: "anthropic", ok: false, active: false, source: `not signed in; /login anthropic ${active}` });
   }
   const key = await openaiKey();
   out.push(
@@ -87,9 +72,19 @@ export async function accounts(): Promise<Account[]> {
 
 export async function provider(name: ProviderName): Promise<Provider> {
   if (name === "anthropic") {
+    if (process.env.ANTHROPIC_API_KEY) {
+      return anthropic(new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, authToken: null }));
+    }
     const { account } = await loadConfig();
-    // An explicit profile makes a missing one an error instead of silent "no auth".
-    return anthropic(new Anthropic(account ? { profile: account } : {}));
+    const profile = activeProfile(account);
+    if (!(await readClaudeTokens(profile))) throw new Error(`Claude profile '${profile}' is not signed in; run /login anthropic ${profile}.`);
+    return anthropic(new Anthropic({
+      apiKey: null,
+      authToken: null,
+      baseURL: "https://api.anthropic.com",
+      credentials: claudeCredentials(profile),
+      defaultHeaders: { "anthropic-beta": CLAUDE_BETAS },
+    }), { subscription: true });
   }
   const apiKey = await openaiKey();
   if (!apiKey) throw new Error("openai: not signed in; run /login openai or set OPENAI_API_KEY");

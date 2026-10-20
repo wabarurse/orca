@@ -5,6 +5,7 @@
 import { readdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { accounts, anthropicProfiles, provider, saveKey } from "./accounts";
+import { importClaudeCode, loginClaude } from "./claude-auth";
 import { loadConfig, paths, saveConfig } from "./config";
 import type { Orchestrator } from "./orchestrator";
 import type { ProviderName } from "./providers/index";
@@ -27,9 +28,11 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
   const out = (s: string) => process.stdout.write(s + "\n");
   let busy = false;
   let closed = false;
+  let loggingIn = false;
+  const loginAbort = new AbortController();
   // Set while /attach is showing a transcript; calling it returns to the orchestrator.
   const view: { leave: (() => void) | null } = { leave: null };
-  rl.on("close", () => (closed = true));
+  rl.on("close", () => { closed = true; loginAbort.abort(); });
   const prompt = () => {
     if (!closed) rl.prompt();
   };
@@ -72,15 +75,17 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
   const ask = (q: string) => new Promise<string>((r) => rl.question(q, (a) => r(a.trim())));
 
   async function login(arg: string) {
-    const [name, profile = "default"] = arg.split(/\s+/);
+    const [name, ...args] = arg.split(/\s+/);
     if (name === "anthropic") {
-      out(dim(`running \`ant auth login --profile ${profile}\` (opens your browser)…`));
-      rl.pause();
-      const code = Bun.spawnSync(["ant", "auth", "login", "--profile", profile], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exitCode;
-      rl.resume();
-      if (code !== 0) return out(dim(`ant auth login exited ${code}; is ant installed? brew install anthropics/tap/ant`));
+      const names = args.filter((a) => a !== "--from-claude-code");
+      if (names.length > 1 || names.some((n) => n.startsWith("--"))) return out(dim("usage: /login anthropic [profile] [--from-claude-code]"));
+      const profile = names[0] ?? "default";
+      if (args.includes("--from-claude-code")) await importClaudeCode(profile);
+      else await loginClaude(profile, { write: out, signal: loginAbort.signal });
       await saveConfig({ account: profile });
-      return out(`signed in; now using anthropic:${profile}`);
+      return out(process.env.ANTHROPIC_API_KEY
+        ? `saved anthropic:${profile}; ANTHROPIC_API_KEY still overrides it with API billing. Unset it to use your subscription.`
+        : `signed in; now using anthropic:${profile} (Claude subscription)`);
     }
     if (name === "openai") {
       const key = await ask("OpenAI API key (stored in ~/.parallels/credentials.json, mode 600): ");
@@ -88,7 +93,7 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
       await saveKey("openai", key);
       return out("saved; openai is signed in");
     }
-    out(dim("usage: /login anthropic [profile]  |  /login openai"));
+    out(dim("usage: /login anthropic [profile] [--from-claude-code]  |  /login openai"));
   }
 
   async function showAccounts() {
@@ -103,7 +108,9 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
       return out(dim(`no such account; anthropic profiles: ${anthropicProfiles().join(", ") || "none"}. /login anthropic <name> adds one`));
     }
     await saveConfig({ account: profile });
-    out(`using anthropic:${profile} ${dim("(takes effect next turn; running agents keep theirs)")}`);
+    out(process.env.ANTHROPIC_API_KEY
+      ? `selected anthropic:${profile}; unset ANTHROPIC_API_KEY to use the subscription instead of API billing.`
+      : `using anthropic:${profile} ${dim("(takes effect next turn; running agents keep theirs)")}`);
   }
 
   async function models(pick?: string) {
@@ -130,6 +137,10 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
 
   rl.on("line", async (line) => {
     const text = line.trim();
+    if (loggingIn) {
+      if (text === "/quit") rl.close();
+      return;
+    }
     if (view.leave) {
       if (text === "/back" || text === "/quit") view.leave();
       if (text === "/quit") rl.close();
@@ -158,7 +169,10 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
       return prompt();
     }
     if (text === "/login" || text.startsWith("/login ")) {
-      await login(text.slice(6).trim());
+      loggingIn = true;
+      try { await login(text.slice(6).trim()); }
+      catch (err) { out(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
+      finally { loggingIn = false; }
       return prompt();
     }
     if (text.startsWith("/")) {
@@ -172,7 +186,7 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
 
   // Worker and reviewer reports land in the inbox while we wait for input.
   const poll = setInterval(async () => {
-    if (!busy && (await orch.pending())) await runTurn();
+    if (!busy && !loggingIn && (await orch.pending())) await runTurn();
   }, 2000);
 
   await new Promise<void>((resolve) => rl.on("close", resolve));
