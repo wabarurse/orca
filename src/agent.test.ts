@@ -115,4 +115,30 @@ describe("agent loop", () => {
     expect(calls[0]!.messages.at(-1)!.content).toBe("[orchestrator] note before start");
     expect(calls[1]!.messages.at(-1)!.content).toBe("[orchestrator] one more thing");
   });
+
+  test("a message that lands during a tool call waits for the result, then rides along with it", async () => {
+    const transcript = fakeTranscript();
+    await transcript.append(user("go"));
+    const order: string[] = [];
+    const slow: Tool = {
+      spec: { name: "slow", description: "slow", input_schema: { type: "object", properties: {} } },
+      async run() {
+        // The note arrives mid-tool; it must not be seen until the tool is done.
+        await put("p", "worker", { from: "orchestrator", text: "change of plan" });
+        order.push("tool finished");
+        return "done";
+      },
+    };
+    const provider = fakeProvider([[toolUse("t1", "slow", {})], [text("ok")]]);
+    await createAgent({ provider, transcript, tools: { slow }, model: "m", ctx, write: () => {} }).run();
+
+    expect(provider.calls.length).toBe(2);
+    const last = provider.calls[1]!.messages.at(-1)!;
+    expect(last.role).toBe("user");
+    expect(last.content).toEqual([
+      { type: "tool_result", tool_use_id: "t1", content: "done" },
+      { type: "text", text: "[orchestrator] change of plan" },
+    ]);
+    expect(order).toEqual(["tool finished"]);
+  });
 });
