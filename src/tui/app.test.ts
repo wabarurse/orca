@@ -1,0 +1,179 @@
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Orchestrator } from "../orchestrator";
+import { App } from "./app";
+import { parseKeys, type Key } from "./keys";
+import type { Terminal } from "./term";
+
+const home = mkdtempSync(join(tmpdir(), "parallels-tui-"));
+process.env.PARALLELS_HOME = home;
+afterAll(() => rmSync(home, { recursive: true, force: true }));
+
+const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
+
+function fakeTerm() {
+  const handlers: ((k: Key) => void)[] = [];
+  let screen = "";
+  const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; opened: boolean; closed: boolean } = {
+    cols: 40, rows: 8, opened: false, closed: false,
+    write: (s) => { screen = s; },
+    onKey: (cb) => { handlers.push(cb); },
+    onResize: () => {},
+    open() { this.opened = true; },
+    close() { this.closed = true; },
+    press: (k) => { for (const h of handlers) h(k); },
+    type: (s) => { for (const k of parseKeys(s)) for (const h of handlers) h(k); },
+    screen: () => strip(screen),
+  };
+  return term;
+}
+
+function fakeOrchestrators() {
+  const opened: { project: string; url?: string }[] = [];
+  const said: Record<string, string[]> = {};
+  const writers: Record<string, (t: string) => void> = {};
+  const openOrchestrator = async (project: string, url: string | undefined, write: (t: string) => void): Promise<Orchestrator> => {
+    opened.push({ project, url });
+    said[project] = [];
+    writers[project] = write;
+    let queued = 0;
+    return {
+      async say(text) { said[project]!.push(text); queued++; },
+      async pending() { return queued > 0; },
+      async turn() {
+        queued = 0;
+        write(`${project} says hi\n`);
+        return [{ from: "worker-x", text: "done", ts: "t" }];
+      },
+    };
+  };
+  return { opened, said, writers, openOrchestrator };
+}
+
+const settle = () => Bun.sleep(15);
+
+describe("tui app", () => {
+  test("opens a page per project, types to its orchestrator and shows replies", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await settle();
+    expect(term.opened).toBe(true);
+    expect(orchs.opened).toEqual([{ project: "alpha", url: undefined }]);
+    term.type("build it\r");
+    await settle();
+    expect(orchs.said.alpha).toEqual(["build it"]);
+    const screen = term.screen();
+    expect(screen).toContain("> build it");
+    expect(screen).toContain("alpha says hi");
+    expect(screen).toContain("worker-x done");
+    term.type("/quit\r");
+    await running;
+    expect(term.closed).toBe(true);
+  });
+
+  test("Ctrl+N prompts for a new orchestrator; Ctrl+, and Ctrl+. switch pages", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await settle();
+    term.press({ name: "n", ctrl: true });
+    await settle();
+    expect(term.screen()).toContain("new orchestrator:");
+    term.type("beta git@example.com:b.git\r");
+    await settle();
+    expect(orchs.opened[1]).toEqual({ project: "beta", url: "git@example.com:b.git" });
+    expect(app.pages.map((p) => p.project)).toEqual(["alpha", "beta"]);
+    expect(app.page!.project).toBe("beta");
+
+    term.press({ name: ",", ctrl: true });
+    expect(app.page!.project).toBe("alpha");
+    term.press({ name: ".", ctrl: true });
+    expect(app.page!.project).toBe("beta");
+    term.press({ name: ".", ctrl: true }); // wraps around
+    expect(app.page!.project).toBe("alpha");
+    term.press({ name: ",", alt: true }); // the fallback chord
+    expect(app.page!.project).toBe("beta");
+
+    term.type("/close\r");
+    await settle();
+    expect(app.pages.map((p) => p.project)).toEqual(["alpha"]);
+    term.press({ name: "c", ctrl: true });
+    await running;
+  });
+
+  test("with no project named it reopens every known project, or prompts when there are none", async () => {
+    mkdirSync(join(home, "projects", "p1", "repo"), { recursive: true });
+    mkdirSync(join(home, "projects", "p2", "repo"), { recursive: true });
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run();
+    await settle();
+    expect(app.pages.map((p) => p.project)).toEqual(["p1", "p2"]);
+    app.quit();
+    await running;
+  });
+
+  test("a report that lands while idle is picked up by the poll", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 20 });
+    const running = app.run("alpha");
+    await settle();
+    // Something arrives in the inbox without the user typing.
+    await app.page!.orch.say("note");
+    await Bun.sleep(60);
+    expect(term.screen()).toContain("worker-x done");
+    app.quit();
+    await running;
+  });
+
+  test("menus move with arrows and pick with Enter; Esc cancels", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await settle();
+    let picked = "";
+    app.openMenu("pick one", [{ value: "x", label: "x" }, { value: "y", label: "y" }], (v) => { picked = v; });
+    term.press({ name: "down" });
+    term.press({ name: "enter" });
+    await settle();
+    expect(picked).toBe("y");
+    app.openMenu("pick one", [{ value: "x", label: "x" }], (v) => { picked = v; });
+    term.press({ name: "escape" });
+    expect(app.menu).toBeNull();
+    expect(picked).toBe("y");
+    app.quit();
+    await running;
+  });
+
+  test("line editing: cursor movement, backspace and history", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await settle();
+    term.type("helo");
+    term.press({ name: "left" });
+    term.type("l");
+    expect(app.input).toEqual({ text: "hello", cursor: 4 });
+    term.press({ name: "end" });
+    term.press({ name: "backspace" });
+    expect(app.input.text).toBe("hell");
+    term.press({ name: "a", ctrl: true });
+    term.press({ name: "k", ctrl: true });
+    expect(app.input.text).toBe("");
+    term.type("first\r");
+    await settle();
+    term.press({ name: "up" });
+    expect(app.input.text).toBe("first");
+    app.quit();
+    await running;
+  });
+});

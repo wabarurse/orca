@@ -6,7 +6,9 @@ Bun + TypeScript. Use `bun` for everything (`bun test`, `bun run check`, `bun sr
 
 Layout:
 
-- `src/cli.ts` — `start`, `msg`, `agent`, `version` commands; the REPL has `/agents` (arrow-key pick to view a transcript live, `/back` to return), `/models [id]` (pick from the newest models), `/accounts` (pick to use or sign in), `/login claude [profile] | codex [profile] (aliases: anthropic/openai)`
+- `src/cli.ts` — `start [project] [git-url]`, `msg`, `agent`, `version` commands. `start` opens the full-screen TUI
+- `src/tui/` — the TUI: `app.ts` (one page per orchestrator; Ctrl+N new, Ctrl+, / Ctrl+. switch, Alt+, / Alt+. fallback; `/agents` picks a transcript to view live, `/back` returns, `/models [id]`, `/accounts`, `/login claude [profile] | codex [profile]` (aliases: anthropic/openai), `/close`, `/quit`), `render.ts` (pure frame → escape codes), `keys.ts` (legacy, xterm modifyOtherKeys and kitty key parsing), `term.ts` (raw mode, alternate screen)
+- `src/commands.ts` — what the slash commands do, separate from how the TUI shows them
 - `src/providers/` — `Provider` interface over an Anthropic-shaped transcript; `anthropic.ts` (SDK) and `openai.ts` (Codex subscription Responses, translated; preserves encrypted reasoning and tool IDs). `providerFor(model)`: `claude*` → anthropic, else openai
 - `src/accounts.ts` — subscription accounts only: config `account` selects a Claude profile, `openaiAccount` selects a Codex profile; empty means `default`. API keys, old saved keys, developer-platform profiles and billing fallbacks are unsupported.
 - `src/claude-auth.ts` / `src/codex-auth.ts` — provider-specific OAuth login, import and refresh. `src/oauth.ts` shares PKCE callbacks, private atomic writes and cross-process locks. State is under `auth/anthropic/` or `auth/openai/`. Tests use temporary homes and fake tokens, never native credentials.

@@ -1,6 +1,6 @@
 // Every agent has its own inbox: a durable FIFO queue of files under
 // inbox/<agent>/. Anyone can put a message in anyone's inbox; only the owner
-// drains it. "user" is an address like any other, drained by the REPL.
+// drains it. "user" is an address like any other, drained by the TUI.
 //
 // Guarantees: a message is written atomically (tmp + rename), delivered once,
 // and read in send order within a process. Nothing is lost if the receiver

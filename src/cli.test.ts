@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pkg from "../package.json";
+import { accounts } from "./accounts";
+import { login } from "./commands";
 
 test("`parallels version` prints the package.json version", async () => {
   const proc = Bun.spawn(["bun", "src/cli.ts", "version"], {
@@ -15,56 +17,34 @@ test("`parallels version` prints the package.json version", async () => {
   expect(out).toBe(`${pkg.version}\n`);
 });
 
-test("REPL uses subscriptions despite API keys and survives invalid login input", async () => {
-  const home = await mkdtemp(join(tmpdir(), "parallels-repl-auth-"));
+test("login uses subscriptions despite API keys and rejects invalid input", async () => {
+  const home = await mkdtemp(join(tmpdir(), "parallels-login-auth-"));
+  const env = { PARALLELS_HOME: process.env.PARALLELS_HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
+  process.env.PARALLELS_HOME = home;
+  process.env.CLAUDE_CONFIG_DIR = join(home, "claude");
+  process.env.ANTHROPIC_API_KEY = "test-api-key";
   await mkdir(join(home, "projects", "p", "repo"), { recursive: true });
   await Bun.write(join(home, "claude", ".credentials.json"), JSON.stringify({
     claudeAiOauth: { accessToken: "test-access", refreshToken: "test-refresh", expiresAt: Date.now() + 3_600_000 },
   }));
-  const proc = Bun.spawn([process.execPath, "src/cli.ts", "start", "p"], {
-    cwd: import.meta.dir + "/..",
-    env: { ...process.env, PARALLELS_HOME: home, CLAUDE_CONFIG_DIR: join(home, "claude"), ANTHROPIC_API_KEY: "test-api-key" },
-    stdin: "pipe", stdout: "pipe", stderr: "pipe",
-  });
   let output = "";
-  const readOutput = (async () => {
-    const decoder = new TextDecoder();
-    for await (const chunk of proc.stdout) output += decoder.decode(chunk, { stream: true });
-  })();
-  async function waitFor(text: string) {
-    const deadline = Date.now() + 3000;
-    while (!output.includes(text) && Date.now() < deadline) await Bun.sleep(10);
-    expect(output).toContain(text);
-  }
-  async function send(line: string) {
-    proc.stdin.write(line + "\n");
-    await proc.stdin.flush();
-  }
+  const io = { write: (s: string) => { output += s; }, signal: new AbortController().signal };
   try {
-    await waitFor("/quit");
-    await send("/login anthropic personal --from-claude-code");
-    await waitFor("now using anthropic:personal");
+    expect(await login("anthropic personal --from-claude-code", io)).toContain("now using anthropic:personal");
     expect(output).not.toContain("API billing");
     const config = Bun.TOML.parse(await Bun.file(join(home, "config.toml")).text());
     expect(config).toMatchObject({ account: "personal" });
     const tokens = await Bun.file(join(home, "auth", "anthropic", "personal.json")).json();
     expect(tokens.accessToken).toBe("test-access");
-    await send("/accounts");
-    await waitFor("Claude Code (Claude subscription)");
-    await send("/login codex --api-key");
-    await waitFor("usage: /login openai [profile] [--from-codex]");
+    const list = await accounts();
+    expect(list.find((a) => a.id === "anthropic:personal")).toMatchObject({ ok: true, active: true, source: "Claude Code (Claude subscription)" });
+    expect(await login("codex --api-key", io)).toBe("usage: /login openai [profile] [--from-codex]");
     expect(output).not.toContain("OpenAI API key");
-    await send("/login anthropic ../outside --from-claude-code");
-    await waitFor("login failed: Profile must");
-    await send("/quit");
-    expect(await proc.exited).toBe(0);
-    await readOutput;
-    expect(await new Response(proc.stderr).text()).toBe("");
+    await expect(login("anthropic ../outside --from-claude-code", io)).rejects.toThrow("Profile must");
     expect(output).not.toContain("test-access");
     expect(output).not.toContain("test-refresh");
   } finally {
-    proc.kill();
-    await proc.exited;
+    for (const [k, v] of Object.entries(env)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
     await rm(home, { recursive: true, force: true });
   }
 });
