@@ -20,12 +20,18 @@ function dir(project: string, box: Box): string {
   return box === "inbox" ? paths.inbox(project) : join(paths.project(project), "outbox");
 }
 
+// Two puts in the same millisecond share a timestamp, so a per-process
+// sequence number breaks the tie and keeps "oldest first" true within a
+// process. Across processes the order inside one millisecond doesn't matter.
+let seq = 0;
+
 export async function put(project: string, msg: Omit<Message, "ts">, box: Box = "inbox"): Promise<Message> {
   const d = dir(project, box);
   mkdirSync(d, { recursive: true });
   const full: Message = { ...msg, ts: new Date().toISOString() };
-  // ts first so a plain sort is oldest-first; a random tail avoids collisions.
-  const name = `${full.ts.replaceAll(":", "-")}-${msg.from}-${crypto.randomUUID().slice(0, 8)}.json`;
+  // ts, then seq, so a plain sort is oldest-first; a random tail avoids collisions between processes.
+  const n = String(seq++).padStart(6, "0");
+  const name = `${full.ts.replaceAll(":", "-")}-${n}-${crypto.randomUUID().slice(0, 8)}-${msg.from}.json`;
   await Bun.write(join(d, name), JSON.stringify(full) + "\n");
   return full;
 }

@@ -29,6 +29,13 @@ test("inbox and outbox are separate", async () => {
   expect((await drain("p3", "outbox")).map((m) => m.text)).toEqual(["reply"]);
 });
 
+test("many puts in the same millisecond still drain in order", async () => {
+  const n = 200;
+  for (let i = 0; i < n; i++) await put("p5", { from: i % 2 ? "a" : "b", text: String(i) });
+  const texts = (await drain("p5")).map((m) => m.text);
+  expect(texts).toEqual(Array.from({ length: n }, (_, i) => String(i)));
+});
+
 test("a partial file is dropped, not fatal", async () => {
   await Bun.write(join(paths.inbox("p4"), "0000-bad.json"), '{"from":');
   await put("p4", { from: "user", text: "ok" });
