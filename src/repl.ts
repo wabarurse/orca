@@ -52,8 +52,13 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
       const agent = (await listAgents(project)).find((a) => a.name === name);
       if (!agent) return out(dim(`no agent "${name}"; try /agents`));
       out(`${bold(name)} ${dim(agent.live ? "live" : "finished")}  ${dim("/back to return")}`);
-      rl.setPrompt("");
-      await follow(paths.transcript(project, name), out, stopped);
+      rl.setPrompt(dim(`${name} > `));
+      // Clear the prompt line, print the entry, redraw the prompt so it's clear you can type.
+      const show = (s: string) => {
+        process.stdout.write(`\x1b[2K\r${s}\n`);
+        prompt();
+      };
+      await follow(paths.transcript(project, name), show, stopped);
       out(dim("— back to orchestrator"));
     } finally {
       view.leave = null;
