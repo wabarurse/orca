@@ -80,6 +80,7 @@ export function createAgent(deps: AgentDeps) {
       const results: ToolResultBlockParam[] = [];
       for (const block of message.content) {
         if (block.type !== "tool_use") continue;
+        write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`);
         const result = await runTool(block.name, block.input as Record<string, unknown>);
         results.push({ ...result, tool_use_id: block.id });
       }
