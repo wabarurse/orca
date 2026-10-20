@@ -38,7 +38,7 @@ switch (cmd) {
   case "msg": {
     const [project, ...words] = rest;
     if (!project || words.length === 0) usage();
-    await put(project, { from: "user", text: words.join(" ") });
+    await put(project, "orchestrator", { from: "user", text: words.join(" ") });
     break;
   }
   case "agent": {

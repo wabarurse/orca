@@ -12,7 +12,7 @@ Layout:
 - `src/transcript.ts` — append-only JSONL with parent pointers
 - `src/tools/` — `bash`, `spawn`, `message`; keep the set small
 - `src/runner.ts` — worktree + tmux backend
-- `src/inbox.ts` — inbox/outbox message files; with the transcripts, the only state on disk
+- `src/inbox.ts` — one FIFO inbox per agent (`inbox/<agent>/`, a file per message); with the transcripts, the only state on disk. `message` sends to any address: `orchestrator`, `user`, or an agent id. Agents read their inbox before the first request and after every turn, and keep going while messages arrive
 
 There are no system prompts. Each agent gets its task from the first user message (spawn's brief or the inbox) and the tool descriptions, so keep those descriptions precise.
 

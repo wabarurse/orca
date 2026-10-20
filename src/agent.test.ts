@@ -1,8 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Message, MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { createAgent, type AgentClient } from "./agent";
+import { put } from "./inbox";
 import type { Entry, NewEntry, Transcript } from "./transcript";
 import type { Tool, ToolContext } from "./tools/index";
+
+const home = mkdtempSync(join(tmpdir(), "parallels-agent-"));
+process.env.PARALLELS_HOME = home;
+afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const user = (text: string): NewEntry => ({ type: "message", message: { role: "user", content: text } });
 
@@ -122,5 +130,31 @@ describe("agent loop", () => {
 
     const results = calls[1]!.messages[2]!.content;
     expect(results).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "kaboom", is_error: true }]);
+  });
+
+  test("messages waiting in the inbox are read before the first request and after each turn", async () => {
+    const transcript = fakeTranscript();
+    await transcript.append(user("go"));
+    await put("p", "worker", { from: "orchestrator", text: "note before start" });
+    let turns = 0;
+    const { client, calls } = fakeClient([
+      reply([{ type: "text", text: "first", citations: null }], "end_turn"),
+      reply([{ type: "text", text: "second", citations: null }], "end_turn"),
+    ]);
+    const spyClient: AgentClient = {
+      messages: {
+        stream(params) {
+          // A message lands while the agent is working on its first turn.
+          const landed = turns++ === 0 ? put("p", "worker", { from: "orchestrator", text: "one more thing" }) : Promise.resolve();
+          const stream = client.messages.stream(params);
+          return { ...stream, finalMessage: () => landed.then(() => stream.finalMessage()) };
+        },
+      },
+    };
+    await createAgent({ client: spyClient, transcript, tools: {}, model: "m", ctx, write: () => {} }).run();
+
+    expect(calls.length).toBe(2);
+    expect(calls[0]!.messages.at(-1)!.content).toBe("[orchestrator] note before start");
+    expect(calls[1]!.messages.at(-1)!.content).toBe("[orchestrator] one more thing");
   });
 });

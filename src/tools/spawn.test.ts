@@ -50,13 +50,14 @@ test("spawn refuses missing input and non-orchestrators", async () => {
   expect(started).toHaveLength(3);
 });
 
-test("message routes workers to the inbox and the orchestrator to the outbox", async () => {
-  expect(await message.run({ text: "done, PR #4" }, ctx("worker", "feat/login"))).toBe("sent");
-  expect(await message.run({ text: "all green" }, ctx("orchestrator"))).toBe("sent");
-  expect(await message.run({ text: "  " }, ctx("worker", "b"))).toContain("empty");
-  const inbox = await drain("p");
-  const outbox = await drain("p", "outbox");
-  expect(inbox).toHaveLength(1);
-  expect(inbox[0]?.from).toBe("worker-feat-login");
-  expect(outbox[0]?.from).toBe("orchestrator");
+test("message delivers to the named inbox and refuses self or empty", async () => {
+  expect(await message.run({ to: "orchestrator", text: "done, PR #4" }, ctx("worker", "feat/login"))).toBe("sent to orchestrator");
+  expect(await message.run({ to: "user", text: "all green" }, ctx("orchestrator"))).toBe("sent to user");
+  expect(await message.run({ to: "worker-feat-login", text: "also fix the test" }, ctx("orchestrator"))).toBe("sent to worker-feat-login");
+  expect(await message.run({ to: "worker-b", text: "  " }, ctx("worker", "b"))).toContain("empty");
+  expect(await message.run({ text: "x" }, ctx("worker", "b"))).toContain("`to` is required");
+  expect(await message.run({ to: "worker-b", text: "hi me" }, ctx("worker", "b"))).toContain("own inbox");
+  expect((await drain("p", "orchestrator")).map((m) => [m.from, m.text])).toEqual([["worker-feat-login", "done, PR #4"]]);
+  expect((await drain("p", "user")).map((m) => m.from)).toEqual(["orchestrator"]);
+  expect((await drain("p", "worker-feat-login")).map((m) => m.text)).toEqual(["also fix the test"]);
 });

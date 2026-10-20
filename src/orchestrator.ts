@@ -1,13 +1,13 @@
 // The orchestrator runs in the `start` process, not in tmux. One turn is:
-// drain the inbox, hand the messages to the model as one user message, run
-// the loop until it stops calling tools, then drain the outbox for replies.
+// drain its inbox, hand the messages to the model as one user message, run
+// the loop until it stops calling tools, then drain the user's inbox for
+// anything addressed to them.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { existsSync, mkdirSync } from "node:fs";
-import { readdir } from "node:fs/promises";
 import { createAgent, type AgentClient } from "./agent";
 import { loadConfig, paths } from "./config";
-import { drain, put, type Message } from "./inbox";
+import { drain, pending, put, type Message } from "./inbox";
 import { registry, toolsFor, type Tool } from "./tools/index";
 import { open, type Transcript } from "./transcript";
 
@@ -20,11 +20,11 @@ export interface OrchestratorDeps {
 }
 
 export interface Orchestrator {
-  /** Queue a message from the user. */
+  /** Put a message from the user in the orchestrator's inbox. */
   say(text: string): Promise<void>;
-  /** True when something is waiting in the inbox. */
+  /** True when the orchestrator has unread messages. */
   pending(): Promise<boolean>;
-  /** Run one turn over everything in the inbox. Returns the outbox replies. */
+  /** Run one turn over the inbox. Returns what was sent to the user meanwhile. */
   turn(): Promise<Message[]>;
 }
 
@@ -36,10 +36,6 @@ export async function ensureProject(project: string, url?: string): Promise<void
   if (!url) throw new Error(`no repo at ${repo}; pass a git url the first time`);
   const res = await Bun.$`git clone ${url} ${repo}`.quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`git clone failed: ${res.stderr.toString().trim()}`);
-}
-
-export function formatInbox(msgs: Message[]): string {
-  return msgs.map((m) => `[${m.from}] ${m.text}`).join("\n\n");
 }
 
 export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orchestrator> {
@@ -63,19 +59,13 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   });
 
   return {
-    async say(text) {
-      await put(project, { from: "user", text });
-    },
-    async pending() {
-      if (!existsSync(paths.inbox(project))) return false;
-      return (await readdir(paths.inbox(project))).some((n) => n.endsWith(".json"));
-    },
+    say: (text) => put(project, "orchestrator", { from: "user", text }).then(() => {}),
+    pending: () => pending(project, "orchestrator"),
     async turn() {
-      const msgs = await drain(project);
-      if (msgs.length === 0) return [];
-      await transcript.append({ type: "message", message: { role: "user", content: formatInbox(msgs) } });
+      // run() drains the inbox itself and keeps going while messages arrive.
+      if (!(await pending(project, "orchestrator"))) return [];
       await agent.run();
-      return drain(project, "outbox");
+      return drain(project, "user");
     },
   };
 }

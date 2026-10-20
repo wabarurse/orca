@@ -9,7 +9,7 @@ import type { ContentBlock, Message } from "@anthropic-ai/sdk/resources/messages
 import type { AgentClient } from "./agent";
 import { paths } from "./config";
 import { put } from "./inbox";
-import { createOrchestrator, formatInbox } from "./orchestrator";
+import { createOrchestrator } from "./orchestrator";
 import type { Runner, StartOptions } from "./runner";
 import { message } from "./tools/message";
 import { makeSpawn } from "./tools/spawn";
@@ -59,7 +59,7 @@ const project = "demo";
 test("user asks for a feature: orchestrator spawns a worker and replies", async () => {
   const client = scriptedClient([
     [text("Splitting that into one task."), toolUse("tu1", "spawn", { prompt: "Add a login page", branch: "feat/login" })],
-    [toolUse("tu2", "message", { text: "Started a worker on feat/login." })],
+    [toolUse("tu2", "message", { to: "user", text: "Started a worker on feat/login." })],
     [text("done")],
   ]);
   const orch = await createOrchestrator({ project, client, tools, write: () => {} });
@@ -78,11 +78,11 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
 
 test("worker reports back: orchestrator spawns a reviewer on the same branch", async () => {
   const client = scriptedClient([
-    [toolUse("tu3", "spawn", { prompt: "Review PR #12", branch: "feat/login", role: "reviewer" }), toolUse("tu4", "message", { text: "feat/login is in review." })],
+    [toolUse("tu3", "spawn", { prompt: "Review PR #12", branch: "feat/login", role: "reviewer" }), toolUse("tu4", "message", { to: "user", text: "feat/login is in review." })],
     [text("ok")],
   ]);
   const orch = await createOrchestrator({ project, client, tools, write: () => {} });
-  await put(project, { from: "worker-feat-login", text: "Done, PR #12" });
+  await put(project, "orchestrator", { from: "worker-feat-login", text: "Done, PR #12" });
 
   const replies = await orch.turn();
   expect(replies[0]?.text).toBe("feat/login is in review.");
@@ -108,8 +108,4 @@ test("spawn seeded the worker and reviewer transcripts with their prompts", asyn
   expect(worker[0]?.content).toBe("Branch: feat/login\n\nAdd a login page");
   const reviewer = await open(paths.transcript(project, "reviewer-feat-login")).chain();
   expect(reviewer[0]?.content).toBe("Branch: feat/login\n\nReview PR #12");
-});
-
-test("formatInbox tags each sender", () => {
-  expect(formatInbox([{ from: "a", text: "x", ts: "" }, { from: "b", text: "y", ts: "" }])).toBe("[a] x\n\n[b] y");
 });
