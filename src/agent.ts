@@ -2,13 +2,15 @@
 // a different tool set. There is no system prompt: the model gets its task
 // through the first user message (spawn's brief, or the inbox) and the tool
 // descriptions, nothing else.
+//
+// The SDK's Tool Runner drives the request → tool call → result loop. We only
+// stream text, print tool calls, and append each turn to the transcript.
 
 import Anthropic from "@anthropic-ai/sdk";
-import type {
-  Message,
-  MessageCreateParamsStreaming,
-  ToolResultBlockParam,
-} from "@anthropic-ai/sdk/resources/messages";
+import type { BetaMessage, BetaMessageParam } from "@anthropic-ai/sdk/resources/beta/messages";
+import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableTool";
+import type { BetaToolRunnerParams } from "@anthropic-ai/sdk/lib/tools/BetaToolRunner";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { loadConfig, paths } from "./config";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
@@ -20,14 +22,18 @@ export interface AgentOptions {
   branch?: string;
 }
 
-/** The slice of the SDK client the loop needs; tests pass a fake. */
+/** The slice of the SDK the loop needs; tests pass a fake. */
+export interface AgentRunner {
+  [Symbol.asyncIterator](): AsyncIterator<{
+    on(event: "text", cb: (delta: string) => void): unknown;
+    finalMessage(): Promise<BetaMessage>;
+  }>;
+  /** The tool results for the last assistant message, or null when it made no calls. */
+  generateToolResponse(): Promise<BetaMessageParam | null>;
+}
+
 export interface AgentClient {
-  messages: {
-    stream(params: MessageCreateParamsStreaming): {
-      on(event: "text", cb: (delta: string) => void): unknown;
-      finalMessage(): Promise<Message>;
-    };
-  };
+  beta: { messages: { toolRunner(params: BetaToolRunnerParams & { stream: true }): AgentRunner } };
 }
 
 export interface AgentDeps {
@@ -42,55 +48,47 @@ export interface AgentDeps {
 
 const MAX_TOKENS = 64000;
 
+/** Wrap our tools as SDK runnable tools, with the agent's context closed over. */
+export function runnable(tools: Record<string, Tool>, ctx: ToolContext): BetaRunnableTool[] {
+  return Object.values(tools).map((tool) => ({
+    ...tool.spec,
+    parse: (input: unknown) => input as Record<string, unknown>,
+    run: (input: Record<string, unknown>) => tool.run(input, ctx),
+  })) as BetaRunnableTool[];
+}
+
 /** Build the loop from explicit dependencies. `runAgent` wires the real ones. */
 export function createAgent(deps: AgentDeps) {
   const write = deps.write ?? ((t: string) => process.stdout.write(t));
-  const tools = Object.values(deps.tools).map((t) => t.spec);
-
-  async function runTool(name: string, input: Record<string, unknown>): Promise<ToolResultBlockParam> {
-    const tool = deps.tools[name];
-    if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
-    try {
-      return { type: "tool_result", tool_use_id: "", content: await tool.run(input, deps.ctx) };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { type: "tool_result", tool_use_id: "", content: msg, is_error: true };
-    }
-  }
 
   async function run(): Promise<void> {
-    for (;;) {
-      const stream = deps.client.messages.stream({
-        model: deps.model,
-        max_tokens: MAX_TOKENS,
-        stream: true,
-        messages: await deps.transcript.chain(),
-        ...(tools.length ? { tools } : {}),
-      });
+    const runner = deps.client.beta.messages.toolRunner({
+      model: deps.model,
+      max_tokens: MAX_TOKENS,
+      stream: true,
+      messages: (await deps.transcript.chain()) as BetaMessageParam[],
+      tools: runnable(deps.tools, deps.ctx),
+    });
+
+    for await (const stream of runner) {
       stream.on("text", write);
       const message = await stream.finalMessage();
       if (message.content.some((b) => b.type === "text")) write("\n");
-
+      for (const block of message.content) {
+        if (block.type === "tool_use") write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`);
+      }
       await deps.transcript.append({
         type: "message",
-        message: { role: "assistant", content: message.content },
+        message: { role: "assistant", content: message.content } as MessageParam,
       });
-      if (message.stop_reason !== "tool_use") return;
-
-      const results: ToolResultBlockParam[] = [];
-      for (const block of message.content) {
-        if (block.type !== "tool_use") continue;
-        write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`);
-        const result = await runTool(block.name, block.input as Record<string, unknown>);
-        results.push({ ...result, tool_use_id: block.id });
-      }
-      await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
+      // Runs the tools now (the runner caches the result so it won't run them twice).
+      const results = await runner.generateToolResponse();
+      if (results) await deps.transcript.append({ type: "message", message: results as MessageParam });
     }
   }
 
   return { run };
 }
-
 
 export async function runAgent(opts: AgentOptions): Promise<void> {
   const config = await loadConfig();

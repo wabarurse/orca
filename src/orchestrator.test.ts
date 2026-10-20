@@ -5,12 +5,11 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ContentBlock, Message } from "@anthropic-ai/sdk/resources/messages";
-import type { AgentClient } from "./agent";
 import { paths } from "./config";
 import { put } from "./inbox";
 import { createOrchestrator, formatInbox } from "./orchestrator";
 import type { Runner, StartOptions } from "./runner";
+import { fakeClient as scriptedClient, text, toolUse } from "./test/fake-runner";
 import { message } from "./tools/message";
 import { makeSpawn } from "./tools/spawn";
 import { open } from "./transcript";
@@ -18,33 +17,6 @@ import { open } from "./transcript";
 const home = mkdtempSync(join(tmpdir(), "parallels-e2e-"));
 process.env.PARALLELS_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
-
-const text = (t: string): ContentBlock => ({ type: "text", text: t, citations: null });
-const toolUse = (id: string, name: string, input: unknown): ContentBlock =>
-  ({ type: "tool_use", id, name, input }) as ContentBlock;
-
-/** A model that answers each request with the next scripted reply. */
-function scriptedClient(script: ContentBlock[][], seen: Message["content"][] = []): AgentClient & { requests: unknown[] } {
-  const requests: unknown[] = [];
-  return {
-    requests,
-    messages: {
-      stream(params) {
-        requests.push(params);
-        const content = script.shift() ?? [text("(no more script)")];
-        const stop = content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn";
-        return {
-          on() {
-            return this;
-          },
-          async finalMessage() {
-            return { content, stop_reason: stop } as Message;
-          },
-        };
-      },
-    },
-  };
-}
 
 const started: StartOptions[] = [];
 const runner: Runner = {
@@ -72,8 +44,7 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
   expect(await orch.pending()).toBe(false);
 
   // The inbox message reached the model as one user message with the sender tagged.
-  const first = client.requests[0] as { messages: { content: unknown }[] };
-  expect(first.messages.at(-1)?.content).toBe("[user] build me a login page");
+  expect(client.calls[0]!.messages.at(-1)?.content).toBe("[user] build me a login page");
 });
 
 test("worker reports back: orchestrator spawns a reviewer on the same branch", async () => {
@@ -100,7 +71,7 @@ test("a turn with an empty inbox does nothing", async () => {
   const client = scriptedClient([]);
   const orch = await createOrchestrator({ project, client, tools, write: () => {} });
   expect(await orch.turn()).toEqual([]);
-  expect(client.requests).toHaveLength(0);
+  expect(client.calls).toHaveLength(0);
 });
 
 test("spawn seeded the worker and reviewer transcripts with their prompts", async () => {

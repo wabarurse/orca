@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { Message, MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { createAgent, type AgentClient } from "./agent";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import { createAgent, runnable } from "./agent";
+import { fakeClient, text, toolUse } from "./test/fake-runner";
 import type { Entry, NewEntry, Transcript } from "./transcript";
 import type { Tool, ToolContext } from "./tools/index";
 
-const user = (text: string): NewEntry => ({ type: "message", message: { role: "user", content: text } });
+const user = (t: string): NewEntry => ({ type: "message", message: { role: "user", content: t } });
 
 function fakeTranscript(): Transcript & { entries: Entry[] } {
   const entries: Entry[] = [];
@@ -25,49 +26,12 @@ function fakeTranscript(): Transcript & { entries: Entry[] } {
   };
 }
 
-// Content is loosely typed: the SDK's ToolUseBlock carries fields the loop never reads.
-function reply(content: unknown[], stop: Message["stop_reason"]): Message {
-  return {
-    id: "m",
-    type: "message",
-    role: "assistant",
-    model: "fake",
-    content,
-    stop_reason: stop,
-    stop_sequence: null,
-    usage: { input_tokens: 0, output_tokens: 0 } as Message["usage"],
-  } as Message;
-}
-
-/** Returns each scripted message in order and records the params it was sent. */
-function fakeClient(replies: Message[]) {
-  const calls: { messages: MessageParam[]; tools?: unknown[] }[] = [];
-  const client: AgentClient = {
-    messages: {
-      stream(params) {
-        calls.push({ messages: params.messages, tools: params.tools });
-        const msg = replies.shift();
-        if (!msg) throw new Error("no more replies");
-        return {
-          on(_event, cb) {
-            for (const b of msg.content) if (b.type === "text") cb(b.text);
-          },
-          async finalMessage() {
-            return msg;
-          },
-        };
-      },
-    },
-  };
-  return { client, calls };
-}
-
 const ctx: ToolContext = { project: "p", role: "worker", cwd: "/" };
 
 const echo: Tool = {
   spec: { name: "echo", description: "echo", input_schema: { type: "object", properties: {} } },
-  async run(input) {
-    return `echo:${input.text}`;
+  async run(input, c) {
+    return `echo:${input.text}:${c.role}`;
   },
 };
 
@@ -82,45 +46,47 @@ describe("agent loop", () => {
   test("text-only turn ends the loop and is streamed", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("hi"));
-    const { client, calls } = fakeClient([reply([{ type: "text", text: "hello", citations: null }], "end_turn")]);
+    const client = fakeClient([[text("hello")]]);
     let out = "";
     await createAgent({ client, transcript, tools: {}, model: "m", ctx, write: (t) => (out += t) }).run();
 
-    expect(calls.length).toBe(1);
-    expect(calls[0]!.tools).toBeUndefined();
+    expect(client.calls.length).toBe(1);
+    expect(client.calls[0]!.tools).toEqual([]);
     expect(out).toBe("hello\n");
     expect(transcript.entries.length).toBe(2);
-    expect(transcript.entries[1]!.type).toBe("message");
     expect((transcript.entries[1] as { message: MessageParam }).message.role).toBe("assistant");
   });
 
-  test("tool call round-trips its result", async () => {
+  test("tool call round-trips its result with the agent's context", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("go"));
-    const { client, calls } = fakeClient([
-      reply([{ type: "tool_use", id: "tu1", name: "echo", input: { text: "x" } }], "tool_use"),
-      reply([{ type: "text", text: "done", citations: null }], "end_turn"),
-    ]);
-    await createAgent({ client, transcript, tools: { echo }, model: "m", ctx, write: () => {} }).run();
+    const client = fakeClient([[toolUse("tu1", "echo", { text: "x" })], [text("done")]]);
+    let out = "";
+    await createAgent({ client, transcript, tools: { echo }, model: "m", ctx, write: (t) => (out += t) }).run();
 
-    expect(calls.length).toBe(2);
-    expect(calls[0]!.tools).toEqual([echo.spec]);
-    const second = calls[1]!.messages;
+    expect(client.calls.length).toBe(2);
+    expect(client.calls[0]!.tools).toEqual(["echo"]);
+    const second = client.calls[1]!.messages;
     expect(second.length).toBe(3);
-    expect(second[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "echo:x" }]);
-    expect(transcript.entries.length).toBe(4);
+    expect(second[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "echo:x:worker" }]);
+    expect(out).toContain("▸ echo");
+    // user, assistant(tool_use), user(tool_result), assistant(text)
+    expect(transcript.entries.map((e) => (e as { message: MessageParam }).message.role)).toEqual(["user", "assistant", "user", "assistant"]);
   });
 
   test("tool error becomes is_error, not a crash", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("go"));
-    const { client, calls } = fakeClient([
-      reply([{ type: "tool_use", id: "tu1", name: "boom", input: {} }], "tool_use"),
-      reply([{ type: "text", text: "ok", citations: null }], "end_turn"),
-    ]);
+    const client = fakeClient([[toolUse("tu1", "boom", {})], [text("ok")]]);
     await createAgent({ client, transcript, tools: { boom }, model: "m", ctx, write: () => {} }).run();
 
-    const results = calls[1]!.messages[2]!.content;
-    expect(results).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "kaboom", is_error: true }]);
+    const results = client.calls[1]!.messages[2]!.content;
+    expect(results).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "Error: kaboom", is_error: true }]);
+  });
+
+  test("runnable wraps our tools as SDK runnable tools", async () => {
+    const [tool] = runnable({ echo }, ctx);
+    expect(tool!.name).toBe("echo");
+    expect(await tool!.run(tool!.parse({ text: "y" }))).toBe("echo:y:worker");
   });
 });
