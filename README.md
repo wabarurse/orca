@@ -4,8 +4,14 @@ A simple, light-context agent harness with an orchestrator → worker → review
 
 ```bash
 bun install
-bun src/cli.ts start <project>
+bun src/cli.ts start [project] [git-url]
 ```
+
+`start` opens a full-screen TUI with one page per orchestrator (one per project).
+With no project named it reopens every project under `~/.parallels/projects`.
+Ctrl+N starts a new orchestrator, Ctrl+, and Ctrl+. move between pages (Alt+,
+and Alt+. in terminals that cannot tell Ctrl+, from a comma), PgUp/PgDn scroll,
+`/close` closes a page and `/quit` exits.
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
 
@@ -14,7 +20,7 @@ Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
 Parallels always connects as **Claude Code** for Claude models and **Codex** for
 OpenAI models. Those are its only authentication and inference paths.
 
-In the REPL:
+In the TUI:
 
 ```text
 /login claude personal
