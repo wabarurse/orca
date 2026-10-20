@@ -1,5 +1,5 @@
 // Render a transcript for a terminal and follow it as it grows. This is what
-// /attach shows: the same view the orchestrator REPL gives you, for any agent.
+// picking an agent in /agents shows: the same view the orchestrator REPL gives you, for any agent.
 
 import { existsSync, statSync } from "node:fs";
 import { open as openFile } from "node:fs/promises";

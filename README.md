@@ -26,14 +26,10 @@ In the REPL:
 open the provider's subscription sign-in page. Omit the profile name to use
 `default`, or use different names for multiple accounts.
 
-Select the account for each provider independently:
-
-```text
-/use anthropic:personal
-/use openai:personal
-/models
-/models <model-id>
-```
+`/accounts` and `/models` open arrow-key menus: ↑↓ then Enter picks an account
+(a signed-out one starts its login) or a model, Esc cancels. Each provider's
+account is selected independently. `/models <model-id>` sets a model the menu
+does not list.
 
 Claude models use the selected Claude subscription. Other models use the selected
 ChatGPT/Codex subscription. Account and model changes take effect on the next

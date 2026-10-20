@@ -1,10 +1,10 @@
 // A thin REPL over the orchestrator. Type to talk; worker and reviewer
 // reports arrive through the same inbox and trigger a turn while you wait.
-// /agents, /accounts and /models open arrow-key menus; /attach <name> shows a transcript live, /back returns.
+// /agents, /accounts and /models open arrow-key menus; picking an agent shows its transcript live, /back returns.
 
 import { readdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import { accounts, provider } from "./accounts";
+import { accounts, provider, type Account } from "./accounts";
 import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
 import { loadConfig, paths, saveConfig } from "./config";
@@ -38,7 +38,7 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
   let closed = false;
   let loggingIn = false;
   const loginAbort = new AbortController();
-  // Set while /attach is showing a transcript; calling it returns to the orchestrator.
+  // Set while an agent's transcript is showing; calling it returns to the orchestrator.
   const view: { leave: (() => void) | null } = { leave: null };
   rl.on("close", () => { closed = true; loginAbort.abort(); });
   const prompt = () => {
@@ -104,18 +104,14 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
       { title: dim(`model: ${model}   ↑↓ then Enter to use an account or sign in; Esc to cancel`) },
     );
     if (!picked) return;
-    if (picked.ok) return use(picked.id);
+    if (picked.ok) return use(picked);
     loggingIn = true;
     try { await login(`${picked.provider} ${picked.id.split(":")[1]}`); }
     catch (err) { out(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { loggingIn = false; }
   }
 
-  async function use(id: string) {
-    const normalized = id.replace(/^claude:/, "anthropic:").replace(/^codex:/, "openai:");
-    const target = normalized.includes(":") ? normalized : `anthropic:${normalized}`;
-    const account = (await accounts()).find((a) => a.id === target && a.ok);
-    if (!account) return out(dim("no such subscription account; try /accounts or /login"));
+  async function use(account: Account) {
     const profile = account.id.split(":")[1]!;
     await saveConfig(account.provider === "anthropic" ? { account: profile } : { openaiAccount: profile });
     out(`using ${account.id} ${dim("(takes effect next turn; running agents keep theirs)")}`);
@@ -153,7 +149,7 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     if (picked) await attach(picked);
   }
 
-  out(`${bold("parallels")} ${dim(project)}  ${dim("/agents  /attach <name>  /models  /accounts  /use  /login  /quit")}`);
+  out(`${bold("parallels")} ${dim(project)}  ${dim("/agents  /models  /accounts  /login  /quit")}`);
   rl.setPrompt(dim("> "));
   prompt();
 
@@ -173,20 +169,12 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
       await showAgents();
       return prompt();
     }
-    if (text.startsWith("/attach ")) {
-      await attach(text.slice(8).trim());
-      return prompt();
-    }
     if (text === "/accounts") {
       await showAccounts();
       return prompt();
     }
     if (text === "/models" || text.startsWith("/models ")) {
       await models(text.slice(7).trim() || undefined);
-      return prompt();
-    }
-    if (text.startsWith("/use ")) {
-      await use(text.slice(5).trim());
       return prompt();
     }
     if (text === "/login" || text.startsWith("/login ")) {

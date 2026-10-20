@@ -51,8 +51,6 @@ test("REPL uses subscriptions despite API keys and survives invalid login input"
     expect(tokens.accessToken).toBe("test-access");
     await send("/accounts");
     await waitFor("Claude Code (Claude subscription)");
-    await send("/use anthropic:personal");
-    await waitFor("takes effect next turn");
     await send("/login codex --api-key");
     await waitFor("usage: /login openai [profile] [--from-codex]");
     expect(output).not.toContain("OpenAI API key");
