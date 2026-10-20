@@ -6,7 +6,7 @@ Bun + TypeScript. Use `bun` for everything (`bun test`, `bun run check`, `bun sr
 
 Layout:
 
-- `src/cli.ts` — `start`, `msg`, `agent`, `version` commands; the REPL has `/agents`, `/attach <name>` (live transcript view, `/back` to return), `/models [id]`, `/accounts`, `/use <account>`, `/login anthropic [profile] | openai`
+- `src/cli.ts` — `start`, `msg`, `agent`, `version` commands; the REPL has `/agents`, `/attach <name>` (live transcript view, `/back` to return), `/models [id]`, `/accounts`, `/use <account>`, `/login anthropic <name> | openai`
 - `src/providers/` — `Provider` interface over an Anthropic-shaped transcript; `anthropic.ts` (SDK) and `openai.ts` (chat completions, translated). `providerFor(model)`: `claude*` → anthropic, else openai
 - `src/accounts.ts` — who is signed in: any number of Anthropic profiles from `ant auth login --profile <name>` (config `account` picks which one's tokens are used; `ANTHROPIC_API_KEY` overrides all); OpenAI via `OPENAI_API_KEY` or a key saved by `/login openai` in `~/.parallels/credentials.json` (0600)
 - `src/view.ts` — renders and follows a transcript for the terminal

@@ -72,8 +72,9 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
   const ask = (q: string) => new Promise<string>((r) => rl.question(q, (a) => r(a.trim())));
 
   async function login(arg: string) {
-    const [name, profile = "default"] = arg.split(/\s+/);
+    const [name, profile] = arg.split(/\s+/);
     if (name === "anthropic") {
+      if (!profile) return out(dim("give the account a name: /login anthropic <name>  (e.g. personal, work)"));
       out(dim(`running \`ant auth login --profile ${profile}\` (opens your browser)…`));
       rl.pause();
       const code = Bun.spawnSync(["ant", "auth", "login", "--profile", profile], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exitCode;
@@ -88,7 +89,7 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
       await saveKey("openai", key);
       return out("saved; openai is signed in");
     }
-    out(dim("usage: /login anthropic [profile]  |  /login openai"));
+    out(dim("usage: /login anthropic <name>  |  /login openai"));
   }
 
   async function showAccounts() {
