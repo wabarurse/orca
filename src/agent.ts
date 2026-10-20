@@ -1,7 +1,16 @@
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different role, system prompt and tool set.
 
-import type { Role } from "./transcript";
+import Anthropic from "@anthropic-ai/sdk";
+import type {
+  Message,
+  MessageCreateParamsStreaming,
+  ToolResultBlockParam,
+} from "@anthropic-ai/sdk/resources/messages";
+import { join } from "node:path";
+import { loadConfig, paths } from "./config";
+import { open, type Entry, type Role, type Transcript } from "./transcript";
+import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
 
 export interface AgentOptions {
   project: string;
@@ -11,9 +20,120 @@ export interface AgentOptions {
   session?: string;
 }
 
-// TODO(PR2): open the transcript, load the prompt for the role, then loop:
-// send chain() to the API, stream text to stdout, run tool calls through the
-// registry, append results, stop when the model ends its turn with no tool use.
-export async function runAgent(_opts: AgentOptions): Promise<void> {
-  throw new Error("agent: not implemented");
+/** The slice of the SDK client the loop needs; tests pass a fake. */
+export interface AgentClient {
+  messages: {
+    stream(params: MessageCreateParamsStreaming): {
+      on(event: "text", cb: (delta: string) => void): unknown;
+      finalMessage(): Promise<Message>;
+    };
+  };
+}
+
+export interface AgentDeps {
+  client: AgentClient;
+  transcript: Transcript;
+  tools: Record<string, Tool>;
+  model: string;
+  system: string;
+  ctx: ToolContext;
+  /** Where streamed text goes; defaults to stdout. */
+  write?: (text: string) => void;
+}
+
+const MAX_TOKENS = 64000;
+
+// `Omit` over the Entry union keeps only the shared keys, so distribute it by
+// hand to type a new entry before it has a uuid/ts.
+type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "uuid" | "ts"> : never) : never;
+const entry = (e: NewEntry): Parameters<Transcript["append"]>[0] => e;
+
+/** Build the loop from explicit dependencies. `runAgent` wires the real ones. */
+export function createAgent(deps: AgentDeps) {
+  const write = deps.write ?? ((t: string) => process.stdout.write(t));
+  const tools = Object.values(deps.tools).map((t) => t.spec);
+
+  async function runTool(name: string, input: Record<string, unknown>): Promise<ToolResultBlockParam> {
+    const tool = deps.tools[name];
+    if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
+    try {
+      return { type: "tool_result", tool_use_id: "", content: await tool.run(input, deps.ctx) };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { type: "tool_result", tool_use_id: "", content: msg, is_error: true };
+    }
+  }
+
+  async function run(): Promise<void> {
+    for (;;) {
+      const stream = deps.client.messages.stream({
+        model: deps.model,
+        max_tokens: MAX_TOKENS,
+        stream: true,
+        system: deps.system,
+        messages: await deps.transcript.chain(),
+        ...(tools.length ? { tools } : {}),
+      });
+      stream.on("text", write);
+      const message = await stream.finalMessage();
+      if (message.content.some((b) => b.type === "text")) write("\n");
+
+      await deps.transcript.append(
+        entry({
+          type: "message",
+          parentUuid: deps.transcript.head(),
+          message: { role: "assistant", content: message.content },
+        }),
+      );
+      if (message.stop_reason !== "tool_use") return;
+
+      const results: ToolResultBlockParam[] = [];
+      for (const block of message.content) {
+        if (block.type !== "tool_use") continue;
+        const result = await runTool(block.name, block.input as Record<string, unknown>);
+        results.push({ ...result, tool_use_id: block.id });
+      }
+      await deps.transcript.append(
+        entry({
+          type: "message",
+          parentUuid: deps.transcript.head(),
+          message: { role: "user", content: results },
+        }),
+      );
+    }
+  }
+
+  return { run };
+}
+
+async function loadPrompt(role: Role): Promise<string> {
+  const user = Bun.file(join(paths.prompts, `${role}.md`));
+  if (await user.exists()) return user.text();
+  return Bun.file(join(import.meta.dir, "..", "prompts", `${role}.md`)).text();
+}
+
+export async function runAgent(opts: AgentOptions): Promise<void> {
+  const config = await loadConfig();
+  const transcript = open(paths.transcript(opts.project, opts.session ?? crypto.randomUUID()));
+  if (transcript.head() === null) {
+    await transcript.append(
+      entry({ type: "meta", parentUuid: null, role: opts.role, taskId: opts.taskId, model: config.model }),
+    );
+  }
+
+  const tools: Record<string, Tool> = {};
+  for (const name of toolsFor[opts.role]) {
+    const tool = registry[name];
+    if (tool) tools[name] = tool;
+  }
+
+  const agent = createAgent({
+    client: new Anthropic(),
+    transcript,
+    tools,
+    model: config.model,
+    system: await loadPrompt(opts.role),
+    ctx: { project: opts.project, role: opts.role, taskId: opts.taskId, cwd: process.cwd() },
+  });
+  await agent.run();
 }
