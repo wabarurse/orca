@@ -3,7 +3,7 @@
 // through the first user message (spawn's brief, or the inbox) and the tool
 // descriptions, nothing else.
 
-import type { ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { provider as providerFromAccounts } from "./accounts";
 import { loadConfig, paths } from "./config";
 import { drain, format } from "./inbox";
@@ -48,18 +48,27 @@ export function createAgent(deps: AgentDeps) {
 
   const me = sessionId(deps.ctx.role, deps.ctx.branch);
 
+  /** Waiting inbox messages as one text block, or null when there are none. */
+  async function inboxBlock(): Promise<TextBlockParam | null> {
+    const msgs = await drain(deps.ctx.project, me);
+    return msgs.length ? { type: "text", text: format(msgs) } : null;
+  }
+
   /** Move waiting inbox messages into the transcript as one user turn. */
   async function readInbox(): Promise<boolean> {
-    const msgs = await drain(deps.ctx.project, me);
-    if (msgs.length === 0) return false;
-    await deps.transcript.append({ type: "message", message: { role: "user", content: format(msgs) } });
+    const block = await inboxBlock();
+    if (!block) return false;
+    await deps.transcript.append({ type: "message", message: { role: "user", content: block.text } });
     return true;
   }
 
   /**
-   * Run until the model ends a turn with an empty inbox. Messages that arrive
-   * while it works are read at the end of each turn, so a worker that gets a
-   * note from the orchestrator keeps going instead of exiting.
+   * Run until the model ends a turn with an empty inbox. Messages are never
+   * injected mid-step: a tool call always finishes first, then anything that
+   * arrived meanwhile is delivered in the same user turn as the tool results,
+   * so the model sees it before deciding its next step. Messages that arrive
+   * after a turn ends start another, so a worker that gets a note from the
+   * orchestrator keeps going instead of exiting.
    */
   async function run(): Promise<void> {
     await readInbox();
@@ -89,7 +98,9 @@ export function createAgent(deps: AgentDeps) {
         const result = await runTool(block.name, block.input as Record<string, unknown>);
         results.push({ ...result, tool_use_id: block.id });
       }
-      await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
+      // Queued messages ride along after the tool results; they never cut a tool short.
+      const note = await inboxBlock();
+      await deps.transcript.append({ type: "message", message: { role: "user", content: note ? [...results, note] : results } });
     }
   }
 
