@@ -1,4 +1,5 @@
 import { put } from "../inbox";
+import { sessionId } from "../runner";
 import type { Tool } from "./index";
 
 // Workers and reviewers write to the inbox for the orchestrator; the
@@ -16,9 +17,8 @@ export const message: Tool = {
   async run(input, ctx) {
     const text = String(input.text ?? "").trim();
     if (!text) return "refused: empty message";
-    const from = ctx.taskId ? `${ctx.role}-${ctx.taskId}` : ctx.role;
     const box = ctx.role === "orchestrator" ? "outbox" : "inbox";
-    await put(ctx.project, { from, text }, box);
+    await put(ctx.project, { from: sessionId(ctx.role, ctx.branch), text }, box);
     return "sent";
   },
 };

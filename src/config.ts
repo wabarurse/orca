@@ -4,10 +4,9 @@
 //     config.toml              model, byte limits, defaults
 //     projects/<name>/
 //       repo/                  the orchestrator's clone
-//       worktrees/<task-id>/   one per worker, removed when done
-//       tasks.json             [{id, branch, status, desc}]
+//       worktrees/<branch>/    one per branch, removed when done
 //       inbox/                 one file per message to the orchestrator
-//       transcripts/<id>.jsonl one per agent session
+//       transcripts/<role>-<branch>.jsonl   one per agent; the only memory
 
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -20,8 +19,7 @@ export const paths = {
   get config() { return join(root(), "config.toml"); },
   project: (name: string) => join(root(), "projects", name),
   repo: (name: string) => join(root(), "projects", name, "repo"),
-  worktree: (name: string, taskId: string) => join(root(), "projects", name, "worktrees", taskId),
-  tasks: (name: string) => join(root(), "projects", name, "tasks.json"),
+  worktree: (name: string, slug: string) => join(root(), "projects", name, "worktrees", slug),
   inbox: (name: string) => join(root(), "projects", name, "inbox"),
   transcript: (name: string, id: string) => join(root(), "projects", name, "transcripts", `${id}.jsonl`),
 };

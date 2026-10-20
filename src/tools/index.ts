@@ -7,7 +7,7 @@ import { spawn } from "./spawn";
 export interface ToolContext {
   project: string;
   role: Role;
-  taskId?: string;
+  branch?: string;
   cwd: string;
 }
 

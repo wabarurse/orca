@@ -1,6 +1,9 @@
 // Starts agents. v1 has one backend: a git worktree plus a tmux window on this
 // machine. A docker/container backend comes later with the same interface, so
 // agents never learn anything about the host beyond their cwd.
+//
+// Everything is keyed by branch: one worktree, one window per role, and one
+// transcript per role on that branch. There is no task list on disk.
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,16 +14,15 @@ import type { Role } from "./transcript";
 export interface StartOptions {
   project: string;
   role: Role;
-  taskId?: string;
-  /** Branch to create the worktree on. Omitted for the orchestrator, which runs in repo/. */
+  /** Branch to work on. Omitted for the orchestrator, which runs in repo/. */
   branch?: string;
 }
 
 export interface Runner {
   /** Create the worktree if needed and start `parallels agent` in a tmux window. */
   start(opts: StartOptions): Promise<void>;
-  /** Remove the worktree and close the window. */
-  stop(project: string, taskId: string): Promise<void>;
+  /** Close the branch's windows and remove its worktree. */
+  stop(project: string, branch: string): Promise<void>;
 }
 
 const CLI = resolve(import.meta.dir, "cli.ts");
@@ -36,21 +38,25 @@ function q(s: string): string {
   return `'${s.replaceAll("'", `'\\''`)}'`;
 }
 
+/** A branch name as a safe directory / window / transcript name. */
+export const slug = (branch: string) => branch.replace(/[^A-Za-z0-9._-]+/g, "-");
 export const sessionName = (project: string) => `parallels-${project}`;
-export const windowName = (role: Role, taskId?: string) =>
-  role === "orchestrator" ? "orchestrator" : `${role}-${taskId}`;
+export const windowName = (role: Role, branch?: string) =>
+  role === "orchestrator" ? "orchestrator" : `${role}-${slug(branch ?? "")}`;
+/** Transcript id for a role on a branch; the orchestrator has one transcript. */
+export const sessionId = (role: Role, branch?: string) => windowName(role, branch);
 
 // --- git ---------------------------------------------------------------------
 
 /**
- * Ensure a worktree for `taskId` exists at paths.worktree() on `branch`,
- * creating the branch from the repo's HEAD if needed. Reusing an existing
- * worktree is how a reviewer shares the worker's checkout.
+ * Ensure a worktree for `branch` exists, creating the branch from the repo's
+ * HEAD if needed. Reusing an existing worktree is how a reviewer shares the
+ * worker's checkout.
  */
-export async function ensureWorktree(project: string, taskId: string, branch: string): Promise<string> {
+export async function ensureWorktree(project: string, branch: string): Promise<string> {
   need("git");
   const repo = paths.repo(project);
-  const dir = paths.worktree(project, taskId);
+  const dir = paths.worktree(project, slug(branch));
   if (existsSync(dir)) return dir;
   if (!existsSync(repo)) throw new Error(`runner: repo not found at ${repo}`);
 
@@ -62,10 +68,10 @@ export async function ensureWorktree(project: string, taskId: string, branch: st
   return dir;
 }
 
-export async function removeWorktree(project: string, taskId: string): Promise<void> {
+export async function removeWorktree(project: string, branch: string): Promise<void> {
   need("git");
   const repo = paths.repo(project);
-  const dir = paths.worktree(project, taskId);
+  const dir = paths.worktree(project, slug(branch));
   if (existsSync(dir)) {
     const res = await $`git -C ${repo} worktree remove --force ${dir}`.quiet().nothrow();
     if (res.exitCode !== 0) throw new Error(`runner: git worktree remove failed: ${res.stderr.toString().trim()}`);
@@ -108,13 +114,21 @@ export const tmux = {
   async killSession(session: string): Promise<void> {
     await $`tmux kill-session -t ${"=" + session}`.quiet().nothrow();
   },
+
+  /** Hand the terminal to a window until the user detaches (prefix-d). Inside tmux, switch instead. */
+  attach(session: string, name: string): number {
+    need("tmux");
+    const target = `=${session}:=${name}`;
+    const args = process.env.TMUX ? ["switch-client", "-t", target] : ["attach", "-t", target];
+    return Bun.spawnSync(["tmux", ...args], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exitCode;
+  },
 };
 
 // --- runner ------------------------------------------------------------------
 
 export function agentCommand(opts: StartOptions): string {
   const parts = ["bun", q(CLI), "agent", "--project", q(opts.project), "--role", q(opts.role)];
-  if (opts.taskId) parts.push("--task", q(opts.taskId));
+  if (opts.branch) parts.push("--branch", q(opts.branch));
   return `PARALLELS_HOME=${q(paths.root)} ${parts.join(" ")}`;
 }
 
@@ -124,22 +138,21 @@ export const local: Runner = {
     need("tmux");
     let cwd: string;
     if (opts.branch) {
-      if (!opts.taskId) throw new Error("runner: taskId is required when branch is set");
-      cwd = await ensureWorktree(opts.project, opts.taskId, opts.branch);
+      cwd = await ensureWorktree(opts.project, opts.branch);
     } else {
       cwd = paths.repo(opts.project);
       if (!existsSync(cwd)) throw new Error(`runner: repo not found at ${cwd}`);
     }
     const session = sessionName(opts.project);
     await tmux.ensureSession(session, paths.repo(opts.project));
-    await tmux.openWindow(session, windowName(opts.role, opts.taskId), cwd, agentCommand(opts));
+    await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, agentCommand(opts));
   },
 
-  async stop(project, taskId) {
+  async stop(project, branch) {
     const session = sessionName(project);
     for (const name of await tmux.listWindows(session)) {
-      if (name.endsWith(`-${taskId}`)) await tmux.killWindow(session, name);
+      if (name.endsWith(`-${slug(branch)}`)) await tmux.killWindow(session, name);
     }
-    await removeWorktree(project, taskId);
+    await removeWorktree(project, branch);
   },
 };

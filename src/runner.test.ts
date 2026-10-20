@@ -8,7 +8,7 @@ import { $ } from "bun";
 const home = mkdtempSync(join(tmpdir(), "parallels-runner-"));
 process.env.PARALLELS_HOME = home;
 const { paths } = await import("./config");
-const { local, ensureWorktree, removeWorktree, tmux, sessionName, agentCommand } = await import("./runner");
+const { local, ensureWorktree, removeWorktree, tmux, sessionName, agentCommand, slug } = await import("./runner");
 
 const project = `rt-${process.pid}`;
 const repo = paths.repo(project);
@@ -31,21 +31,21 @@ async function branchOf(dir: string): Promise<string> {
 
 describe("worktrees", () => {
   test("ensureWorktree creates a new branch from HEAD and reuses the checkout", async () => {
-    const dir = await ensureWorktree(project, "t1", "task/t1");
-    expect(dir).toBe(paths.worktree(project, "t1"));
+    const dir = await ensureWorktree(project, "task/t1");
+    expect(dir).toBe(paths.worktree(project, "task-t1"));
     expect(existsSync(join(dir, ".git"))).toBe(true);
     expect(await branchOf(dir)).toBe("task/t1");
     // Second call (the reviewer) reuses the same worktree.
-    expect(await ensureWorktree(project, "t1", "task/t1")).toBe(dir);
-    await removeWorktree(project, "t1");
+    expect(await ensureWorktree(project, "task/t1")).toBe(dir);
+    await removeWorktree(project, "task/t1");
     expect(existsSync(dir)).toBe(false);
   });
 
   test("ensureWorktree checks out an existing branch", async () => {
     await $`git -C ${repo} branch task/t2`.quiet();
-    const dir = await ensureWorktree(project, "t2", "task/t2");
+    const dir = await ensureWorktree(project, "task/t2");
     expect(await branchOf(dir)).toBe("task/t2");
-    await removeWorktree(project, "t2");
+    await removeWorktree(project, "task/t2");
   });
 
   test("removeWorktree is a no-op when nothing exists", async () => {
@@ -54,9 +54,10 @@ describe("worktrees", () => {
 });
 
 test("agentCommand passes PARALLELS_HOME and the cli flags", () => {
-  const cmd = agentCommand({ project: "p", role: "worker", taskId: "t1", branch: "b" });
+  const cmd = agentCommand({ project: "p", role: "worker", branch: "feat/b" });
   expect(cmd.startsWith(`PARALLELS_HOME='${home}' bun '`)).toBe(true);
-  expect(cmd.endsWith("agent --project 'p' --role 'worker' --task 't1'")).toBe(true);
+  expect(cmd.endsWith("agent --project 'p' --role 'worker' --branch 'feat/b'")).toBe(true);
+  expect(slug("feat/b c")).toBe("feat-b-c");
   expect(agentCommand({ project: "p", role: "orchestrator" })).toContain("--role 'orchestrator'");
 });
 
@@ -64,19 +65,19 @@ describe.skipIf(!hasTmux)("tmux", () => {
   const session = sessionName(project);
 
   test("start for a worker creates the worktree, session and window; stop removes them", async () => {
-    await local.start({ project, role: "worker", taskId: "t3", branch: "task/t3" });
-    const dir = paths.worktree(project, "t3");
+    await local.start({ project, role: "worker", branch: "task/t3" });
+    const dir = paths.worktree(project, "task-t3");
     expect(await branchOf(dir)).toBe("task/t3");
     expect(await tmux.hasSession(session)).toBe(true);
 
     // The agent window may exit quickly (agent loop not implemented yet), so
     // check windowing with a long-lived command instead of the real one.
-    await tmux.openWindow(session, "reviewer-t3", dir, "sleep 60");
-    expect(await tmux.listWindows(session)).toContain("reviewer-t3");
+    await tmux.openWindow(session, "reviewer-task-t3", dir, "sleep 60");
+    expect(await tmux.listWindows(session)).toContain("reviewer-task-t3");
 
-    await local.stop(project, "t3");
+    await local.stop(project, "task/t3");
     expect(existsSync(dir)).toBe(false);
-    expect((await tmux.listWindows(session)).some((w) => w.endsWith("-t3"))).toBe(false);
+    expect((await tmux.listWindows(session)).some((w) => w.endsWith("-task-t3"))).toBe(false);
     expect(await tmux.hasSession(session)).toBe(true);
   });
 
