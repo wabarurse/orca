@@ -1,5 +1,7 @@
 // The agent loop. Orchestrator, worker and reviewer are all this function with
-// a different role, system prompt and tool set.
+// a different tool set. There is no system prompt: the model gets its task
+// through the first user message (spawn's brief, or the inbox) and the tool
+// descriptions, nothing else.
 
 import Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -7,7 +9,6 @@ import type {
   MessageCreateParamsStreaming,
   ToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/messages";
-import { join } from "node:path";
 import { loadConfig, paths } from "./config";
 import { readTasks } from "./tasks";
 import { open, type Role, type Transcript } from "./transcript";
@@ -36,7 +37,6 @@ export interface AgentDeps {
   transcript: Transcript;
   tools: Record<string, Tool>;
   model: string;
-  system: string;
   ctx: ToolContext;
   /** Where streamed text goes; defaults to stdout. */
   write?: (text: string) => void;
@@ -66,7 +66,6 @@ export function createAgent(deps: AgentDeps) {
         model: deps.model,
         max_tokens: MAX_TOKENS,
         stream: true,
-        system: deps.system,
         messages: await deps.transcript.chain(),
         ...(tools.length ? { tools } : {}),
       });
@@ -93,11 +92,6 @@ export function createAgent(deps: AgentDeps) {
   return { run };
 }
 
-export async function loadPrompt(role: Role): Promise<string> {
-  const user = Bun.file(join(paths.prompts, `${role}.md`));
-  if (await user.exists()) return user.text();
-  return Bun.file(join(import.meta.dir, "..", "prompts", `${role}.md`)).text();
-}
 
 /** The first user message a worker or reviewer sees: its task, from tasks.json. */
 export async function taskBrief(project: string, role: Role, taskId: string): Promise<string> {
@@ -131,7 +125,6 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     transcript,
     tools,
     model: config.model,
-    system: await loadPrompt(opts.role),
     ctx: { project: opts.project, role: opts.role, taskId: opts.taskId, cwd: process.cwd() },
   });
   await agent.run();
