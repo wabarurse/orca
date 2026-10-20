@@ -9,6 +9,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages";
 import { join } from "node:path";
 import { loadConfig, paths } from "./config";
+import { readTasks } from "./tasks";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
 
@@ -92,17 +93,31 @@ export function createAgent(deps: AgentDeps) {
   return { run };
 }
 
-async function loadPrompt(role: Role): Promise<string> {
+export async function loadPrompt(role: Role): Promise<string> {
   const user = Bun.file(join(paths.prompts, `${role}.md`));
   if (await user.exists()) return user.text();
   return Bun.file(join(import.meta.dir, "..", "prompts", `${role}.md`)).text();
 }
 
+/** The first user message a worker or reviewer sees: its task, from tasks.json. */
+export async function taskBrief(project: string, role: Role, taskId: string): Promise<string> {
+  const task = (await readTasks(project)).find((t) => t.id === taskId);
+  if (!task) throw new Error(`agent: no task ${taskId} in ${project}`);
+  const verb = role === "reviewer" ? "Review" : "Implement";
+  return `${verb} task ${task.id} on branch \`${task.branch}\`.\n\n${task.desc}`;
+}
+
 export async function runAgent(opts: AgentOptions): Promise<void> {
   const config = await loadConfig();
-  const transcript = open(paths.transcript(opts.project, opts.session ?? crypto.randomUUID()));
+  // Workers and reviewers get one transcript per task so a restart resumes it.
+  const session = opts.session ?? (opts.taskId ? `${opts.role}-${opts.taskId}` : opts.role);
+  const transcript = open(paths.transcript(opts.project, session));
   if (transcript.head() === null) {
     await transcript.append({ type: "meta", role: opts.role, taskId: opts.taskId, model: config.model });
+    if (opts.taskId) {
+      const brief = await taskBrief(opts.project, opts.role, opts.taskId);
+      await transcript.append({ type: "message", message: { role: "user", content: brief } });
+    }
   }
 
   const tools: Record<string, Tool> = {};
