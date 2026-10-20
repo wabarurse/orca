@@ -1,6 +1,14 @@
-// One file per message in paths.inbox(project). The orchestrator drains it
-// between turns. Every client (terminal, worker, reviewer, Instinct in M3)
-// goes through here, so there is one code path.
+// One file per message. `inbox` holds messages to the orchestrator from
+// workers, reviewers and the user; `outbox` holds the orchestrator's replies
+// for whoever is connected (the terminal now, Instinct over HTTP in M3).
+// Every client goes through here, so there is one code path.
+
+import { mkdirSync } from "node:fs";
+import { readdir, unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { paths } from "./config";
+
+export type Box = "inbox" | "outbox";
 
 export interface Message {
   from: string;
@@ -8,12 +16,34 @@ export interface Message {
   ts: string;
 }
 
-// TODO(PR5): put() writes `<ts>-<from>.json`; drain() reads and deletes all,
-// oldest first.
-export async function put(_project: string, _msg: Omit<Message, "ts">): Promise<void> {
-  throw new Error("inbox: not implemented");
+function dir(project: string, box: Box): string {
+  return box === "inbox" ? paths.inbox(project) : join(paths.project(project), "outbox");
 }
 
-export async function drain(_project: string): Promise<Message[]> {
-  throw new Error("inbox: not implemented");
+export async function put(project: string, msg: Omit<Message, "ts">, box: Box = "inbox"): Promise<Message> {
+  const d = dir(project, box);
+  mkdirSync(d, { recursive: true });
+  const full: Message = { ...msg, ts: new Date().toISOString() };
+  // ts first so a plain sort is oldest-first; a random tail avoids collisions.
+  const name = `${full.ts.replaceAll(":", "-")}-${msg.from}-${crypto.randomUUID().slice(0, 8)}.json`;
+  await Bun.write(join(d, name), JSON.stringify(full) + "\n");
+  return full;
+}
+
+/** Read and delete every message, oldest first. */
+export async function drain(project: string, box: Box = "inbox"): Promise<Message[]> {
+  const d = dir(project, box);
+  mkdirSync(d, { recursive: true });
+  const names = (await readdir(d)).filter((n) => n.endsWith(".json")).sort();
+  const out: Message[] = [];
+  for (const name of names) {
+    const path = join(d, name);
+    try {
+      out.push((await Bun.file(path).json()) as Message);
+    } catch {
+      // A partial file from a crash mid-write; drop it.
+    }
+    await unlink(path);
+  }
+  return out;
 }

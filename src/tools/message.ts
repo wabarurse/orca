@@ -1,8 +1,8 @@
+import { put } from "../inbox";
 import type { Tool } from "./index";
 
-// TODO(PR5): write a file into the project inbox. Workers and reviewers use it
-// to report to the orchestrator; the orchestrator uses it to reply to whoever
-// is connected (terminal now, Instinct over HTTP in M3).
+// Workers and reviewers write to the inbox for the orchestrator; the
+// orchestrator writes to the outbox for whoever is connected.
 export const message: Tool = {
   spec: {
     name: "message",
@@ -13,7 +13,12 @@ export const message: Tool = {
       required: ["text"],
     },
   },
-  async run() {
-    throw new Error("message: not implemented");
+  async run(input, ctx) {
+    const text = String(input.text ?? "").trim();
+    if (!text) return "refused: empty message";
+    const from = ctx.taskId ? `${ctx.role}-${ctx.taskId}` : ctx.role;
+    const box = ctx.role === "orchestrator" ? "outbox" : "inbox";
+    await put(ctx.project, { from, text }, box);
+    return "sent";
   },
 };
