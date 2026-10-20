@@ -1,5 +1,5 @@
 // The agent loop. Orchestrator, worker and reviewer are all this function with
-// a different tool set. There is no system prompt: the model gets its task
+// a different tool set. There is no role-specific system prompt: the model gets its task
 // through the first user message (spawn's brief, or the inbox) and the tool
 // descriptions, nothing else.
 

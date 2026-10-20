@@ -26,7 +26,7 @@ export const paths = {
 
 export interface Config {
   model: string;
-  /** Anthropic profile (from `ant auth login --profile <name>`) whose tokens are used. Empty = ant's active profile. */
+  /** Claude subscription profile saved by /login anthropic. Empty = default. */
   account: string;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
