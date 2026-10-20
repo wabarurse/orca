@@ -10,16 +10,14 @@ import type {
   ToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/messages";
 import { loadConfig, paths } from "./config";
-import { readTasks } from "./tasks";
+import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
 
 export interface AgentOptions {
   project: string;
   role: Role;
-  taskId?: string;
-  /** Transcript id; a new one is created when omitted. */
-  session?: string;
+  branch?: string;
 }
 
 /** The slice of the SDK client the loop needs; tests pass a fake. */
@@ -93,25 +91,14 @@ export function createAgent(deps: AgentDeps) {
 }
 
 
-/** The first user message a worker or reviewer sees: its task, from tasks.json. */
-export async function taskBrief(project: string, role: Role, taskId: string): Promise<string> {
-  const task = (await readTasks(project)).find((t) => t.id === taskId);
-  if (!task) throw new Error(`agent: no task ${taskId} in ${project}`);
-  const verb = role === "reviewer" ? "Review" : "Implement";
-  return `${verb} task ${task.id} on branch \`${task.branch}\`.\n\n${task.desc}`;
-}
-
 export async function runAgent(opts: AgentOptions): Promise<void> {
   const config = await loadConfig();
-  // Workers and reviewers get one transcript per task so a restart resumes it.
-  const session = opts.session ?? (opts.taskId ? `${opts.role}-${opts.taskId}` : opts.role);
-  const transcript = open(paths.transcript(opts.project, session));
+  // One transcript per role per branch, so a restart resumes it. spawn seeds
+  // it with the prompt before starting this process.
+  const transcript = open(paths.transcript(opts.project, sessionId(opts.role, opts.branch)));
   if (transcript.head() === null) {
-    await transcript.append({ type: "meta", role: opts.role, taskId: opts.taskId, model: config.model });
-    if (opts.taskId) {
-      const brief = await taskBrief(opts.project, opts.role, opts.taskId);
-      await transcript.append({ type: "message", message: { role: "user", content: brief } });
-    }
+    if (opts.branch) throw new Error(`agent: no transcript for ${sessionId(opts.role, opts.branch)}; spawn seeds it`);
+    await transcript.append({ type: "meta", role: opts.role, model: config.model });
   }
 
   const tools: Record<string, Tool> = {};
@@ -125,7 +112,7 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     transcript,
     tools,
     model: config.model,
-    ctx: { project: opts.project, role: opts.role, taskId: opts.taskId, cwd: process.cwd() },
+    ctx: { project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
   });
   await agent.run();
 }

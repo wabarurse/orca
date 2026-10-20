@@ -29,7 +29,7 @@ export interface SummaryEntry extends BaseEntry {
 export interface MetaEntry extends BaseEntry {
   type: "meta";
   role: Role;
-  taskId?: string;
+  branch?: string;
   model: string;
 }
 

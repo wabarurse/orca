@@ -6,12 +6,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ContentBlock, Message } from "@anthropic-ai/sdk/resources/messages";
-import { taskBrief, type AgentClient } from "./agent";
+import type { AgentClient } from "./agent";
 import { paths } from "./config";
 import { put } from "./inbox";
 import { createOrchestrator, formatInbox } from "./orchestrator";
 import type { Runner, StartOptions } from "./runner";
-import { readTasks } from "./tasks";
 import { message } from "./tools/message";
 import { makeSpawn } from "./tools/spawn";
 import { open } from "./transcript";
@@ -59,8 +58,8 @@ const project = "demo";
 
 test("user asks for a feature: orchestrator spawns a worker and replies", async () => {
   const client = scriptedClient([
-    [text("Splitting that into one task."), toolUse("tu1", "spawn", { desc: "Add a login page" })],
-    [toolUse("tu2", "message", { text: "Started t1." })],
+    [text("Splitting that into one task."), toolUse("tu1", "spawn", { prompt: "Add a login page", branch: "feat/login" })],
+    [toolUse("tu2", "message", { text: "Started a worker on feat/login." })],
     [text("done")],
   ]);
   const orch = await createOrchestrator({ project, client, tools, write: () => {} });
@@ -68,9 +67,8 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
   expect(await orch.pending()).toBe(true);
 
   const replies = await orch.turn();
-  expect(replies.map((r) => r.text)).toEqual(["Started t1."]);
-  expect(started).toEqual([{ project, role: "worker", taskId: "t1", branch: "t1-add-a-login-page" }]);
-  expect((await readTasks(project))[0]?.status).toBe("working");
+  expect(replies.map((r) => r.text)).toEqual(["Started a worker on feat/login."]);
+  expect(started).toEqual([{ project, role: "worker", branch: "feat/login" }]);
   expect(await orch.pending()).toBe(false);
 
   // The inbox message reached the model as one user message with the sender tagged.
@@ -78,25 +76,24 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
   expect(first.messages.at(-1)?.content).toBe("[user] build me a login page");
 });
 
-test("worker reports back: orchestrator spawns the reviewer on the same task", async () => {
+test("worker reports back: orchestrator spawns a reviewer on the same branch", async () => {
   const client = scriptedClient([
-    [toolUse("tu3", "spawn", { task: "t1" }), toolUse("tu4", "message", { text: "t1 is in review." })],
+    [toolUse("tu3", "spawn", { prompt: "Review PR #12", branch: "feat/login", role: "reviewer" }), toolUse("tu4", "message", { text: "feat/login is in review." })],
     [text("ok")],
   ]);
   const orch = await createOrchestrator({ project, client, tools, write: () => {} });
-  await put(project, { from: "worker-t1", text: "Done, PR #12" });
+  await put(project, { from: "worker-feat-login", text: "Done, PR #12" });
 
   const replies = await orch.turn();
-  expect(replies[0]?.text).toBe("t1 is in review.");
-  expect(started.at(-1)).toEqual({ project, role: "reviewer", taskId: "t1", branch: "t1-add-a-login-page" });
-  expect((await readTasks(project))[0]?.status).toBe("review");
+  expect(replies[0]?.text).toBe("feat/login is in review.");
+  expect(started.at(-1)).toEqual({ project, role: "reviewer", branch: "feat/login" });
 });
 
 test("the orchestrator transcript persists across restarts", async () => {
   const t = open(paths.transcript(project, "orchestrator"));
   const chain = await t.chain();
   expect(chain[0]?.content).toBe("[user] build me a login page");
-  expect(chain.some((m) => typeof m.content === "string" && m.content.includes("[worker-t1] Done, PR #12"))).toBe(true);
+  expect(chain.some((m) => typeof m.content === "string" && m.content.includes("[worker-feat-login] Done, PR #12"))).toBe(true);
 });
 
 test("a turn with an empty inbox does nothing", async () => {
@@ -106,10 +103,11 @@ test("a turn with an empty inbox does nothing", async () => {
   expect(client.requests).toHaveLength(0);
 });
 
-test("workers and reviewers are briefed from tasks.json", async () => {
-  expect(await taskBrief(project, "worker", "t1")).toBe("Implement task t1 on branch `t1-add-a-login-page`.\n\nAdd a login page");
-  expect(await taskBrief(project, "reviewer", "t1")).toStartWith("Review task t1");
-  expect(taskBrief(project, "worker", "t9")).rejects.toThrow("no task t9");
+test("spawn seeded the worker and reviewer transcripts with their prompts", async () => {
+  const worker = await open(paths.transcript(project, "worker-feat-login")).chain();
+  expect(worker[0]?.content).toBe("Branch: feat/login\n\nAdd a login page");
+  const reviewer = await open(paths.transcript(project, "reviewer-feat-login")).chain();
+  expect(reviewer[0]?.content).toBe("Branch: feat/login\n\nReview PR #12");
 });
 
 test("formatInbox tags each sender", () => {

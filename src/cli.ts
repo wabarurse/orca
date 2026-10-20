@@ -2,7 +2,7 @@
 // parallels start <project> [git-url]   start the orchestrator REPL (clones on first run)
 // parallels msg <project> <text>        drop a message in the orchestrator's inbox
 // parallels version                    print the package.json version
-// parallels agent --project p --role r [--task id]   internal: what spawn runs
+// parallels agent --project p --role r [--branch b]   internal: what spawn runs
 
 import pkg from "../package.json";
 import { runAgent } from "./agent";
@@ -23,7 +23,7 @@ function usage(): never {
   parallels start <project> [git-url]
   parallels msg <project> <text>
   parallels version
-  parallels agent --project <name> --role <orchestrator|worker|reviewer> [--task <id>]`);
+  parallels agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>]`);
   process.exit(1);
 }
 
@@ -44,7 +44,7 @@ switch (cmd) {
   case "agent": {
     const project = flag("project") ?? usage();
     const role = (flag("role") ?? usage()) as Role;
-    await runAgent({ project, role, taskId: flag("task") });
+    await runAgent({ project, role, branch: flag("branch") });
     break;
   }
   case "version":
