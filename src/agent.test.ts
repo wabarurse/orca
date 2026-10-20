@@ -2,9 +2,11 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Message, MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { createAgent, type AgentClient } from "./agent";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import { createAgent } from "./agent";
 import { put } from "./inbox";
+import type { Provider } from "./providers/index";
+import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import type { Entry, NewEntry, Transcript } from "./transcript";
 import type { Tool, ToolContext } from "./tools/index";
 
@@ -33,43 +35,6 @@ function fakeTranscript(): Transcript & { entries: Entry[] } {
   };
 }
 
-// Content is loosely typed: the SDK's ToolUseBlock carries fields the loop never reads.
-function reply(content: unknown[], stop: Message["stop_reason"]): Message {
-  return {
-    id: "m",
-    type: "message",
-    role: "assistant",
-    model: "fake",
-    content,
-    stop_reason: stop,
-    stop_sequence: null,
-    usage: { input_tokens: 0, output_tokens: 0 } as Message["usage"],
-  } as Message;
-}
-
-/** Returns each scripted message in order and records the params it was sent. */
-function fakeClient(replies: Message[]) {
-  const calls: { messages: MessageParam[]; tools?: unknown[] }[] = [];
-  const client: AgentClient = {
-    messages: {
-      stream(params) {
-        calls.push({ messages: params.messages, tools: params.tools });
-        const msg = replies.shift();
-        if (!msg) throw new Error("no more replies");
-        return {
-          on(_event, cb) {
-            for (const b of msg.content) if (b.type === "text") cb(b.text);
-          },
-          async finalMessage() {
-            return msg;
-          },
-        };
-      },
-    },
-  };
-  return { client, calls };
-}
-
 const ctx: ToolContext = { project: "p", role: "worker", cwd: "/" };
 
 const echo: Tool = {
@@ -90,12 +55,13 @@ describe("agent loop", () => {
   test("text-only turn ends the loop and is streamed", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("hi"));
-    const { client, calls } = fakeClient([reply([{ type: "text", text: "hello", citations: null }], "end_turn")]);
+    const provider = fakeProvider([[text("hello")]]);
+    const { calls } = provider;
     let out = "";
-    await createAgent({ client, transcript, tools: {}, model: "m", ctx, write: (t) => (out += t) }).run();
+    await createAgent({ provider, transcript, tools: {}, model: "m", ctx, write: (t) => (out += t) }).run();
 
     expect(calls.length).toBe(1);
-    expect(calls[0]!.tools).toBeUndefined();
+    expect(calls[0]!.tools).toEqual([]);
     expect(out).toBe("hello\n");
     expect(transcript.entries.length).toBe(2);
     expect(transcript.entries[1]!.type).toBe("message");
@@ -105,14 +71,12 @@ describe("agent loop", () => {
   test("tool call round-trips its result", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("go"));
-    const { client, calls } = fakeClient([
-      reply([{ type: "tool_use", id: "tu1", name: "echo", input: { text: "x" } }], "tool_use"),
-      reply([{ type: "text", text: "done", citations: null }], "end_turn"),
-    ]);
-    await createAgent({ client, transcript, tools: { echo }, model: "m", ctx, write: () => {} }).run();
+    const provider = fakeProvider([[toolUse("tu1", "echo", { text: "x" })], [text("done")]]);
+    const { calls } = provider;
+    await createAgent({ provider, transcript, tools: { echo }, model: "m", ctx, write: () => {} }).run();
 
     expect(calls.length).toBe(2);
-    expect(calls[0]!.tools).toEqual([echo.spec]);
+    expect(calls[0]!.tools).toEqual(["echo"]);
     const second = calls[1]!.messages;
     expect(second.length).toBe(3);
     expect(second[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "echo:x" }]);
@@ -122,11 +86,9 @@ describe("agent loop", () => {
   test("tool error becomes is_error, not a crash", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("go"));
-    const { client, calls } = fakeClient([
-      reply([{ type: "tool_use", id: "tu1", name: "boom", input: {} }], "tool_use"),
-      reply([{ type: "text", text: "ok", citations: null }], "end_turn"),
-    ]);
-    await createAgent({ client, transcript, tools: { boom }, model: "m", ctx, write: () => {} }).run();
+    const provider = fakeProvider([[toolUse("tu1", "boom", {})], [text("ok")]]);
+    const { calls } = provider;
+    await createAgent({ provider, transcript, tools: { boom }, model: "m", ctx, write: () => {} }).run();
 
     const results = calls[1]!.messages[2]!.content;
     expect(results).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "kaboom", is_error: true }]);
@@ -137,21 +99,17 @@ describe("agent loop", () => {
     await transcript.append(user("go"));
     await put("p", "worker", { from: "orchestrator", text: "note before start" });
     let turns = 0;
-    const { client, calls } = fakeClient([
-      reply([{ type: "text", text: "first", citations: null }], "end_turn"),
-      reply([{ type: "text", text: "second", citations: null }], "end_turn"),
-    ]);
-    const spyClient: AgentClient = {
-      messages: {
-        stream(params) {
-          // A message lands while the agent is working on its first turn.
-          const landed = turns++ === 0 ? put("p", "worker", { from: "orchestrator", text: "one more thing" }) : Promise.resolve();
-          const stream = client.messages.stream(params);
-          return { ...stream, finalMessage: () => landed.then(() => stream.finalMessage()) };
-        },
+    const inner = fakeProvider([[text("first")], [text("second")]]);
+    const { calls } = inner;
+    const provider: Provider = {
+      ...inner,
+      async complete(req) {
+        // A message lands while the agent is working on its first turn.
+        if (turns++ === 0) await put("p", "worker", { from: "orchestrator", text: "one more thing" });
+        return inner.complete(req);
       },
     };
-    await createAgent({ client: spyClient, transcript, tools: {}, model: "m", ctx, write: () => {} }).run();
+    await createAgent({ provider, transcript, tools: {}, model: "m", ctx, write: () => {} }).run();
 
     expect(calls.length).toBe(2);
     expect(calls[0]!.messages.at(-1)!.content).toBe("[orchestrator] note before start");

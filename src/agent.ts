@@ -3,14 +3,11 @@
 // through the first user message (spawn's brief, or the inbox) and the tool
 // descriptions, nothing else.
 
-import Anthropic from "@anthropic-ai/sdk";
-import type {
-  Message,
-  MessageCreateParamsStreaming,
-  ToolResultBlockParam,
-} from "@anthropic-ai/sdk/resources/messages";
+import type { ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import { provider as providerFromAccounts } from "./accounts";
 import { loadConfig, paths } from "./config";
 import { drain, format } from "./inbox";
+import { providerFor, type Provider } from "./providers/index";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
@@ -21,18 +18,8 @@ export interface AgentOptions {
   branch?: string;
 }
 
-/** The slice of the SDK client the loop needs; tests pass a fake. */
-export interface AgentClient {
-  messages: {
-    stream(params: MessageCreateParamsStreaming): {
-      on(event: "text", cb: (delta: string) => void): unknown;
-      finalMessage(): Promise<Message>;
-    };
-  };
-}
-
 export interface AgentDeps {
-  client: AgentClient;
+  provider: Provider;
   transcript: Transcript;
   tools: Record<string, Tool>;
   model: string;
@@ -77,22 +64,20 @@ export function createAgent(deps: AgentDeps) {
   async function run(): Promise<void> {
     await readInbox();
     for (;;) {
-      const stream = deps.client.messages.stream({
+      const message = await deps.provider.complete({
         model: deps.model,
-        max_tokens: MAX_TOKENS,
-        stream: true,
+        maxTokens: MAX_TOKENS,
         messages: await deps.transcript.chain(),
-        ...(tools.length ? { tools } : {}),
+        tools,
+        onText: write,
       });
-      stream.on("text", write);
-      const message = await stream.finalMessage();
       if (message.content.some((b) => b.type === "text")) write("\n");
 
       await deps.transcript.append({
         type: "message",
         message: { role: "assistant", content: message.content },
       });
-      if (message.stop_reason !== "tool_use") {
+      if (message.stop !== "tool_use") {
         if (await readInbox()) continue;
         return;
       }
@@ -129,7 +114,7 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
   }
 
   const agent = createAgent({
-    client: new Anthropic(),
+    provider: await providerFromAccounts(providerFor(config.model)),
     transcript,
     tools,
     model: config.model,

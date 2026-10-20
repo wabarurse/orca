@@ -44,3 +44,11 @@ export async function loadConfig(): Promise<Config> {
   const parsed = Bun.TOML.parse(await file.text()) as Partial<Config>;
   return { ...defaults, ...parsed };
 }
+
+/** Write changed keys back to config.toml, keeping the others. */
+export async function saveConfig(patch: Partial<Config>): Promise<Config> {
+  const next = { ...(await loadConfig()), ...patch };
+  const lines = Object.entries(next).map(([k, v]) => `${k} = ${JSON.stringify(v)}`);
+  await Bun.write(paths.config, lines.join("\n") + "\n");
+  return next;
+}

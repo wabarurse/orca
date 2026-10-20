@@ -42,7 +42,7 @@ function q(s: string): string {
 export const slug = (branch: string) => branch.replace(/[^A-Za-z0-9._-]+/g, "-");
 export const sessionName = (project: string) => `parallels-${project}`;
 export const windowName = (role: Role, branch?: string) =>
-  role === "orchestrator" ? "orchestrator" : `${role}-${slug(branch ?? "")}`;
+  role === "orchestrator" || !branch ? role : `${role}-${slug(branch)}`;
 /** Transcript id for a role on a branch; the orchestrator has one transcript. */
 export const sessionId = (role: Role, branch?: string) => windowName(role, branch);
 

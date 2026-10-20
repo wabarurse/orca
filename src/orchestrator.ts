@@ -3,17 +3,18 @@
 // the loop until it stops calling tools, then drain the user's inbox for
 // anything addressed to them.
 
-import Anthropic from "@anthropic-ai/sdk";
 import { existsSync, mkdirSync } from "node:fs";
-import { createAgent, type AgentClient } from "./agent";
+import { provider as providerFromAccounts } from "./accounts";
+import { createAgent } from "./agent";
 import { loadConfig, paths } from "./config";
 import { drain, pending, put, type Message } from "./inbox";
+import { providerFor, type Provider } from "./providers/index";
 import { registry, toolsFor, type Tool } from "./tools/index";
 import { open, type Transcript } from "./transcript";
 
 export interface OrchestratorDeps {
   project: string;
-  client?: AgentClient;
+  provider?: Provider;
   tools?: Record<string, Tool>;
   transcript?: Transcript;
   write?: (text: string) => void;
@@ -49,21 +50,22 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   const tools: Record<string, Tool> = deps.tools ?? {};
   if (!deps.tools) for (const name of toolsFor.orchestrator) if (registry[name]) tools[name] = registry[name];
 
-  const agent = createAgent({
-    client: deps.client ?? new Anthropic(),
-    transcript,
-    tools,
-    model: config.model,
-    ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
-    write: deps.write,
-  });
-
   return {
     say: (text) => put(project, "orchestrator", { from: "user", text }).then(() => {}),
     pending: () => pending(project, "orchestrator"),
     async turn() {
       // run() drains the inbox itself and keeps going while messages arrive.
       if (!(await pending(project, "orchestrator"))) return [];
+      // Config is re-read every turn so /models takes effect at once.
+      const { model } = await loadConfig();
+      const agent = createAgent({
+        provider: deps.provider ?? (await providerFromAccounts(providerFor(model))),
+        transcript,
+        tools,
+        model,
+        ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
+        write: deps.write,
+      });
       await agent.run();
       return drain(project, "user");
     },

@@ -4,8 +4,10 @@
 
 import { readdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import { paths } from "./config";
+import { accounts, provider, saveKey } from "./accounts";
+import { loadConfig, paths, saveConfig } from "./config";
 import type { Orchestrator } from "./orchestrator";
+import type { ProviderName } from "./providers/index";
 import { sessionName, tmux } from "./runner";
 import { follow } from "./view";
 
@@ -66,7 +68,54 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     }
   }
 
-  out(`${bold("parallels")} ${dim(project)}  ${dim("/agents  /attach <name>  /quit")}`);
+  /** Ask one question on the REPL's own readline; the answer never goes to the orchestrator. */
+  const ask = (q: string) => new Promise<string>((r) => rl.question(q, (a) => r(a.trim())));
+
+  async function login(name: string) {
+    if (name === "anthropic") {
+      out(dim("running `ant auth login` (opens your browser)…"));
+      rl.pause();
+      const code = Bun.spawnSync(["ant", "auth", "login"], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).exitCode;
+      rl.resume();
+      return out(code === 0 ? "signed in to anthropic" : dim(`ant auth login exited ${code}; is ant installed? brew install anthropics/tap/ant`));
+    }
+    if (name === "openai") {
+      const key = await ask("OpenAI API key (stored in ~/.parallels/credentials.json, mode 600): ");
+      if (!key) return out(dim("no key given"));
+      await saveKey("openai", key);
+      return out("saved; openai is signed in");
+    }
+    out(dim("usage: /login anthropic | /login openai"));
+  }
+
+  async function showAccounts() {
+    const { model } = await loadConfig();
+    for (const a of await accounts()) out(`${a.ok ? "●" : "○"} ${a.provider.padEnd(10)} ${dim(a.source)}`);
+    out(dim(`model: ${model}`));
+  }
+
+  async function models(pick?: string) {
+    if (pick) {
+      await saveConfig({ model: pick });
+      return out(`model set to ${bold(pick)} ${dim("(takes effect next turn; running agents keep theirs)")}`);
+    }
+    const { model } = await loadConfig();
+    for (const a of await accounts()) {
+      if (!a.ok) {
+        out(`${bold(a.provider)}  ${dim(a.source)}`);
+        continue;
+      }
+      try {
+        const ids = await (await provider(a.provider as ProviderName)).models();
+        out(`${bold(a.provider)}\n` + ids.map((id) => `  ${id === model ? "●" : " "} ${id}`).join("\n"));
+      } catch (err) {
+        out(`${bold(a.provider)}  ${dim(err instanceof Error ? err.message : String(err))}`);
+      }
+    }
+    out(dim("/models <id> to switch"));
+  }
+
+  out(`${bold("parallels")} ${dim(project)}  ${dim("/agents  /attach <name>  /models  /accounts  /login  /quit")}`);
   rl.setPrompt(dim("> "));
   prompt();
 
@@ -85,6 +134,22 @@ export async function repl(project: string, orch: Orchestrator): Promise<void> {
     }
     if (text.startsWith("/attach ")) {
       await attach(text.slice(8).trim());
+      return prompt();
+    }
+    if (text === "/accounts") {
+      await showAccounts();
+      return prompt();
+    }
+    if (text === "/models" || text.startsWith("/models ")) {
+      await models(text.slice(7).trim() || undefined);
+      return prompt();
+    }
+    if (text === "/login" || text.startsWith("/login ")) {
+      await login(text.slice(6).trim());
+      return prompt();
+    }
+    if (text.startsWith("/")) {
+      out(dim(`unknown command ${text.split(" ")[0]}`));
       return prompt();
     }
     if (!text) return prompt();
