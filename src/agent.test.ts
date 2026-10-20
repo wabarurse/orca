@@ -1,12 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Message, MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { createAgent, type AgentClient } from "./agent";
-import type { Entry, MessageEntry, Transcript } from "./transcript";
+import type { Entry, NewEntry, Transcript } from "./transcript";
 import type { Tool, ToolContext } from "./tools/index";
 
-type NewEntry = Omit<Entry, "uuid" | "ts">;
-const user = (text: string) =>
-  ({ type: "message", parentUuid: null, message: { role: "user", content: text } }) as Omit<MessageEntry, "uuid" | "ts"> as NewEntry;
+const user = (text: string): NewEntry => ({ type: "message", message: { role: "user", content: text } });
 
 function fakeTranscript(): Transcript & { entries: Entry[] } {
   const entries: Entry[] = [];

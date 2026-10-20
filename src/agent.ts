@@ -9,7 +9,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages";
 import { join } from "node:path";
 import { loadConfig, paths } from "./config";
-import { open, type Entry, type Role, type Transcript } from "./transcript";
+import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
 
 export interface AgentOptions {
@@ -43,11 +43,6 @@ export interface AgentDeps {
 
 const MAX_TOKENS = 64000;
 
-// `Omit` over the Entry union keeps only the shared keys, so distribute it by
-// hand to type a new entry before it has a uuid/ts.
-type NewEntry = Entry extends infer E ? (E extends Entry ? Omit<E, "uuid" | "ts"> : never) : never;
-const entry = (e: NewEntry): Parameters<Transcript["append"]>[0] => e;
-
 /** Build the loop from explicit dependencies. `runAgent` wires the real ones. */
 export function createAgent(deps: AgentDeps) {
   const write = deps.write ?? ((t: string) => process.stdout.write(t));
@@ -78,13 +73,10 @@ export function createAgent(deps: AgentDeps) {
       const message = await stream.finalMessage();
       if (message.content.some((b) => b.type === "text")) write("\n");
 
-      await deps.transcript.append(
-        entry({
-          type: "message",
-          parentUuid: deps.transcript.head(),
-          message: { role: "assistant", content: message.content },
-        }),
-      );
+      await deps.transcript.append({
+        type: "message",
+        message: { role: "assistant", content: message.content },
+      });
       if (message.stop_reason !== "tool_use") return;
 
       const results: ToolResultBlockParam[] = [];
@@ -93,13 +85,7 @@ export function createAgent(deps: AgentDeps) {
         const result = await runTool(block.name, block.input as Record<string, unknown>);
         results.push({ ...result, tool_use_id: block.id });
       }
-      await deps.transcript.append(
-        entry({
-          type: "message",
-          parentUuid: deps.transcript.head(),
-          message: { role: "user", content: results },
-        }),
-      );
+      await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
     }
   }
 
@@ -116,9 +102,7 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
   const config = await loadConfig();
   const transcript = open(paths.transcript(opts.project, opts.session ?? crypto.randomUUID()));
   if (transcript.head() === null) {
-    await transcript.append(
-      entry({ type: "meta", parentUuid: null, role: opts.role, taskId: opts.taskId, model: config.model }),
-    );
+    await transcript.append({ type: "meta", role: opts.role, taskId: opts.taskId, model: config.model });
   }
 
   const tools: Record<string, Tool> = {};

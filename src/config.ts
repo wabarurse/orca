@@ -13,18 +13,19 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const ROOT = process.env.PARALLELS_HOME ?? join(homedir(), ".parallels");
+// Read lazily so tests can point PARALLELS_HOME at a temp dir after import.
+const root = () => process.env.PARALLELS_HOME ?? join(homedir(), ".parallels");
 
 export const paths = {
-  root: ROOT,
-  config: join(ROOT, "config.toml"),
-  prompts: join(ROOT, "prompts"),
-  project: (name: string) => join(ROOT, "projects", name),
-  repo: (name: string) => join(ROOT, "projects", name, "repo"),
-  worktree: (name: string, taskId: string) => join(ROOT, "projects", name, "worktrees", taskId),
-  tasks: (name: string) => join(ROOT, "projects", name, "tasks.json"),
-  inbox: (name: string) => join(ROOT, "projects", name, "inbox"),
-  transcript: (name: string, id: string) => join(ROOT, "projects", name, "transcripts", `${id}.jsonl`),
+  get root() { return root(); },
+  get config() { return join(root(), "config.toml"); },
+  get prompts() { return join(root(), "prompts"); },
+  project: (name: string) => join(root(), "projects", name),
+  repo: (name: string) => join(root(), "projects", name, "repo"),
+  worktree: (name: string, taskId: string) => join(root(), "projects", name, "worktrees", taskId),
+  tasks: (name: string) => join(root(), "projects", name, "tasks.json"),
+  inbox: (name: string) => join(root(), "projects", name, "inbox"),
+  transcript: (name: string, id: string) => join(root(), "projects", name, "transcripts", `${id}.jsonl`),
 };
 
 export interface Config {

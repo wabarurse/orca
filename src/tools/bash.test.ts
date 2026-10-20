@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Must be set before config.ts is imported (ROOT is read at import time).
+// Point config at a temp dir so tests never read the real ~/.parallels.
 const home = mkdtempSync(join(tmpdir(), "parallels-bash-"));
 process.env.PARALLELS_HOME = home;
 
