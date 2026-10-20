@@ -10,6 +10,7 @@ import type {
   ToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/messages";
 import { loadConfig, paths } from "./config";
+import { drain, format } from "./inbox";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
@@ -58,7 +59,23 @@ export function createAgent(deps: AgentDeps) {
     }
   }
 
+  const me = sessionId(deps.ctx.role, deps.ctx.branch);
+
+  /** Move waiting inbox messages into the transcript as one user turn. */
+  async function readInbox(): Promise<boolean> {
+    const msgs = await drain(deps.ctx.project, me);
+    if (msgs.length === 0) return false;
+    await deps.transcript.append({ type: "message", message: { role: "user", content: format(msgs) } });
+    return true;
+  }
+
+  /**
+   * Run until the model ends a turn with an empty inbox. Messages that arrive
+   * while it works are read at the end of each turn, so a worker that gets a
+   * note from the orchestrator keeps going instead of exiting.
+   */
   async function run(): Promise<void> {
+    await readInbox();
     for (;;) {
       const stream = deps.client.messages.stream({
         model: deps.model,
@@ -75,7 +92,10 @@ export function createAgent(deps: AgentDeps) {
         type: "message",
         message: { role: "assistant", content: message.content },
       });
-      if (message.stop_reason !== "tool_use") return;
+      if (message.stop_reason !== "tool_use") {
+        if (await readInbox()) continue;
+        return;
+      }
 
       const results: ToolResultBlockParam[] = [];
       for (const block of message.content) {

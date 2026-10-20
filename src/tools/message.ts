@@ -2,23 +2,32 @@ import { put } from "../inbox";
 import { sessionId } from "../runner";
 import type { Tool } from "./index";
 
-// Workers and reviewers write to the inbox for the orchestrator; the
-// orchestrator writes to the outbox for whoever is connected.
+// Every agent has an inbox. Addresses: "orchestrator", "user", or an agent id
+// such as "worker-feat-login". Messages wait in the queue until the receiver
+// next reads its inbox, so sending to a finished agent is fine.
 export const message: Tool = {
   spec: {
     name: "message",
-    description: "Send a message to the orchestrator (or, as orchestrator, to the user).",
+    description:
+      "Send a message to another agent's inbox. `to` is \"orchestrator\", \"user\", or an agent id like " +
+      "\"worker-feat-login\" (what spawn returned). Delivered when they next check their inbox.",
     input_schema: {
       type: "object",
-      properties: { text: { type: "string" } },
-      required: ["text"],
+      properties: {
+        to: { type: "string" },
+        text: { type: "string" },
+      },
+      required: ["to", "text"],
     },
   },
   async run(input, ctx) {
+    const to = String(input.to ?? "").trim();
     const text = String(input.text ?? "").trim();
+    if (!to) return "refused: `to` is required";
     if (!text) return "refused: empty message";
-    const box = ctx.role === "orchestrator" ? "outbox" : "inbox";
-    await put(ctx.project, { from: sessionId(ctx.role, ctx.branch), text }, box);
-    return "sent";
+    const from = sessionId(ctx.role, ctx.branch);
+    if (to === from) return "refused: that's your own inbox";
+    await put(ctx.project, to, { from, text });
+    return `sent to ${to}`;
   },
 };

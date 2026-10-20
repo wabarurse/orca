@@ -5,7 +5,7 @@
 //     projects/<name>/
 //       repo/                  the orchestrator's clone
 //       worktrees/<branch>/    one per branch, removed when done
-//       inbox/                 one file per message to the orchestrator
+//       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
 //       transcripts/<role>-<branch>.jsonl   one per agent; the only memory
 
 import { homedir } from "node:os";
