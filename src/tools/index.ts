@@ -1,5 +1,8 @@
 import type { Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { Role } from "../transcript";
+import { bash } from "./bash";
+import { message } from "./message";
+import { spawn } from "./spawn";
 
 export interface ToolContext {
   project: string;
@@ -20,5 +23,4 @@ export const toolsFor: Record<Role, string[]> = {
   reviewer: ["bash", "message"],
 };
 
-// TODO(PR3, PR5): register bash, spawn, message here.
-export const registry: Record<string, Tool> = {};
+export const registry: Record<string, Tool> = { bash, spawn, message };
