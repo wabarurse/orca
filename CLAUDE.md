@@ -6,7 +6,7 @@ Bun + TypeScript. Use `bun` for everything (`bun test`, `bun run check`, `bun sr
 
 Layout:
 
-- `src/cli.ts` — `start`, `msg`, `agent` commands
+- `src/cli.ts` — `start`, `msg`, `agent`, `version` commands
 - `src/agent.ts` — the loop; all three roles are this with a different prompt and tool set
 - `src/transcript.ts` — append-only JSONL with parent pointers
 - `src/tools/` — `bash`, `spawn`, `message`; keep the set small
