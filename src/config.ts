@@ -2,7 +2,6 @@
 //
 //   ~/.parallels/
 //     config.toml              model, byte limits, defaults
-//     prompts/                 orchestrator.md, worker.md, reviewer.md
 //     projects/<name>/
 //       repo/                  the orchestrator's clone
 //       worktrees/<task-id>/   one per worker, removed when done
@@ -19,7 +18,6 @@ const root = () => process.env.PARALLELS_HOME ?? join(homedir(), ".parallels");
 export const paths = {
   get root() { return root(); },
   get config() { return join(root(), "config.toml"); },
-  get prompts() { return join(root(), "prompts"); },
   project: (name: string) => join(root(), "projects", name),
   repo: (name: string) => join(root(), "projects", name, "repo"),
   worktree: (name: string, taskId: string) => join(root(), "projects", name, "worktrees", taskId),

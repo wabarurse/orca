@@ -5,7 +5,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { existsSync, mkdirSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { createAgent, loadPrompt, type AgentClient } from "./agent";
+import { createAgent, type AgentClient } from "./agent";
 import { loadConfig, paths } from "./config";
 import { drain, put, type Message } from "./inbox";
 import { registry, toolsFor, type Tool } from "./tools/index";
@@ -58,7 +58,6 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
     transcript,
     tools,
     model: config.model,
-    system: await loadPrompt("orchestrator"),
     ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
     write: deps.write,
   });

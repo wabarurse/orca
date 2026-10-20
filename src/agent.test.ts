@@ -84,7 +84,7 @@ describe("agent loop", () => {
     await transcript.append(user("hi"));
     const { client, calls } = fakeClient([reply([{ type: "text", text: "hello", citations: null }], "end_turn")]);
     let out = "";
-    await createAgent({ client, transcript, tools: {}, model: "m", system: "sys", ctx, write: (t) => (out += t) }).run();
+    await createAgent({ client, transcript, tools: {}, model: "m", ctx, write: (t) => (out += t) }).run();
 
     expect(calls.length).toBe(1);
     expect(calls[0]!.tools).toBeUndefined();
@@ -101,7 +101,7 @@ describe("agent loop", () => {
       reply([{ type: "tool_use", id: "tu1", name: "echo", input: { text: "x" } }], "tool_use"),
       reply([{ type: "text", text: "done", citations: null }], "end_turn"),
     ]);
-    await createAgent({ client, transcript, tools: { echo }, model: "m", system: "sys", ctx, write: () => {} }).run();
+    await createAgent({ client, transcript, tools: { echo }, model: "m", ctx, write: () => {} }).run();
 
     expect(calls.length).toBe(2);
     expect(calls[0]!.tools).toEqual([echo.spec]);
@@ -118,7 +118,7 @@ describe("agent loop", () => {
       reply([{ type: "tool_use", id: "tu1", name: "boom", input: {} }], "tool_use"),
       reply([{ type: "text", text: "ok", citations: null }], "end_turn"),
     ]);
-    await createAgent({ client, transcript, tools: { boom }, model: "m", system: "sys", ctx, write: () => {} }).run();
+    await createAgent({ client, transcript, tools: { boom }, model: "m", ctx, write: () => {} }).run();
 
     const results = calls[1]!.messages[2]!.content;
     expect(results).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "kaboom", is_error: true }]);

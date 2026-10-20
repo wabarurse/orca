@@ -12,7 +12,8 @@ Layout:
 - `src/tools/` — `bash`, `spawn`, `message`; keep the set small
 - `src/runner.ts` — worktree + tmux backend
 - `src/tasks.ts`, `src/inbox.ts` — the only state: `tasks.json` and inbox files
-- `prompts/` — default system prompts, one per role, each under a page
+
+There are no system prompts. Each agent gets its task from the first user message (spawn's brief or the inbox) and the tool descriptions, so keep those descriptions precise.
 
 Rules:
 
