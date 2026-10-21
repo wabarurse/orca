@@ -2,10 +2,10 @@
 // a different tool set and a short role prompt (src/prompts.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).
 
-import type { TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ContentBlock, TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { provider as providerFromAccounts } from "./accounts";
 import { loadConfig, paths } from "./config";
-import { describeTool, supervise, type Tracker } from "./exits";
+import { supervise, type Tracker } from "./exits";
 import { drain, format } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { providerFor, type Provider } from "./providers/index";
@@ -37,39 +37,81 @@ export interface AgentDeps {
 
 const MAX_TOKENS = 64000;
 
+type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
+
+/** Run one tool; a thrown error becomes an is_error result, never a crash. */
+async function runTool(deps: AgentDeps, name: string, input: Record<string, unknown>): Promise<ToolResultBlockParam> {
+  const tool = deps.tools[name];
+  if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
+  try {
+    return { type: "tool_result", tool_use_id: "", content: await tool.run(input, deps.ctx) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { type: "tool_result", tool_use_id: "", content: msg, is_error: true };
+  }
+}
+
+/** A successful `message` to the orchestrator: what counts as reporting. */
+function isReport(name: string, input: unknown, result: ToolResultBlockParam): boolean {
+  const to = String((input as { to?: unknown } | null)?.to ?? "").trim();
+  return name === "message" && to === "orchestrator" && !result.is_error && String(result.content).startsWith("sent to");
+}
+
+/** Run one tool call and tell the tracker: the step before, a report after. */
+async function runTracked(deps: AgentDeps, block: ToolUse): Promise<ToolResultBlockParam> {
+  const input = block.input as Record<string, unknown>;
+  await deps.tracker?.tool(block.name, input);
+  const result = await runTool(deps, block.name, input);
+  if (isReport(block.name, input, result)) await deps.tracker?.reported();
+  return { ...result, tool_use_id: block.id };
+}
+
+/** Run a turn's tool calls in order, echoing each one. */
+async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: string, plain?: boolean) => void): Promise<ToolResultBlockParam[]> {
+  const results: ToolResultBlockParam[] = [];
+  for (const block of content) {
+    if (block.type !== "tool_use") continue;
+    write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`, true);
+    results.push(await runTracked(deps, block));
+  }
+  return results;
+}
+
+/** Waiting inbox messages as one text block, or null when there are none. New messages mean new instructions. */
+async function inboxBlock(deps: AgentDeps): Promise<TextBlockParam | null> {
+  const msgs = await drain(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch));
+  if (!msgs.length) return null;
+  await deps.tracker?.instructed();
+  return { type: "text", text: format(msgs) };
+}
+
+/** Move waiting inbox messages into the transcript as one user turn. */
+async function readInbox(deps: AgentDeps): Promise<boolean> {
+  const block = await inboxBlock(deps);
+  if (!block) return false;
+  await deps.transcript.append({ type: "message", message: { role: "user", content: block.text } });
+  return true;
+}
+
+/** One model request, streamed and appended to the transcript. */
+async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
+  await deps.tracker?.model();
+  const message = await deps.provider.complete({
+    model: deps.model,
+    system: deps.system,
+    maxTokens: MAX_TOKENS,
+    messages: await deps.transcript.chain(),
+    tools: Object.values(deps.tools).map((t) => t.spec),
+    onText: (t) => write(t),
+  });
+  if (message.content.some((b) => b.type === "text")) write("\n");
+  await deps.transcript.append({ type: "message", message: { role: "assistant", content: message.content } });
+  return message;
+}
+
 /** Build the loop from explicit dependencies. `runAgent` wires the real ones. */
 export function createAgent(deps: AgentDeps) {
   const write = deps.write ?? ((t: string) => process.stdout.write(t));
-  const tools = Object.values(deps.tools).map((t) => t.spec);
-  const tracker = deps.tracker;
-
-  async function runTool(name: string, input: Record<string, unknown>): Promise<ToolResultBlockParam> {
-    const tool = deps.tools[name];
-    if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
-    try {
-      return { type: "tool_result", tool_use_id: "", content: await tool.run(input, deps.ctx) };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { type: "tool_result", tool_use_id: "", content: msg, is_error: true };
-    }
-  }
-
-  const me = sessionId(deps.ctx.role, deps.ctx.branch);
-
-  /** Waiting inbox messages as one text block, or null when there are none. */
-  async function inboxBlock(): Promise<TextBlockParam | null> {
-    const msgs = await drain(deps.ctx.project, me);
-    if (msgs.length) await tracker?.instructed();
-    return msgs.length ? { type: "text", text: format(msgs) } : null;
-  }
-
-  /** Move waiting inbox messages into the transcript as one user turn. */
-  async function readInbox(): Promise<boolean> {
-    const block = await inboxBlock();
-    if (!block) return false;
-    await deps.transcript.append({ type: "message", message: { role: "user", content: block.text } });
-    return true;
-  }
 
   /**
    * Run until the model ends a turn with an empty inbox. Messages are never
@@ -80,52 +122,21 @@ export function createAgent(deps: AgentDeps) {
    * orchestrator keeps going instead of exiting.
    */
   async function run(): Promise<void> {
-    await readInbox();
+    await readInbox(deps);
     for (;;) {
-      await tracker?.step("model request");
-      const message = await deps.provider.complete({
-        model: deps.model,
-        system: deps.system,
-        maxTokens: MAX_TOKENS,
-        messages: await deps.transcript.chain(),
-        tools,
-        onText: (t) => write(t),
-      });
-      if (message.content.some((b) => b.type === "text")) write("\n");
-
-      await deps.transcript.append({
-        type: "message",
-        message: { role: "assistant", content: message.content },
-      });
+      const message = await ask(deps, write);
       if (message.stop !== "tool_use") {
-        if (await readInbox()) continue;
+        if (await readInbox(deps)) continue;
         return;
       }
-
-      const results: ToolResultBlockParam[] = [];
-      for (const block of message.content) {
-        if (block.type !== "tool_use") continue;
-        write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`, true);
-        await tracker?.step(describeTool(block.name, block.input), true);
-        const result = await runTool(block.name, block.input as Record<string, unknown>);
-        await tracker?.toolDone();
-        if (tracker && isReport(block.name, block.input, result)) await tracker.reported();
-        results.push({ ...result, tool_use_id: block.id });
-      }
+      const results = await runTools(deps, message.content, write);
       // Queued messages ride along after the tool results; they never cut a tool short.
-      const note = await inboxBlock();
+      const note = await inboxBlock(deps);
       await deps.transcript.append({ type: "message", message: { role: "user", content: note ? [...results, note] : results } });
     }
   }
 
   return { run };
-}
-
-
-/** A successful `message` to the orchestrator: what counts as reporting. */
-function isReport(name: string, input: unknown, result: ToolResultBlockParam): boolean {
-  const to = String((input as { to?: unknown } | null)?.to ?? "").trim();
-  return name === "message" && to === "orchestrator" && !result.is_error && String(result.content).startsWith("sent to");
 }
 
 /**

@@ -197,9 +197,8 @@ export class App {
     const restoreConsole = this.captureConsole();
     term.onKey((k) => { this.onKey(k).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     term.onResize(() => this.resized());
-    const watch = this.deps.watchdog ?? exitWatchdog();
     const poll = setInterval(() => {
-      for (const p of this.pages) watch(p.project).catch(() => {});
+      this.watchPages();
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
     try {
@@ -698,6 +697,14 @@ export class App {
       if (page === this.page) this.reprint();
     }
     this.draw();
+  }
+
+  private watch?: (project: string) => Promise<unknown>;
+
+  /** Exit watchdog for every open page (commands.ts exitWatchdog); notices land in the orchestrator's inbox. */
+  private watchPages(): void {
+    this.watch ??= this.deps.watchdog ?? exitWatchdog();
+    for (const p of this.pages) this.watch(p.project).catch(() => {});
   }
 
   /** Start a turn on every idle page whose orchestrator has unread messages. */

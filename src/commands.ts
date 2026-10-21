@@ -137,13 +137,18 @@ export async function liveAgents(project: string): Promise<string[]> {
   return agentWindows(await tmux.listWindows(sessionName(project)).catch(() => [] as string[]));
 }
 
+/** Like liveAgents, but null when tmux could not be asked, so the watchdog never mistakes an error for "all gone". */
+export async function liveAgentsOrNull(project: string): Promise<string[] | null> {
+  const windows = await tmux.windows(sessionName(project)).catch(() => null);
+  return windows && agentWindows(windows);
+}
+
 /**
- * The TUI's exit watchdog, called on every inbox poll per open project: an
- * agent whose tmux window vanished (closed by hand, tmux killed) without
- * reporting or sending its own notice gets "[agent-exit] <id>'s window is
- * gone" in the orchestrator's inbox. `live` is stubbed in tests.
+ * The TUI's exit watchdog (src/exits.ts), checked for every open page on each
+ * inbox poll: agents that stopped without reporting or sending their own
+ * notice get an `[agent-exit]` notice. `live` is stubbed in tests.
  */
-export const exitWatchdog = (live: (project: string) => Promise<string[]> = liveAgents) => watchdog(live);
+export const exitWatchdog = (live: (project: string) => Promise<string[] | null> = liveAgentsOrNull) => watchdog({ live });
 
 /** Close a project's (now idle) tmux session, if tmux is installed. */
 export async function killProjectSession(project: string): Promise<void> {
