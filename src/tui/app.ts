@@ -4,7 +4,7 @@
 // talk to the page's orchestrator; worker and reviewer reports arrive through
 // its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, listAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, renameProject, setModel, shortRemote, useAccount, type Choice } from "../commands";
+import { accountChoices, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, renameProject, setModel, shortRemote, useAccount, type Choice } from "../commands";
 import { homedir } from "node:os";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
@@ -23,8 +23,11 @@ export interface Page {
   /** Streamed text that has not reached a newline yet. */
   partial: string;
   busy: boolean;
+  /** When the running turn started (clock ms), and whether its text has started streaming. */
+  busySince: number;
+  streamed: boolean;
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
-  view: { name: string; lines: string[]; leave: () => void } | null;
+  view: { name: string; lines: string[]; leave: () => void; live: boolean } | null;
 }
 
 export interface AppDeps {
@@ -35,7 +38,23 @@ export interface AppDeps {
   pollMs?: number;
   /** Clone source of the repository `start` was run from, if any: opened on start and cloned by Ctrl+N. */
   source?: string | null;
+  /** Clock and repeating timer for the busy spinner; tests inject fakes so they never sleep. */
+  clock?: Clock;
+  /** A project's agents and which are live: /agents lists these and live views poll them. Defaults to listAgents for the menu and to tmux alone (liveAgents) for the poll. */
+  agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
 }
+
+export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
+
+const realClock: Clock = {
+  now: () => Date.now(),
+  every: (fn, ms) => { const t = setInterval(fn, ms); return () => clearInterval(t); },
+};
+
+const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+const SPIN_MS = 100;
+/** How often a live agent view checks whether its agent has finished. */
+const LIVE_CHECK_MS = 1000;
 
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
 
@@ -45,6 +64,9 @@ const HELP = [
   "/rename <name>   /new [name] [git-url]   /close   /quit",
   "/agents   /models [id]   /accounts   /login claude|codex [profile]   /back",
 ];
+
+/** A page shows activity while its turn runs or its agent view follows a live agent. */
+const active = (p: Page) => p.busy || !!p.view?.live;
 
 export class App {
   pages: Page[] = [];
@@ -61,12 +83,19 @@ export class App {
   private readonly finished: Promise<void>;
   private readonly loginAbort = new AbortController();
   private frameQueued = false;
+  private stopSpinner: (() => void) | null = null;
+  private liveCheckedAt = 0;
+  /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
+  private readonly liveChecks = new Map<string, Promise<void>>();
+  private closed = false;
 
   constructor(private readonly deps: AppDeps) {
     this.finished = new Promise<void>((r) => (this.done = r));
   }
 
   get page(): Page | undefined { return this.pages[this.active]; }
+
+  private get clock(): Clock { return this.deps.clock ?? realClock; }
 
   /** Run until /quit; opens the given project, or every known one plus the repo we were started in, or a fresh orch-xxxx. */
   async run(project?: string, url?: string): Promise<void> {
@@ -94,6 +123,9 @@ export class App {
       await this.finished;
     } finally {
       clearInterval(poll);
+      this.closed = true;
+      this.stopSpinner?.();
+      this.stopSpinner = null;
       this.loginAbort.abort();
       for (const p of this.pages) p.view?.leave();
       term.close();
@@ -114,6 +146,7 @@ export class App {
   private stream(page: Page, text: string): void {
     const parts = (page.partial + text).split("\n");
     page.partial = parts.pop()!;
+    page.streamed = true;
     page.lines.push(...parts);
     this.draw();
   }
@@ -125,17 +158,59 @@ export class App {
     const header = page ? dim(`${paths.repo(page.project).replace(homedir(), "~")}  ·  ${shortRemote(page.remote)}`) : "";
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows, header,
-      tabs: this.pages.map((p, i) => ({ title: p.view ? `${p.project} › ${p.view.name}` : p.project, active: i === this.active, busy: p.busy })),
-      lines: body, scroll: this.scroll,
+      tabs: this.pages.map((p, i) => ({ title: p.view ? `${p.project} › ${p.view.name}` : p.project, active: i === this.active, busy: active(p), spinner: this.spinner() })),
+      lines: body, scroll: this.scroll, status: page ? this.status(page) : null,
       input: { prompt, text: this.input.text, cursor: this.input.cursor },
       menu: this.menu,
     };
   }
 
+  private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
+
+  /** The dimmed line above the input while the page's turn (or the viewed agent) runs. */
+  private status(page: Page): string | null {
+    // A live agent view wins over the page's own turn; otherwise a busy page shows its turn, view or not.
+    if (page.view?.live) return dim(`${this.spinner()} following ${page.view.name}`);
+    if (!page.busy) return null;
+    const secs = Math.floor((this.clock.now() - page.busySince) / 1000);
+    return dim(`${this.spinner()} ${page.streamed ? "working…" : "thinking…"} ${secs}s`);
+  }
+
+  /** Run the spinner timer only while some page is busy or viewing a live agent. */
+  private animate(): void {
+    const want = !this.closed && this.pages.some(active);
+    if (want && !this.stopSpinner) this.stopSpinner = this.clock.every(() => this.tick(), SPIN_MS);
+    else if (!want && this.stopSpinner) { this.stopSpinner(); this.stopSpinner = null; }
+  }
+
+  private tick(): void {
+    const now = this.clock.now();
+    if (now - this.liveCheckedAt >= LIVE_CHECK_MS) {
+      this.liveCheckedAt = now;
+      for (const project of new Set(this.pages.filter((p) => p.view?.live).map((p) => p.project))) this.checkLive(project);
+    }
+    this.draw();
+  }
+
+  /** One agents call per project, never overlapping: mark views whose agent has finished. */
+  private checkLive(project: string): void {
+    if (this.liveChecks.has(project)) return;
+    const check = (this.deps.agents ?? liveAgents)(project)
+      .then((agents) => {
+        const live = new Set(agents.filter((a) => a.live).map((a) => a.name));
+        for (const p of this.pages) if (p.project === project && p.view?.live && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
+      })
+      .catch(() => {})
+      .finally(() => this.liveChecks.delete(project));
+    this.liveChecks.set(project, check);
+  }
+
   draw(): void {
+    if (this.closed) return;
+    this.animate();
     if (this.frameQueued) return;
     this.frameQueued = true;
-    setTimeout(() => { this.frameQueued = false; this.deps.term.write(render(this.frame())); }, 0);
+    setTimeout(() => { this.frameQueued = false; if (!this.closed) this.deps.term.write(render(this.frame())); }, 0);
   }
 
   // --- pages ------------------------------------------------------------------
@@ -143,7 +218,7 @@ export class App {
   async openPage(project: string, url?: string): Promise<Page> {
     const existing = this.pages.findIndex((p) => p.project === project);
     if (existing !== -1) { this.active = existing; this.draw(); return this.pages[existing]!; }
-    const page: Page = { project, orch: null as unknown as Orchestrator, remote: "", lines: [], partial: "", busy: false, view: null };
+    const page: Page = { project, orch: null as unknown as Orchestrator, remote: "", lines: [], partial: "", busy: false, busySince: 0, streamed: false, view: null };
     page.orch = await this.deps.openOrchestrator(project, url, (text) => this.stream(page, text));
     page.remote = await remoteOf(project);
     this.pages.push(page);
@@ -195,6 +270,8 @@ export class App {
   private async runTurn(page: Page): Promise<void> {
     if (page.busy) return;
     page.busy = true;
+    page.busySince = this.clock.now();
+    page.streamed = false;
     this.draw();
     try {
       for (const reply of await page.orch.turn()) {
@@ -224,9 +301,9 @@ export class App {
   }
 
   private async agentsMenu(page: Page): Promise<void> {
-    const agents = await listAgents(page.project);
+    const agents = await (this.deps.agents ?? listAgents)(page.project);
     if (!agents.length) return this.say(dim("no agents yet"));
-    this.openMenu("attach to an agent", agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })), (name) => this.attach(page, name));
+    this.openMenu("attach to an agent", agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })), (name) => this.attach(page, name, agents.find((a) => a.name === name)?.live ?? false));
   }
 
   private async accountsMenu(): Promise<void> {
@@ -244,8 +321,8 @@ export class App {
     this.openMenu("switch model   (/models <id> for any other id)", choices, async (id) => this.say(dim(await setModel(id))));
   }
 
-  private async attach(page: Page, name: string): Promise<void> {
-    const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r }));
+  private async attach(page: Page, name: string, live: boolean): Promise<void> {
+    const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live }));
     const view = page.view!;
     this.scroll = 0;
     this.say(dim("Esc or /back returns"), page);

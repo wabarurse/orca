@@ -3,6 +3,7 @@
 //   ┌ tab bar: one tab per orchestrator page ─────────────┐
 //   │ header: the page's clone path and remote             │
 //   │ body: the page's scrollback (or a menu over it)      │
+//   │ status: a dimmed spinner line while a turn runs      │
 //   │ input line                                           │
 //   └──────────────────────────────────────────────────────┘
 
@@ -10,7 +11,8 @@ export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 const inverse = (s: string) => `\x1b[7m${s}\x1b[0m`;
 
-export interface Tab { title: string; active: boolean; busy: boolean }
+/** `spinner` is the busy mark (a spinner frame); "·" when absent. */
+export interface Tab { title: string; active: boolean; busy: boolean; spinner?: string }
 export interface Menu { title: string; items: string[]; index: number }
 export interface Input { prompt: string; text: string; cursor: number }
 
@@ -26,6 +28,8 @@ export interface Frame {
   scroll: number;
   input: Input;
   menu: Menu | null;
+  /** A dimmed activity line just above the input (e.g. "⠋ thinking… 3s"), or none. */
+  status?: string | null;
 }
 
 const ANSI = /\x1b\[[0-9;?<>]*[A-Za-z]/g;
@@ -63,14 +67,14 @@ function fit(line: string, cols: number): string {
 function tabBar(tabs: Tab[], cols: number): string {
   if (tabs.length === 0) return "";
   const cells = tabs.map((t) => {
-    const label = ` ${t.title}${t.busy ? " ·" : ""} `;
+    const label = ` ${t.title}${t.busy ? ` ${t.spinner ?? "·"}` : ""} `;
     return t.active ? inverse(label) : dim(label);
   });
   return wrap(cells.join(" "), cols)[0]!;
 }
 
 export function render(f: Frame): string {
-  const bodyRows = Math.max(0, f.rows - 3);
+  const bodyRows = Math.max(0, f.rows - 3 - (f.status ? 1 : 0));
   const wrapped = f.lines.flatMap((l) => wrap(l, f.cols));
   const end = Math.max(0, wrapped.length - f.scroll);
   const body = wrapped.slice(Math.max(0, end - bodyRows), end);
@@ -82,6 +86,7 @@ export function render(f: Frame): string {
     body.splice(body.length - shown.length, shown.length, ...shown);
   }
   const out: string[] = [tabBar(f.tabs, f.cols), fit(f.header, f.cols), ...body];
+  if (f.status) out.push(fit(f.status, f.cols));
   const inputLine = f.input.prompt + f.input.text;
   out.push(wrap(inputLine, f.cols).at(-1) ?? "");
   // Clear each row before writing so shorter lines never leave debris.

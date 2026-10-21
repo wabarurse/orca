@@ -47,6 +47,16 @@ describe("render", () => {
     expect(r.slice(2, 6)).toEqual(["", "pick", "  x", "❯ y"]);
   });
 
+  test("a status line sits between the body and the input; busy tabs show the spinner frame", () => {
+    const r = rows(render(frame({ status: "⠋ thinking… 3s", tabs: [{ title: "one", active: true, busy: true, spinner: "⠙" }] })));
+    expect(r.length).toBe(7);
+    expect(r[0]).toBe(" one ⠙ ");
+    expect(r.slice(2, 5)).toEqual(["a", "b", "c"]);
+    expect(r[5]).toBe("⠋ thinking… 3s");
+    expect(r[6]).toBe("> hi");
+    expect(rows(render(frame({ status: null }))).slice(2, 6)).toEqual(["", "a", "b", "c"]);
+  });
+
   test("no pages leaves the tab bar empty", () => {
     expect(rows(render(frame({ tabs: [] })))[0]).toBe("");
   });
