@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
-import { App, type Clock, type Line } from "./app";
+import { App, helpLines, parseCommand, type Clock, type Line } from "./app";
 import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
@@ -18,7 +18,7 @@ import { open as openTranscript } from "../transcript";
 import { parseKeys, type Key } from "./keys";
 import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
-import { bold } from "./render";
+import { bold, dim } from "./render";
 
 const home = mkdtempSync(join(tmpdir(), "parallels-tui-"));
 process.env.PARALLELS_HOME = home;
@@ -1767,5 +1767,194 @@ describe("orchestrator questions", () => {
     const again = await start("qa-restore", { openOrchestrator: open, pollMs: 100_000 });
     expect(again.app.page!.lines).toEqual(shown);
     await again.stop();
+  });
+});
+
+describe("command and key tables", () => {
+  /** /help as it was written before the command table, line for line. */
+  const OLD_HELP = [
+    "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)",
+    "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes",
+    "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
+    "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history",
+    "/keys shows what your terminal sends for a chord (Esc ends)",
+    "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
+    "/agents   /models [id]   /accounts   /login claude|codex [profile]",
+    "/review-rounds [n] review rounds before CI (0 = straight to CI)",
+    "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later",
+  ];
+  const OLD_HELP_VIEW = "/back (or Esc) leaves the agent view";
+  const bare = () => new App({ term: fakeTerm(), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000 });
+
+  test("/help is built from the table: every command but /help is listed, /back only in an agent view, text unchanged", () => {
+    const app = bare();
+    const help = helpLines(app.commands, false).join("\n");
+    const inView = helpLines(app.commands, true).join("\n");
+    for (const name of app.commands.keys()) {
+      if (name === "/help") continue; // never listed itself, as before
+      expect(inView).toContain(name);
+      if (name !== "/back") expect(help).toContain(name);
+    }
+    expect(help).not.toContain("/back");
+    expect(helpLines(app.commands, false)).toEqual(OLD_HELP);
+    expect(helpLines(app.commands, true)).toEqual([...OLD_HELP, OLD_HELP_VIEW]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/close", "/help", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/rename", "/review-rounds"]);
+  });
+
+  test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {
+    const { commands } = bare();
+    expect(parseCommand("hello /quit", commands)).toBeNull();
+    expect(parseCommand("  /quit", commands)).toBeNull(); // an indented line is plain text
+    expect(parseCommand("/new  a  b", commands)).toMatchObject({ name: "/new", args: "a  b", command: commands.get("/new") });
+    expect(parseCommand("/login", commands)).toMatchObject({ name: "/login", args: "", command: commands.get("/login") });
+    expect(parseCommand("/quit", commands)!.command).toBe(commands.get("/quit")!);
+    expect(parseCommand("/quit now", commands)).toMatchObject({ name: "/quit", command: undefined });
+    expect(parseCommand("/new\tx", commands)).toMatchObject({ name: "/new\tx", command: undefined });
+    expect(parseCommand("/nope x", commands)).toMatchObject({ name: "/nope", command: undefined });
+    for (const [name, c] of commands) if (c.needsPage) expect(name).toBe("/agents"); // the only command that needs a page
+  });
+
+  test("unknown commands say 'unknown command /x' (the name only), as before", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    for (const t of ["/nope", "/nope with args", "/quit now", "/help me"]) term.type(`${t}\r`);
+    const unknown = () => app.page!.lines.map(raw).filter((l) => l.includes("unknown command"));
+    await until(() => unknown().length === 4);
+    expect(unknown()).toEqual(["unknown command /nope", "unknown command /nope", "unknown command /quit", "unknown command /help"].map(dim));
+    expect(orchs.said.alpha).toEqual([]);
+    app.quit();
+    await running;
+  });
+
+  test("guard: with no page, commands that need none run; /agents, unknown commands and plain text open a fresh page instead", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    let listed = 0;
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, agents: async () => { listed++; return []; } });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    for (const t of ["/agents", "/nope", "hello"]) {
+      term.type("/close\r");
+      await until(() => app.pages.length === 0);
+      await until(() => term.screen().trim() === ">"); // let the close's reprint land first (a reprint with no page drops lines said before it)
+      term.type("/help\r"); // needs no page: runs with none
+      await until(() => term.screen().includes("/review-rounds [n]"));
+      expect(app.pages.length).toBe(0);
+      term.type(`${t}\r`);
+      await until(() => app.pages.length === 1);
+      await Bun.sleep(30);
+      expect(app.page!.project).toMatch(/^orch-/);
+      expect(orchs.said[app.page!.project]).toEqual([]); // dropped, not sent
+    }
+    expect(term.screen()).not.toContain("unknown command");
+    expect(listed).toBe(0);
+    term.type("/agents\r"); // with a page it runs
+    await until(() => listed === 1);
+    app.quit();
+    await running;
+  });
+
+  test("guard: in an agent view every command runs; plain text is refused", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("viewer");
+    await until(() => !!app.page);
+    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false };
+    app.page!.view = view;
+    term.type("/keys\r");
+    await until(() => app.keyEcho);
+    term.press({ name: "escape" });
+    term.type("/review-rounds 2\r/nope\rhello\r");
+    await until(() => view.lines.join("\n").includes("/back first to talk to the orchestrator"));
+    expect(view.lines.join("\n")).toContain("unknown command /nope");
+    expect(orchs.said.viewer).toEqual([]);
+    app.quit();
+    await running;
+  });
+
+  test("guard: while signing in commands run (a second /login is refused) and plain text is queued", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    let finish!: () => void;
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, login: async () => { await new Promise<void>((r) => (finish = r)); return "signed in"; } });
+    const running = app.run("signer");
+    await until(() => !!app.page);
+    term.type("/login codex\r");
+    await until(() => app.loggingIn);
+    term.type("/login openai\r/keys\r");
+    await until(() => app.keyEcho && term.screen().includes("already signing in"));
+    term.press({ name: "escape" });
+    term.type("hi\r");
+    await until(() => term.screen().includes("queued; runs after sign-in"));
+    expect(orchs.said.signer).toEqual([]);
+    finish();
+    await until(() => orchs.said.signer?.length === 1);
+    app.quit();
+    await running;
+  });
+
+  test("key layers run in the documented order", () => {
+    expect(bare().keyLayers.map((l) => l.name)).toEqual(["keyEcho", "chords", "projects", "menu", "questions", "escape", "enter", "editor"]);
+  });
+
+  test("a key two layers could take goes to the earlier one", async () => {
+    const term = fakeTerm(80, 20);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, projects: { live: async () => [], kill: async () => {} } });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+
+    // keyEcho before chords and Esc: Ctrl+N is echoed, Esc ends the echo and keeps the input.
+    app.input = { text: "draft", cursor: 5 };
+    app.keyEcho = true;
+    term.press({ name: "n", ctrl: true });
+    term.press({ name: "escape" });
+    await until(() => !app.keyEcho);
+    expect(app.pages.length).toBe(1);
+    expect(app.input.text).toBe("draft");
+
+    // menu before Esc / Enter / editor: Esc closes it (input kept), Enter picks (nothing sent), j moves.
+    let picked = "";
+    app.openMenu("pick", [{ value: "x", label: "x" }, { value: "y", label: "y" }], (v) => { picked = v; });
+    term.type("j");
+    term.press({ name: "enter" });
+    await until(() => picked === "y");
+    expect(app.input.text).toBe("draft");
+    app.openMenu("pick", [{ value: "x", label: "x" }], () => {});
+    term.press({ name: "escape" });
+    expect(app.menu).toBeNull();
+    expect(app.input.text).toBe("draft");
+
+    // projects before menu: Ctrl+B with a menu up opens the list and drops the menu.
+    app.openMenu("pick", [{ value: "x", label: "x" }], () => {});
+    term.press({ name: "b", ctrl: true });
+    await until(() => !!app.projectList);
+    expect(app.menu).toBeNull();
+    // projects before Esc and the editor: j moves the list, Esc closes it and keeps the input.
+    term.type("j");
+    expect(app.input.text).toBe("draft");
+    term.press({ name: "escape" });
+    await until(() => !app.projectList);
+    expect(app.input.text).toBe("draft");
+
+    // chords before projects: Ctrl+N with the list open opens a page.
+    term.press({ name: "b", ctrl: true });
+    await until(() => !!app.projectList);
+    term.press({ name: "n", ctrl: true });
+    await until(() => app.pages.length === 2);
+
+    // Esc before the editor, Enter before the editor; Shift+Enter is the editor's newline.
+    app.projectList = null;
+    app.input = { text: "a", cursor: 1 };
+    term.press({ name: "enter", shift: true });
+    expect(app.input.text).toBe("a\n");
+    term.press({ name: "escape" });
+    expect(app.input.text).toBe("");
+    app.quit();
+    await running;
   });
 });
