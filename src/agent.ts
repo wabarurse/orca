@@ -5,6 +5,7 @@
 import type { TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { provider as providerFromAccounts } from "./accounts";
 import { loadConfig, paths } from "./config";
+import { describeTool, supervise, type Tracker } from "./exits";
 import { drain, format } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { providerFor, type Provider } from "./providers/index";
@@ -16,6 +17,8 @@ export interface AgentOptions {
   project: string;
   role: Role;
   branch?: string;
+  /** Run id from agentCommand, shared with the shell follow-up; random when absent. */
+  run?: string;
 }
 
 export interface AgentDeps {
@@ -28,6 +31,8 @@ export interface AgentDeps {
   ctx: ToolContext;
   /** Where streamed text goes; defaults to stdout. `plain` marks tool lines (not model markdown). */
   write?: (text: string, plain?: boolean) => void;
+  /** Records steps and reports for exit notices (src/exits.ts); absent for the orchestrator and in most tests. */
+  tracker?: Tracker;
 }
 
 const MAX_TOKENS = 64000;
@@ -36,6 +41,7 @@ const MAX_TOKENS = 64000;
 export function createAgent(deps: AgentDeps) {
   const write = deps.write ?? ((t: string) => process.stdout.write(t));
   const tools = Object.values(deps.tools).map((t) => t.spec);
+  const tracker = deps.tracker;
 
   async function runTool(name: string, input: Record<string, unknown>): Promise<ToolResultBlockParam> {
     const tool = deps.tools[name];
@@ -53,6 +59,7 @@ export function createAgent(deps: AgentDeps) {
   /** Waiting inbox messages as one text block, or null when there are none. */
   async function inboxBlock(): Promise<TextBlockParam | null> {
     const msgs = await drain(deps.ctx.project, me);
+    if (msgs.length) await tracker?.instructed();
     return msgs.length ? { type: "text", text: format(msgs) } : null;
   }
 
@@ -75,6 +82,7 @@ export function createAgent(deps: AgentDeps) {
   async function run(): Promise<void> {
     await readInbox();
     for (;;) {
+      await tracker?.step("model request");
       const message = await deps.provider.complete({
         model: deps.model,
         system: deps.system,
@@ -98,7 +106,10 @@ export function createAgent(deps: AgentDeps) {
       for (const block of message.content) {
         if (block.type !== "tool_use") continue;
         write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`, true);
+        await tracker?.step(describeTool(block.name, block.input), true);
         const result = await runTool(block.name, block.input as Record<string, unknown>);
+        await tracker?.toolDone();
+        if (tracker && isReport(block.name, block.input, result)) await tracker.reported();
         results.push({ ...result, tool_use_id: block.id });
       }
       // Queued messages ride along after the tool results; they never cut a tool short.
@@ -111,7 +122,34 @@ export function createAgent(deps: AgentDeps) {
 }
 
 
-export async function runAgent(opts: AgentOptions): Promise<void> {
+/** A successful `message` to the orchestrator: what counts as reporting. */
+function isReport(name: string, input: unknown, result: ToolResultBlockParam): boolean {
+  const to = String((input as { to?: unknown } | null)?.to ?? "").trim();
+  return name === "message" && to === "orchestrator" && !result.is_error && String(result.content).startsWith("sent to");
+}
+
+/**
+ * Run an agent process. Workers and reviewers are supervised: a crash or an
+ * exit without a report sends an `[agent-exit]` notice to the orchestrator.
+ * Returns the process exit code.
+ */
+export async function runAgent(opts: AgentOptions): Promise<number> {
+  if (opts.role === "orchestrator" || !opts.branch) {
+    await startAgent(opts);
+    return 0;
+  }
+  const info = {
+    project: opts.project,
+    id: sessionId(opts.role, opts.branch),
+    run: opts.run || crypto.randomUUID().slice(0, 8),
+    role: opts.role,
+    branch: opts.branch,
+    cwd: process.cwd(),
+  };
+  return supervise(info, (tracker) => startAgent(opts, tracker));
+}
+
+async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> {
   const config = await loadConfig();
   // One transcript per role per branch, so a restart resumes it. spawn seeds
   // it with the prompt before starting this process.
@@ -134,6 +172,7 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     model: config.model,
     system: rolePrompt(opts.role, config),
     ctx: { project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
+    tracker,
   });
   await agent.run();
 }

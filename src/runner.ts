@@ -126,10 +126,22 @@ export const tmux = {
 
 // --- runner ------------------------------------------------------------------
 
-export function agentCommand(opts: StartOptions): string {
-  const parts = ["bun", q(CLI), "agent", "--project", q(opts.project), "--role", q(opts.role)];
-  if (opts.branch) parts.push("--branch", q(opts.branch));
-  return `PARALLELS_HOME=${q(paths.root)} ${parts.join(" ")}`;
+/**
+ * The tmux window's command: run the agent, and if it exits non-zero (a
+ * signal, OOM, an uncaught error) run `parallels agent-exit` after it, which
+ * sends the orchestrator an `[agent-exit]` notice unless this run already
+ * reported or sent one (src/exits.ts). Both share a run id. The script runs
+ * under `sh -c` as one single-quoted word, so the user's default shell only
+ * sees a quoted string, and every value inside is quoted again.
+ */
+export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID().slice(0, 8)): string {
+  const id = ["--project", q(opts.project), "--role", q(opts.role)];
+  if (opts.branch) id.push("--branch", q(opts.branch));
+  id.push("--run", q(run));
+  const cli = (cmd: string, ...rest: string[]) => ["PARALLELS_HOME=" + q(paths.root), "bun", q(CLI), cmd, ...id, ...rest].join(" ");
+  if (opts.role === "orchestrator" || !opts.branch) return cli("agent");
+  const script = `${cli("agent")}; code=$?; [ "$code" -ne 0 ] && ${cli("agent-exit", "--code", '"$code"')}; exit "$code"`;
+  return `sh -c ${q(script)}`;
 }
 
 export const local: Runner = {

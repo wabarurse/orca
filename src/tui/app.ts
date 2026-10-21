@@ -7,7 +7,7 @@
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deleteProject, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
+import { accountChoices, deleteProject, exitWatchdog, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
 import { format } from "node:util";
@@ -73,6 +73,8 @@ export interface AppDeps {
   login?: typeof login;
   /** How the project list checks for live agents and closes a deleted project's tmux session; tests stub them. */
   projects?: Pick<DeleteOptions, "live" | "kill">;
+  /** Exit watchdog run with each inbox poll (commands.ts exitWatchdog); tests stub it. */
+  watchdog?: (project: string) => Promise<unknown>;
 }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
@@ -195,7 +197,9 @@ export class App {
     const restoreConsole = this.captureConsole();
     term.onKey((k) => { this.onKey(k).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     term.onResize(() => this.resized());
+    const watch = this.deps.watchdog ?? exitWatchdog();
     const poll = setInterval(() => {
+      for (const p of this.pages) watch(p.project).catch(() => {});
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
     try {

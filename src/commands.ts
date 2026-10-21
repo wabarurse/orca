@@ -9,6 +9,7 @@ import { accounts, provider, type Account } from "./accounts";
 import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
 import { loadConfig, paths, saveConfig, validRounds, MAX_REVIEW_ROUNDS } from "./config";
+import { watchdog } from "./exits";
 import type { ProviderName } from "./providers/index";
 import { sessionName, tmux } from "./runner";
 
@@ -135,6 +136,14 @@ export const agentWindows = (windows: string[]) => windows.filter((w) => w !== "
 export async function liveAgents(project: string): Promise<string[]> {
   return agentWindows(await tmux.listWindows(sessionName(project)).catch(() => [] as string[]));
 }
+
+/**
+ * The TUI's exit watchdog, called on every inbox poll per open project: an
+ * agent whose tmux window vanished (closed by hand, tmux killed) without
+ * reporting or sending its own notice gets "[agent-exit] <id>'s window is
+ * gone" in the orchestrator's inbox. `live` is stubbed in tests.
+ */
+export const exitWatchdog = (live: (project: string) => Promise<string[]> = liveAgents) => watchdog(live);
 
 /** Close a project's (now idle) tmux session, if tmux is installed. */
 export async function killProjectSession(project: string): Promise<void> {

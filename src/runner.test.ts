@@ -53,12 +53,15 @@ describe("worktrees", () => {
   });
 });
 
-test("agentCommand passes PARALLELS_HOME and the cli flags", () => {
-  const cmd = agentCommand({ project: "p", role: "worker", branch: "feat/b" });
-  expect(cmd.startsWith(`PARALLELS_HOME='${home}' bun '`)).toBe(true);
-  expect(cmd.endsWith("agent --project 'p' --role 'worker' --branch 'feat/b'")).toBe(true);
+test("agentCommand passes PARALLELS_HOME and the cli flags, wrapping workers in the exit follow-up", () => {
+  const cmd = agentCommand({ project: "p", role: "worker", branch: "feat/b" }, "r1");
+  expect(cmd.startsWith(`sh -c 'PARALLELS_HOME='\\''${home}'\\'' bun '`)).toBe(true);
+  expect(cmd).toContain(`agent --project '\\''p'\\'' --role '\\''worker'\\'' --branch '\\''feat/b'\\'' --run '\\''r1'\\''; code=$?;`);
+  expect(cmd).toContain("agent-exit --project");
   expect(slug("feat/b c")).toBe("feat-b-c");
-  expect(agentCommand({ project: "p", role: "orchestrator" })).toContain("--role 'orchestrator'");
+  const orch = agentCommand({ project: "p", role: "orchestrator" }, "r1");
+  expect(orch.startsWith(`PARALLELS_HOME='${home}' bun '`)).toBe(true);
+  expect(orch).toContain("--role 'orchestrator'");
 });
 
 describe.skipIf(!hasTmux)("tmux", () => {
