@@ -16,7 +16,7 @@ export function makeSpawn(runner: Runner): Tool {
       input_schema: {
         type: "object",
         properties: {
-          prompt: { type: "string", description: "Everything the agent needs to know to do the job." },
+          prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
           branch: { type: "string", description: "Branch to work on; created from HEAD if new." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },

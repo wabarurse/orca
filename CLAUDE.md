@@ -22,7 +22,7 @@ Layout:
 - `src/runner.ts` — worktree + tmux backend
 - `src/inbox.ts` — one FIFO inbox per agent (`inbox/<agent>/`, a file per message); with the transcripts, the only state on disk. `message` sends to any address: `orchestrator`, `user`, or an agent id. Agents read their inbox before the first request, after each tool call (delivered with the tool results, never interrupting one), and after every turn, and keep going while messages arrive
 
-Each agent gets its task from the first user message (spawn's brief or the inbox) and the tool descriptions, so keep those descriptions precise. The system prompt is the provider's Claude Code/Codex identity line followed by the role prompt from `src/prompts.ts`; keep those prompts short lists.
+Each agent gets its task from the first user message (spawn's brief or the inbox) and the tool descriptions, so keep those descriptions precise. The system prompt is the provider's Claude Code/Codex identity line followed by the role prompt from `src/prompts.ts`; keep those prompts short lists. Agents' messages to the orchestrator are full reports with no length limit (the worker and reviewer prompts, the `message` description and spawn's `prompt` description say so); only the orchestrator's output to the user is concise.
 
 Rules:
 
