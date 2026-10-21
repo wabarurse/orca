@@ -104,20 +104,57 @@ interface ProjectListState { items: ProjectEntry[]; index: number; status: strin
 
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
 
-const HELP = [
-  "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)",
-  "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes",
-  "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
-  "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history",
-  "/keys shows what your terminal sends for a chord (Esc ends)",
-  "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
-  "/agents   /models [id]   /accounts   /login claude|codex [profile]",
-  "/review-rounds [n] review rounds before CI (0 = straight to CI)",
-  "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later",
+/**
+ * A slash command. Commands match by name (the text up to the first space).
+ * Without `args` only the bare name matches: "/quit now" is an unknown command.
+ * `run` gets the arguments trimmed ("" when none) and the active page, if any.
+ */
+export interface Command {
+  run(args: string, page: Page | undefined): Promise<void> | void;
+  /** Takes arguments: "/x" and "/x …" both match. */
+  args?: true;
+  /** Needs an open page: with none, a fresh orch-xxxx opens instead and the command is dropped (as for plain text and unknown commands). */
+  needsPage?: true;
+  /** Its /help text and the row it shares; none for /help itself. */
+  help?: { row: HelpRow; text: string };
+}
+
+/** Rows of /help that list commands, in table order; "view" shows only in an agent view. */
+type HelpRow = "projects" | "keys" | "pages" | "settings" | "review" | "questions" | "view";
+
+/** /help, top to bottom: key help as written, and the rows of commands from the table (joined by three spaces). */
+const HELP_LAYOUT: readonly (HelpRow | { text: string })[] = [
+  { text: "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)" },
+  "projects",
+  { text: "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words" },
+  { text: "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history" },
+  "keys",
+  "pages",
+  "settings",
+  "review",
+  "questions",
+  "view",
 ];
-/** Commands a question's answer can run (first word), as typed in chat. */
-const COMMANDS = new Set(["/quit", "/back", "/help", "/projects", "/questions", "/keys", "/new", "/rename", "/close", "/login", "/accounts", "/models", "/review-rounds", "/agents"]);
-const HELP_VIEW = "/back (or Esc) leaves the agent view";
+
+/** The /help lines for this command table; the "view" row only while viewing an agent. */
+export function helpLines(commands: ReadonlyMap<string, Command>, inView: boolean): string[] {
+  const all = [...commands.values()];
+  return HELP_LAYOUT.flatMap((entry) => {
+    if (typeof entry !== "string") return [entry.text];
+    if (entry === "view" && !inView) return [];
+    const texts = all.filter((c) => c.help?.row === entry).map((c) => c.help!.text);
+    return texts.length ? [texts.join("   ")] : [];
+  });
+}
+
+/** A typed line as a command: its name, trimmed arguments and table entry (none when unknown, or when it takes no arguments and got some); null for plain text. */
+export function parseCommand(text: string, commands: ReadonlyMap<string, Command>): { name: string; args: string; command?: Command } | null {
+  if (!text.startsWith("/")) return null;
+  const name = text.split(" ")[0]!;
+  const found = commands.get(name);
+  const command = found && (found.args || text === name) ? found : undefined;
+  return { name, args: text.slice(name.length).trim(), command };
+}
 
 /**
  * What a key means in the project list: a plain character's text or a named
@@ -128,6 +165,16 @@ const listKeyId = (k: Key): string | null => {
   if (k.ctrl || k.alt) return null;
   if (k.name === "char") return k.text ?? null;
   return k.name.length > 1 ? k.name : null;
+};
+
+/** One layer of key handling (App.keyLayers): `takes` only looks, `handle` acts. */
+export interface KeyLayer { name: string; takes(k: Key): boolean; handle(k: Key): Promise<void> | void }
+
+/** A menu key as up / down / enter / escape: k j q are ↑ ↓ Esc, Ctrl+P is ↑; other keys by name (doing nothing unless one of those). */
+const MENU_CHARS = new Map([["k", "up"], ["j", "down"], ["q", "escape"]]);
+const menuKeyId = (k: Key): string | undefined => {
+  if (k.name === "char") return MENU_CHARS.get(k.text ?? "");
+  return k.ctrl && k.name === "p" ? "up" : k.name;
 };
 
 /** A page shows activity while its turn runs or its agent view follows a live agent. */
@@ -208,7 +255,7 @@ export class App {
       record: (line, page) => app.record(page as Page, line),
       width: () => app.deps.term.cols - visibleLength(dim("answer> ")),
       now: () => app.clock.now(),
-      isCommand: (text) => COMMANDS.has(text.split(/\s/)[0]!),
+      isCommand: (text) => app.commands.has(text.split(" ")[0]!),
       run: (text) => { app.remember(text); return app.submit(text); },
       draw: () => app.draw(),
     }, deps.questions, deps.questionDelayMs ?? QUESTION_DELAY_MS);
@@ -671,6 +718,7 @@ export class App {
     const midTurn = `${label} is mid-turn; try again when it ends`;
     if (page?.busy) { list.status = dim(midTurn); return; }
     if (page) page.deleting = true;
+    let status: string;
     try {
       await deleteProject(name, {
         ...this.deps.projects,
@@ -681,12 +729,14 @@ export class App {
           if (at !== -1) this.closePage(at);
         },
       });
-      list.status = dim(`deleted ${label}`);
+      status = `deleted ${label}`;
     } catch (err) {
       if (page) page.deleting = false;
-      list.status = dim(err instanceof Error ? err.message : String(err));
+      status = err instanceof Error ? err.message : String(err);
     }
+    // The status goes up once the list shows the result, as for a pin.
     await this.refreshProjects();
+    if (this.projectList) this.projectList.status = dim(status);
   }
 
   private async runTurn(page: Page): Promise<void> {
@@ -798,33 +848,61 @@ export class App {
 
   // --- input ------------------------------------------------------------------
 
-  /** Every command works at any time: mid-turn, while viewing an agent, while signing in. */
+  /**
+   * The slash commands, by name. Every one works at any time: mid-turn, while
+   * viewing an agent and while signing in (a second /login is refused by
+   * login() itself). Table order is the order within a /help row.
+   */
+  readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
+    ["/projects", { run: () => this.openProjects(), help: { row: "projects", text: "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes" } }],
+    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { row: "keys", text: "/keys shows what your terminal sends for a chord (Esc ends)" } }],
+    ["/rename", { args: true, run: (args) => this.renamePage(args), help: { row: "pages", text: "/rename <name>" } }],
+    ["/new", { args: true, run: (args) => this.newCommand(args), help: { row: "pages", text: "/new [name] [git-url]" } }],
+    ["/close", { run: () => this.closePage(), help: { row: "pages", text: "/close closes this page" } }],
+    ["/quit", { run: () => this.quit(), help: { row: "pages", text: "/quit" } }],
+    ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { row: "settings", text: "/agents" } }],
+    ["/models", { args: true, run: (args) => this.modelsCommand(args), help: { row: "settings", text: "/models [id]" } }],
+    ["/accounts", { run: () => this.accountsMenu(), help: { row: "settings", text: "/accounts" } }],
+    ["/login", { args: true, run: (args) => this.login(args), help: { row: "settings", text: "/login claude|codex [profile]" } }],
+    ["/review-rounds", { args: true, run: async (args) => this.say(dim(await reviewRounds(args))), help: { row: "review", text: "/review-rounds [n] review rounds before CI (0 = straight to CI)" } }],
+    ["/questions", { run: (_, page) => this.questions.command(page), help: { row: "questions", text: "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later" } }],
+    ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { row: "view", text: "/back (or Esc) leaves the agent view" } }],
+    ["/help", { run: (_, page) => { for (const l of helpLines(this.commands, !!page?.view)) this.say(dim(l)); } }],
+  ]);
+
+  /** /new [name] [git-url]: the name must be a valid project id. */
+  private newCommand(args: string): Promise<void> | void {
+    const [name, url] = args.split(/\s+/).filter(Boolean);
+    if (name && !validProjectName(name)) return this.say(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
+    return this.newPage(name, url);
+  }
+
+  /** /models opens the menu; /models <id> sets any id. */
+  private async modelsCommand(id: string): Promise<void> {
+    if (!id) return this.modelsMenu();
+    this.say(dim(await setModel(id)));
+  }
+
+  /**
+   * A sent line, guarded in this order:
+   * 1. a known command that needs no page runs at once (agent view, sign-in, no page: all fine);
+   * 2. with no page open, anything else (/agents, an unknown command, plain text) opens a fresh orch-xxxx and is dropped;
+   * 3. a known command runs on the page;
+   * 4. an unknown one (or arguments to a command that takes none) says "unknown command /x";
+   * 5. plain text goes to the orchestrator (talk), refused in an agent view and queued while signing in.
+   */
   private async submit(text: string): Promise<void> {
+    const call = parseCommand(text, this.commands);
+    if (call?.command && !call.command.needsPage) return call.command.run(call.args, this.page);
     const page = this.page;
-    if (text === "/quit") return this.quit();
-    if (text === "/back") {
-      if (page?.view) return page.view.leave();
-      return this.say(dim("not viewing an agent"));
-    }
-    if (text === "/help") { for (const l of page?.view ? [...HELP, HELP_VIEW] : HELP) this.say(dim(l)); return; }
-    if (text === "/projects") return this.openProjects();
-    if (text === "/questions") return this.questions.command(page);
-    if (text === "/keys") { this.keyEcho = true; return this.say(dim("press keys; Esc ends")); }
-    if (text === "/new" || text.startsWith("/new ")) {
-      const [name, url] = text.slice(4).trim().split(/\s+/).filter(Boolean);
-      if (name && !validProjectName(name)) return this.say(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
-      return this.newPage(name, url);
-    }
-    if (text === "/rename" || text.startsWith("/rename ")) return this.renamePage(text.slice(7).trim());
-    if (text === "/close") return this.closePage();
-    if (text === "/login" || text.startsWith("/login ")) return this.login(text.slice(6).trim());
-    if (text === "/accounts") return this.accountsMenu();
-    if (text === "/models") return this.modelsMenu();
-    if (text.startsWith("/models ")) return this.say(dim(await setModel(text.slice(8).trim())));
-    if (text === "/review-rounds" || text.startsWith("/review-rounds ")) return this.say(dim(await reviewRounds(text.slice(14).trim())));
     if (!page) return this.newPage();
-    if (text === "/agents") return this.agentsMenu(page);
-    if (text.startsWith("/")) return this.say(dim(`unknown command ${text.split(" ")[0]}`));
+    if (call?.command) return call.command.run(call.args, page);
+    if (call) return this.say(dim(`unknown command ${call.name}`));
+    return this.talk(page, text);
+  }
+
+  /** Plain text for the page's orchestrator: refused while viewing an agent, held while signing in. */
+  private async talk(page: Page, text: string): Promise<void> {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     this.toPage(page, userLines(text));
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
@@ -836,46 +914,75 @@ export class App {
     this.runTurn(page);
   }
 
-  async onKey(k: Key): Promise<void> {
-    if (this.keyEcho) {
-      if (k.name === "escape") { this.keyEcho = false; return this.say(dim("done")); }
-      return this.say(dim(JSON.stringify(k)));
-    }
-    // Chords that work everywhere.
-    if (k.ctrl && k.name === "c") return this.quit();
-    if (k.ctrl && k.name === "n") return this.newPage();
-    // Plain control bytes, so they arrive in every terminal (the TUI runs in raw mode, so ^Z does not suspend).
-    if (k.ctrl && k.name === "z") return this.switchPage(-1);
-    if (k.ctrl && k.name === "x") return this.switchPage(1);
+  /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
+  private readonly chords = new Map<string, () => Promise<void> | void>([
+    ["c", () => this.quit()],
+    ["n", () => this.newPage()],
+    ["z", () => this.switchPage(-1)],
+    ["x", () => this.switchPage(1)],
+  ]);
 
-    // Ctrl+B (tmux's prefix, hence also /projects) toggles the project list; while it is open it takes the keys.
-    if (this.projectsTake(k)) return this.projectsKey(k);
-    if (this.menu) {
-      const m = this.menu;
-      if (k.name === "up" || (k.ctrl && k.name === "p") || (k.name === "char" && k.text === "k")) m.index = (m.index + m.items.length - 1) % m.items.length;
-      else if (k.name === "down" || (k.name === "char" && k.text === "j")) m.index = (m.index + 1) % m.items.length;
-      else if (k.name === "enter") { this.menu = null; await m.pick(m.index); }
-      else if (k.name === "escape" || (k.name === "char" && k.text === "q")) this.menu = null;
-      return this.draw();
-    }
-    if (this.questions.takes(k)) return this.questions.handle(k).then(() => this.draw());
-    if (k.name === "escape") {
-      if (this.page?.view) this.page.view.leave();
-      else this.input = { text: "", cursor: 0 };
-      return this.draw();
-    }
-    if (k.name === "enter" && !k.shift && !k.alt) {
-      // Drop blank lines around the message but keep the first line's indent.
-      const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
-      this.input = { text: "", cursor: 0 };
-      this.historyAt = -1;
-      if (!text) return this.draw();
-      this.remember(text);
-      this.draw();
-      return this.submit(text);
-    }
-    this.edit(k);
+  /**
+   * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
+   * 1. keyEcho: /keys echoes every key until Esc;
+   * 2. chords: Ctrl+C quits, Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages;
+   * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
+   * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
+   * 5. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
+   * 6. escape: leaves the agent view, else clears the input;
+   * 7. enter: Enter without Shift or Alt submits;
+   * 8. editor: the rest edits the input (EDITS, ↑↓ history).
+   */
+  readonly keyLayers: readonly KeyLayer[] = [
+    { name: "keyEcho", takes: () => this.keyEcho, handle: (k) => this.echoKey(k) },
+    { name: "chords", takes: (k) => !!k.ctrl && this.chords.has(k.name), handle: (k) => this.chords.get(k.name)!() },
+    { name: "projects", takes: (k) => this.projectsTake(k), handle: (k) => this.projectsKey(k) },
+    { name: "menu", takes: () => !!this.menu, handle: (k) => this.menuKey(k) },
+    { name: "questions", takes: (k) => this.questions.takes(k), handle: (k) => this.questions.handle(k).then(() => this.draw()) },
+    { name: "escape", takes: (k) => k.name === "escape", handle: () => this.escapeKey() },
+    { name: "enter", takes: (k) => k.name === "enter" && !k.shift && !k.alt, handle: () => this.enterKey() },
+    { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
+  ];
+
+  async onKey(k: Key): Promise<void> {
+    for (const layer of this.keyLayers) if (layer.takes(k)) return layer.handle(k);
+  }
+
+  /** /keys: show each key as parsed; Esc ends. */
+  private echoKey(k: Key): void {
+    if (k.name !== "escape") return this.say(dim(JSON.stringify(k)));
+    this.keyEcho = false;
+    this.say(dim("done"));
+  }
+
+  /** Keys while a menu is open: ↑ Ctrl+P k up, ↓ j down, Enter picks, Esc q cancels; the rest do nothing. */
+  private async menuKey(k: Key): Promise<void> {
+    const m = this.menu!;
+    const id = menuKeyId(k);
+    const n = m.items.length;
+    if (id === "up") m.index = (m.index + n - 1) % n;
+    else if (id === "down") m.index = (m.index + 1) % n;
+    else if (id === "enter") { this.menu = null; await m.pick(m.index); }
+    else if (id === "escape") this.menu = null;
+    return this.draw();
+  }
+
+  /** Esc: leave the agent view, else clear the input. */
+  private escapeKey(): void {
+    if (this.page?.view) this.page.view.leave();
+    else this.input = { text: "", cursor: 0 };
+    return this.draw();
+  }
+
+  /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
+  private enterKey(): Promise<void> | void {
+    const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
+    this.input = { text: "", cursor: 0 };
+    this.historyAt = -1;
+    if (!text) return this.draw();
+    this.remember(text);
     this.draw();
+    return this.submit(text);
   }
 
   /** Editing on the input area; the logic lives in editor.ts. */

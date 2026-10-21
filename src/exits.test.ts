@@ -317,17 +317,25 @@ describe("dirtyCount", () => {
   });
 
   test("uses --no-optional-locks and gives up after the timeout", async () => {
-    const bin = mkdtempSync(join(home, "gitbin-"));
-    const log = join(bin, "log");
-    writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$@" > '${log}'\nexec sleep 30\n`);
-    chmodSync(join(bin, "git"), 0o755);
+    // Two fake gits: one logs its arguments and exits at once (no timing involved), one hangs.
+    // A hanging git that logged first could be killed before it logged under load.
+    const fakeGit = (script: string) => {
+      const bin = mkdtempSync(join(home, "gitbin-"));
+      writeFileSync(join(bin, "git"), `#!/bin/sh\n${script}\n`);
+      chmodSync(join(bin, "git"), 0o755);
+      return bin;
+    };
+    const quick = fakeGit(`echo "$@" > "$(dirname "$0")/log"`);
+    const hangs = fakeGit("exec sleep 30");
     const path = process.env.PATH;
-    process.env.PATH = `${bin}:${path}`;
     try {
+      process.env.PATH = `${quick}:${path}`;
+      expect(await dirtyCount(home)).toBe(0);
+      expect(readFileSync(join(quick, "log"), "utf8").trim()).toBe("--no-optional-locks status --porcelain");
+      process.env.PATH = `${hangs}:${path}`;
       const started = Date.now();
       expect(await dirtyCount(home, 200)).toBe(null);
       expect(Date.now() - started).toBeLessThan(2000);
-      expect(readFileSync(log, "utf8").trim()).toBe("--no-optional-locks status --porcelain");
     } finally {
       process.env.PATH = path;
     }
