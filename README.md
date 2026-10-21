@@ -24,6 +24,17 @@ renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X mo
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
 `/help` for the rest of the commands.
 
+When the orchestrator asks you something (its `ask` tool queues questions
+without waiting), the oldest open question shows above the status line, like
+Codex's pending questions: ↑↓ picks an option and Enter answers with it; choose
+"type your own answer" or just start typing to answer in your own words (the
+prompt reads `answer>`; a question without options starts there); Esc skips it
+so the orchestrator uses its default; Tab puts the questions off so you can
+chat, until a new one arrives or you run `/questions`, which shows them again
+(and lists them when there are several). Each answer leaves one dim
+`? question → answer` line. The status line counts open questions on every
+page ("orch-x: 2 questions").
+
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
 
 ## The cycle
