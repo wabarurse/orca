@@ -322,3 +322,14 @@ describe("questions", () => {
     expect(rows(f).join("\n")).not.toContain("Which db?");
   });
 });
+
+test("wrapped styled text replays dim/red/bold on continuations and resets before unrelated output", () => {
+  const rows = wrap("\x1b[2mgray \x1b[31mred \x1b[1mbold\x1b[0m", 5);
+  expect(rows[1]!.startsWith("\x1b[2m")).toBe(true);
+  expect(rows[2]!.startsWith("\x1b[2m\x1b[31m\x1b[1m")).toBe(true);
+  const text = commit(["\x1b[2m0123456789", "normal"], 5);
+  expect(text).toContain("\x1b[2m01234\x1b[0m\x1b[0m\r\n\x1b[2m56789\x1b[0m\r\nnormal".slice(0, -6));
+  const s = new FakeScreen(5, 6);
+  s.write(text);
+  expect(s.text()).toBe("01234\n56789\nnorma\nl");
+});

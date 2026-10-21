@@ -1398,6 +1398,7 @@ describe("orchestrator questions", () => {
     const app = new App({ term, openOrchestrator, pollMs: 20, watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0, ...extra });
     const running = app.run(project);
     await until(() => !!app.page);
+    if (!extra.questions && (await allQuestions(project)).some((q) => q.status === "open")) await app.questions.command(app.page); // explicit opt-in
     return { term, orchs, app, running, inbox: (msgs: Message[]) => onInbox!(msgs), stop: async () => { app.quit(); await running; } };
   }
 
@@ -1436,25 +1437,20 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("a chat draft in the input when a question arrives stays chat: Enter sends it; then the question takes the keys", async () => {
-    const { term, orchs, app, stop } = await start("qa-guard");
+  test("arrival never steals a chat draft; Ctrl+Q opens explicitly and closing preserves it", async () => {
+    const { term, app, stop } = await start("qa-guard");
     term.type("hel");
     await ask1("qa-guard", "Which db?", ["postgres"]);
-    await until(() => live(term).includes("? Which db?") && live(term).includes(GUARD));
+    await until(() => app.page!.questions.open.length === 1);
+    expect(app.questions.view()).toBeNull();
     expect(app.input.text).toBe("hel");
-    term.type("\r");
-    await until(() => orchs.said["qa-guard"]?.length === 1);
-    expect(orchs.said["qa-guard"]).toEqual(["hel"]);
-    expect(await statusOf("qa-guard")).toEqual([["Which db?", "open", null]]);
-    await until(() => live(term).includes(PICK));
-    // Clearing the draft (Esc in chat) works the same way.
-    term.press({ name: "tab" });
-    term.type("abc");
-    await ask1("qa-guard", "Port?", ["80"]);
-    await until(() => live(term).includes(GUARD));
-    term.press({ name: "escape" });
-    await until(() => live(term).includes(PICK));
+    term.press({ name: "q", ctrl: true });
+    await until(() => !!app.questions.view());
     expect(app.input.text).toBe("");
+    term.press({ name: "escape" });
+    await until(() => !app.questions.view());
+    expect(app.input.text).toBe("hel");
+    expect(await statusOf("qa-guard")).toEqual([["Which db?", "open", null]]);
     await stop();
   });
 
@@ -1478,6 +1474,7 @@ describe("orchestrator questions", () => {
   test("typing answers in answer mode and keeps the chat draft aside; a question without options goes straight to answer mode; bad text is refused", async () => {
     const { term, orchs, app, stop } = await start("qa-typed");
     await ask1("qa-typed", "Which db?", ["postgres"], "postgres");
+    await app.questions.command(app.page);
     await until(() => live(term).includes("? Which db?"));
     term.type("mysql");
     await until(() => live(term).includes("answer> mysql") && live(term).includes(ANSWER));
@@ -1516,14 +1513,11 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("? Port? (1 of 2)"));
     term.type("90");
     await until(() => live(term).includes("answer> 90"));
-    term.press({ name: "escape" }); // clears the text, stays
-    await until(() => live(term).includes("answer>") && !live(term).includes("answer> 90"));
-    expect(live(term)).toContain("? Port?");
-    term.press({ name: "escape" }); // now empty: put off
+    term.press({ name: "escape" }); // close, preserving the answer
     await until(() => !live(term).includes("? Port?"));
     expect(await statusOf("qa-esc")).toEqual([["Port?", "open", null], ["Host?", "open", null]]);
     term.type("/questions\r");
-    await until(() => live(term).includes("❯ type your own answer")); // where it was left
+    await until(() => live(term).includes("answer> 90")); // preserved
     term.press({ name: "down" }); // to the skip row
     await until(() => live(term).includes("❯ skip (use default: 8080)"));
     term.press({ name: "enter" });
@@ -1593,6 +1587,7 @@ describe("orchestrator questions", () => {
     term.type("hello\r");
     await until(() => orchs.said["qa-updown"]?.length === 1);
     await ask1("qa-updown", "Name?");
+    await app.questions.command(app.page);
     await until(() => live(term).includes("answer>"));
     term.type("a\x1b[13;2ub"); // a, Shift+Enter, b
     expect(app.input).toEqual({ text: "a\nb", cursor: 3 });
@@ -1617,12 +1612,13 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("answer> my answer"));
     await answerQuestion("qa-moved", first!.id, "sqlite"); // another TUI
     await until(() => term.screen().includes('"Which db?" was answered elsewhere'));
-    await until(() => live(term).includes("? Port?") && live(term).includes(GUARD));
+    await until(() => !app.questions.view());
     expect(app.input.text).toBe("my answer");
     expect(live(term)).toContain("> my answer");
     expect(live(term)).not.toContain("answer> my answer");
     expect(app.page!.questions.answer.text).toBe("");
-    term.press({ name: "escape" }); // clear the draft: the next question takes the keys, with nothing carried over
+    term.press({ name: "escape" }); // clear chat draft
+    term.press({ name: "q", ctrl: true });
     await until(() => live(term).includes(PICK));
     expect(app.input.text).toBe("");
     expect(orchs.said["qa-moved"]).toEqual([]);
@@ -1639,8 +1635,9 @@ describe("orchestrator questions", () => {
     term.press({ name: "enter" });
     await until(() => term.screen().includes("already answered elsewhere; your answer was not sent"));
     expect(app.input.text).toBe("mine");
-    await until(() => live(term).includes(GUARD));
+    await until(() => !app.questions.view());
     term.press({ name: "escape" });
+    term.press({ name: "q", ctrl: true });
     // The orchestrator reads the other TUI's answer: shown as a restored page shows it.
     inbox(await drain("qa-race", "orchestrator"));
     await until(() => term.screen().includes("? Which db? → sqlite"));
@@ -1695,13 +1692,11 @@ describe("orchestrator questions", () => {
     term.press({ name: "u", ctrl: true });
 
     await ask1("qa-tab", "Port?");
-    await until(() => live(term).includes("? Which db? (1 of 2)")); // a new one: the queue shows again from the oldest
-    term.press({ name: "tab" });
+    await until(() => live(term).includes("2 questions")); // arrival only updates the count
     await until(() => !live(term).includes("? Which db?"));
     term.type("/questions\r");
     await until(() => live(term).includes("? Which db? (1 of 2)"));
-    expect(term.screen()).toContain("1. Which db?");
-    expect(term.screen()).toContain("2. Port?");
+    expect(live(term)).toContain("(1 of 2)");
     expect(orchs.said["qa-tab"]).toEqual(["hello"]);
     await stop();
   });
@@ -1716,6 +1711,8 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("qa-bg: 2 questions"));
     expect(live(term)).not.toContain("One?");
     term.type("\x18");
+    await until(() => app.page?.project === "qa-bg");
+    term.press({ name: "q", ctrl: true });
     await until(() => live(term).includes("? One? (1 of 2)"));
     expect(live(term)).toContain("2 questions");
     expect(live(term)).not.toContain("qa-bg: 2");
@@ -1764,9 +1761,10 @@ describe("orchestrator questions", () => {
     let reads = 0;
     const counting: QuestionStore = { ...fileStore, list: (p) => { reads++; return fileStore.list(p); } };
     const second = await start("qa-mtime", { pollMs: 5, questions: counting });
+    await second.app.questions.command(second.app.page);
     await until(() => live(second.term).includes("? Which db?"));
     await Bun.sleep(60);
-    expect(reads).toBe(1);
+    expect(reads).toBeLessThanOrEqual(2); // opening explicitly may re-read once
     await ask1("qa-mtime", "Port?"); // the dir changes: read again
     await until(() => live(second.term).includes("(1 of 2)"));
     expect(reads).toBeGreaterThanOrEqual(2);

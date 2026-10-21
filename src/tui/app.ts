@@ -473,6 +473,7 @@ export class App {
     const busy = this.pages.filter((p) => p !== page && active(p)).length;
     if (busy) parts.push(`${busy} busy`);
     parts.push(...this.questions.status(page, this.pages));
+    if (page.questions.open.length) parts.push("Ctrl+Q to view");
     const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
     if (queued) parts.push(`${queued} messages queued`);
     return dim(parts.join(" · "));
@@ -1025,6 +1026,7 @@ export class App {
   /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
   private readonly chords = new Map<string, () => Promise<void> | void>([
     ["c", () => this.quit()],
+    ["q", () => { if (!this.menu && !this.projectList) return this.questions.toggle(); }],
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
     ["x", () => this.switchPage(1)],

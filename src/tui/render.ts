@@ -139,10 +139,15 @@ export function wrap(line: string, cols: number): string[] {
   const out: string[] = [];
   let piece = "";
   let width = 0;
+  let style = "";
   for (const t of tokens(expandTabs(line))) {
-    if ("esc" in t) { piece += t.esc; continue; }
+    if ("esc" in t) {
+      piece += t.esc;
+      if (/^\x1b\[[0-9;:]*m$/.test(t.esc)) style = /^\x1b\[(?:0)?m$/.test(t.esc) ? "" : style + t.esc;
+      continue;
+    }
     for (const c of cells(t.text)) {
-      if (width > 0 && width + c.width > cols) { out.push(piece + "\x1b[0m"); piece = ""; width = 0; }
+      if (width > 0 && width + c.width > cols) { out.push(piece + "\x1b[0m"); piece = style; width = 0; }
       piece += c.text;
       width += c.width;
     }

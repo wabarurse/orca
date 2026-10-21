@@ -73,6 +73,7 @@ export interface PageQuestions {
   polling: Promise<void> | null;
   /** Put off (Tab, Esc): the ids open then; the queue shows again once another one is open. */
   hidden: Set<string> | null;
+  expanded: boolean;
   /** The selected row of the shown question: an option, then "type your own answer", then "skip". */
   index: number;
   /** The answer typed so far, while the input shows something else. */
@@ -110,14 +111,14 @@ const EMPTY: EditState = { text: "", cursor: 0 };
 /** How long Enter, digits and typing are ignored after a question first shows. */
 export const QUESTION_DELAY_MS = 500;
 
-export const pageQuestions = (): PageQuestions => ({ open: [], seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
+export const pageQuestions = (): PageQuestions => ({ open: [], seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, expanded: false, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
 
 type Mode = "chat" | QuestionMode;
 /** What the input holds in a mode: the chat draft, the question's answer, or nothing (a row is being picked). */
 const bufferOf = (m: Mode) => (m === "chat" || m === "guard" ? "chat" : m === "answer" ? "answer" : "none");
 
 const head = (q: PageQuestions) => q.open[0];
-const visible = (q: PageQuestions) => q.open.length > 0 && (!q.hidden || q.open.some((x) => !q.hidden!.has(x.id)));
+const visible = (q: PageQuestions) => q.expanded && q.open.length > 0 && (!q.hidden || q.open.some((x) => !q.hidden!.has(x.id)));
 const optionCount = (q: PageQuestions) => head(q)?.options?.length ?? 0;
 /** The "type your own answer" row; "skip" is the one after it. */
 const ownRow = (q: PageQuestions) => optionCount(q);
@@ -214,6 +215,7 @@ export class Questions {
     const q = page.questions;
     const inInput = this.shown.page === page && this.shown.mode === "answer";
     const typed = this.typed(page);
+    q.expanded = false;
     q.index = 0;
     q.answer = EMPTY;
     if (!typed.text.trim()) { if (inInput) this.host.input = EMPTY; }
@@ -227,7 +229,7 @@ export class Questions {
   /** The mode the active page wants now: what sync moves the input to. */
   private want(page = this.host.page()): Mode {
     if (!page || page.view || !visible(page.questions)) return "chat";
-    if (bufferOf(this.shown.mode) === "chat" && this.host.input.text.trim()) return "guard";
+
     return page.questions.index === ownRow(page.questions) ? "answer" : "pick";
   }
 
@@ -343,7 +345,6 @@ export class Questions {
 
   /** Esc never sends: it clears a typed answer, else puts the queue off. */
   private escape(page: QuestionPage): void {
-    if (this.shown.mode === "answer" && this.host.input.text) { this.host.input = EMPTY; return; }
     this.hide(page);
   }
 
@@ -400,8 +401,16 @@ export class Questions {
 
   /** Tab (or Esc on an empty input): put the queue off until a new question arrives or /questions. */
   private hide(page: QuestionPage): void {
+    page.questions.expanded = false;
     page.questions.hidden = new Set(page.questions.open.map((x) => x.id));
     this.sync();
+  }
+
+  /** Explicit toggle; closing never answers and keeps both the chat and answer drafts. */
+  async toggle(page = this.host.page()): Promise<void> {
+    if (!page) return;
+    if (page.questions.expanded) { this.hide(page); this.host.draw(); }
+    else await this.command(page);
   }
 
   // --- /questions ---------------------------------------------------------------
@@ -414,8 +423,9 @@ export class Questions {
     q.stamp = NaN;
     await this.pollPage(page);
     q.hidden = null;
+    q.expanded = true;
     if (!q.open.length) return this.host.say(dim("no open questions"), page);
-    if (q.open.length > 1) q.open.forEach((x, i) => this.host.say(dim(`${i + 1}. ${x.text}${x.default ? ` (default: ${x.default})` : ""}`), page));
+
     this.sync();
     this.host.draw();
   }
