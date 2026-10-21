@@ -59,7 +59,14 @@ with the normal system/tools/output reserve before publication. A shorter summar
 that still does not fit is rejected. Known over-budget normal requests are never
 sent blindly. `Context blocked: ...` errors direct the user to select a larger
 model/budget or reduce fixed instructions/tools; source and head are preserved.
-There is no chunking of an already oversized prefix.
+An already oversized summary source is processed in bounded, chronological
+fragments with a rolling summary. Each request budgets the actual escaped fragment,
+previous summary, summary instructions, output reserve and headroom. Large messages
+and tool results may span fragments as inert source text; the retained live tail
+still contains only complete turns. Unicode surrogate pairs stay together. Every
+fragment uses the same resolved provider/model/settings and completion validation.
+Intermediate summaries remain in memory; failure at any stage preserves the
+published transcript and head. Only the final checked checkpoint is committed.
 
 ## Summary and scheduling
 
@@ -88,7 +95,9 @@ There is no provider context-overflow recovery/replay: no tools or partial strea
 responses are replayed.
 
 The same account/model/effort/fast tier performs summarization, **consuming its
-normal quota**. This is not a cheap/free model or provider-native compaction API.
+normal quota**. Oversized sources require multiple summary requests and may lose
+more detail as their rolling summary is updated. This is not a cheap/free model
+or provider-native compaction API.
 OAuth subscription endpoints must not be assumed to implement native platform
 compaction. Codex rejects max_output_tokens, so its normal output reserve is only
 an estimate, not a wire-enforced cap. Its backend controls summary generation too:

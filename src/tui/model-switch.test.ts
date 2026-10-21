@@ -137,9 +137,10 @@ test("no-page /models real dispatch refuses without creating project/global writ
       expect(ui.app.pages).toHaveLength(0);
       expect(ui.opened).toHaveLength(1);
       expect(await effectiveModel("other")).toBe("gpt-6-astra");
-      ui.writes.length = 0;
       ui.app.reprint();
-      await until(() => ui.writes.join("").includes("open a project before changing its model"));
+      await Bun.sleep(30);
+      // An unchanged screen needs no repaint, and the notice stays available.
+      expect(ui.writes.join("")).toContain("open a project before changing its model");
     }
   } finally { await ui.close(); }
 });
@@ -205,8 +206,10 @@ test("effort/fast real command dispatch query, set, refuse and no-page feedback"
   try {
     ui.type("/effort\r"); await until(() => lines().includes("supported: default, low, medium, high, xhigh, max"));
     ui.type("/effort high\r"); await until(() => lines().includes("effort for gpt-6-astra: high"));
+    await until(() => ui.writes.some(s => s.includes("effort high · fast off")));
     ui.type("/fast\r"); await until(() => lines().includes("fast for gpt-6-astra: off"));
     ui.type("/fast on\r"); await until(() => lines().includes("fast for gpt-6-astra: on"));
+    await until(() => ui.writes.some(s => s.includes("effort high · fast on")));
     ui.type("/effort ultra\r"); await until(() => lines().includes("effort ultra is unsupported"));
     ui.type("/fast yes\r"); await until(() => lines().includes("usage: /fast"));
     ui.app.closePage();
