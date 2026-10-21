@@ -9,6 +9,7 @@ import { accounts, provider, type Account } from "./accounts";
 import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
 import { loadConfig, paths, saveConfig, validRounds, MAX_REVIEW_ROUNDS } from "./config";
+import { watchdog } from "./exits";
 import type { ProviderName } from "./providers/index";
 import { sessionName, tmux } from "./runner";
 
@@ -135,6 +136,19 @@ export const agentWindows = (windows: string[]) => windows.filter((w) => w !== "
 export async function liveAgents(project: string): Promise<string[]> {
   return agentWindows(await tmux.listWindows(sessionName(project)).catch(() => [] as string[]));
 }
+
+/** Like liveAgents, but null when tmux could not be asked, so the watchdog never mistakes an error for "all gone". */
+export async function liveAgentsOrNull(project: string): Promise<string[] | null> {
+  const windows = await tmux.windows(sessionName(project)).catch(() => null);
+  return windows && agentWindows(windows);
+}
+
+/**
+ * The TUI's exit watchdog (src/exits.ts), checked for every open page on each
+ * inbox poll: agents that stopped without reporting or sending their own
+ * notice get an `[agent-exit]` notice. `live` is stubbed in tests.
+ */
+export const exitWatchdog = (live: (project: string) => Promise<string[] | null> = liveAgentsOrNull) => watchdog({ live });
 
 /** Close a project's (now idle) tmux session, if tmux is installed. */
 export async function killProjectSession(project: string): Promise<void> {

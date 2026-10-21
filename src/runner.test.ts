@@ -20,8 +20,21 @@ beforeAll(async () => {
   await $`git -C ${repo} -c user.name=t -c user.email=t@t commit -q --allow-empty -m init`.quiet();
 });
 
+/** Wait until no agent process of this test's project is left (sh wrapper, agent, agent-exit), so nothing writes into home after it is removed. */
+async function agentsGone(): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if ((await $`pgrep -f -- ${project}`.quiet().nothrow()).exitCode !== 0) return;
+    await Bun.sleep(50);
+  }
+  throw new Error("agent processes still running");
+}
+
 afterAll(async () => {
-  if (hasTmux) await tmux.killSession(sessionName(project));
+  if (hasTmux) {
+    await tmux.killSession(sessionName(project));
+    await agentsGone();
+  }
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -53,12 +66,16 @@ describe("worktrees", () => {
   });
 });
 
-test("agentCommand passes PARALLELS_HOME and the cli flags", () => {
-  const cmd = agentCommand({ project: "p", role: "worker", branch: "feat/b" });
-  expect(cmd.startsWith(`PARALLELS_HOME='${home}' bun '`)).toBe(true);
-  expect(cmd.endsWith("agent --project 'p' --role 'worker' --branch 'feat/b'")).toBe(true);
+test("agentCommand is an argv: workers run the fixed sh -c wrapper with values as parameters", () => {
+  const cmd = agentCommand({ project: "p", role: "worker", branch: "feat/b" }, "r1");
+  expect(cmd.slice(0, 2)).toEqual(["sh", "-c"]);
+  expect(cmd.slice(3)).toEqual(["sh", home, expect.stringMatching(/cli\.ts$/), "p", "worker", "feat/b", "r1"]);
+  expect(cmd[2]).toContain(`agent --project "$3" --role "$4" --branch "$5" --run "$6"`);
+  expect(cmd[2]).toContain("0|70) ;;");
+  expect(cmd[2]).not.toContain(home);
   expect(slug("feat/b c")).toBe("feat-b-c");
-  expect(agentCommand({ project: "p", role: "orchestrator" })).toContain("--role 'orchestrator'");
+  const orch = agentCommand({ project: "p", role: "orchestrator" }, "r1");
+  expect(orch).toEqual(["env", `PARALLELS_HOME=${home}`, "bun", expect.stringMatching(/cli\.ts$/), "agent", "--project", "p", "--role", "orchestrator"]);
 });
 
 describe.skipIf(!hasTmux)("tmux", () => {
@@ -76,6 +93,7 @@ describe.skipIf(!hasTmux)("tmux", () => {
     expect(await tmux.listWindows(session)).toContain("reviewer-task-t3");
 
     await local.stop(project, "task/t3");
+    await agentsGone();
     expect(existsSync(dir)).toBe(false);
     expect((await tmux.listWindows(session)).some((w) => w.endsWith("-task-t3"))).toBe(false);
     expect(await tmux.hasSession(session)).toBe(true);

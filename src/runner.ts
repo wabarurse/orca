@@ -33,11 +33,6 @@ function need(bin: string): string {
   return found;
 }
 
-/** Single-quote a string for a POSIX shell. */
-function q(s: string): string {
-  return `'${s.replaceAll("'", `'\\''`)}'`;
-}
-
 /** A branch name as a safe directory / window / transcript name. */
 export const slug = (branch: string) => branch.replace(/[^A-Za-z0-9._-]+/g, "-");
 export const sessionName = (project: string) => `parallels-${project}`;
@@ -94,17 +89,29 @@ export const tmux = {
     if (res.exitCode !== 0) throw new Error(`runner: tmux new-session failed: ${res.stderr.toString().trim()}`);
   },
 
-  /** Open a named window in `session` running `command` (a shell string) in `cwd`. */
-  async openWindow(session: string, name: string, cwd: string, command: string): Promise<void> {
+  /** Open a named window in `session` in `cwd`, running `command`: a shell string (run by tmux's default shell) or an argv (exec'd directly). */
+  async openWindow(session: string, name: string, cwd: string, command: string | string[]): Promise<void> {
     need("tmux");
-    const res = await $`tmux new-window -d -t ${"=" + session} -n ${name} -c ${cwd} ${command}`.quiet().nothrow();
+    const argv = typeof command === "string" ? [command] : ["--", ...command];
+    const res = await $`tmux new-window -d -t ${"=" + session} -n ${name} -c ${cwd} ${argv}`.quiet().nothrow();
     if (res.exitCode !== 0) throw new Error(`runner: tmux new-window failed: ${res.stderr.toString().trim()}`);
   },
 
   async listWindows(session: string): Promise<string[]> {
-    if (!(await tmux.hasSession(session))) return [];
+    return (await tmux.windows(session)) ?? [];
+  },
+
+  /**
+   * A session's window names: [] when the session or the tmux server is gone,
+   * null when tmux could not be asked (not installed, or any other error), so
+   * callers can tell "no windows" from "don't know".
+   */
+  async windows(session: string): Promise<string[] | null> {
+    if (!Bun.which("tmux")) return null;
     const out = await $`tmux list-windows -t ${"=" + session} -F ${"#{window_name}"}`.quiet().nothrow();
-    return out.stdout.toString().split("\n").filter(Boolean);
+    if (out.exitCode === 0) return out.stdout.toString().split("\n").filter(Boolean);
+    const err = out.stderr.toString();
+    return /can't find session|no server running|error connecting to .*\((No such file or directory|Connection refused)\)/i.test(err) ? [] : null;
   },
 
   async killWindow(session: string, name: string): Promise<void> {
@@ -126,10 +133,35 @@ export const tmux = {
 
 // --- runner ------------------------------------------------------------------
 
-export function agentCommand(opts: StartOptions): string {
-  const parts = ["bun", q(CLI), "agent", "--project", q(opts.project), "--role", q(opts.role)];
-  if (opts.branch) parts.push("--branch", q(opts.branch));
-  return `PARALLELS_HOME=${q(paths.root)} ${parts.join(" ")}`;
+/** Exit code of an agent whose run is already closed (its crash notice went out, or it ended on a report); the follow-up skips it. */
+export const SETTLED_EXIT = 70;
+
+/**
+ * The follow-up script run by `sh -c` around a worker or reviewer. Values
+ * arrive as positional parameters ($1 PARALLELS_HOME, $2 cli.ts, $3 project,
+ * $4 role, $5 branch, $6 run id), never spliced into the script, so nothing
+ * is quoted at all.
+ */
+const WRAPPER = [
+  `PARALLELS_HOME="$1" bun "$2" agent --project "$3" --role "$4" --branch "$5" --run "$6"`,
+  `code=$?`,
+  `case "$code" in 0|${SETTLED_EXIT}) ;; *) PARALLELS_HOME="$1" bun "$2" agent-exit --project "$3" --role "$4" --branch "$5" --run "$6" --code "$code" ;; esac`,
+  `exit "$code"`,
+].join("\n");
+
+/**
+ * The tmux window's command as an argv, which tmux execs directly without the
+ * user's default shell (fish, zsh, ...). Workers and reviewers run under a
+ * fixed `sh -c` script: if the agent exits non-zero and not SETTLED_EXIT (a
+ * signal, OOM, an uncaught error), `parallels agent-exit` sends the
+ * orchestrator an `[agent-exit]` notice unless the run is already closed
+ * (src/exits.ts). Both share one run id.
+ */
+export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID().slice(0, 8)): string[] {
+  if (opts.role === "orchestrator" || !opts.branch) {
+    return ["env", `PARALLELS_HOME=${paths.root}`, "bun", CLI, "agent", "--project", opts.project, "--role", opts.role];
+  }
+  return ["sh", "-c", WRAPPER, "sh", paths.root, CLI, opts.project, opts.role, opts.branch, run];
 }
 
 export const local: Runner = {

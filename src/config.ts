@@ -7,6 +7,8 @@
 //       repo/                  the orchestrator's clone
 //       worktrees/<branch>/    one per branch, removed when done
 //       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
+//       runs/<agent>.json       the agent's current run: run id, pid, reported or running, last step (src/exits.ts)
+//       runs/<agent>.<run>.exit a run's close claim: created once, by whoever sends its exit notice (or none)
 //       questions/             the orchestrator's open questions for the user, a file each
 //       transcripts/<role>-<branch>.jsonl   one per agent; the only memory
 
@@ -24,6 +26,7 @@ export const paths = {
   repo: (name: string) => join(root(), "projects", name, "repo"),
   worktree: (name: string, slug: string) => join(root(), "projects", name, "worktrees", slug),
   inbox: (name: string) => join(root(), "projects", name, "inbox"),
+  runs: (name: string) => join(root(), "projects", name, "runs"),
   questions: (name: string) => join(root(), "projects", name, "questions"),
   transcript: (name: string, id: string) => join(root(), "projects", name, "transcripts", `${id}.jsonl`),
 };
