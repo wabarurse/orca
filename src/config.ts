@@ -36,6 +36,8 @@ export const paths = {
 
 export interface Config {
   model: string;
+  compact: boolean;
+  contextLimitFallback: number;
   /** Claude subscription profile saved by /login anthropic. Empty = default. */
   account: string;
   /** Codex/ChatGPT subscription profile saved by /login openai. Empty = default. */
@@ -53,6 +55,8 @@ export interface Config {
 
 export const defaults: Config = {
   model: "claude-sonnet-5-5",
+  compact: true,
+  contextLimitFallback: 128000,
   account: "",
   openaiAccount: "",
   maxToolResultBytes: 16 * 1024,

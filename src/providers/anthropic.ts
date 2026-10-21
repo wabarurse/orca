@@ -25,7 +25,7 @@ export function anthropic(client: Anthropic): Provider {
         ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : undefined);
       stream.on("text", req.onText);
       const message = await stream.finalMessage();
-      return { content: message.content, stop: message.stop_reason === "tool_use" ? "tool_use" : "end" };
+      return { ...(message.usage ? { inputTokens: message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0) } : {}), content: message.content, stop: message.stop_reason === "tool_use" ? "tool_use" : "end" };
     },
     async models() {
       const all: { id: string; created_at: string }[] = [];

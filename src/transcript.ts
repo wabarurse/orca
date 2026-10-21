@@ -1,10 +1,11 @@
 // Append-only JSONL, one line per entry. Entries form a tree via parentUuid;
 // the conversation sent to the model is the chain from the latest leaf back
 // to the root. Compaction appends a `summary` entry whose parent is the last
-// message; the chain from there forward is the new context.
+// message; its retained tail and the chain forward are the new context.
+// history() walks past checkpoints for UI replay without duplicating retained turns.
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { appendFile } from "node:fs/promises";
+import { open as openFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 
@@ -24,6 +25,9 @@ export interface MessageEntry extends BaseEntry {
 export interface SummaryEntry extends BaseEntry {
   type: "summary";
   text: string;
+  /** Atomic context checkpoint; originals remain in the parent chain. */
+  retained?: MessageParam[];
+  boundary?: string | null;
 }
 
 export interface MetaEntry extends BaseEntry {
@@ -56,19 +60,20 @@ export interface Transcript {
   chain(): Promise<MessageParam[]>;
   /** The entries of that walk, oldest first, the summary (if any) first: what the conversation is now. */
   branch(): Entry[];
+  history?(): Entry[];
   /** uuid of the latest entry, used as parentUuid for the next append. */
   head(): string | null;
 }
 
 /** The entries from `head` back to the root or the latest summary, oldest first (a loop in the parent pointers ends the walk). */
-function walk(byUuid: Map<string, Entry>, head: string | null): Entry[] {
+function walk(byUuid: Map<string, Entry>, head: string | null, context = true): Entry[] {
   const entries: Entry[] = [];
   const seen = new Set<string>();
   let cur = head ? byUuid.get(head) : undefined;
   while (cur && !seen.has(cur.uuid)) {
     seen.add(cur.uuid);
     entries.push(cur);
-    if (cur.type === "summary") break;
+    if (context && cur.type === "summary") break;
     cur = cur.parentUuid ? byUuid.get(cur.parentUuid) : undefined;
   }
   return entries.reverse();
@@ -78,10 +83,13 @@ export function open(path: string): Transcript {
   mkdirSync(dirname(path), { recursive: true });
   const byUuid = new Map<string, Entry>();
   let head: string | null = null;
+  let separator = "";
 
   // Eager load. A partial last line (crash mid-write) is dropped, not fatal.
   if (existsSync(path)) {
-    for (const line of readFileSync(path, "utf8").split("\n")) {
+    const raw = readFileSync(path, "utf8");
+    separator = raw && !raw.endsWith("\n") ? "\n" : "";
+    for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       let entry: Entry;
       try {
@@ -100,6 +108,7 @@ export function open(path: string): Transcript {
     path,
     head: () => head,
     branch,
+    history: () => walk(byUuid, head, false).filter(e => e.type !== "summary" || !e.retained),
 
     async append(partial) {
       const entry = {
@@ -108,7 +117,12 @@ export function open(path: string): Transcript {
         uuid: crypto.randomUUID(),
         ts: new Date().toISOString(),
       } as Entry;
-      await appendFile(path, JSON.stringify(entry) + "\n");
+      const file = await openFile(path, "a");
+      try {
+        await file.write(separator + JSON.stringify(entry) + "\n");
+        separator = "";
+        await file.sync();
+      } finally { await file.close(); }
       byUuid.set(entry.uuid, entry);
       head = entry.uuid;
       return entry;
@@ -116,7 +130,7 @@ export function open(path: string): Transcript {
 
     async chain() {
       return branch().flatMap((e): MessageParam[] => {
-        if (e.type === "summary") return [{ role: "user", content: e.text }];
+        if (e.type === "summary") return [{ role: "user", content: e.text }, ...(e.retained ?? [])];
         return e.type === "message" ? [e.message] : [];
       });
     },

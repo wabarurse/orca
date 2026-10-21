@@ -12,6 +12,7 @@ export interface Turn {
   content: ContentBlock[];
   /** Whether the model wants tools run before it continues. */
   stop: "end" | "tool_use";
+  inputTokens?: number;
 }
 
 export interface CompleteRequest {
