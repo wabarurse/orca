@@ -7,11 +7,11 @@ import { existsSync, mkdirSync } from "node:fs";
 import { provider as providerFromAccounts } from "./accounts";
 import { createAgent } from "./agent";
 import { loadConfig, paths } from "./config";
-import { drain, parseFormatted, pending, put, type Message } from "./inbox";
+import { drain, pending, put, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { providerFor, type Provider } from "./providers/index";
 import { registry, toolsFor, type Tool } from "./tools/index";
-import { open, type Transcript } from "./transcript";
+import { open, type Entry, type Transcript } from "./transcript";
 
 export interface OrchestratorDeps {
   project: string;
@@ -20,8 +20,8 @@ export interface OrchestratorDeps {
   transcript?: Transcript;
   /** Streamed model text; `plain` marks tool lines, which are not markdown. */
   write?: (text: string, plain?: boolean) => void;
-  /** Each message from an agent (not the user) as the orchestrator reads it from its inbox. */
-  report?: (from: string, text: string) => void;
+  /** Each batch of inbox messages (the user's and agents') as the orchestrator reads it. */
+  onInbox?: (msgs: Message[]) => void;
 }
 
 export interface Orchestrator {
@@ -31,6 +31,8 @@ export interface Orchestrator {
   pending(): Promise<boolean>;
   /** Run one turn over the inbox. Returns what was sent to the user meanwhile. */
   turn(): Promise<Message[]>;
+  /** The current branch of its transcript, oldest first, as loaded (transcript.ts `branch`): what the TUI rebuilds the page from. */
+  entries?(): Entry[];
 }
 
 /**
@@ -48,7 +50,7 @@ export async function ensureProject(project: string, url?: string): Promise<void
 export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orchestrator> {
   const { project } = deps;
   const config = await loadConfig();
-  const transcript = reporting(deps.transcript ?? open(paths.transcript(project, "orchestrator")), deps.report);
+  const transcript = deps.transcript ?? open(paths.transcript(project, "orchestrator"));
   if (transcript.head() === null) {
     await transcript.append({ type: "meta", role: "orchestrator", model: config.model });
   }
@@ -59,6 +61,7 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   return {
     say: (text) => put(project, "orchestrator", { from: "user", text }).then(() => {}),
     pending: () => pending(project, "orchestrator"),
+    entries: () => transcript.branch(),
     async turn() {
       // run() drains the inbox itself and keeps going while messages arrive.
       if (!(await pending(project, "orchestrator"))) return [];
@@ -73,32 +76,14 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
         system: rolePrompt("orchestrator", config),
         ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
         write: deps.write,
+        onInbox: deps.onInbox,
       });
       await agent.run();
-      return drain(project, "user");
+      const replies = await drain(project, "user");
+      // Kept in the transcript so a restored page shows them where they showed live: after the turn.
+      if (replies.length) await transcript.append({ type: "replies", messages: replies.map(({ from, text }) => ({ from, text })) });
+      return replies;
     },
   };
 }
 
-/**
- * The transcript, telling `report` about every agent message as it is
- * appended: the inbox reaches the transcript as user turns (or text riding
- * with tool results) in inbox.ts `format`.
- */
-function reporting(transcript: Transcript, report: OrchestratorDeps["report"]): Transcript {
-  if (!report) return transcript;
-  return {
-    ...transcript,
-    head: () => transcript.head(),
-    chain: () => transcript.chain(),
-    async append(entry) {
-      const out = await transcript.append(entry);
-      if (entry.type === "message" && entry.message.role === "user") {
-        const { content } = entry.message;
-        const texts = typeof content === "string" ? [content] : content.flatMap((b) => (b.type === "text" ? [b.text] : []));
-        for (const m of texts.flatMap(parseFormatted)) if (m.from && m.from !== "user") report(m.from, m.text);
-      }
-      return out;
-    },
-  };
-}

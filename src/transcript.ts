@@ -33,7 +33,13 @@ export interface MetaEntry extends BaseEntry {
   model: string;
 }
 
-export type Entry = MessageEntry | SummaryEntry | MetaEntry;
+/** What a turn sent the user (drained from the user's inbox when it ended), so a page can show it again where it showed live. */
+export interface RepliesEntry extends BaseEntry {
+  type: "replies";
+  messages: { from: string; text: string }[];
+}
+
+export type Entry = MessageEntry | SummaryEntry | MetaEntry | RepliesEntry;
 
 /** An entry as passed to append(): uuid/ts are filled in, parentUuid defaults to head(). */
 export type NewEntry = Entry extends infer E
@@ -48,8 +54,24 @@ export interface Transcript {
   append(entry: NewEntry): Promise<Entry>;
   /** Walk from the latest leaf to the root (or latest summary) and return API messages. */
   chain(): Promise<MessageParam[]>;
+  /** The entries of that walk, oldest first, the summary (if any) first: what the conversation is now. */
+  branch(): Entry[];
   /** uuid of the latest entry, used as parentUuid for the next append. */
   head(): string | null;
+}
+
+/** The entries from `head` back to the root or the latest summary, oldest first (a loop in the parent pointers ends the walk). */
+function walk(byUuid: Map<string, Entry>, head: string | null): Entry[] {
+  const entries: Entry[] = [];
+  const seen = new Set<string>();
+  let cur = head ? byUuid.get(head) : undefined;
+  while (cur && !seen.has(cur.uuid)) {
+    seen.add(cur.uuid);
+    entries.push(cur);
+    if (cur.type === "summary") break;
+    cur = cur.parentUuid ? byUuid.get(cur.parentUuid) : undefined;
+  }
+  return entries.reverse();
 }
 
 export function open(path: string): Transcript {
@@ -72,9 +94,12 @@ export function open(path: string): Transcript {
     }
   }
 
+  const branch = () => walk(byUuid, head);
+
   return {
     path,
     head: () => head,
+    branch,
 
     async append(partial) {
       const entry = {
@@ -90,17 +115,10 @@ export function open(path: string): Transcript {
     },
 
     async chain() {
-      const messages: MessageParam[] = [];
-      let cur = head ? byUuid.get(head) : undefined;
-      while (cur) {
-        if (cur.type === "summary") {
-          messages.push({ role: "user", content: cur.text });
-          break;
-        }
-        if (cur.type === "message") messages.push(cur.message);
-        cur = cur.parentUuid ? byUuid.get(cur.parentUuid) : undefined;
-      }
-      return messages.reverse();
+      return branch().flatMap((e): MessageParam[] => {
+        if (e.type === "summary") return [{ role: "user", content: e.text }];
+        return e.type === "message" ? [e.message] : [];
+      });
     },
   };
 }

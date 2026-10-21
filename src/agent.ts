@@ -6,12 +6,13 @@ import type { ContentBlock, TextBlockParam, ToolResultBlockParam } from "@anthro
 import { provider as providerFromAccounts } from "./accounts";
 import { loadConfig, paths } from "./config";
 import { supervise, type Tracker } from "./exits";
-import { drain, format } from "./inbox";
+import { drain, format, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { providerFor, type Provider } from "./providers/index";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
+import { toolLine } from "./view";
 
 export interface AgentOptions {
   project: string;
@@ -33,6 +34,8 @@ export interface AgentDeps {
   write?: (text: string, plain?: boolean) => void;
   /** Records steps and reports for exit notices (src/exits.ts); absent for the orchestrator and in most tests. */
   tracker?: Tracker;
+  /** Each batch of inbox messages as it is read, before it reaches the transcript (the TUI shows them). */
+  onInbox?: (msgs: Message[]) => void;
 }
 
 const MAX_TOKENS = 64000;
@@ -71,7 +74,7 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
   const results: ToolResultBlockParam[] = [];
   for (const block of content) {
     if (block.type !== "tool_use") continue;
-    write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`, true);
+    write(`${toolLine(block.name, block.input)}\n`, true);
     results.push(await runTracked(deps, block));
   }
   return results;
@@ -81,6 +84,7 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
 async function inboxBlock(deps: AgentDeps): Promise<TextBlockParam | null> {
   const msgs = await drain(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch));
   if (!msgs.length) return null;
+  deps.onInbox?.(msgs);
   await deps.tracker?.instructed();
   return { type: "text", text: format(msgs) };
 }

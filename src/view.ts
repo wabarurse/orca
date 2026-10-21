@@ -13,6 +13,9 @@ const firstLine = (s: string, max = 100) => {
   return line.length > max ? line.slice(0, max) + "…" : line;
 };
 
+/** A tool call as the agent loop echoes it while it runs (and the TUI shows it, live or restored). */
+export const toolLine = (name: string, input: unknown): string => dim(`▸ ${name} ${JSON.stringify(input).slice(0, 100)}`);
+
 /** A piece of an entry as shown: plain styled text, or an assistant's markdown (`md`) for a renderer that lays it out. */
 export type Part = string | { md: string };
 
@@ -33,6 +36,7 @@ function blockPart(block: Block, text: (t: string) => Part): Part | null {
 export function parts(entry: Entry): Part[] | null {
   if (entry.type === "meta") return [dim(`— ${entry.role}${entry.branch ? ` on ${entry.branch}` : ""} (${entry.model || "default model"})`)];
   if (entry.type === "summary") return [dim(`— compacted: ${firstLine(entry.text)}`)];
+  if (entry.type === "replies") return entry.messages.flatMap((m): Part[] => [dim(`${m.from} → user:`), { md: m.text }]);
   const { role, content } = entry.message;
   const text = (t: string): Part => (role === "user" ? `${bold(">")} ${t}` : { md: t });
   if (typeof content === "string") return [text(content)];

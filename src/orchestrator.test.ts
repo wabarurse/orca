@@ -88,3 +88,21 @@ test("ensureProject starts an empty repository when no url is given", async () =
   await ensureProject("fresh"); // idempotent
   expect(await head.exists()).toBe(true);
 });
+
+test("onInbox gets each batch as it is read, and the turn's replies are kept in the transcript", async () => {
+  const provider = fakeProvider([
+    [toolUse("tu9", "message", { to: "user", text: "On it." })],
+    [text("ok")],
+  ]);
+  const seen: string[][] = [];
+  const orch = await createOrchestrator({ project: "inboxes", provider, tools, write: () => {}, onInbox: (msgs) => seen.push(msgs.map((m) => `${m.from}: ${m.text}`)) });
+  await put("inboxes", "orchestrator", { from: "user", text: "hi" });
+  await put("inboxes", "orchestrator", { from: "worker-a", text: "done" });
+  expect((await orch.turn()).map((r) => r.text)).toEqual(["On it."]);
+  expect(seen).toEqual([["user: hi", "worker-a: done"]]);
+  const branch = orch.entries!();
+  expect(branch.at(-1)).toMatchObject({ type: "replies", messages: [{ from: "orchestrator", text: "On it." }] });
+  expect(open(paths.transcript("inboxes", "orchestrator")).branch().map((e) => e.type)).toEqual(branch.map((e) => e.type));
+  // The replies entry is not sent to the model.
+  expect((await open(paths.transcript("inboxes", "orchestrator")).chain()).length).toBe(branch.filter((e) => e.type === "message").length);
+});
