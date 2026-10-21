@@ -32,36 +32,78 @@ const runAt = (s: string, i: number) => {
   return k - i;
 };
 
-/** Where an emphasis run of `n` × `c` closes after `from`, as [content end, after closer], or null. */
+/** Where the code span opened by the backtick run at `i` ends (just past its closing run), or -1 when it never closes. */
+function codeEnd(s: string, i: number): number {
+  const r = runAt(s, i);
+  const fence = "`".repeat(r);
+  let j = s.indexOf(fence, i + r);
+  while (j !== -1 && runAt(s, j) !== r) j = s.indexOf(fence, j + runAt(s, j));
+  return j === -1 ? -1 : j + r;
+}
+
+/** Past an escape or a code span at `j` (their characters never close emphasis), or `j` itself. */
+function skipAt(s: string, j: number): number {
+  if (s[j] === "\\") return j + 2;
+  if (s[j] !== "`") return j;
+  const end = codeEnd(s, j);
+  return end === -1 ? j + runAt(s, j) : end;
+}
+
+/** A run of `n` delimiters at `j` may open: it follows no letter or digit (so snake_case, 2*3 stay literal) and a non-space follows it. */
+const canOpen = (s: string, j: number, n: number) => !isAlnum(s[j - 1]) && !isSpace(s[j + n]);
+/** A run of `r` at `j` may close: it follows a non-space and no letter or digit follows it. */
+const canClose = (s: string, j: number, r: number, from: number) => j > from && !isSpace(s[j - 1]) && !isAlnum(s[j + r]);
+
+/**
+ * Where an emphasis run of `n` × `c` opened just before `from` closes, as
+ * [content end, after closer], or null. Escapes and code spans are skipped; a
+ * run of exactly `n` closes; a run that opens a span of its own is skipped
+ * with that span (so `*a **b** c*` nests); a longer run that cannot open
+ * closes with its first `n`, leaving the rest to an outer span (so
+ * `**a *b***` closes both, as in CommonMark).
+ */
 function closer(s: string, from: number, c: string, n: number): [number, number] | null {
-  for (let j = from; j < s.length; j++) {
-    if (s[j] !== c) continue;
-    const r = runAt(s, j);
-    // A closer follows a non-space and is not followed by a letter or digit (so snake_case and 2*3*4 stay literal).
-    if (r >= n && j > from && !isSpace(s[j - 1]) && !isAlnum(s[j + r])) return [j + r - n, j + r];
-    j += r - 1;
+  let j = from;
+  while (j < s.length) {
+    const skip = skipAt(s, j);
+    if (skip !== j || s[j] !== c) { j = Math.max(skip, j + 1); continue; }
+    const step = atRun(s, j, from, n);
+    if (Array.isArray(step)) return step;
+    j = step;
   }
   return null;
 }
 
+/** At a run of the delimiter at `j`: where it closes the span, or where to scan on past it (and any span it opens). */
+function atRun(s: string, j: number, from: number, n: number): [number, number] | number {
+  const r = runAt(s, j);
+  const closes = canClose(s, j, r, from);
+  if (closes && r === n) return [j, j + r];
+  const m = Math.min(r, 3);
+  const inner = canOpen(s, j, m) ? closer(s, j + m, s[j]!, m) : null;
+  if (inner) return inner[1];
+  return closes && r > n ? [j, j + n] : j + r;
+}
+
 const EMPHASIS: Record<string, Record<number, string>> = {
-  "*": { 1: SGR.italic, 2: SGR.bold },
-  _: { 1: SGR.italic, 2: SGR.bold },
+  "*": { 1: SGR.italic, 2: SGR.bold, 3: SGR.bold + SGR.italic },
+  _: { 1: SGR.italic, 2: SGR.bold, 3: SGR.bold + SGR.italic },
   "~": { 2: SGR.strike },
 };
 
 /**
- * *italic*, **bold**, ~~strike~~. Stricter than CommonMark on purpose: an
+ * *italic*, **bold**, ***both***, ~~strike~~. Stricter than CommonMark on purpose: an
  * opener never follows a letter or digit, for * as for _, so 2*3, a*b*c and
- * snake_case stay literal. An unmatched run is literal as a whole.
+ * snake_case stay literal. An unmatched run is literal as a whole (a run is
+ * never split between an opener and a closer as CommonMark may).
  */
 const emphasis: Rule = (s, i, outer) => {
   const c = s[i]!;
   const r = runAt(s, i);
-  const n = Math.min(r, 2);
+  const n = Math.min(r, 3);
   const style = EMPHASIS[c]![n];
   const literal = { out: s.slice(i, i + r), next: i + r };
-  if (!style || isAlnum(s[i - 1]) || isSpace(s[i + n])) return literal;
+  if (!style || !canOpen(s, i, n)) return literal;
   const end = closer(s, i + n, c, n);
   if (!end) return literal;
   return { out: span(style, s.slice(i + n, end[0]), outer), next: end[1] };
@@ -69,13 +111,11 @@ const emphasis: Rule = (s, i, outer) => {
 
 const codeSpan: Rule = (s, i, outer) => {
   const r = runAt(s, i);
-  const fence = "`".repeat(r);
-  let j = s.indexOf(fence, i + r);
-  while (j !== -1 && runAt(s, j) !== r) j = s.indexOf(fence, j + runAt(s, j));
-  if (j === -1) return { out: fence, next: i + r };
-  let code = s.slice(i + r, j);
+  const end = codeEnd(s, i);
+  if (end === -1) return { out: "`".repeat(r), next: i + r };
+  let code = s.slice(i + r, end - r);
   if (/^ .*[^ ].* $/.test(code)) code = code.slice(1, -1);
-  return { out: `${SGR.code}${code}${RESET}${outer}`, next: j + r };
+  return { out: `${SGR.code}${code}${RESET}${outer}`, next: end };
 };
 
 const PUNCTUATION = /[\p{P}\p{S}]/u;
@@ -87,13 +127,22 @@ const escape: Rule = (s, i) => {
 /** A clean URL: no controls or spaces, so it cannot break out of the OSC 8 sequence. */
 const cleanUrl = (u: string) => u.replace(/[\x00-\x20\x7f-\x9f]/g, "");
 
-/** Link text as an OSC 8 hyperlink; like Codex, the URL follows in brackets when the text is something else. */
-function link(text: string, url: string, outer: string): string {
-  const shown = `${linkOpen(url)}${inline(text, outer)}${LINK_CLOSE}`;
+/** Only these schemes become OSC 8 links; anything else (javascript:, file:, relative paths) is plain text. */
+const LINKABLE = /^(?:https?:|mailto:)/i;
+
+/**
+ * Link text as an OSC 8 hyperlink; like Codex, the URL follows in brackets
+ * when the text is something else. Empty text shows the URL.
+ */
+function link(rawText: string, url: string, outer: string): string {
+  const text = rawText.trim() ? rawText : url;
+  const label = inline(text, outer);
+  const shown = LINKABLE.test(url) ? `${linkOpen(url)}${label}${LINK_CLOSE}` : label;
   return text === url ? shown : `${shown} ${SGR.dim}(${url})${RESET}${outer}`;
 }
 
-const LINK = /^\[((?:[^[\]]|\[[^\]]*\])*)\]\(\s*<?([^\s<>()]+(?:\([^\s()]*\))?)>?(?:\s+"[^"]*")?\s*\)/;
+/** [text](url "title"): the URL may hold balanced (...) groups anywhere, as in Wikipedia links. */
+const LINK = /^\[((?:[^[\]]|\[[^\]]*\])*)\]\(\s*<?((?:[^\s<>()]|\([^\s<>()]*\))+)>?(?:\s+"[^"]*")?\s*\)/;
 const markdownLink: Rule = (s, i, outer) => {
   const m = LINK.exec(s.slice(i));
   return m ? { out: link(m[1]!, cleanUrl(m[2]!), outer), next: i + m[0].length } : null;
@@ -230,7 +279,8 @@ const FENCE = /^(\s*)(`{3,}|~{3,})\s*([^`\s]*)[^`]*$/;
 const DELIMITER = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 export const isBlank = (l: string) => !l.trim();
 const isTableRow = (l: string) => l.includes("|") && !isBlank(l);
-const isDelimiter = (l: string) => DELIMITER.test(l) && (l.includes("|") || /-.*-/.test(l));
+/** A delimiter row under `header`: dashes with optional colons, as many cells as the header (GitHub's rule). */
+const isDelimiter = (l: string, header: string) => DELIMITER.test(l) && l.includes("|") && splitRow(l).length === splitRow(header).length;
 
 /** The index of the line closing the fence opened by `open`, or -1. */
 function fenceEnd(lines: string[], i: number): number {
@@ -263,7 +313,7 @@ function blockLength(lines: string[], i: number, end: boolean): number {
   if (FENCE.test(line)) { const j = fenceEnd(lines, i); return j !== -1 ? j - i + 1 : upTo(left); }
   if (!isTableRow(line)) return 1;
   if (left === 1) return upTo(left);
-  if (!isDelimiter(lines[i + 1]!)) return 1;
+  if (!isDelimiter(lines[i + 1]!, line)) return 1;
   return upTo(2 + runLength(lines, i + 2, isTableRow));
 }
 
@@ -285,9 +335,10 @@ export function takeBlocks(lines: string[], end: boolean): { blocks: string[]; u
   return { blocks, used: i };
 }
 
-/** Split source text into lines, dropping leading blank lines (the stream does the same). */
+/** Split source text into lines, dropping leading blank lines and a final newline (the stream does the same). */
 export function sourceLines(text: string): string[] {
   const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop(); // the final newline ends the last line, as in the stream
   const first = lines.findIndex((l) => !isBlank(l));
   return first === -1 ? [] : lines.slice(first);
 }
@@ -495,13 +546,19 @@ function table(lines: string[], w: number): string[] {
   return [border(ws, "┌┬┐"), ...drawn[0]!, between, ...bodyLines, border(ws, "└┴┘")];
 }
 
-/** The narrow fallback: each row as "key: value" lines, rows apart by a blank line. */
+/**
+ * The narrow fallback: each row as "key: value" lines, rows apart by a blank
+ * line, continuation lines indented (when there is room). A table with no
+ * rows shows its header cells, one per line.
+ */
 function stacked(header: string[], body: string[][], w: number): string[] {
+  const key = (h: string, i: number) => `${SGR.bold}${inline(h || `${i + 1}`, SGR.bold)}${RESET}`;
+  const indent = w >= 4 ? 2 : 0;
+  const entry = (first: string, rest = "") =>
+    wordWrap(first + rest, w - indent).map((l, j) => (j ? " ".repeat(indent) : "") + l);
+  if (!body.length) return header.flatMap((h, i) => entry(key(h, i)));
   return body.flatMap((row, r) => [
     ...(r ? [""] : []),
-    ...row.flatMap((cell, i) => {
-      const key = `${SGR.bold}${inline(header[i] || `${i + 1}`, SGR.bold)}:${RESET} `;
-      return wordWrap(key + inline(cell.replace(/<br\s*\/?>/gi, " ")), w - 2).map((l, j) => (j ? "  " : "") + l);
-    }),
+    ...row.flatMap((cell, i) => entry(`${key(header[i]!, i)}${SGR.bold}:${RESET} `, inline(cell.replace(/<br\s*\/?>/gi, " ")))),
   ]);
 }

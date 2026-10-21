@@ -21,7 +21,7 @@ describe("inline", () => {
     expect(inline("~~gone~~")).toBe("\x1b[9mgone\x1b[0m");
     expect(inline("run `ls -la` now")).toBe("run \x1b[36mls -la\x1b[0m now");
     expect(inline("**bold *both* bold**")).toBe("\x1b[1mbold \x1b[3mboth\x1b[0m\x1b[1m bold\x1b[0m");
-    expect(inline("***both***")).toBe("\x1b[1m\x1b[3mboth\x1b[0m\x1b[1m\x1b[0m");
+    expect(inline("***both***")).toBe("\x1b[1m\x1b[3mboth\x1b[0m");
   });
 
   test("snake_case, 2*3 and other intraword or spaced delimiters stay literal", () => {
@@ -29,6 +29,17 @@ describe("inline", () => {
       expect(inline(s)).toBe(s);
     }
     expect(inline("use my_var, not *your_var*")).toBe("use my_var, not \x1b[3myour_var\x1b[0m");
+  });
+
+  test("nested emphasis closes on its own run; code spans and escapes never close it", () => {
+    expect(inline("*a **b** c*")).toBe("\x1b[3ma \x1b[1mb\x1b[0m\x1b[3m c\x1b[0m");
+    expect(inline("*ital **bold** ital*")).toBe("\x1b[3mital \x1b[1mbold\x1b[0m\x1b[3m ital\x1b[0m");
+    expect(inline("**a *b* c**")).toBe("\x1b[1ma \x1b[3mb\x1b[0m\x1b[1m c\x1b[0m");
+    expect(inline("**a *b***")).toBe("\x1b[1ma \x1b[3mb\x1b[0m\x1b[1m\x1b[0m");
+    expect(inline("**a***")).toBe("\x1b[1ma\x1b[0m*");
+    expect(inline("*a `*` b*")).toBe("\x1b[3ma \x1b[36m*\x1b[0m\x1b[3m b\x1b[0m");
+    expect(inline("**a\\**")).toBe("**a**"); // the escaped star is text: nothing closes the bold
+    expect(inline("*a\\* b*")).toBe("\x1b[3ma* b\x1b[0m");
   });
 
   test("backslash escapes and code spans keep markdown characters literal", () => {
@@ -44,6 +55,22 @@ describe("inline", () => {
     expect(plain(inline("[https://x.dev](https://x.dev)"))).toBe("https://x.dev");
     expect(plain(inline("<https://x.dev/q>"))).toBe("https://x.dev/q");
     expect(inline("[a](https://x.dev/\x07\x1b)")).not.toContain("\x07");
+
+  });
+
+  test("URLs may hold balanced parentheses; empty text shows the URL; only http(s) and mailto become links", () => {
+    const paren = inline("[x](https://e.com/a_(b)_c) after");
+    expect(paren).toContain("\x1b]8;;https://e.com/a_(b)_c\x1b\\x\x1b]8;;\x1b\\");
+    expect(plain(paren)).toBe("x (https://e.com/a_(b)_c) after");
+    expect(plain(inline("[x](https://e.com/(a)/(b))"))).toBe("x (https://e.com/(a)/(b))");
+    const empty = inline("[](https://e.com)");
+    expect(empty).toBe("\x1b]8;;https://e.com\x1b\\https://e.com\x1b]8;;\x1b\\");
+    expect(inline("[mail](mailto:a@b.c)")).toContain("\x1b]8;;mailto:a@b.c");
+    for (const url of ["javascript:alert(1)", "file:///etc/passwd", "./README.md"]) {
+      const out = inline(`[click](${url})`);
+      expect(out).not.toContain("\x1b]8");
+      expect(plain(out)).toBe(`click (${url})`);
+    }
   });
 });
 
@@ -195,6 +222,30 @@ describe("tables", () => {
     expect(fitColumns([20, 20, 20], 17)).toBeNull();
   });
 
+  test("a header-only table keeps its header, as a grid or in the narrow fallback", () => {
+    const only = "| Branch name | What it does | Status |\n|---|---|---|";
+    expect(md(only, 60)).toEqual([
+      "┌─────────────┬──────────────┬────────┐",
+      "│ Branch name │ What it does │ Status │",
+      "├─────────────┼──────────────┼────────┤",
+      "└─────────────┴──────────────┴────────┘",
+    ]);
+    expect(md(only, 20)).toEqual(["Branch name", "What it does", "Status"]);
+  });
+
+  test("the fallback never overflows a tiny width", () => {
+    for (const w of [1, 2, 3, 4, 5]) {
+      const rows = renderMarkdown(TABLE, w);
+      expect(rows.every((r) => width(r) <= w)).toBe(true);
+    }
+  });
+
+  test("a delimiter row must have as many cells as the header", () => {
+    expect(md("note | see below\n---")).toEqual(["note | see below", "─".repeat(60)]);
+    expect(md("| a | b |\n|---|")).toEqual(["| a | b |", "|---|"]);
+    expect(md("| a | b |\n|---|---|")[0]).toBe("┌───┬───┐");
+  });
+
   test("a row line without a delimiter under it is just text", () => {
     expect(md("a | b\nnext")).toEqual(["a | b", "next"]);
   });
@@ -223,18 +274,32 @@ const DOC = [
   "",
 ].join("\n");
 
+/** Blocks from feeding `text` in chunks of `size`, then flushing. */
+function chunked(text: string, size: number): string[] {
+  const s = new MarkdownStream();
+  const blocks: string[] = [];
+  for (let i = 0; i < text.length; i += size) blocks.push(...s.feed(text.slice(i, i + size)));
+  return [...blocks, ...s.flush()];
+}
+
 describe("streaming", () => {
   test("any chunking gives the same blocks and lines as one feed", () => {
     const whole = takeBlocks(sourceLines(DOC), true).blocks;
     const rendered = renderMarkdown(DOC, 50);
     for (const size of [1, 2, 3, 5, 7, 13, 1000]) {
-      const s = new MarkdownStream();
-      const blocks: string[] = [];
-      for (let i = 0; i < DOC.length; i += size) blocks.push(...s.feed(DOC.slice(i, i + size)));
-      blocks.push(...s.flush());
+      const blocks = chunked(DOC, size);
       expect(blocks).toEqual(whole);
       expect(blocks.flatMap((b) => renderBlock(b, 50))).toEqual(rendered);
     }
+  });
+
+  test("a trailing newline, an unclosed fence and other edge texts agree between the stream and the whole text", () => {
+    const texts = ["a\n\n\n```\nx\n", "```\nx", "```\nx\n\n", "a\n", "a", "\n\n", "", "| a | b |\n|---|---|\n", "| a | b |\n|---|---|", "x | y\n"];
+    for (const text of texts) {
+      const whole = takeBlocks(sourceLines(text), true).blocks;
+      for (const size of [1, 2, 3, 1000]) expect(chunked(text, size)).toEqual(whole);
+    }
+    expect(takeBlocks(sourceLines("a\n\n\n```\nx\n"), true).blocks).toEqual(["a", "", "```\nx"]);
   });
 
   test("lines go at once; a code block waits for its fence, a table for a non-row line, showing raw meanwhile", () => {
