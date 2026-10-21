@@ -8,10 +8,13 @@ bun src/cli.ts start [project] [git-url]
 ```
 
 `start` opens a bare full-screen TUI with one page per orchestrator (one per
-project). With no project named it reopens every project under
-`~/.parallels/projects`, or starts a fresh one. Ctrl+N starts a new orchestrator
-named `orch-xxxx` with an empty repository (`/rename <name>` renames it;
-`/new <name> <git-url>` clones instead), Ctrl+Z and Ctrl+X move between pages
+project). Run it inside a git repository and you get an orchestrator for that
+repository: a clone named after it, tracking its origin. With no project named
+it also reopens every project under `~/.parallels/projects`. Each page starts
+with its clone path and git remote. Ctrl+N starts a new orchestrator named
+`orch-xxxx`, cloned from the repository you started in (an empty repository
+otherwise; `/rename <name>` renames it; `/new <name> <git-url>` clones from
+elsewhere), Ctrl+Z and Ctrl+X move between pages
 (`/keys` shows what your terminal sends for any chord). Type
 `/help` for the rest of the commands.
 
