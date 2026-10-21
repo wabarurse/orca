@@ -23,6 +23,15 @@ export interface Input {
   /** First input row shown last frame, so the window only scrolls when the cursor leaves it; unset shows the end. */
   top?: number;
 }
+/** One row of the project list: `name` is the id, `label` what it shows. */
+export interface ProjectItem { name: string; label: string; pinned: boolean; open: boolean; active: boolean; busy: boolean }
+/** The project list (Ctrl+B, /projects): drawn like a menu, with a status and key hint under it. */
+export interface ProjectList {
+  items: ProjectItem[];
+  index: number;
+  /** A question or refusal shown under the list, e.g. "delete x? y/n". */
+  status: string;
+}
 
 export interface Frame {
   cols: number;
@@ -40,6 +49,8 @@ export interface Frame {
   status?: string | null;
   /** `inputArea(input, cols, rows, status ? 1 : 0)` when the caller already has it; computed otherwise. */
   inputArea?: InputArea;
+  /** The project list, at the bottom of the body like a menu, when open. */
+  projects?: ProjectList | null;
 }
 
 /** Escape codes that take no columns, as Bun.stringWidth skips them: CSI (with ':' params, as in 38:2:r:g:b) and OSC (hyperlinks, titles). */
@@ -98,7 +109,7 @@ export function wrap(line: string, cols: number): string[] {
 function fit(raw: string, cols: number): string {
   const line = expandTabs(raw);
   if (visibleLength(line) <= cols) return line;
-  return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…";
+  return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…\x1b[0m";
 }
 
 function tabBar(tabs: Tab[], cols: number): string {
@@ -126,6 +137,32 @@ export function inputArea(input: Input, cols: number, rows: number, reserved = 0
   return { lines, row: row - top, col: Math.max(0, Math.min(cols - 1, indent + col)), top };
 }
 
+/** First item to show so the selected one stays in a window of `rows`. */
+export function windowStart(count: number, index: number, rows: number): number {
+  return Math.max(0, Math.min(index - rows + 1, count - rows));
+}
+
+function projectRow(it: ProjectItem, selected: boolean): string {
+  const mark = `${selected ? bold("❯") : " "} ${it.pinned ? "*" : " "}${it.active ? "●" : it.open ? "○" : " "} `;
+  return `${mark}${it.label}${it.busy ? dim(" ·") : ""}`;
+}
+
+export const PROJECTS_HINT = "↑↓ Enter opens   p pins   d deletes   Esc closes";
+
+/**
+ * The project list's rows, at most `height`: a title, the items (scrolled to
+ * keep the selection in view), then the status and key hint. On short
+ * terminals the status and hint win over the list.
+ */
+export function projectRows(p: ProjectList, height: number): string[] {
+  const footer = [...(p.status ? p.status.split("\n") : []), dim(PROJECTS_HINT)].slice(0, Math.max(0, height));
+  const listRows = Math.max(0, height - footer.length - 1);
+  const start = windowStart(p.items.length, p.index, listRows);
+  const items = p.items.slice(start, start + listRows).map((it, i) => projectRow(it, start + i === p.index));
+  const head = [dim("projects"), ...(p.items.length ? items : [dim("  none yet")])].slice(0, Math.max(0, height - footer.length));
+  return [...head, ...footer];
+}
+
 export function render(f: Frame): string {
   const statusRows = f.status ? 1 : 0;
   const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, statusRows);
@@ -134,12 +171,11 @@ export function render(f: Frame): string {
   const end = Math.max(0, wrapped.length - f.scroll);
   const body = wrapped.slice(Math.max(0, end - bodyRows), end);
   while (body.length < bodyRows) body.unshift("");
-  if (f.menu) {
-    // The menu sits at the bottom of the body, on top of the scrollback.
-    const rows = [f.menu.title, ...f.menu.items.map((item, i) => `${i === f.menu!.index ? bold("❯") : " "} ${item}`)];
-    const shown = rows.slice(-bodyRows);
-    body.splice(body.length - shown.length, shown.length, ...shown);
-  }
+  // A menu or the project list sits at the bottom of the body, on top of the scrollback.
+  const overlay = f.menu
+    ? [f.menu.title, ...f.menu.items.map((item, i) => `${i === f.menu!.index ? bold("❯") : " "} ${item}`)].slice(-bodyRows)
+    : f.projects ? projectRows(f.projects, bodyRows) : [];
+  if (bodyRows) body.splice(body.length - overlay.length, overlay.length, ...overlay.map((r) => fit(r, f.cols)));
   const out: string[] = [tabBar(f.tabs, f.cols), fit(f.header, f.cols), ...body];
   if (f.status) out.push(fit(f.status, f.cols));
   out.push(...input.lines);

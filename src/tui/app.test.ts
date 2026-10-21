@@ -561,6 +561,46 @@ describe("tui app", () => {
     await running;
   });
 
+  test("Ctrl+B and /projects open a list of every project: move, open, pin", async () => {
+    for (const n of ["sb-a", "sb-b", "sb-c"]) mkdirSync(join(home, "projects", n, "repo"), { recursive: true });
+    const term = fakeTerm(90);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("sb-b");
+    await until(() => !!app.page);
+    term.type("\x02"); // Ctrl+B
+    await until(() => !!app.projectList?.items.length);
+    const names = () => app.projectList!.items.map((i) => i.name).filter((n) => n.startsWith("sb-"));
+    expect(names()).toEqual(["sb-a", "sb-b", "sb-c"]);
+    expect(app.projectList!.items[app.projectList!.index]!.name).toBe("sb-b"); // starts on the active page
+    await until(() => term.screen().includes("● sb-b"));
+    term.type("j"); // keys go to the list, not the input
+    expect(app.input.text).toBe("");
+    expect(app.projectList!.items[app.projectList!.index]!.name).toBe("sb-c");
+    term.type("p");
+    await until(() => app.projectList!.items[0]!.name === "sb-c");
+    expect(app.projectList!.items[0]!.pinned).toBe(true);
+    expect(app.projectList!.index).toBe(0); // the selection follows the pinned project
+    term.press({ name: "enter" }); // opens a page for it like start <name>
+    await until(() => app.page?.project === "sb-c");
+    expect(orchs.opened.at(-1)).toEqual({ project: "sb-c", url: undefined });
+    expect(app.projectList).toBeNull(); // Enter closes the list; keys go back to the input
+    term.type("x");
+    expect(app.input.text).toBe("x");
+    term.press({ name: "b", ctrl: true }); // reopens
+    await until(() => !!app.projectList);
+    term.press({ name: "escape" }); // closes
+    expect(app.projectList).toBeNull();
+    term.type("\x7f/projects\r");
+    await until(() => !!app.projectList);
+    term.type("p"); // unpin sb-c again for the other tests
+    await until(() => app.projectList!.items[0]!.name !== "sb-c");
+    term.type("\x02");
+    expect(app.projectList).toBeNull();
+    app.quit();
+    await running;
+  });
+
   test("multi-line messages: one scrollback line per row, indent kept, history walks rows", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
@@ -587,6 +627,58 @@ describe("tui app", () => {
     await running;
   });
 
+  test("deleting from the project list asks y/n, closes the page and removes the project", async () => {
+    mkdirSync(join(home, "projects", "sb-del", "repo"), { recursive: true });
+    const term = fakeTerm(90);
+    const orchs = fakeOrchestrators();
+    const killed: string[] = [];
+    let checks = 0; // deleteProject calls live() synchronously, so a key that starts a delete shows up here at once
+    const projects = { live: async () => { checks++; return []; }, kill: async (p: string) => { killed.push(p); } };
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, projects });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    await app.openPage("sb-del");
+    term.type("/projects\r");
+    await until(() => app.projectList?.items[app.projectList.index]?.name === "sb-del");
+    term.type("d");
+    await until(() => term.screen().includes("delete sb-del? y/n"));
+    term.type("n"); // anything but y cancels
+    expect(app.projectList!.confirm).toBeNull();
+    expect(checks).toBe(0);
+    // Chords are not answers: Ctrl+Y, Alt+Y (legacy and kitty) and a char with alt cancel too.
+    for (const answer of [() => term.type("\x19"), () => term.type("\x1by"), () => term.type("\x1b[121;3u"), () => term.press({ name: "char", text: "y", alt: true })]) {
+      term.type("d");
+      expect(app.projectList!.confirm?.name).toBe("sb-del");
+      answer();
+      expect(app.projectList!.confirm).toBeNull();
+      expect(checks).toBe(0);
+    }
+    // Ctrl+D / Alt+D do not ask, Ctrl+P does not pin, and batched text like __proto__ does nothing.
+    for (const chord of ["\x04", "\x1bd", "\x10", "__proto__", "constructor"]) {
+      term.type(chord);
+      expect(app.projectList!.confirm).toBeNull();
+      expect(app.projectList!.status).toBe("");
+    }
+    // Had Ctrl+P pinned it, this p would unpin it.
+    term.type("p");
+    await until(() => app.projectList!.status !== "");
+    expect(strip(app.projectList!.status)).toBe("pinned sb-del");
+    term.type("p");
+    await until(() => strip(app.projectList!.status) === "unpinned sb-del");
+    expect(checks).toBe(0);
+    expect(app.projectList!.items[app.projectList!.index]!.name).toBe("sb-del");
+    term.type("d");
+    term.type("y");
+    await until(() => !existsSync(join(home, "projects", "sb-del")));
+    await until(() => !app.projectList!.items.some((i) => i.name === "sb-del"));
+    expect(app.pages.map((p) => p.project)).toEqual(["alpha"]);
+    expect(app.page!.project).toBe("alpha");
+    await until(() => term.screen().includes("deleted sb-del"));
+    expect(killed).toEqual(["sb-del"]);
+    app.quit();
+    await running;
+  });
+
   test("a multi-line message queued during sign-in is split in the scrollback and sent whole", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
@@ -606,6 +698,107 @@ describe("tui app", () => {
     finish();
     await until(() => orchs.said.queuer?.length === 1);
     expect(orchs.said.queuer).toEqual(["line one\nline two"]);
+    app.quit();
+    await running;
+  });
+
+  test("a project with a display name shows it in the list; pin and delete use its id", async () => {
+    mkdirSync(join(home, "projects", "sb-orch1", "repo"), { recursive: true });
+    await Bun.write(join(home, "projects", "sb-orch1", "name"), "Shiny app\n");
+    mkdirSync(join(home, "projects", "sb-ren", "repo"), { recursive: true });
+    const term = fakeTerm(90);
+    const orchs = fakeOrchestrators();
+    const checked: string[] = [];
+    const killed: string[] = [];
+    const projects = { live: async (p: string) => { checked.push(p); return []; }, kill: async (p: string) => { killed.push(p); } };
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, projects });
+    const running = app.run("sb-ren");
+    await until(() => !!app.page);
+    term.type("\x02");
+    await until(() => !!app.projectList);
+    const at = app.projectList!.items.findIndex((i) => i.name === "sb-orch1");
+    expect(app.projectList!.items[at]!.label).toBe("Shiny app");
+    app.projectList!.index = at; // the fake screen is 8 rows; select it so the list scrolls to it
+    app.draw();
+    await until(() => term.screen().includes("❯    Shiny app"));
+    expect(term.screen()).not.toContain("sb-orch1");
+
+    term.type("p");
+    await until(() => strip(app.projectList!.status) === "pinned Shiny app");
+    expect((await loadConfig()).pinned).toContain("sb-orch1");
+    expect(app.projectList!.items[0]!.name).toBe("sb-orch1");
+
+    term.type("d");
+    expect(strip(app.projectList!.status)).toBe("delete Shiny app? y/n");
+    term.type("y");
+    await until(() => strip(app.projectList!.status) === "deleted Shiny app");
+    expect(checked).toEqual(["sb-orch1"]);
+    expect(killed).toEqual(["sb-orch1"]);
+    expect(existsSync(join(home, "projects", "sb-orch1"))).toBe(false);
+    expect((await loadConfig()).pinned).not.toContain("sb-orch1");
+    expect(app.projectList!.items.some((i) => i.name === "sb-orch1")).toBe(false);
+
+    // A /rename while the list is open updates its label.
+    await app.renamePage("Ren app");
+    await until(() => app.projectList!.items.find((i) => i.name === "sb-ren")?.label === "Ren app");
+    expect(strip(app.frame().projects!.items.find((i) => i.name === "sb-ren")!.label)).toBe("Ren app");
+    app.quit();
+    await running;
+  });
+
+  test("a project mid-turn, or one with live agents, is not deleted", async () => {
+    mkdirSync(join(home, "projects", "sb-busy", "repo"), { recursive: true });
+    const term = fakeTerm(90);
+    let finish!: () => void;
+    let turns = 0;
+    let queued = false;
+    const openOrchestrator = async (): Promise<Orchestrator> => ({
+      async say() { queued = true; },
+      async pending() { return queued; },
+      async turn() { queued = false; turns++; await new Promise<void>((r) => (finish = r)); return []; },
+    });
+    let live: string[] = [];
+    let checking: (() => void) | null = null;
+    const projects = {
+      live: async () => { await new Promise<void>((r) => (checking = r)); return live; },
+      kill: async () => {},
+    };
+    const app = new App({ term, openOrchestrator, pollMs: 10, projects });
+    const running = app.run("sb-busy");
+    await until(() => !!app.page);
+    const dir = join(home, "projects", "sb-busy");
+    const askDelete = async (before = async () => {}) => {
+      term.type("/projects\r");
+      await until(() => app.projectList?.items[app.projectList.index]?.name === "sb-busy");
+      term.type("d");
+      await before();
+      term.type("y"); // marks the page as deleting before the next poll tick
+    };
+
+    // Busy when asked: refused at once.
+    term.type("go\r");
+    await until(() => app.page!.busy);
+    await askDelete();
+    await until(() => !!app.projectList?.status.includes("mid-turn"));
+    expect(existsSync(dir)).toBe(true);
+    expect(app.pages.length).toBe(1);
+    finish();
+    await until(() => !app.page!.busy);
+
+    // While the live-agent check runs, the poll does not start a turn on it.
+    term.press({ name: "escape" });
+    await askDelete(() => app.page!.orch.say("report"));
+    await until(() => !!checking);
+    await Bun.sleep(50);
+    expect(turns).toBe(1);
+    live = ["worker-x"];
+    checking!();
+    await until(() => !!app.projectList?.status.includes("live agents (worker-x)"));
+    expect(existsSync(dir)).toBe(true);
+    expect(app.pages.length).toBe(1);
+    expect(app.page!.deleting).toBe(false);
+    await until(() => turns === 2); // turns resume once the delete is refused
+    finish();
     app.quit();
     await running;
   });

@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { displayName, newProjectName, repoHere, setDisplayName, shortRemote, validProjectName } from "./commands";
+import { agentWindows, deleteProject, displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "./commands";
 import { recentModels, REVIEW_ROUNDS_USAGE, reviewRounds } from "./commands";
-import { loadConfig } from "./config";
+import { loadConfig, saveConfig } from "./config";
 
 describe("recentModels", () => {
   const ids = ["m6", "m5", "m4", "m3", "m2", "m1", "m0"];
@@ -30,6 +30,7 @@ describe("project names", () => {
     expect(validProjectName("login-page")).toBe(true);
     expect(validProjectName("bad name")).toBe(false);
     expect(validProjectName("../x")).toBe(false);
+    for (const bad of ["", "a/b", "..", "."]) expect(validProjectName(bad)).toBe(false);
   });
 });
 
@@ -95,5 +96,110 @@ describe("/review-rounds", () => {
       if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("project list", () => {
+  const withHome = async (fn: (home: string) => Promise<void>) => {
+    const prev = process.env.PARALLELS_HOME;
+    const home = mkdtempSync(join(tmpdir(), "parallels-projects-"));
+    process.env.PARALLELS_HOME = home;
+    try { await fn(home); } finally {
+      if (prev === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  };
+  const project = (home: string, name: string) => mkdirSync(join(home, "projects", name, "repo"), { recursive: true });
+
+  const plain = (...names: string[]) => names.map((name) => ({ name, label: name }));
+
+  test("orderProjects puts pins first, each group sorted, and drops stale pins", () => {
+    expect(orderProjects(plain("c", "a", "b", "d"), ["d", "gone", "b"])).toEqual([
+      { name: "b", label: "b", pinned: true }, { name: "d", label: "d", pinned: true },
+      { name: "a", label: "a", pinned: false }, { name: "c", label: "c", pinned: false },
+    ]);
+  });
+
+  test("orderProjects sorts each group by label, then id", () => {
+    const projects = [
+      { name: "orch-aaaa", label: "zebra" }, { name: "orch-bbbb", label: "apple" },
+      { name: "orch-cccc", label: "mango" }, { name: "orch-dddd", label: "kiwi" }, { name: "b-id", label: "same" }, { name: "a-id", label: "same" },
+    ];
+    expect(orderProjects(projects, ["orch-aaaa", "orch-cccc"]).map((p) => `${p.pinned ? "*" : ""}${p.label}:${p.name}`)).toEqual([
+      "*mango:orch-cccc", "*zebra:orch-aaaa", "apple:orch-bbbb", "kiwi:orch-dddd", "same:a-id", "same:b-id",
+    ]);
+  });
+
+  test("orderedProjects labels each project with its display name", async () => {
+    await withHome(async (home) => {
+      project(home, "orch-zz11");
+      project(home, "beta");
+      await setDisplayName("orch-zz11", "alpha app");
+      expect(await orderedProjects()).toEqual([
+        { name: "orch-zz11", label: "alpha app", pinned: false }, { name: "beta", label: "beta", pinned: false },
+      ]);
+    });
+  });
+
+  test("pins are saved in config.toml and survive a reload", async () => {
+    await withHome(async (home) => {
+      for (const n of ["zeta", "alpha", "mid"]) project(home, n);
+      expect((await orderedProjects()).map((p) => p.name)).toEqual(["alpha", "mid", "zeta"]);
+      expect(await togglePin("zeta")).toBe(true);
+      expect((await loadConfig()).pinned).toEqual(["zeta"]);
+      expect(await Bun.file(join(home, "config.toml")).text()).toContain('pinned = ["zeta"]');
+      expect((await orderedProjects()).map((p) => `${p.pinned ? "*" : ""}${p.name}`)).toEqual(["*zeta", "alpha", "mid"]);
+      expect(await togglePin("zeta")).toBe(false);
+      expect((await loadConfig()).pinned).toEqual([]);
+    });
+  });
+
+  test("agentWindows ignores the session's idle shell", () => {
+    expect(agentWindows(["shell", "worker-x", "reviewer-x"])).toEqual(["worker-x", "reviewer-x"]);
+    expect(agentWindows(["shell"])).toEqual([]);
+    expect(agentWindows([])).toEqual([]);
+  });
+
+  test("togglePin and deleteProject keep the other config keys", async () => {
+    await withHome(async (home) => {
+      project(home, "keep");
+      project(home, "gone");
+      await saveConfig({ model: "gpt-test", maxReviewRounds: 5 });
+      await togglePin("keep");
+      await togglePin("gone");
+      await deleteProject("gone", { live: async () => [], kill: async () => {} });
+      const cfg = await loadConfig();
+      expect(cfg.model).toBe("gpt-test");
+      expect(cfg.maxReviewRounds).toBe(5);
+      expect(cfg.pinned).toEqual(["keep"]);
+    });
+  });
+
+  test("deleteProject removes the directory and its pin, after the hook", async () => {
+    await withHome(async (home) => {
+      project(home, "doomed");
+      mkdirSync(join(home, "projects", "doomed", "transcripts"), { recursive: true });
+      await togglePin("doomed");
+      const order: string[] = [];
+      const killed: string[] = [];
+      await deleteProject("doomed", { live: async () => [], kill: async (p) => { killed.push(p); }, beforeRemove: () => { order.push(existsSync(join(home, "projects", "doomed")) ? "present" : "gone"); } });
+      expect(order).toEqual(["present"]);
+      expect(killed).toEqual(["doomed"]);
+      expect(existsSync(join(home, "projects", "doomed"))).toBe(false);
+      expect((await loadConfig()).pinned).toEqual([]);
+    });
+  });
+
+  test("deleteProject refuses while agents are live, and bad or missing names", async () => {
+    await withHome(async (home) => {
+      project(home, "busy");
+      let hooked = false;
+      const attempt = deleteProject("busy", { live: async () => ["worker-x"], beforeRemove: () => { hooked = true; } });
+      await expect(attempt).rejects.toThrow("live agents (worker-x)");
+      expect(hooked).toBe(false);
+      expect(existsSync(join(home, "projects", "busy", "repo"))).toBe(true);
+      for (const bad of ["../busy", "", "a/b", "..", "."]) await expect(deleteProject(bad, { live: async () => [] })).rejects.toThrow("not a project name");
+      await expect(deleteProject("nope", { live: async () => [] })).rejects.toThrow("no project named nope");
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { expandTabs, inputArea, render, visibleLength, wrap, type Frame } from "./render";
+import { expandTabs, inputArea, projectRows, render, visibleLength, windowStart, wrap, type Frame, type ProjectList } from "./render";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 const rows = (s: string) => s.split("\x1b[2K").slice(1).map((r) => strip(r).replace(/^.*?H/, ""));
@@ -142,5 +142,62 @@ describe("render", () => {
 
   test("no pages leaves the tab bar empty", () => {
     expect(rows(render(frame({ tabs: [] })))[0]).toBe("");
+  });
+
+  const projects = (over: Partial<ProjectList> = {}): ProjectList => ({
+    items: [
+      { name: "orch-p1n0", label: "pinned", pinned: true, open: false, active: false, busy: false }, // rows show the label, not the id
+      { name: "one", label: "one", pinned: false, open: true, active: true, busy: false },
+      { name: "two", label: "two", pinned: false, open: true, active: false, busy: true },
+    ],
+    index: 1, status: "", ...over,
+  });
+
+  test("the project list sits at the bottom of the body at full width, like a menu", () => {
+    const r = rows(render(frame({ cols: 60, rows: 9, projects: projects(), lines: ["x".repeat(70)] })));
+    expect(r.length).toBe(9);
+    expect(r[0]).toBe(" one   two · ");
+    expect(r.slice(2, 8)).toEqual(["", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(r[8]).toBe("> hi"); // the input row is untouched
+  });
+
+  test("the body keeps the full width under the list", () => {
+    const r = rows(render(frame({ cols: 60, rows: 12, projects: projects(), lines: ["x".repeat(70), "1", "2", "3", "4", "5"] })));
+    expect(r.slice(2, 6)).toEqual(["", "", "x".repeat(60), "x".repeat(10)]);
+    expect(r[6]).toBe("projects");
+  });
+
+  test("project rows scroll to keep the selection in view, with the status under the list", () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({ name: `id${i}`, label: `p${i}`, pinned: false, open: false, active: false, busy: false }));
+    const out = projectRows({ items: many, index: 8, status: "delete p8? y/n" }, 6).map(strip);
+    expect(out).toEqual(["projects", "     p6", "     p7", "❯    p8", "delete p8? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(projectRows({ items: [], index: 0, status: "" }, 5).map(strip)).toEqual(["projects", "  none yet", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(windowStart(10, 0, 3)).toBe(0);
+    expect(windowStart(10, 9, 3)).toBe(7);
+    expect(windowStart(2, 1, 5)).toBe(0);
+  });
+
+  test("on a short terminal the status and hint stay ahead of the list", () => {
+    expect(projectRows(projects({ status: "delete one? y/n" }), 2).map(strip)).toEqual(["delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(projectRows(projects({ status: "delete one? y/n" }), 1).map(strip)).toEqual(["delete one? y/n"]);
+    const r = rows(render(frame({ cols: 60, rows: 5, projects: projects({ status: "delete one? y/n" }) })));
+    expect(r.slice(2, 4)).toEqual(["delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+  });
+
+  test("the list sits above a multi-row input area and the status line", () => {
+    const r = rows(render(frame({ cols: 60, rows: 12, status: "⠋ thinking… 1s", projects: projects(), input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 13 } })));
+    expect(r.length).toBe(12);
+    // 12 rows: tabs, header, 6 body rows (the list's 5 at the bottom), status, 3 input rows.
+    expect(r.slice(3, 8)).toEqual(["projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(r[8]).toBe("⠋ thinking… 1s");
+    expect(r.slice(9)).toEqual(["> one", "  two", "  three"]);
+  });
+
+  test("a long menu row is cut to the width with … and its style closed", () => {
+    const out = render(frame({ cols: 40, rows: 9, menu: { title: "pick", items: [`\x1b[2m${"y".repeat(60)}`], index: 0 } }));
+    const row = out.split("\x1b[2K").slice(1)[7]!.replace(/\x1b\[\d+;1H$/, ""); // without the next row's cursor move
+    expect(visibleLength(row)).toBe(40);
+    expect(strip(row).endsWith("…")).toBe(true);
+    expect(row.endsWith("…\x1b[0m")).toBe(true);
   });
 });

@@ -1,10 +1,11 @@
 // The full-screen TUI, kept bare: a tab bar, the page, an input area. One
 // page per orchestrator (one per project): Ctrl+N starts a new one named
-// orch-xxxx (/rename gives it a display name), Ctrl+Z and Ctrl+X move between them. Type to
-// talk to the page's orchestrator; worker and reviewer reports arrive through
-// its inbox and show up while you wait. /help lists the commands.
+// orch-xxxx (/rename gives it a display name), Ctrl+Z and Ctrl+X move between
+// them, Ctrl+B or /projects lists every project (open, pin, delete) like a
+// menu. Type to talk to the page's orchestrator; worker and reviewer reports
+// arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, useAccount, validProjectName, type Choice } from "../commands";
+import { accountChoices, deleteProject, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { homedir } from "node:os";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
@@ -30,6 +31,8 @@ export interface Page {
   /** When the running turn started (clock ms), and whether its text has started streaming. */
   busySince: number;
   streamed: boolean;
+  /** Set while the project list deletes this project: no new turns start. */
+  deleting?: boolean;
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
   view: { name: string; lines: string[]; leave: () => void; live: boolean } | null;
 }
@@ -48,6 +51,8 @@ export interface AppDeps {
   agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
   /** Sign-in; tests replace it. */
   login?: typeof login;
+  /** How the project list checks for live agents and closes a deleted project's tmux session; tests stub them. */
+  projects?: Pick<DeleteOptions, "live" | "kill">;
 }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
@@ -62,10 +67,14 @@ const SPIN_MS = 100;
 /** How often a live agent view checks whether its agent has finished. */
 const LIVE_CHECK_MS = 1000;
 
+/** The project list (Ctrl+B, /projects): every project on disk, pinned first. Takes the keys while open. */
+interface ProjectListState { items: ProjectEntry[]; index: number; status: string; confirm: ProjectEntry | null }
+
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
 
 const HELP = [
   "^N new orchestrator   ^Z ^X switch pages   PgUp PgDn scroll   Esc clear",
+  "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes",
   "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
   "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history",
   "/keys shows what your terminal sends for a chord (Esc ends)",
@@ -74,6 +83,17 @@ const HELP = [
   "/review-rounds [n] review rounds before CI (0 = straight to CI)",
 ];
 const HELP_VIEW = "/back (or Esc) leaves the agent view";
+
+/**
+ * What a key means in the project list: a plain character's text or a named
+ * key ("up", "enter", ...). Ctrl/Alt chords (and other single-letter chords)
+ * mean nothing there, so Ctrl+D or Alt+Y never deletes.
+ */
+const listKeyId = (k: Key): string | null => {
+  if (k.ctrl || k.alt) return null;
+  if (k.name === "char") return k.text ?? null;
+  return k.name.length > 1 ? k.name : null;
+};
 
 /** A page shows activity while its turn runs or its agent view follows a live agent. */
 const active = (p: Page) => p.busy || !!p.view?.live;
@@ -101,6 +121,7 @@ export class App {
   private inputTop: number | undefined;
   scroll = 0;
   menu: ActiveMenu | null = null;
+  projectList: ProjectListState | null = null;
   loggingIn = false;
   /** Text typed while signing in, per page; sent when sign-in succeeds, dropped when it fails. */
   private readonly queued = new Map<Page, string[]>();
@@ -191,6 +212,13 @@ export class App {
       tabs: this.pages.map((p, i) => ({ title: p.view ? `${p.name} › ${p.view.name}` : p.name, active: i === this.active, busy: active(p), spinner: this.spinner() })),
       lines: body, scroll: this.scroll, status, input, inputArea: area,
       menu: this.menu,
+      projects: this.projectList && {
+        index: this.projectList.index, status: this.projectList.status,
+        items: this.projectList.items.map((it) => {
+          const at = this.pages.findIndex((p) => p.project === it.name);
+          return { ...it, open: at !== -1, active: at === this.active, busy: !!this.pages[at]?.busy };
+        }),
+      },
     };
   }
 
@@ -224,7 +252,8 @@ export class App {
   /** One agents call per project, never overlapping: mark views whose agent has finished. */
   private checkLive(project: string): void {
     if (this.liveChecks.has(project)) return;
-    const check = (this.deps.agents ?? liveAgents)(project)
+    const agents = this.deps.agents ?? (async (p: string) => (await liveAgents(p)).map((name) => ({ name, live: true })));
+    const check = agents(project)
       .then((agents) => {
         const live = new Set(agents.filter((a) => a.live).map((a) => a.name));
         for (const p of this.pages) if (p.project === project && p.view?.live && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
@@ -267,15 +296,17 @@ export class App {
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.scroll = 0;
+    if (this.projectList) await this.refreshProjects();
     this.draw();
     return page;
   }
 
-  closePage(): void {
-    const page = this.page;
+  closePage(index = this.active): void {
+    const page = this.pages[index];
     if (!page) return;
     page.view?.leave();
-    this.pages.splice(this.active, 1);
+    this.pages.splice(index, 1);
+    if (index < this.active) this.active--;
     this.active = Math.min(this.active, Math.max(0, this.pages.length - 1));
     this.scroll = 0;
     this.draw();
@@ -316,11 +347,125 @@ export class App {
       const from = page.name;
       page.name = await setDisplayName(page.project, to);
       this.say(dim(`${from} → ${page.name}`), page);
+      if (this.projectList) await this.refreshProjects();
     } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`, page); }
   }
 
+  // --- project list -----------------------------------------------------------
+
+  /** Ctrl+B: open the project list, or close it. */
+  toggleProjects(): Promise<void> | void {
+    return this.projectList ? this.closeProjects() : this.openProjects();
+  }
+
+  async openProjects(): Promise<void> {
+    const items = await orderedProjects();
+    const index = Math.max(0, items.findIndex((it) => it.name === this.page?.project));
+    this.menu = null;
+    this.projectList = { items, index, status: "", confirm: null };
+    this.draw();
+  }
+
+  closeProjects(): void {
+    this.projectList = null;
+    this.draw();
+  }
+
+  /** Reload the project list, keeping the selection on `select` (or the selected name) when it is still there. */
+  private async refreshProjects(select = this.projectList?.items[this.projectList.index]?.name): Promise<void> {
+    const items = await orderedProjects();
+    const list = this.projectList;
+    if (!list) return;
+    list.items = items;
+    const at = items.findIndex((it) => it.name === select);
+    list.index = at !== -1 ? at : Math.min(list.index, Math.max(0, items.length - 1));
+    this.draw();
+  }
+
+  /** What each key does in the project list, given the selected project. Actions use its id; messages its label. */
+  private readonly projectActions = new Map<string, (entry: ProjectEntry) => Promise<void> | void>([
+    ["up", () => this.moveProjects(-1)], ["k", () => this.moveProjects(-1)],
+    ["down", () => this.moveProjects(1)], ["j", () => this.moveProjects(1)],
+    ["enter", (entry) => this.openFromProjects(entry.name)],
+    ["p", (entry) => this.pinFromProjects(entry)],
+    ["d", (entry) => { this.projectList!.confirm = entry; this.projectList!.status = bold(`delete ${entry.label}? y/n`); }],
+  ]);
+
+  /** Ctrl+B anywhere, and every key while the project list is open (and no menu is up). */
+  private projectsTake(k: Key): boolean {
+    return (k.ctrl === true && k.name === "b") || (!!this.projectList && !this.menu);
+  }
+
+  /** Keys while the project list is open, and Ctrl+B anywhere. */
+  private async projectsKey(k: Key): Promise<void> {
+    if (k.ctrl && k.name === "b") return this.toggleProjects();
+    const list = this.projectList!;
+    if (list.confirm) return this.confirmDelete(k);
+    list.status = "";
+    const id = listKeyId(k);
+    if (id === "escape") return this.closeProjects();
+    const entry = list.items[list.index];
+    const action = id === null ? undefined : this.projectActions.get(id);
+    if (action && entry) await action(entry);
+    this.draw();
+  }
+
+  private moveProjects(delta: number): void {
+    const list = this.projectList!;
+    list.index = (list.index + delta + list.items.length) % list.items.length;
+  }
+
+  private async openFromProjects(name: string): Promise<void> {
+    this.projectList = null;
+    try { await this.openPage(name); } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`); }
+  }
+
+  private async pinFromProjects(entry: ProjectEntry): Promise<void> {
+    const on = await togglePin(entry.name);
+    await this.refreshProjects(entry.name);
+    if (this.projectList) this.projectList.status = dim(`${on ? "pinned" : "unpinned"} ${entry.label}`);
+  }
+
+  /** The key after "delete x? y/n": only a plain y or Y deletes, anything else cancels. */
+  private async confirmDelete(k: Key): Promise<void> {
+    const list = this.projectList!;
+    const target = list.confirm!;
+    list.confirm = null;
+    list.status = "";
+    if (k.name === "char" && !k.ctrl && !k.alt && (k.text === "y" || k.text === "Y")) await this.deleteFromProjects(target);
+    this.draw();
+  }
+
+  /**
+   * Delete a project (by id) after its y/n. Its page is marked so no turn
+   * starts while the checks run, and closes only if it is still idle once they pass.
+   */
+  private async deleteFromProjects({ name, label }: ProjectEntry): Promise<void> {
+    const list = this.projectList!;
+    const page = this.pages.find((p) => p.project === name);
+    const midTurn = `${label} is mid-turn; try again when it ends`;
+    if (page?.busy) { list.status = dim(midTurn); return; }
+    if (page) page.deleting = true;
+    try {
+      await deleteProject(name, {
+        ...this.deps.projects,
+        beforeRemove: () => {
+          if (!page) return;
+          if (page.busy) throw new Error(midTurn);
+          const at = this.pages.indexOf(page);
+          if (at !== -1) this.closePage(at);
+        },
+      });
+      list.status = dim(`deleted ${label}`);
+    } catch (err) {
+      if (page) page.deleting = false;
+      list.status = dim(err instanceof Error ? err.message : String(err));
+    }
+    await this.refreshProjects();
+  }
+
   private async runTurn(page: Page): Promise<void> {
-    if (page.busy) return;
+    if (page.busy || page.deleting) return;
     page.busy = true;
     page.busySince = this.clock.now();
     page.streamed = false;
@@ -388,7 +533,7 @@ export class App {
 
   /** Start a turn on every idle page whose orchestrator has unread messages. */
   private runPending(): void {
-    for (const p of this.pages) if (!p.busy) p.orch.pending().then((has) => { if (has) this.runTurn(p); }).catch(() => {});
+    for (const p of this.pages) if (!p.busy && !p.deleting) p.orch.pending().then((has) => { if (has) this.runTurn(p); }).catch(() => {});
   }
 
   private async login(arg: string): Promise<void> {
@@ -425,6 +570,7 @@ export class App {
       return this.say(dim("not viewing an agent"));
     }
     if (text === "/help") { for (const l of page?.view ? [...HELP, HELP_VIEW] : HELP) this.say(dim(l)); return; }
+    if (text === "/projects") return this.openProjects();
     if (text === "/keys") { this.keyEcho = true; return this.say(dim("press keys; Esc ends")); }
     if (text === "/new" || text.startsWith("/new ")) {
       const [name, url] = text.slice(4).trim().split(/\s+/).filter(Boolean);
@@ -467,6 +613,8 @@ export class App {
     if (k.name === "pageup") { this.scroll += Math.max(1, this.deps.term.rows - 4); return this.draw(); }
     if (k.name === "pagedown") { this.scroll = Math.max(0, this.scroll - Math.max(1, this.deps.term.rows - 4)); return this.draw(); }
 
+    // Ctrl+B (tmux's prefix, hence also /projects) toggles the project list; while it is open it takes the keys.
+    if (this.projectsTake(k)) return this.projectsKey(k);
     if (this.menu) {
       const m = this.menu;
       if (k.name === "up" || (k.ctrl && k.name === "p") || (k.name === "char" && k.text === "k")) m.index = (m.index + m.items.length - 1) % m.items.length;
