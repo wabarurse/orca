@@ -28,11 +28,16 @@ nothing starts until you say "execute" or "dispatch". Then it spawns a
 commit and one report. It then spawns a **reviewer**, which reads the diff
 against the task's goal, runs the `complexity` tool (cyclomatic and cognitive,
 per function) and reports without touching code. Problems go back to the worker
-with notes; when the review is clean the orchestrator tells the reviewer to
+with notes and the reviewer looks again, for at most `maxReviewRounds` rounds;
+if the last review still finds problems, the worker gets one more pass, the
+branch goes straight to CI with no further review, and the orchestrator tells
+you what was left open. When a review is clean the orchestrator tells the reviewer to
 "watch ci": it pushes, opens the PR, runs `gh pr checks --watch`, fixes what
 fails until green, and reports ready to merge. One agent codes on a branch at a
-time. `config.toml` holds `maxReviewRounds` (2), `cyclomatic` (10) and
-`cognitive` (15).
+time. `config.toml` holds `maxReviewRounds` (1), `cyclomatic` (10) and
+`cognitive` (15). `/review-rounds [n]` shows or sets the round count (0 to 100;
+a config value outside that, or a `config.toml` that does not parse, falls back
+to the defaults); 0 skips review and sends the worker's branch straight to "watch ci".
 
 ## Subscription login
 

@@ -8,7 +8,7 @@ import { $ } from "bun";
 import { accounts, provider, type Account } from "./accounts";
 import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
-import { loadConfig, paths, saveConfig } from "./config";
+import { loadConfig, paths, saveConfig, validRounds, MAX_REVIEW_ROUNDS } from "./config";
 import type { ProviderName } from "./providers/index";
 import { sessionName, tmux } from "./runner";
 
@@ -137,6 +137,17 @@ export async function modelChoices(dim: (s: string) => string): Promise<{ choice
 export async function setModel(id: string): Promise<string> {
   await saveConfig({ model: id });
   return `model set to ${id} (takes effect next turn; running agents keep theirs)`;
+}
+
+export const REVIEW_ROUNDS_USAGE = `usage: /review-rounds [n]  (n = 0 to ${MAX_REVIEW_ROUNDS}; 0 skips review and goes straight to CI)`;
+
+/** `/review-rounds [n]`: show the review round limit, or save it. */
+export async function reviewRounds(arg: string): Promise<string> {
+  if (!arg) return `review rounds: ${(await loadConfig()).maxReviewRounds}`;
+  const n = /^\d{1,3}$/.test(arg) ? Number(arg) : NaN;
+  if (!validRounds(n)) return REVIEW_ROUNDS_USAGE;
+  await saveConfig({ maxReviewRounds: n });
+  return `review rounds set to ${n} (takes effect from the orchestrator's next turn)`;
 }
 
 export const LOGIN_USAGE = "usage: /login anthropic [profile] [--from-claude-code]  |  /login openai [profile] [--from-codex]";

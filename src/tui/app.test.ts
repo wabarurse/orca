@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
+import { loadConfig } from "../config";
 import { App, type Clock } from "./app";
 import { parseKeys, type Key } from "./keys";
 import type { Terminal } from "./term";
@@ -14,11 +15,11 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 
-function fakeTerm(cols = 40) {
+function fakeTerm(cols = 40, rows = 8) {
   const handlers: ((k: Key) => void)[] = [];
   let screen = "";
   const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; opened: boolean; closed: boolean } = {
-    cols, rows: 8, opened: false, closed: false,
+    cols, rows, opened: false, closed: false,
     write: (s) => { screen = s; },
     onKey: (cb) => { handlers.push(cb); },
     onResize: () => {},
@@ -221,6 +222,37 @@ describe("tui app", () => {
     await running;
   });
 
+  test("/review-rounds works while viewing an agent and while signing in", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    let finish!: () => void;
+    const login = async () => { await new Promise<void>((r) => (finish = r)); return "signed in"; };
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, login });
+    const running = app.run("rounds");
+    await until(() => !!app.page);
+    const page = app.page!;
+    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false };
+    page.view = view;
+    term.type("/review-rounds 3\r");
+    await until(() => view.lines.join("\n").includes("review rounds set to 3"));
+    expect((await loadConfig()).maxReviewRounds).toBe(3);
+    page.view = null;
+    term.type("/login claude\r");
+    await until(() => app.loggingIn);
+    term.type("/review-rounds 0\r");
+    await until(() => page.lines.join("\n").includes("review rounds set to 0"));
+    expect((await loadConfig()).maxReviewRounds).toBe(0);
+    term.type("/review-rounds\r");
+    await until(() => page.lines.join("\n").includes("review rounds: 0"));
+    expect(page.lines.join("\n")).not.toContain("queued");
+    finish();
+    await until(() => !app.loggingIn);
+    await Bun.sleep(20);
+    expect(orchs.said.rounds).toEqual([]); // nothing was queued for the orchestrator
+    app.quit();
+    await running;
+  });
+
   test("text queued during a sign-in that fails is dropped, not run", async () => {
     const term = fakeTerm(200);
     const orchs = fakeOrchestrators();
@@ -301,10 +333,10 @@ describe("tui app", () => {
     await until(() => !!app.page);
     expect(term.screen()).not.toContain("/models");
     term.type("/help\r");
-    await until(() => term.screen().includes("/rename <name>"));
-    expect(term.screen()).toContain("/models [id]");
-    expect(term.screen()).toContain("/close closes this page");
-    expect(term.screen()).not.toContain("/back");
+    await until(() => app.page!.lines.join("\n").includes("/review-rounds"));
+    const help = app.page!.lines.join("\n");
+    for (const cmd of ["/keys", "/rename <name>", "/new [name] [git-url]", "/close closes this page", "/quit", "/agents", "/models [id]", "/accounts", "/login claude|codex", "/review-rounds [n]"]) expect(help).toContain(cmd);
+    expect(help).not.toContain("/back");
     app.quit();
     await running;
   });

@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { displayName, newProjectName, repoHere, setDisplayName, shortRemote, validProjectName } from "./commands";
-import { recentModels } from "./commands";
+import { recentModels, REVIEW_ROUNDS_USAGE, reviewRounds } from "./commands";
+import { loadConfig } from "./config";
 
 describe("recentModels", () => {
   const ids = ["m6", "m5", "m4", "m3", "m2", "m1", "m0"];
@@ -73,6 +74,26 @@ describe("repoHere", () => {
       expect(await repoHere(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("/review-rounds", () => {
+  test("shows, saves and refuses", async () => {
+    const before = process.env.PARALLELS_HOME;
+    const home = mkdtempSync(join(tmpdir(), "parallels-rounds-"));
+    process.env.PARALLELS_HOME = home;
+    try {
+      expect(await reviewRounds("")).toBe("review rounds: 1");
+      expect(await reviewRounds("3")).toContain("next turn");
+      expect((await loadConfig()).maxReviewRounds).toBe(3);
+      expect(await reviewRounds("0")).toContain("set to 0");
+      expect(await reviewRounds("")).toBe("review rounds: 0");
+      for (const bad of ["-1", "1.5", "two", "1e2", "1e23", "2 3", "101", "999", "0100", "9007199254740993"]) expect(await reviewRounds(bad)).toBe(REVIEW_ROUNDS_USAGE);
+      expect((await loadConfig()).maxReviewRounds).toBe(0);
+    } finally {
+      if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

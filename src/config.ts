@@ -36,7 +36,7 @@ export interface Config {
   openaiAccount: string;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
-  /** Max review rounds before the orchestrator reports what is still open. */
+  /** Max review rounds before the orchestrator reports what is still open; 0 skips review and goes straight to CI. */
   maxReviewRounds: number;
   /** Complexity thresholds the reviewer reports against. */
   cyclomatic: number;
@@ -48,16 +48,38 @@ export const defaults: Config = {
   account: "",
   openaiAccount: "",
   maxToolResultBytes: 16 * 1024,
-  maxReviewRounds: 2,
+  maxReviewRounds: 1,
   cyclomatic: 10,
   cognitive: 15,
 };
 
+/** Most review rounds /review-rounds and config.toml accept. */
+export const MAX_REVIEW_ROUNDS = 100;
+
+/** The last parse warning, so a broken file is reported once, not on every load. */
+let warned = "";
+
 export async function loadConfig(): Promise<Config> {
   const file = Bun.file(paths.config);
   if (!(await file.exists())) return defaults;
-  const parsed = Bun.TOML.parse(await file.text()) as Partial<Config>;
-  return { ...defaults, ...parsed };
+  let parsed: Partial<Config>;
+  try {
+    parsed = Bun.TOML.parse(await file.text()) as Partial<Config>;
+  } catch (err) {
+    // A broken config.toml must not break every command and turn.
+    const warning = `parallels: ignoring ${paths.config}: ${err instanceof Error ? err.message : String(err)}`;
+    if (warning !== warned) console.error(warning);
+    warned = warning;
+    return defaults;
+  }
+  const config = { ...defaults, ...parsed };
+  if (!validRounds(config.maxReviewRounds)) config.maxReviewRounds = defaults.maxReviewRounds;
+  return config;
+}
+
+/** A review round count: an integer from 0 to MAX_REVIEW_ROUNDS. */
+export function validRounds(n: unknown): n is number {
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= MAX_REVIEW_ROUNDS;
 }
 
 /** Write changed keys back to config.toml, keeping the others. */

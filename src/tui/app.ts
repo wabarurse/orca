@@ -4,7 +4,7 @@
 // talk to the page's orchestrator; worker and reviewer reports arrive through
 // its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, setDisplayName, setModel, shortRemote, useAccount, validProjectName, type Choice } from "../commands";
+import { accountChoices, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, useAccount, validProjectName, type Choice } from "../commands";
 import { homedir } from "node:os";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
@@ -71,6 +71,7 @@ const HELP = [
   "/keys shows what your terminal sends for a chord (Esc ends)",
   "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
   "/agents   /models [id]   /accounts   /login claude|codex [profile]",
+  "/review-rounds [n] review rounds before CI (0 = straight to CI)",
 ];
 const HELP_VIEW = "/back (or Esc) leaves the agent view";
 
@@ -436,6 +437,7 @@ export class App {
     if (text === "/accounts") return this.accountsMenu();
     if (text === "/models") return this.modelsMenu();
     if (text.startsWith("/models ")) return this.say(dim(await setModel(text.slice(8).trim())));
+    if (text === "/review-rounds" || text.startsWith("/review-rounds ")) return this.say(dim(await reviewRounds(text.slice(14).trim())));
     if (!page) return this.newPage();
     if (text === "/agents") return this.agentsMenu(page);
     if (text.startsWith("/")) return this.say(dim(`unknown command ${text.split(" ")[0]}`));
