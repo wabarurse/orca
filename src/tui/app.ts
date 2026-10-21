@@ -9,15 +9,16 @@
 
 import { accountChoices, deleteProject, exitWatchdog, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { paths } from "../config";
+import type { Message } from "../inbox";
 import type { Orchestrator } from "../orchestrator";
 import { format } from "node:util";
 import { follow, parts } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
 import { lineRows, type Line } from "./lines";
-import { loadHistory, remember, saveHistory } from "./history";
+import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
-import { readEntries, replyLine, reportLine, restore, userLines } from "./restore";
+import { replyLine, reportLine, restore, userLines } from "./restore";
 import { append, bold, commit, erase, dim, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
 import type { Terminal } from "./term";
 
@@ -43,8 +44,11 @@ export interface Page {
   deleting?: boolean;
   /** Input history (↑/↓), oldest first, saved in projects/<id>/input-history. */
   inputHistory: string[];
-  /** The last input-history write; the next one waits for it so an older list never lands last. */
+  /** Lines in the input-history file as far as this page knows, and the last write (writes go one at a time). */
+  historyLines: number;
   savingHistory: Promise<void>;
+  /** What the user typed here and sent, not yet read by the orchestrator: when it reads them they are already on screen. */
+  sent: string[];
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
   view: { name: string; lines: Line[]; leave: () => void; live: boolean } | null;
 }
@@ -52,8 +56,8 @@ export interface Page {
 export interface AppDeps {
   term: Terminal;
   /** Make sure the project exists (cloning when a url is given) and build its orchestrator. */
-  /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `report` gets each agent message the orchestrator reads. */
-  openOrchestrator(project: string, url: string | undefined, write: (text: string, plain?: boolean) => void, report?: (from: string, text: string) => void): Promise<Orchestrator>;
+  /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
+  openOrchestrator(project: string, url: string | undefined, write: (text: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void): Promise<Orchestrator>;
   /** Inbox poll period; tests shorten it. */
   pollMs?: number;
   /** Clone source of the repository `start` was run from, if any: opened on start and cloned by Ctrl+N. */
@@ -291,10 +295,16 @@ export class App {
     this.toPage(page, text.replace(/\n$/, "").split("\n"));
   }
 
-  /** An agent's message as the orchestrator reads it: one dim line, ending any markdown in the stream. */
-  private report(page: Page, from: string, text: string): void {
+  /** Messages as the orchestrator reads them, ending any markdown in the stream: an agent's as one dim line, the user's as "> …" unless typed here. */
+  private inbox(page: Page, msgs: Message[]): void {
     this.endPartial(page);
-    this.toPage(page, [reportLine(from, text)]);
+    for (const m of msgs) {
+      if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
+      // Typed here: already shown when sent. From elsewhere (`parallels msg`, a question's answer): shown now, as restore shows it.
+      const at = page.sent.indexOf(m.text);
+      if (at !== -1) page.sent.splice(at, 1);
+      else this.toPage(page, userLines(m.text));
+    }
   }
 
   /** Move what a page's stream still holds into its history. */
@@ -458,11 +468,13 @@ export class App {
       if (existing !== this.active) { this.active = existing; this.reprint(); }
       return this.pages[existing]!;
     }
-    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], savingHistory: Promise.resolve(), view: null };
-    // Like `claude --continue`: the page starts with what its transcript showed live, and ↑ recalls what was typed.
-    page.lines = restore(readEntries(paths.transcript(project, "orchestrator")), this.deps.term.cols);
-    page.inputHistory = await loadHistory(project);
-    page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (from, text) => this.report(page, from, text));
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], view: null };
+    page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs));
+    // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
+    page.lines = [...restore(page.orch.entries?.() ?? [], this.deps.term.cols), ...page.lines];
+    const saved = await loadHistory(project);
+    page.inputHistory = saved.entries;
+    page.historyLines = saved.lines;
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
     this.pages.push(page);
@@ -733,7 +745,7 @@ export class App {
     this.queued.clear();
     for (const [page, texts] of queued) {
       if (!this.pages.includes(page)) continue; // closed meanwhile
-      if (ok) for (const t of texts) await page.orch.say(t);
+      if (ok) for (const t of texts) await this.send(page, t);
       else this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
     }
     this.draw();
@@ -775,7 +787,7 @@ export class App {
       this.queued.set(page, [...(this.queued.get(page) ?? []), text]);
       return this.say(dim("queued; runs after sign-in"), page);
     }
-    await page.orch.say(text);
+    await this.send(page, text);
     this.runTurn(page);
   }
 
@@ -837,16 +849,22 @@ export class App {
   }
 
 
-  /** Add a sent line to the active page's input history and save it (or keep it in memory while no page is open). */
+  /** Send what the user typed on a page to its orchestrator, remembering it was shown already. */
+  private send(page: Page, text: string): Promise<void> {
+    page.sent.push(text);
+    return page.orch.say(text);
+  }
+
+  /** Add a sent line (only plain messages and harmless commands; nothing while signing in) to the active page's input history and save it (or keep it in memory while no page is open). */
   private remember(text: string): void {
+    if (!keepable(text, this.loggingIn)) return;
     const page = this.page;
     if (!page) { this.looseHistory = remember(this.looseHistory, text); return; }
     const before = page.inputHistory;
     page.inputHistory = remember(before, text);
     if (page.inputHistory === before) return;
-    const list = page.inputHistory;
     page.savingHistory = page.savingHistory
-      .then(() => saveHistory(page.project, list))
+      .then(async () => { page.historyLines = await appendHistory(page.project, text, page.historyLines); })
       .catch((err) => this.say(dim(`could not save input history: ${err instanceof Error ? err.message : String(err)}`), page));
   }
 

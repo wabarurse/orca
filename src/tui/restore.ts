@@ -1,19 +1,37 @@
 // Rebuild a page's history from its orchestrator's transcript, like
 // `claude --continue` or `codex resume`: what the page showed live, in the
-// same form. User messages as "> …", agents' reports as "From <id>: …", the
+// same form. User messages as "> …", agents' messages as "From <id>: …", the
 // orchestrator's text as markdown blocks cut the way the stream cuts them,
-// its tool calls as the dim "▸" lines agent.ts writes and its messages to the
-// user labelled as replies. Tool results and thinking were never shown, so
-// they stay hidden. Only the current branch shows: the parent chain from the
-// head back to the root or to the latest summary (compaction), which then
-// leads with a dim note. A long history keeps its last MAX_RESTORED_ROWS rows.
+// its tool calls as the dim "▸" lines the agent loop writes, and what each
+// turn sent the user (the transcript's `replies` entries) labelled after that
+// turn. Tool results and thinking were never shown, so they stay hidden.
+// Only the current branch shows: the parent chain from the head back to the
+// root or to the latest summary (compaction), which then leads with a dim
+// note. A long history keeps its newest MAX_RESTORED_ROWS rendered rows.
+//
+// Known differences from the live page:
+// - A user message typed mid-turn showed live where it was typed; restored, it
+//   sits where the orchestrator read it (with the user's lines first in that
+//   inbox batch, as typed lines show before the turn reads them).
+// - Transcripts from before `replies` entries existed only hold the
+//   orchestrator's own `message` calls to the user: those are held until the
+//   user next speaks (or the end), so a reply from an earlier turn that ended
+//   without the user speaking shows later than it did live, and worker or
+//   reviewer messages to "user" (not in the orchestrator's transcript) are lost.
+// - "user" messages that did not come from the TUI (`parallels msg`, question
+//   answers) show as "> …" both live and restored.
+// - Errors, command output (/help, /models, …), status notes ("queued; runs
+//   after sign-in") and anything else the app itself said are not in the
+//   transcript and are not restored.
 
-import { existsSync, readFileSync } from "node:fs";
 import { parseFormatted } from "../inbox";
 import type { Entry, MessageEntry } from "../transcript";
+import { toolLine } from "../view";
 import { lineRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
 import { bold, dim } from "./render";
+
+export { toolLine };
 
 /** A restored page shows about this many rendered rows: whole messages from the newest back. */
 export const MAX_RESTORED_ROWS = 200;
@@ -30,131 +48,148 @@ export function userLines(text: string): Line[] {
   return [`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`)];
 }
 
-/** An agent's message to the orchestrator: one dim line, the full report is in /agents. */
+const REPORT_CHARS = 100;
+
+/** An agent's message to the orchestrator: one dim line (its first, cut at 100 characters); the full report is in /agents. */
 export function reportLine(from: string, text: string): Line {
   const first = text.split("\n").find((l) => l.trim()) ?? "";
-  const cut = first.length > 100 ? first.slice(0, 100) : first;
-  const more = cut !== first || text.trim() !== first.trim();
+  const chars = [...first];
+  const cut = chars.slice(0, REPORT_CHARS).join("");
+  const more = chars.length > REPORT_CHARS || text.trim() !== first.trim();
   return dim(`From ${from}: ${cut}${more ? "…" : ""}`);
 }
 
 /** A message to the user, led by its sender. */
 export const replyLine = (from: string, text: string): Line => ({ md: text, label: bold(from) });
 
-/** A tool call as agent.ts writes it while the turn runs. */
-export const toolLine = (name: string, input: unknown): string => `\x1b[2m▸ ${name} ${JSON.stringify(input).slice(0, 100)}\x1b[0m`;
+/** One message as the page shows it, laid out only when needed. */
+interface Item { lines: () => Line[]; summary?: boolean }
 
-/** Every entry of a transcript file, skipping blank or partial lines (as transcript.ts does). */
-export function readEntries(path: string): Entry[] {
-  if (!existsSync(path)) return [];
-  const out: Entry[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try { out.push(JSON.parse(line) as Entry); } catch { /* partial line */ }
-  }
-  return out;
-}
-
-/** The current branch, oldest first: from the head (the last entry) back to the root or the latest summary. */
-export function currentChain(entries: Entry[]): Entry[] {
-  const byUuid = new Map(entries.map((e) => [e.uuid, e]));
-  const chain: Entry[] = [];
-  const seen = new Set<string>();
-  let cur = entries.at(-1);
-  while (cur && !seen.has(cur.uuid)) {
-    seen.add(cur.uuid);
-    chain.push(cur);
-    if (cur.type === "summary") break;
-    cur = cur.parentUuid ? byUuid.get(cur.parentUuid) : undefined;
-  }
-  return chain.reverse();
-}
+const now = (lines: Line[]): Item => ({ lines: () => lines });
 
 type Content = Exclude<MessageEntry["message"]["content"], string>;
+type Block = Content[number];
 
-/** The inbox text of a user entry: its string content, or its text blocks (messages riding with tool results). */
-const inboxTexts = (content: MessageEntry["message"]["content"]): string[] =>
-  typeof content === "string" ? [content] : content.flatMap((b) => (b.type === "text" ? [b.text] : []));
+/** The text of a tool result. */
+const resultText = (b: Extract<Block, { type: "tool_result" }>): string =>
+  typeof b.content === "string" ? b.content : (b.content ?? []).map((c) => (c.type === "text" ? c.text : "")).join("");
 
-/** Tool results by tool_use id, to tell a sent message from a refused one. */
-function results(chain: Entry[]): Map<string, { ok: boolean }> {
-  const out = new Map<string, { ok: boolean }>();
-  for (const e of chain) {
-    if (e.type !== "message" || typeof e.message.content === "string") continue;
-    for (const b of e.message.content) {
-      if (b.type !== "tool_result") continue;
-      const text = typeof b.content === "string" ? b.content : (b.content ?? []).map((c) => (c.type === "text" ? c.text : "")).join("");
-      out.set(b.tool_use_id, { ok: !b.is_error && text.startsWith("sent to") });
-    }
-  }
-  return out;
+/** The tool results in an entry. */
+const toolResults = (e: Entry) =>
+  e.type === "message" && typeof e.message.content !== "string" ? e.message.content.filter((b) => b.type === "tool_result") : [];
+
+/** Tool results by tool_use id: whether a `message` call was really sent. */
+function sentIds(chain: Entry[]): Set<string> {
+  const ok = chain.flatMap(toolResults).filter((b) => !b.is_error && resultText(b).startsWith("sent to"));
+  return new Set(ok.map((b) => b.tool_use_id));
 }
 
-/**
- * The page history for a transcript, as display messages (each a run of
- * lines), oldest first. Replaying it reproduces the live page: the stream's
- * blocks end at a tool line or at the end of a turn, and the turn's messages
- * to the user follow it.
- */
-export function restoreMessages(entries: Entry[]): Line[][] {
-  const chain = currentChain(entries);
-  const sent = results(chain);
-  const out: Line[][] = [];
+/** The inbox messages a user entry holds: its string content, or text blocks riding with tool results. */
+function inboxMessages(content: MessageEntry["message"]["content"]) {
+  const texts = typeof content === "string" ? [content] : content.flatMap((b) => (b.type === "text" ? [b.text] : []));
+  return texts.flatMap(parseFormatted);
+}
+
+const fromUser = (m: { from: string }) => m.from === "user" || m.from === "";
+
+/** A user entry: the user's lines first (they showed when typed), then each agent's message. Says whether the user spoke. */
+function userEntry(content: MessageEntry["message"]["content"]): { items: Item[]; user: boolean } {
+  const msgs = inboxMessages(content);
+  const mine = msgs.filter(fromUser);
+  const items = [...mine.map((m) => now(userLines(m.text))), ...msgs.filter((m) => !fromUser(m)).map((m) => now([reportLine(m.from, m.text)]))];
+  return { items, user: mine.length > 0 };
+}
+
+/** An assistant entry's lines: its text through a fresh stream (every entry ends flushed live), then its tool lines. */
+function assistantLines(parts: Content): Line[] {
   const md = new MarkdownStream();
-  let replies: Line[] = [];
-  let cur: Line[] = [];
-  const blocks = (bs: string[]) => cur.push(...bs.map((b): Line => ({ md: b, block: true })));
-  const endTurn = () => {
-    blocks(md.flush());
-    for (const r of replies) out.push([r]);
-    replies = [];
-  };
+  const out: string[] = [];
+  const said = parts.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+  if (said) out.push(...md.feed(`${said}\n`), ...md.flush());
+  const lines: Line[] = out.map((b) => ({ md: b, block: true }));
+  for (const b of parts) if (b.type === "tool_use") lines.push(toolLine(b.name, b.input));
+  return lines;
+}
 
-  for (const e of chain) {
-    if (e.type === "summary") { out.push([SUMMARIZED]); continue; }
-    if (e.type !== "message") continue;
-    const { role, content } = e.message;
-    if (role === "user") {
-      // Live, the user's own lines show when sent, before the turn reads them with any agent reports.
-      const msgs = inboxTexts(content).flatMap(parseFormatted);
-      const mine = (m: { from: string }) => m.from === "user" || m.from === "";
-      for (const m of msgs.filter(mine)) out.push(userLines(m.text));
-      for (const m of msgs.filter((m) => !mine(m))) out.push([reportLine(m.from, m.text)]);
-      continue;
-    }
-    const parts: Content = typeof content === "string" ? [{ type: "text", text: content }] : content;
-    cur = [];
-    out.push(cur);
-    const said = parts.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-    if (said) { blocks(md.feed(said)); blocks(md.feed("\n")); }
-    const tools = parts.filter((b) => b.type === "tool_use");
-    for (const b of tools) {
-      blocks(md.flush());
-      cur.push(toolLine(b.name, b.input));
-      const input = b.input as { to?: unknown; text?: unknown };
-      if (b.name === "message" && String(input.to ?? "").trim() === "user" && sent.get(b.id)?.ok) replies.push(replyLine("orchestrator", String(input.text ?? "").trim()));
-    }
-    if (!tools.length) endTurn();
-  }
-  endTurn();
-  return out.filter((m) => m.length);
+/** A sent `message` call to the user, as the reply it was (or null). */
+function sentReply(b: Block, sent: Set<string>): Item | null {
+  if (b.type !== "tool_use" || b.name !== "message" || !sent.has(b.id)) return null;
+  const input = (b.input ?? {}) as { to?: unknown; text?: unknown };
+  return String(input.to ?? "").trim() === "user" ? now([replyLine("orchestrator", String(input.text ?? "").trim())]) : null;
+}
+
+/** An assistant entry as an item (none when it holds only thinking), and its sent `message` calls to the user. */
+function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<string>): { item: Item | null; replies: Item[] } {
+  const parts: Content = typeof content === "string" ? [{ type: "text", text: content }] : content;
+  const shows = parts.some((b) => (b.type === "text" && b.text) || b.type === "tool_use");
+  const replies = parts.map((b) => sentReply(b, sent)).filter((r): r is Item => r !== null);
+  return { item: shows ? { lines: () => assistantLines(parts) } : null, replies };
 }
 
 /**
- * The page history for a transcript at `cols` columns: the newest whole
- * messages that fit in `maxRows` rendered rows (at least the newest one),
- * led by a dim count of the messages left out.
+ * The current branch (transcript.ts `branch`: oldest first, a summary first)
+ * as the page's messages, oldest first, none laid out yet. Turns record what
+ * they sent the user in `replies` entries; before the first one (older
+ * transcripts) the orchestrator's sent `message` calls to the user stand in,
+ * held until the user next speaks.
  */
-export function restore(entries: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS): Line[] {
-  const messages = restoreMessages(entries);
+export function restoreItems(chain: Entry[]): Item[] {
+  const firstReplies = chain.findIndex((e) => e.type === "replies");
+  const legacy = firstReplies === -1 ? chain.length : firstReplies;
+  const sent = sentIds(chain.slice(0, legacy));
+  const state: Fold = { items: [], held: [] };
+  chain.forEach((e, i) => step(state, e, i < legacy ? sent : new Set()));
+  return release(state).items;
+}
+
+/** The items so far, and the stand-in replies waiting for the user to speak. */
+interface Fold { items: Item[]; held: Item[] }
+
+function release(state: Fold): Fold {
+  state.items.push(...state.held);
+  state.held = [];
+  return state;
+}
+
+/** One entry of the branch into the items. `sent` is empty past the first `replies` entry: from there they hold the replies. */
+function step(state: Fold, e: Entry, sent: Set<string>): void {
+  if (e.type === "summary") state.items.push({ lines: () => [SUMMARIZED], summary: true });
+  // The run that recorded these also made the held message calls: the entry has them, so they are not shown twice.
+  if (e.type === "replies") {
+    state.held = [];
+    state.items.push(...e.messages.map((m) => now([replyLine(m.from, m.text)])));
+  }
+  if (e.type !== "message") return;
+  if (e.message.role === "user") {
+    const { items, user } = userEntry(e.message.content);
+    if (user) release(state);
+    state.items.push(...items);
+    return;
+  }
+  const { item, replies } = assistantEntry(e.message.content, sent);
+  if (item) state.items.push(item);
+  state.held.push(...replies);
+}
+
+/**
+ * The page history for the current branch at `cols` columns: the newest
+ * whole messages that fit in `maxRows` rendered rows (at least the newest
+ * one), led by a dim count of the messages left out. Only the messages shown
+ * are laid out.
+ */
+export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS): Line[] {
+  const items = restoreItems(chain);
+  const shown: Line[][] = [];
   let rows = 0;
-  let from = messages.length;
+  let from = items.length;
   while (from > 0) {
-    const n = messages[from - 1]!.reduce((sum, l) => sum + lineRows(l, cols).length, 0);
-    if (from < messages.length && rows + n > maxRows) break;
+    const lines = items[from - 1]!.lines();
+    const n = lines.reduce((sum, l) => sum + lineRows(l, cols).length, 0);
+    if (shown.length && rows + n > maxRows) break;
+    shown.unshift(lines);
     rows += n;
     from--;
   }
-  const dropped = messages.slice(0, from).filter((m) => m[0] !== SUMMARIZED).length;
-  return [...(from > 0 ? [earlier(dropped)] : []), ...messages.slice(from).flat()];
+  const dropped = items.slice(0, from).filter((it) => !it.summary).length;
+  return [...(from > 0 ? [earlier(dropped)] : []), ...shown.flat()];
 }

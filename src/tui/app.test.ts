@@ -7,7 +7,7 @@ import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
 import { App, type Clock, type Line } from "./app";
 import { createOrchestrator } from "../orchestrator";
-import { put } from "../inbox";
+import { put, type Message } from "../inbox";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../tools/message";
 import { makeSpawn } from "../tools/spawn";
@@ -15,6 +15,7 @@ import { open as openTranscript } from "../transcript";
 import { parseKeys, type Key } from "./keys";
 import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
+import { bold } from "./render";
 
 const home = mkdtempSync(join(tmpdir(), "parallels-tui-"));
 process.env.PARALLELS_HOME = home;
@@ -1214,7 +1215,9 @@ describe("restored pages", () => {
     const term = fakeTerm(50, 20);
     term.display.write("shell$ parallels start\r\n");
     const orchs = fakeOrchestrators();
-    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    // The page is built from the transcript its orchestrator loaded.
+    const openOrchestrator: typeof orchs.openOrchestrator = async (...args) => ({ ...(await orchs.openOrchestrator(...args)), entries: () => (args[0] === "resumed" ? t.branch() : []) });
+    const app = new App({ term, openOrchestrator, pollMs: 100_000 });
     const running = app.run("resumed");
     await until(() => term.screen().includes("Worker done."));
     const restored = ["shell$ parallels start", "> what changed?", "Two things:", "- a", "- b", '▸ bash {"command":"ls"}', "From worker-feat: all done", "Worker done."];
@@ -1248,23 +1251,32 @@ describe("restored pages", () => {
       [said(`Plan:\n${TABLE_MD}\nthen *go*`), toolUse("t1", "spawn", { prompt: "do it", branch: "feat" })],
       [said("```ts\nconst x = 1;\n"), toolUse("t2", "message", { to: "user", text: "Started **feat**." })],
       [said("All set.")],
+      // A second turn, started by the poll: a message from `parallels msg` and a report, nothing typed here.
+      [said("Got it."), toolUse("t3", "message", { to: "user", text: "Second." })],
+      [said("Done.")],
     ]);
-    const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, report?: (from: string, text: string) => void) =>
-      createOrchestrator({ project: p, provider, tools, write, report });
+    const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void) =>
+      createOrchestrator({ project: p, provider, tools, write, onInbox });
     const term = fakeTerm(60, 30);
-    const app = new App({ term, openOrchestrator: open, pollMs: 100_000 });
+    const app = new App({ term, openOrchestrator: open, pollMs: 30, watchdog: async () => {} });
     const running = app.run("fidelity");
     await until(() => !!app.page);
     term.type("go\nnow\r");
     await until(() => term.screen().includes("orchestrator Started feat."));
     await until(() => !app.page!.busy);
+    await put("fidelity", "orchestrator", { from: "user", text: "from the cli" });
+    await put("fidelity", "orchestrator", { from: "worker-feat", text: "more" });
+    await until(() => term.screen().includes("orchestrator Second."));
+    await until(() => !app.page!.busy);
     const live = app.page!.lines;
     expect(live.map(raw)).toContain("All set.");
+    expect(live.map(raw).filter((l) => l.endsWith("> go") || l.endsWith("m go"))).toEqual([`${bold(">")} go`]); // typed here: shown once
+    expect(live.map(raw)).toContain(`${bold(">")} from the cli`);
     expect(live.map(raw).some((l) => l.includes("From worker-feat: Report:…"))).toBe(true);
     app.quit();
     await running;
 
-    const again = new App({ term: fakeTerm(60, 30), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000 });
+    const again = new App({ term: fakeTerm(60, 30), openOrchestrator: open, pollMs: 100_000 });
     const running2 = again.run("fidelity");
     await until(() => !!again.page);
     expect(again.page!.lines).toEqual(live);
@@ -1310,5 +1322,35 @@ describe("restored pages", () => {
     expect(again.input.text).toBe("/new fresh");
     again.quit();
     await running2;
+  });
+
+  test("secrets never reach the input history: /login, credentials in a /new URL, anything typed while signing in", async () => {
+    mkdirSync(paths.project("secrets"), { recursive: true });
+    let finish!: (s: string) => void;
+    const login = async () => new Promise<string>((r) => (finish = r));
+    const term = fakeTerm();
+    const app = new App({ term, openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000, login });
+    const running = app.run("secrets");
+    await until(() => !!app.page);
+    const page = app.page!;
+    term.type("hello\r");
+    term.type("/login claude work\r");
+    await until(() => app.loggingIn);
+    term.type("my api key is TOKEN-1\r"); // typed while signing in
+    await until(() => term.screen().includes("queued; runs after sign-in"));
+    finish("signed in");
+    await until(() => !app.loggingIn);
+    term.type("/new other https://me:TOKEN-2@github.com/a/b.git\r");
+    await until(() => app.page?.project === "other");
+    term.type("\x1a"); // back to secrets
+    await until(() => app.page === page);
+    term.type("/agents\r");
+    await until(() => page.inputHistory.length === 2);
+    await page.savingHistory;
+    const saved = await Bun.file(paths.inputHistory("secrets")).text();
+    expect(saved).toBe('"hello"\n"/agents"\n');
+    expect(page.inputHistory).toEqual(["hello", "/agents"]);
+    app.quit();
+    await running;
   });
 });

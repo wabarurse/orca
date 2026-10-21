@@ -1,18 +1,30 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { format } from "../inbox";
-import type { Entry } from "../transcript";
+import { open, type Entry } from "../transcript";
 import { lineRows, type Line } from "./lines";
-import { earlier, MAX_RESTORED_ROWS, restore, restoreMessages, SUMMARIZED, toolLine } from "./restore";
+import { earlier, MAX_RESTORED_ROWS, replyLine, restore, restoreItems, SUMMARIZED, toolLine } from "./restore";
 import { bold, dim } from "./render";
 
-/** A fixture transcript: entries chained in order unless a parent is given. */
+const dir = mkdtempSync(join(tmpdir(), "parallels-restore-"));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
+let files = 0;
+
+/**
+ * A fixture transcript file, entries chained in order unless a parent is
+ * given, loaded the way the orchestrator loads it: the current branch.
+ */
 function transcript(...items: (Omit<Entry, "uuid" | "parentUuid" | "ts"> & { parentUuid?: string | null; uuid?: string })[]): Entry[] {
   const out: Entry[] = [];
   for (const [i, item] of items.entries()) {
     const parentUuid = item.parentUuid !== undefined ? item.parentUuid : (out.at(-1)?.uuid ?? null);
     out.push({ ...item, uuid: item.uuid ?? `u${i}`, parentUuid, ts: "t" } as Entry);
   }
-  return out;
+  const path = join(dir, `t${files++}.jsonl`);
+  writeFileSync(path, out.map((e) => JSON.stringify(e) + "\n").join(""));
+  return open(path).branch();
 }
 const meta = { type: "meta", role: "orchestrator", model: "m" } as const;
 const user = (content: unknown, extra = {}) => ({ type: "message", message: { role: "user", content }, ...extra }) as never;
@@ -48,9 +60,10 @@ test("user messages, agent reports, assistant markdown and replies; tool calls a
   expect(lines.some((l) => raw(l).includes("started worker") || raw(l).includes("hmm"))).toBe(false);
 });
 
-test("the tool line is what agent.ts writes live", async () => {
+test("the tool line is the one agent.ts writes live", async () => {
   const src = await Bun.file(new URL("../agent.ts", import.meta.url)).text();
-  expect(src).toContain("write(`\\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\\x1b[0m\\n`, true);");
+  expect(src).toContain("write(`${toolLine(block.name, block.input)}\\n`, true);");
+  expect(toolLine("bash", { command: "ls" })).toBe(dim('▸ bash {"command":"ls"}'));
 });
 
 test("a summary: only the branch from the head back to it, led by a dim note", () => {
@@ -79,7 +92,7 @@ test("a long history keeps the newest whole messages within the cap, led by how 
   const lines = restore(entries, 60);
   const rows = lines.slice(1).flatMap((l) => lineRows(l, 60));
   expect(rows.length).toBe(MAX_RESTORED_ROWS);
-  const total = restoreMessages(entries).length;
+  const total = restoreItems(entries).length;
   // 300 messages of 1 and 2 rows: the newest 133 fill exactly 200 rows, so 167 were left out.
   expect(total).toBe(300);
   expect(lines[0]).toBe(earlier(167));
@@ -100,4 +113,79 @@ test("an empty or missing transcript restores nothing", () => {
 test("the user's lines lead an inbox turn they share with agent reports, as they were shown when sent", () => {
   const entries = transcript(meta, user(inbox(["worker-a", "report"], ["user", "hi"])));
   expect(restore(entries, 60)).toEqual([`${bold(">")} hi`, dim("From worker-a: report")]);
+});
+
+const sentTo = (id: string, to: string, text: string) => [
+  assistant([{ type: "tool_use", id, name: "message", input: { to, text } }]),
+  user([{ type: "tool_result", tool_use_id: id, content: `sent to ${to}` }]),
+];
+
+test("older transcripts: a reply waits for the end of the run, past a report that continued the turn, until the user speaks", () => {
+  const entries = transcript(
+    meta,
+    user(inbox(["user", "go"])),
+    ...sentTo("r1", "user", "Started."),
+    assistant([{ type: "text", text: "ok" }]), // end_turn
+    user(inbox(["worker-a", "done"])), // a report arrives: the run goes on
+    assistant([{ type: "text", text: "more text" }]),
+    user(inbox(["user", "next"])),
+    assistant([{ type: "text", text: "sure" }]),
+  );
+  const tool = toolLine("message", { to: "user", text: "Started." });
+  expect(restore(entries, 60)).toEqual([
+    `${bold(">")} go`, tool, { md: "ok", block: true }, dim("From worker-a: done"), { md: "more text", block: true },
+    replyLine("orchestrator", "Started."),
+    `${bold(">")} next`, { md: "sure", block: true },
+  ]);
+});
+
+test("replies entries place what a turn sent the user (agents' too) after it; message calls before them are not shown twice", () => {
+  const entries = transcript(
+    meta,
+    user(inbox(["user", "go"])),
+    ...sentTo("r1", "user", "Started."),
+    assistant([{ type: "text", text: "ok" }]),
+    user(inbox(["worker-a", "done"])),
+    assistant([{ type: "text", text: "more text" }]),
+    { type: "replies", messages: [{ from: "orchestrator", text: "Started." }, { from: "worker-a", text: "hi user" }] } as never,
+    // A turn started by a report alone: its reply shows after it, not when the user next speaks.
+    user(inbox(["reviewer-a", "lgtm"])),
+    ...sentTo("r2", "user", "Reviewed."),
+    assistant([{ type: "text", text: "noted" }]),
+    { type: "replies", messages: [{ from: "orchestrator", text: "Reviewed." }] } as never,
+    user(inbox(["user", "thanks"])),
+  );
+  const lines = restore(entries, 60);
+  expect(lines.filter((l) => typeof l !== "string" && l.label)).toEqual([replyLine("orchestrator", "Started."), replyLine("worker-a", "hi user"), replyLine("orchestrator", "Reviewed.")]);
+  const at = (l: Line) => lines.findIndex((x) => JSON.stringify(x) === JSON.stringify(l));
+  expect(at(replyLine("orchestrator", "Started."))).toBe(at({ md: "more text", block: true }) + 1);
+  expect(at(replyLine("orchestrator", "Reviewed."))).toBe(at({ md: "noted", block: true }) + 1);
+  expect(lines.at(-1)).toBe(`${bold(">")} thanks`);
+});
+
+test("a capped history that began at a summary drops the summary note and counts only messages", () => {
+  const items = [meta as never, user(inbox(["user", "old"])), { type: "summary", text: "s", parentUuid: "u1" } as never];
+  for (let i = 0; i < 120; i++) items.push(user(inbox(["user", `q${i}`])), assistant([{ type: "text", text: `a${i}` }]));
+  const lines = restore(transcript(...items), 60);
+  // 240 one-row messages after the summary: the newest 200 show, 40 are counted, the note is not.
+  expect(lines.length).toBe(201);
+  expect(lines[0]).toBe(earlier(40));
+  expect(lines).not.toContain(SUMMARIZED);
+  expect(lines.some((l) => raw(l).includes("old"))).toBe(false);
+  // Just under the cap the note leads.
+  const few = restore(transcript(meta, { type: "summary", text: "s" } as never, user(inbox(["user", "q"]))), 60);
+  expect(few).toEqual([SUMMARIZED, `${bold(">")} q`]);
+});
+
+test("report lines cut at 100 characters, not UTF-16 units", () => {
+  const emoji = "😀".repeat(150);
+  const line = restore(transcript(meta, user(inbox(["worker-a", emoji]))), 60)[0] as string;
+  expect(line).toBe(dim(`From worker-a: ${"😀".repeat(100)}…`));
+  const exact = restore(transcript(meta, user(inbox(["worker-a", "😀".repeat(100)]))), 60)[0];
+  expect(exact).toBe(dim(`From worker-a: ${"😀".repeat(100)}`));
+});
+
+test("tags inside a report or a user message are not senders", () => {
+  const entries = transcript(meta, user(inbox(["worker-a", "Report\n\n[x] done\n\n[1] item"], ["user", "list:\n\n[x] done\n\n[1] item"])));
+  expect(restore(entries, 60)).toEqual([`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item", dim("From worker-a: Report…")]);
 });
