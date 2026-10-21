@@ -2,7 +2,6 @@
 //
 //   ┌ tab bar: one tab per orchestrator page ─────────────┐
 //   │ body: the page's scrollback (or a menu over it)      │
-//   │ status: hints and what is happening                  │
 //   │ input line                                           │
 //   └──────────────────────────────────────────────────────┘
 
@@ -22,7 +21,6 @@ export interface Frame {
   lines: string[];
   /** How many lines up from the bottom the body is scrolled. */
   scroll: number;
-  status: string;
   input: Input;
   menu: Menu | null;
 }
@@ -54,7 +52,7 @@ export function wrap(line: string, cols: number): string[] {
 }
 
 function tabBar(tabs: Tab[], cols: number): string {
-  if (tabs.length === 0) return dim(" no orchestrators   ^N new");
+  if (tabs.length === 0) return "";
   const cells = tabs.map((t) => {
     const label = ` ${t.title}${t.busy ? " ·" : ""} `;
     return t.active ? inverse(label) : dim(label);
@@ -63,7 +61,7 @@ function tabBar(tabs: Tab[], cols: number): string {
 }
 
 export function render(f: Frame): string {
-  const bodyRows = Math.max(0, f.rows - 3);
+  const bodyRows = Math.max(0, f.rows - 2);
   const wrapped = f.lines.flatMap((l) => wrap(l, f.cols));
   const end = Math.max(0, wrapped.length - f.scroll);
   const body = wrapped.slice(Math.max(0, end - bodyRows), end);
@@ -74,7 +72,7 @@ export function render(f: Frame): string {
     const shown = rows.slice(-bodyRows);
     body.splice(body.length - shown.length, shown.length, ...shown);
   }
-  const out: string[] = [tabBar(f.tabs, f.cols), ...body, wrap(f.status, f.cols)[0] ?? ""];
+  const out: string[] = [tabBar(f.tabs, f.cols), ...body];
   const inputLine = f.input.prompt + f.input.text;
   out.push(wrap(inputLine, f.cols).at(-1) ?? "");
   // Clear each row before writing so shorter lines never leave debris.

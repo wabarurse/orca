@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
@@ -75,7 +75,7 @@ describe("tui app", () => {
     expect(term.closed).toBe(true);
   });
 
-  test("Ctrl+N prompts for a new orchestrator; Ctrl+, and Ctrl+. switch pages", async () => {
+  test("Ctrl+N starts orch-xxxx at once; Ctrl+, and Ctrl+. switch pages", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
@@ -83,30 +83,68 @@ describe("tui app", () => {
     await settle();
     term.press({ name: "n", ctrl: true });
     await settle();
-    expect(term.screen()).toContain("new orchestrator:");
-    term.type("beta git@example.com:b.git\r");
-    await settle();
-    expect(orchs.opened[1]).toEqual({ project: "beta", url: "git@example.com:b.git" });
-    expect(app.pages.map((p) => p.project)).toEqual(["alpha", "beta"]);
-    expect(app.page!.project).toBe("beta");
+    expect(orchs.opened[1]!.project).toMatch(/^orch-[a-z0-9]{4}$/);
+    expect(orchs.opened[1]!.url).toBeUndefined();
+    expect(app.pages.length).toBe(2);
+    expect(app.page!.project).toBe(orchs.opened[1]!.project);
+    expect(term.screen()).toContain("/rename <name> to rename");
 
     term.press({ name: ",", ctrl: true });
     expect(app.page!.project).toBe("alpha");
     term.press({ name: ".", ctrl: true });
-    expect(app.page!.project).toBe("beta");
+    expect(app.page!.project).toBe(orchs.opened[1]!.project);
     term.press({ name: ".", ctrl: true }); // wraps around
     expect(app.page!.project).toBe("alpha");
     term.press({ name: ",", alt: true }); // the fallback chord
-    expect(app.page!.project).toBe("beta");
+    expect(app.page!.project).toBe(orchs.opened[1]!.project);
 
+    term.type("/new beta git@example.com:b.git\r");
+    await settle();
+    expect(orchs.opened[2]).toEqual({ project: "beta", url: "git@example.com:b.git" });
     term.type("/close\r");
     await settle();
-    expect(app.pages.map((p) => p.project)).toEqual(["alpha"]);
+    expect(app.pages.map((p) => p.project)).toEqual(["alpha", orchs.opened[1]!.project]);
     term.press({ name: "c", ctrl: true });
     await running;
   });
 
-  test("with no project named it reopens every known project, or prompts when there are none", async () => {
+  test("/rename moves the project directory and reopens the orchestrator", async () => {
+    mkdirSync(join(home, "projects", "orch-old", "repo"), { recursive: true });
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("orch-old");
+    await settle();
+    term.type("/rename login-page\r");
+    await settle();
+    expect(app.page!.project).toBe("login-page");
+    expect(orchs.opened.map((o) => o.project)).toEqual(["orch-old", "login-page"]);
+    expect(existsSync(join(home, "projects", "login-page", "repo"))).toBe(true);
+    expect(existsSync(join(home, "projects", "orch-old"))).toBe(false);
+    expect(term.screen()).toContain("orch-old → login-page");
+    term.type("/rename bad name\r");
+    await settle();
+    expect(term.screen()).toContain("error: names are letters");
+    app.quit();
+    await running;
+  });
+
+  test("the screen is bare until /help", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await settle();
+    expect(term.screen()).not.toContain("/models");
+    term.type("/help\r");
+    await settle();
+    expect(term.screen()).toContain("/rename <name>");
+    expect(term.screen()).toContain("/models [id]");
+    app.quit();
+    await running;
+  });
+
+  test("with no project named it reopens every known project", async () => {
     mkdirSync(join(home, "projects", "p1", "repo"), { recursive: true });
     mkdirSync(join(home, "projects", "p2", "repo"), { recursive: true });
     const term = fakeTerm();
@@ -114,7 +152,7 @@ describe("tui app", () => {
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run();
     await settle();
-    expect(app.pages.map((p) => p.project)).toEqual(["p1", "p2"]);
+    expect(app.pages.map((p) => p.project)).toEqual(expect.arrayContaining(["p1", "p2"]));
     app.quit();
     await running;
   });
