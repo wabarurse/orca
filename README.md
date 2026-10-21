@@ -11,8 +11,8 @@ bun src/cli.ts start [project] [git-url]
 project). With no project named it reopens every project under
 `~/.parallels/projects`, or starts a fresh one. Ctrl+N starts a new orchestrator
 named `orch-xxxx` with an empty repository (`/rename <name>` renames it;
-`/new <name> <git-url>` clones instead), Ctrl+Z and Ctrl+X move between pages (so
-do Ctrl+←/→ and Alt+←/→; `/keys` shows what your terminal sends for any chord). Type
+`/new <name> <git-url>` clones instead), Ctrl+Z and Ctrl+X move between pages
+(`/keys` shows what your terminal sends for any chord). Type
 `/help` for the rest of the commands.
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).

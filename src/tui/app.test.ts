@@ -95,9 +95,7 @@ describe("tui app", () => {
     expect(app.page!.project).toBe(orchs.opened[1]!.project);
     term.type("\x18"); // wraps around
     expect(app.page!.project).toBe("alpha");
-    term.type("\x1b[1;5C"); // Ctrl+Right, the arrow fallback
-    expect(app.page!.project).toBe(orchs.opened[1]!.project);
-    term.type("\x1b[1;3D"); // Alt+Left
+    term.type("\x1b[1;5C"); // Ctrl+Right does nothing
     expect(app.page!.project).toBe("alpha");
 
     term.type("/new beta git@example.com:b.git\r");
