@@ -1813,7 +1813,7 @@ describe("command and key tables", () => {
     "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history",
     "/keys shows what your terminal sends for a chord (Esc ends)",
     "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
-    "/agents   /models [id]   /accounts   /login claude|codex [profile]",
+    "/agents   /effort [level|default]   /fast [on|off]   /models [id]   /accounts   /login claude|codex [profile]",
     "/review-rounds [n] review rounds before CI (0 = straight to CI)",
     "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later",
   ];
@@ -1832,7 +1832,7 @@ describe("command and key tables", () => {
     expect(help).not.toContain("/back");
     expect(helpLines(app.commands, false)).toEqual(OLD_HELP);
     expect(helpLines(app.commands, true)).toEqual([...OLD_HELP, OLD_HELP_VIEW]);
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/close", "/help", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/rename", "/review-rounds"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/close", "/effort", "/fast", "/help", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/rename", "/review-rounds"]);
   });
 
   test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {
@@ -1845,7 +1845,7 @@ describe("command and key tables", () => {
     expect(parseCommand("/quit now", commands)).toMatchObject({ name: "/quit", command: undefined });
     expect(parseCommand("/new\tx", commands)).toMatchObject({ name: "/new\tx", command: undefined });
     expect(parseCommand("/nope x", commands)).toMatchObject({ name: "/nope", command: undefined });
-    for (const [name, c] of commands) if (c.needsPage) expect(name).toBe("/agents"); // the only command that needs a page
+    for (const [name, c] of commands) if (c.needsPage) expect(name).toBe("/agents"); // /models handles no-page explicitly
   });
 
   test("unknown commands say 'unknown command /x' (the name only), as before", async () => {

@@ -1,3 +1,4 @@
+import type { RequestSettings } from "../project-settings";
 // A provider turns the transcript into one model turn. The transcript stays
 // Anthropic-shaped (text / tool_use / tool_result blocks) whatever the
 // provider; OpenAI is translated on the way in and out.
@@ -14,6 +15,7 @@ export interface Turn {
 }
 
 export interface CompleteRequest {
+  settings?: RequestSettings;
   model: string;
   /** The role's system prompt; providers put their own identity line first. */
   system?: string;

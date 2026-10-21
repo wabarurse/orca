@@ -34,3 +34,13 @@ Rules:
 - Agents only know their cwd. Never read the host or another worker's worktree.
 - Tool results are byte-capped when appended to the transcript.
 - Prefer `Bun.file`, `Bun.$`, and `bun:test` over npm packages.
+
+
+Project model switching and request settings:
+
+- `src/project-model.ts`: `effectiveModel(project)` / `saveProjectModel(project, model, identity?)`; project override with unchanged global fallback. `projectModelResolver` returns model/provider/settings before every request in every production agent.
+- `src/project-settings.ts`: `effectiveSettings(project, model)`, `saveProjectSettings(project, model, patch)`, `effortCommand`, `fastCommand`. `/effort [level|default]` and `/fast [on|off]` are project/exact-model scoped, with conservative endpoint compatibility (`model-capabilities.ts`), backend defaults when absent, no picker/header controls. Unknown explicit capabilities refuse without saving.
+- `src/project-state.ts`: invocation queue + cross-process lock shared by managed project create/delete and model/settings saves; captured directory identity refuses old-generation commits after deletion/recreation. Never steal uncertain stale locks.
+- `/models` counts actual live windows using `liveAgentsOrNull` (injectable `AppDeps.modelAgents`); unknown liveness refuses. Model async generations cancel stale results. No-page settings commands explain rather than open a project. No-page feedback survives redraw until a page opens. `AppDeps.saveModel` is the injectable commit boundary; once persistence starts the captured project owns the save, not the selected page.
+- In-flight calls/tools finish. Failed turns retain drained history and require another message to resume; changing settings never retries a task or restarts exited workers/reviewers. Provider-load errors are explicit. Cross-provider adapter sanitizer and fake tests do not guarantee live service acceptance of all historic reasoning/multimodal blocks.
+- See `MODEL_SETTINGS.md` for exact semantics, verified SDK/official endpoint sources, allowed model/effort/tier subset, tests and limitations.

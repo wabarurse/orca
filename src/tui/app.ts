@@ -1,3 +1,4 @@
+import { effortCommand, fastCommand } from "../project-settings";
 // The inline TUI, kept bare: like Claude Code and Codex it never takes over
 // the screen. Finished lines go once into the terminal's scrollback; only the
 // live region at the bottom (a streaming line, a menu, the status line, the
@@ -7,8 +8,10 @@
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
+import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { paths } from "../config";
+import { projectIdentity } from "../project-state";
+import { validateModel } from "../project-model";
 import type { Message } from "../inbox";
 import type { Orchestrator } from "../orchestrator";
 import { format } from "node:util";
@@ -73,6 +76,9 @@ export interface AppDeps {
   agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
   /** Sign-in; tests replace it. */
   login?: typeof login;
+  modelChoices?: typeof modelChoices;
+  modelAgents?: (project: string) => Promise<string[] | null>;
+  saveModel?: typeof setModel;
   /** How the project list checks for live agents and closes a deleted project's tmux session; tests stub them. */
   projects?: Pick<DeleteOptions, "live" | "kill">;
   /** Exit watchdog run with each inbox poll (commands.ts exitWatchdog); tests stub it. */
@@ -199,7 +205,14 @@ const typedText = (k: Key): string | undefined => ((k.name === "char" || k.name 
 
 export class App {
   pages: Page[] = [];
-  active = 0;
+  private modelGeneration = 0;
+  private _active = 0;
+  get active(): number { return this._active; }
+  set active(index: number) {
+    if (index !== this._active) this.modelGeneration++;
+    this._active = index;
+  }
+  private looseLines: string[] = [];
   input = { text: "", cursor: 0 };
   /** First input row on screen, kept between frames so the input area scrolls only when the cursor leaves it. */
   private inputTop: number | undefined;
@@ -326,13 +339,13 @@ export class App {
     return () => methods.forEach((m, i) => { console[m] = saved[i]!; });
   }
 
-  quit(): void { this.done(); }
+  quit(): void { this.modelGeneration++; this.done(); }
 
   // --- output -----------------------------------------------------------------
 
   /** Append a finished line to the page's agent view if one is up, else to the page (or the screen when there is none). */
   say(line: string, page = this.page): void {
-    if (!page) { this.pending.push(line); return this.draw(); }
+    if (!page) { this.looseLines.push(line); this.pending.push(line); return this.draw(); }
     if (page.view) this.toView(page, page.view, [line]);
     else this.toPage(page, [line]);
   }
@@ -353,7 +366,7 @@ export class App {
 
   /** What the screen shows for the active page: its agent view or its history. */
   private screenLines(page = this.page): string[] {
-    return page ? this.rows(page.view?.lines ?? page.lines) : [];
+    return page ? this.rows(page.view?.lines ?? page.lines) : this.looseLines;
   }
 
   /** History lines laid out at the terminal's width. */
@@ -554,6 +567,7 @@ export class App {
   // --- pages ------------------------------------------------------------------
 
   async openPage(project: string, url?: string): Promise<Page> {
+    this.modelGeneration++;
     const existing = this.pages.findIndex((p) => p.project === project);
     if (existing !== -1) {
       if (existing !== this.active) { this.active = existing; this.reprint(); }
@@ -569,6 +583,7 @@ export class App {
     page.historyLines = saved.lines;
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
+    this.looseLines = [];
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.questions.poll([page]);
@@ -578,6 +593,7 @@ export class App {
   }
 
   closePage(index = this.active): void {
+    this.modelGeneration++;
     const page = this.pages[index];
     if (!page) return;
     page.view?.leave();
@@ -633,6 +649,7 @@ export class App {
   }
 
   async openProjects(): Promise<void> {
+    this.modelGeneration++;
     const items = await orderedProjects();
     const index = Math.max(0, items.findIndex((it) => it.name === this.page?.project));
     this.menu = null;
@@ -754,7 +771,7 @@ export class App {
       }
     } catch (err) {
       this.endPartial(page);
-      this.toPage(page, [`${bold("error")} ${err instanceof Error ? err.message : String(err)}`]);
+      this.toPage(page, [`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. Send another message to resume with retained history; changing model alone does not retry. Exited agents require restart.`]);
     } finally {
       this.endPartial(page);
       page.busy = false;
@@ -764,7 +781,8 @@ export class App {
 
   // --- menus ------------------------------------------------------------------
 
-  openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void): void {
+  openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
+    if (modelOperation === undefined) this.modelGeneration++;
     if (!choices.length) return;
     this.menu = {
       title: dim(title) + dim("   ↑↓ Enter   Esc cancels"),
@@ -776,6 +794,7 @@ export class App {
   }
 
   private async agentsMenu(page: Page): Promise<void> {
+    this.modelGeneration++;
     const agents = await (this.deps.agents ?? listAgents)(page.project);
     if (!agents.length) return this.say(dim("no agents yet"));
     this.openMenu("attach to an agent", agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })), (name) => {
@@ -785,18 +804,20 @@ export class App {
   }
 
   private async accountsMenu(): Promise<void> {
+    this.modelGeneration++;
     this.openMenu("accounts: Enter uses one or signs it in", await accountChoices(dim), async (account) => {
       if (account.ok) return this.say(dim(await useAccount(account)));
       await this.login(`${account.provider} ${account.id.split(":")[1]}`);
     });
   }
 
-  private async modelsMenu(): Promise<void> {
+  private async modelsMenu(page: Page, operation: number, identity: string): Promise<void> {
     this.say(dim("fetching models…"));
-    const { choices, errors } = await modelChoices(dim);
+    const { choices, errors } = await (this.deps.modelChoices ?? modelChoices)(dim, page.project);
+    if (!this.modelPageCurrent(page, operation)) return;
     for (const e of errors) this.say(dim(e));
     if (!choices.length) return this.say(dim("no models available; sign in with /login first"));
-    this.openMenu("switch model   (/models <id> for any other id)", choices, async (id) => this.say(dim(await setModel(id))));
+    this.openMenu("switch model   (/models <id> for any other id)", choices, async (id) => this.switchModel(page, id, operation, identity), operation);
   }
 
   private async attach(page: Page, name: string, live: boolean): Promise<void> {
@@ -865,7 +886,9 @@ export class App {
     ["/close", { run: () => this.closePage(), help: { row: "pages", text: "/close closes this page" } }],
     ["/quit", { run: () => this.quit(), help: { row: "pages", text: "/quit" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { row: "settings", text: "/agents" } }],
-    ["/models", { args: true, run: (args) => this.modelsCommand(args), help: { row: "settings", text: "/models [id]" } }],
+    ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { row: "settings", text: "/effort [level|default]" } }],
+    ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { row: "settings", text: "/fast [on|off]" } }],
+    ["/models", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { row: "settings", text: "/models [id]" } }],
     ["/accounts", { run: () => this.accountsMenu(), help: { row: "settings", text: "/accounts" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { row: "settings", text: "/login claude|codex [profile]" } }],
     ["/review-rounds", { args: true, run: async (args) => this.say(dim(await reviewRounds(args))), help: { row: "review", text: "/review-rounds [n] review rounds before CI (0 = straight to CI)" } }],
@@ -882,9 +905,51 @@ export class App {
   }
 
   /** /models opens the menu; /models <id> sets any id. */
-  private async modelsCommand(id: string): Promise<void> {
-    if (!id) return this.modelsMenu();
-    this.say(dim(await setModel(id)));
+  private async requestSetting(page: Page | undefined, args: string, command: typeof effortCommand): Promise<void> {
+    if (!page) return this.say(dim("open a project before changing its model settings"));
+    this.say(dim(await command(page.project, args)), page);
+  }
+
+  private async modelsCommand(id: string, page?: Page): Promise<void> {
+    const operation = ++this.modelGeneration;
+    if (!page) return this.say(dim("open a project before changing its model"));
+    const identity = projectIdentity(page.project);
+    if (!id) return this.modelsMenu(page, operation, identity);
+    await this.switchModel(page, id, operation, identity);
+  }
+
+  private modelPageCurrent(page: Page, operation: number): boolean {
+    return operation === this.modelGeneration && this.page === page && this.pages.includes(page) && !page.deleting;
+  }
+
+  private async modelAgents(project: string): Promise<string[] | null> {
+    try { return await (this.deps.modelAgents ?? liveAgentsOrNull)(project); }
+    catch { return null; }
+  }
+
+  private async switchModel(page: Page, id: string, operation: number, identity: string): Promise<void> {
+    validateModel(id);
+    if (!this.modelPageCurrent(page, operation)) return;
+    const agents = await this.modelAgents(page.project);
+    if (!this.modelPageCurrent(page, operation)) return;
+    if (agents === null) return this.say(dim("could not determine running agents; try again"), page);
+    const workers = agents.filter((name) => name.startsWith("worker-")).length;
+    const reviewers = agents.filter((name) => name.startsWith("reviewer-")).length;
+    const save = () => this.commitModel(page, id, operation, identity);
+    if (!workers && !reviewers) return save();
+    this.openMenu(`Switch this project to ${id}? Applies to orchestrator, ${workers} workers and ${reviewers} reviewers. Running tools finish; agents switch before their next model request.`, [
+      { value: false, label: "Cancel", current: true },
+      { value: true, label: "Switch all" },
+    ], async (confirmed) => { if (confirmed) await save(); }, operation);
+  }
+
+  private async commitModel(page: Page, id: string, operation: number, identity: string): Promise<void> {
+    if (!this.modelPageCurrent(page, operation)) return;
+    // Persistence boundary: once invoked, this commit belongs to the captured
+    // project even if its page closes or selection changes. Disk identity and
+    // the shared project-state lock protect deletion/recreation, not selection.
+    const result = await (this.deps.saveModel ?? setModel)(id, page.project, identity);
+    this.say(dim(result), page);
   }
 
   /**
@@ -897,6 +962,7 @@ export class App {
    */
   private async submit(text: string): Promise<void> {
     const call = parseCommand(text, this.commands);
+    if (call && call.name !== "/models") this.modelGeneration++;
     if (call?.command && !call.command.needsPage) return call.command.run(call.args, this.page);
     const page = this.page;
     if (!page) return this.newPage();
@@ -949,6 +1015,7 @@ export class App {
   ];
 
   async onKey(k: Key): Promise<void> {
+    if (k.name === "escape") this.modelGeneration++;
     for (const layer of this.keyLayers) if (layer.takes(k)) return layer.handle(k);
   }
 
@@ -967,7 +1034,7 @@ export class App {
     if (id === "up") m.index = (m.index + n - 1) % n;
     else if (id === "down") m.index = (m.index + 1) % n;
     else if (id === "enter") { this.menu = null; await m.pick(m.index); }
-    else if (id === "escape") this.menu = null;
+    else if (id === "escape") { this.modelGeneration++; this.menu = null; }
     return this.draw();
   }
 

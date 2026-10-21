@@ -154,3 +154,19 @@ test("malformed tool arguments fail instead of being executed as an empty comman
   expect(() => fromResponses([{ ...call, type: "function_call", arguments: "[]" } as ResponseOutputItem])).toThrow("invalid tool call");
   expect(() => fromResponses([{ ...call, status: "incomplete" } as ResponseOutputItem])).toThrow("unfinished");
 });
+
+test("Codex subscription wire payload sends selected effort/priority, omits them by default", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  intercept(async (req) => {
+    expect(req.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    bodies.push(await req.json() as Record<string, unknown>);
+    return codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]);
+  });
+  const provider = openai(async () => fakeCodexTokens());
+  await provider.complete({ ...request(), model: "gpt-6-astra", settings: { effort: "max", fast: true } });
+  await provider.complete({ ...request(), model: "gpt-6-astra" });
+  expect(bodies[0]).toMatchObject({ reasoning: { summary: "auto", effort: "max" }, service_tier: "priority" });
+  expect(bodies[1]).toMatchObject({ reasoning: { summary: "auto" } });
+  expect(bodies[1]).not.toHaveProperty("service_tier");
+  expect(bodies[1]!.reasoning).not.toHaveProperty("effort");
+});

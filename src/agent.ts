@@ -1,14 +1,15 @@
+import type { RequestSettings } from "./project-settings";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/prompts.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).
 
 import type { ContentBlock, TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
-import { provider as providerFromAccounts } from "./accounts";
+import { effectiveModel, projectModelResolver } from "./project-model";
 import { loadConfig, paths } from "./config";
 import { supervise, type Tracker } from "./exits";
 import { drain, format, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
-import { providerFor, type Provider } from "./providers/index";
+import { type Provider } from "./providers/index";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
@@ -20,10 +21,14 @@ export interface AgentOptions {
   branch?: string;
   /** Run id from agentCommand, shared with the shell follow-up; random when absent. */
   run?: string;
+  /** Injectable credentials boundary; production defaults to accounts.provider. */
+  loadProvider?: Parameters<typeof projectModelResolver>[1];
 }
 
 export interface AgentDeps {
-  provider: Provider;
+  provider?: Provider;
+  /** Resolve the project setting immediately before every model request. */
+  resolveModel?: () => Promise<{ model: string; provider: Provider; settings?: RequestSettings }>;
   transcript: Transcript;
   tools: Record<string, Tool>;
   model: string;
@@ -100,8 +105,10 @@ async function readInbox(deps: AgentDeps): Promise<boolean> {
 /** One model request, streamed and appended to the transcript. */
 async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   await deps.tracker?.model();
-  const message = await deps.provider.complete({
-    model: deps.model,
+  const current = deps.resolveModel ? await deps.resolveModel() : { model: deps.model, provider: deps.provider!, settings: undefined };
+  const message = await current.provider.complete({
+    model: current.model,
+    settings: current.settings,
     system: deps.system,
     maxTokens: MAX_TOKENS,
     messages: await deps.transcript.chain(),
@@ -166,12 +173,13 @@ export async function runAgent(opts: AgentOptions): Promise<number> {
 
 async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> {
   const config = await loadConfig();
+  const model = await effectiveModel(opts.project);
   // One transcript per role per branch, so a restart resumes it. spawn seeds
   // it with the prompt before starting this process.
   const transcript = open(paths.transcript(opts.project, sessionId(opts.role, opts.branch)));
   if (transcript.head() === null) {
     if (opts.branch) throw new Error(`agent: no transcript for ${sessionId(opts.role, opts.branch)}; spawn seeds it`);
-    await transcript.append({ type: "meta", role: opts.role, model: config.model });
+    await transcript.append({ type: "meta", role: opts.role, model });
   }
 
   const tools: Record<string, Tool> = {};
@@ -181,10 +189,10 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
   }
 
   const agent = createAgent({
-    provider: await providerFromAccounts(providerFor(config.model)),
+    resolveModel: projectModelResolver(opts.project, opts.loadProvider),
     transcript,
     tools,
-    model: config.model,
+    model,
     system: rolePrompt(opts.role, config),
     ctx: { project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
     tracker,
