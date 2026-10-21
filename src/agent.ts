@@ -26,8 +26,8 @@ export interface AgentDeps {
   /** System prompt for the role; omitted in tests. */
   system?: string;
   ctx: ToolContext;
-  /** Where streamed text goes; defaults to stdout. */
-  write?: (text: string) => void;
+  /** Where streamed text goes; defaults to stdout. `plain` marks tool lines (not model markdown). */
+  write?: (text: string, plain?: boolean) => void;
 }
 
 const MAX_TOKENS = 64000;
@@ -81,7 +81,7 @@ export function createAgent(deps: AgentDeps) {
         maxTokens: MAX_TOKENS,
         messages: await deps.transcript.chain(),
         tools,
-        onText: write,
+        onText: (t) => write(t),
       });
       if (message.content.some((b) => b.type === "text")) write("\n");
 
@@ -97,7 +97,7 @@ export function createAgent(deps: AgentDeps) {
       const results: ToolResultBlockParam[] = [];
       for (const block of message.content) {
         if (block.type !== "tool_use") continue;
-        write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`);
+        write(`\x1b[2m▸ ${block.name} ${JSON.stringify(block.input).slice(0, 100)}\x1b[0m\n`, true);
         const result = await runTool(block.name, block.input as Record<string, unknown>);
         results.push({ ...result, tool_use_id: block.id });
       }

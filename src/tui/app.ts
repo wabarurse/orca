@@ -11,11 +11,28 @@ import { accountChoices, deleteProject, displayName, listAgents, liveAgents, lis
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
 import { format } from "node:util";
-import { follow } from "../view";
+import { follow, parts } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
+import { renderBlock, renderLabelled, renderMarkdown } from "./markdown";
+import { MarkdownStream } from "./mdstream";
 import { append, bold, commit, erase, dim, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
 import type { Terminal } from "./term";
+
+/**
+ * A line of history. Plain text stays as it is; the orchestrator's markdown is
+ * kept as written (`md`: one streamed block, or a whole text led by `label`)
+ * and laid out at the current width whenever it is drawn, so a reprint after a
+ * resize fits tables to the new width.
+ */
+export type Line = string | { md: string; block?: boolean; label?: string };
+
+/** A history line as screen lines at `cols` columns. */
+export function lineRows(l: Line, cols: number): string[] {
+  if (typeof l === "string") return [l];
+  if (l.block) return renderBlock(l.md, cols);
+  return l.label ? renderLabelled(l.label, l.md, cols) : renderMarkdown(l.md, cols);
+}
 
 export interface Page {
   /** The project id: its folder under ~/.parallels/projects. Never changes. */
@@ -26,9 +43,9 @@ export interface Page {
   /** Where the clone came from, for the status line. */
   remote: string;
   /** Finished lines, oldest first: written once to the scrollback while active, reprinted on a switch back. */
-  lines: string[];
-  /** Streamed text that has not reached a newline yet. */
-  partial: string;
+  lines: Line[];
+  /** The streaming reply: markdown blocks leave it as they complete; the rest shows raw in the live region. */
+  md: MarkdownStream;
   busy: boolean;
   /** When the running turn started (clock ms), and whether its text has started streaming. */
   busySince: number;
@@ -36,13 +53,14 @@ export interface Page {
   /** Set while the project list deletes this project: no new turns start. */
   deleting?: boolean;
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
-  view: { name: string; lines: string[]; leave: () => void; live: boolean } | null;
+  view: { name: string; lines: Line[]; leave: () => void; live: boolean } | null;
 }
 
 export interface AppDeps {
   term: Terminal;
   /** Make sure the project exists (cloning when a url is given) and build its orchestrator. */
-  openOrchestrator(project: string, url: string | undefined, write: (text: string) => void): Promise<Orchestrator>;
+  /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are. */
+  openOrchestrator(project: string, url: string | undefined, write: (text: string, plain?: boolean) => void): Promise<Orchestrator>;
   /** Inbox poll period; tests shorten it. */
   pollMs?: number;
   /** Clone source of the repository `start` was run from, if any: opened on start and cloned by Ctrl+N. */
@@ -239,38 +257,45 @@ export class App {
   }
 
   /** Finished lines of the page's own history; they reach the screen only while it is active and shows no agent. */
-  private toPage(page: Page, lines: string[]): void {
+  private toPage(page: Page, lines: Line[]): void {
     page.lines.push(...lines);
-    if (this.started && page === this.page && !page.view) this.pending.push(...lines);
+    if (this.started && page === this.page && !page.view) this.pending.push(...this.rows(lines));
     this.draw();
   }
 
   /** Finished lines of an agent view; on screen only while it is what the active page shows. */
-  private toView(page: Page, view: NonNullable<Page["view"]>, lines: string[]): void {
+  private toView(page: Page, view: NonNullable<Page["view"]>, lines: Line[]): void {
     view.lines.push(...lines);
-    if (this.started && page === this.page && page.view === view) this.pending.push(...lines);
+    if (this.started && page === this.page && page.view === view) this.pending.push(...this.rows(lines));
     this.draw();
   }
 
   /** What the screen shows for the active page: its agent view or its history. */
   private screenLines(page = this.page): string[] {
-    return page ? (page.view?.lines ?? page.lines) : [];
+    return page ? this.rows(page.view?.lines ?? page.lines) : [];
   }
 
-  /** Streamed model text: lines end at newlines, the rest waits in `partial` (shown in the live region). */
-  private stream(page: Page, text: string): void {
-    const parts = (page.partial + text).split("\n");
-    page.partial = parts.pop()!;
+  /** History lines laid out at the terminal's width. */
+  private rows(lines: Line[]): string[] {
+    return lines.flatMap((l) => lineRows(l, this.deps.term.cols));
+  }
+
+  /**
+   * Streamed output. Model text is markdown: each block goes into the history
+   * once complete, the rest waits in `page.md` (shown raw in the live region).
+   * `plain` text (tool calls) ends the markdown and is shown as is.
+   */
+  private stream(page: Page, text: string, plain = false): void {
     page.streamed = true;
-    this.toPage(page, parts);
+    if (!plain) return this.toPage(page, page.md.feed(text).map((md) => ({ md, block: true })));
+    this.endPartial(page);
+    this.toPage(page, text.replace(/\n$/, "").split("\n"));
   }
 
-  /** Move a page's unfinished streamed line into its history. */
+  /** Move what a page's stream still holds into its history. */
   private endPartial(page: Page): void {
-    if (!page.partial) return;
-    const line = page.partial;
-    page.partial = "";
-    this.toPage(page, [line]);
+    const blocks = page.md.flush();
+    if (blocks.length) this.toPage(page, blocks.map((md) => ({ md, block: true })));
   }
 
   frame(): Frame {
@@ -279,7 +304,7 @@ export class App {
     const { input, area } = this.inputFrame(status ? 1 : 0);
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
-      partial: page && !page.view ? page.partial : "",
+      partial: page && !page.view ? page.md.pending : "",
       status, input, inputArea: area,
       menu: this.menu,
       projects: this.projectList && {
@@ -413,7 +438,8 @@ export class App {
   /** On quit: drop the live region, keep everything committed (and a half-streamed line), and leave the cursor on a fresh line. */
   private leave(): void {
     const page = this.page;
-    const lines = [...this.pending, ...(page && !page.view && page.partial ? [page.partial] : [])];
+    const held = page && !page.view ? page.md.pending : "";
+    const lines = [...this.pending, ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`${erase(this.shown)}${commit(lines, this.deps.term.cols)}\x1b[?25h`);
     this.shown = NOTHING;
@@ -427,8 +453,8 @@ export class App {
       if (existing !== this.active) { this.active = existing; this.reprint(); }
       return this.pages[existing]!;
     }
-    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], partial: "", busy: false, busySince: 0, streamed: false, view: null };
-    page.orch = await this.deps.openOrchestrator(project, url, (text) => this.stream(page, text));
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, view: null };
+    page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain));
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
     this.pages.push(page);
@@ -608,7 +634,7 @@ export class App {
     try {
       for (const reply of await page.orch.turn()) {
         this.endPartial(page);
-        this.toPage(page, [`${bold(reply.from)} ${reply.text}`]);
+        this.toPage(page, [{ md: reply.text, label: bold(reply.from) }]);
       }
     } catch (err) {
       this.endPartial(page);
@@ -662,7 +688,7 @@ export class App {
     const view = page.view!;
     if (page === this.page) this.reprint();
     this.say(dim("Esc or /back returns"), page);
-    await follow(paths.transcript(page.project, name), (s) => this.toView(page, view, [s]), stopped);
+    await follow(paths.transcript(page.project, name), (_s, entry) => this.toView(page, view, parts(entry) ?? []), stopped);
     if (page.view === view) {
       page.view = null;
       if (page === this.page) this.reprint();
