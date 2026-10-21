@@ -8,6 +8,7 @@ import { provider as providerFromAccounts } from "./accounts";
 import { createAgent } from "./agent";
 import { loadConfig, paths } from "./config";
 import { drain, pending, put, type Message } from "./inbox";
+import { rolePrompt } from "./prompts";
 import { providerFor, type Provider } from "./providers/index";
 import { registry, toolsFor, type Tool } from "./tools/index";
 import { open, type Transcript } from "./transcript";
@@ -59,12 +60,14 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
       // run() drains the inbox itself and keeps going while messages arrive.
       if (!(await pending(project, "orchestrator"))) return [];
       // Config is re-read every turn so /models takes effect at once.
-      const { model } = await loadConfig();
+      const config = await loadConfig();
+      const { model } = config;
       const agent = createAgent({
         provider: deps.provider ?? (await providerFromAccounts(providerFor(model))),
         transcript,
         tools,
         model,
+        system: rolePrompt("orchestrator", config),
         ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
         write: deps.write,
       });

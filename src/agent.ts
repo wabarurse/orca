@@ -1,12 +1,12 @@
 // The agent loop. Orchestrator, worker and reviewer are all this function with
-// a different tool set. There is no role-specific system prompt: the model gets its task
-// through the first user message (spawn's brief, or the inbox) and the tool
-// descriptions, nothing else.
+// a different tool set and a short role prompt (src/prompts.ts). The task
+// itself comes through the first user message (spawn's brief, or the inbox).
 
 import type { TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { provider as providerFromAccounts } from "./accounts";
 import { loadConfig, paths } from "./config";
 import { drain, format } from "./inbox";
+import { rolePrompt } from "./prompts";
 import { providerFor, type Provider } from "./providers/index";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
@@ -23,6 +23,8 @@ export interface AgentDeps {
   transcript: Transcript;
   tools: Record<string, Tool>;
   model: string;
+  /** System prompt for the role; omitted in tests. */
+  system?: string;
   ctx: ToolContext;
   /** Where streamed text goes; defaults to stdout. */
   write?: (text: string) => void;
@@ -75,6 +77,7 @@ export function createAgent(deps: AgentDeps) {
     for (;;) {
       const message = await deps.provider.complete({
         model: deps.model,
+        system: deps.system,
         maxTokens: MAX_TOKENS,
         messages: await deps.transcript.chain(),
         tools,
@@ -129,6 +132,7 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     transcript,
     tools,
     model: config.model,
+    system: rolePrompt(opts.role, config),
     ctx: { project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
   });
   await agent.run();

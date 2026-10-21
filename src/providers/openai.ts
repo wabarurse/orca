@@ -93,7 +93,7 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
     async complete(req) {
       const stream = await request((client) => client.responses.create({
         // The SDK's platform type requires server IDs that Codex's stateless history omits.
-        model: req.model, input: toResponses(req.messages) as ResponseInputItem[], instructions: "You are Codex, an AI coding agent.",
+        model: req.model, input: toResponses(req.messages) as ResponseInputItem[], instructions: req.system ? `You are Codex, an AI coding agent.\n\n${req.system}` : "You are Codex, an AI coding agent.",
         store: false, stream: true, parallel_tool_calls: true,
         reasoning: { summary: "auto" }, include: ["reasoning.encrypted_content"],
         ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),

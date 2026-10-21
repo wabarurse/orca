@@ -10,8 +10,11 @@ export function anthropic(client: Anthropic): Provider {
         model: req.model,
         max_tokens: req.maxTokens,
         messages: req.messages,
-        // Required by the Claude Code OAuth path; not persisted in the transcript.
-        system: [{ type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." }],
+        // The identity line is required by the Claude Code OAuth path; the role prompt follows it.
+        system: [
+          { type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." },
+          ...(req.system ? [{ type: "text" as const, text: req.system }] : []),
+        ],
         ...(req.tools.length ? { tools: req.tools } : {}),
       });
       stream.on("text", req.onText);
