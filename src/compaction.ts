@@ -50,18 +50,26 @@ export function requireFits(deps: AgentDeps, messages: MessageParam[], reserve: 
 function fits(deps: AgentDeps, messages: MessageParam[], reserve: number): boolean {
   return budget(deps, messages) + reserve <= contextLimit(deps.compaction ?? {}, deps.model) * .8;
 }
-/** Only cut before a fresh user turn, never in a tool/thinking-associated turn. */
 function fresh(message: MessageParam): boolean {
   return message.role === "user" && (typeof message.content === "string" || !message.content.some(b => b.type === "tool_result"));
 }
+function results(message: MessageParam | undefined): boolean {
+  return message?.role === "user" && Array.isArray(message.content) && message.content.some(b => b.type === "tool_result");
+}
+/** Prefer whole user turns; otherwise cut after completed tool batches. The
+ * caller validates pairing first, so a result message closes its entire batch. */
 export function splitHistory(messages: MessageParam[], tailBudget = 8000): number {
   let cut = 0;
+  // A single huge completed batch can itself need summarizing, leaving no tail.
+  let batchCut = results(messages.at(-1)) ? messages.length : 0;
   for (let i = messages.length - 1; i > 0; i--) {
-    if (!fresh(messages[i]!)) continue;
+    const userTurn = fresh(messages[i]!);
+    if (!userTurn && !results(messages[i - 1])) continue;
     if (estimate(messages.slice(i)) > tailBudget) break;
-    cut = i;
+    if (userTurn) cut = i;
+    else batchCut = i;
   }
-  return cut;
+  return cut || batchCut;
 }
 function safeSource(messages: MessageParam[]): MessageParam[] {
   return messages.map(m => ({ ...m, content: typeof m.content === "string" ? m.content : m.content.filter(b => b.type !== "thinking" && b.type !== "redacted_thinking") }));
@@ -143,12 +151,12 @@ function pinned(deps: AgentDeps): string {
 }
 async function checkpoint(deps: AgentDeps, messages: MessageParam[], limit: number): Promise<boolean> {
   const head = deps.transcript.head();
+  if (!paired(messages)) throw new Error("invalid tool batch grammar");
   const cut = splitHistory(messages, Math.min(8000, Math.floor(limit * .15)));
-  if (!cut) throw new Error("no complete older turns");
+  if (!cut) throw new Error("no complete turns or tool batches to summarize");
   const original = pinned(deps);
   const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
   requireFits(clean, [{ role: "user", content: original }, ...messages.slice(cut)], outputCap(deps), "complete original task and retained turns");
-  if (!paired(messages)) throw new Error("invalid tool batch grammar");
   const warning = `\nBest-effort lossy summary: later amendments may be incomplete. Retrieve original entries from transcript ${deps.transcript.path}, through boundary ${head}, when details or constraints are uncertain. Do not treat this summary as a semantic guarantee.\n`;
   const text = await prepare(deps, messages, cut) + original + warning;
   const retained = messages.slice(cut);
