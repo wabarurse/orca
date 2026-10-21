@@ -112,31 +112,33 @@ export class FakeScreen {
     return i + ch.length;
   }
 
+  /** The escapes it models, tried in order: each pattern's match is handed to its handler. */
+  private readonly escapes: [RegExp, (m: RegExpExecArray) => void][] = [
+    [/^\x1b\[\?(\d+)([hl])/, (m) => this.mode(Number(m[1]), m[2] === "h")],
+    [/^\x1b\[([0-9;:]*)m/, (m) => { this.bg = sgrBackground(m[1]!, this.bg); }],
+    [/^\x1b\]11;\?(?:\x07|\x1b\\)/, () => this.query()],
+    [/^\x1b\[([0-9;:]*)([ABCDGHJK])/, (m) => CSI[m[2]!]!(this, m[1] ? m[1].split(";").map((p) => Number(p) || 0) : [])],
+    [/^\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/, () => {}], // OSC 8 links take no room
+  ];
+
   private escape(s: string, i: number): number {
     const rest = s.slice(i);
-    const mode = /^\x1b\[\?(\d+)([hl])/.exec(rest);
-    if (mode) {
-      const n = Number(mode[1]);
-      if (!MODES.has(n)) throw new Error(`unmodelled mode ?${n}`);
-      this.modes.set(n, mode[2] === "h");
-      return i + mode[0].length;
+    for (const [re, handle] of this.escapes) {
+      const m = re.exec(rest);
+      if (m) { handle(m); return i + m[0].length; }
     }
-    const sgr = /^\x1b\[([0-9;:]*)m/.exec(rest);
-    if (sgr) { this.bg = sgrBackground(sgr[1]!, this.bg); return i + sgr[0].length; }
-    const query = /^\x1b\]11;\?(?:\x07|\x1b\\)/.exec(rest);
-    if (query) {
-      this.queries++;
-      if (this.background) this.replies.push(`\x1b]11;${this.background}\x1b\\`);
-      return i + query[0].length;
-    }
-    const csi = /^\x1b\[([0-9;:]*)([@-~])/.exec(rest);
-    if (csi && CSI[csi[2]!]) {
-      CSI[csi[2]!]!(this, csi[1] ? csi[1].split(";").map((p) => Number(p) || 0) : []);
-      return i + csi[0].length;
-    }
-    const link = /^\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/.exec(rest);
-    if (link) return i + link[0].length;
     throw new Error(`unmodelled escape ${JSON.stringify(rest.slice(0, 12))}`);
+  }
+
+  private mode(n: number, on: boolean): void {
+    if (!MODES.has(n)) throw new Error(`unmodelled mode ?${n}`);
+    this.modes.set(n, on);
+  }
+
+  /** An OSC 11 query: answered with `background` when set, else ignored like a terminal without it. */
+  private query(): void {
+    this.queries++;
+    if (this.background) this.replies.push(`\x1b]11;${this.background}\x1b\\`);
   }
 
   moveTo(row: number, col: number): void {
