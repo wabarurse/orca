@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "./config";
-import { drain, format, pending, put } from "./inbox";
+import { drain, format, parseFormatted, pending, put } from "./inbox";
 
 const home = mkdtempSync(join(tmpdir(), "parallels-inbox-"));
 process.env.PARALLELS_HOME = home;
@@ -49,4 +49,10 @@ test("writes are atomic: no temp files left, a bad file is dropped", async () =>
 
 test("format tags each sender", () => {
   expect(format([{ from: "a", text: "x", ts: "" }, { from: "b", text: "y", ts: "" }])).toBe("[a] x\n\n[b] y");
+});
+
+test("parseFormatted reads back what format wrote", () => {
+  const msgs = [{ from: "user", text: "hi\nthere", ts: "" }, { from: "worker-feat-x", text: "done\n\nall green", ts: "" }];
+  expect(parseFormatted(format(msgs))).toEqual(msgs.map(({ from, text }) => ({ from, text })));
+  expect(parseFormatted("no tag here")).toEqual([{ from: "", text: "no tag here" }]);
 });

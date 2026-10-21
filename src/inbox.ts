@@ -63,3 +63,16 @@ export async function drain(project: string, agent: string): Promise<Message[]> 
 export function format(msgs: Message[]): string {
   return msgs.map((m) => `[${m.from}] ${m.text}`).join("\n\n");
 }
+
+/**
+ * The messages a `format`ted turn holds, in order: the inverse of `format`
+ * for senders without spaces or brackets (every agent id, "user"). Text that
+ * is not a formatted turn comes back as one message from nobody ("").
+ */
+export function parseFormatted(text: string): Pick<Message, "from" | "text">[] {
+  if (!/^\[[^\]\s]+\] /.test(text)) return [{ from: "", text }];
+  return text.split(/\n\n(?=\[[^\]\s]+\] )/).map((chunk) => {
+    const m = /^\[([^\]\s]+)\] ([\s\S]*)$/.exec(chunk)!;
+    return { from: m[1]!, text: m[2]! };
+  });
+}
