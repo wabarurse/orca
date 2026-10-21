@@ -316,17 +316,21 @@ describe("dirtyCount", () => {
     expect(await dirtyCount(join(home, "missing"))).toBe(null);
   });
 
+  // Two fake gits: one logs its arguments and exits at once (no timing involved), one hangs.
+  // A hanging git that logged first could be killed before it logged under load.
+  const fakeGit = (script: string) => {
+    const bin = mkdtempSync(join(home, "gitbin-"));
+    writeFileSync(join(bin, "git"), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, "git"), 0o755);
+    return bin;
+  };
+  const quick = fakeGit(`echo "$@" > "$(dirname "$0")/log"`);
+  const hangs = fakeGit("exec sleep 30");
+  // Run once at load: on macOS the first exec of a new file waits for a system policy check,
+  // which can outlast dirtyCount's 3s timeout under parallel load.
+  Bun.spawnSync([join(quick, "git")]);
+
   test("uses --no-optional-locks and gives up after the timeout", async () => {
-    // Two fake gits: one logs its arguments and exits at once (no timing involved), one hangs.
-    // A hanging git that logged first could be killed before it logged under load.
-    const fakeGit = (script: string) => {
-      const bin = mkdtempSync(join(home, "gitbin-"));
-      writeFileSync(join(bin, "git"), `#!/bin/sh\n${script}\n`);
-      chmodSync(join(bin, "git"), 0o755);
-      return bin;
-    };
-    const quick = fakeGit(`echo "$@" > "$(dirname "$0")/log"`);
-    const hangs = fakeGit("exec sleep 30");
     const path = process.env.PATH;
     try {
       process.env.PATH = `${quick}:${path}`;
@@ -352,15 +356,23 @@ describe("agentCommand", () => {
   const nasty = `it's a \\ "$(id)" \`id\` $HOME *`;
   const nastyBranch = `it's\\b`;
 
-  /** A dir with a fake `bun` that logs its argv and exits with the code in ./code for `agent`. */
+  // One fake `bun` for every test here, made and run once at load: on macOS the first exec of a new
+  // file waits for a system policy check, which took over 5s (the test timeout) under parallel load.
+  // It logs its argv and $PARALLELS_HOME into $FAKE_BUN and exits with $FAKE_BUN/code for `agent`.
+  const fakeBin = mkdtempSync(join(home, "bin-"));
+  writeFileSync(join(fakeBin, "bun"), `#!/bin/sh\nd="$FAKE_BUN"\nprintf '%s' "$PARALLELS_HOME" > "$d/home"\nfor a in "$@"; do printf '%s\\n' "$a"; done >> "$d/log"\necho --- >> "$d/log"\nif [ "$2" = agent ]; then exit "$(cat "$d/code")"; fi\nexit 0\n`);
+  chmodSync(join(fakeBin, "bun"), 0o755);
+  Bun.spawnSync([join(fakeBin, "bun")], { env: { ...process.env, FAKE_BUN: mkdtempSync(join(home, "warm-")) } });
+
+  /** A dir for the fake `bun`'s log, with the code it exits with for `agent`, and the env that runs it. */
   function fakeBun(code: number) {
-    const bin = mkdtempSync(join(home, "bin-"));
-    const log = join(bin, "log");
-    writeFileSync(join(bin, "code"), String(code));
-    writeFileSync(join(bin, "bun"), `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done >> '${log}'\necho --- >> '${log}'\nif [ "$2" = agent ]; then exit "$(cat '${bin}/code')"; fi\nexit 0\n`);
-    chmodSync(join(bin, "bun"), 0o755);
-    const calls = () => (existsSync(log) ? readFileSync(log, "utf8") : "").split("---\n").filter(Boolean).map((c) => c.split("\n").filter(Boolean));
-    return { bin, calls };
+    const dir = mkdtempSync(join(home, "fake-"));
+    const log = join(dir, "log");
+    writeFileSync(join(dir, "code"), String(code));
+    // Only complete calls (ended by ---): the follow-up may still be writing its argv when a test reads the log.
+    const calls = () => (existsSync(log) ? readFileSync(log, "utf8") : "").split("---\n").slice(0, -1).map((c) => c.split("\n").filter(Boolean));
+    const env = { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, FAKE_BUN: dir };
+    return { dir, env, calls };
   }
 
   /** agentCommand built with a PARALLELS_HOME full of quotes and backslashes. */
@@ -376,10 +388,10 @@ describe("agentCommand", () => {
 
   /** Exec the argv directly, as tmux does with more than one argument. */
   async function runWith(code: number) {
-    const { bin, calls } = fakeBun(code);
+    const { env, calls } = fakeBun(code);
     const { argv, weirdHome } = command("run1");
     const cwd = mkdtempSync(join(home, "cwd-"));
-    const proc = Bun.spawn(argv, { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    const proc = Bun.spawn(argv, { cwd, env });
     return { exit: await proc.exited, calls: calls(), cwd, weirdHome };
   }
 
@@ -407,20 +419,19 @@ describe("agentCommand", () => {
   });
 
   test("PARALLELS_HOME with ' and \\ reaches the agent intact", async () => {
-    const { bin } = fakeBun(0);
-    writeFileSync(join(bin, "bun"), `#!/bin/sh\nprintf '%s' "$PARALLELS_HOME" > '${bin}/home'\n`);
+    const { dir, env } = fakeBun(0);
     const { argv, weirdHome } = command("r");
-    await Bun.spawn(argv, { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } }).exited;
-    expect(readFileSync(join(bin, "home"), "utf8")).toBe(weirdHome);
+    await Bun.spawn(argv, { env }).exited;
+    expect(readFileSync(join(dir, "home"), "utf8")).toBe(weirdHome);
   });
 
   const shells = ["/bin/sh", "/bin/zsh", Bun.which("fish"), Bun.which("bash")].filter((s): s is string => !!s && existsSync(s));
   for (const shell of shells) {
     test.skipIf(!Bun.which("tmux"))(`through tmux with default-shell ${shell}`, async () => {
-      const { bin, calls } = fakeBun(1);
+      const { env: fake, calls } = fakeBun(1);
       const { argv } = command("run1");
       const sock = join(mkdtempSync(join(tmpdir(), "pt-")), "s");
-      const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, TMUX: "" };
+      const env = { ...fake, TMUX: "" };
       const t = (...a: string[]) => Bun.spawnSync(["tmux", "-S", sock, "-f", "/dev/null", ...a], { env });
       try {
         expect(t("new-session", "-d", "-s", "x", "-n", "shell").exitCode).toBe(0);

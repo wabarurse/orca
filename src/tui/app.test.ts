@@ -1260,8 +1260,14 @@ describe("restored pages", () => {
     ]);
     const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void) =>
       createOrchestrator({ project: p, provider, tools, write, onInbox });
+    // Both lines are typed before the first turn reads the inbox: its turn waits for the second say to land.
+    const typed: Promise<void>[] = [];
+    const openLive: typeof open = async (...args) => {
+      const orch = await open(...args);
+      return { ...orch, say: (t) => { const p = orch.say(t); typed.push(p); return p; }, turn: async () => { await until(() => typed.length === 2); await Promise.all(typed); return orch.turn(); } };
+    };
     const term = fakeTerm(60, 30);
-    const app = new App({ term, openOrchestrator: open, pollMs: 30, watchdog: async () => {}, merges: async () => {} });
+    const app = new App({ term, openOrchestrator: openLive, pollMs: 30, watchdog: async () => {}, merges: async () => {} });
     const running = app.run("fidelity");
     await until(() => !!app.page);
     term.type("go\nnow\r");
@@ -1747,6 +1753,34 @@ describe("orchestrator questions", () => {
     await until(() => live(second.term).includes("(1 of 2)"));
     expect(reads).toBeGreaterThanOrEqual(2);
     await second.stop();
+  });
+
+  test("a poll that reads the answer before the close ends is not 'answered elsewhere'; the typed answer leaves the input", async () => {
+    await ask1("qa-race", "Which db?", ["postgres"]);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let written = false;
+    let listsAfter = 0;
+    // The answer file is written, then the close waits (as for its inbox message) while polls read it as answered.
+    const store: QuestionStore = {
+      ...fileStore,
+      list: async (p) => { const open = await fileStore.list(p); if (written) listsAfter++; return open; },
+      answer: async (p, id, text) => { const q = await fileStore.answer(p, id, text); written = true; await gate; return q; },
+    };
+    const { term, app, stop } = await start("qa-race", { pollMs: 5, questions: store });
+    await until(() => live(term).includes("? Which db?"));
+    term.type("mysql");
+    await until(() => live(term).includes("answer> mysql"));
+    term.press({ name: "enter" });
+    await until(() => listsAfter >= 2);
+    release();
+    await until(() => term.screen().includes("? Which db? → mysql"));
+    await until(() => !live(term).includes("answer>"));
+    expect(term.screen()).not.toContain("answered elsewhere");
+    expect(app.input.text).toBe("");
+    await ask1("qa-race", "Project name?");
+    await until(() => live(term).includes("? Project name?") && live(term).includes("answer>"));
+    await stop();
   });
 
   test("a restored page shows an answer the way it showed live: real orchestrator, scripted model", async () => {

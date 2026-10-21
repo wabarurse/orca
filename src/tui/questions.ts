@@ -176,6 +176,8 @@ export class Questions {
   private update(page: QuestionPage, open: Question[]): void {
     const q = page.questions;
     const before = head(q);
+    // A read can see the head answered by the close still in flight here: it stays until that close ends.
+    if (q.closing && before && !open.some((x) => x.id === before.id)) open = [before, ...open];
     for (const x of open) q.seen.set(x.id, x);
     q.open = open;
     if (q.hidden && open.some((x) => !q.hidden!.has(x.id))) q.hidden = null;

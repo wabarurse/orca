@@ -24,6 +24,11 @@ const dir = (project: string, agent: string) => join(paths.inbox(project), agent
 // millisecond doesn't matter.
 let seq = 0;
 
+// Puts to one inbox from this process land one after another, in send order:
+// otherwise a later message could be renamed into place before an earlier one
+// and a drain in between would read it first (two lines typed quickly).
+const writing = new Map<string, Promise<unknown>>();
+
 /** Append a message to `to`'s inbox. */
 export async function put(project: string, to: string, msg: Omit<Message, "ts">): Promise<Message> {
   const d = dir(project, to);
@@ -32,9 +37,15 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
   const n = String(seq++).padStart(6, "0");
   const name = `${full.ts.replaceAll(":", "-")}-${n}-${crypto.randomUUID().slice(0, 8)}.json`;
   const tmp = join(d, `.${name}.tmp`);
-  await Bun.write(tmp, JSON.stringify(full) + "\n");
-  await rename(tmp, join(d, name));
-  return full;
+  const done = (writing.get(d) ?? Promise.resolve()).then(async () => {
+    await Bun.write(tmp, JSON.stringify(full) + "\n");
+    await rename(tmp, join(d, name));
+    return full;
+  });
+  const tail = done.catch(() => {});
+  writing.set(d, tail);
+  tail.then(() => { if (writing.get(d) === tail) writing.delete(d); });
+  return done;
 }
 
 /** True when `agent` has unread messages. */

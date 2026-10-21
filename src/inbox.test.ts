@@ -40,6 +40,15 @@ test("many puts in the same millisecond still drain in order", async () => {
   expect((await drain("p4", "x")).map((m) => m.text)).toEqual(Array.from({ length: n }, (_, i) => String(i)));
 });
 
+test("concurrent puts from one process land in send order: once one resolves, every earlier one is there", async () => {
+  const n = 50;
+  const seen: number[] = [];
+  const count = () => readdirSync(join(paths.inbox("p6"), "x")).filter((f) => f.endsWith(".json")).length;
+  await Promise.all(Array.from({ length: n }, (_, i) => put("p6", "x", { from: "y", text: String(i) }).then(() => { seen[i] = count(); })));
+  expect(seen.every((c, i) => c >= i + 1)).toBe(true);
+  expect((await drain("p6", "x")).map((m) => m.text)).toEqual(Array.from({ length: n }, (_, i) => String(i)));
+});
+
 test("writes are atomic: no temp files left, a bad file is dropped", async () => {
   await put("p5", "x", { from: "y", text: "ok" });
   await Bun.write(join(paths.inbox("p5"), "x", "0000-bad.json"), '{"from":');
