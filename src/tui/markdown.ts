@@ -181,16 +181,24 @@ class Filler {
   }
 
   word(text: string, tw: number): void {
-    if (this.used && this.used + this.gap + tw > this.w) {
-      this.lines.push(this.line + this.pen.close());
-      this.line = this.pen.open();
-      this.used = 0;
-    }
+    if (this.used && this.used + this.gap + tw > this.w) this.newLine();
     if (this.used) { this.line += " ".repeat(this.gap); this.used += this.gap; }
     this.gap = 0;
     for (const e of this.held.splice(0)) this.esc(e);
     this.line += text;
     this.used += tw;
+  }
+
+  /** A word wider than a line: from a fresh line, cut a cell at a time. */
+  long(word: string): void {
+    if (this.used) this.newLine();
+    for (const c of cells(word)) this.word(c.text, c.width);
+  }
+
+  private newLine(): void {
+    this.lines.push(this.line + this.pen.close());
+    this.line = this.pen.open();
+    this.used = 0;
   }
 
   end(): string[] {
@@ -201,7 +209,7 @@ class Filler {
   }
 }
 
-/** Word-wrap a styled string to `width` columns; styles and links carry over to the next line, and a word too long for a line is cut. */
+/** Word-wrap a styled string to `width` columns; styles and links carry over to the next line, and a word too long for a line is cut, starting on a line of its own. */
 export function wordWrap(s: string, width: number): string[] {
   const w = Math.max(1, width);
   const f = new Filler(w);
@@ -209,7 +217,7 @@ export function wordWrap(s: string, width: number): string[] {
     if ("esc" in p) f.esc(p.esc);
     else if ("space" in p) f.gap += p.space;
     else if (p.width <= w) f.word(p.word, p.width);
-    else for (const c of cells(p.word)) f.word(c.text, c.width);
+    else f.long(p.word);
   }
   return f.end();
 }

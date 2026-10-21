@@ -1136,3 +1136,58 @@ describe("frames, resizes, startup and crashes", () => {
     expect(t.modes).toEqual([true, false]);
   });
 });
+
+describe("markdown replies", () => {
+  const TABLE = "| Branch | What it does |\n|---|---|\n| tui-markdown | Render markdown in the chat area |\n";
+
+  test("streamed markdown is rendered block by block; held blocks show raw in the live region; the rest stays plain", async () => {
+    const term = fakeTerm(60, 12);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("keep **this** raw\r");
+    await until(() => term.screen().includes("> keep **this** raw"));
+    const write = orchs.writers.alpha! as (t: string, plain?: boolean) => void;
+    write("Some **bold** and snake_case\n| Branch | What");
+    await until(() => term.screen().includes("Some bold and snake_case"));
+    await until(() => term.display.screen().some((r) => r === "| Branch | What")); // held, raw, in the live region
+    write(TABLE.slice("| Branch | What".length));
+    await settle();
+    expect(term.screen()).not.toContain("┌");
+    write("\x1b[2m▸ bash {\"command\":\"**ls**\"}\x1b[0m\n", true); // a tool line ends the table and stays plain
+    await until(() => term.screen().includes("┌"));
+    expect(term.screen()).toContain('▸ bash {"command":"**ls**"}');
+    expect(term.screen()).toContain("│ tui-markdown │ Render markdown in the chat area │");
+    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : l.md))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
+    app.quit();
+    await running;
+  });
+
+  test("replies render as markdown after their sender, and a resize re-lays out a table from the raw text", async () => {
+    const term = fakeTerm(60, 30);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    const page = app.page!;
+    (page.orch as { turn: () => Promise<unknown> }).turn = async () => {
+      orchs.writers.alpha!(`Plan:\n${TABLE}`);
+      return [{ from: "orchestrator", text: `**Done**: see below\n\n${TABLE}`, ts: "t" }];
+    };
+    term.type("go\r");
+    await until(() => term.screen().includes("orchestrator Done: see below"));
+    const wide = "│ tui-markdown │ Render markdown in the chat area │";
+    await until(() => term.screen().split(wide).length === 3);
+    expect(page.lines.some((l) => typeof l === "string" && l.includes("┌"))).toBe(false); // raw kept, not rendered rows
+    term.resize(34, 30);
+    await until(() => term.display.clears === 1);
+    await until(() => term.screen().includes("orchestrator Done: see below"));
+    const shown = term.screen().split("\n");
+    expect(shown).not.toContain(wide);
+    expect(shown.filter((r) => r === "│ tui-markdown │ Render markdown │").length).toBe(2);
+    expect(shown.every((r) => Bun.stringWidth(r) <= 34)).toBe(true);
+    app.quit();
+    await running;
+  });
+});

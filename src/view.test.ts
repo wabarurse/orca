@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open } from "./transcript";
-import { follow, render } from "./view";
+import { follow, parts, render } from "./view";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const home = mkdtempSync(join(tmpdir(), "parallels-view-"));
@@ -45,4 +45,14 @@ test("follow prints history, then new entries, then stops", async () => {
   expect(lines).toEqual(["> first", "second"]);
   stop();
   await running;
+});
+
+test("parts keeps assistant text as markdown and the rest as styled lines", () => {
+  const ps = parts({
+    uuid: "5", parentUuid: null, ts: "", type: "message",
+    message: { role: "assistant", content: [{ type: "text", text: "**hi**" }, { type: "tool_use", id: "t", name: "bash", input: {} }] },
+  })!;
+  expect(ps[0]).toEqual({ md: "**hi**" });
+  expect(strip(ps[1] as string)).toBe("▸ bash {}");
+  expect(parts({ uuid: "6", parentUuid: null, ts: "", type: "message", message: { role: "user", content: "**raw**" } })!.map((p) => strip(p as string))).toEqual(["> **raw**"]);
 });
