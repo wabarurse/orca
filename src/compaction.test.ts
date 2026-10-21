@@ -8,7 +8,7 @@ import { createOrchestrator } from "./orchestrator";
 import { open } from "./transcript";
 import { restore } from "./tui/restore";
 import { put, pending } from "./inbox";
-import { fakeProvider, text } from "./test/fake-provider";
+import { fakeProvider, text, toolUse } from "./test/fake-provider";
 
 const dirs: string[] = [];
 const oldHome = process.env.PARALLELS_HOME;
@@ -135,4 +135,38 @@ test("restart ignores truncated checkpoint and subsequent append remains readabl
   expect(await restarted.chain()).toEqual(before);
   await restarted.append({ type: "message", message: { role: "user", content: "after crash" } });
   expect(await open(transcript.path).chain()).toEqual([...before, { role: "user", content: "after crash" }]);
+});
+
+
+test("scheduled compaction retains full UI replay and forwards subsequent tool events", async () => {
+  const { transcript, dir } = await fixture();
+  process.env.PARALLELS_HOME = dir;
+  const originals = transcript.history!();
+  const provider = fakeProvider([
+    [text("Goal: original requirements. Progress: old answer. Next: recent task.")],
+    [text("Running a check."), toolUse("check-1", "check", {})],
+    [text("Finished.")],
+  ]);
+  const events: string[] = [];
+  const plain: string[] = [];
+  const orch = await createOrchestrator({
+    project: "compaction-ui", transcript, provider,
+    tools: { check: { spec: { name: "check", description: "Check", input_schema: { type: "object" } }, run: async () => "checked" } },
+    write: (value, isPlain) => { if (isPlain) plain.push(value); },
+    onInbox: messages => { events.push(...messages.map(m => `inbox:${m.text}`)); },
+    onTool: call => { events.push(`start:${call.id}`); },
+    onToolResult: result => { events.push(`end:${result.id}:${result.ok}`); },
+  });
+  await orch.compact!();
+  await orch.turn();
+  expect(orch.entries!()).toEqual(originals);
+  expect(restore(orch.entries!(), 100)).toEqual(restore(originals, 100));
+  expect(plain.some(line => line.includes("compaction complete"))).toBe(true);
+  await orch.say("check now");
+  expect(events).toEqual([]);
+  await orch.turn();
+  expect(events).toEqual(["inbox:check now", "start:check-1", "end:check-1:true"]);
+  expect(plain.some(line => line.includes("⏺"))).toBe(false);
+  expect(orch.entries!()).toEqual(open(transcript.path).history!());
+  expect(restore(orch.entries!(), 100)).toEqual(restore(open(transcript.path).history!(), 100));
 });
