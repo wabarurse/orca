@@ -67,10 +67,10 @@ export function fromResponses(output: ResponseOutputItem[]): ContentBlock[] {
   return content;
 }
 
-/** Keep refusal/non-text signals that translation might otherwise flatten or omit. */
+/** Keep refusal/unsupported output signals, allowing normal reasoning metadata. */
 function summaryCompletion(output: ResponseOutputItem[]): string {
   if (output.some(item => item.type === "message" && item.content.some(part => part.type === "refusal"))) return "refusal";
-  if (output.some(item => item.type !== "message" || item.content.some(part => part.type !== "output_text"))) return "nontext";
+  if (output.some(item => item.type !== "reasoning" && (item.type !== "message" || item.content.some(part => part.type !== "output_text")))) return "nontext";
   return "completed";
 }
 
