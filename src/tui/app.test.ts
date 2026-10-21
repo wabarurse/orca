@@ -499,4 +499,59 @@ describe("tui app", () => {
     expect(ticks.length).toBe(0);
     expect(writesAfterClose).toBe(0);
   });
+
+  test("multi-line input: Shift+Enter, paste, rows before history, word deletion", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("earlier\r");
+    await settle();
+    term.type("one\x1b[13;2utwo\x1b\rthree");
+    expect(app.input).toEqual({ text: "one\ntwo\nthree", cursor: 13 });
+    term.type("\x1b[A");
+    expect(app.input.cursor).toBe(7); // "two" row, same column
+    term.type("\x1b[A");
+    expect(app.input.cursor).toBe(3); // first row, not history yet
+    term.type("\x1b[A");
+    expect(app.input.text).toBe("earlier"); // first row: history
+    term.press({ name: "escape" });
+    term.type("\x1b[200~pasted\nlines\x1b[201~");
+    expect(app.input.text).toBe("pasted\nlines");
+    expect(orchs.said.alpha).toEqual(["earlier"]);
+    term.type(" more words\x1b\x7f");
+    expect(app.input.text).toBe("pasted\nlines more ");
+    term.type("\r");
+    await settle();
+    expect(orchs.said.alpha).toEqual(["earlier", "pasted\nlines more"]);
+    app.quit();
+    await running;
+  });
+
+  test("multi-line messages: one scrollback line per row, indent kept, history walks rows", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("old\r");
+    await settle();
+    term.type("\x1b[200~\n  first\nsecond\n\n\x1b[201~\r");
+    await settle();
+    expect(orchs.said.alpha).toEqual(["old", "  first\nsecond"]);
+    const page = app.pages[0]!;
+    expect(page.lines.map(strip)).toContain(">   first");
+    expect(page.lines.map(strip)).toContain("  second");
+    expect(page.lines.some((l) => l.includes("\n"))).toBe(false);
+    term.press({ name: "up" });
+    expect(app.input).toEqual({ text: "  first\nsecond", cursor: 14 });
+    term.press({ name: "up" });
+    expect(app.input.text).toBe("  first\nsecond"); // moved to the first row
+    expect(app.input.cursor).toBe(6);
+    term.press({ name: "up" });
+    expect(app.input.text).toBe("old");
+    app.quit();
+    await running;
+  });
 });

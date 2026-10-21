@@ -1,7 +1,7 @@
 // The terminal behind the TUI: raw mode, the alternate screen, size and key
 // events. The real one wraps stdin/stdout; tests pass a fake with the same shape.
 
-import { parseKeys, type Key } from "./keys";
+import { keyReader, type Key } from "./keys";
 
 export interface Terminal {
   cols: number;
@@ -15,16 +15,15 @@ export interface Terminal {
   close(): void;
 }
 
-const ENTER = "\x1b[?1049h\x1b[H\x1b[2J";
-const LEAVE = "\x1b[?25h\x1b[?1049l";
+// The alternate screen plus bracketed paste, so a pasted newline is text, not Enter.
+const ENTER = "\x1b[?1049h\x1b[?2004h\x1b[H\x1b[2J";
+const LEAVE = "\x1b[?2004l\x1b[?25h\x1b[?1049l";
 
 export function realTerminal(stdin = process.stdin, stdout = process.stdout): Terminal {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error("parallels start needs a terminal; run it from an interactive shell");
   let opened = false;
   const keyHandlers: ((k: Key) => void)[] = [];
-  const onData = (chunk: string) => {
-    for (const key of parseKeys(chunk)) for (const h of keyHandlers) h(key);
-  };
+  const onData = keyReader((key) => { for (const h of keyHandlers) h(key); });
   return {
     get cols() { return stdout.columns || 80; },
     get rows() { return stdout.rows || 24; },
