@@ -6,6 +6,12 @@ import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
 import { App, type Clock, type Line } from "./app";
+import { createOrchestrator } from "../orchestrator";
+import { put } from "../inbox";
+import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
+import { message } from "../tools/message";
+import { makeSpawn } from "../tools/spawn";
+import { open as openTranscript } from "../transcript";
 import { parseKeys, type Key } from "./keys";
 import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
@@ -1194,5 +1200,115 @@ describe("markdown replies", () => {
     expect(shown.every((r) => Bun.stringWidth(r) <= 34)).toBe(true);
     app.quit();
     await running;
+  });
+});
+
+describe("restored pages", () => {
+  test("a page opens with its transcript's history under the shell's output, above the input, and again when switched back to", async () => {
+    const t = openTranscript(paths.transcript("resumed", "orchestrator"));
+    await t.append({ type: "meta", role: "orchestrator", model: "m" });
+    await t.append({ type: "message", message: { role: "user", content: "[user] what changed?" } });
+    await t.append({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "**Two** things:\n- a\n- b\n", citations: null }, { type: "tool_use", id: "x1", name: "bash", input: { command: "ls" } }] } });
+    await t.append({ type: "message", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x1", content: "SECRET-RESULT" }, { type: "text", text: "[worker-feat] all done" }] } });
+    await t.append({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Worker done.", citations: null }] } });
+    const term = fakeTerm(50, 20);
+    term.display.write("shell$ parallels start\r\n");
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("resumed");
+    await until(() => term.screen().includes("Worker done."));
+    const restored = ["shell$ parallels start", "> what changed?", "Two things:", "- a", "- b", '▸ bash {"command":"ls"}', "From worker-feat: all done", "Worker done."];
+    const rows = term.screen().split("\n");
+    expect(rows.slice(0, restored.length)).toEqual(restored);
+    expect(rows.at(-1)).toBe(">"); // the input, below the history
+    expect(term.screen()).not.toContain("SECRET-RESULT");
+    expect(term.display.clears).toBe(0); // printed under the shell's output, nothing cleared
+
+    // Typing continues the page under the restored lines.
+    term.type("more\r");
+    await until(() => term.screen().includes("resumed says hi"));
+    expect(term.screen().indexOf("Worker done.")).toBeLessThan(term.screen().indexOf("> more"));
+
+    // Another page, then back: the restored history is reprinted with the rest.
+    term.type("/new elsewhere\r");
+    await until(() => app.page?.project === "elsewhere");
+    await until(() => !term.screen().includes("Worker done."));
+    term.type("\x1a"); // Ctrl+Z
+    await until(() => term.screen().includes("Worker done.") && term.screen().includes("resumed says hi"));
+    expect(term.screen().split("\n").slice(0, restored.length - 1)).toEqual(restored.slice(1));
+    app.quit();
+    await running;
+  });
+
+  test("a restored page shows what it showed live: real orchestrator, scripted model", async () => {
+    const TABLE_MD = "| a | b |\n|---|---|\n| 1 | 2 |";
+    const runner = { async start() { await put("fidelity", "orchestrator", { from: "worker-feat", text: "Report:\n\nall green" }); }, async stop() {} };
+    const tools = { spawn: makeSpawn(runner), message };
+    const provider = fakeProvider([
+      [said(`Plan:\n${TABLE_MD}\nthen *go*`), toolUse("t1", "spawn", { prompt: "do it", branch: "feat" })],
+      [said("```ts\nconst x = 1;\n"), toolUse("t2", "message", { to: "user", text: "Started **feat**." })],
+      [said("All set.")],
+    ]);
+    const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, report?: (from: string, text: string) => void) =>
+      createOrchestrator({ project: p, provider, tools, write, report });
+    const term = fakeTerm(60, 30);
+    const app = new App({ term, openOrchestrator: open, pollMs: 100_000 });
+    const running = app.run("fidelity");
+    await until(() => !!app.page);
+    term.type("go\nnow\r");
+    await until(() => term.screen().includes("orchestrator Started feat."));
+    await until(() => !app.page!.busy);
+    const live = app.page!.lines;
+    expect(live.map(raw)).toContain("All set.");
+    expect(live.map(raw).some((l) => l.includes("From worker-feat: Report:…"))).toBe(true);
+    app.quit();
+    await running;
+
+    const again = new App({ term: fakeTerm(60, 30), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000 });
+    const running2 = again.run("fidelity");
+    await until(() => !!again.page);
+    expect(again.page!.lines).toEqual(live);
+    again.quit();
+    await running2;
+  });
+
+  test("input history is saved per project and survives a restart; blanks and repeats are not saved", async () => {
+    mkdirSync(paths.project("remembers"), { recursive: true }); // what openOrchestrator's ensureProject makes
+    const term = fakeTerm();
+    const app = new App({ term, openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000 });
+    const running = app.run("remembers");
+    await until(() => !!app.page);
+    for (const t of ["one\r", "one\r", "   \r", "two\x1b\rlines\r", "/help\r"]) { term.type(t); await settle(); }
+    await until(() => app.page!.inputHistory.length === 3);
+    const page = app.page!;
+    app.quit();
+    await running;
+    await page.savingHistory;
+    expect(await Bun.file(paths.inputHistory("remembers")).text()).toBe(['"one"', '"two\\nlines"', '"/help"', ""].join("\n"));
+
+    const term2 = fakeTerm();
+    const again = new App({ term: term2, openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000 });
+    const running2 = again.run("remembers");
+    await until(() => !!again.page);
+    term2.press({ name: "up" });
+    expect(again.input.text).toBe("/help");
+    term2.press({ name: "up" });
+    expect(again.input.text).toBe("two\nlines");
+    term2.press({ name: "up" }); // first row of the multi-line entry, then on to history
+    term2.press({ name: "up" });
+    expect(again.input.text).toBe("one");
+    term2.press({ name: "up" });
+    expect(again.input.text).toBe("one"); // oldest
+    // Another project has its own history.
+    term2.type("\x1b"); // Esc clears
+    term2.type("/new fresh\r");
+    await until(() => again.page?.project === "fresh");
+    term2.press({ name: "up" });
+    expect(again.input.text).toBe("");
+    term2.type("\x1a"); // Ctrl+Z: back to the page "/new fresh" was typed on
+    term2.press({ name: "up" });
+    expect(again.input.text).toBe("/new fresh");
+    again.quit();
+    await running2;
   });
 });
