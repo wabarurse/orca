@@ -1248,7 +1248,7 @@ describe("restored pages", () => {
 
   test("a restored page shows what it showed live: real orchestrator, scripted model", async () => {
     const TABLE_MD = "| a | b |\n|---|---|\n| 1 | 2 |";
-    const runner = { async start() { await put("fidelity", "orchestrator", { from: "worker-feat", text: "Report:\n\nall green" }); }, async stop() {} };
+    const runner = { async start() { await put("fidelity", "orchestrator", { from: "worker-feat", text: "Report:\n\nall green" }); }, async stop() {}, async running() { return []; } };
     const tools = { spawn: makeSpawn(runner), message };
     const provider = fakeProvider([
       [said(`Plan:\n${TABLE_MD}\nthen *go*`), toolUse("t1", "spawn", { prompt: "do it", branch: "feat" })],
@@ -1267,7 +1267,7 @@ describe("restored pages", () => {
       return { ...orch, say: (t) => { const p = orch.say(t); typed.push(p); return p; }, turn: async () => { await until(() => typed.length === 2); await Promise.all(typed); return orch.turn(); } };
     };
     const term = fakeTerm(60, 30);
-    const app = new App({ term, openOrchestrator: openLive, pollMs: 30, watchdog: async () => {} });
+    const app = new App({ term, openOrchestrator: openLive, pollMs: 30, watchdog: async () => {}, merges: async () => {} });
     const running = app.run("fidelity");
     await until(() => !!app.page);
     term.type("go\nnow\r");
@@ -1377,7 +1377,7 @@ describe("orchestrator questions", () => {
     const orchs = fakeOrchestrators();
     let onInbox: ((msgs: Message[]) => void) | undefined;
     const openOrchestrator = async (p: string, u: string | undefined, w: (t: string, plain?: boolean) => void, inbox?: (msgs: Message[]) => void) => { onInbox = inbox; return orchs.openOrchestrator(p, u, w); };
-    const app = new App({ term, openOrchestrator, pollMs: 20, watchdog: async () => {}, questionDelayMs: 0, ...extra });
+    const app = new App({ term, openOrchestrator, pollMs: 20, watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0, ...extra });
     const running = app.run(project);
     await until(() => !!app.page);
     return { term, orchs, app, running, inbox: (msgs: Message[]) => onInbox!(msgs), stop: async () => { app.quit(); await running; } };

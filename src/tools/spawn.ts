@@ -5,19 +5,47 @@ import type { Tool } from "./index";
 
 // Orchestrator-only. Seeds the agent's transcript with the prompt, then starts
 // it in a worktree on `branch`. Spawning again on the same branch and role
-// appends to that transcript, so a second review round keeps its context.
-export function makeSpawn(runner: Runner): Tool {
+// appends to that transcript, so a second review round keeps its context,
+// and a worker given a follow-up task on its open branch keeps its own. The
+// description holds the orchestrator's reuse-or-new-branch rule.
+/** How long spawn waits for a live agent on the branch to finish, and how often it looks. */
+export interface SpawnWait { waitMs: number; pollMs: number }
+const WAIT: SpawnWait = { waitMs: 20_000, pollMs: 250 };
+
+/** The branch's agents still live after waiting up to `waitMs`; [] when none, or when tmux could not be asked. */
+async function stillLive(runner: Runner, project: string, branch: string, wait: SpawnWait): Promise<string[]> {
+  const ids = [sessionId("worker", branch), sessionId("reviewer", branch)];
+  const deadline = Date.now() + wait.waitMs;
+  for (;;) {
+    const live = await runner.running(project, ids).catch(() => null);
+    if (!live?.length || Date.now() >= deadline) return live ?? [];
+    await Bun.sleep(wait.pollMs);
+  }
+}
+
+export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
   return {
     spec: {
       name: "spawn",
       description:
         "Start an agent on a git branch in its own worktree and tmux window. The prompt is the only thing it is told. " +
-        "role 'worker' (default) or 'reviewer'. It reports back to you through `message`.",
+        "role 'worker' (default) or 'reviewer'. It reports back to you through `message`.\n\n" +
+        "Spawning the same role on a branch again continues that agent: same transcript, so it keeps its context, and same worktree, with its earlier commits. " +
+        "The prompt is its next instruction. One agent works on a branch at a time: spawn waits briefly, then refuses while the branch's worker or reviewer is still running, " +
+        "so spawn again only after it has reported or exited.\n" +
+        "Never spawn on a branch whose PR is merged; the harness stops and cleans those up (within ~30s, when gh is available). Follow-up work goes on a new branch.\n\n" +
+        "Reuse or new branch, decided per task when you plan:\n" +
+        "- Reuse an open branch (spawn its worker again with the new task) only before it has gone to CI or a PR: its worker has reported, and review has not started or is between rounds. " +
+        "It fits small work on the same files or feature. Its whole transcript is resent each call, so reuse a worker for small follow-ups, not a long series of tasks. " +
+        "The new task runs the whole task flow anew, with its own review rounds.\n" +
+        "- Start a new branch when the work is independent, needs its own merge order, or the existing branch has gone to CI or a PR.\n" +
+        "- If unsure, say so in the plan table and let the user choose.\n" +
+        "In the plan table, mark a reused branch (existing): \"<branch> (existing)\".",
       input_schema: {
         type: "object",
         properties: {
           prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
-          branch: { type: "string", description: "Branch to work on; created from HEAD if new." },
+          branch: { type: "string", description: "Branch to work on: an open branch to reuse it, or a new name, created from HEAD." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
         required: ["prompt", "branch"],
@@ -29,6 +57,10 @@ export function makeSpawn(runner: Runner): Tool {
       const branch = typeof input.branch === "string" ? input.branch.trim() : "";
       const role = input.role === "reviewer" ? "reviewer" : "worker";
       if (!prompt || !branch) return "refused: prompt and branch are required";
+
+      // One agent per branch: a reported agent may still be finishing, so wait briefly for it.
+      const busy = await stillLive(runner, ctx.project, branch, wait);
+      if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
       const id = sessionId(role, branch);
       const t = open(paths.transcript(ctx.project, id));

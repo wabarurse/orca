@@ -105,3 +105,13 @@ describe.skipIf(!hasTmux)("tmux", () => {
     expect(existsSync(paths.worktree(project, "orchestrator"))).toBe(false);
   });
 });
+
+test("local.running is null when tmux cannot be asked", async () => {
+  const path = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  try {
+    expect(await local.running("p", ["worker-x"])).toBe(null);
+  } finally {
+    process.env.PATH = path;
+  }
+});

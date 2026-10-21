@@ -24,6 +24,7 @@ const runner: Runner = {
     started.push(o);
   },
   async stop() {},
+  async running() { return []; },
 };
 const tools = { spawn: makeSpawn(runner), message };
 const project = "demo";
