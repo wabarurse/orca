@@ -4,6 +4,10 @@
 // wide characters two columns, scrolls on LF at the bottom, clamps cursor
 // moves to the screen, and throws on any sequence it does not model, so a
 // test fails when the TUI writes something a real terminal would misread.
+// It tracks the SGR background (each cell keeps the one it was written with,
+// `backgrounds()`), refuses an erase while a background is set (a real terminal
+// would fill the erased cells with it), and answers an OSC 11 background query
+// with `background` when that is set (the reply goes to `replies`).
 
 type Csi = (s: FakeScreen, n: number[]) => void;
 
@@ -19,8 +23,26 @@ const CSI: Record<string, Csi> = {
   H: (s, n) => s.moveTo(arg(n) - 1, arg(n, 1) - 1),
   J: (s, n) => s.eraseDisplay(n[0] ?? 0),
   K: (s, n) => s.eraseLine(n[0] ?? 0),
-  m: () => {},
 };
+
+/** An SGR's params as the background they leave, from `bg` (a cell's background is its params, e.g. "48;5;236", or "" for none). */
+function sgrBackground(params: string, bg: string): string {
+  if (params === "") return "";
+  const ps = params.split(";");
+  for (let i = 0; i < ps.length; i++) {
+    const p = ps[i]!;
+    if (p.includes(":")) { if (p.startsWith("48:")) bg = p; continue; }
+    const n = Number(p || 0);
+    if (n === 38 || n === 48 || n === 58) {
+      const len = ps[i + 1] === "5" ? 2 : ps[i + 1] === "2" ? 4 : -1;
+      if (len < 0 || i + len >= ps.length) throw new Error(`unmodelled SGR ${params}`);
+      if (n === 48) bg = ps.slice(i, i + len + 1).join(";");
+      i += len;
+    } else if (n === 0 || n === 49) bg = "";
+    else if ((n >= 40 && n <= 47) || (n >= 100 && n <= 107)) bg = String(n);
+  }
+  return bg;
+}
 
 /** DEC private modes it models: cursor visibility, bracketed paste, synchronized output. */
 const MODES = new Set([25, 2004, 2026]);
@@ -28,6 +50,15 @@ const MODES = new Set([25, 2004, 2026]);
 export class FakeScreen {
   /** Every row, scrollback first; a row is cells, "" marking the right half of a wide character. */
   buf: string[][] = [];
+  /** Each cell's background, parallel to `buf`: SGR params such as "48;5;236", "" for none. */
+  private bgs: string[][] = [];
+  /** The current SGR background. */
+  private bg = "";
+  /** What it answers an OSC 11 query with (e.g. "rgb:0000/0000/0000"); unset, it stays silent like a terminal without it. */
+  background?: string;
+  /** OSC 11 queries seen, and the replies they got (the terminal's input, for the test to feed back). */
+  queries = 0;
+  replies: string[] = [];
   /** Cursor on the visible screen (0-based). */
   row = 0;
   col = 0;
@@ -38,13 +69,21 @@ export class FakeScreen {
   clears = 0;
 
   constructor(public cols = 80, public rows = 24) {
-    for (let i = 0; i < rows; i++) this.buf.push([]);
+    for (let i = 0; i < rows; i++) this.pushRow();
   }
 
   /** First buffer row of the visible screen. */
   get top(): number { return this.buf.length - this.rows; }
 
   private line(row = this.row): string[] { return this.buf[this.top + row]!; }
+  private bgLine(row = this.row): string[] { return this.bgs[this.top + row]!; }
+  private pushRow(): void { this.buf.push([]); this.bgs.push([]); }
+  /** Cut a visible row to `n` cells. */
+  private cut(row: number, n: number): void {
+    const line = this.line(row);
+    line.length = Math.min(line.length, n);
+    this.bgLine(row).length = line.length;
+  }
 
   write(s: string): void {
     let i = 0;
@@ -73,6 +112,14 @@ export class FakeScreen {
       this.modes.set(n, mode[2] === "h");
       return i + mode[0].length;
     }
+    const sgr = /^\x1b\[([0-9;:]*)m/.exec(rest);
+    if (sgr) { this.bg = sgrBackground(sgr[1]!, this.bg); return i + sgr[0].length; }
+    const query = /^\x1b\]11;\?(?:\x07|\x1b\\)/.exec(rest);
+    if (query) {
+      this.queries++;
+      if (this.background) this.replies.push(`\x1b]11;${this.background}\x1b\\`);
+      return i + query[0].length;
+    }
     const csi = /^\x1b\[([0-9;:]*)([@-~])/.exec(rest);
     if (csi && CSI[csi[2]!]) {
       CSI[csi[2]!]!(this, csi[1] ? csi[1].split(";").map((p) => Number(p) || 0) : []);
@@ -92,7 +139,7 @@ export class FakeScreen {
   private lineFeed(): void {
     this.pending = false;
     if (this.row < this.rows - 1) this.row++;
-    else this.buf.push([]); // the top row scrolls into the scrollback
+    else this.pushRow(); // the top row scrolls into the scrollback
   }
 
   private put(ch: string): void {
@@ -100,30 +147,40 @@ export class FakeScreen {
     if (width === 0) return;
     if (this.pending || this.col + width > this.cols) { this.lineFeed(); this.col = 0; }
     const line = this.line();
-    while (line.length < this.col) line.push(" ");
+    const bgs = this.bgLine();
+    while (line.length < this.col) { line.push(" "); bgs.push(""); }
     line[this.col] = ch;
-    if (width === 2) line[this.col + 1] = "";
+    bgs[this.col] = this.bg;
+    if (width === 2) { line[this.col + 1] = ""; bgs[this.col + 1] = this.bg; }
     this.col += width;
     if (this.col >= this.cols) { this.col = this.cols - 1; this.pending = true; }
   }
 
+  /** Erased cells would take the current background on a real terminal; nothing the TUI writes relies on that. */
+  private plainErase(what: string): void {
+    if (this.bg) throw new Error(`${what} with a background set (${this.bg})`);
+  }
+
   eraseDisplay(n: number): void {
-    if (n === 3) { this.buf.splice(0, this.top); this.clears++; return; }
+    this.plainErase(`J${n}`);
+    if (n === 3) { const top = this.top; this.buf.splice(0, top); this.bgs.splice(0, top); this.clears++; return; }
     if (n === 0) {
       this.eraseLine(0);
-      for (let r = this.row + 1; r < this.rows; r++) this.line(r).length = 0;
+      for (let r = this.row + 1; r < this.rows; r++) this.cut(r, 0);
     } else if (n === 1) {
       this.eraseLine(1);
-      for (let r = 0; r < this.row; r++) this.line(r).length = 0;
-    } else if (n === 2) for (let r = 0; r < this.rows; r++) this.line(r).length = 0;
+      for (let r = 0; r < this.row; r++) this.cut(r, 0);
+    } else if (n === 2) for (let r = 0; r < this.rows; r++) this.cut(r, 0);
     else throw new Error(`unmodelled J${n}`);
   }
 
   eraseLine(n: number): void {
+    this.plainErase(`K${n}`);
     const line = this.line();
-    if (n === 0) line.length = Math.min(line.length, this.col);
-    else if (n === 1) for (let c = 0; c <= this.col && c < line.length; c++) line[c] = " ";
-    else if (n === 2) line.length = 0;
+    const bgs = this.bgLine();
+    if (n === 0) this.cut(this.row, this.col);
+    else if (n === 1) for (let c = 0; c <= this.col && c < line.length; c++) { line[c] = " "; bgs[c] = ""; }
+    else if (n === 2) this.cut(this.row, 0);
     else throw new Error(`unmodelled K${n}`);
   }
 
@@ -131,15 +188,18 @@ export class FakeScreen {
   resize(cols: number, rows: number): void {
     const cursor = this.top + this.row;
     const top = this.row >= rows ? cursor - rows + 1 : this.top;
-    for (const line of this.buf) if (line.length > cols) line.length = cols;
-    this.buf.length = Math.min(this.buf.length, top + rows);
-    while (this.buf.length < top + rows) this.buf.push([]);
+    this.buf.forEach((line, i) => { if (line.length > cols) line.length = this.bgs[i]!.length = cols; });
+    this.buf.length = this.bgs.length = Math.min(this.buf.length, top + rows);
+    while (this.buf.length < top + rows) this.pushRow();
     this.cols = cols;
     this.rows = rows;
     this.moveTo(cursor - top, this.col);
   }
 
   private static text(rows: string[][]): string[] { return rows.map((l) => l.join("").trimEnd()); }
+
+  /** Every row's cell backgrounds, scrollback first, parallel to `buf` ("" for none; rows end at their last written cell). */
+  backgrounds(): string[][] { return this.bgs.map((l) => [...l]); }
 
   /** The visible screen's rows, trailing spaces trimmed. */
   screen(): string[] { return FakeScreen.text(this.buf.slice(this.top)); }

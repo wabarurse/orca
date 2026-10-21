@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { append, commit, erase, sanitize, expandTabs, inputArea, live, liveRows, menuRows, NOTHING, projectRows, questionRows, reprint, visibleLength, windowStart, wrap, type Frame, type ProjectList, type QuestionView } from "./render";
 import { FakeScreen } from "./testing";
+import { setUserFill } from "./style";
+
+// These tests lay out text without the user background; style.test.ts draws it.
+beforeEach(() => setUserFill(null));
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 /** The live region's rows as text. */

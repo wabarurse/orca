@@ -68,4 +68,31 @@ describe("FakeScreen", () => {
     expect(s.text()).toBe("a\nb\nc\nabcde");
     expect(s.row).toBe(1);
   });
+
+  test("tracks the SGR background per cell; resets, 49 and other SGR behave as on a real terminal", () => {
+    const s = screen(10, 2, "a\x1b[48;5;236mb\x1b[1mc\x1b[0md\x1b[44me\x1b[49mf\x1b[48;2;1;2;3m你\x1b[38;5;0mg\x1b[mh");
+    expect(s.text()).toBe("abcdef你gh");
+    expect(s.backgrounds()[0]).toEqual(["", "48;5;236", "48;5;236", "", "44", "", "48;2;1;2;3", "48;2;1;2;3", "48;2;1;2;3", ""]);
+    expect(screen(4, 1, "\x1b[48:5:236mx").backgrounds()[0]).toEqual(["48:5:236"]);
+    expect(() => screen(4, 1, "\x1b[48;5m")).toThrow(); // a cut-off colour
+  });
+
+  test("an erase while a background is set throws (a real terminal would fill with it); scrolled and cleared rows keep their cells' backgrounds", () => {
+    expect(() => screen(4, 2, "\x1b[41m\x1b[K")).toThrow();
+    expect(() => screen(4, 2, "\x1b[41m\x1b[2J")).toThrow();
+    const s = screen(4, 2, "\x1b[41mab\x1b[0m\r\nc\r\nd");
+    expect(s.backgrounds()).toEqual([["41", "41"], [""], [""]]);
+    s.write("\x1b[3J");
+    expect(s.backgrounds()).toEqual([[""], [""]]);
+  });
+
+  test("answers an OSC 11 query only when given a background, like a terminal with or without it", () => {
+    const silent = screen(4, 1, "\x1b]11;?\x1b\\");
+    expect([silent.queries, silent.replies]).toEqual([1, []]);
+    const s = new FakeScreen(4, 1);
+    s.background = "rgb:ffff/ffff/ffff";
+    s.write("\x1b]11;?\x07");
+    expect(s.replies).toEqual(["\x1b]11;rgb:ffff/ffff/ffff\x1b\\"]);
+    expect(s.text()).toBe("");
+  });
 });

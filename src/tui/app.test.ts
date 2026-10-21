@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import { parseKeys, type Key } from "./keys";
 import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
 import { bold, dim } from "./render";
+import { setUserFill } from "./style";
 
 const home = mkdtempSync(join(tmpdir(), "parallels-tui-"));
 process.env.PARALLELS_HOME = home;
@@ -27,10 +28,13 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 /** Anything the fake screen refused (an escape or control a real terminal would misread); checked after every test. */
 const screenErrors: string[] = [];
 afterEach(() => { expect(screenErrors).toEqual([]); screenErrors.length = 0; });
+/** The user background on, whatever the environment says, so every test draws it (and pads the input). */
+const USER_BG = "\x1b[48;5;236m";
+beforeEach(() => setUserFill(USER_BG));
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 /** A history line's text: plain lines as they are, markdown as written. */
-const raw = (l: Line) => (typeof l === "string" ? l : l.md);
+const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : l.md);
 
 /** A fake terminal: records every raw write and applies it to a FakeScreen, so `screen()` is the scrollback plus the screen. */
 function fakeTerm(cols = 40, rows = 8) {
@@ -1021,7 +1025,7 @@ describe("frames, resizes, startup and crashes", () => {
     await until(() => term.screen().endsWith("four"));
     const shown = term.display.screen();
     expect(shown.length).toBe(6);
-    expect(shown.at(-1)).toBe("  four");
+    expect(shown.slice(-2)).toEqual(["  four", ""]); // the input's padding row last
     expect(shown.join("\n")).toContain("alpha · no remote");
     expect(term.display.text().startsWith("> hello\nalpha says hi\nworker-x done\n")).toBe(true);
     app.quit();
@@ -1174,7 +1178,7 @@ describe("markdown replies", () => {
     await until(() => term.screen().includes("┌"));
     expect(term.screen()).toContain('▸ bash {"command":"**ls**"}');
     expect(term.screen()).toContain("│ tui-markdown │ Render markdown in the chat area │");
-    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : l.md))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
+    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : "md" in l ? l.md : l.user))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
     app.quit();
     await running;
   });
@@ -1988,6 +1992,37 @@ describe("command and key tables", () => {
     expect(app.input.text).toBe("a\n");
     term.press({ name: "escape" });
     expect(app.input.text).toBe("");
+    app.quit();
+    await running;
+  });
+});
+
+describe("user background", () => {
+  test("sent messages and the input are on the user background, full width, live and after a resize reprint", async () => {
+    const term = fakeTerm(30, 10);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("a message long enough to wrap\r");
+    await until(() => term.screen().includes("worker-x done"));
+    term.type("draft");
+    await until(() => term.screen().endsWith("> draft"));
+    const filled = (cols: number) => term.display.backgrounds().map((r) => r.length === cols && r.every((b) => b === "48;5;236"));
+    const check = (cols: number) => {
+      const text = term.display.text().split("\n");
+      const bg = filled(cols);
+      const at = (s: string) => text.findIndex((l) => l.startsWith(s));
+      expect([bg[at("> a message")], bg[at("> a message") + 1], bg[at("alpha says hi")]]).toEqual([true, true, false]);
+      const row = term.display.top + term.display.row;
+      expect(term.display.buf[row]!.join("").trimEnd()).toBe("> draft");
+      expect([bg[row - 1], bg[row], bg[row + 1]]).toEqual([true, true, true]); // padding, input, padding
+      expect(term.display.col).toBe(7);
+    };
+    check(30);
+    term.resize(24, 10);
+    await until(() => term.display.clears === 1 && term.screen().includes("> draft"));
+    check(24);
     app.quit();
     await running;
   });

@@ -50,10 +50,10 @@ export const SUMMARIZED = dim("… earlier conversation summarized");
 /** The note leading a capped history. */
 export const earlier = (n: number) => dim(`… ${n} earlier ${n === 1 ? "message" : "messages"}`);
 
-/** A user message as the page shows it when sent: "> " before the first line, the rest indented. */
+/** A user message as the page shows it when sent: "> " before the first line, the rest indented, all on the user background. */
 export function userLines(text: string): Line[] {
   const [first, ...rest] = text.split("\n");
-  return [`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`)];
+  return [`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`)].map((user) => ({ user }));
 }
 
 /** A question closed by the user, as the page shows it: one dim line, the answer or "skipped" (with the default) after an arrow. */

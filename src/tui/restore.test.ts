@@ -30,7 +30,7 @@ const meta = { type: "meta", role: "orchestrator", model: "m" } as const;
 const user = (content: unknown, extra = {}) => ({ type: "message", message: { role: "user", content }, ...extra }) as never;
 const assistant = (content: unknown, extra = {}) => ({ type: "message", message: { role: "assistant", content }, ...extra }) as never;
 const inbox = (...msgs: [string, string][]) => format(msgs.map(([from, text]) => ({ from, text, ts: "" })));
-const raw = (l: Line) => (typeof l === "string" ? l : l.md);
+const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : l.md);
 
 test("user messages, agent reports, assistant markdown and replies; tool calls as live, results and thinking hidden", () => {
   const entries = transcript(
@@ -48,7 +48,7 @@ test("user messages, agent reports, assistant markdown and replies; tool calls a
   );
   const lines = restore(entries, 60);
   expect(lines).toEqual([
-    `${bold(">")} build a login`, "  page please",
+    { user: `${bold(">")} build a login` }, { user: "  page please" },
     { md: "# Plan", block: true }, { md: "", block: true }, { md: "| a | b |\n|---|---|\n| 1 | 2 |", block: true },
     toolLine("spawn", { branch: "feat/login" }),
     dim("From worker-feat-login: Done.…"),
@@ -77,7 +77,7 @@ test("a summary: only the branch from the head back to it, led by a dim note", (
     user(inbox(["user", "new question"])),
     assistant([{ type: "text", text: "new answer" }]),
   );
-  expect(restore(entries, 60)).toEqual([SUMMARIZED, `${bold(">")} new question`, { md: "new answer", block: true }]);
+  expect(restore(entries, 60)).toEqual([SUMMARIZED, { user: `${bold(">")} new question` }, { md: "new answer", block: true }]);
 });
 
 test("the head's branch wins over a later-abandoned fork", () => {
@@ -99,7 +99,7 @@ test("a long history keeps the newest whole messages within the cap, led by how 
   expect(raw(lines.at(-1)!)).toBe("line two");
   expect(raw(lines[1]!)).toBe("answer 83");
   // Under the cap nothing is left out; a newest message longer than the cap still shows whole.
-  expect(restore(transcript(meta, user(inbox(["user", "hi"]))), 60)).toEqual([`${bold(">")} hi`]);
+  expect(restore(transcript(meta, user(inbox(["user", "hi"]))), 60)).toEqual([{ user: `${bold(">")} hi` }]);
   const huge = restore(transcript(meta, user(inbox(["user", "hi"])), assistant([{ type: "text", text: Array.from({ length: 300 }, (_, i) => `l${i}`).join("\n") }])), 60);
   expect(huge[0]).toBe(earlier(1));
   expect(huge.length).toBe(301);
@@ -112,7 +112,7 @@ test("an empty or missing transcript restores nothing", () => {
 
 test("the user's lines lead an inbox turn they share with agent reports, as they were shown when sent", () => {
   const entries = transcript(meta, user(inbox(["worker-a", "report"], ["user", "hi"])));
-  expect(restore(entries, 60)).toEqual([`${bold(">")} hi`, dim("From worker-a: report")]);
+  expect(restore(entries, 60)).toEqual([{ user: `${bold(">")} hi` }, dim("From worker-a: report")]);
 });
 
 const sentTo = (id: string, to: string, text: string) => [
@@ -133,9 +133,9 @@ test("older transcripts: a reply waits for the end of the run, past a report tha
   );
   const tool = toolLine("message", { to: "user", text: "Started." });
   expect(restore(entries, 60)).toEqual([
-    `${bold(">")} go`, tool, { md: "ok", block: true }, dim("From worker-a: done"), { md: "more text", block: true },
+    { user: `${bold(">")} go` }, tool, { md: "ok", block: true }, dim("From worker-a: done"), { md: "more text", block: true },
     replyLine("orchestrator", "Started."),
-    `${bold(">")} next`, { md: "sure", block: true },
+    { user: `${bold(">")} next` }, { md: "sure", block: true },
   ]);
 });
 
@@ -156,11 +156,11 @@ test("replies entries place what a turn sent the user (agents' too) after it; me
     user(inbox(["user", "thanks"])),
   );
   const lines = restore(entries, 60);
-  expect(lines.filter((l) => typeof l !== "string" && l.label)).toEqual([replyLine("orchestrator", "Started."), replyLine("worker-a", "hi user"), replyLine("orchestrator", "Reviewed.")]);
+  expect(lines.filter((l) => typeof l !== "string" && "label" in l && l.label)).toEqual([replyLine("orchestrator", "Started."), replyLine("worker-a", "hi user"), replyLine("orchestrator", "Reviewed.")]);
   const at = (l: Line) => lines.findIndex((x) => JSON.stringify(x) === JSON.stringify(l));
   expect(at(replyLine("orchestrator", "Started."))).toBe(at({ md: "more text", block: true }) + 1);
   expect(at(replyLine("orchestrator", "Reviewed."))).toBe(at({ md: "noted", block: true }) + 1);
-  expect(lines.at(-1)).toBe(`${bold(">")} thanks`);
+  expect(lines.at(-1)).toEqual({ user: `${bold(">")} thanks` });
 });
 
 test("a capped history that began at a summary drops the summary note and counts only messages", () => {
@@ -174,7 +174,7 @@ test("a capped history that began at a summary drops the summary note and counts
   expect(lines.some((l) => raw(l).includes("old"))).toBe(false);
   // Just under the cap the note leads.
   const few = restore(transcript(meta, { type: "summary", text: "s" } as never, user(inbox(["user", "q"]))), 60);
-  expect(few).toEqual([SUMMARIZED, `${bold(">")} q`]);
+  expect(few).toEqual([SUMMARIZED, { user: `${bold(">")} q` }]);
 });
 
 test("report lines cut at 100 characters, not UTF-16 units", () => {
@@ -187,7 +187,7 @@ test("report lines cut at 100 characters, not UTF-16 units", () => {
 
 test("tags inside a report or a user message are not senders", () => {
   const entries = transcript(meta, user(inbox(["worker-a", "Report\n\n[x] done\n\n[1] item"], ["user", "list:\n\n[x] done\n\n[1] item"])));
-  expect(restore(entries, 60)).toEqual([`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item", dim("From worker-a: Report…")]);
+  expect(restore(entries, 60)).toEqual([...[`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item"].map((user) => ({ user })), dim("From worker-a: Report…")]);
 });
 
 test("question answers and skips restore as the dim line the page showed live, not as '> …'", () => {

@@ -9,11 +9,16 @@
 //   the status line: spinner, page name, remote, page count
 //   the input area: wrapped rows, up to a third of the screen
 //
+// The input area and the user's messages (`userRows`) are drawn on the user
+// background from style.ts, full width, like Codex's composer and user cells;
+// the input gets a padding row above and below in it when the screen has room.
+//
 // `reprint` clears the screen and scrollback and writes a page from scratch
 // (page switches, resizes, agent views).
 
 import { cells, layout, scrollWindow } from "./editor";
 import { wordWrap } from "./markdown";
+import { fillRow, userFill } from "./style";
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -143,6 +148,13 @@ export function wrap(line: string, cols: number): string[] {
   return out;
 }
 
+/** A user message line ("> …" or its indented continuation) at `cols`: wrapped, every row on the user background, full width. */
+export function userRows(line: string, cols: number): string[] {
+  const rows = wrap(sanitize(line), cols);
+  const fill = userFill();
+  return fill ? rows.map((r) => fillRow(r, cols, fill)) : rows;
+}
+
 /** One row: cut with an ellipsis rather than wrapped. */
 function fit(raw: string, cols: number): string {
   const line = expandTabs(raw);
@@ -252,12 +264,17 @@ export function liveRows(f: Frame): { rows: string[]; cursor: number; col: numbe
   const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, statusRows);
   // Everything must fit on screen, or the cursor could not get back to the top: the overlay
   // gets what the input and status leave (but a row), the partial line the rest, showing its end.
-  let free = Math.max(0, f.rows - statusRows - input.lines.length);
+  const fill = userFill();
+  // A padding row above and below the input, on its background, when that still leaves a row above.
+  const pad = fill && f.rows - statusRows - input.lines.length >= 3 ? 1 : 0;
+  const padding = Array<string>(pad).fill("");
+  const box = fill ? [...padding, ...input.lines, ...padding].map((r) => fillRow(r, f.cols, fill)) : input.lines;
+  let free = Math.max(0, f.rows - statusRows - box.length);
   const overlay = overlayRows(f, free - 1).map((r) => fit(sanitize(r), f.cols));
   free -= overlay.length;
   const partial = f.partial ? lastRows(f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)), free) : [];
-  const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...input.lines];
-  return { rows, cursor: rows.length - input.lines.length + input.row, col: input.col };
+  const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...box];
+  return { rows, cursor: rows.length - box.length + pad + input.row, col: input.col };
 }
 
 /** Move from where `prev` left the cursor to the live region's first row and clear from there down. */
