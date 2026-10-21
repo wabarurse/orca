@@ -18,6 +18,7 @@ import type { Key } from "./keys";
 import { lineRows, type Line } from "./lines";
 import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
+import { pageQuestions, Questions, type PageQuestions, type QuestionStore } from "./questions";
 import { replyLine, reportLine, restore, userLines } from "./restore";
 import { append, bold, commit, erase, dim, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
 import type { Terminal } from "./term";
@@ -49,6 +50,8 @@ export interface Page {
   savingHistory: Promise<void>;
   /** What the user typed here and sent, not yet read by the orchestrator: when it reads them they are already on screen. */
   sent: string[];
+  /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
+  questions: PageQuestions;
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
   view: { name: string; lines: Line[]; leave: () => void; live: boolean } | null;
 }
@@ -72,6 +75,8 @@ export interface AppDeps {
   projects?: Pick<DeleteOptions, "live" | "kill">;
   /** Exit watchdog run with each inbox poll (commands.ts exitWatchdog); tests stub it. */
   watchdog?: (project: string) => Promise<unknown>;
+  /** Where questions are read and answered (questions.ts on disk by default); tests stub it. */
+  questions?: QuestionStore;
 }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
@@ -104,6 +109,7 @@ const HELP = [
   "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
   "/agents   /models [id]   /accounts   /login claude|codex [profile]",
   "/review-rounds [n] review rounds before CI (0 = straight to CI)",
+  "/questions shows the orchestrator's open questions again (Enter answers, Esc skips, Tab puts off)",
 ];
 const HELP_VIEW = "/back (or Esc) leaves the agent view";
 
@@ -182,8 +188,20 @@ export class App {
   private readonly liveChecks = new Map<string, Promise<void>>();
   private closed = false;
 
+  /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
+  readonly questions: Questions;
+
   constructor(private readonly deps: AppDeps) {
     this.finished = new Promise<void>((r) => (this.done = r));
+    const app = this;
+    this.questions = new Questions({
+      page: () => app.page,
+      get input() { return app.input; },
+      set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
+      say: (line, page) => app.say(line, page as Page),
+      record: (line, page) => app.toPage(page as Page, [line]),
+      draw: () => app.draw(),
+    }, deps.questions);
   }
 
   get page(): Page | undefined { return this.pages[this.active]; }
@@ -199,6 +217,7 @@ export class App {
     term.onResize(() => this.resized());
     const poll = setInterval(() => {
       this.watchPages();
+      this.questions.poll(this.pages);
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
     try {
@@ -300,6 +319,9 @@ export class App {
     this.endPartial(page);
     for (const m of msgs) {
       if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
+      // A question's answer: its dim line, unless answered here (shown then).
+      const asked = this.questions.inboxLines(page, m.text);
+      if (asked) { this.toPage(page, asked); continue; }
       // Typed here: already shown when sent. From elsewhere (`parallels msg`, a question's answer): shown now, as restore shows it.
       const at = page.sent.indexOf(m.text);
       if (at !== -1) page.sent.splice(at, 1);
@@ -322,6 +344,7 @@ export class App {
       partial: page && !page.view ? page.md.pending : "",
       status, input, inputArea: area,
       menu: this.menu,
+      question: this.questions.view(),
       projects: this.projectList && {
         index: this.projectList.index, status: this.projectList.status,
         items: this.projectList.items.map((it) => {
@@ -352,6 +375,7 @@ export class App {
     parts.push(`${this.pages.length} ${this.pages.length === 1 ? "page" : "pages"}`);
     const busy = this.pages.filter((p) => p !== page && active(p)).length;
     if (busy) parts.push(`${busy} busy`);
+    parts.push(...this.questions.status(page, this.pages));
     return dim(parts.join(" · "));
   }
 
@@ -395,6 +419,7 @@ export class App {
 
   private prompt(): string {
     const view = this.page?.view;
+    if (this.questions.answering()) return dim("answer> ");
     return view ? dim(`${view.name} > `) : dim("> ");
   }
 
@@ -430,6 +455,7 @@ export class App {
   private flush(): void {
     this.lastFrame = Date.now();
     try {
+      this.questions.sync(); // the input holds the chat draft or the shown question's answer
       const f = this.frame();
       const pending = this.pending;
       this.pending = [];
@@ -468,7 +494,7 @@ export class App {
       if (existing !== this.active) { this.active = existing; this.reprint(); }
       return this.pages[existing]!;
     }
-    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], view: null };
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs));
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     page.lines = [...restore(page.orch.entries?.() ?? [], this.deps.term.cols), ...page.lines];
@@ -479,6 +505,7 @@ export class App {
     page.name = await displayName(project);
     this.pages.push(page);
     this.active = this.pages.length - 1;
+    this.questions.poll([page]);
     this.reprint();
     if (this.projectList) await this.refreshProjects();
     return page;
@@ -764,6 +791,7 @@ export class App {
     }
     if (text === "/help") { for (const l of page?.view ? [...HELP, HELP_VIEW] : HELP) this.say(dim(l)); return; }
     if (text === "/projects") return this.openProjects();
+    if (text === "/questions") return this.questions.command(page);
     if (text === "/keys") { this.keyEcho = true; return this.say(dim("press keys; Esc ends")); }
     if (text === "/new" || text.startsWith("/new ")) {
       const [name, url] = text.slice(4).trim().split(/\s+/).filter(Boolean);
@@ -813,6 +841,7 @@ export class App {
       else if (k.name === "escape" || (k.name === "char" && k.text === "q")) this.menu = null;
       return this.draw();
     }
+    if (this.questions.takes(k)) return this.questions.handle(k).then(() => this.draw());
     if (k.name === "escape") {
       if (this.page?.view) this.page.view.leave();
       else this.input = { text: "", cursor: 0 };

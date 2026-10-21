@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
@@ -7,7 +7,10 @@ import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
 import { App, type Clock, type Line } from "./app";
 import { createOrchestrator } from "../orchestrator";
-import { put, type Message } from "../inbox";
+import { drain, put, type Message } from "../inbox";
+import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
+import { fileStore, type QuestionStore } from "./questions";
+import { answeredLine } from "./restore";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../tools/message";
 import { makeSpawn } from "../tools/spawn";
@@ -1352,5 +1355,228 @@ describe("restored pages", () => {
     expect(page.inputHistory).toEqual(["hello", "/agents"]);
     app.quit();
     await running;
+  });
+});
+
+describe("orchestrator questions", () => {
+  const live = (term: ReturnType<typeof fakeTerm>) => term.display.screen().join("\n");
+  const ask1 = (project: string, text: string, options?: string[], def?: string) => askQuestions(project, [{ text, ...(options ? { options } : {}), ...(def ? { default: def } : {}) }]);
+  const statusOf = async (project: string) => (await allQuestions(project)).map((q) => [q.text, q.status, q.answer ?? null]);
+  async function start(project: string, extra: Partial<ConstructorParameters<typeof App>[0]> = {}) {
+    const term = fakeTerm(60, 16);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 20, watchdog: async () => {}, ...extra });
+    const running = app.run(project);
+    await until(() => !!app.page);
+    return { term, orchs, app, running, stop: async () => { app.quit(); await running; } };
+  }
+
+  test("Enter on an option answers it; one dim line goes to the scrollback; the inbox message reaches the orchestrator", async () => {
+    const [q] = await ask1("qa-opt", "Which db?", ["postgres", "sqlite"], "sqlite");
+    const { term, orchs, app, stop } = await start("qa-opt");
+    await until(() => live(term).includes("? Which db?") && live(term).includes("❯ 1. postgres"));
+    expect(live(term)).toContain("type your own answer");
+    expect(live(term)).toContain("default: sqlite");
+    expect(live(term)).toContain("Enter answer · Esc skip (uses default) · Tab later");
+    expect(live(term)).toContain("1 question");
+    term.press({ name: "down" });
+    await until(() => live(term).includes("❯ 2. sqlite"));
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("? Which db? → sqlite"));
+    expect(await statusOf("qa-opt")).toEqual([["Which db?", "answered", "sqlite"]]);
+    expect(live(term)).not.toContain("Enter answer");
+    expect(live(term)).not.toContain("question");
+    expect(orchs.said["qa-opt"]).toEqual([]); // not sent as a chat message
+    const inbox = await drain("qa-opt", "orchestrator");
+    expect(inbox.map((m) => [m.from, m.text])).toEqual([["user", `[${q!.id}] answer to "Which db?": sqlite`]]);
+    expect(app.page!.lines.map(raw)).toContain(answeredLine("Which db?", "sqlite"));
+    await stop();
+  });
+
+  test("typing answers in answer mode and keeps the chat draft; a question without options goes straight to answer mode; bad text is refused", async () => {
+    const { term, orchs, app, stop } = await start("qa-typed");
+    term.type("half a message");
+    await ask1("qa-typed", "Which db?", ["postgres"], "postgres");
+    await until(() => live(term).includes("? Which db?"));
+    expect(app.input.text).toBe(""); // the draft is put aside while the question shows
+    term.type("mysql");
+    await until(() => live(term).includes("answer> mysql"));
+    expect(live(term)).toContain("❯ type your own answer");
+    term.press({ name: "up" }); // back to an option: the typed answer waits
+    await until(() => live(term).includes("❯ 1. postgres"));
+    expect(app.input.text).toBe("");
+    term.press({ name: "down" });
+    await until(() => live(term).includes("answer> mysql"));
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("? Which db? → mysql"));
+    await until(() => app.input.text === "half a message");
+    expect(orchs.said["qa-typed"]).toEqual([]);
+
+    await ask1("qa-typed", "Project name?");
+    await until(() => live(term).includes("? Project name?") && live(term).includes("answer>"));
+    term.press({ name: "paste", text: "x".repeat(2001) });
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("not sent: answer is over 2000 characters"));
+    expect((await allQuestions("qa-typed")).at(-1)!.status).toBe("open");
+    term.press({ name: "u", ctrl: true }); // Ctrl+U clears the line
+    term.type("  shiny  ");
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("? Project name? → shiny"));
+    expect((await allQuestions("qa-typed")).at(-1)!.answer).toBe("shiny");
+    await until(() => app.input.text === "half a message");
+    term.type("\r");
+    await until(() => orchs.said["qa-typed"]!.length === 1);
+    expect(orchs.said["qa-typed"]).toEqual(["half a message"]);
+    await stop();
+  });
+
+  test("Esc skips with the default, then the next question shows", async () => {
+    await askQuestions("qa-skip", [{ text: "Port?", options: ["80", "8080"], default: "8080" }, { text: "Host?", options: ["a", "b"] }]);
+    const { term, stop } = await start("qa-skip");
+    await until(() => live(term).includes("? Port? (1 of 2)"));
+    expect(live(term)).toContain("2 questions");
+    term.press({ name: "escape" });
+    await until(() => term.screen().includes("? Port? → skipped, default: 8080"));
+    await until(() => live(term).includes("? Host?"));
+    expect(live(term)).toContain("1 question");
+    term.press({ name: "escape" });
+    await until(() => term.screen().includes("? Host? → skipped"));
+    expect(await statusOf("qa-skip")).toEqual([["Port?", "skipped", null], ["Host?", "skipped", null]]);
+    await stop();
+  });
+
+  test("Tab puts the queue off so chat works; a new question or /questions shows it again; /questions lists several", async () => {
+    await ask1("qa-tab", "Which db?", ["postgres", "sqlite"]);
+    const { term, orchs, stop } = await start("qa-tab");
+    await until(() => live(term).includes("? Which db?"));
+    term.press({ name: "tab" });
+    await until(() => !live(term).includes("? Which db?"));
+    expect(live(term)).toContain("1 question"); // still counted
+    term.type("hello\r");
+    await until(() => orchs.said["qa-tab"]?.length === 1);
+    expect(orchs.said["qa-tab"]).toEqual(["hello"]);
+    term.press({ name: "up" }); // history, not the question
+    await until(() => live(term).includes("> hello"));
+    term.press({ name: "u", ctrl: true });
+
+    await ask1("qa-tab", "Port?");
+    await until(() => live(term).includes("? Which db? (1 of 2)")); // a new one: the queue shows again from the oldest
+    term.press({ name: "tab" });
+    await until(() => !live(term).includes("? Which db?"));
+    term.type("/questions\r");
+    await until(() => live(term).includes("? Which db? (1 of 2)"));
+    expect(term.screen()).toContain("1. Which db?");
+    expect(term.screen()).toContain("2. Port?");
+    expect(orchs.said["qa-tab"]).toEqual(["hello"]);
+    await stop();
+  });
+
+  test("a question closed elsewhere is dropped quietly; its answer shows when the orchestrator reads it", async () => {
+    const [first] = await askQuestions("qa-race", [{ text: "Which db?", options: ["postgres"] }, { text: "Port?", options: ["80"] }]);
+    let onInbox: ((msgs: Message[]) => void) | undefined;
+    const orchs = fakeOrchestrators();
+    const open = async (p: string, u: string | undefined, w: (t: string) => void, inbox?: (msgs: Message[]) => void) => { onInbox = inbox; return orchs.openOrchestrator(p, u, w); };
+    const { term, app, stop } = await start("qa-race", { openOrchestrator: open, pollMs: 100_000 });
+    await until(() => live(term).includes("? Which db? (1 of 2)"));
+    await answerQuestion("qa-race", first!.id, "sqlite"); // another TUI
+    term.press({ name: "enter" });
+    await until(() => live(term).includes("? Port?") && !live(term).includes("Which db?"));
+    expect(term.screen()).not.toContain("already");
+    expect(term.screen()).not.toContain("→");
+    // The orchestrator reads the other TUI's answer: shown like a restored page shows it.
+    onInbox!(await drain("qa-race", "orchestrator"));
+    await until(() => term.screen().includes("? Which db? → sqlite"));
+    // An answer from here is not shown twice when the orchestrator reads it.
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("? Port? → 80"));
+    onInbox!(await drain("qa-race", "orchestrator"));
+    await settle();
+    expect(app.page!.lines.map(raw).filter((l) => l === answeredLine("Port?", "80"))).toHaveLength(1);
+    await stop();
+  });
+
+  test("background pages show their count in the status line", async () => {
+    const { term, app, stop } = await start("qa-fg");
+    term.type("/new qa-bg\r");
+    await until(() => app.page?.project === "qa-bg" && app.pages.length === 2);
+    term.type("\x1a"); // back to qa-fg
+    await until(() => app.page?.project === "qa-fg");
+    await askQuestions("qa-bg", [{ text: "One?" }, { text: "Two?" }]);
+    await until(() => live(term).includes("qa-bg: 2 questions"));
+    expect(live(term)).not.toContain("One?");
+    term.type("\x18");
+    await until(() => live(term).includes("? One? (1 of 2)"));
+    expect(live(term)).toContain("2 questions");
+    expect(live(term)).not.toContain("qa-bg: 2");
+    await stop();
+  });
+
+  test("modifier chords never pick, skip or put off a question; Ctrl+C still quits", async () => {
+    await ask1("qa-chord", "Which db?", ["postgres", "sqlite"], "sqlite");
+    const { term, app, running } = await start("qa-chord");
+    await until(() => live(term).includes("❯ 1. postgres"));
+    for (const k of [{ name: "down", ctrl: true }, { name: "down", alt: true }, { name: "enter", ctrl: true }, { name: "escape", alt: true }, { name: "tab", shift: true }, { name: "j", ctrl: true }]) term.press(k);
+    await settle();
+    expect(live(term)).toContain("❯ 1. postgres");
+    expect(app.page!.questions.open).toHaveLength(1);
+    expect(await statusOf("qa-chord")).toEqual([["Which db?", "open", null]]);
+    term.press({ name: "c", ctrl: true });
+    await running;
+  });
+
+  test("polls never overlap, and an unchanged questions dir is not re-read", async () => {
+    let inFlight = 0;
+    let most = 0;
+    let lists = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let stamp = 0;
+    const store: QuestionStore = {
+      stamp: async () => ++stamp, // always changed
+      list: async () => { lists++; inFlight++; most = Math.max(most, inFlight); await gate; inFlight--; return []; },
+      answer: async () => {}, skip: async () => {},
+    };
+    const { stop } = await start("qa-poll", { pollMs: 5, questions: store });
+    await Bun.sleep(60);
+    expect(lists).toBe(1);
+    release();
+    await until(() => lists > 2);
+    expect(most).toBe(1);
+    await stop();
+
+    // The real store: a dir unchanged for a while is stat'ed, not read.
+    await ask1("qa-mtime", "Which db?");
+    const past = new Date(Date.now() - 60_000);
+    utimesSync(paths.questions("qa-mtime"), past, past);
+    let reads = 0;
+    const counting: QuestionStore = { ...fileStore, list: (p) => { reads++; return fileStore.list(p); } };
+    const second = await start("qa-mtime", { pollMs: 5, questions: counting });
+    await until(() => live(second.term).includes("? Which db?"));
+    await Bun.sleep(60);
+    expect(reads).toBe(1);
+    await ask1("qa-mtime", "Port?"); // the dir changes: read again
+    await until(() => live(second.term).includes("(1 of 2)"));
+    expect(reads).toBeGreaterThanOrEqual(2);
+    await second.stop();
+  });
+
+  test("a restored page shows an answer the way it showed live: real orchestrator, scripted model", async () => {
+    await ask1("qa-restore", "Which db?", ["postgres", "sqlite"], "sqlite");
+    const provider = fakeProvider([[said("Noted, sqlite.")]]);
+    const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void) =>
+      createOrchestrator({ project: p, provider, tools: { message }, write, onInbox });
+    const { term, app, stop } = await start("qa-restore", { openOrchestrator: open, pollMs: 20 });
+    await until(() => live(term).includes("❯ 1. postgres"));
+    term.press({ name: "down" });
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("Noted, sqlite."));
+    await until(() => !app.page!.busy);
+    const shown = app.page!.lines;
+    expect(shown.map(raw)).toEqual([answeredLine("Which db?", "sqlite"), "Noted, sqlite."]);
+    await stop();
+
+    const again = await start("qa-restore", { openOrchestrator: open, pollMs: 100_000 });
+    expect(again.app.page!.lines).toEqual(shown);
+    await again.stop();
   });
 });
