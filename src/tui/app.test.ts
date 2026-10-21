@@ -279,6 +279,14 @@ describe("tui app", () => {
     let finish!: () => void;
     let write!: (t: string) => void;
     let live = true;
+    let agentCalls = 0;
+    let release: (() => void) | null = null;
+    let hold = false;
+    const agents = async () => {
+      agentCalls++;
+      if (hold) await new Promise<void>((r) => (release = r));
+      return [{ name: "worker-x", live }];
+    };
     const openOrchestrator = async (_p: string, _u: string | undefined, w: (t: string) => void): Promise<Orchestrator> => {
       write = w;
       return {
@@ -288,7 +296,10 @@ describe("tui app", () => {
       };
     };
     const term = fakeTerm();
-    const app = new App({ term, openOrchestrator, pollMs: 100_000, clock, agentLive: async () => live });
+    let writesAfterClose = 0;
+    const termWrite = term.write;
+    term.write = (s) => { if (term.closed) writesAfterClose++; termWrite(s); };
+    const app = new App({ term, openOrchestrator, pollMs: 100_000, clock, agents });
     const running = app.run("alpha");
     await settle();
     expect(started).toBe(0); // idle: no timer
@@ -310,28 +321,51 @@ describe("tui app", () => {
     expect(ticks.length).toBe(0);
     expect(term.screen()).not.toContain("working…");
 
-    // Viewing a live agent shows the line until it finishes.
-    const page = app.page!;
-    const attached = app.attach(page, "worker-x", true);
+    // Viewing a live agent through /agents shows the line until it finishes.
+    term.type("/agents\r");
+    await until(() => !!app.menu);
+    term.press({ name: "enter" });
     await settle();
+    expect(app.page!.view?.name).toBe("worker-x");
     expect(started).toBe(2);
-    expect(term.screen()).toContain("working… 0s");
-    live = false;
+    expect(term.screen()).toContain("following worker-x");
+    const calls = agentCalls;
+    hold = true;
     now = 5_000;
     ticks[0]!();
+    now = 6_000;
+    ticks[0]!(); // the first check is still pending: no second call
     await settle();
-    expect(term.screen()).not.toContain("working…");
+    expect(agentCalls).toBe(calls + 1);
+    live = false;
+    release!();
+    hold = false;
+    await settle();
+    expect(term.screen()).not.toContain("following");
     expect(ticks.length).toBe(0);
-    page.view!.leave();
-    await attached;
 
-    // Quitting mid-turn clears the timer.
+    // Busy while viewing a finished agent: the page's own turn shows.
+    term.press({ name: "escape" }); // leave the view
+    await until(() => !app.page!.view);
     term.type("again\r");
     await settle();
+    term.type("/agents\r");
+    await until(() => !!app.menu);
+    term.press({ name: "enter" });
+    await settle();
+    expect(app.page!.view?.live).toBe(false);
+    expect(term.screen()).toContain("thinking… ");
+
+    // Quitting mid-turn clears the timer, and nothing restarts it or writes afterwards.
     expect(ticks.length).toBe(1);
+    const startedBefore = started;
     app.quit();
     await running;
     expect(ticks.length).toBe(0);
     finish();
+    await settle();
+    expect(started).toBe(startedBefore);
+    expect(ticks.length).toBe(0);
+    expect(writesAfterClose).toBe(0);
   });
 });

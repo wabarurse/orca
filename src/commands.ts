@@ -23,6 +23,11 @@ export function recentModels(ids: string[], current: string, limit = RECENT_MODE
   return ids.includes(current) && !head.includes(current) ? [...head, current] : head;
 }
 
+/** The agents running now: just the project's tmux windows, without reading transcripts. */
+export async function liveAgents(project: string): Promise<{ name: string; live: boolean }[]> {
+  return (await tmux.listWindows(sessionName(project)).catch(() => [])).map((name) => ({ name, live: true }));
+}
+
 /** Every agent that has a transcript, marked live when its tmux window is still open. */
 export async function listAgents(project: string): Promise<{ name: string; live: boolean }[]> {
   const live = new Set(await tmux.listWindows(sessionName(project)).catch(() => []));

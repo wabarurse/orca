@@ -4,7 +4,7 @@
 // talk to the page's orchestrator; worker and reviewer reports arrive through
 // its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, listAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, renameProject, setModel, shortRemote, useAccount, type Choice } from "../commands";
+import { accountChoices, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, renameProject, setModel, shortRemote, useAccount, type Choice } from "../commands";
 import { homedir } from "node:os";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
@@ -27,7 +27,7 @@ export interface Page {
   busySince: number;
   streamed: boolean;
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
-  view: { name: string; lines: string[]; leave: () => void; live: boolean; since: number } | null;
+  view: { name: string; lines: string[]; leave: () => void; live: boolean } | null;
 }
 
 export interface AppDeps {
@@ -40,8 +40,8 @@ export interface AppDeps {
   source?: string | null;
   /** Clock and repeating timer for the busy spinner; tests inject fakes so they never sleep. */
   clock?: Clock;
-  /** Whether an agent is still running; defaults to listAgents. */
-  agentLive?: (project: string, name: string) => Promise<boolean>;
+  /** A project's agents and which are live: /agents lists these and live views poll them. Defaults to listAgents for the menu and to tmux alone (liveAgents) for the poll. */
+  agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
 }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
@@ -85,6 +85,8 @@ export class App {
   private frameQueued = false;
   private stopSpinner: (() => void) | null = null;
   private liveCheckedAt = 0;
+  /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
+  private readonly liveChecks = new Map<string, Promise<void>>();
   private closed = false;
 
   constructor(private readonly deps: AppDeps) {
@@ -167,10 +169,11 @@ export class App {
 
   /** The dimmed line above the input while the page's turn (or the viewed agent) runs. */
   private status(page: Page): string | null {
-    const secs = (since: number) => Math.floor((this.clock.now() - since) / 1000);
-    if (page.view) return page.view.live ? dim(`${this.spinner()} working… ${secs(page.view.since)}s`) : null;
+    // A live agent view wins over the page's own turn; otherwise a busy page shows its turn, view or not.
+    if (page.view?.live) return dim(`${this.spinner()} following ${page.view.name}`);
     if (!page.busy) return null;
-    return dim(`${this.spinner()} ${page.streamed ? "working…" : "thinking…"} ${secs(page.busySince)}s`);
+    const secs = Math.floor((this.clock.now() - page.busySince) / 1000);
+    return dim(`${this.spinner()} ${page.streamed ? "working…" : "thinking…"} ${secs}s`);
   }
 
   /** Run the spinner timer only while some page is busy or viewing a live agent. */
@@ -184,24 +187,30 @@ export class App {
     const now = this.clock.now();
     if (now - this.liveCheckedAt >= LIVE_CHECK_MS) {
       this.liveCheckedAt = now;
-      for (const p of this.pages) {
-        const view = p.view;
-        if (view?.live) this.isLive(p.project, view.name).then((live) => { if (!live && p.view === view) { view.live = false; this.draw(); } }).catch(() => {});
-      }
+      for (const project of new Set(this.pages.filter((p) => p.view?.live).map((p) => p.project))) this.checkLive(project);
     }
     this.draw();
   }
 
-  private isLive(project: string, name: string): Promise<boolean> {
-    if (this.deps.agentLive) return this.deps.agentLive(project, name);
-    return listAgents(project).then((agents) => agents.some((a) => a.name === name && a.live));
+  /** One agents call per project, never overlapping: mark views whose agent has finished. */
+  private checkLive(project: string): void {
+    if (this.liveChecks.has(project)) return;
+    const check = (this.deps.agents ?? liveAgents)(project)
+      .then((agents) => {
+        const live = new Set(agents.filter((a) => a.live).map((a) => a.name));
+        for (const p of this.pages) if (p.project === project && p.view?.live && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
+      })
+      .catch(() => {})
+      .finally(() => this.liveChecks.delete(project));
+    this.liveChecks.set(project, check);
   }
 
   draw(): void {
+    if (this.closed) return;
     this.animate();
     if (this.frameQueued) return;
     this.frameQueued = true;
-    setTimeout(() => { this.frameQueued = false; this.deps.term.write(render(this.frame())); }, 0);
+    setTimeout(() => { this.frameQueued = false; if (!this.closed) this.deps.term.write(render(this.frame())); }, 0);
   }
 
   // --- pages ------------------------------------------------------------------
@@ -292,7 +301,7 @@ export class App {
   }
 
   private async agentsMenu(page: Page): Promise<void> {
-    const agents = await listAgents(page.project);
+    const agents = await (this.deps.agents ?? listAgents)(page.project);
     if (!agents.length) return this.say(dim("no agents yet"));
     this.openMenu("attach to an agent", agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })), (name) => this.attach(page, name, agents.find((a) => a.name === name)?.live ?? false));
   }
@@ -312,8 +321,8 @@ export class App {
     this.openMenu("switch model   (/models <id> for any other id)", choices, async (id) => this.say(dim(await setModel(id))));
   }
 
-  async attach(page: Page, name: string, live: boolean): Promise<void> {
-    const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live, since: this.clock.now() }));
+  private async attach(page: Page, name: string, live: boolean): Promise<void> {
+    const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live }));
     const view = page.view!;
     this.scroll = 0;
     this.say(dim("Esc or /back returns"), page);
