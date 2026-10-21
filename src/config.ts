@@ -6,6 +6,7 @@
 //       repo/                  the orchestrator's clone
 //       worktrees/<branch>/    one per branch, removed when done
 //       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
+//       questions/             the orchestrator's open questions for the user, a file each
 //       transcripts/<role>-<branch>.jsonl   one per agent; the only memory
 
 import { homedir } from "node:os";
@@ -21,6 +22,7 @@ export const paths = {
   repo: (name: string) => join(root(), "projects", name, "repo"),
   worktree: (name: string, slug: string) => join(root(), "projects", name, "worktrees", slug),
   inbox: (name: string) => join(root(), "projects", name, "inbox"),
+  questions: (name: string) => join(root(), "projects", name, "questions"),
   transcript: (name: string, id: string) => join(root(), "projects", name, "transcripts", `${id}.jsonl`),
 };
 
