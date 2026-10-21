@@ -1,7 +1,6 @@
 // The full-screen TUI, kept bare: a tab bar, the page, an input line. One
 // page per orchestrator (one per project): Ctrl+N starts a new one named
-// orch-xxxx (/rename changes it), Ctrl+, and Ctrl+. move between them (Alt+,
-// / Alt+. where the terminal cannot tell Ctrl+, apart from a comma). Type to
+// orch-xxxx (/rename changes it), Ctrl+Z and Ctrl+X move between them. Type to
 // talk to the page's orchestrator; worker and reviewer reports arrive through
 // its inbox and show up while you wait. /help lists the commands.
 
@@ -36,7 +35,8 @@ export interface AppDeps {
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
 
 const HELP = [
-  "^N new orchestrator   ^, ^. switch pages (Alt+, Alt+. too)   PgUp PgDn scroll   Esc clear",
+  "^N new orchestrator   ^Z ^X switch pages   PgUp PgDn scroll   Esc clear",
+  "/keys shows what your terminal sends for a chord (Esc ends)",
   "/rename <name>   /new [name] [git-url]   /close   /quit",
   "/agents   /models [id]   /accounts   /login claude|codex [profile]   /back",
 ];
@@ -48,6 +48,8 @@ export class App {
   scroll = 0;
   menu: ActiveMenu | null = null;
   loggingIn = false;
+  /** /keys: echo every key as parsed until Esc, to see what a terminal really sends. */
+  keyEcho = false;
   private history: string[] = [];
   private historyAt = -1;
   private done!: () => void;
@@ -257,6 +259,7 @@ export class App {
       return;
     }
     if (text === "/help") { for (const l of HELP) this.say(dim(l)); return; }
+    if (text === "/keys") { this.keyEcho = true; return this.say(dim("press keys; Esc ends")); }
     if (text === "/new" || text.startsWith("/new ")) {
       const [name, url] = text.slice(4).trim().split(/\s+/).filter(Boolean);
       return this.newPage(name, url);
@@ -276,11 +279,16 @@ export class App {
   }
 
   async onKey(k: Key): Promise<void> {
+    if (this.keyEcho) {
+      if (k.name === "escape") { this.keyEcho = false; return this.say(dim("done")); }
+      return this.say(dim(JSON.stringify(k)));
+    }
     // Chords that work everywhere.
     if (k.ctrl && k.name === "c") return this.quit();
     if (k.ctrl && k.name === "n") return this.newPage();
-    if ((k.ctrl || k.alt) && k.name === ",") return this.switchPage(-1);
-    if ((k.ctrl || k.alt) && k.name === ".") return this.switchPage(1);
+    // Plain control bytes, so they arrive in every terminal (the TUI runs in raw mode, so ^Z does not suspend).
+    if (k.ctrl && k.name === "z") return this.switchPage(-1);
+    if (k.ctrl && k.name === "x") return this.switchPage(1);
     if (k.name === "pageup") { this.scroll += Math.max(1, this.deps.term.rows - 4); return this.draw(); }
     if (k.name === "pagedown") { this.scroll = Math.max(0, this.scroll - Math.max(1, this.deps.term.rows - 4)); return this.draw(); }
 

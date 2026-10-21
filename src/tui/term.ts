@@ -15,10 +15,8 @@ export interface Terminal {
   close(): void;
 }
 
-// Kitty keyboard protocol (disambiguate flag) and xterm modifyOtherKeys, so
-// Ctrl+, and Ctrl+. reach us as distinct keys where the terminal supports them.
-const ENTER = "\x1b[?1049h\x1b[H\x1b[2J\x1b[>1u\x1b[>4;2m";
-const LEAVE = "\x1b[<u\x1b[>4;0m\x1b[?25h\x1b[?1049l";
+const ENTER = "\x1b[?1049h\x1b[H\x1b[2J";
+const LEAVE = "\x1b[?25h\x1b[?1049l";
 
 export function realTerminal(stdin = process.stdin, stdout = process.stdout): Terminal {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error("parallels start needs a terminal; run it from an interactive shell");

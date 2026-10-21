@@ -1,7 +1,7 @@
 // Turn raw terminal input into key events. Understands the legacy encodings
-// (control bytes, ESC-prefixed Alt, CSI arrows), xterm's modifyOtherKeys
-// (CSI 27;mod;code~) and the kitty keyboard protocol (CSI code;mod u), which
-// term.ts switches on so chords like Ctrl+, and Ctrl+. are distinguishable.
+// (control bytes, ESC-prefixed Alt, CSI arrows) and, for terminals that use
+// them, xterm's modifyOtherKeys (CSI 27;mod;code~) and the kitty keyboard
+// protocol (CSI code;mod u).
 
 export interface Key {
   /** "char" (see text), "enter", "backspace", "tab", "escape", "up", "down",
