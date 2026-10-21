@@ -7,15 +7,18 @@ bun install
 bun src/cli.ts start [project] [git-url]
 ```
 
-`start` opens a bare full-screen TUI with one page per orchestrator (one per
-project). Run it inside a git repository and you get an orchestrator for that
+`start` opens a bare inline TUI, like Claude Code and Codex, with one page per
+orchestrator (one per project). It does not take over the screen: replies go
+into your terminal's normal scrollback (scroll with the terminal or the mouse)
+and only the bottom block (a streaming line, menus, the status line and the
+input) is redrawn; quitting leaves everything printed in place. Run it inside a git repository and you get an orchestrator for that
 repository: an `orch-xxxx` project cloned from its origin (reused next time you
 start there). With no project named it also reopens every project under
-`~/.parallels/projects`. The row under the tabs shows the page's clone path and
-git remote. Ctrl+N starts a new orchestrator named `orch-xxxx`, cloned from the
+`~/.parallels/projects`. The status line above the input shows the page's name,
+git remote and how many pages are open (and a spinner while a turn runs). Ctrl+N starts a new orchestrator named `orch-xxxx`, cloned from the
 repository you started in (an empty repository otherwise; `/rename <name>`
-renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X move between pages
-(`/keys` shows what your terminal sends for any chord). Type
+renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X move between pages,
+reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
 `/help` for the rest of the commands.
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
