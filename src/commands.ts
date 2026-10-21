@@ -2,7 +2,7 @@
 // these into menus and status lines.
 
 import { existsSync } from "node:fs";
-import { readdir, rename } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { $ } from "bun";
 import { accounts, provider, type Account } from "./accounts";
@@ -46,15 +46,26 @@ export function newProjectName(taken: string[]): string {
 
 export const validProjectName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name);
 
+/** What tabs and the header call a project: its /rename name, else its id. */
+export async function displayName(project: string): Promise<string> {
+  const file = Bun.file(paths.displayName(project));
+  const name = (await file.exists()) ? (await file.text()).trim() : "";
+  return name || project;
+}
+
 /**
- * Rename a project directory. Refused while agents run in its tmux session,
- * since their paths and session name embed the old name.
+ * Give a project a display name. Only the name file changes: the folder, the
+ * id, the tmux session and running agents stay as they are, so this is safe
+ * at any time. Refused when another project already shows that name.
  */
-export async function renameProject(from: string, to: string): Promise<void> {
-  if (!validProjectName(to)) throw new Error("names are letters, digits, . _ or -");
-  if (existsSync(paths.project(to))) throw new Error(`a project named ${to} already exists`);
-  if ((await tmux.listWindows(sessionName(from)).catch(() => [])).length) throw new Error("agents are still running; wait for them or stop them first");
-  await rename(paths.project(from), paths.project(to));
+export async function setDisplayName(project: string, name: string): Promise<string> {
+  name = name.trim();
+  if (!name || name.length > 40 || /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(name)) throw new Error("names are 1-40 printable characters");
+  for (const other of await listProjects()) {
+    if (other !== project && (other === name || (await displayName(other)) === name)) throw new Error(`another project is already called ${name}`);
+  }
+  await Bun.write(paths.displayName(project), name + "\n");
+  return name;
 }
 
 /** Where a project's clone came from: its origin url, or "no remote". */

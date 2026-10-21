@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newProjectName, repoHere, shortRemote, validProjectName } from "./commands";
+import { displayName, newProjectName, repoHere, setDisplayName, shortRemote, validProjectName } from "./commands";
 import { recentModels } from "./commands";
 
 describe("recentModels", () => {
@@ -29,6 +29,31 @@ describe("project names", () => {
     expect(validProjectName("login-page")).toBe(true);
     expect(validProjectName("bad name")).toBe(false);
     expect(validProjectName("../x")).toBe(false);
+  });
+});
+
+describe("display names", () => {
+  test("are saved per project, keep the folder, and must be unique", async () => {
+    const home = mkdtempSync(join(tmpdir(), "parallels-names-"));
+    const before = process.env.PARALLELS_HOME;
+    process.env.PARALLELS_HOME = home;
+    try {
+      for (const p of ["a", "b"]) mkdirSync(join(home, "projects", p, "repo"), { recursive: true });
+      expect(await displayName("a")).toBe("a");
+      expect(await setDisplayName("a", "  login page ")).toBe("login page");
+      expect(await displayName("a")).toBe("login page");
+      expect(existsSync(join(home, "projects", "a", "repo"))).toBe(true);
+      await expect(setDisplayName("b", "login page")).rejects.toThrow("already called");
+      await expect(setDisplayName("b", "a")).rejects.toThrow("already called");
+      await expect(setDisplayName("b", "")).rejects.toThrow("printable");
+      await expect(setDisplayName("b", "x\ny")).rejects.toThrow("printable");
+      for (const bad of ["x\x85y", "x\x9by", "\u202eevil", "a\u2066b", "a\u2069"]) await expect(setDisplayName("b", bad)).rejects.toThrow("printable");
+      expect(await setDisplayName("b", "café ✓")).toBe("café ✓");
+      expect(await setDisplayName("a", "login page")).toBe("login page"); // its own name again is fine
+    } finally {
+      if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

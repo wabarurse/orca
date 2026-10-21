@@ -3,6 +3,7 @@
 //   ~/.parallels/
 //     config.toml              model, byte limits, defaults
 //     projects/<name>/
+//       name                   display name set by /rename (absent = <name>)
 //       repo/                  the orchestrator's clone
 //       worktrees/<branch>/    one per branch, removed when done
 //       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
@@ -18,6 +19,7 @@ export const paths = {
   get root() { return root(); },
   get config() { return join(root(), "config.toml"); },
   project: (name: string) => join(root(), "projects", name),
+  displayName: (name: string) => join(root(), "projects", name, "name"),
   repo: (name: string) => join(root(), "projects", name, "repo"),
   worktree: (name: string, slug: string) => join(root(), "projects", name, "worktrees", slug),
   inbox: (name: string) => join(root(), "projects", name, "inbox"),

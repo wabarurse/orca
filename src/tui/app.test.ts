@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
+import { displayName, setDisplayName } from "../commands";
 import { App, type Clock } from "./app";
 import { parseKeys, type Key } from "./keys";
 import type { Terminal } from "./term";
@@ -66,16 +67,13 @@ describe("tui app", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await settle();
+    await until(() => !!app.page);
     expect(term.opened).toBe(true);
     expect(orchs.opened).toEqual([{ project: "alpha", url: undefined }]);
     term.type("build it\r");
-    await settle();
+    await until(() => orchs.said.alpha?.length === 1);
     expect(orchs.said.alpha).toEqual(["build it"]);
-    const screen = term.screen();
-    expect(screen).toContain("> build it");
-    expect(screen).toContain("alpha says hi");
-    expect(screen).toContain("worker-x done");
+    await until(() => ["> build it", "alpha says hi", "worker-x done"].every((t) => term.screen().includes(t)));
     term.type("/quit\r");
     await running;
     expect(term.closed).toBe(true);
@@ -86,7 +84,7 @@ describe("tui app", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await settle();
+    await until(() => !!app.page);
     term.press({ name: "n", ctrl: true });
     await until(() => app.pages.length === 2);
     expect(orchs.opened[1]!.project).toMatch(/^orch-[a-z0-9]{4}$/);
@@ -113,21 +111,144 @@ describe("tui app", () => {
     await running;
   });
 
-  test("/rename moves the project directory and reopens the orchestrator", async () => {
-    mkdirSync(join(home, "projects", "orch-old", "repo"), { recursive: true });
+  test("/rename sets a display name only, at any time, and refuses names in use", async () => {
+    mkdirSync(join(home, "projects", "named", "repo"), { recursive: true });
+    mkdirSync(join(home, "projects", "taken", "repo"), { recursive: true });
+    const term = fakeTerm(200);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("named");
+    await until(() => !!app.page);
+    const page = app.page!;
+    const orch = page.orch;
+    page.busy = true; // mid-turn
+    term.type("/rename login page\r");
+    await until(() => term.screen().includes("named → login page"));
+    expect(page.project).toBe("named");
+    expect(page.name).toBe("login page");
+    expect(page.orch).toBe(orch); // not reopened
+    expect(orchs.opened.map((o) => o.project)).toEqual(["named"]);
+    expect(existsSync(join(home, "projects", "named", "repo"))).toBe(true);
+    expect(await Bun.file(join(home, "projects", "named", "name")).text()).toBe("login page\n");
+    expect(term.screen()).toContain("login page  ·  "); // header
+    expect(app.frame().tabs[0]!.title).toBe("login page");
+    expect(await displayName("named")).toBe("login page");
+
+    term.type("/rename taken\r");
+    await until(() => term.screen().includes("another project is already called taken"));
+    await setDisplayName("taken", "shown");
+    term.type("/rename shown\r");
+    await until(() => term.screen().includes("another project is already called shown"));
+    expect(page.name).toBe("login page");
+    page.busy = false;
+    app.quit();
+    await running;
+
+    // Reopened later, the page shows its display name.
+    const again = new App({ term: fakeTerm(), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000 });
+    const running2 = again.run("named");
+    await until(() => again.page?.name === "login page");
+    again.quit();
+    await running2;
+  });
+
+  test("commands work while viewing an agent; plain text waits for /back", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
-    const running = app.run("orch-old");
+    const running = app.run("viewer");
+    await until(() => !!app.page);
+    const page = app.page!;
+    let left = 0;
+    const view = { name: "worker-x", lines: [] as string[], leave: () => { left++; }, live: false };
+    page.view = view;
+    term.type("/help\r");
+    await until(() => view.lines.join("\n").includes("/back (or Esc) leaves the agent view"));
+    term.type("hello\r");
+    await until(() => view.lines.join("\n").includes("/back first"));
+    expect(orchs.said.viewer).toEqual([]);
+    term.type("/rename viewed\r");
+    await until(() => page.name === "viewed");
+    term.type("/new beta\r");
+    await until(() => app.page?.project === "beta");
+    term.type("/help\r");
     await settle();
-    term.type("/rename login-page\r");
-    await until(() => term.screen().includes("orch-old → login-page"));
-    expect(app.page!.project).toBe("login-page");
-    expect(orchs.opened.map((o) => o.project)).toEqual(["orch-old", "login-page"]);
-    expect(existsSync(join(home, "projects", "login-page", "repo"))).toBe(true);
-    expect(existsSync(join(home, "projects", "orch-old"))).toBe(false);
-    term.type("/rename bad name\r");
-    await until(() => term.screen().includes("error: names are letters"));
+    expect(app.page!.lines.join("\n")).not.toContain("/back");
+    term.type("/back\r");
+    await settle();
+    expect(app.page!.lines.join("\n")).toContain("not viewing an agent");
+    term.type("\x1a"); // back to viewer
+    term.type("/back\r");
+    await settle();
+    expect(left).toBe(1);
+    page.view = null;
+    term.type("/close\r");
+    await until(() => app.pages.length === 1);
+    app.quit();
+    await running;
+  });
+
+  test("commands work while signing in; /login does not start a second one; queued text runs when it ends", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    let finish!: () => void;
+    let logins = 0;
+    const login = async () => { logins++; await new Promise<void>((r) => (finish = r)); return "signed in"; };
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, login });
+    const running = app.run("signer");
+    await until(() => !!app.page);
+    term.type("/login claude\r");
+    await until(() => app.loggingIn);
+    term.type("/login claude\r");
+    await until(() => term.screen().includes("already signing in"));
+    expect(logins).toBe(1);
+    term.type("/rename signing\r");
+    await until(() => app.page!.name === "signing");
+    term.type("/help\r");
+    await until(() => term.screen().includes("/models [id]"));
+    term.type("hi\r");
+    await until(() => term.screen().includes("queued; runs after sign-in"));
+    expect(orchs.said.signer).toEqual(["hi"]);
+    await Bun.sleep(30);
+    expect(term.screen()).not.toContain("signer says hi"); // the turn waits for sign-in
+    term.type("/new beta2\r");
+    await until(() => app.page?.project === "beta2");
+    term.type("\x1a");
+    expect(app.page!.project).toBe("signer");
+    finish(); // no poll runs (pollMs is huge): login() starts the queued turn itself
+    await until(() => term.screen().includes("signer says hi"));
+    expect(app.loggingIn).toBe(false);
+    app.quit();
+    await running;
+  });
+
+  test("/new and Ctrl+N ids never match another project's display name", async () => {
+    mkdirSync(join(home, "projects", "shown-id", "repo"), { recursive: true });
+    await setDisplayName("shown-id", "foo");
+    const term = fakeTerm(200);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("clash");
+    await until(() => !!app.page);
+    term.type("/new foo\r");
+    await until(() => term.screen().includes("another project is already called foo"));
+    expect(orchs.opened.map((o) => o.project)).toEqual(["clash"]);
+    term.type("/new shown-id\r"); // its own id still opens it
+    await until(() => app.page?.project === "shown-id");
+    expect(app.page!.name).toBe("foo");
+
+    // Ctrl+N skips an orch-xxxx another project displays as.
+    const first = `orch-${(0.5).toString(36).slice(2, 6).padEnd(4, "0")}`;
+    await setDisplayName("shown-id", first);
+    app.page!.name = first;
+    const rolls = [0.5, 0.25];
+    const random = Math.random;
+    Math.random = () => rolls.shift() ?? random();
+    try {
+      term.press({ name: "n", ctrl: true });
+      await until(() => app.pages.length === 3);
+    } finally { Math.random = random; }
+    expect(app.page!.project).toBe(`orch-${(0.25).toString(36).slice(2, 6).padEnd(4, "0")}`);
     app.quit();
     await running;
   });
@@ -151,16 +272,17 @@ describe("tui app", () => {
   });
 
   test("the screen is bare until /help", async () => {
-    const term = fakeTerm();
+    const term = fakeTerm(200);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await settle();
+    await until(() => !!app.page);
     expect(term.screen()).not.toContain("/models");
     term.type("/help\r");
-    await settle();
-    expect(term.screen()).toContain("/rename <name>");
+    await until(() => term.screen().includes("/rename <name>"));
     expect(term.screen()).toContain("/models [id]");
+    expect(term.screen()).toContain("/close closes this page");
+    expect(term.screen()).not.toContain("/back");
     app.quit();
     await running;
   });

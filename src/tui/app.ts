@@ -1,10 +1,10 @@
 // The full-screen TUI, kept bare: a tab bar, the page, an input line. One
 // page per orchestrator (one per project): Ctrl+N starts a new one named
-// orch-xxxx (/rename changes it), Ctrl+Z and Ctrl+X move between them. Type to
+// orch-xxxx (/rename gives it a display name), Ctrl+Z and Ctrl+X move between them. Type to
 // talk to the page's orchestrator; worker and reviewer reports arrive through
 // its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, renameProject, setModel, shortRemote, useAccount, type Choice } from "../commands";
+import { accountChoices, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, projectFor, remoteOf, setDisplayName, setModel, shortRemote, useAccount, validProjectName, type Choice } from "../commands";
 import { homedir } from "node:os";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
@@ -14,7 +14,10 @@ import { bold, dim, render, type Frame, type Menu } from "./render";
 import type { Terminal } from "./term";
 
 export interface Page {
+  /** The project id: its folder under ~/.parallels/projects. Never changes. */
   project: string;
+  /** What tabs and the header show; /rename sets it. */
+  name: string;
   orch: Orchestrator;
   /** Where the clone came from, for the header. */
   remote: string;
@@ -42,6 +45,8 @@ export interface AppDeps {
   clock?: Clock;
   /** A project's agents and which are live: /agents lists these and live views poll them. Defaults to listAgents for the menu and to tmux alone (liveAgents) for the poll. */
   agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
+  /** Sign-in; tests replace it. */
+  login?: typeof login;
 }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
@@ -61,9 +66,10 @@ interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | voi
 const HELP = [
   "^N new orchestrator   ^Z ^X switch pages   PgUp PgDn scroll   Esc clear",
   "/keys shows what your terminal sends for a chord (Esc ends)",
-  "/rename <name>   /new [name] [git-url]   /close   /quit",
-  "/agents   /models [id]   /accounts   /login claude|codex [profile]   /back",
+  "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
+  "/agents   /models [id]   /accounts   /login claude|codex [profile]",
 ];
+const HELP_VIEW = "/back (or Esc) leaves the agent view";
 
 /** A page shows activity while its turn runs or its agent view follows a live agent. */
 const active = (p: Page) => p.busy || !!p.view?.live;
@@ -155,10 +161,10 @@ export class App {
     const page = this.page;
     const body = page ? (page.view ? page.view.lines : page.partial ? [...page.lines, page.partial] : page.lines) : [];
     const prompt = page?.view ? dim(`${page.view.name} > `) : dim("> ");
-    const header = page ? dim(`${paths.repo(page.project).replace(homedir(), "~")}  ·  ${shortRemote(page.remote)}`) : "";
+    const header = page ? dim(`${page.name}  ·  ${paths.repo(page.project).replace(homedir(), "~")}  ·  ${shortRemote(page.remote)}`) : "";
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows, header,
-      tabs: this.pages.map((p, i) => ({ title: p.view ? `${p.project} › ${p.view.name}` : p.project, active: i === this.active, busy: active(p), spinner: this.spinner() })),
+      tabs: this.pages.map((p, i) => ({ title: p.view ? `${p.name} › ${p.view.name}` : p.name, active: i === this.active, busy: active(p), spinner: this.spinner() })),
       lines: body, scroll: this.scroll, status: page ? this.status(page) : null,
       input: { prompt, text: this.input.text, cursor: this.input.cursor },
       menu: this.menu,
@@ -218,9 +224,10 @@ export class App {
   async openPage(project: string, url?: string): Promise<Page> {
     const existing = this.pages.findIndex((p) => p.project === project);
     if (existing !== -1) { this.active = existing; this.draw(); return this.pages[existing]!; }
-    const page: Page = { project, orch: null as unknown as Orchestrator, remote: "", lines: [], partial: "", busy: false, busySince: 0, streamed: false, view: null };
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], partial: "", busy: false, busySince: 0, streamed: false, view: null };
     page.orch = await this.deps.openOrchestrator(project, url, (text) => this.stream(page, text));
     page.remote = await remoteOf(project);
+    page.name = await displayName(project);
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.scroll = 0;
@@ -247,24 +254,28 @@ export class App {
 
   /** Start a fresh orchestrator named orch-xxxx (or `name`), cloning `url`, else the repo we were started in. */
   async newPage(name?: string, url?: string): Promise<void> {
-    const project = name ?? newProjectName([...this.pages.map((p) => p.project), ...(await listProjects())]);
+    // Every id and display name in use, open or on disk, so no two tabs read the same.
+    const shown = new Map<string, string>(this.pages.map((p) => [p.project, p.name]));
+    for (const id of await listProjects()) if (!shown.has(id)) shown.set(id, await displayName(id));
+    if (name && [...shown].some(([id, n]) => id !== name && n === name)) return this.say(dim(`another project is already called ${name}`));
+    const project = name ?? newProjectName([...shown.keys(), ...shown.values()]);
     try {
       const page = await this.openPage(project, url ?? this.deps.source ?? undefined);
       if (!name) this.say(dim("/rename <name> to rename"), page);
     } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`); }
   }
 
+  /** Set the page's display name; the project folder, id and running agents are untouched, so this works mid-turn. */
   async renamePage(to: string): Promise<void> {
     const page = this.page;
     if (!page) return;
-    if (page.busy) return this.say(dim("busy; try again when the turn ends"));
-    if (this.pages.some((p) => p.project === to)) return this.say(dim(`${to} is already open`));
-    await renameProject(page.project, to);
-    const from = page.project;
-    page.project = to;
-    page.orch = await this.deps.openOrchestrator(to, undefined, (text) => this.stream(page, text));
-    page.remote = await remoteOf(to);
-    this.say(dim(`${from} → ${to}`), page);
+    if (!to) return this.say(dim("usage: /rename <name>"));
+    if (this.pages.some((p) => p !== page && (p.name === to.trim() || p.project === to.trim()))) return this.say(dim(`another page is already called ${to.trim()}`));
+    try {
+      const from = page.name;
+      page.name = await setDisplayName(page.project, to);
+      this.say(dim(`${from} → ${page.name}`), page);
+    } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`, page); }
   }
 
   private async runTurn(page: Page): Promise<void> {
@@ -303,7 +314,10 @@ export class App {
   private async agentsMenu(page: Page): Promise<void> {
     const agents = await (this.deps.agents ?? listAgents)(page.project);
     if (!agents.length) return this.say(dim("no agents yet"));
-    this.openMenu("attach to an agent", agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })), (name) => this.attach(page, name, agents.find((a) => a.name === name)?.live ?? false));
+    this.openMenu("attach to an agent", agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })), (name) => {
+      page.view?.leave();
+      return this.attach(page, name, agents.find((a) => a.name === name)?.live ?? false);
+    });
   }
 
   private async accountsMenu(): Promise<void> {
@@ -327,35 +341,42 @@ export class App {
     this.scroll = 0;
     this.say(dim("Esc or /back returns"), page);
     await follow(paths.transcript(page.project, name), (s) => { view.lines.push(s); this.draw(); }, stopped);
-    page.view = null;
+    if (page.view === view) page.view = null;
     this.draw();
   }
 
   private async login(arg: string): Promise<void> {
+    if (this.loggingIn) return this.say(dim("already signing in; /quit cancels"));
     this.loggingIn = true;
     this.say(dim("signing in… (/quit cancels)"));
-    try { this.say(await login(arg, { write: (s) => this.say(s.replace(/\n$/, "")), signal: this.loginAbort.signal })); }
+    try { this.say(await (this.deps.login ?? login)(arg, { write: (s) => this.say(s.replace(/\n$/, "")), signal: this.loginAbort.signal })); }
     catch (err) { this.say(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
-    finally { this.loggingIn = false; this.draw(); }
+    finally {
+      this.loggingIn = false;
+      this.draw();
+      // Run what was typed during sign-in now rather than at the next poll.
+      for (const p of this.pages) if (!p.busy) p.orch.pending().then((has) => { if (has) this.runTurn(p); }).catch(() => {});
+    }
   }
 
   // --- input ------------------------------------------------------------------
 
+  /** Every command works at any time: mid-turn, while viewing an agent, while signing in. */
   private async submit(text: string): Promise<void> {
     const page = this.page;
     if (text === "/quit") return this.quit();
-    if (this.loggingIn) return;
-    if (page?.view) {
-      if (text === "/back") page.view.leave();
-      return;
+    if (text === "/back") {
+      if (page?.view) return page.view.leave();
+      return this.say(dim("not viewing an agent"));
     }
-    if (text === "/help") { for (const l of HELP) this.say(dim(l)); return; }
+    if (text === "/help") { for (const l of page?.view ? [...HELP, HELP_VIEW] : HELP) this.say(dim(l)); return; }
     if (text === "/keys") { this.keyEcho = true; return this.say(dim("press keys; Esc ends")); }
     if (text === "/new" || text.startsWith("/new ")) {
       const [name, url] = text.slice(4).trim().split(/\s+/).filter(Boolean);
+      if (name && !validProjectName(name)) return this.say(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
       return this.newPage(name, url);
     }
-    if (text.startsWith("/rename ")) return this.renamePage(text.slice(8).trim());
+    if (text === "/rename" || text.startsWith("/rename ")) return this.renamePage(text.slice(7).trim());
     if (text === "/close") return this.closePage();
     if (text === "/login" || text.startsWith("/login ")) return this.login(text.slice(6).trim());
     if (text === "/accounts") return this.accountsMenu();
@@ -364,8 +385,11 @@ export class App {
     if (!page) return this.newPage();
     if (text === "/agents") return this.agentsMenu(page);
     if (text.startsWith("/")) return this.say(dim(`unknown command ${text.split(" ")[0]}`));
+    if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     page.lines.push(`${bold(">")} ${text}`);
     await page.orch.say(text);
+    // While signing in the turn waits; login() starts it once sign-in ends.
+    if (this.loggingIn) return this.say(dim("queued; runs after sign-in"), page);
     this.runTurn(page);
   }
 
