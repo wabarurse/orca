@@ -32,6 +32,7 @@ function fakeTranscript(): Transcript & { entries: Entry[] } {
     head() {
       return entries.at(-1)?.uuid ?? null;
     },
+    branch: () => entries,
   };
 }
 

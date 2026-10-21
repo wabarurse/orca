@@ -11,7 +11,7 @@ import { drain, pending, put, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { providerFor, type Provider } from "./providers/index";
 import { registry, toolsFor, type Tool } from "./tools/index";
-import { open, type Transcript } from "./transcript";
+import { open, type Entry, type Transcript } from "./transcript";
 
 export interface OrchestratorDeps {
   project: string;
@@ -20,6 +20,8 @@ export interface OrchestratorDeps {
   transcript?: Transcript;
   /** Streamed model text; `plain` marks tool lines, which are not markdown. */
   write?: (text: string, plain?: boolean) => void;
+  /** Each batch of inbox messages (the user's and agents') as the orchestrator reads it. */
+  onInbox?: (msgs: Message[]) => void;
 }
 
 export interface Orchestrator {
@@ -29,6 +31,8 @@ export interface Orchestrator {
   pending(): Promise<boolean>;
   /** Run one turn over the inbox. Returns what was sent to the user meanwhile. */
   turn(): Promise<Message[]>;
+  /** The current branch of its transcript, oldest first, as loaded (transcript.ts `branch`): what the TUI rebuilds the page from. */
+  entries?(): Entry[];
 }
 
 /**
@@ -57,6 +61,7 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   return {
     say: (text) => put(project, "orchestrator", { from: "user", text }).then(() => {}),
     pending: () => pending(project, "orchestrator"),
+    entries: () => transcript.branch(),
     async turn() {
       // run() drains the inbox itself and keeps going while messages arrive.
       if (!(await pending(project, "orchestrator"))) return [];
@@ -71,9 +76,14 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
         system: rolePrompt("orchestrator", config),
         ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
         write: deps.write,
+        onInbox: deps.onInbox,
       });
       await agent.run();
-      return drain(project, "user");
+      const replies = await drain(project, "user");
+      // Kept in the transcript so a restored page shows them where they showed live: after the turn.
+      if (replies.length) await transcript.append({ type: "replies", messages: replies.map(({ from, text }) => ({ from, text })) });
+      return replies;
     },
   };
 }
+

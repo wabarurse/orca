@@ -56,3 +56,8 @@ test("parts keeps assistant text as markdown and the rest as styled lines", () =
   expect(strip(ps[1] as string)).toBe("▸ bash {}");
   expect(parts({ uuid: "6", parentUuid: null, ts: "", type: "message", message: { role: "user", content: "**raw**" } })!.map((p) => strip(p as string))).toEqual(["> **raw**"]);
 });
+
+test("a replies entry shows each message to the user with its sender", () => {
+  const ps = parts({ uuid: "r", parentUuid: null, ts: "", type: "replies", messages: [{ from: "orchestrator", text: "**done**" }] });
+  expect(ps).toEqual(["\x1b[2morchestrator → user:\x1b[0m", { md: "**done**" }]);
+});

@@ -4,6 +4,7 @@
 //     config.toml              model, byte limits, defaults, pinned projects
 //     projects/<name>/
 //       name                   display name set by /rename (absent = <name>)
+//       input-history          the TUI's ↑/↓ input history, one JSON string per line, newest last
 //       repo/                  the orchestrator's clone
 //       worktrees/<branch>/    one per branch, removed when done
 //       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
@@ -23,6 +24,7 @@ export const paths = {
   get config() { return join(root(), "config.toml"); },
   project: (name: string) => join(root(), "projects", name),
   displayName: (name: string) => join(root(), "projects", name, "name"),
+  inputHistory: (name: string) => join(root(), "projects", name, "input-history"),
   repo: (name: string) => join(root(), "projects", name, "repo"),
   worktree: (name: string, slug: string) => join(root(), "projects", name, "worktrees", slug),
   inbox: (name: string) => join(root(), "projects", name, "inbox"),

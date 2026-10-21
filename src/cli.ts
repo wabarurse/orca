@@ -39,9 +39,9 @@ switch (cmd) {
     const app = new App({
       term: realTerminal(),
       source: await repoHere(),
-      async openOrchestrator(project, url, write) {
+      async openOrchestrator(project, url, write, onInbox) {
         await ensureProject(project, url);
-        return createOrchestrator({ project, write });
+        return createOrchestrator({ project, write, onInbox });
       },
     });
     await app.run(rest[0], rest[1]);
