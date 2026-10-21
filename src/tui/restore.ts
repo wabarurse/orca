@@ -18,8 +18,16 @@
 //   user next speaks (or the end), so a reply from an earlier turn that ended
 //   without the user speaking shows later than it did live, and worker or
 //   reviewer messages to "user" (not in the orchestrator's transcript) are lost.
-// - "user" messages that did not come from the TUI (`parallels msg`, question
-//   answers) show as "> …" both live and restored.
+// - "user" messages that did not come from the TUI (`parallels msg`) show as
+//   "> …" both live and restored.
+// - A question answered or skipped in this TUI showed live as its dim
+//   "? <question> → <answer>" line when it was answered; restored, the same
+//   line sits where the orchestrator read the answer from its inbox (answers
+//   from another TUI show there live too). Questions still open are not in the
+//   transcript: the queue shows them again from questions/. A reply is read
+//   by its question's id against questions/ (answered and skipped files are
+//   kept), so quotes or `": ` in the question cannot confuse it; only a
+//   missing file falls back to parsing the message text.
 // - Errors, command output (/help, /models, …), status notes ("queued; runs
 //   after sign-in") and anything else the app itself said are not in the
 //   transcript and are not restored.
@@ -47,6 +55,57 @@ export function userLines(text: string): Line[] {
   const [first, ...rest] = text.split("\n");
   return [`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`)];
 }
+
+/** A question closed by the user, as the page shows it: one dim line, the answer or "skipped" (with the default) after an arrow. */
+export function answeredLine(question: string, answer: string | null, def?: string): string {
+  const tail = answer ?? (def ? `skipped, default: ${def}` : "skipped");
+  return dim(`? ${question} → ${tail}`);
+}
+
+/** A question id as questions.ts makes them: its ask time, a sequence number and a random suffix. */
+const QUESTION_ID = String.raw`\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{3}Z-\d{6}-[0-9a-f]{8}`;
+/** The start of the inbox message questions.ts sends for an answer or a skip. */
+const REPLY_HEAD = new RegExp(`^\\[(${QUESTION_ID})\\] (answer to|skipped) "`);
+/** Fallbacks for a question whose file is gone: the text is cut at the last `": ` (answers) or matched against the skip's tail. */
+const ANSWERED = new RegExp(`^\\[${QUESTION_ID}\\] answer to "([^\\n]*?)": ([^\\n]*)$`);
+const SKIPPED = new RegExp(`^\\[${QUESTION_ID}\\] skipped "([^\\n]*)"(?:; use your default \\(([^\\n]*)\\)| \\(no default given\\); decide yourself)$`);
+
+/** What a reply needs of its question (questions.ts `Question`): its text, default and, once answered, the answer. */
+export interface AskedQuestion { text: string; default?: string; status?: string; answer?: string }
+/** Questions by id, answered and skipped ones included (questions/ keeps them). */
+export type AskedLookup = (id: string) => AskedQuestion | undefined;
+
+/** The line for a reply whose question is known: the question's own text, so quotes or `": ` in it cannot confuse the parse. */
+function knownReply(text: string, id: string, kind: string, q: AskedQuestion): string | null {
+  if (kind === "skipped") return answeredLine(q.text, null, q.default);
+  if (q.status === "answered" && q.answer !== undefined) return answeredLine(q.text, q.answer);
+  const prefix = `[${id}] answer to "${q.text}": `;
+  return text.startsWith(prefix) ? answeredLine(q.text, text.slice(prefix.length)) : null;
+}
+
+/**
+ * A "user" message that is a question's answer or skip (questions.ts): its id
+ * and its line, else null. The question is looked up by id (`asked`); only
+ * when it is unknown is the text parsed alone.
+ */
+export function questionReply(text: string, asked?: AskedLookup): { id: string; line: string } | null {
+  const head = REPLY_HEAD.exec(text);
+  if (!head) return null;
+  const id = head[1]!;
+  const q = asked?.(id);
+  const known = q ? knownReply(text, id, head[2]!, q) : null;
+  if (known) return { id, line: known };
+  const a = ANSWERED.exec(text);
+  if (a) return { id, line: answeredLine(a[1]!, a[2]!) };
+  const s = SKIPPED.exec(text);
+  return s ? { id, line: answeredLine(s[1]!, null, s[2]) } : null;
+}
+
+/** A message from the user as the page shows it: a question's answer as its dim line, anything else as "> …". */
+export const fromUserLines = (text: string, asked?: AskedLookup): Line[] => {
+  const reply = questionReply(text, asked);
+  return reply ? [reply.line] : userLines(text);
+};
 
 const REPORT_CHARS = 100;
 
@@ -93,10 +152,10 @@ function inboxMessages(content: MessageEntry["message"]["content"]) {
 const fromUser = (m: { from: string }) => m.from === "user" || m.from === "";
 
 /** A user entry: the user's lines first (they showed when typed), then each agent's message. Says whether the user spoke. */
-function userEntry(content: MessageEntry["message"]["content"]): { items: Item[]; user: boolean } {
+function userEntry(content: MessageEntry["message"]["content"], asked?: AskedLookup): { items: Item[]; user: boolean } {
   const msgs = inboxMessages(content);
   const mine = msgs.filter(fromUser);
-  const items = [...mine.map((m) => now(userLines(m.text))), ...msgs.filter((m) => !fromUser(m)).map((m) => now([reportLine(m.from, m.text)]))];
+  const items = [...mine.map((m) => now(fromUserLines(m.text, asked))), ...msgs.filter((m) => !fromUser(m)).map((m) => now([reportLine(m.from, m.text)]))];
   return { items, user: mine.length > 0 };
 }
 
@@ -133,12 +192,12 @@ function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<s
  * transcripts) the orchestrator's sent `message` calls to the user stand in,
  * held until the user next speaks.
  */
-export function restoreItems(chain: Entry[]): Item[] {
+export function restoreItems(chain: Entry[], asked?: AskedLookup): Item[] {
   const firstReplies = chain.findIndex((e) => e.type === "replies");
   const legacy = firstReplies === -1 ? chain.length : firstReplies;
   const sent = sentIds(chain.slice(0, legacy));
   const state: Fold = { items: [], held: [] };
-  chain.forEach((e, i) => step(state, e, i < legacy ? sent : new Set()));
+  chain.forEach((e, i) => step(state, e, i < legacy ? sent : new Set(), asked));
   return release(state).items;
 }
 
@@ -152,7 +211,7 @@ function release(state: Fold): Fold {
 }
 
 /** One entry of the branch into the items. `sent` is empty past the first `replies` entry: from there they hold the replies. */
-function step(state: Fold, e: Entry, sent: Set<string>): void {
+function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): void {
   if (e.type === "summary") state.items.push({ lines: () => [SUMMARIZED], summary: true });
   // The run that recorded these also made the held message calls: the entry has them, so they are not shown twice.
   if (e.type === "replies") {
@@ -161,7 +220,7 @@ function step(state: Fold, e: Entry, sent: Set<string>): void {
   }
   if (e.type !== "message") return;
   if (e.message.role === "user") {
-    const { items, user } = userEntry(e.message.content);
+    const { items, user } = userEntry(e.message.content, asked);
     if (user) release(state);
     state.items.push(...items);
     return;
@@ -177,8 +236,8 @@ function step(state: Fold, e: Entry, sent: Set<string>): void {
  * one), led by a dim count of the messages left out. Only the messages shown
  * are laid out.
  */
-export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS): Line[] {
-  const items = restoreItems(chain);
+export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS, asked?: AskedLookup): Line[] {
+  const items = restoreItems(chain, asked);
   const shown: Line[][] = [];
   let rows = 0;
   let from = items.length;

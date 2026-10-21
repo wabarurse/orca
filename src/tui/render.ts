@@ -5,7 +5,7 @@
 // at the bottom is (`live`), top to bottom:
 //
 //   the partial streaming line (until it ends and is committed)
-//   a menu or the project list, when open
+//   a menu or the project list, when open, else the oldest open question
 //   the status line: spinner, page name, remote, page count
 //   the input area: wrapped rows, up to a third of the screen
 //
@@ -13,6 +13,7 @@
 // (page switches, resizes, agent views).
 
 import { cells, layout, scrollWindow } from "./editor";
+import { wordWrap } from "./markdown";
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -35,6 +36,21 @@ export interface ProjectList {
   status: string;
 }
 
+/** How the input relates to the shown question: choosing a row, typing its answer, or holding a chat draft (which must go first). */
+export type QuestionMode = "pick" | "answer" | "guard";
+
+/** The oldest open question of the active page, as the live region shows it. */
+export interface QuestionView {
+  text: string;
+  options: string[];
+  /** The selected row: an option, options.length for "type your own answer", options.length + 1 for "skip". */
+  index: number;
+  default?: string;
+  /** Open questions on the page, this one included. */
+  count: number;
+  mode: QuestionMode;
+}
+
 /** The live region's state. */
 export interface Frame {
   cols: number;
@@ -45,6 +61,8 @@ export interface Frame {
   menu: Menu | null;
   /** The project list, above the status line like a menu, when open. */
   projects?: ProjectList | null;
+  /** The question shown above the status line when no menu or project list is open. */
+  question?: QuestionView | null;
   /** The status line just above the input (e.g. "⠋ thinking… 3s · name · remote · 2 pages"), or none. */
   status?: string | null;
   /** `inputArea(input, cols, rows, status ? 1 : 0)` when the caller already has it; computed otherwise. */
@@ -174,6 +192,37 @@ export function projectRows(p: ProjectList, height: number): string[] {
   return [...head, ...footer];
 }
 
+export const QUESTION_HINTS: Record<QuestionMode, string> = {
+  pick: "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later",
+  answer: "Enter send · Esc clear · Tab later",
+  guard: "send or clear your message to answer",
+};
+export const OWN_ANSWER = "type your own answer";
+export const skipRow = (def?: string) => (def ? `skip (use default: ${def})` : "skip");
+
+/** A question's rows: its options numbered (1–9 pick them), then "type your own answer" and "skip". */
+export const questionItems = (q: Pick<QuestionView, "options" | "default">): string[] => [...q.options.map((o, i) => `${i + 1}. ${o}`), OWN_ANSWER, skipRow(q.default)];
+
+/**
+ * A question's rows, at most `height`, `cols` wide: its text word-wrapped,
+ * then its rows (scrolled to keep the selection in view), and the hint for
+ * the mode. On short terminals the hint wins, then a row of text, then the rows.
+ */
+export function questionRows(q: QuestionView, cols: number, height: number): string[] {
+  if (height <= 0) return [];
+  const footer = [dim(QUESTION_HINTS[q.mode])];
+  const room = height - footer.length;
+  const items = questionItems(q);
+  const head = wordWrap(`${bold("?")} ${q.text}${q.count > 1 ? dim(` (1 of ${q.count})`) : ""}`, cols);
+  const textRows = Math.max(0, Math.min(head.length, room > 0 ? Math.max(1, room - items.length) : 0));
+  const text = head.slice(0, textRows);
+  if (textRows > 0 && textRows < head.length) text[textRows - 1] += "…";
+  const listRows = room - text.length;
+  const start = windowStart(items.length, q.index, listRows);
+  const list = items.slice(start, start + listRows).map((it, i) => `${start + i === q.index ? bold("❯") : " "} ${it}`);
+  return [...text, ...list, ...footer];
+}
+
 /** A menu's rows, at most `height`: its title, then the items scrolled to keep the selection in view. */
 export function menuRows(m: Menu, height: number): string[] {
   const listRows = Math.max(0, height - 1);
@@ -190,6 +239,13 @@ export function commit(lines: string[], cols: number): string {
 /** The last `n` of `rows` (none when n is 0). */
 const lastRows = (rows: string[], n: number) => (n > 0 ? rows.slice(-n) : []);
 
+/** What sits above the status line: a menu, else the project list, else the question. */
+function overlayRows(f: Frame, height: number): string[] {
+  if (f.menu) return menuRows(f.menu, height);
+  if (f.projects) return projectRows(f.projects, height);
+  return f.question ? questionRows(f.question, f.cols, height) : [];
+}
+
 /** The live region's rows, top to bottom, and where the cursor goes in them. */
 export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
   const statusRows = f.status ? 1 : 0;
@@ -197,7 +253,7 @@ export function liveRows(f: Frame): { rows: string[]; cursor: number; col: numbe
   // Everything must fit on screen, or the cursor could not get back to the top: the overlay
   // gets what the input and status leave (but a row), the partial line the rest, showing its end.
   let free = Math.max(0, f.rows - statusRows - input.lines.length);
-  const overlay = (f.menu ? menuRows(f.menu, free - 1) : f.projects ? projectRows(f.projects, free - 1) : []).map((r) => fit(sanitize(r), f.cols));
+  const overlay = overlayRows(f, free - 1).map((r) => fit(sanitize(r), f.cols));
   free -= overlay.length;
   const partial = f.partial ? lastRows(f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)), free) : [];
   const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...input.lines];
