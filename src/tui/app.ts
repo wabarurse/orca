@@ -1,29 +1,30 @@
-// The full-screen TUI, kept bare: a tab bar, the page, an input area. One
-// page per orchestrator (one per project): Ctrl+N starts a new one named
+// The inline TUI, kept bare: like Claude Code and Codex it never takes over
+// the screen. Finished lines go once into the terminal's scrollback; only the
+// live region at the bottom (a streaming line, a menu, the status line, the
+// input area) is redrawn. One page per orchestrator (one per project): Ctrl+N starts a new one named
 // orch-xxxx (/rename gives it a display name), Ctrl+Z and Ctrl+X move between
 // them, Ctrl+B or /projects lists every project (open, pin, delete) like a
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
 import { accountChoices, deleteProject, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
-import { homedir } from "node:os";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
 import { follow } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
-import { bold, dim, inputArea, render, visibleLength, type Frame, type Input, type InputArea, type Menu } from "./render";
+import { append, bold, commit, erase, dim, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
 import type { Terminal } from "./term";
 
 export interface Page {
   /** The project id: its folder under ~/.parallels/projects. Never changes. */
   project: string;
-  /** What tabs and the header show; /rename sets it. */
+  /** What the status line shows; /rename sets it. */
   name: string;
   orch: Orchestrator;
-  /** Where the clone came from, for the header. */
+  /** Where the clone came from, for the status line. */
   remote: string;
-  /** Scrollback, oldest first. */
+  /** Finished lines, oldest first: written once to the scrollback while active, reprinted on a switch back. */
   lines: string[];
   /** Streamed text that has not reached a newline yet. */
   partial: string;
@@ -73,7 +74,7 @@ interface ProjectListState { items: ProjectEntry[]; index: number; status: strin
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
 
 const HELP = [
-  "^N new orchestrator   ^Z ^X switch pages   PgUp PgDn scroll   Esc clear",
+  "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)",
   "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes",
   "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
   "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history",
@@ -119,7 +120,6 @@ export class App {
   input = { text: "", cursor: 0 };
   /** First input row on screen, kept between frames so the input area scrolls only when the cursor leaves it. */
   private inputTop: number | undefined;
-  scroll = 0;
   menu: ActiveMenu | null = null;
   projectList: ProjectListState | null = null;
   loggingIn = false;
@@ -133,6 +133,14 @@ export class App {
   private readonly finished: Promise<void>;
   private readonly loginAbort = new AbortController();
   private frameQueued = false;
+  /** What the live region left on screen last time, so the next draw can erase exactly it. */
+  private shown: Shown = NOTHING;
+  /** Finished lines of what the screen shows, not yet written above the live region. */
+  private pending: string[] = [];
+  /** The next draw clears the screen and scrollback and reprints the page (switches, resizes, agent views). */
+  private needReprint = false;
+  /** Nothing is written until the pages from start are open; then the first draw commits (no clear). */
+  private ready = false;
   private stopSpinner: (() => void) | null = null;
   private liveCheckedAt = 0;
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
@@ -152,7 +160,7 @@ export class App {
     const { term } = this.deps;
     term.open();
     term.onKey((k) => { this.onKey(k).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`)); });
-    term.onResize(() => this.draw());
+    term.onResize(() => this.reprint());
     const poll = setInterval(() => {
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
@@ -169,6 +177,10 @@ export class App {
         }
         if (!this.pages.length) await this.newPage();
       }
+      // The first frame goes under whatever the shell showed, like Claude Code: nothing is cleared.
+      this.ready = true;
+      this.needReprint = false;
+      this.pending = [...this.screenLines()];
       this.draw();
       await this.finished;
     } finally {
@@ -178,6 +190,7 @@ export class App {
       this.stopSpinner = null;
       this.loginAbort.abort();
       for (const p of this.pages) p.view?.leave();
+      this.leave();
       term.close();
     }
   }
@@ -186,31 +199,56 @@ export class App {
 
   // --- output -----------------------------------------------------------------
 
-  /** Append a finished line to the active page (or the screen when there is none). */
+  /** Append a finished line to the page's agent view if one is up, else to the page (or the screen when there is none). */
   say(line: string, page = this.page): void {
-    if (page) (page.view?.lines ?? page.lines).push(line);
+    if (!page) { this.pending.push(line); return this.draw(); }
+    if (page.view) this.toView(page, page.view, [line]);
+    else this.toPage(page, [line]);
+  }
+
+  /** Finished lines of the page's own history; they reach the screen only while it is active and shows no agent. */
+  private toPage(page: Page, lines: string[]): void {
+    page.lines.push(...lines);
+    if (page === this.page && !page.view) this.pending.push(...lines);
     this.draw();
   }
 
-  /** Streamed model text: lines end at newlines, the rest waits in `partial`. */
+  /** Finished lines of an agent view; on screen only while it is what the active page shows. */
+  private toView(page: Page, view: NonNullable<Page["view"]>, lines: string[]): void {
+    view.lines.push(...lines);
+    if (page === this.page && page.view === view) this.pending.push(...lines);
+    this.draw();
+  }
+
+  /** What the screen shows for the active page: its agent view or its history. */
+  private screenLines(page = this.page): string[] {
+    return page ? (page.view?.lines ?? page.lines) : [];
+  }
+
+  /** Streamed model text: lines end at newlines, the rest waits in `partial` (shown in the live region). */
   private stream(page: Page, text: string): void {
     const parts = (page.partial + text).split("\n");
     page.partial = parts.pop()!;
     page.streamed = true;
-    page.lines.push(...parts);
-    this.draw();
+    this.toPage(page, parts);
+  }
+
+  /** Move a page's unfinished streamed line into its history. */
+  private endPartial(page: Page): void {
+    if (!page.partial) return;
+    const line = page.partial;
+    page.partial = "";
+    this.toPage(page, [line]);
   }
 
   frame(): Frame {
     const page = this.page;
-    const body = page ? (page.view ? page.view.lines : page.partial ? [...page.lines, page.partial] : page.lines) : [];
     const status = page ? this.status(page) : null;
     const { input, area } = this.inputFrame(status ? 1 : 0);
-    const header = page ? dim(`${page.name}  ·  ${paths.repo(page.project).replace(homedir(), "~")}  ·  ${shortRemote(page.remote)}`) : "";
     return {
-      cols: this.deps.term.cols, rows: this.deps.term.rows, header,
-      tabs: this.pages.map((p, i) => ({ title: p.view ? `${p.name} › ${p.view.name}` : p.name, active: i === this.active, busy: active(p), spinner: this.spinner() })),
-      lines: body, scroll: this.scroll, status, input, inputArea: area,
+      cols: this.deps.term.cols, rows: this.deps.term.rows,
+      partial: page && !page.view ? page.partial : "",
+      status, input, inputArea: area,
       menu: this.menu,
       projects: this.projectList && {
         index: this.projectList.index, status: this.projectList.status,
@@ -224,13 +262,25 @@ export class App {
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
 
-  /** The dimmed line above the input while the page's turn (or the viewed agent) runs. */
-  private status(page: Page): string | null {
+  /**
+   * The dimmed line above the input: what the page is doing (a spinner while
+   * its turn or the viewed agent runs), its name, remote and the open pages,
+   * e.g. "⠋ thinking… 3s · orch-ab12 · github.com/x/y · 2 pages · 1 busy".
+   */
+  status(page: Page): string {
+    const parts: string[] = [];
     // A live agent view wins over the page's own turn; otherwise a busy page shows its turn, view or not.
-    if (page.view?.live) return dim(`${this.spinner()} following ${page.view.name}`);
-    if (!page.busy) return null;
-    const secs = Math.floor((this.clock.now() - page.busySince) / 1000);
-    return dim(`${this.spinner()} ${page.streamed ? "working…" : "thinking…"} ${secs}s`);
+    if (page.view?.live) parts.push(`${this.spinner()} following ${page.view.name}`);
+    else if (page.busy) {
+      const secs = Math.floor((this.clock.now() - page.busySince) / 1000);
+      parts.push(`${this.spinner()} ${page.streamed ? "working…" : "thinking…"} ${secs}s`);
+    }
+    parts.push(page.view ? `${page.name} › ${page.view.name}` : page.name);
+    if (page.remote) parts.push(shortRemote(page.remote));
+    parts.push(`${this.pages.length} ${this.pages.length === 1 ? "page" : "pages"}`);
+    const busy = this.pages.filter((p) => p !== page && active(p)).length;
+    if (busy) parts.push(`${busy} busy`);
+    return dim(parts.join(" · "));
   }
 
   /** Run the spinner timer only while some page is busy or viewing a live agent. */
@@ -276,28 +326,59 @@ export class App {
     return view ? dim(`${view.name} > `) : dim("> ");
   }
 
+  /** Redraw the live region soon, committing pending lines above it first. */
   draw(): void {
     if (this.closed) return;
     this.animate();
-    if (this.frameQueued) return;
+    if (this.frameQueued || !this.ready) return;
     this.frameQueued = true;
-    setTimeout(() => { this.frameQueued = false; if (!this.closed) this.deps.term.write(render(this.frame())); }, 0);
+    setTimeout(() => { this.frameQueued = false; if (!this.closed) this.flush(); }, 0);
+  }
+
+  /** Clear the screen and scrollback and show the active page (or agent view) from the start, then the live region. */
+  reprint(): void {
+    if (!this.ready) return;
+    this.needReprint = true;
+    this.draw();
+  }
+
+  private flush(): void {
+    const f = this.frame();
+    const pending = this.pending;
+    this.pending = [];
+    const out = this.needReprint ? reprint(this.screenLines(), f) : pending.length ? append(pending, f, this.shown) : live(f, this.shown);
+    this.needReprint = false;
+    this.shown = out.shown;
+    // Synchronized output, so the terminal shows the whole update at once.
+    this.deps.term.write(`\x1b[?2026h${out.text}\x1b[?2026l`);
+  }
+
+  /** On quit: drop the live region, keep everything committed (and a half-streamed line), and leave the cursor on a fresh line. */
+  private leave(): void {
+    if (!this.ready) return;
+    const page = this.page;
+    const lines = [...this.pending, ...(page && !page.view && page.partial ? [page.partial] : [])];
+    this.pending = [];
+    this.deps.term.write(`${erase(this.shown)}${commit(lines, this.deps.term.cols)}\x1b[?25h`);
+    this.shown = NOTHING;
   }
 
   // --- pages ------------------------------------------------------------------
 
   async openPage(project: string, url?: string): Promise<Page> {
     const existing = this.pages.findIndex((p) => p.project === project);
-    if (existing !== -1) { this.active = existing; this.draw(); return this.pages[existing]!; }
+    if (existing !== -1) {
+      if (existing !== this.active) { this.active = existing; this.reprint(); }
+      return this.pages[existing]!;
+    }
     const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], partial: "", busy: false, busySince: 0, streamed: false, view: null };
     page.orch = await this.deps.openOrchestrator(project, url, (text) => this.stream(page, text));
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
     this.pages.push(page);
     this.active = this.pages.length - 1;
-    this.scroll = 0;
+    this.reprint();
     if (this.projectList) await this.refreshProjects();
-    this.draw();
     return page;
   }
 
@@ -308,18 +389,16 @@ export class App {
     this.pages.splice(index, 1);
     if (index < this.active) this.active--;
     this.active = Math.min(this.active, Math.max(0, this.pages.length - 1));
-    this.scroll = 0;
-    this.draw();
+    this.reprint();
   }
 
   switchPage(delta: number): void {
     if (this.pages.length < 2) return;
     this.active = (this.active + delta + this.pages.length) % this.pages.length;
-    this.scroll = 0;
-    this.draw();
+    this.reprint();
   }
 
-  /** Every project id, open or on disk, with the name its tab shows, so no two tabs read the same. */
+  /** Every project id, open or on disk, with the name it shows, so no two pages read the same. */
   private async shownNames(): Promise<Map<string, string>> {
     const shown = new Map<string, string>(this.pages.map((p) => [p.project, p.name]));
     for (const id of await listProjects()) if (!shown.has(id)) shown.set(id, await displayName(id));
@@ -472,13 +551,14 @@ export class App {
     this.draw();
     try {
       for (const reply of await page.orch.turn()) {
-        if (page.partial) { page.lines.push(page.partial); page.partial = ""; }
-        page.lines.push(`${bold(reply.from)} ${reply.text}`);
+        this.endPartial(page);
+        this.toPage(page, [`${bold(reply.from)} ${reply.text}`]);
       }
     } catch (err) {
-      page.lines.push(`${bold("error")} ${err instanceof Error ? err.message : String(err)}`);
+      this.endPartial(page);
+      this.toPage(page, [`${bold("error")} ${err instanceof Error ? err.message : String(err)}`]);
     } finally {
-      if (page.partial) { page.lines.push(page.partial); page.partial = ""; }
+      this.endPartial(page);
       page.busy = false;
       this.draw();
     }
@@ -524,10 +604,13 @@ export class App {
   private async attach(page: Page, name: string, live: boolean): Promise<void> {
     const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live }));
     const view = page.view!;
-    this.scroll = 0;
+    if (page === this.page) this.reprint();
     this.say(dim("Esc or /back returns"), page);
-    await follow(paths.transcript(page.project, name), (s) => { view.lines.push(s); this.draw(); }, stopped);
-    if (page.view === view) page.view = null;
+    await follow(paths.transcript(page.project, name), (s) => this.toView(page, view, [s]), stopped);
+    if (page.view === view) {
+      page.view = null;
+      if (page === this.page) this.reprint();
+    }
     this.draw();
   }
 
@@ -589,7 +672,7 @@ export class App {
     if (text.startsWith("/")) return this.say(dim(`unknown command ${text.split(" ")[0]}`));
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     const [first, ...rest] = text.split("\n");
-    page.lines.push(`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`));
+    this.toPage(page, [`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`)]);
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
     if (this.loggingIn) {
       this.queued.set(page, [...(this.queued.get(page) ?? []), text]);
@@ -610,8 +693,6 @@ export class App {
     // Plain control bytes, so they arrive in every terminal (the TUI runs in raw mode, so ^Z does not suspend).
     if (k.ctrl && k.name === "z") return this.switchPage(-1);
     if (k.ctrl && k.name === "x") return this.switchPage(1);
-    if (k.name === "pageup") { this.scroll += Math.max(1, this.deps.term.rows - 4); return this.draw(); }
-    if (k.name === "pagedown") { this.scroll = Math.max(0, this.scroll - Math.max(1, this.deps.term.rows - 4)); return this.draw(); }
 
     // Ctrl+B (tmux's prefix, hence also /projects) toggles the project list; while it is open it takes the keys.
     if (this.projectsTake(k)) return this.projectsKey(k);
@@ -632,7 +713,6 @@ export class App {
       // Drop blank lines around the message but keep the first line's indent.
       const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
       this.input = { text: "", cursor: 0 };
-      this.scroll = 0;
       this.historyAt = -1;
       if (!text) return this.draw();
       this.history.unshift(text);

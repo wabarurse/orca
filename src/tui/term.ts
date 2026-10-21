@@ -1,5 +1,6 @@
-// The terminal behind the TUI: raw mode, the alternate screen, size and key
-// events. The real one wraps stdin/stdout; tests pass a fake with the same shape.
+// The terminal behind the TUI: raw mode, bracketed paste, size and key
+// events. No alternate screen: the TUI is inline, writing into the normal
+// screen and its scrollback. The real one wraps stdin/stdout; tests pass a fake with the same shape.
 
 import { keyReader, type Key } from "./keys";
 
@@ -9,15 +10,15 @@ export interface Terminal {
   write(s: string): void;
   onKey(cb: (key: Key) => void): void;
   onResize(cb: () => void): void;
-  /** Enter the alternate screen and raw mode. */
+  /** Enter raw mode and bracketed paste. */
   open(): void;
   /** Undo open(); safe to call twice. */
   close(): void;
 }
 
-// The alternate screen plus bracketed paste, so a pasted newline is text, not Enter.
-const ENTER = "\x1b[?1049h\x1b[?2004h\x1b[H\x1b[2J";
-const LEAVE = "\x1b[?2004l\x1b[?25h\x1b[?1049l";
+// Bracketed paste, so a pasted newline is text, not Enter. Leaving keeps the screen as it is.
+const ENTER = "\x1b[?2004h";
+const LEAVE = "\x1b[?2004l\x1b[?25h";
 
 export function realTerminal(stdin = process.stdin, stdout = process.stdout): Terminal {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error("parallels start needs a terminal; run it from an interactive shell");

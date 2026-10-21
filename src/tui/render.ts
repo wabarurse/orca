@@ -1,20 +1,22 @@
-// Draw one frame of the TUI as a string. Pure: state in, escape codes out.
+// Draw the inline TUI as strings. Pure: state in, escape codes out.
 //
-//   ┌ tab bar: one tab per orchestrator page ─────────────┐
-//   │ header: the page's clone path and remote             │
-//   │ body: the page's scrollback (or a menu over it)      │
-//   │ status: a dimmed spinner line while a turn runs      │
-//   │ input area: wrapped rows, up to a third of the screen │
-//   └──────────────────────────────────────────────────────┘
+// Nothing takes over the screen. Finished lines are written once into the
+// terminal's own scrollback (`commit`) and never redrawn; only the live region
+// at the bottom is (`live`), top to bottom:
+//
+//   the partial streaming line (until it ends and is committed)
+//   a menu or the project list, when open
+//   the status line: spinner, page name, remote, page count
+//   the input area: wrapped rows, up to a third of the screen
+//
+// `reprint` clears the screen and scrollback and writes a page from scratch
+// (page switches, resizes, agent views).
 
 import { cells, layout, scrollWindow } from "./editor";
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
-const inverse = (s: string) => `\x1b[7m${s}\x1b[0m`;
 
-/** `spinner` is the busy mark (a spinner frame); "·" when absent. */
-export interface Tab { title: string; active: boolean; busy: boolean; spinner?: string }
 export interface Menu { title: string; items: string[]; index: number }
 export interface Input {
   prompt: string;
@@ -33,26 +35,25 @@ export interface ProjectList {
   status: string;
 }
 
+/** The live region's state. */
 export interface Frame {
   cols: number;
   rows: number;
-  tabs: Tab[];
-  /** One line under the tabs: where the active page's clone is and came from. */
-  header: string;
-  /** The active page's scrollback, oldest first. */
-  lines: string[];
-  /** How many lines up from the bottom the body is scrolled. */
-  scroll: number;
+  /** Streamed text that has not reached a newline yet; wrapped, above everything else. */
+  partial?: string;
   input: Input;
   menu: Menu | null;
-  /** A dimmed activity line just above the input (e.g. "⠋ thinking… 3s"), or none. */
+  /** The project list, above the status line like a menu, when open. */
+  projects?: ProjectList | null;
+  /** The status line just above the input (e.g. "⠋ thinking… 3s · name · remote · 2 pages"), or none. */
   status?: string | null;
   /** `inputArea(input, cols, rows, status ? 1 : 0)` when the caller already has it; computed otherwise. */
   inputArea?: InputArea;
-  /** The project list, at the bottom of the body like a menu, when open. */
-  projects?: ProjectList | null;
 }
 
+/** What the last `live` left on screen: its height and the row (from its top) the cursor sits on. */
+export interface Shown { height: number; cursor: number }
+export const NOTHING: Shown = { height: 0, cursor: 0 };
 /** Escape codes that take no columns, as Bun.stringWidth skips them: CSI (with ':' params, as in 38:2:r:g:b) and OSC (hyperlinks, titles). */
 const ESCAPE = /^(?:\x1b\[[0-9;:?<>]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
 /** Display columns, ignoring escape codes; CJK and emoji count two. Expand tabs first. */
@@ -112,25 +113,16 @@ function fit(raw: string, cols: number): string {
   return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…\x1b[0m";
 }
 
-function tabBar(tabs: Tab[], cols: number): string {
-  if (tabs.length === 0) return "";
-  const cells = tabs.map((t) => {
-    const label = ` ${t.title}${t.busy ? ` ${t.spinner ?? "·"}` : ""} `;
-    return t.active ? inverse(label) : dim(label);
-  });
-  return wrap(cells.join(" "), cols)[0]!;
-}
-
 /** The input area as laid out on screen: its rows (prompt on the first, indented after), the cursor within them, and the first text row shown. */
 export interface InputArea { lines: string[]; row: number; col: number; top: number }
 
-/** Lay out the input in the bottom of a `rows`-high screen, leaving `reserved` rows (the status line) between it and the body. */
+/** Lay out the input at the bottom of a `rows`-high screen, leaving `reserved` rows (the status line) above it. */
 export function inputArea(input: Input, cols: number, rows: number, reserved = 0): InputArea {
   const indent = visibleLength(input.prompt);
   const { rows: all, row, col } = layout(input, cols - indent);
-  // At most a third of the screen, less if the tabs, header, reserved rows and a body row would not fit;
+  // At most a third of the screen, less if the reserved rows and a row above would not fit;
   // past that, scroll only when the cursor leaves the window.
-  const allowance = Math.max(1, Math.min(Math.floor(rows / 3), rows - 3 - reserved));
+  const allowance = Math.max(1, Math.min(Math.floor(rows / 3), rows - 1 - reserved));
   const shown = Math.min(all.length, allowance);
   const top = scrollWindow(input.top ?? all.length, row, all.length, shown);
   const lines = all.slice(top, top + shown).map((r, i) => (top + i === 0 ? input.prompt : " ".repeat(indent)) + r.text);
@@ -163,24 +155,60 @@ export function projectRows(p: ProjectList, height: number): string[] {
   return [...head, ...footer];
 }
 
-export function render(f: Frame): string {
+/** A menu's rows, at most `height`: its title, then the items scrolled to keep the selection in view. */
+export function menuRows(m: Menu, height: number): string[] {
+  const listRows = Math.max(0, height - 1);
+  const start = windowStart(m.items.length, m.index, listRows);
+  const items = m.items.slice(start, start + listRows).map((item, i) => `${start + i === m.index ? bold("❯") : " "} ${item}`);
+  return [m.title, ...items].slice(0, Math.max(0, height));
+}
+
+/** Finished lines as they go into the scrollback: split at newlines, wrapped to `cols`, each ending in CRLF. */
+export function commit(lines: string[], cols: number): string {
+  return lines.flatMap((l) => l.split("\n")).flatMap((l) => wrap(l, cols)).map((r) => `${r}\x1b[0m\r\n`).join("");
+}
+
+/** The live region's rows, top to bottom, and where the cursor goes in them. */
+export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
   const statusRows = f.status ? 1 : 0;
   const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, statusRows);
-  const bodyRows = Math.max(0, f.rows - 2 - statusRows - input.lines.length);
-  const wrapped = f.lines.flatMap((l) => wrap(l, f.cols));
-  const end = Math.max(0, wrapped.length - f.scroll);
-  const body = wrapped.slice(Math.max(0, end - bodyRows), end);
-  while (body.length < bodyRows) body.unshift("");
-  // A menu or the project list sits at the bottom of the body, on top of the scrollback.
-  const overlay = f.menu
-    ? [f.menu.title, ...f.menu.items.map((item, i) => `${i === f.menu!.index ? bold("❯") : " "} ${item}`)].slice(-bodyRows)
-    : f.projects ? projectRows(f.projects, bodyRows) : [];
-  if (bodyRows) body.splice(body.length - overlay.length, overlay.length, ...overlay.map((r) => fit(r, f.cols)));
-  const out: string[] = [tabBar(f.tabs, f.cols), fit(f.header, f.cols), ...body];
-  if (f.status) out.push(fit(f.status, f.cols));
-  out.push(...input.lines);
-  // Clear each row before writing so shorter lines never leave debris.
-  const screen = out.map((row, i) => `\x1b[${i + 1};1H\x1b[2K${row}`).join("");
-  const row = f.rows - input.lines.length + input.row + 1;
-  return `\x1b[?25l${screen}\x1b[${row};${input.col + 1}H\x1b[?25h`;
+  // Everything must fit on screen, or the cursor could not get back to the top: the overlay
+  // gets what the input and status leave (but a row), the partial line the rest, showing its end.
+  let free = Math.max(0, f.rows - statusRows - input.lines.length);
+  const overlay = (f.menu ? menuRows(f.menu, free - 1) : f.projects ? projectRows(f.projects, free - 1) : []).map((r) => fit(r, f.cols));
+  free -= overlay.length;
+  const partial = f.partial ? wrap(f.partial, f.cols).slice(-free).slice(0, free) : [];
+  const rows = [...partial, ...overlay, ...(f.status ? [fit(f.status, f.cols)] : []), ...input.lines];
+  return { rows, cursor: rows.length - input.lines.length + input.row, col: input.col };
+}
+
+/** Move from where `prev` left the cursor to the live region's first row and clear from there down. */
+export function erase(prev: Shown): string {
+  if (!prev.height) return "";
+  return `\r${prev.cursor ? `\x1b[${prev.cursor}A` : ""}\x1b[J`;
+}
+
+/**
+ * Redraw the live region: erase what `prev` left, write the rows, and put the
+ * cursor in the input. Returns the escape codes and what is now shown.
+ */
+export function live(f: Frame, prev: Shown = NOTHING): { text: string; shown: Shown } {
+  const { rows, cursor, col } = liveRows(f);
+  const up = rows.length - 1 - cursor;
+  const body = rows.map((r) => `${r}\x1b[0m`).join("\r\n");
+  const text = `\x1b[?25l${erase(prev)}${body}${up ? `\x1b[${up}A` : ""}\r${col ? `\x1b[${col}C` : ""}\x1b[?25h`;
+  return { text, shown: { height: rows.length, cursor } };
+}
+
+/** Commit `lines` above the live region: erase it, write them, draw it again. */
+export function append(lines: string[], f: Frame, prev: Shown): { text: string; shown: Shown } {
+  const next = live(f);
+  return { text: `\x1b[?25l${erase(prev)}${commit(lines, f.cols)}${next.text}`, shown: next.shown };
+}
+
+/** Clear the screen and the scrollback, then write `lines` and the live region from scratch. */
+export const CLEAR = "\x1b[2J\x1b[3J\x1b[H";
+export function reprint(lines: string[], f: Frame): { text: string; shown: Shown } {
+  const next = live(f);
+  return { text: `\x1b[?25l${CLEAR}${commit(lines, f.cols)}${next.text}`, shown: next.shown };
 }
