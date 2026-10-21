@@ -23,7 +23,7 @@ export function fakeProvider(script: ContentBlock[][]): Provider & { calls: Call
       const content = script.shift();
       if (!content) throw new Error("fake provider: script exhausted");
       for (const b of content) if (b.type === "text") req.onText(b.text);
-      return { content, stop: content.some((b) => b.type === "tool_use") ? ("tool_use" as const) : ("end" as const) };
+      return { completion: "end_turn", content, stop: content.some((b) => b.type === "tool_use") ? ("tool_use" as const) : ("end" as const) };
     },
     async models() {
       return ["fake-model"];

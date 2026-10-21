@@ -987,6 +987,7 @@ export class App {
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { row: "settings", text: "/agents" } }],
     ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { row: "settings", text: "/effort [level|default]" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { row: "settings", text: "/fast [on|off]" } }],
+    ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { row: "settings", text: "/compact summarizes model context (keeps history)" } }],
     ["/models", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { row: "settings", text: "/models [id]" } }],
     ["/accounts", { run: () => this.accountsMenu(), help: { row: "settings", text: "/accounts" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { row: "settings", text: "/login claude|codex [profile]" } }],

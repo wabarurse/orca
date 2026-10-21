@@ -5,6 +5,7 @@ import type { RequestSettings } from "./project-settings";
 
 import type { ContentBlock, TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { effectiveModel, projectModelResolver } from "./project-model";
+import { budget, compact, outputCap, requireFits, type CompactOptions } from "./compaction";
 import { loadConfig, paths } from "./config";
 import { supervise, type Tracker } from "./exits";
 import { drain, format, type Message } from "./inbox";
@@ -27,7 +28,12 @@ export interface AgentOptions {
 
 export interface AgentDeps {
   provider?: Provider;
-  /** Resolve the project setting immediately before every model request. */
+  settings?: RequestSettings;
+  /** Internal safe-boundary snapshot: request output cap and accounting reserve. */
+  requestOutputCap?: number;
+  compaction?: CompactOptions;
+  compactRequested?: () => boolean;
+  /** Resolve before budgeting, not just before the normal request. */
   resolveModel?: () => Promise<{ model: string; provider: Provider; settings?: RequestSettings }>;
   transcript: Transcript;
   tools: Record<string, Tool>;
@@ -46,7 +52,6 @@ export interface AgentDeps {
   onToolResult?: (outcome: ToolOutcome) => void;
 }
 
-const MAX_TOKENS = 64000;
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
@@ -121,49 +126,72 @@ async function readInbox(deps: AgentDeps): Promise<boolean> {
 /** One model request, streamed and appended to the transcript. */
 async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   await deps.tracker?.model();
-  const current = deps.resolveModel ? await deps.resolveModel() : { model: deps.model, provider: deps.provider!, settings: undefined };
-  const message = await current.provider.complete({
-    model: current.model,
-    settings: current.settings,
+  const messages = await deps.transcript.chain();
+  const estimated = budget({ ...deps, compaction: undefined }, messages);
+  if (!deps.provider) throw new Error("agent: no provider or resolver");
+  const message = await deps.provider.complete({
+    model: deps.model,
+    settings: deps.settings,
     system: deps.system,
-    maxTokens: MAX_TOKENS,
-    messages: await deps.transcript.chain(),
+    maxTokens: outputCap(deps),
+    messages,
     tools: Object.values(deps.tools).map((t) => t.spec),
     onText: (t) => write(t),
   });
+  if (message.inputTokens !== undefined) {
+    deps.compaction ??= {};
+    deps.compaction.measured = { input: message.inputTokens, estimated, model: deps.model };
+  }
   if (message.content.some((b) => b.type === "text")) write("\n");
   await deps.transcript.append({ type: "message", message: { role: "assistant", content: message.content } });
   return message;
 }
 
-/** Build the loop from explicit dependencies. `runAgent` wires the real ones. */
-export function createAgent(deps: AgentDeps) {
-  const write = deps.write ?? ((t: string) => process.stdout.write(t));
-
-  /**
-   * Run until the model ends a turn with an empty inbox. Messages are never
-   * injected mid-step: a tool call always finishes first, then anything that
-   * arrived meanwhile is delivered in the same user turn as the tool results,
-   * so the model sees it before deciding its next step. Messages that arrive
-   * after a turn ends start another, so a worker that gets a note from the
-   * orchestrator keeps going instead of exiting.
-   */
-  async function run(): Promise<void> {
-    await readInbox(deps);
-    for (;;) {
-      const message = await ask(deps, write);
-      if (message.stop !== "tool_use") {
-        if (await readInbox(deps)) continue;
-        return;
-      }
-      const results = await runTools(deps, message.content, write);
-      // Queued messages ride along after the tool results; they never cut a tool short.
-      const note = await inboxBlock(deps);
-      await deps.transcript.append({ type: "message", message: { role: "user", content: note ? [...results, note] : results } });
+/** Resolve credentials/settings exactly once at a safe boundary. Failure never falls back. */
+async function snapshot(deps: AgentDeps): Promise<AgentDeps> {
+  const current = deps.resolveModel ? await deps.resolveModel() : { model: deps.model, provider: deps.provider, settings: deps.settings };
+  if (!current.provider) throw new Error("agent: no provider or resolver");
+  const selected = { ...deps, ...current, settings: current.settings ? { ...current.settings } : undefined };
+  return { ...selected, requestOutputCap: outputCap(selected) };
+}
+function boundaries(deps: AgentDeps) {
+  let failed = false;
+  let previousModel = "";
+  return async (manual = false): Promise<AgentDeps> => {
+    const current = await snapshot(deps);
+    if (current.model !== previousModel) failed = false;
+    previousModel = current.model;
+    if (manual || !failed) {
+      try {
+        const result = await compact(current, manual);
+        if (result !== null) failed = !result;
+      } catch (error) { failed = true; throw error; }
     }
+    requireFits(current, await current.transcript.chain(), outputCap(current), "model request");
+    return current;
+  };
+}
+async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<void> {
+  const results = await runTools(deps, content, deps.write!);
+  const note = await inboxBlock(deps);
+  await deps.transcript.append({ type: "message", message: { role: "user", content: note ? [...results, note] : results } });
+}
+async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>): Promise<void> {
+  await readInbox(deps);
+  for (;;) {
+    const current = await boundary(deps.compactRequested?.() ?? false);
+    const message = await ask(current, deps.write!);
+    if (message.stop === "tool_use") { await toolBatch(deps, message.content); continue; }
+    if (await readInbox(deps)) continue;
+    if (deps.compactRequested?.()) await boundary(true);
+    return;
   }
-
-  return { run };
+}
+/** Sole-writer loop; status and model output share the normalized scoped writer. */
+export function createAgent(input: AgentDeps) {
+  const deps = { ...input, compaction: input.compaction ?? {}, write: input.write ?? ((t: string) => { process.stdout.write(t); }) };
+  const boundary = boundaries(deps);
+  return { run: () => runLoop(deps, boundary), compact: async () => { await boundary(true); } };
 }
 
 /**
@@ -209,6 +237,7 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
     transcript,
     tools,
     model,
+    compaction: { enabled: config.compact, fallback: config.contextLimitFallback },
     system: rolePrompt(opts.role, config),
     ctx: { project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
     tracker,

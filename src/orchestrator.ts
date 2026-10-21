@@ -32,11 +32,12 @@ export interface OrchestratorDeps {
 export interface Orchestrator {
   /** Put a message from the user in the orchestrator's inbox. */
   say(text: string): Promise<void>;
+  compact?(): Promise<void>;
   /** True when the orchestrator has unread messages. */
   pending(): Promise<boolean>;
   /** Run one turn over the inbox. Returns what was sent to the user meanwhile. */
   turn(): Promise<Message[]>;
-  /** The current branch of its transcript, oldest first, as loaded (transcript.ts `branch`): what the TUI rebuilds the page from. */
+  /** Full original history, oldest first, excluding synthetic checkpoint tails: UI replay. */
   entries?(): Entry[];
 }
 
@@ -62,39 +63,48 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
     await transcript.append({ type: "meta", role: "orchestrator", model: await effectiveModel(project) });
   }
 
-  const tools: Record<string, Tool> = deps.tools ?? {};
-  if (!deps.tools) for (const name of toolsFor.orchestrator) if (registry[name]) tools[name] = registry[name];
-
-  const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
+  let requested = false;
+  let running = false;
+  const takeRequest = () => { const value = requested; requested = false; return value; };
   return {
+    compact: async () => { requested = true; },
     say: (text) => put(project, "orchestrator", { from: "user", text }).then(() => {}),
-    pending: () => pending(project, "orchestrator"),
-    entries: () => transcript.branch(),
+    pending: async () => requested || await pending(project, "orchestrator"),
+    entries: () => transcript.history?.() ?? transcript.branch(),
     async turn() {
       // run() drains the inbox itself and keeps going while messages arrive.
-      if (!(await pending(project, "orchestrator"))) return [];
-      // Role/review settings refresh per turn; the project model refreshes per request.
-      const config = await loadConfig();
-      const model = await effectiveModel(project);
-      const agent = createAgent({
-        provider: deps.provider,
-        resolveModel: projectModelResolver(project, loadProvider),
-        transcript,
-        tools,
-        model,
-        system: rolePrompt("orchestrator", config),
-        ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
-        write: deps.write,
-        onInbox: deps.onInbox,
-        onTool: deps.onTool,
-        onToolResult: deps.onToolResult,
-      });
-      await agent.run();
-      const replies = await drain(project, "user");
-      // Kept in the transcript so a restored page shows them where they showed live: after the turn.
-      if (replies.length) await transcript.append({ type: "replies", messages: replies.map(({ from, text }) => ({ from, text })) });
-      return replies;
+      if (running) return [];
+      running = true;
+      try {
+        const hasInbox = await pending(project, "orchestrator");
+        if (!requested && !hasInbox) return [];
+        const agent = await turnAgent(deps, transcript, takeRequest);
+        if (hasInbox) await agent.run();
+        else if (takeRequest()) await agent.compact();
+        const replies = await drain(project, "user");
+        // Kept in the transcript so a restored page shows them where they showed live: after the turn.
+        if (replies.length) await transcript.append({ type: "replies", messages: replies.map(({ from, text }) => ({ from, text })) });
+        return replies;
+      } finally { running = false; }
     },
   };
 }
 
+
+function orchestratorTools(overrides?: Record<string, Tool>): Record<string, Tool> {
+  if (overrides) return overrides;
+  return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, registry[name]]] : []));
+}
+async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean) {
+  const config = await loadConfig();
+  const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
+  return createAgent({
+    resolveModel: projectModelResolver(deps.project, loadProvider),
+    transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project),
+    compaction: { enabled: config.compact, fallback: config.contextLimitFallback }, compactRequested,
+    system: rolePrompt("orchestrator", config),
+    ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project) },
+    write: deps.write, onInbox: deps.onInbox,
+    onTool: deps.onTool, onToolResult: deps.onToolResult,
+  });
+}
