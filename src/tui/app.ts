@@ -104,20 +104,57 @@ interface ProjectListState { items: ProjectEntry[]; index: number; status: strin
 
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
 
-const HELP = [
-  "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)",
-  "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes",
-  "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
-  "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history",
-  "/keys shows what your terminal sends for a chord (Esc ends)",
-  "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
-  "/agents   /models [id]   /accounts   /login claude|codex [profile]",
-  "/review-rounds [n] review rounds before CI (0 = straight to CI)",
-  "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later",
+/**
+ * A slash command. Commands match by name (the text up to the first space).
+ * Without `args` only the bare name matches: "/quit now" is an unknown command.
+ * `run` gets the arguments trimmed ("" when none) and the active page, if any.
+ */
+export interface Command {
+  run(args: string, page: Page | undefined): Promise<void> | void;
+  /** Takes arguments: "/x" and "/x …" both match. */
+  args?: true;
+  /** Needs an open page: with none, a fresh orch-xxxx opens instead and the command is dropped (as for plain text and unknown commands). */
+  needsPage?: true;
+  /** Its /help text and the row it shares; none for /help itself. */
+  help?: { row: HelpRow; text: string };
+}
+
+/** Rows of /help that list commands, in table order; "view" shows only in an agent view. */
+type HelpRow = "projects" | "keys" | "pages" | "settings" | "review" | "questions" | "view";
+
+/** /help, top to bottom: key help as written, and the rows of commands from the table (joined by three spaces). */
+const HELP_LAYOUT: readonly (HelpRow | { text: string })[] = [
+  { text: "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)" },
+  "projects",
+  { text: "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words" },
+  { text: "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history" },
+  "keys",
+  "pages",
+  "settings",
+  "review",
+  "questions",
+  "view",
 ];
-/** Commands a question's answer can run (first word), as typed in chat. */
-const COMMANDS = new Set(["/quit", "/back", "/help", "/projects", "/questions", "/keys", "/new", "/rename", "/close", "/login", "/accounts", "/models", "/review-rounds", "/agents"]);
-const HELP_VIEW = "/back (or Esc) leaves the agent view";
+
+/** The /help lines for this command table; the "view" row only while viewing an agent. */
+export function helpLines(commands: ReadonlyMap<string, Command>, inView: boolean): string[] {
+  const all = [...commands.values()];
+  return HELP_LAYOUT.flatMap((entry) => {
+    if (typeof entry !== "string") return [entry.text];
+    if (entry === "view" && !inView) return [];
+    const texts = all.filter((c) => c.help?.row === entry).map((c) => c.help!.text);
+    return texts.length ? [texts.join("   ")] : [];
+  });
+}
+
+/** A typed line as a command: its name, trimmed arguments and table entry (none when unknown, or when it takes no arguments and got some); null for plain text. */
+export function parseCommand(text: string, commands: ReadonlyMap<string, Command>): { name: string; args: string; command?: Command } | null {
+  if (!text.startsWith("/")) return null;
+  const name = text.split(" ")[0]!;
+  const found = commands.get(name);
+  const command = found && (found.args || text === name) ? found : undefined;
+  return { name, args: text.slice(name.length).trim(), command };
+}
 
 /**
  * What a key means in the project list: a plain character's text or a named
@@ -208,7 +245,7 @@ export class App {
       record: (line, page) => app.record(page as Page, line),
       width: () => app.deps.term.cols - visibleLength(dim("answer> ")),
       now: () => app.clock.now(),
-      isCommand: (text) => COMMANDS.has(text.split(/\s/)[0]!),
+      isCommand: (text) => app.commands.has(text.split(" ")[0]!),
       run: (text) => { app.remember(text); return app.submit(text); },
       draw: () => app.draw(),
     }, deps.questions, deps.questionDelayMs ?? QUESTION_DELAY_MS);
@@ -798,33 +835,61 @@ export class App {
 
   // --- input ------------------------------------------------------------------
 
-  /** Every command works at any time: mid-turn, while viewing an agent, while signing in. */
+  /**
+   * The slash commands, by name. Every one works at any time: mid-turn, while
+   * viewing an agent and while signing in (a second /login is refused by
+   * login() itself). Table order is the order within a /help row.
+   */
+  readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
+    ["/projects", { run: () => this.openProjects(), help: { row: "projects", text: "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes" } }],
+    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { row: "keys", text: "/keys shows what your terminal sends for a chord (Esc ends)" } }],
+    ["/rename", { args: true, run: (args) => this.renamePage(args), help: { row: "pages", text: "/rename <name>" } }],
+    ["/new", { args: true, run: (args) => this.newCommand(args), help: { row: "pages", text: "/new [name] [git-url]" } }],
+    ["/close", { run: () => this.closePage(), help: { row: "pages", text: "/close closes this page" } }],
+    ["/quit", { run: () => this.quit(), help: { row: "pages", text: "/quit" } }],
+    ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { row: "settings", text: "/agents" } }],
+    ["/models", { args: true, run: (args) => this.modelsCommand(args), help: { row: "settings", text: "/models [id]" } }],
+    ["/accounts", { run: () => this.accountsMenu(), help: { row: "settings", text: "/accounts" } }],
+    ["/login", { args: true, run: (args) => this.login(args), help: { row: "settings", text: "/login claude|codex [profile]" } }],
+    ["/review-rounds", { args: true, run: async (args) => this.say(dim(await reviewRounds(args))), help: { row: "review", text: "/review-rounds [n] review rounds before CI (0 = straight to CI)" } }],
+    ["/questions", { run: (_, page) => this.questions.command(page), help: { row: "questions", text: "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later" } }],
+    ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { row: "view", text: "/back (or Esc) leaves the agent view" } }],
+    ["/help", { run: (_, page) => { for (const l of helpLines(this.commands, !!page?.view)) this.say(dim(l)); } }],
+  ]);
+
+  /** /new [name] [git-url]: the name must be a valid project id. */
+  private newCommand(args: string): Promise<void> | void {
+    const [name, url] = args.split(/\s+/).filter(Boolean);
+    if (name && !validProjectName(name)) return this.say(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
+    return this.newPage(name, url);
+  }
+
+  /** /models opens the menu; /models <id> sets any id. */
+  private async modelsCommand(id: string): Promise<void> {
+    if (!id) return this.modelsMenu();
+    this.say(dim(await setModel(id)));
+  }
+
+  /**
+   * A sent line, guarded in this order:
+   * 1. a known command that needs no page runs at once (agent view, sign-in, no page: all fine);
+   * 2. with no page open, anything else (/agents, an unknown command, plain text) opens a fresh orch-xxxx and is dropped;
+   * 3. a known command runs on the page;
+   * 4. an unknown one (or arguments to a command that takes none) says "unknown command /x";
+   * 5. plain text goes to the orchestrator (talk), refused in an agent view and queued while signing in.
+   */
   private async submit(text: string): Promise<void> {
+    const call = parseCommand(text, this.commands);
+    if (call?.command && !call.command.needsPage) return call.command.run(call.args, this.page);
     const page = this.page;
-    if (text === "/quit") return this.quit();
-    if (text === "/back") {
-      if (page?.view) return page.view.leave();
-      return this.say(dim("not viewing an agent"));
-    }
-    if (text === "/help") { for (const l of page?.view ? [...HELP, HELP_VIEW] : HELP) this.say(dim(l)); return; }
-    if (text === "/projects") return this.openProjects();
-    if (text === "/questions") return this.questions.command(page);
-    if (text === "/keys") { this.keyEcho = true; return this.say(dim("press keys; Esc ends")); }
-    if (text === "/new" || text.startsWith("/new ")) {
-      const [name, url] = text.slice(4).trim().split(/\s+/).filter(Boolean);
-      if (name && !validProjectName(name)) return this.say(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
-      return this.newPage(name, url);
-    }
-    if (text === "/rename" || text.startsWith("/rename ")) return this.renamePage(text.slice(7).trim());
-    if (text === "/close") return this.closePage();
-    if (text === "/login" || text.startsWith("/login ")) return this.login(text.slice(6).trim());
-    if (text === "/accounts") return this.accountsMenu();
-    if (text === "/models") return this.modelsMenu();
-    if (text.startsWith("/models ")) return this.say(dim(await setModel(text.slice(8).trim())));
-    if (text === "/review-rounds" || text.startsWith("/review-rounds ")) return this.say(dim(await reviewRounds(text.slice(14).trim())));
     if (!page) return this.newPage();
-    if (text === "/agents") return this.agentsMenu(page);
-    if (text.startsWith("/")) return this.say(dim(`unknown command ${text.split(" ")[0]}`));
+    if (call?.command) return call.command.run(call.args, page);
+    if (call) return this.say(dim(`unknown command ${call.name}`));
+    return this.talk(page, text);
+  }
+
+  /** Plain text for the page's orchestrator: refused while viewing an agent, held while signing in. */
+  private async talk(page: Page, text: string): Promise<void> {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     this.toPage(page, userLines(text));
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
