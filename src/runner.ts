@@ -23,6 +23,8 @@ export interface Runner {
   start(opts: StartOptions): Promise<void>;
   /** Close the branch's windows and remove its worktree. */
   stop(project: string, branch: string): Promise<void>;
+  /** Which of these agent ids have a live window, or null when that could not be asked. */
+  running(project: string, ids: string[]): Promise<string[] | null>;
 }
 
 const CLI = resolve(import.meta.dir, "cli.ts");
@@ -186,5 +188,10 @@ export const local: Runner = {
       if (name.endsWith(`-${slug(branch)}`)) await tmux.killWindow(session, name);
     }
     await removeWorktree(project, branch);
+  },
+
+  async running(project, ids) {
+    const w = await tmux.windows(sessionName(project));
+    return w && ids.filter((id) => w.includes(id));
   },
 };

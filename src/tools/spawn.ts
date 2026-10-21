@@ -8,7 +8,22 @@ import type { Tool } from "./index";
 // appends to that transcript, so a second review round keeps its context,
 // and a worker given a follow-up task on its open branch keeps its own. The
 // description holds the orchestrator's reuse-or-new-branch rule.
-export function makeSpawn(runner: Runner): Tool {
+/** How long spawn waits for a live agent on the branch to finish, and how often it looks. */
+export interface SpawnWait { waitMs: number; pollMs: number }
+const WAIT: SpawnWait = { waitMs: 20_000, pollMs: 250 };
+
+/** The branch's agents still live after waiting up to `waitMs`; [] when none, or when tmux could not be asked. */
+async function stillLive(runner: Runner, project: string, branch: string, wait: SpawnWait): Promise<string[]> {
+  const ids = [sessionId("worker", branch), sessionId("reviewer", branch)];
+  const deadline = Date.now() + wait.waitMs;
+  for (;;) {
+    const live = await runner.running(project, ids).catch(() => null);
+    if (!live?.length || Date.now() >= deadline) return live ?? [];
+    await Bun.sleep(wait.pollMs);
+  }
+}
+
+export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
   return {
     spec: {
       name: "spawn",
@@ -39,6 +54,10 @@ export function makeSpawn(runner: Runner): Tool {
       const branch = typeof input.branch === "string" ? input.branch.trim() : "";
       const role = input.role === "reviewer" ? "reviewer" : "worker";
       if (!prompt || !branch) return "refused: prompt and branch are required";
+
+      // One agent per branch: a reported agent may still be finishing, so wait briefly for it.
+      const busy = await stillLive(runner, ctx.project, branch, wait);
+      if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
       const id = sessionId(role, branch);
       const t = open(paths.transcript(ctx.project, id));

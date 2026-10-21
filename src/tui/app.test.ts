@@ -1248,7 +1248,7 @@ describe("restored pages", () => {
 
   test("a restored page shows what it showed live: real orchestrator, scripted model", async () => {
     const TABLE_MD = "| a | b |\n|---|---|\n| 1 | 2 |";
-    const runner = { async start() { await put("fidelity", "orchestrator", { from: "worker-feat", text: "Report:\n\nall green" }); }, async stop() {} };
+    const runner = { async start() { await put("fidelity", "orchestrator", { from: "worker-feat", text: "Report:\n\nall green" }); }, async stop() {}, async running() { return []; } };
     const tools = { spawn: makeSpawn(runner), message };
     const provider = fakeProvider([
       [said(`Plan:\n${TABLE_MD}\nthen *go*`), toolUse("t1", "spawn", { prompt: "do it", branch: "feat" })],
