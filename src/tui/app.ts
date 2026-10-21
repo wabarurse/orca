@@ -23,22 +23,23 @@ import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
 import { MAX_RESTORED_ROWS, replyLine, reportLine, restore, userLines } from "./restore";
-import { bold, commit, dim, inputArea, visibleLength, type Frame, type Input, type InputArea, type Menu } from "./render";
+import { bold, commit, dim, inputArea, inputGeometry, statusRows, type Frame, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
+import { chapterRows, headerHeight } from "./chrome";
 import { Calls } from "./tools";
 import type { ToolCall, ToolOutcome } from "../toolview";
-import { stickyRows, stickyUpdate, tabs, type StickyScreen } from "./sticky";
+import { stickyRows, stickyUpdate, reflowAnchor, type StickyScreen } from "./sticky";
 
 export { lineRows, type Line } from "./lines";
 
 export interface Page {
   /** The project id: its folder under ~/.parallels/projects. Never changes. */
   project: string;
-  /** What the status line shows; /rename sets it. */
+  /** What the header tab shows; /rename sets it. */
   name: string;
   orch: Orchestrator;
-  /** Where the clone came from, for the status line. */
+  /** Where the clone came from, for the pinned header. */
   remote: string;
   /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
@@ -261,7 +262,7 @@ export class App {
   private needReprint = false;
   /**
    * Set once pages and terminal background are ready. Until then show only
-   * startup notes and the "opening…" status.
+   * startup notes and transient "opening…" activity at the conversation tail.
    */
   private started = false;
   private stopSpinner: (() => void) | null = null;
@@ -287,7 +288,7 @@ export class App {
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
       say: (line, page) => app.say(line, page as Page),
       record: (line, page) => app.record(page as Page, line),
-      width: () => app.deps.term.cols - visibleLength(dim("answer> ")),
+      width: () => app.inputWidth("answer> "),
       now: () => app.clock.now(),
       isCommand: (text) => app.commands.has(text.split(" ")[0]!),
       run: (text) => { app.remember(text); return app.submit(text); },
@@ -316,7 +317,7 @@ export class App {
       this.draw(); // "opening…" at once
       const shaded = term.background?.then(() => this.draw()); // the input in the terminal's shade as soon as it is known
       await this.openStartPages(project, url);
-      await shaded; // the first page's user lines go into the scrollback in that shade
+      await shaded; // restored user rows first enter the viewport in the resolved shade
       this.started = true;
       this.needReprint = true;
       this.draw();
@@ -350,9 +351,9 @@ export class App {
   }
 
   /**
-   * Route console output (e.g. the config loader's warning) into the scrollback
-   * while the TUI runs, as Ink does for Claude Code, so nothing writes to the
-   * terminal behind the live region's back. Returns the undo.
+   * Route console output (e.g. the config loader's warning) into conversation
+   * history while the TUI runs, so nothing writes behind the pinned renderer's
+   * back. Returns the undo.
    */
   private captureConsole(): () => void {
     const methods = ["log", "info", "warn", "error", "debug"] as const;
@@ -446,12 +447,13 @@ export class App {
 
   frame(): Frame {
     const page = this.page;
-    const status = !this.started ? dim("opening…") : page ? this.status(page) : null;
-    const { input, area } = this.inputFrame(status ? 1 : 0);
+    const status = this.started && page ? this.status(page) : null;
+    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length);
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
       running: page ? (page.view?.calls ?? page.calls).rows(this.clock.now(), this.deps.term.cols) : [],
+      activity: !this.started ? dim("opening…") : page ? this.activity(page) : undefined,
       status, input, inputArea: area,
       menu: this.menu,
       question: this.questions.view(),
@@ -465,9 +467,10 @@ export class App {
     };
   }
 
-  private header(page: Page): string {
+  private header(page: Page): string[] {
     const settings = page.settings;
-    return `${page.name} · ${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}\n${paths.repo(page.project)}\n${page.remote ? shortRemote(page.remote) : "no remote"}`;
+    const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Independent read generations for captured page objects. */
@@ -493,44 +496,29 @@ export class App {
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
 
-  /**
-   * The dimmed line below the input: what the page is doing (a spinner while
-   * its turn or the viewed agent runs), its name, remote and the open pages,
-   * e.g. "⠋ thinking… 3s · orch-ab12 · github.com/x/y · 2 pages · 1 busy".
-   */
+  /** Counts only: no shortcuts, repeated identities or transient animation in the footer. */
   status(page: Page): string {
-    const parts = this.counts(page);
-    // A live agent view wins over the page's own turn; otherwise a busy page shows its turn (its word shimmering), view or not.
-    if (page.view?.live) parts.push(`${this.spinner()} following ${page.view.name}`);
-    else if (page.busy) parts.push(this.turnStatus(page));
-    parts.push(page.view ? `${page.name} › ${page.view.name}` : page.name);
-    if (page.remote) parts.push(shortRemote(page.remote));
-    parts.push(`${this.pages.length} ${this.pages.length === 1 ? "page" : "pages"}`);
-    const busy = this.pages.filter((p) => p !== page && active(p)).length;
-    if (busy) parts.push(`${busy} busy`);
-
-
-    return dim(parts.join(" · "));
+    const agents = page.agentCount ?? 0;
+    const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
+    const questions = page.questions.open.length;
+    const elsewhere = this.pages.reduce((n, p) => n + (p === page ? 0 : p.questions.open.length), 0);
+    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, `${queued} ${queued === 1 ? "message" : "messages"} queued`, `${questions} ${questions === 1 ? "question" : "questions"}${elsewhere ? ` (+${elsewhere} elsewhere)` : ""}`].join(" │ ");
   }
 
-  private counts(page: Page): string[] {
-    const parts = [`${page.agentCount ?? 0} agents running`];
-    const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
-    if (queued) parts.push(`${queued} messages queued`);
-    parts.push(...this.questions.status(page, this.pages));
-    if (page.questions.open.length) parts.push("Ctrl+Q to view");
-    return parts;
+  /** Only the selected conversation can animate; tool rows already carry their own shimmer. */
+  activity(page: Page): string | undefined {
+    if ((page.view?.calls ?? page.calls).size) return undefined;
+    if (page.view) return page.view.live ? dim(`${this.spinner()} ${shimmer("working…", this.clock.now())}`) : undefined;
+    return page.busy ? dim(this.turnStatus(page)) : undefined;
   }
 
   /** Fast frames only for visible animation, never because a background page is busy. */
   private shimmering(): boolean {
     const page = this.page;
-    if (!page) return false;
-    if ((page.view?.calls ?? page.calls).size) return true;
-    return page.busy && !page.view?.live;
+    return !!page && (!!(page.view?.calls ?? page.calls).size || !!this.activity(page));
   }
 
-  /** "⠋ thinking… 3s" with the word shimmering; the dim the status line is drawn in resumes after it. */
+  /** "⠋ thinking… 3s" with the word shimmering; the surrounding dim resumes after it. */
   private turnStatus(page: Page): string {
     const now = this.clock.now();
     const word = shimmer(page.streamed ? "working…" : "thinking…", now);
@@ -575,9 +563,18 @@ export class App {
   /** The input and its laid-out area, keeping the window's top row between frames. */
   private inputFrame(reserved: number): { input: Input; area: InputArea } {
     const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, top: this.inputTop };
-    const area = inputArea(input, this.deps.term.cols, this.deps.term.rows, reserved);
+    const area = inputArea(input, this.deps.term.cols, this.composerRows(), reserved);
     input.top = this.inputTop = area.top;
     return { input, area };
+  }
+
+  /** Same available height as stickyRows: fixed header, plus at least one body row. */
+  private composerRows(): number {
+    return Math.max(1, this.deps.term.rows - (this.page ? this.header(this.page).length : 0) - 1);
+  }
+
+  private inputWidth(prompt: string): number {
+    return inputGeometry(prompt, this.deps.term.cols, this.composerRows()).width;
   }
 
   private prompt(): string {
@@ -586,7 +583,7 @@ export class App {
     return view ? dim(`${view.name} > `) : dim("> ");
   }
 
-  /** Redraw the live region soon, committing pending lines above it first. */
+  /** Coalesce changed pinned rows and the conversation viewport into the next frame. */
   draw(): void {
     if (this.closed) return;
     this.questions.sync(); // the input holds the chat draft or the shown question's answer, as the state now wants
@@ -638,13 +635,23 @@ export class App {
 
   private viewport(f: Frame): StickyScreen {
     const owner = this.page?.view ?? this.page;
-    if (owner !== this.screenOwner) this.scrollTop = null;
+    this.anchorScroll(owner, f.cols);
     if (this.needReprint || owner !== this.screenOwner) this.screenHistory = this.started ? this.screenLines() : [...this.looseLines];
     else this.screenHistory.push(...this.pending);
     this.screenOwner = owner;
     this.pending = [];
-    const chrome = this.page ? [tabs(this.pages, this.active, f.cols), ...this.header(this.page).split("\n")] : [];
-    return stickyRows(f, this.screenHistory, chrome, this.scrollTop);
+    const chrome = this.page ? this.header(this.page) : [];
+    const screen = stickyRows(f, this.screenHistory, chrome, this.scrollTop);
+    if (this.scrollTop !== null) this.scrollTop = screen.start;
+    return screen;
+  }
+
+  /** Only a resize of the same conversation can reuse its scroll anchor. */
+  private anchorScroll(owner: typeof this.screenOwner, cols: number): void {
+    if (owner !== this.screenOwner) { this.scrollTop = null; return; }
+    if (this.scrollTop === null || !this.screen || this.screen.cols === cols) return;
+    const lines = this.page?.view?.lines ?? this.page?.lines ?? this.looseLines;
+    this.scrollTop = reflowAnchor(lines, this.screen.cols, cols, this.scrollTop);
   }
 
   /** The last drawing error said, so a frame that keeps failing is reported once. */
@@ -654,7 +661,7 @@ export class App {
   private leave(): void {
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
-    const lines = [...(page ? this.header(page).split("\n") : []), ...this.screenLines(), ...(held ? held.split("\n") : [])];
+    const lines = [...(page ? this.header(page) : []), ...this.screenLines(), ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
   }
@@ -1213,7 +1220,7 @@ export class App {
 
   /** Up / Down move between rows; on the first / last row they walk the history. */
   private upDown(dir: -1 | 1): void {
-    const moved = ed.vertical(this.input, this.deps.term.cols - visibleLength(this.prompt()), dir);
+    const moved = ed.vertical(this.input, this.inputWidth(this.prompt()), dir);
     if (moved) this.input = moved;
     else this.recall(dir);
   }

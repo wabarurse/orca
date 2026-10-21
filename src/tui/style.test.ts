@@ -29,21 +29,21 @@ describe("input area", () => {
     const plain = draw(f);
     setUserFill(BG);
     const s = draw(f);
-    expect(s.screen().slice(0, 2)).toEqual(["> hi", "s"]);
+    expect(s.screen().slice(0, 4)).toEqual(["┌──────────────────┐", "│> hi              │", "└──────────────────┘", "s"]);
     expect(marks(s).slice(0, 2)).toEqual([full(20), full(20)]);
     expect([s.row, s.col]).toEqual([plain.row, plain.col]);
-    expect([s.row, s.col]).toEqual([0, 4]);
+    expect([s.row, s.col]).toEqual([1, 5]);
   });
 
   test("a wrapped multi-row input: every row filled, the cursor on its row and column", () => {
     setUserFill(BG);
     const text = "0123456789abcdefghij\nsecond";
     const s = draw(frame({ input: { prompt: "> ", text, cursor: 12 } }));
-    expect(s.screen().slice(0, 4)).toEqual(["> 0123456789abcdefgh", "  ij", "  second", "s"]);
+    expect(s.screen().slice(0, 6)).toEqual(["┌──────────────────┐", "│> 0123456789abcdef│", "│  ghij            │", "│  second          │", "└──────────────────┘", "s"]);
     expect(marks(s).slice(0, 4)).toEqual(Array(4).fill(full(20)));
-    expect([s.row, s.col]).toEqual([0, 14]); // after "> 0123456789ab"
+    expect([s.row, s.col]).toEqual([1, 15]); // after "> 0123456789ab"
     const end = draw(frame({ input: { prompt: "> ", text, cursor: text.length } }));
-    expect([end.row, end.col]).toEqual([2, 8]);
+    expect([end.row, end.col]).toEqual([3, 9]);
   });
 
   test("input and status remain filled on a short screen", () => {
@@ -57,8 +57,7 @@ describe("input area", () => {
   test("CJK input pads by display width", () => {
     setUserFill(BG);
     const s = draw(frame({ cols: 9, input: { prompt: "> ", text: "你好世界", cursor: 4 } }));
-    expect(s.screen()[0]).toBe("> 你好世");
-    expect(s.screen()[1]).toBe("  界");
+    expect(s.screen().slice(0, 4)).toEqual(["┌───────┐", "│> 你好 │", "│  世界 │", "└───────┘"]);
     expect(marks(s).slice(0, 3)).toEqual(Array(3).fill(full(9)));
   });
 
@@ -69,13 +68,13 @@ describe("input area", () => {
     expect(marks(s).slice(0, 3)).toEqual(Array(3).fill(full(4)));
   });
 
-  test("NO_COLOR: no background, no padding, the prompt as before", () => {
+  test("NO_COLOR: no background, box and prompt remain legible", () => {
     setUserFill(pickFill({ NO_COLOR: "1" }));
     expect(userFill()).toBeNull();
     const s = draw(frame());
-    expect(s.screen().slice(0, 2)).toEqual(["> hi", "s"]);
+    expect(s.screen().slice(0, 4)).toEqual(["┌──────────────────┐", "│> hi              │", "└──────────────────┘", "s"]);
     expect(marks(s).every((r) => !r.includes("#"))).toBe(true);
-    expect(liveRows(frame()).cursor).toBe(0);
+    expect(liveRows(frame()).cursor).toBe(1);
   });
 });
 

@@ -5,7 +5,7 @@ import { Calls } from "./tools";
 import { MarkdownStream } from "./mdstream";
 import { historyRows, type Line } from "./lines";
 import { restore, earlier } from "./restore";
-import { commit, fit, headerRow, live, liveRows, type Frame } from "./render";
+import { commit, fit, live, liveRows, type Frame } from "./render";
 import { FakeScreen } from "./testing";
 
 const assistant = (text: string, id: string): Entry => ({ type: "message", uuid: id, parentUuid: null, ts: "", message: { role: "assistant", content: [{ type: "text", text }] } });
@@ -62,13 +62,13 @@ test("pending unfinished fenced text preserves interior blanks before and after 
   expect(rendered.join("\n")).toContain("│ first\n│ \n│ second");
 });
 
-test("one-column fit, header, status and modal never overflow and erase returns to the live-region start", () => {
+test("one-column fit, status and modal never overflow and erase returns to the live-region start", () => {
   expect(fit("abc", 1)).toBe("…");
   expect(fit("界", 1)).toBe("…");
   expect(fit("x", 0)).toBe("");
   const f: Frame = { cols: 1, rows: 5, status: "status", input: { prompt: "> ", text: "界", cursor: 1 }, menu: { title: "models", items: ["one"], index: 0 } };
   const s = new FakeScreen(1, 8);
-  s.write(commit([headerRow("界 directory", 1)], 1));
+  s.write(commit([fit("界 directory", 1)], 1));
   const first = live(f);
   s.write(first.text);
   expect(liveRows(f).rows.every((r) => Bun.stringWidth(r) <= 1)).toBe(true);

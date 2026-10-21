@@ -1,4 +1,4 @@
-// The shimmer on what is running (a tool call's line, the status line's
+// The shimmer on what is running (a tool call's line, the conversation tail's
 // "thinking…"), like Claude Code and Codex: a soft highlight band sweeps left
 // to right across the text, once every SHIMMER_MS. Pure in `now`, so frames
 // are deterministic under an injected clock. With truecolor and a known

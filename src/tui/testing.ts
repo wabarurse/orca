@@ -9,6 +9,8 @@
 // would fill the erased cells with it), and answers an OSC 11 background query
 // with `background` when that is set (the reply goes to `replies`).
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 type Csi = (s: FakeScreen, n: number[]) => void;
 
 const arg = (n: number[], i = 0, def = 1) => n[i] || def;
@@ -137,7 +139,14 @@ export class FakeScreen {
     if (ch === "\r") this.moveTo(this.row, 0);
     else if (ch === "\n") this.lineFeed();
     else if (/[\x00-\x1f\x7f-\x9f]/.test(ch)) throw new Error(`unmodelled control ${JSON.stringify(ch)}`);
-    else this.put(ch);
+    else {
+      // Treat complete printable runs as graphemes, like the renderer: combining
+      // marks and ZWJ emoji must not add phantom rows and break erase assertions.
+      const end = s.slice(i).search(/[\x00-\x1f\x7f-\x9f]/);
+      const text = end < 0 ? s.slice(i) : s.slice(i, i + end);
+      for (const { segment } of graphemes.segment(text)) this.put(segment);
+      return i + text.length;
+    }
     return i + ch.length;
   }
 

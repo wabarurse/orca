@@ -18,17 +18,23 @@ blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that
 repository: an `orch-xxxx` project cloned from its origin (reused next time you
 start there). With no project named it also reopens every project under
-`~/.parallels/projects`. The shaded, pinned header shows the project, cached model,
-effort, fast mode, directory and remote, and refreshes when settings change.
+`~/.parallels/projects`. The ruled, pinned header shows bracketed project/display names (the active one
+marked `>`), cached model, effort, fast mode, directory and remote, and refreshes
+when settings change.
 Short terminals collapse header details to keep the input usable.
-The bottom band puts the input first, then running worker/reviewer counts,
-queued messages and `N questions · Ctrl+Q to view`; every menu and question
-panel opens below the input. A running turn's "thinking…/working…" shimmers. Like Codex, the input and your own messages sit on a
+The bottom band puts the boxed input first, then grouped running worker/reviewer,
+queued-message and question counts; these stack on narrow screens. Every menu
+and question panel opens below the input and retains its own key hints. There
+is no persistent shortcut row; Ctrl+B, Ctrl+Q and the other keys still work.
+A running turn's "thinking…/working…" shimmers at the selected conversation's
+current tail, not in the pinned footer. Scrolling back hides that activity with
+the tail; it never enters history. Like Codex, the input and your own messages sit on a
 subtle background the full width of the terminal, shaded from your terminal's
 own background colour (asked once at start; a neutral grey when the terminal
 does not say; none with `NO_COLOR`). Tool calls show like Claude Code's: while
-one runs, a shimmering `⏺ Bash(git status)` line sits above the input; when it
-ends that line goes into the scrollback with one summary line under it
+one runs, a shimmering `⏺ Bash(git status)` line sits at the conversation tail
+instead of a separate working indicator; when it ends, that line goes into the
+conversation history with one summary line under it
 (`⎿  12 lines`, `exit 2: <first error line>`, `sent to orchestrator`,
 `spawned worker-feat`), its marker red when it failed. A call whose run stops
 without a result is red with an `interrupted` summary. Truncated bash output
