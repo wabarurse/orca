@@ -13,6 +13,14 @@ describe("rolePrompt", () => {
     expect(rolePrompt("worker", config)).not.toMatch(/\{\w+\}/);
     expect(rolePrompt("orchestrator", config)).toContain("Do not spawn, push, or change anything until the user says to execute or dispatch");
   });
+  test("reports to the orchestrator are full; only the user gets the concise version", () => {
+    const orch = rolePrompt("orchestrator", defaults);
+    expect(orch).toContain("Be direct and concise with the user");
+    expect(orch).toContain(`ask for full reports, never "short" ones`);
+    expect(rolePrompt("worker", defaults)).toContain("no length limit");
+    expect(rolePrompt("worker", defaults)).toContain("commit hashes");
+    expect(rolePrompt("reviewer", defaults)).toContain("each with file/line and the reason");
+  });
   test("0 rounds skips review and goes straight to watch ci", () => {
     const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 });
     expect(p).toContain(`spawn the reviewer with only the instruction "watch ci"`);
