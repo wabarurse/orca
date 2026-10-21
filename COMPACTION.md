@@ -1,6 +1,6 @@
 # Conversation compaction
 
-The flow is **one summary of older history + recent complete turns**. Each
+The flow is **one summary of older history + recent complete turns or tool batches**. Each
 compaction makes one model request. If the source is too large, shorten old tool
 results first, then keep the beginning and end of the source with explicit omission
 markers. There are no rolling summaries or multipart inference loops.
@@ -76,10 +76,14 @@ preserves the published transcript and head.
 
 ## Summary and scheduling
 
-The newest complete user-led turns are retained within min(8000, 15% of window).
-A tool-result message is never a boundary; signed thinking, tool calls and results
-stay together. Role/order grammar and unique call/result IDs are validated before
-committing. If even the newest turn cannot fit, refuse rather than split it.
+Prefer complete user-led turns within min(8000, 15% of window). If one long task
+has no user-turn boundary that fits, cut after a completed tool batch and retain
+the newest whole batches that fit. A single oversized completed batch can be
+summarized in full, leaving only the checkpoint and original task. Never cut
+between tool calls and their results; signed thinking stays with its assistant
+message. Role/order grammar and unique call/result IDs are validated before
+choosing a boundary or making a summary request. Pending or malformed batches
+cannot be compacted, and compaction never re-executes tools.
 
 The older prefix (including prior checkpoints) is serialized as untrusted JSON
 data, stripping signed/redacted reasoning. The prompt requests goal/requirements,
