@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { inputArea, render, visibleLength, wrap, type Frame } from "./render";
+import { expandTabs, inputArea, render, visibleLength, wrap, type Frame } from "./render";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 const rows = (s: string) => s.split("\x1b[2K").slice(1).map((r) => strip(r).replace(/^.*?H/, ""));
@@ -24,6 +24,27 @@ describe("wrap widths", () => {
     expect(wrap("你好世界ab", 6).map(strip)).toEqual(["你好世", "界ab"]);
     expect(wrap("ab😀c", 3).map(strip)).toEqual(["ab", "😀c"]);
     expect(visibleLength("\x1b[2m你\x1b[0m")).toBe(2);
+  });
+});
+
+describe("tabs and escapes", () => {
+  test("tabs expand to the next 8-column stop before wrapping", () => {
+    expect(expandTabs("a\tb")).toBe("a       b");
+    expect(expandTabs("\x1b[2mab\x1b[0m\tc")).toBe("\x1b[2mab\x1b[0m      c");
+    expect(expandTabs("你\tx")).toBe("你      x");
+    expect(wrap("a\tbcdefghij", 10).map(strip)).toEqual(["a       bc", "defghij"]);
+  });
+
+  test("scrollback lines with tabs wrap instead of overflowing", () => {
+    const r = rows(render(frame({ cols: 10, lines: ["\tabcdef"] })));
+    expect(r.slice(4, 6)).toEqual(["        ab", "cdef"]);
+  });
+
+  test("wrap skips colon CSI params and OSC hyperlinks like stringWidth does", () => {
+    const link = "\x1b]8;;https://x.y\x07abcdef\x1b]8;;\x07";
+    expect(wrap(link, 4).map(visibleLength)).toEqual([4, 2]);
+    expect(wrap("\x1b]8;;u\x1b\\abcdef", 4).map(visibleLength)).toEqual([4, 2]);
+    expect(wrap("\x1b[38:2::1:2:3mabcdef", 4).map(visibleLength)).toEqual([4, 2]);
   });
 });
 
@@ -88,6 +109,17 @@ describe("render", () => {
     const start = render(frame({ rows: 9, input: { prompt: "> ", text, cursor: 0 } }));
     expect(rows(start).slice(6)).toEqual(["> 1", "  2", "  3"]);
     expect(start.endsWith("\x1b[7;3H\x1b[?25h")).toBe(true);
+  });
+
+  test("a status line sits between the body and a multi-row input", () => {
+    const text = "1\n2\n3\n4\n5";
+    const out = render(frame({ rows: 9, status: "⠋ thinking… 3s", input: { prompt: "> ", text, cursor: text.length } }));
+    const r = rows(out);
+    expect(r.length).toBe(9);
+    expect(r.slice(2, 5)).toEqual(["a", "b", "c"]);
+    expect(r[5]).toBe("⠋ thinking… 3s");
+    expect(r.slice(6)).toEqual(["  3", "  4", "  5"]);
+    expect(out.endsWith("\x1b[9;4H\x1b[?25h")).toBe(true);
   });
 
   test("the input window keeps its top until the cursor leaves it", () => {

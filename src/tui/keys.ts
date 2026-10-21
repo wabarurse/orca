@@ -57,42 +57,131 @@ function fromCsi(params: string, final: string): Key | null {
 
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
-/** An unfinished paste is parsed anyway past this size. */
-const MAX_PENDING = 1 << 20;
-/** A read that stops inside an escape sequence: CSI parameters with no final byte yet (covers a split PASTE_START). */
-const PARTIAL_CSI = /\x1b?\x1b\[[0-9;:?<>]*$/;
+/** An unfinished paste is handed on in pieces of at most this size. */
+const MAX_PASTE = 1 << 20;
+/** A read that stops inside an escape sequence: CSI parameters with no final byte yet (covers a split PASTE_START), or SS3 with no key. */
+const PARTIAL_ESC = /(?:\x1b?\x1b\[[0-9;:?<>]*|\x1bO)$/;
 
 /** Pasted text with line endings as \n and other control characters dropped (tabs become spaces). */
 function cleanPaste(text: string): string {
   return text.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "");
 }
 
-/** Where to cut a chunk so the tail can wait for the next read: an unfinished paste (unless Ctrl+C is in it) or escape sequence. */
-function holdFrom(input: string): number {
-  const at = input.lastIndexOf(PASTE_START);
-  if (at !== -1 && input.indexOf(PASTE_END, at) === -1) return input.indexOf("\x03", at) === -1 ? at : -1;
-  return input.search(PARTIAL_CSI);
+/** How much of `s`'s tail could be the start of `marker`. */
+function partialSuffix(s: string, marker: string): number {
+  for (let n = Math.min(s.length, marker.length - 1); n > 0; n--) if (marker.startsWith(s.slice(-n))) return n;
+  return 0;
 }
 
-/** Split input at an unfinished bracketed paste or escape sequence: parse `keys` now, keep `rest` for the next read. */
-export function takeKeys(input: string): { keys: Key[]; rest: string } {
-  const at = holdFrom(input);
-  if (at === -1 || input.length - at > MAX_PENDING) return { keys: parseKeys(input), rest: "" };
-  return { keys: parseKeys(input.slice(0, at)), rest: input.slice(at) };
+/** Schedule `fn` after `ms`; returns a cancel. */
+export type SetTimer = (fn: () => void, ms: number) => () => void;
+const realTimer: SetTimer = (fn, ms) => {
+  const t = setTimeout(fn, ms);
+  t.unref?.(); // a pending flush never keeps the process alive
+  return () => clearTimeout(t);
+};
+
+export interface KeyReader {
+  /** Feed one raw read. */
+  feed(chunk: string): void;
+  /** Stop the idle timer and drop anything held. */
+  close(): void;
 }
 
-/** Feed raw reads in, get keys out. A held tail is flushed as-is (a paste stays a paste) after `idleMs` without input. */
-export function keyReader(emit: (k: Key) => void, idleMs = 300): (chunk: string) => void {
-  let pending = "";
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const flush = () => { const p = pending; pending = ""; for (const k of parseKeys(p)) emit(k); };
-  return (chunk) => {
-    clearTimeout(timer);
-    const { keys, rest } = takeKeys(pending + chunk);
-    pending = rest;
-    for (const k of keys) emit(k);
-    if (pending) timer = setTimeout(flush, idleMs);
-  };
+/**
+ * Turn raw reads into keys. A read may stop inside an escape sequence; that tail
+ * waits for the next read, or `idleMs` without input, then is parsed as it is.
+ * Between the paste markers everything is paste text, however the reads are cut
+ * and however long the gaps: what has arrived is handed on as a paste key after
+ * the idle timeout and the rest follows as more paste keys. Ctrl+C still ends a
+ * paste, so a terminal that never sends the end marker cannot trap the user.
+ */
+export function keyReader(emit: (k: Key) => void, idleMs = 300, setTimer: SetTimer = realTimer): KeyReader {
+  const r = new Reader(emit, idleMs, setTimer);
+  return { feed: (chunk) => r.feed(chunk), close: () => r.close() };
+}
+
+class Reader {
+  private held = ""; // an unfinished escape sequence, or (in a paste) a partial end marker
+  private inPaste = false;
+  private paste = "";
+  private cancel: (() => void) | null = null;
+
+  constructor(private readonly emit: (k: Key) => void, private readonly idleMs: number, private readonly setTimer: SetTimer) {}
+
+  feed(chunk: string): void {
+    this.stopTimer();
+    let data: string | null = this.held + chunk;
+    this.held = "";
+    while (data) data = this.inPaste ? this.pasteStep(data) : this.keysStep(data);
+    if (this.held || this.paste) this.cancel = this.setTimer(() => this.idle(), this.idleMs);
+  }
+
+  close(): void {
+    this.stopTimer();
+    this.held = this.paste = "";
+    this.inPaste = false;
+  }
+
+  private stopTimer(): void {
+    this.cancel?.();
+    this.cancel = null;
+  }
+
+  private keys(text: string): void {
+    for (const k of parseKeys(text)) this.emit(k);
+  }
+
+  /** Hand on the paste text so far; a trailing \r may be half of \r\n, so `keepCr` keeps it for the next piece. */
+  private emitPaste(keepCr: boolean): void {
+    const cut = keepCr && this.paste.endsWith("\r") ? this.paste.length - 1 : this.paste.length;
+    if (cut > 0) this.emit({ name: "paste", text: cleanPaste(this.paste.slice(0, cut)) });
+    this.paste = this.paste.slice(cut);
+  }
+
+  /** End the paste after `data[0, at)`; returns what follows it. */
+  private endPaste(data: string, at: number, skip: number): string {
+    this.paste += data.slice(0, at);
+    this.emitPaste(false);
+    this.inPaste = false;
+    return data.slice(at + skip);
+  }
+
+  /** Inside a paste: text up to the end marker or a Ctrl+C (left to be parsed); null when all of `data` was paste text. */
+  private pasteStep(data: string): string | null {
+    const end = data.indexOf(PASTE_END);
+    const ctrlC = data.indexOf("\x03");
+    if (ctrlC !== -1 && (end === -1 || ctrlC < end)) return this.endPaste(data, ctrlC, 0);
+    if (end !== -1) return this.endPaste(data, end, PASTE_END.length);
+    const keep = partialSuffix(data, PASTE_END);
+    this.paste += data.slice(0, data.length - keep);
+    this.held = data.slice(data.length - keep);
+    if (this.paste.length > MAX_PASTE) this.emitPaste(true);
+    return null;
+  }
+
+  /** Outside a paste: keys up to a paste start (returns what follows it) or an unfinished escape (held; returns null). */
+  private keysStep(data: string): string | null {
+    const start = data.indexOf(PASTE_START);
+    if (start !== -1) {
+      this.keys(data.slice(0, start));
+      this.inPaste = true;
+      return data.slice(start + PASTE_START.length);
+    }
+    const cut = data.search(PARTIAL_ESC);
+    const at = cut === -1 ? data.length : cut;
+    this.keys(data.slice(0, at));
+    this.held = data.slice(at);
+    return null;
+  }
+
+  private idle(): void {
+    this.cancel = null;
+    if (this.inPaste) return this.emitPaste(true);
+    const tail = this.held;
+    this.held = "";
+    this.keys(tail);
+  }
 }
 
 type Step = [key: Key | null, next: number];

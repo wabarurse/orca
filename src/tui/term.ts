@@ -23,7 +23,8 @@ export function realTerminal(stdin = process.stdin, stdout = process.stdout): Te
   if (!stdin.isTTY || !stdout.isTTY) throw new Error("parallels start needs a terminal; run it from an interactive shell");
   let opened = false;
   const keyHandlers: ((k: Key) => void)[] = [];
-  const onData = keyReader((key) => { for (const h of keyHandlers) h(key); });
+  const reader = keyReader((key) => { for (const h of keyHandlers) h(key); });
+  const onData = (chunk: string) => reader.feed(chunk);
   return {
     get cols() { return stdout.columns || 80; },
     get rows() { return stdout.rows || 24; },
@@ -44,6 +45,7 @@ export function realTerminal(stdin = process.stdin, stdout = process.stdout): Te
       opened = false;
       stdout.write(LEAVE);
       stdin.off("data", onData);
+      reader.close();
       stdin.setRawMode(false);
       stdin.pause();
     },

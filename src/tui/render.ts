@@ -42,9 +42,39 @@ export interface Frame {
   inputArea?: InputArea;
 }
 
-const ANSI = /^\x1b\[[0-9;?<>]*[A-Za-z]/;
-/** Display columns, ignoring escape codes; CJK and emoji count two. */
+/** Escape codes that take no columns, as Bun.stringWidth skips them: CSI (with ':' params, as in 38:2:r:g:b) and OSC (hyperlinks, titles). */
+const ESCAPE = /^(?:\x1b\[[0-9;:?<>]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
+/** Display columns, ignoring escape codes; CJK and emoji count two. Expand tabs first. */
 export const visibleLength = (s: string) => Bun.stringWidth(s);
+
+/** A styled line as escape codes and the text between them. */
+function* tokens(line: string): Generator<{ esc: string } | { text: string }> {
+  let i = 0;
+  while (i < line.length) {
+    const m = line[i] === "\x1b" ? ESCAPE.exec(line.slice(i)) : null;
+    if (m) { yield { esc: m[0] }; i += m[0].length; continue; }
+    let j = line.indexOf("\x1b", i + 1);
+    if (j === -1) j = line.length;
+    yield { text: line.slice(i, j) };
+    i = j;
+  }
+}
+
+/** Replace tabs with spaces up to the next 8-column stop (stringWidth counts a tab as nothing). */
+export function expandTabs(line: string): string {
+  if (!line.includes("\t")) return line;
+  let out = "";
+  let col = 0;
+  for (const t of tokens(line)) {
+    if ("esc" in t) { out += t.esc; continue; }
+    t.text.split("\t").forEach((part, n) => {
+      if (n > 0) { const pad = 8 - (col % 8); out += " ".repeat(pad); col += pad; }
+      out += part;
+      col += Bun.stringWidth(part);
+    });
+  }
+  return out;
+}
 
 /** Split a styled line into pieces at most `cols` display columns wide (one wider character may overflow a tiny width). */
 export function wrap(line: string, cols: number): string[] {
@@ -52,25 +82,21 @@ export function wrap(line: string, cols: number): string[] {
   const out: string[] = [];
   let piece = "";
   let width = 0;
-  let i = 0;
-  while (i < line.length) {
-    const m = line[i] === "\x1b" ? line.slice(i).match(ANSI) : null;
-    if (m) { piece += m[0]; i += m[0].length; continue; }
-    let j = line.indexOf("\x1b", i + 1);
-    if (j === -1) j = line.length;
-    for (const c of cells(line, i, j)) {
+  for (const t of tokens(expandTabs(line))) {
+    if ("esc" in t) { piece += t.esc; continue; }
+    for (const c of cells(t.text)) {
       if (width > 0 && width + c.width > cols) { out.push(piece + "\x1b[0m"); piece = ""; width = 0; }
       piece += c.text;
       width += c.width;
     }
-    i = j;
   }
   out.push(piece);
   return out;
 }
 
 /** One row: cut with an ellipsis rather than wrapped. */
-function fit(line: string, cols: number): string {
+function fit(raw: string, cols: number): string {
+  const line = expandTabs(raw);
   if (visibleLength(line) <= cols) return line;
   return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…";
 }

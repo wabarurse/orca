@@ -89,6 +89,9 @@ const EDITS: Record<string, (s: ed.EditState) => ed.EditState> = {
   "C-u": ed.killToStart, "C-k": ed.killToEnd, "C-w": ed.rubout,
 };
 
+/** The text a key types (a printable run or a paste), if any. */
+const typedText = (k: Key): string | undefined => ((k.name === "char" || k.name === "paste") && !k.ctrl && !k.alt ? k.text : undefined);
+
 export class App {
   pages: Page[] = [];
   active = 0;
@@ -492,7 +495,8 @@ export class App {
 
   /** Editing on the input area; the logic lives in editor.ts. */
   private edit(k: Key): void {
-    if ((k.name === "char" || k.name === "paste") && k.text && !k.ctrl && !k.alt) { this.input = ed.insert(this.input, k.text); return; }
+    const text = typedText(k);
+    if (text) { this.input = ed.insert(this.input, text); return; }
     if (k.name === "up" || k.name === "down") return this.upDown(k.name === "up" ? -1 : 1);
     const action = EDITS[`${k.ctrl ? "C-" : ""}${k.alt ? "M-" : ""}${k.name}`];
     if (action) this.input = action(this.input);
