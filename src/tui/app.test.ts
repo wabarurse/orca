@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
-import { App } from "./app";
+import { App, type Clock } from "./app";
 import { parseKeys, type Key } from "./keys";
 import type { Terminal } from "./term";
 
@@ -266,5 +266,72 @@ describe("tui app", () => {
     expect(app.input.text).toBe("first");
     app.quit();
     await running;
+  });
+
+  test("a busy page shows a spinner status line driven by an injected clock; agent views show it while live", async () => {
+    let now = 0;
+    const ticks: (() => void)[] = [];
+    let started = 0, stopped = 0;
+    const clock: Clock = {
+      now: () => now,
+      every: (fn) => { started++; ticks.push(fn); return () => { stopped++; ticks.splice(ticks.indexOf(fn), 1); }; },
+    };
+    let finish!: () => void;
+    let write!: (t: string) => void;
+    let live = true;
+    const openOrchestrator = async (_p: string, _u: string | undefined, w: (t: string) => void): Promise<Orchestrator> => {
+      write = w;
+      return {
+        async say() {},
+        async pending() { return false; },
+        turn: () => new Promise((r) => (finish = () => r([]))),
+      };
+    };
+    const term = fakeTerm();
+    const app = new App({ term, openOrchestrator, pollMs: 100_000, clock, agentLive: async () => live });
+    const running = app.run("alpha");
+    await settle();
+    expect(started).toBe(0); // idle: no timer
+    term.type("go\r");
+    await settle();
+    expect(started).toBe(1);
+    expect(term.screen()).toContain("⠋ thinking… 0s");
+    expect(term.screen()).toContain(" alpha ⠋ ");
+    now = 2_150;
+    ticks[0]!();
+    await settle();
+    expect(term.screen()).toContain("⠙ thinking… 2s");
+    write("partial text");
+    await settle();
+    expect(term.screen()).toContain("working… 2s");
+    finish();
+    await settle();
+    expect(stopped).toBe(1);
+    expect(ticks.length).toBe(0);
+    expect(term.screen()).not.toContain("working…");
+
+    // Viewing a live agent shows the line until it finishes.
+    const page = app.page!;
+    const attached = app.attach(page, "worker-x", true);
+    await settle();
+    expect(started).toBe(2);
+    expect(term.screen()).toContain("working… 0s");
+    live = false;
+    now = 5_000;
+    ticks[0]!();
+    await settle();
+    expect(term.screen()).not.toContain("working…");
+    expect(ticks.length).toBe(0);
+    page.view!.leave();
+    await attached;
+
+    // Quitting mid-turn clears the timer.
+    term.type("again\r");
+    await settle();
+    expect(ticks.length).toBe(1);
+    app.quit();
+    await running;
+    expect(ticks.length).toBe(0);
+    finish();
   });
 });
