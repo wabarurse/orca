@@ -40,7 +40,8 @@ reprinting the page you switch to (`/keys` shows what your terminal sends for an
 Pressing Enter puts a chat message in the orchestrator's inbox; it appears in
 the conversation only when the orchestrator consumes it, between tool batches
 or responses. Until then the bottom band counts it as queued. This never
-interrupts a running tool. Logical conversation blocks have a neutral blank
+interrupts a running tool. Assistant message identity is retained across streamed paragraph/quote/list
+source lines and transcript entries. Logical conversation blocks have a neutral blank
 row between them, not between a tool's label and result or wrapped rows.
 
 Questions never open automatically or take your draft. Ctrl+Q or `/questions`
@@ -53,7 +54,8 @@ your chat draft. The answer draft is retained for reopening. Only selecting
 When the queue is empty the panel closes; a later question needs explicit
 opening again. A half-second guard after opening prevents accidental answers.
 Menus take precedence over questions; Ctrl+Q does nothing while a menu/project
-list is open. In `/agents` only the question count shows. Each answer leaves a
+list is open. On a one-row terminal the input takes the whole live region: a modal panel
+can be hidden while still owning keys; Esc closes it. In `/agents` only the question count shows. Each answer leaves a
 dim `? question → answer` line; background projects' question counts are shown too.
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
