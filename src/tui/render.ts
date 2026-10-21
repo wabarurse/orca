@@ -279,7 +279,7 @@ function overlayRows(f: Frame, height: number): string[] {
   return f.question ? questionRows(f.question, f.cols, height) : [];
 }
 
-/** Inline header: committed once with the page, never pinned or redrawn with the composer. */
+/** Shaded project-header row, clipped to the terminal width. */
 export function headerRow(text: string, cols: number): string {
   const row = fit(sanitize(text), cols);
   const fill = chromeFill();

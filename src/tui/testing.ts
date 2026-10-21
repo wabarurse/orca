@@ -78,7 +78,7 @@ function sgrStyle(params: string, style: CellStyle): CellStyle {
 }
 
 /** DEC private modes it models: cursor visibility, bracketed paste, synchronized output. */
-const MODES = new Set([25, 2004, 2026]);
+const MODES = new Set([25, 1000, 1006, 1049, 2004, 2026]);
 
 export class FakeScreen {
   /** Every row, scrollback first; a row is cells, "" marking the right half of a wide character. */
@@ -89,6 +89,7 @@ export class FakeScreen {
   private bg = "";
   private style: CellStyle = { ...DEFAULT_STYLE };
   private styles = new WeakMap<string[], CellStyle[]>();
+  private primary?: { buf: string[][]; bgs: string[][]; row: number; col: number };
   /** What it answers an OSC 11 query with (e.g. "rgb:0000/0000/0000"); unset, it stays silent like a terminal without it. */
   background?: string;
   /** OSC 11 queries seen, and the replies they got (the terminal's input, for the test to feed back). */
@@ -160,7 +161,23 @@ export class FakeScreen {
 
   private mode(n: number, on: boolean): void {
     if (!MODES.has(n)) throw new Error(`unmodelled mode ?${n}`);
+    if (n === 1049) this.alternate(on);
     this.modes.set(n, on);
+  }
+
+  private alternate(on: boolean): void {
+    if (on && !this.primary) {
+      this.primary = { buf: this.buf, bgs: this.bgs, row: this.row, col: this.col };
+      this.buf = []; this.bgs = [];
+      for (let i = 0; i < this.rows; i++) this.pushRow();
+      this.moveTo(0, 0);
+    } else if (!on && this.primary) {
+      const saved = this.primary;
+      this.buf = saved.buf; this.bgs = saved.bgs;
+      while (this.buf.length < this.rows) this.pushRow();
+      this.primary = undefined;
+      this.moveTo(saved.row, saved.col);
+    }
   }
 
   /** An OSC 11 query: answered with `background` when set, else ignored like a terminal without it. */

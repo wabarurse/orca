@@ -52,6 +52,11 @@ function fromTilde(nums: number[]): Key | null {
 }
 
 function fromCsi(params: string, final: string): Key | null {
+  if (params.startsWith("<") && (final === "M" || final === "m")) {
+    const button = Number(params.slice(1).split(";")[0]);
+    if (final !== "M" || !(button & 64)) return null;
+    return { name: button & 1 ? "wheeldown" : "wheelup" };
+  }
   const nums = params.split(";").map((p) => (p === "" ? NaN : Number(p)));
   if (final === "u") return fromKitty(nums);
   if (final === "~") return fromTilde(nums);
