@@ -1,11 +1,11 @@
-import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
-import { App, helpLines, parseCommand, type Clock, type Line } from "./app";
+import { App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
 import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
@@ -18,7 +18,9 @@ import { open as openTranscript } from "../transcript";
 import { parseKeys, type Key } from "./keys";
 import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
-import { bold, dim } from "./render";
+import { bold, dim, live as renderLive } from "./render";
+import { setUserFill } from "./style";
+import { Calls } from "./tools";
 
 const home = mkdtempSync(join(tmpdir(), "parallels-tui-"));
 process.env.PARALLELS_HOME = home;
@@ -27,10 +29,13 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 /** Anything the fake screen refused (an escape or control a real terminal would misread); checked after every test. */
 const screenErrors: string[] = [];
 afterEach(() => { expect(screenErrors).toEqual([]); screenErrors.length = 0; });
+/** The user background on, whatever the environment says, so every test draws it (and pads the input). */
+const USER_BG = "\x1b[48;5;236m";
+beforeEach(() => setUserFill(USER_BG));
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 /** A history line's text: plain lines as they are, markdown as written. */
-const raw = (l: Line) => (typeof l === "string" ? l : l.md);
+const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : l.md);
 
 /** A fake terminal: records every raw write and applies it to a FakeScreen, so `screen()` is the scrollback plus the screen. */
 function fakeTerm(cols = 40, rows = 8) {
@@ -62,16 +67,19 @@ function fakeOrchestrators() {
   const opened: { project: string; url?: string }[] = [];
   const said: Record<string, string[]> = {};
   const writers: Record<string, (t: string) => void> = {};
-  const openOrchestrator = async (project: string, url: string | undefined, write: (t: string) => void): Promise<Orchestrator> => {
+  const openOrchestrator = async (project: string, url: string | undefined, write: (t: string) => void, onInbox?: (msgs: Message[]) => void): Promise<Orchestrator> => {
     opened.push({ project, url });
     said[project] = [];
     writers[project] = write;
     let queued = 0;
+    let consumed = 0;
     return {
       async say(text) { said[project]!.push(text); queued++; },
       async pending() { return queued > 0; },
       async turn() {
         queued = 0;
+        onInbox?.(said[project]!.slice(consumed).map((text) => ({ from: "user", text, ts: "" })));
+        consumed = said[project]!.length;
         write(`${project} says hi\n`);
         return [{ from: "worker-x", text: "done", ts: "t" }];
       },
@@ -81,6 +89,8 @@ function fakeOrchestrators() {
 }
 
 const settle = () => Bun.sleep(15);
+/** A real terminal's clock whose background-reply window ends at once, as for a terminal that never answers (term.test.ts covers the window). */
+const NO_REPLY_WINDOW = { now: Date.now, setTimer: (fn: () => void) => { fn(); return () => {}; } };
 /** Wait until `cond` holds, up to two seconds. */
 async function until(cond: () => boolean): Promise<void> {
   const deadline = Date.now() + 2000;
@@ -186,7 +196,7 @@ describe("tui app", () => {
     await until(() => !!app.page);
     const page = app.page!;
     let left = 0;
-    const view = { name: "worker-x", lines: [] as string[], leave: () => { left++; }, live: false };
+    const view = { name: "worker-x", lines: [] as string[], leave: () => { left++; }, live: false, calls: new Calls() };
     page.view = view;
     term.type("/help\r");
     await until(() => view.lines.join("\n").includes("/back (or Esc) leaves the agent view"));
@@ -256,7 +266,7 @@ describe("tui app", () => {
     const running = app.run("rounds");
     await until(() => !!app.page);
     const page = app.page!;
-    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false };
+    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false, calls: new Calls() };
     page.view = view;
     term.type("/review-rounds 3\r");
     await until(() => view.lines.join("\n").includes("review rounds set to 3"));
@@ -493,7 +503,7 @@ describe("tui app", () => {
         turn: () => new Promise((r) => (finish = () => r([]))),
       };
     };
-    const term = fakeTerm();
+    const term = fakeTerm(100);
     let writesAfterClose = 0;
     const termWrite = term.write;
     term.write = (s) => { if (term.closed) writesAfterClose++; termWrite(s); };
@@ -503,7 +513,7 @@ describe("tui app", () => {
     expect(started).toBe(0); // idle: no timer
     term.type("go\r");
     await until(() => started === 1 && term.screen().includes("⠋ thinking… 0s"));
-    expect(term.screen()).toContain("⠋ thinking… 0s · alpha · no remote · 1 …") // cut to the width;
+    expect(term.screen()).toContain("⠋ thinking… 0s · alpha") // cut to the width;
     now = 2_150;
     ticks[0]!();
     await until(() => term.screen().includes("⠙ thinking… 2s"));
@@ -715,12 +725,14 @@ describe("tui app", () => {
     term.type("\x1b[200~line one\nline two\x1b[201~\r");
     await until(() => term.screen().includes("queued; runs after sign-in"));
     const lines = app.page!.lines.map(raw).map(strip);
-    expect(lines).toContain("> line one");
-    expect(lines).toContain("  line two");
+    expect(lines).not.toContain("> line one");
+    expect(lines).not.toContain("  line two");
     expect(app.page!.lines.some((l) => raw(l).includes("\n"))).toBe(false);
     finish();
     await until(() => orchs.said.queuer?.length === 1);
     expect(orchs.said.queuer).toEqual(["line one\nline two"]);
+    await until(() => app.page!.sent.length === 0);
+    expect(app.page!.lines.map(raw).map(strip)).toContain("> line one");
     app.quit();
     await running;
   });
@@ -839,11 +851,12 @@ describe("inline screen", () => {
     const running = app.run("alpha");
     await until(() => !!app.page && term.screen().includes(">"));
     term.type("build it");
-    await until(() => term.screen().endsWith("> build it"));
+    await until(() => term.screen().includes("> build it"));
     term.type("\r");
     await until(() => term.screen().includes("worker-x done"));
     const lines = term.screen().split("\n");
-    expect(lines.slice(0, 4)).toEqual(["$ parallels start", "> build it", "alpha says hi", "worker-x done"]);
+    expect(lines[0]).toBe("$ parallels start");
+    expect(lines.slice(4).filter(Boolean).slice(0, 3)).toEqual(["> build it", "alpha says hi", "worker-x done"]);
     expect(lines.filter((l) => l === "> build it").length).toBe(1);
     expect(term.display.clears).toBe(0);
     expect(term.raw()).not.toContain("\x1b[2J");
@@ -873,15 +886,15 @@ describe("inline screen", () => {
 
     term.type("\x1a"); // Ctrl+Z back to alpha
     await until(() => term.display.clears === 2);
-    await until(() => term.screen().startsWith("> one\nalpha says hi\nworker-x done\n"));
+    await until(() => term.screen().includes("> one\n\nalpha says hi\n\nworker-x done\n"));
     expect(term.screen()).not.toContain("beta says hi");
     const before = term.writes.length;
     term.resize(30, 8);
     await until(() => term.display.clears === 3);
     expect(term.writes.slice(before).join("")).toContain(CLEAR);
-    await until(() => term.screen().startsWith("> one\nalpha says hi\n"));
+    await until(() => term.screen().includes("> one\n\nalpha says hi\n"));
     term.type("/close\r");
-    await until(() => term.display.clears === 4 && term.screen().startsWith("> two\nbeta says hi"));
+    await until(() => term.display.clears === 4 && term.screen().includes("> two\n\nbeta says hi"));
     app.quit();
     await running;
   });
@@ -931,14 +944,14 @@ describe("inline screen", () => {
     expect(term.screen()).toContain("viewed › worker-v");
     const { appendFileSync } = await import("node:fs");
     appendFileSync(transcript, entry("worker line two"));
-    await until(() => term.screen().includes("worker line one\nworker line two"));
+    await until(() => term.screen().includes("worker line one\n\nworker line two"));
     // An agent's assistant text is markdown too (as Claude Code shows subagent text); a user prompt stays plain.
     appendFileSync(transcript, entry("**bold** reply\n\n| k | v |\n|---|---|\n| a | b |"));
     appendFileSync(transcript, JSON.stringify({ type: "message", message: { role: "user", content: "**raw** prompt" } }) + "\n");
-    await until(() => term.screen().includes("worker line two\nbold reply\n\n┌───┬───┐\n│ k │ v │"));
+    await until(() => term.screen().includes("worker line two\n\nbold reply\n\n┌───┬───┐\n│ k │ v │"));
     await until(() => term.screen().includes("> **raw** prompt"));
     term.type("/back\r");
-    await until(() => term.display.clears === 2 && term.screen().startsWith("> hello\nviewed says hi\nworker-x done"));
+    await until(() => term.display.clears === 2 && term.screen().includes("> hello\n\nviewed says hi\n\nworker-x done"));
     expect(term.screen()).not.toContain("worker line");
     app.quit();
     await running;
@@ -959,8 +972,8 @@ describe("inline screen", () => {
     await running;
     expect(term.closed).toBe(true);
     // The live region (status, input) goes; what was printed stays, the streamed half line too.
-    expect(term.screen()).toBe("> hi\nalpha says hi\nworker-x done\nhalf a line");
-    expect([term.display.row, term.display.col]).toEqual([4, 0]);
+    expect(term.screen().split("\n").slice(3).join("\n")).toBe("> hi\n\nalpha says hi\n\nworker-x done\nhalf a line");
+    expect(term.display.col).toBe(0);
     expect(term.raw()).not.toContain("1049");
 
     // The real terminal keeps raw mode and bracketed paste, and no alternate screen.
@@ -968,7 +981,7 @@ describe("inline screen", () => {
     const modes: boolean[] = [];
     const stdin = { isTTY: true, setRawMode: (on: boolean) => { modes.push(on); }, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
     const stdout = { isTTY: true, columns: 80, rows: 24, write: (s: string) => { out.push(s); return true; }, on() {} };
-    const real = realTerminal(stdin as never, stdout as never);
+    const real = realTerminal(stdin as never, stdout as never, undefined, NO_REPLY_WINDOW);
     real.open();
     real.close();
     expect(modes).toEqual([true, false]);
@@ -1018,12 +1031,13 @@ describe("frames, resizes, startup and crashes", () => {
     await until(() => term.display.clears === 1);
     const after = term.writes.slice(before).join("");
     expect(after.split("\x1b[3J").length - 1).toBe(1);
-    await until(() => term.screen().endsWith("four"));
+    await until(() => term.screen().includes("  four"));
     const shown = term.display.screen();
     expect(shown.length).toBe(6);
-    expect(shown.at(-1)).toBe("  four");
-    expect(shown.join("\n")).toContain("alpha · no remote");
-    expect(term.display.text().startsWith("> hello\nalpha says hi\nworker-x done\n")).toBe(true);
+    expect(shown).toContain("  four");
+    expect(shown.indexOf("  four")).toBeLessThan(shown.findIndex((r) => r.includes("pick one")));
+    expect(shown.join("\n")).toContain("agents running");
+    expect(term.display.text().includes("> hello\n\nalpha says hi\n\nworker-x done\n")).toBe(true);
     app.quit();
     await running;
   });
@@ -1107,7 +1121,7 @@ describe("frames, resizes, startup and crashes", () => {
     await until(() => term.screen().includes("half"));
     app.say("said \x1b[H\x1b[2Jline\b");
     await until(() => term.screen().includes("said line"));
-    expect(term.screen().split("\n").slice(0, 3)).toEqual(["tool output", "said line", "half"]);
+    expect(term.screen().split("\n").slice(3).filter(Boolean).slice(0, 3)).toEqual(["tool output", "said line", "half"]);
     app.quit();
     await running;
   });
@@ -1127,7 +1141,7 @@ describe("frames, resizes, startup and crashes", () => {
       };
       const stdin = { isTTY: true, setRawMode: (on: boolean) => { modes.push(on); }, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
       const stdout = { isTTY: true, columns: 80, rows: 24, write: (s: string) => { out.push(s); return true; }, on() {} };
-      const term = realTerminal(stdin as never, stdout as never, proc as never);
+      const term = realTerminal(stdin as never, stdout as never, proc as never, NO_REPLY_WINDOW);
       return { term, out, modes, handlers, exits, errs };
     };
     for (const [event, code] of [["SIGTERM", 143], ["SIGHUP", 129], ["uncaughtException", 1], ["exit", null]] as const) {
@@ -1174,7 +1188,7 @@ describe("markdown replies", () => {
     await until(() => term.screen().includes("┌"));
     expect(term.screen()).toContain('▸ bash {"command":"**ls**"}');
     expect(term.screen()).toContain("│ tui-markdown │ Render markdown in the chat area │");
-    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : l.md))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
+    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : "md" in l ? l.md : "user" in l ? l.user : l.tool))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
     app.quit();
     await running;
   });
@@ -1223,10 +1237,10 @@ describe("restored pages", () => {
     const app = new App({ term, openOrchestrator, pollMs: 100_000 });
     const running = app.run("resumed");
     await until(() => term.screen().includes("Worker done."));
-    const restored = ["shell$ parallels start", "> what changed?", "Two things:", "- a", "- b", '▸ bash {"command":"ls"}', "From worker-feat: all done", "Worker done."];
+    const restored = ["shell$ parallels start", "> what changed?", "Two things:", "- a", "- b", "⏺ Bash(ls)", "  ⎿  1 line", "From worker-feat: all done", "Worker done."];
     const rows = term.screen().split("\n");
-    expect(rows.slice(0, restored.length)).toEqual(restored);
-    expect(rows.at(-1)).toBe(">"); // the input, below the history
+    expect([rows[0], ...rows.slice(4).filter(Boolean).slice(0, restored.length - 1)]).toEqual(restored);
+    expect(term.display.buf[term.display.top + term.display.row]!.join("").trimEnd()).toBe(">"); // input before the status
     expect(term.screen()).not.toContain("SECRET-RESULT");
     expect(term.display.clears).toBe(0); // printed under the shell's output, nothing cleared
 
@@ -1241,7 +1255,7 @@ describe("restored pages", () => {
     await until(() => !term.screen().includes("Worker done."));
     term.type("\x1a"); // Ctrl+Z
     await until(() => term.screen().includes("Worker done.") && term.screen().includes("resumed says hi"));
-    expect(term.screen().split("\n").slice(0, restored.length - 1)).toEqual(restored.slice(1));
+    expect(term.screen().split("\n").slice(3).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
     app.quit();
     await running;
   });
@@ -1258,8 +1272,8 @@ describe("restored pages", () => {
       [said("Got it."), toolUse("t3", "message", { to: "user", text: "Second." })],
       [said("Done.")],
     ]);
-    const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void) =>
-      createOrchestrator({ project: p, provider, tools, write, onInbox });
+    const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void, events?: ToolEvents) =>
+      createOrchestrator({ project: p, provider, tools, write, onInbox, ...events });
     // Both lines are typed before the first turn reads the inbox: its turn waits for the second say to land.
     const typed: Promise<void>[] = [];
     const openLive: typeof open = async (...args) => {
@@ -1279,6 +1293,12 @@ describe("restored pages", () => {
     await until(() => !app.page!.busy);
     const live = app.page!.lines;
     expect(live.map(raw)).toContain("All set.");
+    expect(live.filter((l) => typeof l !== "string" && "tool" in l)).toEqual([
+      { tool: "Spawn(feat, worker)", summary: "spawned worker-feat", failed: false },
+      { tool: "Message(user: Started **feat**.)", summary: "sent to user", failed: false },
+      { tool: "Message(user: Second.)", summary: "sent to user", failed: false },
+    ]);
+    expect(term.screen()).toContain("⏺ Spawn(feat, worker)\n  ⎿  spawned worker-feat");
     expect(live.map(raw).filter((l) => l.endsWith("> go") || l.endsWith("m go"))).toEqual([`${bold(">")} go`]); // typed here: shown once
     expect(live.map(raw)).toContain(`${bold(">")} from the cli`);
     expect(live.map(raw).some((l) => l.includes("From worker-feat: Report:…"))).toBe(true);
@@ -1366,7 +1386,7 @@ describe("restored pages", () => {
 
 describe("orchestrator questions", () => {
   const PICK = "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later";
-  const ANSWER = "Enter send · Esc clear · Tab later";
+  const ANSWER = "Enter send · Esc/Tab close";
   const GUARD = "send or clear your message to answer";
   const live = (term: ReturnType<typeof fakeTerm>) => term.display.screen().join("\n");
   const ask1 = (project: string, text: string, options?: string[], def?: string) => askQuestions(project, [{ text, ...(options ? { options } : {}), ...(def ? { default: def } : {}) }]);
@@ -1380,6 +1400,7 @@ describe("orchestrator questions", () => {
     const app = new App({ term, openOrchestrator, pollMs: 20, watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0, ...extra });
     const running = app.run(project);
     await until(() => !!app.page);
+    if (!extra.questions && (await allQuestions(project)).some((q) => q.status === "open")) await app.questions.command(app.page); // explicit opt-in
     return { term, orchs, app, running, inbox: (msgs: Message[]) => onInbox!(msgs), stop: async () => { app.quit(); await running; } };
   }
 
@@ -1418,25 +1439,20 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("a chat draft in the input when a question arrives stays chat: Enter sends it; then the question takes the keys", async () => {
-    const { term, orchs, app, stop } = await start("qa-guard");
+  test("arrival never steals a chat draft; Ctrl+Q opens explicitly and closing preserves it", async () => {
+    const { term, app, stop } = await start("qa-guard");
     term.type("hel");
     await ask1("qa-guard", "Which db?", ["postgres"]);
-    await until(() => live(term).includes("? Which db?") && live(term).includes(GUARD));
+    await until(() => app.page!.questions.open.length === 1);
+    expect(app.questions.view()).toBeNull();
     expect(app.input.text).toBe("hel");
-    term.type("\r");
-    await until(() => orchs.said["qa-guard"]?.length === 1);
-    expect(orchs.said["qa-guard"]).toEqual(["hel"]);
-    expect(await statusOf("qa-guard")).toEqual([["Which db?", "open", null]]);
-    await until(() => live(term).includes(PICK));
-    // Clearing the draft (Esc in chat) works the same way.
-    term.press({ name: "tab" });
-    term.type("abc");
-    await ask1("qa-guard", "Port?", ["80"]);
-    await until(() => live(term).includes(GUARD));
-    term.press({ name: "escape" });
-    await until(() => live(term).includes(PICK));
+    term.press({ name: "q", ctrl: true });
+    await until(() => !!app.questions.view());
     expect(app.input.text).toBe("");
+    term.press({ name: "escape" });
+    await until(() => !app.questions.view());
+    expect(app.input.text).toBe("hel");
+    expect(await statusOf("qa-guard")).toEqual([["Which db?", "open", null]]);
     await stop();
   });
 
@@ -1460,6 +1476,7 @@ describe("orchestrator questions", () => {
   test("typing answers in answer mode and keeps the chat draft aside; a question without options goes straight to answer mode; bad text is refused", async () => {
     const { term, orchs, app, stop } = await start("qa-typed");
     await ask1("qa-typed", "Which db?", ["postgres"], "postgres");
+    await app.questions.command(app.page);
     await until(() => live(term).includes("? Which db?"));
     term.type("mysql");
     await until(() => live(term).includes("answer> mysql") && live(term).includes(ANSWER));
@@ -1474,6 +1491,7 @@ describe("orchestrator questions", () => {
     expect(orchs.said["qa-typed"]).toEqual([]);
 
     await ask1("qa-typed", "Project name?");
+    await app.questions.command(app.page);
     await until(() => live(term).includes("? Project name?") && live(term).includes("answer>"));
     term.press({ name: "paste", text: "x".repeat(2001) });
     term.press({ name: "enter" });
@@ -1498,14 +1516,11 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("? Port? (1 of 2)"));
     term.type("90");
     await until(() => live(term).includes("answer> 90"));
-    term.press({ name: "escape" }); // clears the text, stays
-    await until(() => live(term).includes("answer>") && !live(term).includes("answer> 90"));
-    expect(live(term)).toContain("? Port?");
-    term.press({ name: "escape" }); // now empty: put off
+    term.press({ name: "escape" }); // close, preserving the answer
     await until(() => !live(term).includes("? Port?"));
     expect(await statusOf("qa-esc")).toEqual([["Port?", "open", null], ["Host?", "open", null]]);
     term.type("/questions\r");
-    await until(() => live(term).includes("❯ type your own answer")); // where it was left
+    await until(() => live(term).includes("answer> 90")); // preserved
     term.press({ name: "down" }); // to the skip row
     await until(() => live(term).includes("❯ skip (use default: 8080)"));
     term.press({ name: "enter" });
@@ -1575,6 +1590,7 @@ describe("orchestrator questions", () => {
     term.type("hello\r");
     await until(() => orchs.said["qa-updown"]?.length === 1);
     await ask1("qa-updown", "Name?");
+    await app.questions.command(app.page);
     await until(() => live(term).includes("answer>"));
     term.type("a\x1b[13;2ub"); // a, Shift+Enter, b
     expect(app.input).toEqual({ text: "a\nb", cursor: 3 });
@@ -1591,7 +1607,7 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("answered elsewhere while typing: the text stays (as a chat draft), said, never moved into the next question", async () => {
+  test("answered elsewhere while typing: report the orphan answer without replacing chat or the next answer", async () => {
     const [first] = await askQuestions("qa-moved", [{ text: "Which db?", options: ["postgres"] }, { text: "Port?", options: ["80"] }]);
     const { term, orchs, app, stop } = await start("qa-moved");
     await until(() => live(term).includes("? Which db? (1 of 2)"));
@@ -1599,12 +1615,13 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("answer> my answer"));
     await answerQuestion("qa-moved", first!.id, "sqlite"); // another TUI
     await until(() => term.screen().includes('"Which db?" was answered elsewhere'));
-    await until(() => live(term).includes("? Port?") && live(term).includes(GUARD));
-    expect(app.input.text).toBe("my answer");
-    expect(live(term)).toContain("> my answer");
+    await until(() => !app.questions.view());
+    expect(app.input.text).toBe("");
+    expect(term.screen()).toContain("unsent answer: my answer");
     expect(live(term)).not.toContain("answer> my answer");
     expect(app.page!.questions.answer.text).toBe("");
-    term.press({ name: "escape" }); // clear the draft: the next question takes the keys, with nothing carried over
+    term.press({ name: "escape" }); // clear chat draft
+    term.press({ name: "q", ctrl: true });
     await until(() => live(term).includes(PICK));
     expect(app.input.text).toBe("");
     expect(orchs.said["qa-moved"]).toEqual([]);
@@ -1620,9 +1637,11 @@ describe("orchestrator questions", () => {
     await answerQuestion("qa-race", first!.id, "sqlite"); // another TUI; no poll sees it
     term.press({ name: "enter" });
     await until(() => term.screen().includes("already answered elsewhere; your answer was not sent"));
-    expect(app.input.text).toBe("mine");
-    await until(() => live(term).includes(GUARD));
+    expect(app.input.text).toBe("");
+    expect(app.page!.lines.map(raw).join(" ")).toContain("unsent answer: mine");
+    await until(() => !app.questions.view());
     term.press({ name: "escape" });
+    term.press({ name: "q", ctrl: true });
     // The orchestrator reads the other TUI's answer: shown as a restored page shows it.
     inbox(await drain("qa-race", "orchestrator"));
     await until(() => term.screen().includes("? Which db? → sqlite"));
@@ -1677,13 +1696,11 @@ describe("orchestrator questions", () => {
     term.press({ name: "u", ctrl: true });
 
     await ask1("qa-tab", "Port?");
-    await until(() => live(term).includes("? Which db? (1 of 2)")); // a new one: the queue shows again from the oldest
-    term.press({ name: "tab" });
+    await until(() => live(term).includes("2 questions")); // arrival only updates the count
     await until(() => !live(term).includes("? Which db?"));
     term.type("/questions\r");
     await until(() => live(term).includes("? Which db? (1 of 2)"));
-    expect(term.screen()).toContain("1. Which db?");
-    expect(term.screen()).toContain("2. Port?");
+    expect(live(term)).toContain("(1 of 2)");
     expect(orchs.said["qa-tab"]).toEqual(["hello"]);
     await stop();
   });
@@ -1698,6 +1715,8 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("qa-bg: 2 questions"));
     expect(live(term)).not.toContain("One?");
     term.type("\x18");
+    await until(() => app.page?.project === "qa-bg");
+    term.press({ name: "q", ctrl: true });
     await until(() => live(term).includes("? One? (1 of 2)"));
     expect(live(term)).toContain("2 questions");
     expect(live(term)).not.toContain("qa-bg: 2");
@@ -1746,9 +1765,10 @@ describe("orchestrator questions", () => {
     let reads = 0;
     const counting: QuestionStore = { ...fileStore, list: (p) => { reads++; return fileStore.list(p); } };
     const second = await start("qa-mtime", { pollMs: 5, questions: counting });
+    await second.app.questions.command(second.app.page);
     await until(() => live(second.term).includes("? Which db?"));
     await Bun.sleep(60);
-    expect(reads).toBe(1);
+    expect(reads).toBeLessThanOrEqual(2); // opening explicitly may re-read once
     await ask1("qa-mtime", "Port?"); // the dir changes: read again
     await until(() => live(second.term).includes("(1 of 2)"));
     expect(reads).toBeGreaterThanOrEqual(2);
@@ -1768,6 +1788,7 @@ describe("orchestrator questions", () => {
       answer: async (p, id, text) => { const q = await fileStore.answer(p, id, text); written = true; await gate; return q; },
     };
     const { term, app, stop } = await start("qa-race", { pollMs: 5, questions: store });
+    await app.questions.command(app.page);
     await until(() => live(term).includes("? Which db?"));
     term.type("mysql");
     await until(() => live(term).includes("answer> mysql"));
@@ -1779,6 +1800,7 @@ describe("orchestrator questions", () => {
     expect(term.screen()).not.toContain("answered elsewhere");
     expect(app.input.text).toBe("");
     await ask1("qa-race", "Project name?");
+    await app.questions.command(app.page);
     await until(() => live(term).includes("? Project name?") && live(term).includes("answer>"));
     await stop();
   });
@@ -1884,9 +1906,9 @@ describe("command and key tables", () => {
       expect(orchs.said[app.page!.project]).toEqual([]); // dropped, not sent
     }
     expect(term.screen()).not.toContain("unknown command");
-    expect(listed).toBe(0);
+    expect(app.menu).toBeNull(); // background agent-count polling may list agents
     term.type("/agents\r"); // with a page it runs
-    await until(() => listed === 1);
+    await until(() => listed > 0);
     app.quit();
     await running;
   });
@@ -1897,7 +1919,7 @@ describe("command and key tables", () => {
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("viewer");
     await until(() => !!app.page);
-    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false };
+    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false, calls: new Calls() };
     app.page!.view = view;
     term.type("/keys\r");
     await until(() => app.keyEcho);
@@ -1991,4 +2013,303 @@ describe("command and key tables", () => {
     app.quit();
     await running;
   });
+});
+
+describe("user background", () => {
+  test("sent messages and the input are on the user background, full width, live and after a resize reprint", async () => {
+    const term = fakeTerm(30, 10);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("a message long enough to wrap\r");
+    await until(() => term.screen().includes("worker-x done"));
+    term.type("draft");
+    await until(() => term.screen().includes("> draft"));
+    const filled = (cols: number) => term.display.backgrounds().map((r) => r.length === cols && r.every((b) => b === "48;5;236"));
+    const check = (cols: number) => {
+      const text = term.display.text().split("\n");
+      const bg = filled(cols);
+      const at = (s: string) => text.findIndex((l) => l.startsWith(s));
+      expect([bg[at("> a message")], bg[at("> a message") + 1], bg[at("alpha says hi")]]).toEqual([true, true, false]);
+      const row = term.display.top + term.display.row;
+      expect(term.display.buf[row]!.join("").trimEnd()).toBe("> draft");
+      expect([bg[row], bg[row + 1]]).toEqual([true, true]); // input, bottom status
+      expect(term.display.col).toBe(7);
+    };
+    check(30);
+    term.resize(24, 10);
+    await until(() => term.display.clears === 1 && term.screen().includes("> draft"));
+    check(24);
+    app.quit();
+    await running;
+  });
+});
+
+describe("terminal background", () => {
+  test("the first page is committed only once the terminal's background is known, in its shade; the input is redrawn in it", async () => {
+    const t = openTranscript(paths.transcript("shaded", "orchestrator"));
+    await t.append({ type: "meta", role: "orchestrator", model: "m" });
+    await t.append({ type: "message", message: { role: "user", content: "[user] earlier question" } });
+    const term = fakeTerm(30, 10);
+    let answer!: () => void;
+    term.background = new Promise<void>((resolve) => { answer = () => { setUserFill("\x1b[48;5;254m"); resolve(); }; });
+    const orchs = fakeOrchestrators();
+    const openOrchestrator: typeof orchs.openOrchestrator = async (...args) => ({ ...(await orchs.openOrchestrator(...args)), entries: () => t.branch() });
+    const app = new App({ term, openOrchestrator, pollMs: 100_000 });
+    const running = app.run("shaded");
+    await until(() => !!app.page);
+    await Bun.sleep(40);
+    expect(term.screen()).not.toContain("earlier question"); // held until the shade is known
+    answer();
+    await until(() => term.screen().includes("> earlier question"));
+    const row = term.display.text().split("\n").indexOf("> earlier question");
+    expect(term.display.backgrounds()[row]!.every((b) => b === "48;5;254")).toBe(true);
+    const input = term.display.top + term.display.row;
+    expect(term.display.backgrounds()[input]![0]).toBe("48;5;254");
+    app.quit();
+    await running;
+  });
+});
+
+describe("tool calls", () => {
+  /** An orchestrator whose turn runs the tool calls the test drives through `events`, on an injected clock. */
+  function scripted() {
+    const state = { now: 1000, events: null as ToolEvents | null, finish: null as (() => void) | null, ticks: [] as (() => void)[] };
+    const clock: Clock = { now: () => state.now, every: (fn) => { state.ticks.push(fn); return () => { state.ticks.splice(state.ticks.indexOf(fn), 1); }; } };
+    const openOrchestrator = async (_p: string, _u: string | undefined, _w: (t: string, plain?: boolean) => void, _i?: unknown, events?: ToolEvents): Promise<Orchestrator> => {
+      state.events = events!;
+      return { async say() {}, async pending() { return false; }, turn: () => new Promise((r) => (state.finish = () => r([]))) };
+    };
+    return { state, clock, openOrchestrator };
+  }
+
+  test("a running call shimmers in the live region; when it ends its ⏺ line and ⎿ summary go to the scrollback; a failure is red", async () => {
+    const term = fakeTerm(50, 12);
+    const { state, clock, openOrchestrator } = scripted();
+    const app = new App({ term, openOrchestrator, pollMs: 100_000, clock });
+    const running = app.run("tooly");
+    await until(() => !!app.page);
+    term.type("go\r");
+    await until(() => !!state.finish);
+    state.events!.onTool({ id: "c1", name: "bash", input: { command: "git status" } });
+    await until(() => term.screen().includes("⏺ Bash(git status)"));
+    expect(app.page!.lines.some((l) => typeof l !== "string" && "tool" in l)).toBe(false); // live only, not committed
+    expect(term.screen()).toContain("working…"); // the status line's word, shimmering too
+    const frame = () => app.frame().running!.join("");
+    const first = frame();
+    expect(frame()).toBe(first); // same instant, same frame
+    state.now += 400;
+    expect(frame()).not.toBe(first); // the band moved
+    expect(state.ticks.length).toBe(1); // the animation timer runs while the turn does
+    state.events!.onToolResult({ id: "c1", ok: true, text: "M a.ts\nM b.ts\n" });
+    await until(() => term.screen().includes("⏺ Bash(git status)\n  ⎿  2 lines"));
+    expect(app.frame().running).toEqual([]);
+    state.events!.onTool({ id: "c2", name: "bash", input: { command: "make" } });
+    state.events!.onToolResult({ id: "c2", ok: true, text: "x: error 1\n[exit 2]" });
+    await until(() => term.screen().includes("⏺ Bash(make)\n  ⎿  exit 2: x: error 1"));
+    expect(term.raw()).toContain("\x1b[31m⏺");
+    state.finish!();
+    await until(() => !app.page!.busy);
+    expect(state.ticks.length).toBe(0); // nothing runs: no timer
+    app.quit();
+    await running;
+  });
+
+  test("the /agents view shows a followed agent's running call live, then its lines when the result lands", async () => {
+    const term = fakeTerm(60, 12);
+    const orchs = fakeOrchestrators();
+    const transcript = paths.transcript("toolview", "worker-t");
+    mkdirSync(join(transcript, ".."), { recursive: true });
+    const line = (role: string, content: unknown) => JSON.stringify({ type: "message", message: { role, content } }) + "\n";
+    await Bun.write(transcript, line("assistant", [{ type: "text", text: "checking" }, { type: "tool_use", id: "u1", name: "bash", input: { command: "bun test" } }]));
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, agents: async () => [{ name: "worker-t", live: true }] });
+    const running = app.run("toolview");
+    await until(() => !!app.page);
+    term.type("/agents\r");
+    await until(() => !!app.menu);
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("checking") && term.screen().includes("⏺ Bash(bun test)"));
+    expect(app.page!.view!.lines.some((l) => typeof l !== "string" && "tool" in l)).toBe(false); // still running
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(transcript, line("user", [{ type: "tool_result", tool_use_id: "u1", content: "1 pass\n0 fail\n" }]));
+    await until(() => term.screen().includes("⏺ Bash(bun test)\n  ⎿  2 lines"));
+    expect(app.page!.view!.calls.size).toBe(0);
+    app.quit();
+    await running;
+  });
+});
+
+test("queued user messages show only when consumed, in order, alongside external users", async () => {
+  const term = fakeTerm(80, 12);
+  let inbox!: (msgs: Message[]) => void;
+  let done!: () => void;
+  const app = new App({ term, pollMs: 100_000, openOrchestrator: async (_p, _u, _w, read) => {
+    inbox = read!;
+    return { async say() {}, async pending() { return false; }, turn: () => new Promise((r) => { done = () => r([]); }) };
+  } });
+  const running = app.run("consume");
+  await until(() => !!app.page);
+  term.type("one\r");
+  await until(() => !!done);
+  term.type("two\r");
+  await until(() => app.page!.sent.length === 2);
+  expect(app.page!.lines.map(raw).join("\n")).not.toContain("> one");
+  expect(strip(app.status(app.page!))).toContain("2 messages queued");
+  inbox(["one", "two", "external"].map((text) => ({ from: "user", text, ts: "" })));
+  expect(app.page!.sent).toEqual([]);
+  expect(app.page!.lines.map(raw).map(strip)).toEqual(["> one", "> two", "> external"]);
+  done();
+  app.quit();
+  await running;
+});
+
+test("unfinished calls commit red in turns and finished agent transcripts", async () => {
+  const term = fakeTerm(80, 14);
+  const project = "interrupted-ui";
+  const transcript = paths.transcript(project, "worker-ended");
+  mkdirSync(join(transcript, ".."), { recursive: true });
+  await Bun.write(transcript, JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "tool_use", id: "v1", name: "bash", input: { command: "sleep forever" } }] } }) + "\n");
+  const app = new App({ term, pollMs: 100_000, agents: async () => [{ name: "worker-ended", live: false }], openOrchestrator: async (_p, _u, _w, _i, tools) => ({
+    async say() {}, async pending() { return false; },
+    async turn() { tools!.onTool({ id: "a", name: "bash", input: { command: "wait" } }); return []; },
+  }) });
+  const running = app.run(project);
+  await until(() => !!app.page);
+  term.type("go\r");
+  await until(() => term.screen().includes("⏺ Bash(wait)\n  ⎿  interrupted"));
+  expect(app.page!.calls.size).toBe(0);
+  expect(term.raw()).toContain("\x1b[31m⏺");
+  term.type("/agents\r");
+  await until(() => !!app.menu);
+  term.press({ name: "enter" });
+  await until(() => term.screen().includes("⏺ Bash(sleep forever)\n  ⎿  interrupted"));
+  expect(app.page!.view!.calls.size).toBe(0);
+  app.quit();
+  await running;
+});
+
+test("header caches model and filters subagent counts; unchanged background frames write no bytes", async () => {
+  const term = fakeTerm(80, 24);
+  const ticks: { fn: () => void; ms: number }[] = [];
+  let now = 0;
+  const clock: Clock = { now: () => now, every: (fn, ms) => { const tick = { fn, ms }; ticks.push(tick); return () => { ticks.splice(ticks.indexOf(tick), 1); }; } };
+  let model = "model-a", reads = 0;
+  const app = new App({ term, clock, pollMs: 100_000, projectModel: async () => { reads++; return model; }, agents: async () => [{ name: "orchestrator", live: true }, { name: "worker-a", live: true }, { name: "reviewer-a", live: true }, { name: "worker-old", live: false }], openOrchestrator: fakeOrchestrators().openOrchestrator });
+  const running = app.run("header-test");
+  await until(() => term.screen().includes("model-a") && term.screen().includes("2 agents running"));
+  const readOnce = reads;
+  app.frame(); app.frame();
+  expect(reads).toBe(readOnce);
+  model = "model-b";
+  await app.refreshHeader();
+  await until(() => term.screen().includes("model-b") && term.display.clears === 1);
+  const background = app.page!;
+  await app.openPage("foreground-test");
+  background.busy = true;
+  app.draw();
+  await settle();
+  expect(ticks.map((t) => t.ms)).toEqual([100]);
+  const before = term.writes.length;
+  const frame = app.frame();
+  const shown = renderLive(frame).shown;
+  const lastBytes = Buffer.byteLength(`\x1b[?2026h${renderLive(frame, shown).text}\x1b[?2026l`);
+  for (let i = 0; i < 10; i++) { now += 100; ticks[0]!.fn(); await Bun.sleep(20); }
+  const bytes = term.writes.slice(before).reduce((n, s) => n + Buffer.byteLength(s), 0);
+  expect(bytes).toBe(0);
+  await Bun.write("/tmp/tui-background-bandwidth.json", JSON.stringify({ cols: 80, rows: 24, oldBytesPerSecond: lastBytes * (1000 / 33), newBytesPerSecond: bytes }));
+  app.page!.busy = true;
+  app.draw();
+  expect(ticks.map((t) => t.ms)).toEqual([33]);
+  app.quit();
+  await running;
+});
+
+test("external question closure preserves both original chat and orphan answer, expanded or collapsed", async () => {
+  for (const collapsed of [false, true]) {
+    const project = `orphan-drafts-${collapsed}`;
+    const term = fakeTerm(100, 18);
+    const app = new App({ term, openOrchestrator: fakeOrchestrators().openOrchestrator, questionDelayMs: 0, pollMs: 10, watchdog: async () => {}, merges: async () => {} });
+    const running = app.run(project);
+    await until(() => !!app.page);
+    term.type("original chat draft");
+    const [first, next] = await askQuestions(project, [{ text: "First?" }, { text: "Next?" }]);
+    await app.questions.command(app.page);
+    term.type("orphan answer");
+    expect(app.input.text).toBe("orphan answer");
+    if (collapsed) term.press({ name: "q", ctrl: true });
+    await answerQuestion(project, first!.id, "someone else's answer");
+    await until(() => app.page!.questions.open[0]?.id === next!.id);
+    expect(app.input.text).toBe("original chat draft");
+    expect(app.page!.lines.map(raw).join(" ")).toContain("unsent answer: orphan answer");
+    expect(app.questions.view()).toBeNull();
+    await app.questions.command(app.page);
+    expect(app.input.text).toBe(""); // orphan never becomes the next question's answer
+    term.press({ name: "escape" });
+    expect(app.input.text).toBe("original chat draft");
+    app.quit(); await running;
+  }
+});
+
+test("header refresh generations reject reverse completion and closed/reopened pages", async () => {
+  const reads: ((model: string) => void)[] = [];
+  let defer = false;
+  const term = fakeTerm(80, 12);
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => defer ? new Promise<string>((r) => reads.push(r)) : "initial", openOrchestrator: fakeOrchestrators().openOrchestrator });
+  const running = app.run("refresh-a");
+  await until(() => !!app.page);
+  const a = app.page!;
+  defer = true;
+  const first = app.refreshHeader(a), second = app.refreshHeader(a);
+  reads[1]!("newest"); await second;
+  reads[0]!("old"); await first;
+  expect(a.model).toBe("newest");
+  const offscreen = app.refreshHeader(a);
+  defer = false;
+  await app.openPage("refresh-b");
+  reads[2]!("offscreen-a"); await offscreen;
+  expect(app.page!.model).toBe("initial");
+  expect(a.model).toBe("offscreen-a");
+  defer = true;
+  const stale = app.refreshHeader(a);
+  app.closePage(app.pages.indexOf(a));
+  defer = false;
+  const reopened = await app.openPage("refresh-a");
+  reads[3]!("stale-closed"); await stale;
+  expect(reopened).not.toBe(a);
+  expect(reopened.model).toBe("initial");
+  expect(a.model).toBe("offscreen-a");
+  app.quit(); await running;
+});
+
+test("sign-in queue attempts every owned message after failures across pages without duplicating consumed successes", async () => {
+  for (const failed of ["one", "two"]) {
+    const attempted: string[] = [];
+    let finish!: () => void;
+    const term = fakeTerm(100, 18);
+    const app = new App({ term, pollMs: 100_000, login: async () => { await new Promise<void>((r) => { finish = r; }); return "signed in"; }, openOrchestrator: async (_p, _u, _w, inbox) => ({
+      async say(text) { attempted.push(text); if (text === failed) throw new Error("send failed"); inbox?.([{ from: "user", text, ts: "" }]); },
+      async pending() { return false; }, async turn() { return []; },
+    }) });
+    const running = app.run(`login-drain-${failed}`);
+    await until(() => !!app.page);
+    const firstPage = app.page!;
+    term.type("/login claude\r");
+    await until(() => !!finish);
+    term.type("one\rtwo\r");
+    await until(() => app.status(firstPage).includes("2 messages queued"));
+    await app.openPage(`login-other-${failed}`);
+    const secondPage = app.page!;
+    term.type("three\r");
+    await until(() => app.status(secondPage).includes("1 messages queued"));
+    finish();
+    await until(() => attempted.length === 3 && !app.status(secondPage).includes("queued"));
+    expect(attempted).toEqual(["one", "two", "three"]);
+    const displayed = [...firstPage.lines, ...secondPage.lines].map(raw).map(strip);
+    for (const text of ["one", "two", "three"]) expect(displayed.filter((l) => l === `> ${text}`).length).toBe(text === failed ? 0 : 1);
+    expect(displayed).toContain(`not sent: ${failed}`);
+    expect(firstPage.sent).toEqual([]);
+    expect(secondPage.sent).toEqual([]);
+    app.quit(); await running;
+  }
 });

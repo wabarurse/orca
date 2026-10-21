@@ -4,6 +4,7 @@
 import { existsSync, statSync } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import type { Entry } from "./transcript";
+import { callText, resultText as summaryText, type ToolCall, type ToolOutcome } from "./toolview";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -13,11 +14,12 @@ const firstLine = (s: string, max = 100) => {
   return line.length > max ? line.slice(0, max) + "…" : line;
 };
 
-/** A tool call as the agent loop echoes it while it runs (and the TUI shows it, live or restored). */
-export const toolLine = (name: string, input: unknown): string => dim(`▸ ${name} ${JSON.stringify(input).slice(0, 100)}`);
-
-/** A piece of an entry as shown: plain styled text, or an assistant's markdown (`md`) for a renderer that lays it out. */
-export type Part = string | { md: string };
+/**
+ * A piece of an entry as shown: plain styled text, an assistant's markdown
+ * (`md`) for a renderer that lays it out, or a tool call starting (`call`) or
+ * ending (`result`), for a renderer that pairs them (the TUI's tools.ts).
+ */
+export type Part = string | { md: string } | { call: ToolCall } | { result: ToolOutcome };
 
 type Block = Exclude<Extract<Entry, { type: "message" }>["message"]["content"], string>[number];
 
@@ -27,9 +29,15 @@ const resultText = (content: unknown): string =>
 /** A content block as shown, or null for blocks with nothing to show (thinking). */
 function blockPart(block: Block, text: (t: string) => Part): Part | null {
   if (block.type === "text") return text(block.text);
-  if (block.type === "tool_use") return dim(`▸ ${block.name} ${firstLine(JSON.stringify(block.input))}`);
-  if (block.type === "tool_result") return dim(`  ${block.is_error ? "error: " : ""}${firstLine(resultText(block.content))}`);
+  if (block.type === "tool_use") return { call: { id: block.id, name: block.name, input: block.input } };
+  if (block.type === "tool_result") return { result: { id: block.tool_use_id, ok: !block.is_error, text: resultText(block.content) } };
   return null;
+}
+
+/** Assistant text blocks in one model response are one logical message, as the streaming path concatenates them. */
+function joinedText(blocks: Block[]): Block[] {
+  const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("");
+  return [...(text ? [{ type: "text" as const, text }] : []), ...blocks.filter((b) => b.type !== "text")];
 }
 
 /** One entry as pieces to show, or null for entries with nothing to show. */
@@ -40,22 +48,33 @@ export function parts(entry: Entry): Part[] | null {
   const { role, content } = entry.message;
   const text = (t: string): Part => (role === "user" ? `${bold(">")} ${t}` : { md: t });
   if (typeof content === "string") return [text(content)];
-  const out = content.map((b) => blockPart(b, text)).filter((p): p is Part => p !== null);
+  const blocks = role === "assistant" ? joinedText(content) : content;
+  const out = blocks.map((b) => blockPart(b, text)).filter((p): p is Part => p !== null);
   return out.length ? out : null;
 }
 
+/** A part as plain terminal text: markdown as written, a call as its "⏺" line, a result as its first line. */
+function partText(p: Part, calls: Map<string, ToolCall>): string {
+  if (typeof p === "string") return p;
+  if ("md" in p) return p.md;
+  if ("call" in p) { calls.set(p.call.id, p.call); return callText(p.call); }
+  const call = calls.get(p.result.id);
+  calls.delete(p.result.id);
+  return summaryText(call?.name ?? "tool", p.result);
+}
+
 /** One entry as terminal lines (markdown left as written), or null for entries with nothing to show. */
-export function render(entry: Entry): string | null {
+export function render(entry: Entry, calls = new Map<string, ToolCall>()): string | null {
   const ps = parts(entry);
-  return ps && ps.map((p) => (typeof p === "string" ? p : p.md)).join("\n");
+  return ps && ps.map((p) => partText(p, calls)).join("\n");
 }
 
 /** Show one transcript line, skipping blank, partial or foreign ones. */
-function emit(line: string, out: (s: string, entry: Entry) => void): void {
+function emit(line: string, out: (s: string, entry: Entry) => void, calls: Map<string, ToolCall>): void {
   if (!line.trim()) return;
   let entry: Entry;
   try { entry = JSON.parse(line) as Entry; } catch { return; }
-  const rendered = render(entry);
+  const rendered = render(entry, calls);
   if (rendered) out(rendered, entry);
 }
 
@@ -64,7 +83,8 @@ function emit(line: string, out: (s: string, entry: Entry) => void): void {
  * `stop` resolves; `out` gets each entry's text and the entry itself. Reads
  * by byte offset so a partial trailing line waits for its newline.
  */
-export async function follow(path: string, out: (s: string, entry: Entry) => void, stop: Promise<void>, intervalMs = 300): Promise<void> {
+export async function follow(path: string, out: (s: string, entry: Entry) => void, stop: Promise<void>, intervalMs = 300, afterDrain: () => void = () => {}): Promise<void> {
+  const calls = new Map<string, ToolCall>();
   let offset = 0;
   let done = false;
   stop.then(() => (done = true));
@@ -80,7 +100,7 @@ export async function follow(path: string, out: (s: string, entry: Entry) => voi
       const end = text.lastIndexOf("\n");
       if (end === -1) return;
       offset += Buffer.byteLength(text.slice(0, end + 1));
-      for (const line of text.slice(0, end).split("\n")) emit(line, out);
+      for (const line of text.slice(0, end).split("\n")) emit(line, out, calls);
     } finally {
       await fh.close();
     }
@@ -88,7 +108,9 @@ export async function follow(path: string, out: (s: string, entry: Entry) => voi
 
   while (!done) {
     await drain();
+    afterDrain();
     await Bun.sleep(intervalMs);
   }
   await drain();
+  afterDrain();
 }

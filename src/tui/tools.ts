@@ -1,0 +1,85 @@
+// Tool calls on screen, like Claude Code: while a call runs its line sits in
+// the live region with the shimmer ("⏺ Bash(git status)"); when it ends, that
+// line and one summary line under it ("  ⎿  12 lines") go into the history as
+// a { tool } Line, laid out at the current width (cut, never wrapped). The
+// marker is dim, red when the call failed (bold under NO_COLOR). The labels
+// and summaries come from src/toolview.ts, shared with restore.ts and the
+// agent loop, so live and restored pages match.
+
+import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../toolview";
+import type { Part } from "../view";
+import type { Line } from "./lines";
+import { dim, fit, sanitize, visibleLength, wrap } from "./render";
+import { shimmer } from "./shimmer";
+import { noColour } from "./style";
+
+const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
+
+/** The marker before a call: dim, or red when it failed (bold without colour). */
+function mark(failed: boolean): string {
+  if (!failed) return dim(TOOL_MARK);
+  return noColour() ? bold(TOOL_MARK) : `\x1b[31m${TOOL_MARK}\x1b[0m`;
+}
+
+/** "Bash(git status)" with the tool's name in bold. */
+function label(text: string): string {
+  const open = text.indexOf("(");
+  return open > 0 ? `${bold(text.slice(0, open))}${text.slice(open)}` : text;
+}
+
+/** Plain text cut to `cols` columns with … (one wider character may overflow a tiny width). */
+function cut(text: string, cols: number): string {
+  if (visibleLength(text) <= cols) return text;
+  return `${wrap(text, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "")}…`;
+}
+
+/** A finished call as screen rows at `cols`, each cut to fit: the call, then its summary. */
+export function toolRows(v: ToolView, cols: number): string[] {
+  const head = fit(`${mark(v.failed)} ${label(sanitize(v.tool))}`, cols);
+  const tail = dim(cut(`${RESULT_MARK}${sanitize(v.summary)}`, cols));
+  return [head, tail];
+}
+
+/** A running call's row at `now`: the dim marker and its label with the shimmer. */
+export function runningRow(call: Pick<ToolCall, "name" | "input">, now: number, cols: number): string {
+  const text = cut(sanitize(toolView(call.name, call.input, { ok: true, text: "" }).tool), Math.max(1, cols - 2));
+  return `${dim(TOOL_MARK)} ${shimmer(text, now)}`;
+}
+
+/** The calls running on a page or in an agent view, oldest first. */
+export class Calls {
+  private readonly running = new Map<string, ToolCall>();
+
+  get size(): number { return this.running.size; }
+
+  start(call: ToolCall): void { this.running.set(call.id, call); }
+
+  interrupt(): Line[] {
+    const lines = [...this.running.values()].map((c) => interruptedView(c.name, c.input));
+    this.running.clear();
+    return lines;
+  }
+
+  /** The call ended: its history line (a call not seen starting shows as "Tool"). */
+  finish(outcome: ToolOutcome): Line {
+    const call = this.running.get(outcome.id);
+    this.running.delete(outcome.id);
+    return toolView(call?.name ?? "tool", call?.input ?? {}, outcome);
+  }
+
+  /** The running calls' rows at `now`. */
+  rows(now: number, cols: number): string[] {
+    return [...this.running.values()].map((c) => runningRow(c, now, cols));
+  }
+
+  /** A followed transcript's parts as history lines: calls start running, their results finish them. */
+  absorb(parts: Part[]): Line[] {
+    const out: Line[] = [];
+    for (const p of parts) {
+      if (typeof p !== "string" && "call" in p) this.start(p.call);
+      else if (typeof p !== "string" && "result" in p) out.push(this.finish(p.result));
+      else out.push(p);
+    }
+    return out;
+  }
+}

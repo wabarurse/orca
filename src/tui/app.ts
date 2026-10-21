@@ -11,20 +11,23 @@ import { effortCommand, fastCommand } from "../project-settings";
 import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { paths } from "../config";
 import { projectIdentity } from "../project-state";
-import { validateModel } from "../project-model";
+import { validateModel, effectiveModel } from "../project-model";
 import type { Message } from "../inbox";
 import type { Orchestrator } from "../orchestrator";
 import { format } from "node:util";
 import { follow, parts } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
-import { lineRows, type Line } from "./lines";
+import { historyRows, type Line } from "./lines";
 import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
 import { MAX_RESTORED_ROWS, replyLine, reportLine, restore, userLines } from "./restore";
-import { append, bold, commit, erase, dim, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
+import { append, bold, commit, erase, dim, headerRow, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
 import type { Terminal } from "./term";
+import { shimmer } from "./shimmer";
+import { Calls } from "./tools";
+import type { ToolCall, ToolOutcome } from "../toolview";
 
 export { lineRows, type Line } from "./lines";
 
@@ -51,21 +54,28 @@ export interface Page {
   /** Lines in the input-history file as far as this page knows, and the last write (writes go one at a time). */
   historyLines: number;
   savingHistory: Promise<void>;
-  /** What the user typed here and sent, not yet read by the orchestrator: when it reads them they are already on screen. */
+  /** Messages sent to the inbox, not yet consumed or shown; removed exactly once by onInbox. */
   sent: string[];
   /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
   questions: PageQuestions;
   /** Answered-question lines waiting for the streaming reply's partial line to end, so they never split it. */
   held: Line[];
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
-  view: { name: string; lines: Line[]; leave: () => void; live: boolean } | null;
+  view: { name: string; lines: Line[]; leave: () => void; live: boolean; calls: Calls } | null;
+  /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
+  calls: Calls;
+  model?: string;
+  agentCount?: number;
 }
 
 export interface AppDeps {
+  /** Cached header model accessor; defaults to effectiveModel(project). */
+  projectModel?: (project: string) => Promise<string>;
   term: Terminal;
   /** Make sure the project exists (cloning when a url is given) and build its orchestrator. */
   /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
-  openOrchestrator(project: string, url: string | undefined, write: (text: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void): Promise<Orchestrator>;
+  /** `tools` gets each tool call as it starts and ends: running in the live region, then its "⏺" line and summary in the history. */
+  openOrchestrator(project: string, url: string | undefined, write: (text: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void, tools?: ToolEvents): Promise<Orchestrator>;
   /** Inbox poll period; tests shorten it. */
   pollMs?: number;
   /** Clone source of the repository `start` was run from, if any: opened on start and cloned by Ctrl+N. */
@@ -91,6 +101,8 @@ export interface AppDeps {
   questionDelayMs?: number;
 }
 
+export interface ToolEvents { onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void }
+
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
 
 const realClock: Clock = {
@@ -104,6 +116,8 @@ const FRAME_MS = 16;
 /** A resize reprints once it has settled for this long (trailing debounce). */
 const RESIZE_MS = 120;
 const SPIN_MS = 100;
+/** The animation timer's period while something runs: the spinner steps every SPIN_MS, the shimmer moves every tick. */
+const TICK_MS = 33;
 /** How often a live agent view checks whether its agent has finished. */
 const LIVE_CHECK_MS = 1000;
 
@@ -251,6 +265,8 @@ export class App {
    */
   private started = false;
   private stopSpinner: (() => void) | null = null;
+  private tickMs = 0;
+  private lastLive = "";
   private liveCheckedAt = 0;
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
   private readonly liveChecks = new Map<string, Promise<void>>();
@@ -288,13 +304,16 @@ export class App {
     term.onKey((k) => { this.onKey(k).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     term.onResize(() => this.resized());
     const poll = setInterval(() => {
+      if (this.page) { this.checkLive(this.page.project); void this.refreshHeader(this.page).catch(() => {}); }
       this.watchPages();
       this.questions.poll(this.pages);
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
     try {
       this.draw(); // "opening…" at once
+      const shaded = term.background?.then(() => this.draw()); // the input in the terminal's shade as soon as it is known
       await this.openStartPages(project, url);
+      await shaded; // the first page's user lines go into the scrollback in that shade
       this.started = true;
       this.pending.push(...this.screenLines());
       this.draw();
@@ -352,26 +371,28 @@ export class App {
 
   /** Finished lines of the page's own history; they reach the screen only while it is active and shows no agent. */
   private toPage(page: Page, lines: Line[]): void {
+    const previous = page.lines.at(-1);
     page.lines.push(...lines);
-    if (this.started && page === this.page && !page.view) this.pending.push(...this.rows(lines));
+    if (this.started && page === this.page && !page.view) this.pending.push(...this.rows(lines, previous));
     this.draw();
   }
 
   /** Finished lines of an agent view; on screen only while it is what the active page shows. */
   private toView(page: Page, view: NonNullable<Page["view"]>, lines: Line[]): void {
+    const previous = view.lines.at(-1);
     view.lines.push(...lines);
-    if (this.started && page === this.page && page.view === view) this.pending.push(...this.rows(lines));
+    if (this.started && page === this.page && page.view === view) this.pending.push(...this.rows(lines, previous));
     this.draw();
   }
 
   /** What the screen shows for the active page: its agent view or its history. */
   private screenLines(page = this.page): string[] {
-    return page ? this.rows(page.view?.lines ?? page.lines) : this.looseLines;
+    return page ? [...this.header(page).split("\n").map((r) => headerRow(r, this.deps.term.cols)), ...this.rows(page.view?.lines ?? page.lines)] : this.looseLines;
   }
 
   /** History lines laid out at the terminal's width. */
-  private rows(lines: Line[]): string[] {
-    return lines.flatMap((l) => lineRows(l, this.deps.term.cols));
+  private rows(lines: Line[], previous?: Line): string[] {
+    return historyRows(lines, this.deps.term.cols, previous);
   }
 
   /**
@@ -381,7 +402,7 @@ export class App {
    */
   private stream(page: Page, text: string, plain = false): void {
     page.streamed = true;
-    if (!plain) return this.toPage(page, page.md.feed(text).map((md) => ({ md, block: true })));
+    if (!plain) return this.toPage(page, page.md.feedLines(text));
     this.endPartial(page);
     this.toPage(page, text.replace(/\n$/, "").split("\n"));
   }
@@ -391,18 +412,26 @@ export class App {
     this.endPartial(page);
     for (const m of msgs) {
       if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
-      // Typed here: already shown when sent (checked first, so typed text that looks like an answer stays text).
+      // Typed here: show only now, at the consumption boundary (answer-shaped chat stays chat).
       const at = page.sent.indexOf(m.text);
-      if (at !== -1) { page.sent.splice(at, 1); continue; }
+      if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines(m.text)); continue; }
       // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`parallels msg`) as "> …", as restore shows it.
       this.toPage(page, this.questions.inboxLines(page, m.text) ?? userLines(m.text));
     }
   }
 
+  /** A tool call started: it ends the streamed text and runs in the live region until it ends. */
+  private toolStarted(page: Page, call: ToolCall): void {
+    page.streamed = true;
+    this.endPartial(page);
+    page.calls.start(call);
+    this.draw();
+  }
+
   /** Move what a page's stream still holds into its history. */
   private endPartial(page: Page): void {
-    const blocks = page.md.flush();
-    if (blocks.length) this.toPage(page, blocks.map((md) => ({ md, block: true })));
+    const blocks = page.md.flushLines();
+    if (blocks.length) this.toPage(page, blocks);
     if (page.held.length) this.toPage(page, page.held.splice(0));
   }
 
@@ -419,6 +448,7 @@ export class App {
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
+      running: page ? (page.view?.calls ?? page.calls).rows(this.clock.now(), this.deps.term.cols) : [],
       status, input, inputArea: area,
       menu: this.menu,
       question: this.questions.view(),
@@ -432,42 +462,89 @@ export class App {
     };
   }
 
+  private header(page: Page): string {
+    return `${page.name} · ${page.model ?? "loading model…"}\n${paths.repo(page.project)}\n${page.remote ? shortRemote(page.remote) : "no remote"}`;
+  }
+
+  /** Independent read generations for captured page objects. */
+  private readonly modelVersions = new WeakMap<Page, number>();
+
+  private readModel(project: string): Promise<string> {
+    return this.deps.projectModel?.(project) ?? effectiveModel(project);
+  }
+
+  /** Refresh after a confirmed save or poll; late reads cannot overwrite newer captured-page state. */
+  async refreshHeader(page = this.page): Promise<void> {
+    if (!page) return;
+    const version = (this.modelVersions.get(page) ?? 0) + 1;
+    this.modelVersions.set(page, version);
+    const model = await this.readModel(page.project);
+    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting || model === page.model) return;
+    page.model = model;
+    if (page === this.page) this.reprint();
+  }
+
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
 
   /**
-   * The dimmed line above the input: what the page is doing (a spinner while
+   * The dimmed line below the input: what the page is doing (a spinner while
    * its turn or the viewed agent runs), its name, remote and the open pages,
    * e.g. "⠋ thinking… 3s · orch-ab12 · github.com/x/y · 2 pages · 1 busy".
    */
   status(page: Page): string {
-    const parts: string[] = [];
-    // A live agent view wins over the page's own turn; otherwise a busy page shows its turn, view or not.
+    const parts = this.counts(page);
+    // A live agent view wins over the page's own turn; otherwise a busy page shows its turn (its word shimmering), view or not.
     if (page.view?.live) parts.push(`${this.spinner()} following ${page.view.name}`);
-    else if (page.busy) {
-      const secs = Math.floor((this.clock.now() - page.busySince) / 1000);
-      parts.push(`${this.spinner()} ${page.streamed ? "working…" : "thinking…"} ${secs}s`);
-    }
+    else if (page.busy) parts.push(this.turnStatus(page));
     parts.push(page.view ? `${page.name} › ${page.view.name}` : page.name);
     if (page.remote) parts.push(shortRemote(page.remote));
     parts.push(`${this.pages.length} ${this.pages.length === 1 ? "page" : "pages"}`);
     const busy = this.pages.filter((p) => p !== page && active(p)).length;
     if (busy) parts.push(`${busy} busy`);
-    parts.push(...this.questions.status(page, this.pages));
+
+
     return dim(parts.join(" · "));
+  }
+
+  private counts(page: Page): string[] {
+    const parts = [`${page.agentCount ?? 0} agents running`];
+    const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
+    if (queued) parts.push(`${queued} messages queued`);
+    parts.push(...this.questions.status(page, this.pages));
+    if (page.questions.open.length) parts.push("Ctrl+Q to view");
+    return parts;
+  }
+
+  /** Fast frames only for visible animation, never because a background page is busy. */
+  private shimmering(): boolean {
+    const page = this.page;
+    if (!page) return false;
+    if ((page.view?.calls ?? page.calls).size) return true;
+    return page.busy && !page.view?.live;
+  }
+
+  /** "⠋ thinking… 3s" with the word shimmering; the dim the status line is drawn in resumes after it. */
+  private turnStatus(page: Page): string {
+    const now = this.clock.now();
+    const word = shimmer(page.streamed ? "working…" : "thinking…", now);
+    return `${this.spinner()} ${word}\x1b[2m ${Math.floor((now - page.busySince) / 1000)}s`;
   }
 
   /** Run the spinner timer only while some page is busy or viewing a live agent. */
   private animate(): void {
-    const want = !this.closed && this.pages.some(active);
-    if (want && !this.stopSpinner) this.stopSpinner = this.clock.every(() => this.tick(), SPIN_MS);
-    else if (!want && this.stopSpinner) { this.stopSpinner(); this.stopSpinner = null; }
+    const fast = this.shimmering();
+    const ms = fast ? TICK_MS : SPIN_MS;
+    const want = !this.closed && (fast || this.pages.some(active));
+    if (this.tickMs !== ms || !want) { this.stopSpinner?.(); this.stopSpinner = null; }
+    this.tickMs = ms;
+    if (want && !this.stopSpinner) this.stopSpinner = this.clock.every(() => this.tick(), ms);
   }
 
   private tick(): void {
     const now = this.clock.now();
     if (now - this.liveCheckedAt >= LIVE_CHECK_MS) {
       this.liveCheckedAt = now;
-      for (const project of new Set(this.pages.filter((p) => p.view?.live).map((p) => p.project))) this.checkLive(project);
+      for (const project of new Set(this.pages.filter((p) => p === this.page || p.view?.live).map((p) => p.project))) this.checkLive(project);
     }
     this.draw();
   }
@@ -479,6 +556,8 @@ export class App {
     const check = agents(project)
       .then((agents) => {
         const live = new Set(agents.filter((a) => a.live).map((a) => a.name));
+        for (const p of this.pages) if (p.project === project) p.agentCount = [...live].filter((n) => /^(worker|reviewer)(-|$)/.test(n)).length;
+        this.draw();
         for (const p of this.pages) if (p.project === project && p.view?.live && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
       })
       .catch(() => {})
@@ -530,17 +609,24 @@ export class App {
     this.resizeTimer = setTimeout(() => { this.resizeTimer = null; this.reprint(); }, RESIZE_MS);
   }
 
+  private unchanged(text: string): boolean {
+    return !this.needReprint && !this.pending.length && text === this.lastLive;
+  }
+
   private flush(): void {
     this.lastFrame = Date.now();
     try {
       this.questions.sync(); // the input holds the chat draft or the shown question's answer
       const f = this.frame();
+      const fingerprint = live(f).text;
+      if (this.unchanged(fingerprint)) return;
       const pending = this.pending;
       this.pending = [];
       const out = this.needReprint ? reprint(this.screenLines(), f) : pending.length ? append(pending, f, this.shown) : live(f, this.shown);
       this.needReprint = false;
       // Synchronized output, so the terminal shows the whole update at once.
       this.deps.term.write(`\x1b[?2026h${out.text}\x1b[?2026l`);
+      this.lastLive = fingerprint;
       this.shown = out.shown;
       this.deps.term.eraseOnExit(erase(this.shown));
     } catch (err) {
@@ -573,8 +659,9 @@ export class App {
       if (existing !== this.active) { this.active = existing; this.reprint(); }
       return this.pages[existing]!;
     }
-    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), held: [], view: null };
-    page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs));
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), held: [], view: null, calls: new Calls() };
+    const tools: ToolEvents = { onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]) };
+    page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     const asked = await this.questions.load(page);
     page.lines = [...restore(page.orch.entries?.() ?? [], this.deps.term.cols, MAX_RESTORED_ROWS, asked), ...page.lines];
@@ -584,8 +671,10 @@ export class App {
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
     this.looseLines = [];
+    page.model = await this.readModel(project);
     this.pages.push(page);
     this.active = this.pages.length - 1;
+    this.checkLive(project);
     this.questions.poll([page]);
     this.reprint();
     if (this.projectList) await this.refreshProjects();
@@ -775,6 +864,7 @@ export class App {
     } finally {
       this.endPartial(page);
       page.busy = false;
+      this.toPage(page, page.calls.interrupt());
       this.draw();
     }
   }
@@ -821,11 +911,11 @@ export class App {
   }
 
   private async attach(page: Page, name: string, live: boolean): Promise<void> {
-    const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live }));
+    const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live, calls: new Calls() }));
     const view = page.view!;
     if (page === this.page) this.reprint();
     this.say(dim("Esc or /back returns"), page);
-    await follow(paths.transcript(page.project, name), (_s, entry) => this.toView(page, view, parts(entry) ?? []), stopped);
+    await follow(paths.transcript(page.project, name), (_s, entry) => this.toView(page, view, view.calls.absorb(parts(entry) ?? [])), stopped, 300, () => { if (!view.live) this.toView(page, view, view.calls.interrupt()); });
     if (page.view === view) {
       page.view = null;
       if (page === this.page) this.reprint();
@@ -860,15 +950,24 @@ export class App {
     } catch (err) { this.say(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { this.loggingIn = false; }
     // Text typed meanwhile was held back: send it now, or drop it when sign-in failed.
-    const queued = [...this.queued];
-    this.queued.clear();
-    for (const [page, texts] of queued) {
-      if (!this.pages.includes(page)) continue; // closed meanwhile
-      if (ok) for (const t of texts) await this.send(page, t);
-      else this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
-    }
+    await this.drainLogin(ok);
     this.draw();
     this.runPending();
+  }
+
+  /** Each queued message stays owned until its send attempt ends. A failure is reported by send; later messages are still attempted. */
+  private async drainLogin(ok: boolean): Promise<void> {
+    for (const [page, texts] of [...this.queued]) await this.drainLoginPage(page, texts, ok);
+  }
+
+  private async drainLoginPage(page: Page, texts: string[], ok: boolean): Promise<void> {
+    if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
+    for (const text of [...texts]) {
+      texts.shift(); // ownership transfers to send (Page.sent), or an explicit drop report
+      if (ok && this.pages.includes(page)) await this.send(page, text).catch(() => {});
+      else this.say(dim(`not sent after sign-in (${page.name}): ${text}`), this.pages.includes(page) ? page : this.page);
+    }
+    if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
   }
 
   // --- input ------------------------------------------------------------------
@@ -950,6 +1049,7 @@ export class App {
     // the shared project-state lock protect deletion/recreation, not selection.
     const result = await (this.deps.saveModel ?? setModel)(id, page.project, identity);
     this.say(dim(result), page);
+    await this.refreshHeader(page);
   }
 
   /**
@@ -974,7 +1074,6 @@ export class App {
   /** Plain text for the page's orchestrator: refused while viewing an agent, held while signing in. */
   private async talk(page: Page, text: string): Promise<void> {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
-    this.toPage(page, userLines(text));
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
     if (this.loggingIn) {
       this.queued.set(page, [...(this.queued.get(page) ?? []), text]);
@@ -987,6 +1086,7 @@ export class App {
   /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
   private readonly chords = new Map<string, () => Promise<void> | void>([
     ["c", () => this.quit()],
+    ["q", () => { if (!this.menu && !this.projectList) return this.questions.toggle(); }],
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
     ["x", () => this.switchPage(1)],
@@ -1074,9 +1174,16 @@ export class App {
 
 
   /** Send what the user typed on a page to its orchestrator, remembering it was shown already. */
-  private send(page: Page, text: string): Promise<void> {
+  private async send(page: Page, text: string): Promise<void> {
     page.sent.push(text);
-    return page.orch.say(text);
+    this.draw();
+    try { await page.orch.say(text); }
+    catch (err) {
+      const at = page.sent.lastIndexOf(text);
+      if (at !== -1) page.sent.splice(at, 1);
+      this.say(dim(`not sent: ${text}`), page);
+      throw err;
+    } finally { this.draw(); }
   }
 
   /** Add a sent line (only plain messages and harmless commands; nothing while signing in) to the active page's input history and save it (or keep it in memory while no page is open). */

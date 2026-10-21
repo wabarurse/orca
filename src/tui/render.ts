@@ -5,15 +5,22 @@
 // at the bottom is (`live`), top to bottom:
 //
 //   the partial streaming line (until it ends and is committed)
-//   a menu or the project list, when open, else the oldest open question
-//   the status line: spinner, page name, remote, page count
+//   the tool calls running now, each one line with the shimmer
 //   the input area: wrapped rows, up to a third of the screen
+//   counts/status: agents, queued messages, questions, activity
+//   a menu or project list, else the explicitly opened question
+//
+// The input area and the user's messages (`userRows`) are drawn on the user
+// background from style.ts, full width, like Codex's composer and user cells;
+// there are no composer padding rows. Input, status and panels share its band.
+// On a one-row screen a panel may be hidden while owning keys; Esc closes it.
 //
 // `reprint` clears the screen and scrollback and writes a page from scratch
 // (page switches, resizes, agent views).
 
 import { cells, layout, scrollWindow } from "./editor";
 import { wordWrap } from "./markdown";
+import { fillRow, userFill, chromeFill } from "./style";
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -36,8 +43,8 @@ export interface ProjectList {
   status: string;
 }
 
-/** How the input relates to the shown question: choosing a row, typing its answer, or holding a chat draft (which must go first). */
-export type QuestionMode = "pick" | "answer" | "guard";
+/** How the input relates to the shown question: choosing a row or typing its answer, with the chat draft saved separately. */
+export type QuestionMode = "pick" | "answer";
 
 /** The oldest open question of the active page, as the live region shows it. */
 export interface QuestionView {
@@ -57,13 +64,15 @@ export interface Frame {
   rows: number;
   /** Streamed text not committed yet (a partial line, or a held code block or table, raw); wrapped, above everything else. */
   partial?: string;
+  /** Rows of the tool calls running now (tools.ts, already styled), under the partial line. */
+  running?: string[];
   input: Input;
   menu: Menu | null;
-  /** The project list, above the status line like a menu, when open. */
+  /** The project list, below the input and status like a menu, when open. */
   projects?: ProjectList | null;
-  /** The question shown above the status line when no menu or project list is open. */
+  /** The question shown below the input and status when no menu or project list is open. */
   question?: QuestionView | null;
-  /** The status line just above the input (e.g. "⠋ thinking… 3s · name · remote · 2 pages"), or none. */
+  /** The status line just below the input (e.g. "⠋ thinking… 3s · name · remote · 2 pages"), or none. */
   status?: string | null;
   /** `inputArea(input, cols, rows, status ? 1 : 0)` when the caller already has it; computed otherwise. */
   inputArea?: InputArea;
@@ -125,16 +134,31 @@ export function expandTabs(line: string): string {
   return out;
 }
 
-/** Split a styled line into pieces at most `cols` display columns wide (one wider character may overflow a tiny width). */
+/** Replay the SGR state on a soft wrap; a full reset discards its predecessors. */
+function continuedStyle(style: string, esc: string): string {
+  if (!/^\x1b\[[0-9;:]*m$/.test(esc)) return style;
+  return /^\x1b\[(?:0)?m$/.test(esc) ? "" : style + esc;
+}
+
+/** A two-column glyph cannot fit a one-column screen: show an ellipsis without corrupting geometry. */
+const fittingCell = (c: { text: string; width: number }, cols: number) => c.width > cols ? { text: "…", width: 1 } : c;
+
+/** Split a styled line into pieces at most `cols` display columns wide. */
 export function wrap(line: string, cols: number): string[] {
   if (cols <= 0) return [line];
   const out: string[] = [];
   let piece = "";
   let width = 0;
+  let style = "";
   for (const t of tokens(expandTabs(line))) {
-    if ("esc" in t) { piece += t.esc; continue; }
-    for (const c of cells(t.text)) {
-      if (width > 0 && width + c.width > cols) { out.push(piece + "\x1b[0m"); piece = ""; width = 0; }
+    if ("esc" in t) {
+      piece += t.esc;
+      style = continuedStyle(style, t.esc);
+      continue;
+    }
+    for (const source of cells(t.text)) {
+      const c = fittingCell(source, cols);
+      if (width > 0 && width + c.width > cols) { out.push(piece + "\x1b[0m"); piece = style; width = 0; }
       piece += c.text;
       width += c.width;
     }
@@ -143,26 +167,36 @@ export function wrap(line: string, cols: number): string[] {
   return out;
 }
 
+/** A user message line ("> …" or its indented continuation) at `cols`: wrapped, every row on the user background, full width. */
+export function userRows(line: string, cols: number): string[] {
+  const rows = wrap(sanitize(line), cols);
+  const fill = userFill();
+  return fill ? rows.map((r) => fillRow(r, cols, fill)) : rows;
+}
+
 /** One row: cut with an ellipsis rather than wrapped. */
-function fit(raw: string, cols: number): string {
+export function fit(raw: string, cols: number): string {
+  if (cols <= 0) return "";
   const line = expandTabs(raw);
   if (visibleLength(line) <= cols) return line;
+  if (cols === 1) return "…";
   return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…\x1b[0m";
 }
 
 /** The input area as laid out on screen: its rows (prompt on the first, indented after), the cursor within them, and the first text row shown. */
 export interface InputArea { lines: string[]; row: number; col: number; top: number }
 
-/** Lay out the input at the bottom of a `rows`-high screen, leaving `reserved` rows (the status line) above it. */
+/** Lay out the input at the bottom of a `rows`-high screen, reserving `reserved` rows for the status below it. */
 export function inputArea(input: Input, cols: number, rows: number, reserved = 0): InputArea {
-  const indent = visibleLength(input.prompt);
+  const prompt = cols < 4 ? "" : fit(input.prompt, Math.max(0, cols - 2));
+  const indent = visibleLength(prompt);
   const { rows: all, row, col } = layout(input, cols - indent);
   // At most a third of the screen, less if the reserved rows and a row above would not fit;
   // past that, scroll only when the cursor leaves the window.
   const allowance = Math.max(1, Math.min(Math.floor(rows / 3), rows - 1 - reserved));
   const shown = Math.min(all.length, allowance);
   const top = scrollWindow(input.top ?? all.length, row, all.length, shown);
-  const lines = all.slice(top, top + shown).map((r, i) => (top + i === 0 ? input.prompt : " ".repeat(indent)) + r.text);
+  const lines = all.slice(top, top + shown).map((r, i) => (top + i === 0 ? prompt : " ".repeat(indent)) + r.text).map((r) => fit(r, cols));
   return { lines, row: row - top, col: Math.max(0, Math.min(cols - 1, indent + col)), top };
 }
 
@@ -194,8 +228,7 @@ export function projectRows(p: ProjectList, height: number): string[] {
 
 export const QUESTION_HINTS: Record<QuestionMode, string> = {
   pick: "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later",
-  answer: "Enter send · Esc clear · Tab later",
-  guard: "send or clear your message to answer",
+  answer: "Enter send · Esc/Tab close",
 };
 export const OWN_ANSWER = "type your own answer";
 export const skipRow = (def?: string) => (def ? `skip (use default: ${def})` : "skip");
@@ -239,25 +272,32 @@ export function commit(lines: string[], cols: number): string {
 /** The last `n` of `rows` (none when n is 0). */
 const lastRows = (rows: string[], n: number) => (n > 0 ? rows.slice(-n) : []);
 
-/** What sits above the status line: a menu, else the project list, else the question. */
+/** What sits below input/status: a menu, else the project list, else the question. */
 function overlayRows(f: Frame, height: number): string[] {
   if (f.menu) return menuRows(f.menu, height);
   if (f.projects) return projectRows(f.projects, height);
   return f.question ? questionRows(f.question, f.cols, height) : [];
 }
 
-/** The live region's rows, top to bottom, and where the cursor goes in them. */
+/** Inline header: committed once with the page, never pinned or redrawn with the composer. */
+export function headerRow(text: string, cols: number): string {
+  const row = fit(sanitize(text), cols);
+  const fill = chromeFill();
+  return fill ? fillRow(row, cols, fill) : row;
+}
+
+/** Input first; panels live BELOW it. On tiny screens the input wins, then the status, then the panel. */
 export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
-  const statusRows = f.status ? 1 : 0;
-  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, statusRows);
-  // Everything must fit on screen, or the cursor could not get back to the top: the overlay
-  // gets what the input and status leave (but a row), the partial line the rest, showing its end.
-  let free = Math.max(0, f.rows - statusRows - input.lines.length);
-  const overlay = overlayRows(f, free - 1).map((r) => fit(sanitize(r), f.cols));
-  free -= overlay.length;
-  const partial = f.partial ? lastRows(f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)), free) : [];
-  const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...input.lines];
-  return { rows, cursor: rows.length - input.lines.length + input.row, col: input.col };
+  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, f.status ? 1 : 0);
+  const status = f.status && f.rows > input.lines.length ? [fit(sanitize(f.status), f.cols)] : [];
+  const free = Math.max(0, f.rows - input.lines.length - status.length);
+  const panel = overlayRows(f, free).map((r) => fit(sanitize(r), f.cols));
+  const streamed = f.partial ? f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)) : [];
+  const above = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols))], free - panel.length);
+  const band = [...input.lines, ...status, ...panel];
+  const fill = userFill();
+  const rows = [...above, ...band.map((r) => fill ? fillRow(r, f.cols, fill) : r)];
+  return { rows, cursor: above.length + input.row, col: input.col };
 }
 
 /** Move from where `prev` left the cursor to the live region's first row and clear from there down. */

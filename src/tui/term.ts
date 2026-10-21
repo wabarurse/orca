@@ -1,9 +1,15 @@
 // The terminal behind the TUI: raw mode, bracketed paste, size and key
 // events. No alternate screen: the TUI is inline, writing into the normal
 // screen and its scrollback. The real one wraps stdin/stdout; tests pass a
-// fake with the same shape.
+// fake with the same shape. Opening asks the terminal for its background
+// colour (OSC 11) once, without blocking: a reply within BG_REPLY_MS sets the
+// user background's shade (style.ts) and settles `background` (so does the
+// timeout), which the app awaits before committing its first page; later or
+// other OSC replies are dropped, none of them ever reaches the app as keys,
+// and a close inside the window keeps reading stdin until it ends.
 
-import { keyReader, type Key } from "./keys";
+import { keyReader, type Key, type SetTimer } from "./keys";
+import { BG_QUERY, BG_REPLY_MS, parseBgReply, useTerminalBackground } from "./style";
 
 export interface Terminal {
   cols: number;
@@ -17,6 +23,8 @@ export interface Terminal {
   close(): void;
   /** What to write, on a crash or a signal, to take the live region off the screen (the app keeps it current). */
   eraseOnExit(text: string): void;
+  /** Settles once the terminal's background is known or will not be (the OSC 11 reply or its timeout); the app commits the first page after it. */
+  background?: Promise<void>;
 }
 
 // Bracketed paste, so a pasted newline is text, not Enter. Leaving keeps the screen as it is.
@@ -51,20 +59,34 @@ function attempt(fn: () => void): void {
   try { fn(); } catch { /* nothing left to restore */ }
 }
 
-export function realTerminal(stdin = process.stdin, stdout = process.stdout, proc: Proc = process): Terminal {
+/** Clock and timers for the background query's window; tests pass manual ones. */
+export interface TermClock { now: () => number; setTimer: SetTimer }
+/** Kept referenced, unlike the key reader's: closing waits out the reply window before the shell gets the terminal back. */
+const realClock: TermClock = { now: Date.now, setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } };
+
+export function realTerminal(stdin = process.stdin, stdout = process.stdout, proc: Proc = process, clock: TermClock = realClock): Terminal {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error("parallels start needs a terminal; run it from an interactive shell");
-  return new RealTerminal(stdin, stdout, proc);
+  return new RealTerminal(stdin, stdout, proc, clock);
 }
 
 class RealTerminal implements Terminal {
   private opened = false;
+  /** Closed, but waiting out the reply window with stdin still read (and dropped) in raw mode. */
+  private draining = false;
   private eraser = "";
   private readonly keyHandlers: ((k: Key) => void)[] = [];
-  private readonly reader = keyReader((key) => { for (const h of this.keyHandlers) h(key); });
+  /** When the background query went out; null once answered or its window is over. It goes out once. */
+  private asked: number | null = null;
+  private queried = false;
+  private settle: (() => void) | null = null;
+  private stopWait: (() => void) | null = null;
+  /** Resolves once the background reply came or its window ended; resolved until open() asks. */
+  background: Promise<void> = Promise.resolve();
+  private readonly reader = keyReader((key) => this.key(key), 300, undefined, () => this.awaiting());
   private readonly onData = (chunk: string) => this.reader.feed(chunk);
   private readonly handlers: [string, Handler][];
 
-  constructor(private readonly stdin: typeof process.stdin, private readonly stdout: typeof process.stdout, private readonly proc: Proc) {
+  constructor(private readonly stdin: typeof process.stdin, private readonly stdout: typeof process.stdout, private readonly proc: Proc, private readonly clock: TermClock) {
     this.handlers = exitHandlers(() => this.rescue(), proc);
   }
 
@@ -75,12 +97,51 @@ class RealTerminal implements Terminal {
   onResize(cb: () => void): void { this.stdout.on("resize", cb); }
   eraseOnExit(text: string): void { this.eraser = text; }
 
+  /** Whether the background reply is still expected. */
+  private awaiting(): boolean {
+    return this.asked !== null && this.clock.now() - this.asked <= BG_REPLY_MS;
+  }
+
+  /** A key from the reader: OSC replies are taken here, and nothing reaches the app once closed. */
+  private key(k: Key): void {
+    if (k.name === "osc") return this.reply(k.text ?? "");
+    if (!this.opened) return;
+    for (const h of this.keyHandlers) h(k);
+  }
+
+  /** An OSC reply: the first background reply in time sets the shade; anything else is dropped. */
+  private reply(body: string): void {
+    const bg = body.startsWith("11;") ? parseBgReply(body) : null;
+    if (!bg || this.asked === null) return;
+    if (this.awaiting()) useTerminalBackground(bg);
+    this.windowOver();
+  }
+
+  /** Send the background query and open its window: `background` settles on the reply or when the window ends. */
+  private ask(): void {
+    this.asked = this.clock.now();
+    this.background = new Promise<void>((resolve) => { this.settle = resolve; });
+    this.stdout.write(BG_QUERY);
+    this.stopWait = this.clock.setTimer(() => this.windowOver(), BG_REPLY_MS);
+  }
+
+  /** The reply came or the window ended: settle `background`, and finish a close that was waiting for it. */
+  private windowOver(): void {
+    this.asked = null;
+    this.stopWait?.();
+    this.stopWait = null;
+    this.settle?.();
+    this.settle = null;
+    if (this.draining) this.release();
+  }
+
   private install(on: boolean): void {
     for (const [event, fn] of this.handlers) (on ? this.proc.on : this.proc.off).call(this.proc, event as "exit", fn);
   }
 
   /** Put the terminal back after a crash or signal: no sync, paste or hidden cursor, no live region, cooked mode. */
   private rescue(): void {
+    if (this.draining) return this.release();
     if (!this.opened) return;
     this.opened = false;
     attempt(() => this.stdout.write(RESCUE + this.eraser));
@@ -89,7 +150,7 @@ class RealTerminal implements Terminal {
   }
 
   open(): void {
-    if (this.opened) return;
+    if (this.opened || this.draining) return;
     this.opened = true;
     this.install(true);
     this.stdin.setRawMode(true);
@@ -97,16 +158,25 @@ class RealTerminal implements Terminal {
     this.stdin.on("data", this.onData);
     this.stdin.resume();
     this.stdout.write(ENTER);
+    if (!this.queried) { this.queried = true; this.ask(); }
   }
 
+  /** Leave paste mode at once; while the background reply is still expected, keep reading (and dropping) stdin until it comes or the window ends, so it never lands at the shell prompt. */
   close(): void {
     if (!this.opened) return;
     this.opened = false;
-    this.install(false);
     this.stdout.write(LEAVE);
+    if (this.awaiting()) { this.draining = true; return; }
+    this.release();
+  }
+
+  /** Hand the terminal back: no handlers, no reader, cooked mode. */
+  private release(): void {
+    this.draining = false;
+    this.install(false);
     this.stdin.off("data", this.onData);
     this.reader.close();
-    this.stdin.setRawMode(false);
+    attempt(() => this.stdin.setRawMode(false));
     this.stdin.pause();
   }
 }

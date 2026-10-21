@@ -20,12 +20,12 @@ test("render shows prompts, text, tool calls and results, and hides thinking", (
       { type: "tool_use", id: "t", name: "bash", input: { command: "ls\n-la" } },
     ] },
   })!;
-  expect(strip(assistant)).toBe('on it\n▸ bash {"command":"ls\\n-la"}');
+  expect(strip(assistant)).toBe("on it\n⏺ Bash(ls -la)");
   const result = render({
     uuid: "4", parentUuid: null, ts: "", type: "message",
     message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "a.ts\nb.ts", is_error: true }] },
   })!;
-  expect(strip(result)).toBe("  error: a.ts");
+  expect(strip(result)).toBe("  ⎿  a.ts");
 });
 
 test("follow prints history, then new entries, then stops", async () => {
@@ -47,13 +47,13 @@ test("follow prints history, then new entries, then stops", async () => {
   await running;
 });
 
-test("parts keeps assistant text as markdown and the rest as styled lines", () => {
+test("parts keeps assistant text as markdown, tool calls and results as parts to pair, and the rest as styled lines", () => {
   const ps = parts({
     uuid: "5", parentUuid: null, ts: "", type: "message",
     message: { role: "assistant", content: [{ type: "text", text: "**hi**" }, { type: "tool_use", id: "t", name: "bash", input: {} }] },
   })!;
   expect(ps[0]).toEqual({ md: "**hi**" });
-  expect(strip(ps[1] as string)).toBe("▸ bash {}");
+  expect(ps[1]).toEqual({ call: { id: "t", name: "bash", input: {} } });
   expect(parts({ uuid: "6", parentUuid: null, ts: "", type: "message", message: { role: "user", content: "**raw**" } })!.map((p) => strip(p as string))).toEqual(["> **raw**"]);
 });
 

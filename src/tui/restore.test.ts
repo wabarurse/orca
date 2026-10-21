@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { format } from "../inbox";
 import { open, type Entry } from "../transcript";
-import { lineRows, type Line } from "./lines";
-import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, toolLine } from "./restore";
+import { historyRows, lineRows, type Line } from "./lines";
+import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED } from "./restore";
+import { toolView } from "../toolview";
 import { bold, dim } from "./render";
 
 const dir = mkdtempSync(join(tmpdir(), "parallels-restore-"));
@@ -30,7 +31,7 @@ const meta = { type: "meta", role: "orchestrator", model: "m" } as const;
 const user = (content: unknown, extra = {}) => ({ type: "message", message: { role: "user", content }, ...extra }) as never;
 const assistant = (content: unknown, extra = {}) => ({ type: "message", message: { role: "assistant", content }, ...extra }) as never;
 const inbox = (...msgs: [string, string][]) => format(msgs.map(([from, text]) => ({ from, text, ts: "" })));
-const raw = (l: Line) => (typeof l === "string" ? l : l.md);
+const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : l.md);
 
 test("user messages, agent reports, assistant markdown and replies; tool calls as live, results and thinking hidden", () => {
   const entries = transcript(
@@ -41,29 +42,40 @@ test("user messages, agent reports, assistant markdown and replies; tool calls a
       { type: "text", text: "# Plan\n\n| a | b |\n|---|---|\n| 1 | 2 |\n" },
       { type: "tool_use", id: "t1", name: "spawn", input: { branch: "feat/login" } },
     ]),
-    user([{ type: "tool_result", tool_use_id: "t1", content: "started worker-feat-login" }, { type: "text", text: inbox(["worker-feat-login", "Done.\n\nAll green."]) }]),
+    user([{ type: "tool_result", tool_use_id: "t1", content: "worker-feat-login" }, { type: "text", text: inbox(["worker-feat-login", "Done.\n\nAll green."]) }]),
     assistant([{ type: "tool_use", id: "t2", name: "message", input: { to: "user", text: "Login is **done**." } }, { type: "tool_use", id: "t3", name: "message", input: { to: "user", text: "refused one" } }]),
     user([{ type: "tool_result", tool_use_id: "t2", content: "sent to user" }, { type: "tool_result", tool_use_id: "t3", content: "refused: empty message", is_error: true }]),
     assistant([{ type: "text", text: "All set." }]),
   );
   const lines = restore(entries, 60);
   expect(lines).toEqual([
-    `${bold(">")} build a login`, "  page please",
-    { md: "# Plan", block: true }, { md: "", block: true }, { md: "| a | b |\n|---|---|\n| 1 | 2 |", block: true },
-    toolLine("spawn", { branch: "feat/login" }),
+    { user: `${bold(">")} build a login` }, { user: "  page please" },
+    { md: "# Plan", block: true }, { md: "", block: true, continuation: true }, { md: "| a | b |\n|---|---|\n| 1 | 2 |", block: true, continuation: true },
+    { tool: "Spawn(feat/login, worker)", summary: "spawned worker-feat-login", failed: false },
     dim("From worker-feat-login: Done.…"),
-    toolLine("message", { to: "user", text: "Login is **done**." }),
-    toolLine("message", { to: "user", text: "refused one" }),
+    { tool: "Message(user: Login is **done**.)", summary: "sent to user", failed: false },
+    { tool: "Message(user: refused one)", summary: "refused: empty message", failed: true },
     { md: "All set.", block: true },
     { md: "Login is **done**.", label: bold("orchestrator") },
   ]);
-  expect(lines.some((l) => raw(l).includes("started worker") || raw(l).includes("hmm"))).toBe(false);
+  expect(lines.some((l) => raw(l).includes("All green") || raw(l).includes("hmm"))).toBe(false);
 });
 
-test("the tool line is the one agent.ts writes live", async () => {
+test("a tool call restores as the line it showed when it ended, through the formatter agent.ts and the TUI use", async () => {
   const src = await Bun.file(new URL("../agent.ts", import.meta.url)).text();
-  expect(src).toContain("write(`${toolLine(block.name, block.input)}\\n`, true);");
-  expect(toolLine("bash", { command: "ls" })).toBe(dim('▸ bash {"command":"ls"}'));
+  expect(src).toContain("callText(call)");
+  expect(src).toContain("resultText(call.name, outcome)");
+  const entries = transcript(
+    meta,
+    assistant([{ type: "tool_use", id: "b1", name: "bash", input: { command: "ls" } }, { type: "tool_use", id: "b2", name: "bash", input: { command: "false" } }]),
+    user([{ type: "tool_result", tool_use_id: "b1", content: "a\nb\n" }, { type: "tool_result", tool_use_id: "b2", content: "boom\n[exit 1]" }]),
+    assistant([{ type: "tool_use", id: "b3", name: "bash", input: { command: "sleep 9" } }]), // never got a result
+  );
+  expect(restore(entries, 60)).toEqual([
+    toolView("bash", { command: "ls" }, { ok: true, text: "a\nb\n" }),
+    { tool: "Bash(false)", summary: "exit 1: boom", failed: true },
+    { tool: "Bash(sleep 9)", summary: "interrupted", failed: true },
+  ]);
 });
 
 test("a summary: only the branch from the head back to it, led by a dim note", () => {
@@ -77,7 +89,7 @@ test("a summary: only the branch from the head back to it, led by a dim note", (
     user(inbox(["user", "new question"])),
     assistant([{ type: "text", text: "new answer" }]),
   );
-  expect(restore(entries, 60)).toEqual([SUMMARIZED, `${bold(">")} new question`, { md: "new answer", block: true }]);
+  expect(restore(entries, 60)).toEqual([SUMMARIZED, { user: `${bold(">")} new question` }, { md: "new answer", block: true }]);
 });
 
 test("the head's branch wins over a later-abandoned fork", () => {
@@ -90,16 +102,16 @@ test("a long history keeps the newest whole messages within the cap, led by how 
   for (let i = 0; i < 150; i++) items.push(user(inbox(["user", `question ${i}`])), assistant([{ type: "text", text: `answer ${i}\nline two` }]));
   const entries = transcript(...items);
   const lines = restore(entries, 60);
-  const rows = lines.slice(1).flatMap((l) => lineRows(l, 60));
-  expect(rows.length).toBe(MAX_RESTORED_ROWS);
+  const rows = historyRows(lines, 60);
+  expect(rows.length).toBe(MAX_RESTORED_ROWS - 1);
   const total = restoreItems(entries).length;
-  // 300 messages of 1 and 2 rows: the newest 133 fill exactly 200 rows, so 167 were left out.
+  // Spaced display, including omission note: 79 whole messages fill 199 rows; one more would exceed 200.
   expect(total).toBe(300);
-  expect(lines[0]).toBe(earlier(167));
+  expect(lines[0]).toBe(earlier(221));
   expect(raw(lines.at(-1)!)).toBe("line two");
-  expect(raw(lines[1]!)).toBe("answer 83");
+  expect(raw(lines[1]!)).toBe("answer 110");
   // Under the cap nothing is left out; a newest message longer than the cap still shows whole.
-  expect(restore(transcript(meta, user(inbox(["user", "hi"]))), 60)).toEqual([`${bold(">")} hi`]);
+  expect(restore(transcript(meta, user(inbox(["user", "hi"]))), 60)).toEqual([{ user: `${bold(">")} hi` }]);
   const huge = restore(transcript(meta, user(inbox(["user", "hi"])), assistant([{ type: "text", text: Array.from({ length: 300 }, (_, i) => `l${i}`).join("\n") }])), 60);
   expect(huge[0]).toBe(earlier(1));
   expect(huge.length).toBe(301);
@@ -112,7 +124,7 @@ test("an empty or missing transcript restores nothing", () => {
 
 test("the user's lines lead an inbox turn they share with agent reports, as they were shown when sent", () => {
   const entries = transcript(meta, user(inbox(["worker-a", "report"], ["user", "hi"])));
-  expect(restore(entries, 60)).toEqual([`${bold(">")} hi`, dim("From worker-a: report")]);
+  expect(restore(entries, 60)).toEqual([{ user: `${bold(">")} hi` }, dim("From worker-a: report")]);
 });
 
 const sentTo = (id: string, to: string, text: string) => [
@@ -131,11 +143,11 @@ test("older transcripts: a reply waits for the end of the run, past a report tha
     user(inbox(["user", "next"])),
     assistant([{ type: "text", text: "sure" }]),
   );
-  const tool = toolLine("message", { to: "user", text: "Started." });
+  const tool = { tool: "Message(user: Started.)", summary: "sent to user", failed: false };
   expect(restore(entries, 60)).toEqual([
-    `${bold(">")} go`, tool, { md: "ok", block: true }, dim("From worker-a: done"), { md: "more text", block: true },
+    { user: `${bold(">")} go` }, tool, { md: "ok", block: true }, dim("From worker-a: done"), { md: "more text", block: true },
     replyLine("orchestrator", "Started."),
-    `${bold(">")} next`, { md: "sure", block: true },
+    { user: `${bold(">")} next` }, { md: "sure", block: true },
   ]);
 });
 
@@ -156,25 +168,25 @@ test("replies entries place what a turn sent the user (agents' too) after it; me
     user(inbox(["user", "thanks"])),
   );
   const lines = restore(entries, 60);
-  expect(lines.filter((l) => typeof l !== "string" && l.label)).toEqual([replyLine("orchestrator", "Started."), replyLine("worker-a", "hi user"), replyLine("orchestrator", "Reviewed.")]);
+  expect(lines.filter((l) => typeof l !== "string" && "label" in l && l.label)).toEqual([replyLine("orchestrator", "Started."), replyLine("worker-a", "hi user"), replyLine("orchestrator", "Reviewed.")]);
   const at = (l: Line) => lines.findIndex((x) => JSON.stringify(x) === JSON.stringify(l));
   expect(at(replyLine("orchestrator", "Started."))).toBe(at({ md: "more text", block: true }) + 1);
   expect(at(replyLine("orchestrator", "Reviewed."))).toBe(at({ md: "noted", block: true }) + 1);
-  expect(lines.at(-1)).toBe(`${bold(">")} thanks`);
+  expect(lines.at(-1)).toEqual({ user: `${bold(">")} thanks` });
 });
 
 test("a capped history that began at a summary drops the summary note and counts only messages", () => {
   const items = [meta as never, user(inbox(["user", "old"])), { type: "summary", text: "s", parentUuid: "u1" } as never];
   for (let i = 0; i < 120; i++) items.push(user(inbox(["user", `q${i}`])), assistant([{ type: "text", text: `a${i}` }]));
   const lines = restore(transcript(...items), 60);
-  // 240 one-row messages after the summary: the newest 200 show, 40 are counted, the note is not.
-  expect(lines.length).toBe(201);
-  expect(lines[0]).toBe(earlier(40));
+  // Note plus 99 one-row messages and their separators: 199 rows; 141 messages omitted.
+  expect(lines.length).toBe(100);
+  expect(lines[0]).toBe(earlier(141));
   expect(lines).not.toContain(SUMMARIZED);
   expect(lines.some((l) => raw(l).includes("old"))).toBe(false);
   // Just under the cap the note leads.
   const few = restore(transcript(meta, { type: "summary", text: "s" } as never, user(inbox(["user", "q"]))), 60);
-  expect(few).toEqual([SUMMARIZED, `${bold(">")} q`]);
+  expect(few).toEqual([SUMMARIZED, { user: `${bold(">")} q` }]);
 });
 
 test("report lines cut at 100 characters, not UTF-16 units", () => {
@@ -187,7 +199,7 @@ test("report lines cut at 100 characters, not UTF-16 units", () => {
 
 test("tags inside a report or a user message are not senders", () => {
   const entries = transcript(meta, user(inbox(["worker-a", "Report\n\n[x] done\n\n[1] item"], ["user", "list:\n\n[x] done\n\n[1] item"])));
-  expect(restore(entries, 60)).toEqual([`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item", dim("From worker-a: Report…")]);
+  expect(restore(entries, 60)).toEqual([...[`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item"].map((user) => ({ user })), dim("From worker-a: Report…")]);
 });
 
 test("question answers and skips restore as the dim line the page showed live, not as '> …'", () => {

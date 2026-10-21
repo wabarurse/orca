@@ -1,28 +1,17 @@
-// The orchestrator's questions in the TUI, like Codex's pending questions:
-// the oldest open question of the active page sits in the live region above
-// the status line (render.ts questionRows) with its options numbered, then
-// "type your own answer" and "skip (use default: …)". Nothing is ever sent
-// by Esc: it clears a typed answer, else puts the queue off like Tab, until a
-// new question arrives or /questions. The backend is ../questions.ts.
+// Explicitly opened questions in the composer-first TUI. Arrivals only update
+// the count; Ctrl+Q or /questions opens the oldest question BELOW the input.
+// Esc/Tab/Ctrl+Q closes without answering/skipping and restores the saved chat
+// draft; a typed answer remains with the question for reopening. Selecting
+// skip and pressing Enter is the only skip action. Menus take precedence.
 //
-// Modes (the input is shared with chat):
-// - pick: an option or the skip row is selected; the input is empty. ↑↓ or
-//   1–9 choose, Enter picks, typing moves to "type your own answer".
-// - answer: "answer>" (that row, or a question without options at first);
-//   Enter sends the typed text, or runs it when its first word is a known
-//   command; ↑↓ move between the answer's lines, then between rows.
-// - guard: a chat draft was in the input when the question showed; the
-//   question shows but the keys stay with chat ("send or clear your message
-//   to answer").
-// - chat: no question shown, or the page shows an agent view (only the count
-//   in the status line then).
-// The chat draft is put aside while the input holds an answer, and a
-// half-typed answer stays with its page. Enter, digits and typing are
-// ignored for a moment (delayMs) after a question first shows, so a key meant
-// for chat never answers it. A question closed elsewhere while its answer is
-// half typed leaves the text in the input as a chat draft, never moved to the
-// next question. An answered line is held while the page's reply is mid-line
-// (app.ts), and in an agent view it lands in the page, seen after /back.
+// Modes: pick (options/skip, empty input); answer (answer> edits the answer);
+// chat (panel closed, empty queue, or an agent view). Opening saves the chat
+// buffer, even when it is nonempty. If a question is closed elsewhere, its
+// orphaned answer is reported separately and the ORIGINAL chat is restored;
+// neither buffer is silently replaced or moved to the next question.
+// Enter/digits/typing have a short guard after opening. The #45 closing guard
+// keeps polls from mistaking our own in-flight answer for an external close.
+// A local answer's history line waits behind any streaming partial in app.ts.
 
 import { stat } from "node:fs/promises";
 import { paths } from "../config";
@@ -71,8 +60,9 @@ export interface PageQuestions {
   readAt: number;
   /** The read in flight, if any; polls never overlap. */
   polling: Promise<void> | null;
-  /** Put off (Tab, Esc): the ids open then; the queue shows again once another one is open. */
+  /** Ids hidden on close; expanded is the explicit open/closed state. */
   hidden: Set<string> | null;
+  expanded: boolean;
   /** The selected row of the shown question: an option, then "type your own answer", then "skip". */
   index: number;
   /** The answer typed so far, while the input shows something else. */
@@ -110,14 +100,14 @@ const EMPTY: EditState = { text: "", cursor: 0 };
 /** How long Enter, digits and typing are ignored after a question first shows. */
 export const QUESTION_DELAY_MS = 500;
 
-export const pageQuestions = (): PageQuestions => ({ open: [], seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
+export const pageQuestions = (): PageQuestions => ({ open: [], seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, expanded: false, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
 
 type Mode = "chat" | QuestionMode;
 /** What the input holds in a mode: the chat draft, the question's answer, or nothing (a row is being picked). */
-const bufferOf = (m: Mode) => (m === "chat" || m === "guard" ? "chat" : m === "answer" ? "answer" : "none");
+const bufferOf = (m: Mode) => (m === "chat" ? "chat" : m === "answer" ? "answer" : "none");
 
 const head = (q: PageQuestions) => q.open[0];
-const visible = (q: PageQuestions) => q.open.length > 0 && (!q.hidden || q.open.some((x) => !q.hidden!.has(x.id)));
+const visible = (q: PageQuestions) => q.expanded && q.open.length > 0 && (!q.hidden || q.open.some((x) => !q.hidden!.has(x.id)));
 const optionCount = (q: PageQuestions) => head(q)?.options?.length ?? 0;
 /** The "type your own answer" row; "skip" is the one after it. */
 const ownRow = (q: PageQuestions) => optionCount(q);
@@ -172,14 +162,20 @@ export class Questions {
     this.update(page, open);
   }
 
-  /** New open questions: a new one ends a put-off; a new head starts at its first row. */
+  private keepClosing(q: PageQuestions, open: Question[]): Question[] {
+    const before = head(q);
+    return q.closing && before && !open.some((x) => x.id === before.id) ? [before, ...open] : open;
+  }
+
+  /** Refresh the queue without opening it; a changed head starts at its first row. */
   private update(page: QuestionPage, open: Question[]): void {
     const q = page.questions;
     const before = head(q);
     // A read can see the head answered by the close still in flight here: it stays until that close ends.
-    if (q.closing && before && !open.some((x) => x.id === before.id)) open = [before, ...open];
+    open = this.keepClosing(q, open);
     for (const x of open) q.seen.set(x.id, x);
     q.open = open;
+    if (!open.length) q.expanded = false;
     if (q.hidden && open.some((x) => !q.hidden!.has(x.id))) q.hidden = null;
     if (before && !open.some((x) => x.id === before.id)) this.headGone(page, before);
     else if (head(q)?.id !== before?.id) this.reset(page);
@@ -205,20 +201,18 @@ export class Questions {
     return this.shown.page === page && this.shown.mode === "answer" ? this.host.input : page.questions.answer;
   }
 
-  /**
-   * The head closed elsewhere: say so, and keep a typed answer — in the input
-   * as a chat draft (so the next question waits behind it), or in the note
-   * when the page is not showing it. It never moves to the next question.
-   */
+  /** Preserve the original chat buffer; an orphaned answer is reported separately, never assigned to the next question. */
   private keepTyped(page: QuestionPage, note: string): void {
-    const q = page.questions;
-    const inInput = this.shown.page === page && this.shown.mode === "answer";
     const typed = this.typed(page);
-    q.index = 0;
-    q.answer = EMPTY;
-    if (!typed.text.trim()) { if (inInput) this.host.input = EMPTY; }
-    else if (inInput) this.shown = { page, mode: "chat" };
-    else note += `; your unsent answer: ${typed.text}`;
+    const active = this.shown.page === page && this.shown.mode !== "chat";
+    page.questions.expanded = false;
+    page.questions.index = 0;
+    page.questions.answer = EMPTY;
+    if (active) {
+      this.host.input = this.chat;
+      this.shown = { page, mode: "chat" };
+    }
+    if (typed.text.trim()) note += `; your unsent answer: ${typed.text}`;
     this.host.say(dim(note), page);
   }
 
@@ -227,7 +221,7 @@ export class Questions {
   /** The mode the active page wants now: what sync moves the input to. */
   private want(page = this.host.page()): Mode {
     if (!page || page.view || !visible(page.questions)) return "chat";
-    if (bufferOf(this.shown.mode) === "chat" && this.host.input.text.trim()) return "guard";
+
     return page.questions.index === ownRow(page.questions) ? "answer" : "pick";
   }
 
@@ -271,7 +265,7 @@ export class Questions {
     if (this.shown.page === page && this.shown.mode === want) return;
     const from = bufferOf(this.shown.mode);
     if (this.shown.page !== page || from !== bufferOf(want)) this.swap(page, want);
-    if (page && want !== "chat") this.arm(page.questions, from === "chat" && want !== "guard");
+    if (page && want !== "chat") this.arm(page.questions, from === "chat");
     this.shown = { page, mode: want };
   }
 
@@ -297,12 +291,12 @@ export class Questions {
   /**
    * Whether a key goes to the shown question; pure, so callers can ask
    * freely. Plain ↑↓ Enter Esc Tab, and typing on a row being picked (or
-   * while the delay runs). Nothing in chat or guard mode or in an agent view.
+   * while the delay runs). Nothing in chat mode or in an agent view.
    */
   takes(k: Key): boolean {
     const page = this.host.page();
     const mode = this.want(page);
-    if (mode === "chat" || mode === "guard") return false;
+    if (mode === "chat") return false;
     if (typing(k)) return mode === "pick" || !this.ready(page!.questions);
     return plain(k) && TAKEN.has(k.name);
   }
@@ -341,9 +335,8 @@ export class Questions {
     this.host.input = ed.insert(this.host.input, text);
   }
 
-  /** Esc never sends: it clears a typed answer, else puts the queue off. */
+  /** Esc closes the panel, preserving both drafts; it never sends. */
   private escape(page: QuestionPage): void {
-    if (this.shown.mode === "answer" && this.host.input.text) { this.host.input = EMPTY; return; }
     this.hide(page);
   }
 
@@ -394,19 +387,28 @@ export class Questions {
       q.closing = false;
     }
     q.open = q.open.filter((x) => x.id !== h.id);
+    if (!q.open.length) q.expanded = false;
     this.sync();
     this.host.draw();
   }
 
-  /** Tab (or Esc on an empty input): put the queue off until a new question arrives or /questions. */
+  /** Close until explicit reopening, even if new questions arrive. */
   private hide(page: QuestionPage): void {
+    page.questions.expanded = false;
     page.questions.hidden = new Set(page.questions.open.map((x) => x.id));
     this.sync();
   }
 
+  /** Explicit toggle; closing never answers and keeps both the chat and answer drafts. */
+  async toggle(page = this.host.page()): Promise<void> {
+    if (!page) return;
+    if (page.questions.expanded) { this.hide(page); this.host.draw(); }
+    else await this.command(page);
+  }
+
   // --- /questions ---------------------------------------------------------------
 
-  /** /questions: read the queue now, show it again, and list it when there are several. */
+  /** /questions: read and explicitly open the queue. */
   async command(page: QuestionPage | undefined): Promise<void> {
     if (!page) return;
     const q = page.questions;
@@ -414,8 +416,9 @@ export class Questions {
     q.stamp = NaN;
     await this.pollPage(page);
     q.hidden = null;
+    q.expanded = q.open.length > 0;
     if (!q.open.length) return this.host.say(dim("no open questions"), page);
-    if (q.open.length > 1) q.open.forEach((x, i) => this.host.say(dim(`${i + 1}. ${x.text}${x.default ? ` (default: ${x.default})` : ""}`), page));
+
     this.sync();
     this.host.draw();
   }
