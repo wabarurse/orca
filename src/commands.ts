@@ -37,9 +37,9 @@ export async function listAgents(project: string): Promise<{ name: string; live:
 }
 
 /** A fresh orchestrator name, orch-xxxx, that no project uses yet. */
-export function newProjectName(taken: string[]): string {
+export function newProjectName(taken: string[], random: () => number = Math.random): string {
   for (;;) {
-    const name = `orch-${Math.random().toString(36).slice(2, 6).padEnd(4, "0")}`;
+    const name = `orch-${random().toString(36).slice(2, 6).padEnd(4, "0")}`;
     if (!taken.includes(name)) return name;
   }
 }

@@ -81,6 +81,8 @@ export class App {
   scroll = 0;
   menu: ActiveMenu | null = null;
   loggingIn = false;
+  /** Text typed while signing in, per page; sent when sign-in succeeds, dropped when it fails. */
+  private readonly queued = new Map<Page, string[]>();
   /** /keys: echo every key as parsed until Esc, to see what a terminal really sends. */
   keyEcho = false;
   private history: string[] = [];
@@ -110,7 +112,7 @@ export class App {
     term.onKey((k) => { this.onKey(k).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     term.onResize(() => this.draw());
     const poll = setInterval(() => {
-      for (const p of this.pages) if (!p.busy && !this.loggingIn) p.orch.pending().then((has) => { if (has) this.runTurn(p); }).catch(() => {});
+      if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
     try {
       if (project) await this.openPage(project, url);
@@ -252,11 +254,16 @@ export class App {
     this.draw();
   }
 
-  /** Start a fresh orchestrator named orch-xxxx (or `name`), cloning `url`, else the repo we were started in. */
-  async newPage(name?: string, url?: string): Promise<void> {
-    // Every id and display name in use, open or on disk, so no two tabs read the same.
+  /** Every project id, open or on disk, with the name its tab shows, so no two tabs read the same. */
+  private async shownNames(): Promise<Map<string, string>> {
     const shown = new Map<string, string>(this.pages.map((p) => [p.project, p.name]));
     for (const id of await listProjects()) if (!shown.has(id)) shown.set(id, await displayName(id));
+    return shown;
+  }
+
+  /** Start a fresh orchestrator named orch-xxxx (or `name`), cloning `url`, else the repo we were started in. */
+  async newPage(name?: string, url?: string): Promise<void> {
+    const shown = await this.shownNames();
     if (name && [...shown].some(([id, n]) => id !== name && n === name)) return this.say(dim(`another project is already called ${name}`));
     const project = name ?? newProjectName([...shown.keys(), ...shown.values()]);
     try {
@@ -345,18 +352,32 @@ export class App {
     this.draw();
   }
 
+  /** Start a turn on every idle page whose orchestrator has unread messages. */
+  private runPending(): void {
+    for (const p of this.pages) if (!p.busy) p.orch.pending().then((has) => { if (has) this.runTurn(p); }).catch(() => {});
+  }
+
   private async login(arg: string): Promise<void> {
     if (this.loggingIn) return this.say(dim("already signing in; /quit cancels"));
     this.loggingIn = true;
     this.say(dim("signing in… (/quit cancels)"));
-    try { this.say(await (this.deps.login ?? login)(arg, { write: (s) => this.say(s.replace(/\n$/, "")), signal: this.loginAbort.signal })); }
-    catch (err) { this.say(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
-    finally {
-      this.loggingIn = false;
-      this.draw();
-      // Run what was typed during sign-in now rather than at the next poll.
-      for (const p of this.pages) if (!p.busy) p.orch.pending().then((has) => { if (has) this.runTurn(p); }).catch(() => {});
+    let ok = false;
+    try {
+      const result = await (this.deps.login ?? login)(arg, { write: (s) => this.say(s.replace(/\n$/, "")), signal: this.loginAbort.signal });
+      ok = !result.startsWith("usage:");
+      this.say(result);
+    } catch (err) { this.say(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
+    finally { this.loggingIn = false; }
+    // Text typed meanwhile was held back: send it now, or drop it when sign-in failed.
+    const queued = [...this.queued];
+    this.queued.clear();
+    for (const [page, texts] of queued) {
+      if (!this.pages.includes(page)) continue; // closed meanwhile
+      if (ok) for (const t of texts) await page.orch.say(t);
+      else this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
     }
+    this.draw();
+    this.runPending();
   }
 
   // --- input ------------------------------------------------------------------
@@ -387,9 +408,12 @@ export class App {
     if (text.startsWith("/")) return this.say(dim(`unknown command ${text.split(" ")[0]}`));
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     page.lines.push(`${bold(">")} ${text}`);
+    // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
+    if (this.loggingIn) {
+      this.queued.set(page, [...(this.queued.get(page) ?? []), text]);
+      return this.say(dim("queued; runs after sign-in"), page);
+    }
     await page.orch.say(text);
-    // While signing in the turn waits; login() starts it once sign-in ends.
-    if (this.loggingIn) return this.say(dim("queued; runs after sign-in"), page);
     this.runTurn(page);
   }
 

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
-import { displayName, setDisplayName } from "../commands";
+import { displayName, newProjectName, setDisplayName } from "../commands";
 import { App, type Clock } from "./app";
 import { parseKeys, type Key } from "./keys";
 import type { Terminal } from "./term";
@@ -172,15 +172,13 @@ describe("tui app", () => {
     term.type("/new beta\r");
     await until(() => app.page?.project === "beta");
     term.type("/help\r");
-    await settle();
+    await until(() => app.page!.lines.join("\n").includes("/models [id]"));
     expect(app.page!.lines.join("\n")).not.toContain("/back");
     term.type("/back\r");
-    await settle();
-    expect(app.page!.lines.join("\n")).toContain("not viewing an agent");
+    await until(() => app.page!.lines.join("\n").includes("not viewing an agent"));
     term.type("\x1a"); // back to viewer
     term.type("/back\r");
-    await settle();
-    expect(left).toBe(1);
+    await until(() => left === 1);
     page.view = null;
     term.type("/close\r");
     await until(() => app.pages.length === 1);
@@ -208,7 +206,7 @@ describe("tui app", () => {
     await until(() => term.screen().includes("/models [id]"));
     term.type("hi\r");
     await until(() => term.screen().includes("queued; runs after sign-in"));
-    expect(orchs.said.signer).toEqual(["hi"]);
+    expect(orchs.said.signer).toEqual([]); // held back until sign-in succeeds
     await Bun.sleep(30);
     expect(term.screen()).not.toContain("signer says hi"); // the turn waits for sign-in
     term.type("/new beta2\r");
@@ -217,7 +215,31 @@ describe("tui app", () => {
     expect(app.page!.project).toBe("signer");
     finish(); // no poll runs (pollMs is huge): login() starts the queued turn itself
     await until(() => term.screen().includes("signer says hi"));
+    expect(orchs.said.signer).toEqual(["hi"]);
     expect(app.loggingIn).toBe(false);
+    app.quit();
+    await running;
+  });
+
+  test("text queued during a sign-in that fails is dropped, not run", async () => {
+    const term = fakeTerm(200);
+    const orchs = fakeOrchestrators();
+    let fail!: (err: Error) => void;
+    const login = () => new Promise<string>((_, reject) => (fail = reject));
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 20, login });
+    const running = app.run("failer");
+    await until(() => !!app.page);
+    term.type("/login claude\r");
+    await until(() => app.loggingIn);
+    term.type("one\r");
+    term.type("two\r");
+    await until(() => app.page!.lines.filter((l) => l.includes("queued; runs after sign-in")).length === 2);
+    fail(new Error("denied"));
+    await until(() => term.screen().includes("sign-in failed; dropped 2 queued message(s)"));
+    expect(term.screen()).toContain("login failed: denied");
+    await Bun.sleep(60); // polls run, but nothing was queued in the inbox
+    expect(orchs.said.failer).toEqual([]);
+    expect(term.screen()).not.toContain("failer says hi");
     app.quit();
     await running;
   });
@@ -238,7 +260,7 @@ describe("tui app", () => {
     expect(app.page!.name).toBe("foo");
 
     // Ctrl+N skips an orch-xxxx another project displays as.
-    const first = `orch-${(0.5).toString(36).slice(2, 6).padEnd(4, "0")}`;
+    const first = newProjectName([], () => 0.5);
     await setDisplayName("shown-id", first);
     app.page!.name = first;
     const rolls = [0.5, 0.25];
@@ -248,7 +270,8 @@ describe("tui app", () => {
       term.press({ name: "n", ctrl: true });
       await until(() => app.pages.length === 3);
     } finally { Math.random = random; }
-    expect(app.page!.project).toBe(`orch-${(0.25).toString(36).slice(2, 6).padEnd(4, "0")}`);
+    expect(app.page!.project).toMatch(/^orch-/);
+    expect(app.page!.project).not.toBe(first);
     app.quit();
     await running;
   });
@@ -258,13 +281,12 @@ describe("tui app", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await settle();
+    await until(() => !!app.page);
     term.type("/keys\r");
-    await settle();
+    await until(() => app.keyEcho && term.screen().includes("press keys; Esc ends"));
     term.type("\x1b[44;5u");
     term.press({ name: "escape" });
-    await settle();
-    expect(term.screen()).toContain('{"name":",","ctrl":true}');
+    await until(() => !app.keyEcho && term.screen().includes('{"name":",","ctrl":true}'));
     expect(app.keyEcho).toBe(false);
     expect(app.pages.length).toBe(1); // the chord was echoed, not acted on
     app.quit();
@@ -351,13 +373,12 @@ describe("tui app", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await settle();
+    await until(() => !!app.page);
     let picked = "";
     app.openMenu("pick one", [{ value: "x", label: "x" }, { value: "y", label: "y" }], (v) => { picked = v; });
     term.press({ name: "down" });
     term.press({ name: "enter" });
-    await settle();
-    expect(picked).toBe("y");
+    await until(() => picked === "y");
     app.openMenu("pick one", [{ value: "x", label: "x" }], (v) => { picked = v; });
     term.press({ name: "escape" });
     expect(app.menu).toBeNull();
@@ -371,7 +392,7 @@ describe("tui app", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await settle();
+    await until(() => !!app.page);
     term.type("helo");
     term.press({ name: "left" });
     term.type("l");
@@ -383,7 +404,7 @@ describe("tui app", () => {
     term.press({ name: "k", ctrl: true });
     expect(app.input.text).toBe("");
     term.type("first\r");
-    await settle();
+    await until(() => app.input.text === "");
     term.press({ name: "up" });
     expect(app.input.text).toBe("first");
     app.quit();
@@ -423,23 +444,18 @@ describe("tui app", () => {
     term.write = (s) => { if (term.closed) writesAfterClose++; termWrite(s); };
     const app = new App({ term, openOrchestrator, pollMs: 100_000, clock, agents });
     const running = app.run("alpha");
-    await settle();
+    await until(() => !!app.page);
     expect(started).toBe(0); // idle: no timer
     term.type("go\r");
-    await settle();
-    expect(started).toBe(1);
-    expect(term.screen()).toContain("⠋ thinking… 0s");
+    await until(() => started === 1 && term.screen().includes("⠋ thinking… 0s"));
     expect(term.screen()).toContain(" alpha ⠋ ");
     now = 2_150;
     ticks[0]!();
-    await settle();
-    expect(term.screen()).toContain("⠙ thinking… 2s");
+    await until(() => term.screen().includes("⠙ thinking… 2s"));
     write("partial text");
-    await settle();
-    expect(term.screen()).toContain("working… 2s");
+    await until(() => term.screen().includes("working… 2s"));
     finish();
-    await settle();
-    expect(stopped).toBe(1);
+    await until(() => stopped === 1);
     expect(ticks.length).toBe(0);
     expect(term.screen()).not.toContain("working…");
 
@@ -447,10 +463,7 @@ describe("tui app", () => {
     term.type("/agents\r");
     await until(() => !!app.menu);
     term.press({ name: "enter" });
-    await settle();
-    expect(app.page!.view?.name).toBe("worker-x");
-    expect(started).toBe(2);
-    expect(term.screen()).toContain("following worker-x");
+    await until(() => app.page!.view?.name === "worker-x" && started === 2 && term.screen().includes("following worker-x"));
     const calls = agentCalls;
     hold = true;
     now = 5_000;
@@ -462,21 +475,17 @@ describe("tui app", () => {
     live = false;
     release!();
     hold = false;
-    await settle();
-    expect(term.screen()).not.toContain("following");
-    expect(ticks.length).toBe(0);
+    await until(() => !term.screen().includes("following") && ticks.length === 0);
 
     // Busy while viewing a finished agent: the page's own turn shows.
     term.press({ name: "escape" }); // leave the view
     await until(() => !app.page!.view);
     term.type("again\r");
-    await settle();
+    await until(() => app.page!.busy);
     term.type("/agents\r");
     await until(() => !!app.menu);
     term.press({ name: "enter" });
-    await settle();
-    expect(app.page!.view?.live).toBe(false);
-    expect(term.screen()).toContain("thinking… ");
+    await until(() => app.page!.view?.live === false && term.screen().includes("thinking… "));
 
     // Quitting mid-turn clears the timer, and nothing restarts it or writes afterwards.
     expect(ticks.length).toBe(1);
