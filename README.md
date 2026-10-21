@@ -60,13 +60,17 @@ fails until green, and reports ready to merge. One agent codes on a branch at a
 time.
 
 When a branch's PR is merged, the TUI notices within about 30 seconds (it asks
-`gh pr list --state merged` for each open project; without `gh` nothing
-happens): it stops that branch's worker and reviewer, removes the worktree and
-the local and remote branch, deletes their transcripts, fast-forwards the
-project's checkout of main, and tells the orchestrator, which tells you and
-starts whatever was waiting on that branch. A worktree with uncommitted changes
-is kept, and the message says so. Closed-unmerged PRs and branches without a PR
-are never touched.
+`gh pr list --repo <origin> --state merged` for each open project whose origin
+is on GitHub; without `gh` nothing happens): it stops that branch's worker and
+reviewer, removes the worktree and the local and remote branch, deletes their
+transcripts, fast-forwards the project's checkout of main, and tells the
+orchestrator, which tells you and starts whatever was waiting on that branch.
+The worktree is removed with `git worktree remove --force`, so ignored files in
+it, such as `.env`, are deleted too. Everything is kept, and the message says
+why, when the worktree has uncommitted changes, is on another branch, or the
+branch has commits that are not in the merged PR, or when an agent does not
+stop. PRs from forks, closed-unmerged PRs, branches without a PR, main and
+origin's default branch are never touched.
 
 `config.toml` holds `maxReviewRounds` (1), `cyclomatic` (10) and
 `cognitive` (15). `/review-rounds [n]` shows or sets the round count (0 to 100;
