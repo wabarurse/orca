@@ -469,7 +469,7 @@ test("the TUI runs the watchdog for each open page on every inbox poll", async (
   const checked: string[] = [];
   const term = { cols: 40, rows: 8, write() {}, onKey() {}, onResize() {}, open() {}, close() {}, eraseOnExit() {} };
   const orch = { async say() {}, async pending() { return false; }, async turn() { return []; } };
-  const app = new App({ term, openOrchestrator: async () => orch, pollMs: 10, watchdog: async (p) => { checked.push(p); } });
+  const app = new App({ term, openOrchestrator: async () => orch, pollMs: 10, watchdog: async (p) => { checked.push(p); }, merges: async () => {} });
   const running = app.run("watched");
   const deadline = Date.now() + 2000;
   while (checked.length < 2 && Date.now() < deadline) await Bun.sleep(5);

@@ -1261,7 +1261,7 @@ describe("restored pages", () => {
     const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void) =>
       createOrchestrator({ project: p, provider, tools, write, onInbox });
     const term = fakeTerm(60, 30);
-    const app = new App({ term, openOrchestrator: open, pollMs: 30, watchdog: async () => {} });
+    const app = new App({ term, openOrchestrator: open, pollMs: 30, watchdog: async () => {}, merges: async () => {} });
     const running = app.run("fidelity");
     await until(() => !!app.page);
     term.type("go\nnow\r");
@@ -1371,7 +1371,7 @@ describe("orchestrator questions", () => {
     const orchs = fakeOrchestrators();
     let onInbox: ((msgs: Message[]) => void) | undefined;
     const openOrchestrator = async (p: string, u: string | undefined, w: (t: string, plain?: boolean) => void, inbox?: (msgs: Message[]) => void) => { onInbox = inbox; return orchs.openOrchestrator(p, u, w); };
-    const app = new App({ term, openOrchestrator, pollMs: 20, watchdog: async () => {}, questionDelayMs: 0, ...extra });
+    const app = new App({ term, openOrchestrator, pollMs: 20, watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0, ...extra });
     const running = app.run(project);
     await until(() => !!app.page);
     return { term, orchs, app, running, inbox: (msgs: Message[]) => onInbox!(msgs), stop: async () => { app.quit(); await running; } };
