@@ -11,7 +11,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parseFormatted } from "../inbox";
 import type { Entry, MessageEntry } from "../transcript";
-import { lineRows, type Line } from "./app";
+import { lineRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
 import { bold, dim } from "./render";
 

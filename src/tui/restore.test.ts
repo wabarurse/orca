@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { format } from "../inbox";
 import type { Entry } from "../transcript";
-import { lineRows, type Line } from "./app";
+import { lineRows, type Line } from "./lines";
 import { earlier, MAX_RESTORED_ROWS, restore, restoreMessages, SUMMARIZED, toolLine } from "./restore";
 import { bold, dim } from "./render";
 

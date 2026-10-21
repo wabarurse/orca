@@ -14,27 +14,14 @@ import { format } from "node:util";
 import { follow, parts } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
-import { renderBlock, renderLabelled, renderMarkdown } from "./markdown";
+import { lineRows, type Line } from "./lines";
 import { loadHistory, remember, saveHistory } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { readEntries, replyLine, reportLine, restore, userLines } from "./restore";
 import { append, bold, commit, erase, dim, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
 import type { Terminal } from "./term";
 
-/**
- * A line of history. Plain text stays as it is; the orchestrator's markdown is
- * kept as written (`md`: one streamed block, or a whole text led by `label`)
- * and laid out at the current width whenever it is drawn, so a reprint after a
- * resize fits tables to the new width.
- */
-export type Line = string | { md: string; block?: boolean; label?: string };
-
-/** A history line as screen lines at `cols` columns. */
-export function lineRows(l: Line, cols: number): string[] {
-  if (typeof l === "string") return [l];
-  if (l.block) return renderBlock(l.md, cols);
-  return l.label ? renderLabelled(l.label, l.md, cols) : renderMarkdown(l.md, cols);
-}
+export { lineRows, type Line } from "./lines";
 
 export interface Page {
   /** The project id: its folder under ~/.parallels/projects. Never changes. */
