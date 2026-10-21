@@ -38,7 +38,12 @@ controls are provided for these settings.
   **Once confirmed and persistence starts, the commit belongs to the captured
   project even if selection changes or its page closes.**
 - Model/settings saves use a per-project invocation-order queue and exclusive
-  `project-locks/<id>` directory lock outside the project. Managed project
+  `project-locks/<id>` directory lock outside the project. Ordering begins when
+  `saveProjectModel` / `saveProjectSettings` is invoked, not before an effort/fast
+  command finishes its asynchronous model read. A settings save queued behind a
+  model switch rejects its old-model target without updating either preference.
+  Successive effort/fast patches merge under the lock and retain both fields.
+  Managed project
   create/delete use the same lock. The directory's device/inode/birthtime is
   captured before waiting, checked inside the lock and before rename. A queued
   old-generation save refuses after managed delete/recreate, never resurrecting
@@ -92,7 +97,12 @@ delegation; installed SDK effort types do not support it and this harness does
 not implement that mode. It is intentionally refused, as are unverified models
 and tiers. This conservative table can require updates as providers change.
 Unsupported explicit settings fail **before persistence**, leaving saved state
-unchanged. `default` and `off` remain safe resets for any model. Endpoint
+unchanged. The selected saved entry and incoming patch must be records containing
+only `effort` (string) and `fast` (boolean); null, arrays, scalars, invalid value
+types, and unexpected keys refuse before any merge/write, including reset
+commands. Files remain byte-for-byte unchanged on refusal. `default`/`off` can
+still reset well-shaped preferences that are no longer supported; they never
+silently repair malformed stored data. `default` and `off` remain safe resets for any model. Endpoint
 entitlement/model availability failures still surface clearly at request time;
 there is no fallback to different credentials/provider/billing or silent retry.
 

@@ -84,3 +84,95 @@ for (const role of ["orchestrator", "worker", "reviewer"] as const) {
     expect(requests[1]!.messages[0]!.content).toBe("original task");
   });
 }
+
+for (const [label, entry] of Object.entries({
+  null: null, array: [], arrayValues: ["bad"], string: "bad", number: 7, boolean: false,
+  effortNull: { effort: null }, effortNumber: { effort: 7 }, effortBoolean: { effort: true },
+  effortArray: { effort: [] }, effortObject: { effort: {} },
+  fastNull: { fast: null }, fastString: { fast: "on" }, fastNumber: { fast: 1 },
+  fastArray: { fast: [] }, fastObject: { fast: {} },
+  unexpected: { effort: "high", extra: true }, numericKeys: { "0": "b", "1": "a", "2": "d" },
+})) {
+  test(`malformed selected entry ${label}: all writes/reset attempts refuse without changing bytes`, async () => {
+    const project = `malformed-${label}`;
+    await setup(project);
+    const path = join(paths.project(project), "model-settings.json");
+    const before = `  ${JSON.stringify({ "gpt-6-astra": entry, "claude-opus-5-5": { effort: "low" } }, null, 2)}\n\n`;
+    await Bun.write(path, before);
+    const attempts = [
+      () => effortCommand(project, "high"), () => effortCommand(project, "default"),
+      () => fastCommand(project, "on"), () => fastCommand(project, "off"),
+      () => effectiveSettings(project, "gpt-6-astra"),
+    ];
+    for (const attempt of attempts) {
+      await expect(attempt()).rejects.toThrow("invalid");
+      expect(await Bun.file(path).text()).toBe(before);
+    }
+  });
+}
+
+test("default/off can reset well-shaped but no-longer-supported preferences", async () => {
+  await setup("valid-reset", "claude-sonnet-4-6");
+  const path = join(paths.project("valid-reset"), "model-settings.json");
+  await Bun.write(path, JSON.stringify({ "claude-sonnet-4-6": { effort: "xhigh", fast: false } }));
+  await effortCommand("valid-reset", "default");
+  expect(await effectiveSettings("valid-reset", "claude-sonnet-4-6")).toEqual({ fast: false });
+  await Bun.write(path, JSON.stringify({ "claude-sonnet-4-6": { effort: "high", fast: true } }));
+  await fastCommand("valid-reset", "off");
+  expect(await effectiveSettings("valid-reset", "claude-sonnet-4-6")).toEqual({ effort: "high", fast: false });
+});
+
+import { withProjectStateLock } from "./project-state";
+import { effectiveModel } from "./project-model";
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+test("settings save queued behind model switch rejects old target, preserving both model preferences", async () => {
+  const project = "queued-switch";
+  await setup(project);
+  const path = join(paths.project(project), "model-settings.json");
+  const before = '{\n "gpt-6-astra": {"effort":"low"}, "claude-opus-5-5": {"fast":false}\n}\n';
+  await Bun.write(path, before);
+  const entered = deferred();
+  const release = deferred();
+  const blocker = withProjectStateLock(project, async () => { entered.resolve(); await release.promise; });
+  await entered.promise;
+  // Order is reserved synchronously at the save APIs, not during command reads.
+  const switching = saveProjectModel(project, "claude-opus-5-5");
+  const saving = saveProjectSettings(project, "gpt-6-astra", { effort: "high" }).catch((error: Error) => error);
+  release.resolve();
+  await blocker; await switching;
+  expect(String(await saving)).toContain("model changed while saving settings; try again");
+  expect(await effectiveModel(project)).toBe("claude-opus-5-5");
+  expect(await Bun.file(path).text()).toBe(before);
+});
+
+for (const effortFirst of [true, false]) {
+  test(`queued effort/fast patches preserve both fields (effort first: ${effortFirst})`, async () => {
+    const project = `queued-patches-${effortFirst}`;
+    await setup(project);
+    const entered = deferred();
+    const release = deferred();
+    const blocker = withProjectStateLock(project, async () => { entered.resolve(); await release.promise; });
+    await entered.promise;
+    const patches = effortFirst ? [{ effort: "high" as const }, { fast: true }] : [{ fast: true }, { effort: "high" as const }];
+    const first = saveProjectSettings(project, "gpt-6-astra", patches[0]!);
+    const second = saveProjectSettings(project, "gpt-6-astra", patches[1]!);
+    release.resolve();
+    await blocker; await second; await first;
+    expect(await effectiveSettings(project, "gpt-6-astra")).toEqual({ effort: "high", fast: true });
+  });
+}
+
+test("unexpected patch keys are explicit refusals and leave saved bytes intact", async () => {
+  await setup("patch-refusal");
+  await effortCommand("patch-refusal", "high");
+  const path = join(paths.project("patch-refusal"), "model-settings.json");
+  const before = await Bun.file(path).text();
+  const patch = { fast: true, extra: "bad" } as Parameters<typeof saveProjectSettings>[2];
+  await expect(saveProjectSettings("patch-refusal", "gpt-6-astra", patch)).rejects.toThrow("unexpected keys: extra");
+  expect(await Bun.file(path).text()).toBe(before);
+});

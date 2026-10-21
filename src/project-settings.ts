@@ -6,7 +6,7 @@ import { effectiveModel } from "./project-model";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./project-state";
 
 export interface RequestSettings { effort?: Effort; fast?: boolean }
-type SavedSettings = Record<string, RequestSettings>;
+type SavedSettings = Record<string, unknown>;
 function isRecord(value: unknown): boolean {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -21,8 +21,24 @@ async function readSettings(project: string): Promise<SavedSettings> {
     throw error;
   }
 }
+/** Validate the stored shape before merging, so a reset cannot silently repair
+ * corrupt data. Capability validation is separate: default/off may reset a
+ * well-shaped preference that the current capability snapshot no longer supports. */
+function assertSettingsShape(value: unknown): asserts value is RequestSettings {
+  if (!isRecord(value)) throw new Error("invalid project model settings: expected a record");
+  const entry = value as Record<string, unknown>;
+  const unexpected = Object.keys(entry).filter((key) => key !== "effort" && key !== "fast");
+  if (unexpected.length) throw new Error(`invalid project model settings: unexpected keys: ${unexpected.join(", ")}`);
+  if (entry.effort !== undefined && typeof entry.effort !== "string") throw new Error("invalid effort: expected a string");
+  if (entry.fast !== undefined && typeof entry.fast !== "boolean") throw new Error("invalid fast mode: expected a boolean");
+}
+function selectedSettings(saved: SavedSettings, model: string): RequestSettings {
+  const entry = Object.hasOwn(saved, model) ? saved[model] : {};
+  assertSettingsShape(entry);
+  return entry;
+}
 export function validateSettings(model: string, settings: RequestSettings): void {
-  if (!isRecord(settings)) throw new Error("invalid project model settings");
+  assertSettingsShape(settings);
   const supported = modelCapabilities(model);
   if (settings.effort !== undefined && !supported.effort.includes(settings.effort)) throw new Error(`effort ${settings.effort} is unsupported for ${model}; supported: default, ${supported.effort.join(", ") || "no explicit levels"}`);
   if (settings.fast !== undefined && typeof settings.fast !== "boolean") throw new Error("invalid fast mode");
@@ -30,12 +46,12 @@ export function validateSettings(model: string, settings: RequestSettings): void
 }
 export async function effectiveSettings(project: string, model: string): Promise<RequestSettings> {
   const saved = await readSettings(project);
-  const settings = Object.hasOwn(saved, model) ? saved[model]! : {};
+  const settings = selectedSettings(saved, model);
   validateSettings(model, settings);
   return settings;
 }
 /** Per-model preferences prevent invalid effort/tier fields crossing providers.
- * Both command invocations and commits are serialized with model/delete writes. */
+ * Queue order starts at saveProjectSettings invocation, after any command reads. */
 export function saveProjectSettings(project: string, model: string, patch: RequestSettings, expectedIdentity?: string): Promise<void> {
   try {
     validateSettings(model, patch);
@@ -47,8 +63,9 @@ async function commitSettings(project: string, model: string, patch: RequestSett
   assertProjectIdentity(project, identity);
   if (await effectiveModel(project) !== model) throw new Error("model changed while saving settings; try again");
   const saved = await readSettings(project);
-  const next = { ...saved, [model]: { ...saved[model], ...patch } };
-  validateSettings(model, next[model]!);
+  const entry = { ...selectedSettings(saved, model), ...patch };
+  validateSettings(model, entry);
+  const next = { ...saved, [model]: entry };
   const path = settingsPath(project);
   const temp = `${path}.${crypto.randomUUID()}.tmp`;
   try {
