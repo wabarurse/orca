@@ -9,7 +9,16 @@ export function anthropic(client: Anthropic): Provider {
       const stream = client.messages.stream({
         model: req.model,
         max_tokens: req.maxTokens,
-        messages: req.messages,
+        // Codex encrypted reasoning is not a Claude thinking signature. Keep
+        // the shared transcript untouched; omit only foreign reasoning here.
+        messages: req.messages.map((message) => ({
+          ...message,
+          content: typeof message.content === "string" ? message.content : message.content.filter((block) => {
+            if (block.type !== "thinking") return true;
+            try { return JSON.parse(block.signature).provider !== "codex"; }
+            catch { return true; }
+          }),
+        })).filter((message) => message.content.length > 0),
         // The identity line is required by the Claude Code OAuth path; the role prompt follows it.
         system: [
           { type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." },

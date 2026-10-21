@@ -4,12 +4,12 @@
 // anything addressed to them.
 
 import { existsSync, mkdirSync } from "node:fs";
-import { provider as providerFromAccounts } from "./accounts";
+import { effectiveModel, projectModelResolver } from "./project-model";
 import { createAgent } from "./agent";
 import { loadConfig, paths } from "./config";
 import { drain, pending, put, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
-import { providerFor, type Provider } from "./providers/index";
+import { type Provider } from "./providers/index";
 import { registry, toolsFor, type Tool } from "./tools/index";
 import { open, type Entry, type Transcript } from "./transcript";
 
@@ -49,10 +49,9 @@ export async function ensureProject(project: string, url?: string): Promise<void
 
 export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orchestrator> {
   const { project } = deps;
-  const config = await loadConfig();
   const transcript = deps.transcript ?? open(paths.transcript(project, "orchestrator"));
   if (transcript.head() === null) {
-    await transcript.append({ type: "meta", role: "orchestrator", model: config.model });
+    await transcript.append({ type: "meta", role: "orchestrator", model: await effectiveModel(project) });
   }
 
   const tools: Record<string, Tool> = deps.tools ?? {};
@@ -65,11 +64,12 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
     async turn() {
       // run() drains the inbox itself and keeps going while messages arrive.
       if (!(await pending(project, "orchestrator"))) return [];
-      // Config is re-read every turn so /models and /review-rounds take effect on the next turn.
+      // Role/review settings refresh per turn; the project model refreshes per request.
       const config = await loadConfig();
-      const { model } = config;
+      const model = await effectiveModel(project);
       const agent = createAgent({
-        provider: deps.provider ?? (await providerFromAccounts(providerFor(model))),
+        provider: deps.provider,
+        resolveModel: projectModelResolver(project, deps.provider ? async () => deps.provider! : undefined),
         transcript,
         tools,
         model,

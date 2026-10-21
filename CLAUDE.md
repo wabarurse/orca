@@ -34,3 +34,12 @@ Rules:
 - Agents only know their cwd. Never read the host or another worker's worktree.
 - Tool results are byte-capped when appended to the transcript.
 - Prefer `Bun.file`, `Bun.$`, and `bun:test` over npm packages.
+
+
+Project model switching:
+
+- `src/project-model.ts`: `effectiveModel(project)` reads `projects/<id>/model`, falling back to global `config.model` only when absent. `saveProjectModel(project, model)` validates ids and atomically replaces the override in an existing project; global defaults and other projects are untouched. Invalid saved overrides fail explicitly rather than silently selecting another provider.
+- `/models <id>` and the picker share a project-scoped switch handler. Live workers/reviewers require Switch all / Cancel confirmation (Cancel selected by default; Esc cancels). Async picker/liveness/confirmation callbacks revalidate the captured page. No subagents means immediate save. Menus use fake liveness/catalog hooks in tests.
+- Every production agent resolves its project model/provider immediately before each model request, including within a tool loop. In-flight requests and tools finish on their original request; transcript, worktree, tool set and inbox remain intact. Exited agents are not restarted. Provider/credential load failures name the project and model and do not fall back.
+- Transcripts remain Anthropic-shaped. Codex already omits Claude reasoning signatures; the Claude adapter now omits Codex encrypted reasoning without mutating history. Text and tool pairs retain their ids. Fake-provider/adapter tests cover both switch directions, not live service acceptance of every historic model-specific block. Image/document and other provider-only blocks are not newly translated by switching.
+- CLI startup syntax is unchanged (there is no startup model flag); existing projects without overrides continue using the global model, including an existing `gpt-6-astra` setting. Programmatic `setModel(id)` still sets the global default for backward compatibility; TUI always supplies the project.

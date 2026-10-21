@@ -1845,7 +1845,7 @@ describe("command and key tables", () => {
     expect(parseCommand("/quit now", commands)).toMatchObject({ name: "/quit", command: undefined });
     expect(parseCommand("/new\tx", commands)).toMatchObject({ name: "/new\tx", command: undefined });
     expect(parseCommand("/nope x", commands)).toMatchObject({ name: "/nope", command: undefined });
-    for (const [name, c] of commands) if (c.needsPage) expect(name).toBe("/agents"); // the only command that needs a page
+    for (const [name, c] of commands) if (c.needsPage) expect(["/agents", "/models"]).toContain(name); // project-scoped commands
   });
 
   test("unknown commands say 'unknown command /x' (the name only), as before", async () => {

@@ -1,3 +1,4 @@
+import { effectiveModel, saveProjectModel, validateModel } from "./project-model";
 // What the slash commands do, apart from how they are shown. The TUI turns
 // these into menus and status lines.
 
@@ -200,8 +201,8 @@ export async function useAccount(account: Account): Promise<string> {
 }
 
 /** The newest models of every active provider; errors are reported per provider. */
-export async function modelChoices(dim: (s: string) => string): Promise<{ choices: Choice<string>[]; errors: string[]; current: string }> {
-  const { model } = await loadConfig();
+export async function modelChoices(dim: (s: string) => string, project?: string): Promise<{ choices: Choice<string>[]; errors: string[]; current: string }> {
+  const model = project ? await effectiveModel(project) : (await loadConfig()).model;
   const choices: Choice<string>[] = [];
   const errors: string[] = [];
   for (const a of await accounts()) {
@@ -216,9 +217,11 @@ export async function modelChoices(dim: (s: string) => string): Promise<{ choice
   return { choices, errors, current: model };
 }
 
-export async function setModel(id: string): Promise<string> {
-  await saveConfig({ model: id });
-  return `model set to ${id} (takes effect next turn; running agents keep theirs)`;
+export async function setModel(id: string, project?: string): Promise<string> {
+  validateModel(id);
+  if (project) await saveProjectModel(project, id);
+  else await saveConfig({ model: id }); // Retain the programmatic global-default API.
+  return `model set to ${id} (applies before each agent’s next model request; running tools finish; exited agents stay exited)`;
 }
 
 export const REVIEW_ROUNDS_USAGE = `usage: /review-rounds [n]  (n = 0 to ${MAX_REVIEW_ROUNDS}; 0 skips review and goes straight to CI)`;

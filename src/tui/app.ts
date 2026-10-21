@@ -9,6 +9,7 @@
 
 import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { paths } from "../config";
+import { validateModel } from "../project-model";
 import type { Message } from "../inbox";
 import type { Orchestrator } from "../orchestrator";
 import { format } from "node:util";
@@ -73,6 +74,7 @@ export interface AppDeps {
   agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
   /** Sign-in; tests replace it. */
   login?: typeof login;
+  modelChoices?: typeof modelChoices;
   /** How the project list checks for live agents and closes a deleted project's tmux session; tests stub them. */
   projects?: Pick<DeleteOptions, "live" | "kill">;
   /** Exit watchdog run with each inbox poll (commands.ts exitWatchdog); tests stub it. */
@@ -791,12 +793,13 @@ export class App {
     });
   }
 
-  private async modelsMenu(): Promise<void> {
+  private async modelsMenu(page: Page): Promise<void> {
     this.say(dim("fetching models…"));
-    const { choices, errors } = await modelChoices(dim);
+    const { choices, errors } = await (this.deps.modelChoices ?? modelChoices)(dim, page.project);
+    if (!this.modelPageCurrent(page)) return;
     for (const e of errors) this.say(dim(e));
     if (!choices.length) return this.say(dim("no models available; sign in with /login first"));
-    this.openMenu("switch model   (/models <id> for any other id)", choices, async (id) => this.say(dim(await setModel(id))));
+    this.openMenu("switch model   (/models <id> for any other id)", choices, async (id) => this.switchModel(page, id));
   }
 
   private async attach(page: Page, name: string, live: boolean): Promise<void> {
@@ -865,7 +868,7 @@ export class App {
     ["/close", { run: () => this.closePage(), help: { row: "pages", text: "/close closes this page" } }],
     ["/quit", { run: () => this.quit(), help: { row: "pages", text: "/quit" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { row: "settings", text: "/agents" } }],
-    ["/models", { args: true, run: (args) => this.modelsCommand(args), help: { row: "settings", text: "/models [id]" } }],
+    ["/models", { args: true, needsPage: true, run: (args, page) => this.modelsCommand(args, page!), help: { row: "settings", text: "/models [id]" } }],
     ["/accounts", { run: () => this.accountsMenu(), help: { row: "settings", text: "/accounts" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { row: "settings", text: "/login claude|codex [profile]" } }],
     ["/review-rounds", { args: true, run: async (args) => this.say(dim(await reviewRounds(args))), help: { row: "review", text: "/review-rounds [n] review rounds before CI (0 = straight to CI)" } }],
@@ -882,9 +885,31 @@ export class App {
   }
 
   /** /models opens the menu; /models <id> sets any id. */
-  private async modelsCommand(id: string): Promise<void> {
-    if (!id) return this.modelsMenu();
-    this.say(dim(await setModel(id)));
+  private async modelsCommand(id: string, page: Page): Promise<void> {
+    if (!id) return this.modelsMenu(page);
+    await this.switchModel(page, id);
+  }
+
+  private modelPageCurrent(page: Page): boolean {
+    return this.page === page && this.pages.includes(page) && !page.deleting;
+  }
+
+  private async switchModel(page: Page, id: string): Promise<void> {
+    validateModel(id);
+    if (!this.modelPageCurrent(page)) return;
+    const agents = await (this.deps.agents ?? listAgents)(page.project);
+    if (!this.modelPageCurrent(page)) return;
+    const workers = agents.filter((a) => a.live && a.name.startsWith("worker-")).length;
+    const reviewers = agents.filter((a) => a.live && a.name.startsWith("reviewer-")).length;
+    const save = async () => {
+      if (!this.modelPageCurrent(page)) return;
+      this.say(dim(await setModel(id, page.project)), page);
+    };
+    if (!workers && !reviewers) return save();
+    this.openMenu(`Switch this project to ${id}? Applies to orchestrator, ${workers} workers and ${reviewers} reviewers. Running tools finish; agents switch before their next model request.`, [
+      { value: false, label: "Cancel", current: true },
+      { value: true, label: "Switch all" },
+    ], async (confirmed) => { if (confirmed) await save(); });
   }
 
   /**
