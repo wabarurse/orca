@@ -1,8 +1,8 @@
 import { CLAUDE_BETAS } from "../claude-auth";
 import { validateSettings, type RequestSettings } from "../project-settings";
 import Anthropic from "@anthropic-ai/sdk";
-import type { MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
-import type { Provider } from "./index";
+import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { Provider, Turn } from "./index";
 
 // accounts.ts supplies Claude Code subscription credentials. There is no API-key mode.
 export function anthropic(client: Anthropic): Provider {
@@ -25,7 +25,7 @@ export function anthropic(client: Anthropic): Provider {
         ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : undefined);
       stream.on("text", req.onText);
       const message = await stream.finalMessage();
-      return { ...(message.usage ? { inputTokens: message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0) } : {}), content: message.content, stop: message.stop_reason === "tool_use" ? "tool_use" : "end" };
+      return completedTurn(message);
     },
     async models() {
       const all: { id: string; created_at: string }[] = [];
@@ -34,6 +34,13 @@ export function anthropic(client: Anthropic): Provider {
       return all.sort((a, b) => b.created_at.localeCompare(a.created_at)).map((m) => m.id);
     },
   };
+}
+
+function completedTurn(message: Message): Turn {
+  const usage = message.usage;
+  const inputTokens = usage ? usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) : undefined;
+  return { completion: message.stop_reason ?? "unknown", inputTokens, content: message.content,
+    stop: message.stop_reason === "tool_use" ? "tool_use" : "end" };
 }
 
 /** Only Codex reasoning is foreign. Claude signed/redacted thinking stays intact,

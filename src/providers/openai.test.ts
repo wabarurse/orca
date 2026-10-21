@@ -170,3 +170,13 @@ test("Codex subscription wire payload sends selected effort/priority, omits them
   expect(bodies[1]).not.toHaveProperty("service_tier");
   expect(bodies[1]!.reasoning).not.toHaveProperty("effort");
 });
+test("Codex terminal metadata distinguishes refusal and omitted nontext output for summary safety", async () => {
+  const refusal: ResponseOutputItem = { type: "message", id: "refused", role: "assistant", status: "completed", content: [{ type: "refusal", refusal: "cannot comply" }] };
+  let output: ResponseOutputItem[] = [message, refusal];
+  intercept(async () => codexSSE([{ type: "response.completed", response: { status: "completed", output } }]));
+  const p = openai(async () => fakeCodexTokens());
+  expect((await p.complete(request())).completion).toBe("refusal");
+  output = [message, { ...reasoning, encrypted_content: undefined }];
+  expect((await p.complete(request())).completion).toBe("nontext");
+  output = [message]; expect((await p.complete(request())).completion).toBe("completed");
+});

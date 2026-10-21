@@ -13,6 +13,8 @@ export interface Turn {
   /** Whether the model wants tools run before it continues. */
   stop: "end" | "tool_use";
   inputTokens?: number;
+  /** Terminal provider reason; absent only for legacy/custom providers. */
+  completion?: string;
 }
 
 export interface CompleteRequest {

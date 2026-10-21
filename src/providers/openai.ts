@@ -67,6 +67,13 @@ export function fromResponses(output: ResponseOutputItem[]): ContentBlock[] {
   return content;
 }
 
+/** Keep refusal/non-text signals that translation might otherwise flatten or omit. */
+function summaryCompletion(output: ResponseOutputItem[]): string {
+  if (output.some(item => item.type === "message" && item.content.some(part => part.type === "refusal"))) return "refusal";
+  if (output.some(item => item.type !== "message" || item.content.some(part => part.type !== "output_text"))) return "nontext";
+  return "completed";
+}
+
 function clientFor(tokens: CodexTokens): OpenAI {
   return new OpenAI({
     // The SDK calls this option apiKey, but it sends our OAuth access token as Bearer auth.
@@ -94,7 +101,7 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
       }));
       const output = await completedOutput(stream as AsyncIterable<CodexStreamEvent>, req.onText);
       const content = fromResponses(output);
-      return { content, stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
+      return { completion: summaryCompletion(output), content, stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
     },
     async models() {
       const catalog = await request((client) => client.get<{ models: { slug: string; visibility?: string; priority?: number }[] }>("/models", {

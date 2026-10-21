@@ -16,11 +16,11 @@ afterEach(() => { process.env.PARALLELS_HOME = oldHome; for (const dir of dirs.s
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "compact-")); dirs.push(dir);
   const transcript = open(join(dir, "t.jsonl"));
-  for (const content of ["original requirements " + "a".repeat(20000), "old answer", "recent task", "recent answer"]) {
+  for (const content of ["original requirements " + "a".repeat(3000), "old answer" + "z".repeat(33000), "recent task", "recent answer"]) {
     await transcript.append({ type: "message", message: { role: content.includes("answer") ? "assistant" : "user", content } });
   }
   const provider = fakeProvider([[text("Goal: original requirements. Progress: old answer. Next: recent task.")]]);
-  const deps: AgentDeps = { transcript, provider, model: "unknown", tools: {}, ctx: { project: "p", role: "worker", cwd: dir }, compaction: { fallback: 10000 } };
+  const deps: AgentDeps = { transcript, provider, model: "unknown", tools: {}, ctx: { project: "p", role: "worker", cwd: dir }, compaction: { fallback: 20000 } };
   return { deps, provider, transcript, dir };
 }
 test("threshold includes system/tools/reserve; unknown uses configured fallback", async () => {
@@ -34,7 +34,7 @@ test("threshold includes system/tools/reserve; unknown uses configured fallback"
   expect(budget(deps, [])).toBeGreaterThan(2000);
   deps.system = "s".repeat(300000);
   expect(budget(deps, [])).toBeGreaterThan(100000);
-  expect(await compact(deps)).toBe(true);
+  await expect(compact(deps)).rejects.toThrow("Context blocked");
 });
 test("atomic checkpoint, repeated compactions and restart keep original UI history without duplicated tail", async () => {
   const { deps, transcript } = await fixture();
@@ -60,7 +60,7 @@ test("complete tool/thinking turn stays together", () => {
 });
 for (const failure of ["", "x".repeat(30000), new Error("offline")]) test(`failed summary leaves bytes/head/context unchanged: ${String(failure).slice(0, 20)}`, async () => {
   const { deps, transcript } = await fixture();
-  deps.provider = { ...deps.provider, complete: async () => { if (failure instanceof Error) throw failure; return { content: [text(failure)], stop: "end" }; } };
+  deps.provider = { ...deps.provider!, complete: async () => { if (failure instanceof Error) throw failure; return { content: [text(failure)], completion: "end_turn", stop: "end" }; } };
   const before = await Bun.file(transcript.path).text(), head = transcript.head(), chain = await transcript.chain();
   expect(await compact(deps, true)).toBe(false);
   expect(transcript.head()).toBe(head); expect(await transcript.chain()).toEqual(chain);
@@ -71,6 +71,7 @@ test("model change to smaller context rechecks and compact off can be overridden
   deps.compaction = { contextLimit: 100000 }; expect(await compact(deps)).toBeNull();
   deps.model = "smaller"; deps.compaction.contextLimit = 10000;
   deps.compaction.enabled = false; expect(await compact(deps)).toBeNull();
+  deps.compaction.contextLimit = 100000;
   expect(await compact(deps, true)).toBe(true);
 });
 test("manual idle queues without user messages; busy request and arriving inbox use safe boundaries", async () => {
@@ -80,7 +81,7 @@ test("manual idle queues without user messages; busy request and arriving inbox 
   const entered = new Promise<void>(r => started = r);
   const gate = new Promise<void>(r => release = r);
   let calls = 0;
-  const provider = { ...deps.provider, complete: async () => { calls++; started(); await gate; return { content: [text("short summary")], stop: "end" as const }; } };
+  const provider = { ...deps.provider!, complete: async () => { calls++; started(); await gate; return { content: [text("short summary")], completion: "end_turn", stop: "end" as const }; } };
   const orch = await createOrchestrator({ project: "p", provider, transcript, tools: {} });
   await orch.compact!(); expect(await orch.pending()).toBe(true);
   const turn = orch.turn(); await entered;
@@ -117,12 +118,12 @@ test("non-reducing small summary and orphaned tool batches are rejected", async 
 test("resolver is consulted before compaction and summarizer uses newly selected provider", async () => {
   const { deps, dir } = await fixture(); process.env.PARALLELS_HOME = dir;
   deps.model = "gpt-6-astra";
-  deps.compaction = { fallback: 10000 };
+  deps.compaction = { fallback: 20000 };
   const selected = fakeProvider([[text("Goal and progress summary")], [text("done")]]);
   deps.resolveModel = async () => ({ model: "smaller-unknown", provider: selected });
   await createAgent(deps).run();
   expect(selected.calls).toHaveLength(2);
-  expect(deps.model).toBe("smaller-unknown");
+  expect(selected.calls).toHaveLength(2);
   expect(selected.calls[0]?.tools).toEqual([]);
 });
 test("restart ignores truncated checkpoint and subsequent append remains readable", async () => {

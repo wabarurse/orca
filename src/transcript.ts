@@ -1,11 +1,12 @@
-// Append-only JSONL, one line per entry. Entries form a tree via parentUuid;
+// Logically append-only JSONL, atomically published byte-preserving file images.
+// One line per entry. Entries form a tree via parentUuid;
 // the conversation sent to the model is the chain from the latest leaf back
 // to the root. Compaction appends a `summary` entry whose parent is the last
 // message; its retained tail and the chain forward are the new context.
 // history() walks past checkpoints for UI replay without duplicating retained turns.
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { open as openFile } from "node:fs/promises";
+import { publish, disk, type Storage } from "./transcript-storage";
 import { dirname } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 
@@ -79,60 +80,39 @@ function walk(byUuid: Map<string, Entry>, head: string | null, context = true): 
   return entries.reverse();
 }
 
-export function open(path: string): Transcript {
-  mkdirSync(dirname(path), { recursive: true });
-  const byUuid = new Map<string, Entry>();
-  let head: string | null = null;
-  let separator = "";
-
-  // Eager load. A partial last line (crash mid-write) is dropped, not fatal.
-  if (existsSync(path)) {
-    const raw = readFileSync(path, "utf8");
-    separator = raw && !raw.endsWith("\n") ? "\n" : "";
-    for (const line of raw.split("\n")) {
-      if (!line.trim()) continue;
-      let entry: Entry;
-      try {
-        entry = JSON.parse(line) as Entry;
-      } catch {
-        continue;
-      }
-      byUuid.set(entry.uuid, entry);
-      head = entry.uuid;
-    }
+function load(path: string): Map<string, Entry> {
+  const entries = new Map<string, Entry>();
+  if (!existsSync(path)) return entries;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    try {
+      const entry = JSON.parse(line) as Entry;
+      if (entry.uuid && entry.type) entries.set(entry.uuid, entry);
+    } catch { /* Preserve damaged bytes, but never replay them. */ }
   }
-
+  return entries;
+}
+function messages(entries: Entry[]): MessageParam[] {
+  return entries.flatMap((e): MessageParam[] => {
+    if (e.type === "summary") return [{ role: "user", content: e.text }, ...(e.retained ?? [])];
+    return e.type === "message" ? [e.message] : [];
+  });
+}
+export function open(path: string, io: Storage = disk): Transcript {
+  mkdirSync(dirname(path), { recursive: true });
+  const byUuid = load(path);
+  let head = [...byUuid.keys()].at(-1) ?? null;
   const branch = () => walk(byUuid, head);
-
-  return {
-    path,
-    head: () => head,
-    branch,
-    history: () => walk(byUuid, head, false).filter(e => e.type !== "summary" || !e.retained),
-
-    async append(partial) {
-      const entry = {
-        ...partial,
-        parentUuid: partial.parentUuid ?? head,
-        uuid: crypto.randomUUID(),
-        ts: new Date().toISOString(),
-      } as Entry;
-      const file = await openFile(path, "a");
-      try {
-        await file.write(separator + JSON.stringify(entry) + "\n");
-        separator = "";
-        await file.sync();
-      } finally { await file.close(); }
+  async function append(partial: NewEntry): Promise<Entry> {
+    const entry = { ...partial, parentUuid: partial.parentUuid ?? head,
+      uuid: crypto.randomUUID(), ts: new Date().toISOString() } as Entry;
+    await publish(path, JSON.stringify(entry), io, () => {
       byUuid.set(entry.uuid, entry);
       head = entry.uuid;
-      return entry;
-    },
-
-    async chain() {
-      return branch().flatMap((e): MessageParam[] => {
-        if (e.type === "summary") return [{ role: "user", content: e.text }, ...(e.retained ?? [])];
-        return e.type === "message" ? [e.message] : [];
-      });
-    },
+    });
+    return entry;
+  }
+  return { path, head: () => head, branch, append,
+    history: () => walk(byUuid, head, false).filter(e => e.type !== "summary" || !e.retained),
+    chain: async () => messages(branch()),
   };
 }

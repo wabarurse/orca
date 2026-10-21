@@ -37,7 +37,7 @@ export interface Orchestrator {
   pending(): Promise<boolean>;
   /** Run one turn over the inbox. Returns what was sent to the user meanwhile. */
   turn(): Promise<Message[]>;
-  /** The current branch of its transcript, oldest first, as loaded (transcript.ts `branch`): what the TUI rebuilds the page from. */
+  /** Full original history, oldest first, excluding synthetic checkpoint tails: UI replay. */
   entries?(): Entry[];
 }
 
@@ -63,10 +63,6 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
     await transcript.append({ type: "meta", role: "orchestrator", model: await effectiveModel(project) });
   }
 
-  const tools: Record<string, Tool> = deps.tools ?? {};
-  if (!deps.tools) for (const name of toolsFor.orchestrator) if (registry[name]) tools[name] = registry[name];
-
-  const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   let requested = false;
   let running = false;
   const takeRequest = () => { const value = requested; requested = false; return value; };
@@ -82,24 +78,7 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
       try {
         const hasInbox = await pending(project, "orchestrator");
         if (!requested && !hasInbox) return [];
-        // Config is re-read every turn so /models and /review-rounds take effect on the next turn.
-        const config = await loadConfig();
-        const model = await effectiveModel(project);
-        const agent = createAgent({
-          provider: deps.provider,
-          resolveModel: projectModelResolver(project, loadProvider),
-          transcript,
-          tools,
-          model,
-          compaction: { enabled: config.compact, fallback: config.contextLimitFallback },
-          compactRequested: takeRequest,
-          system: rolePrompt("orchestrator", config),
-          ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
-          write: deps.write,
-          onInbox: deps.onInbox,
-          onTool: deps.onTool,
-          onToolResult: deps.onToolResult,
-        });
+        const agent = await turnAgent(deps, transcript, takeRequest);
         if (hasInbox) await agent.run();
         else if (takeRequest()) await agent.compact();
         const replies = await drain(project, "user");
@@ -111,3 +90,21 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   };
 }
 
+
+function orchestratorTools(overrides?: Record<string, Tool>): Record<string, Tool> {
+  if (overrides) return overrides;
+  return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, registry[name]]] : []));
+}
+async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean) {
+  const config = await loadConfig();
+  const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
+  return createAgent({
+    resolveModel: projectModelResolver(deps.project, loadProvider),
+    transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project),
+    compaction: { enabled: config.compact, fallback: config.contextLimitFallback }, compactRequested,
+    system: rolePrompt("orchestrator", config),
+    ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project) },
+    write: deps.write, onInbox: deps.onInbox,
+    onTool: deps.onTool, onToolResult: deps.onToolResult,
+  });
+}
