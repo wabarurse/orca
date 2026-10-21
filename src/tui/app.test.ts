@@ -67,16 +67,19 @@ function fakeOrchestrators() {
   const opened: { project: string; url?: string }[] = [];
   const said: Record<string, string[]> = {};
   const writers: Record<string, (t: string) => void> = {};
-  const openOrchestrator = async (project: string, url: string | undefined, write: (t: string) => void): Promise<Orchestrator> => {
+  const openOrchestrator = async (project: string, url: string | undefined, write: (t: string) => void, onInbox?: (msgs: Message[]) => void): Promise<Orchestrator> => {
     opened.push({ project, url });
     said[project] = [];
     writers[project] = write;
     let queued = 0;
+    let consumed = 0;
     return {
       async say(text) { said[project]!.push(text); queued++; },
       async pending() { return queued > 0; },
       async turn() {
         queued = 0;
+        onInbox?.(said[project]!.slice(consumed).map((text) => ({ from: "user", text, ts: "" })));
+        consumed = said[project]!.length;
         write(`${project} says hi\n`);
         return [{ from: "worker-x", text: "done", ts: "t" }];
       },
@@ -722,12 +725,14 @@ describe("tui app", () => {
     term.type("\x1b[200~line one\nline two\x1b[201~\r");
     await until(() => term.screen().includes("queued; runs after sign-in"));
     const lines = app.page!.lines.map(raw).map(strip);
-    expect(lines).toContain("> line one");
-    expect(lines).toContain("  line two");
+    expect(lines).not.toContain("> line one");
+    expect(lines).not.toContain("  line two");
     expect(app.page!.lines.some((l) => raw(l).includes("\n"))).toBe(false);
     finish();
     await until(() => orchs.said.queuer?.length === 1);
     expect(orchs.said.queuer).toEqual(["line one\nline two"]);
+    await until(() => app.page!.sent.length === 0);
+    expect(app.page!.lines.map(raw).map(strip)).toContain("> line one");
     app.quit();
     await running;
   });
@@ -2129,4 +2134,28 @@ describe("tool calls", () => {
     app.quit();
     await running;
   });
+});
+
+test("queued user messages show only when consumed, in order, alongside external users", async () => {
+  const term = fakeTerm(80, 12);
+  let inbox!: (msgs: Message[]) => void;
+  let done!: () => void;
+  const app = new App({ term, pollMs: 100_000, openOrchestrator: async (_p, _u, _w, read) => {
+    inbox = read!;
+    return { async say() {}, async pending() { return false; }, turn: () => new Promise((r) => { done = () => r([]); }) };
+  } });
+  const running = app.run("consume");
+  await until(() => !!app.page);
+  term.type("one\r");
+  await until(() => !!done);
+  term.type("two\r");
+  await until(() => app.page!.sent.length === 2);
+  expect(app.page!.lines.map(raw).join("\n")).not.toContain("> one");
+  expect(strip(app.status(app.page!))).toContain("2 messages queued");
+  inbox(["one", "two", "external"].map((text) => ({ from: "user", text, ts: "" })));
+  expect(app.page!.sent).toEqual([]);
+  expect(app.page!.lines.map(raw).map(strip)).toEqual(["> one", "> two", "> external"]);
+  done();
+  app.quit();
+  await running;
 });

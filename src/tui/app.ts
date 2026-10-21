@@ -405,9 +405,9 @@ export class App {
     this.endPartial(page);
     for (const m of msgs) {
       if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
-      // Typed here: already shown when sent (checked first, so typed text that looks like an answer stays text).
+      // Typed here: show only now, at the consumption boundary (answer-shaped chat stays chat).
       const at = page.sent.indexOf(m.text);
-      if (at !== -1) { page.sent.splice(at, 1); continue; }
+      if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines(m.text)); continue; }
       // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`parallels msg`) as "> …", as restore shows it.
       this.toPage(page, this.questions.inboxLines(page, m.text) ?? userLines(m.text));
     }
@@ -473,6 +473,8 @@ export class App {
     const busy = this.pages.filter((p) => p !== page && active(p)).length;
     if (busy) parts.push(`${busy} busy`);
     parts.push(...this.questions.status(page, this.pages));
+    const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
+    if (queued) parts.push(`${queued} messages queued`);
     return dim(parts.join(" · "));
   }
 
@@ -1011,7 +1013,6 @@ export class App {
   /** Plain text for the page's orchestrator: refused while viewing an agent, held while signing in. */
   private async talk(page: Page, text: string): Promise<void> {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
-    this.toPage(page, userLines(text));
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
     if (this.loggingIn) {
       this.queued.set(page, [...(this.queued.get(page) ?? []), text]);
@@ -1111,9 +1112,16 @@ export class App {
 
 
   /** Send what the user typed on a page to its orchestrator, remembering it was shown already. */
-  private send(page: Page, text: string): Promise<void> {
+  private async send(page: Page, text: string): Promise<void> {
     page.sent.push(text);
-    return page.orch.say(text);
+    this.draw();
+    try { await page.orch.say(text); }
+    catch (err) {
+      const at = page.sent.lastIndexOf(text);
+      if (at !== -1) page.sent.splice(at, 1);
+      this.say(dim(`not sent: ${text}`), page);
+      throw err;
+    } finally { this.draw(); }
   }
 
   /** Add a sent line (only plain messages and harmless commands; nothing while signing in) to the active page's input history and save it (or keep it in memory while no page is open). */
