@@ -41,7 +41,7 @@ export function newProjectName(taken: string[], random: () => number = Math.rand
 
 export const validProjectName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name);
 
-/** What tabs and the header call a project: its /rename name, else its id. */
+/** What the TUI calls a project (status line, project list): its /rename name, else its id. */
 export async function displayName(project: string): Promise<string> {
   const file = Bun.file(paths.displayName(project));
   const name = (await file.exists()) ? (await file.text()).trim() : "";

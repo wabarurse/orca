@@ -1,33 +1,47 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
-import { loadConfig } from "../config";
+import { loadConfig, paths } from "../config";
 import { App, type Clock } from "./app";
 import { parseKeys, type Key } from "./keys";
-import type { Terminal } from "./term";
+import { realTerminal, type Terminal } from "./term";
+import { FakeScreen } from "./testing";
 
 const home = mkdtempSync(join(tmpdir(), "parallels-tui-"));
 process.env.PARALLELS_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
+/** Anything the fake screen refused (an escape or control a real terminal would misread); checked after every test. */
+const screenErrors: string[] = [];
+afterEach(() => { expect(screenErrors).toEqual([]); screenErrors.length = 0; });
+
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 
+/** A fake terminal: records every raw write and applies it to a FakeScreen, so `screen()` is the scrollback plus the screen. */
 function fakeTerm(cols = 40, rows = 8) {
   const handlers: ((k: Key) => void)[] = [];
-  let screen = "";
-  const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; opened: boolean; closed: boolean } = {
-    cols, rows, opened: false, closed: false,
-    write: (s) => { screen = s; },
+  const resizers: (() => void)[] = [];
+  const display = new FakeScreen(cols, rows);
+  const writes: string[] = [];
+  const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; raw(): string; writes: string[]; display: FakeScreen; resize(cols: number, rows: number): void; eraser: string; opened: boolean; closed: boolean } = {
+    cols, rows, opened: false, closed: false, writes, display, eraser: "",
+    eraseOnExit(text) { this.eraser = text; },
+    write: (s) => {
+      writes.push(s);
+      try { display.write(s); } catch (err) { screenErrors.push(String(err)); throw err; }
+    },
     onKey: (cb) => { handlers.push(cb); },
-    onResize: () => {},
+    onResize: (cb) => { resizers.push(cb); },
+    resize(c, r) { this.cols = c; this.rows = r; display.resize(c, r); for (const cb of resizers) cb(); },
     open() { this.opened = true; },
     close() { this.closed = true; },
     press: (k) => { for (const h of handlers) h(k); },
     type: (s) => { for (const k of parseKeys(s)) for (const h of handlers) h(k); },
-    screen: () => strip(screen),
+    screen: () => display.text(),
+    raw: () => writes.join(""),
   };
   return term;
 }
@@ -131,8 +145,7 @@ describe("tui app", () => {
     expect(orchs.opened.map((o) => o.project)).toEqual(["named"]);
     expect(existsSync(join(home, "projects", "named", "repo"))).toBe(true);
     expect(await Bun.file(join(home, "projects", "named", "name")).text()).toBe("login page\n");
-    expect(term.screen()).toContain("login page  ·  "); // header
-    expect(app.frame().tabs[0]!.title).toBe("login page");
+    await until(() => term.screen().includes("· login page · no remote · 1 page")); // the status line
     expect(await displayName("named")).toBe("login page");
 
     term.type("/rename taken\r");
@@ -370,7 +383,6 @@ describe("tui app", () => {
     term.type("/new other\r"); // an explicit name without a url still clones the launch repo
     await until(() => app.page?.project === "other");
     expect(orchs.opened.at(-1)).toEqual({ project: "other", url: source });
-    await until(() => term.screen().includes("/projects/other/repo")); // the header shows the clone path
     app.quit();
     await running;
 
@@ -394,8 +406,7 @@ describe("tui app", () => {
     await until(() => !!app.page);
     // Something arrives in the inbox without the user typing.
     await app.page!.orch.say("note");
-    await Bun.sleep(60);
-    expect(term.screen()).toContain("worker-x done");
+    await until(() => term.screen().includes("worker-x done"));
     app.quit();
     await running;
   });
@@ -480,7 +491,7 @@ describe("tui app", () => {
     expect(started).toBe(0); // idle: no timer
     term.type("go\r");
     await until(() => started === 1 && term.screen().includes("⠋ thinking… 0s"));
-    expect(term.screen()).toContain(" alpha ⠋ ");
+    expect(term.screen()).toContain("⠋ thinking… 0s · alpha · no remote · 1 …") // cut to the width;
     now = 2_150;
     ticks[0]!();
     await until(() => term.screen().includes("⠙ thinking… 2s"));
@@ -489,7 +500,7 @@ describe("tui app", () => {
     finish();
     await until(() => stopped === 1);
     expect(ticks.length).toBe(0);
-    expect(term.screen()).not.toContain("working…");
+    await until(() => !term.screen().includes("working…"));
 
     // Viewing a live agent through /agents shows the line until it finishes.
     term.type("/agents\r");
@@ -801,5 +812,325 @@ describe("tui app", () => {
     finish();
     app.quit();
     await running;
+  });
+});
+
+describe("inline screen", () => {
+  const count = (hay: string, needle: string) => hay.split(needle).length - 1;
+  const CLEAR = "\x1b[2J\x1b[3J\x1b[H";
+
+  test("typing and sending appends to the scrollback once, without full redraws", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    term.display.write("$ parallels start\r\n"); // the shell's output stays above
+    const running = app.run("alpha");
+    await until(() => !!app.page && term.screen().includes(">"));
+    term.type("build it");
+    await until(() => term.screen().endsWith("> build it"));
+    term.type("\r");
+    await until(() => term.screen().includes("worker-x done"));
+    const lines = term.screen().split("\n");
+    expect(lines.slice(0, 4)).toEqual(["$ parallels start", "> build it", "alpha says hi", "worker-x done"]);
+    expect(lines.filter((l) => l === "> build it").length).toBe(1);
+    expect(term.display.clears).toBe(0);
+    expect(term.raw()).not.toContain("\x1b[2J");
+    expect(term.raw()).not.toContain("\x1b[?1049");
+    // Each finished line was written once; only the live region repaints.
+    expect(count(strip(term.raw()), "alpha says hi")).toBe(1);
+    expect(count(strip(term.raw()), "worker-x done")).toBe(1);
+    app.quit();
+    await running;
+  });
+
+  test("a page switch clears the screen and scrollback and reprints that page; so does a resize", async () => {
+    const term = fakeTerm(60);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("one\r");
+    await until(() => term.screen().includes("worker-x done"));
+    await app.openPage("beta");
+    await until(() => term.display.clears === 1);
+    expect(term.raw()).toContain(CLEAR);
+    await until(() => term.screen().includes("beta · no remote · 2 pages"));
+    expect(term.screen()).not.toContain("alpha says hi");
+    term.type("two\r");
+    await until(() => term.screen().includes("beta says hi"));
+
+    term.type("\x1a"); // Ctrl+Z back to alpha
+    await until(() => term.display.clears === 2);
+    await until(() => term.screen().startsWith("> one\nalpha says hi\nworker-x done\n"));
+    expect(term.screen()).not.toContain("beta says hi");
+    const before = term.writes.length;
+    term.resize(30, 8);
+    await until(() => term.display.clears === 3);
+    expect(term.writes.slice(before).join("")).toContain(CLEAR);
+    await until(() => term.screen().startsWith("> one\nalpha says hi\n"));
+    term.type("/close\r");
+    await until(() => term.display.clears === 4 && term.screen().startsWith("> two\nbeta says hi"));
+    app.quit();
+    await running;
+  });
+
+  test("a non-active page's output stays in its history, off the screen; its turn shows as busy", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    const alpha = app.page!;
+    await app.openPage("beta");
+    await until(() => term.screen().includes("beta · no remote · 2 pages"));
+    orchs.writers.alpha!("background line\nhalf");
+    alpha.busy = true;
+    alpha.busySince = Date.now();
+    app.draw();
+    await until(() => term.screen().includes("2 pages · 1 busy"));
+    expect(alpha.lines).toContain("background line");
+    expect(alpha.partial).toBe("half");
+    expect(strip(term.raw())).not.toContain("background line");
+    expect(strip(term.raw())).not.toContain("half");
+    alpha.busy = false;
+    term.type("\x1a");
+    await until(() => term.screen().includes("background line\nhalf"));
+    app.quit();
+    await running;
+  });
+
+  test("/agents clears and shows the transcript live; /back reprints the page", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    const transcript = paths.transcript("viewed", "worker-v");
+    mkdirSync(join(transcript, ".."), { recursive: true });
+    const entry = (content: string) => JSON.stringify({ type: "message", message: { role: "assistant", content } }) + "\n";
+    await Bun.write(transcript, entry("worker line one"));
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, agents: async () => [{ name: "worker-v", live: false }] });
+    const running = app.run("viewed");
+    await until(() => !!app.page);
+    term.type("hello\r");
+    await until(() => term.screen().includes("worker-x done"));
+    term.type("/agents\r");
+    await until(() => !!app.menu);
+    term.press({ name: "enter" });
+    await until(() => term.display.clears === 1 && term.screen().includes("worker line one"));
+    expect(term.screen()).not.toContain("viewed says hi");
+    expect(term.screen()).toContain("viewed › worker-v");
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(transcript, entry("worker line two"));
+    await until(() => term.screen().includes("worker line one\nworker line two"));
+    term.type("/back\r");
+    await until(() => term.display.clears === 2 && term.screen().startsWith("> hello\nviewed says hi\nworker-x done"));
+    expect(term.screen()).not.toContain("worker line");
+    app.quit();
+    await running;
+  });
+
+  test("quit leaves the output and the cursor on a fresh line below it, and never uses the alternate screen", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("hi\r");
+    await until(() => term.screen().includes("worker-x done"));
+    orchs.writers.alpha!("half a line");
+    await until(() => term.screen().includes("half a line"));
+    term.type("draft");
+    app.quit();
+    await running;
+    expect(term.closed).toBe(true);
+    // The live region (status, input) goes; what was printed stays, the streamed half line too.
+    expect(term.screen()).toBe("> hi\nalpha says hi\nworker-x done\nhalf a line");
+    expect([term.display.row, term.display.col]).toEqual([4, 0]);
+    expect(term.raw()).not.toContain("1049");
+
+    // The real terminal keeps raw mode and bracketed paste, and no alternate screen.
+    const out: string[] = [];
+    const modes: boolean[] = [];
+    const stdin = { isTTY: true, setRawMode: (on: boolean) => { modes.push(on); }, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
+    const stdout = { isTTY: true, columns: 80, rows: 24, write: (s: string) => { out.push(s); return true; }, on() {} };
+    const real = realTerminal(stdin as never, stdout as never);
+    real.open();
+    real.close();
+    expect(modes).toEqual([true, false]);
+    expect(out.join("")).toContain("\x1b[?2004h");
+    expect(out.join("")).toContain("\x1b[?2004l");
+    expect(out.join("")).not.toContain("1049");
+    expect(out.join("")).not.toContain("\x1b[2J");
+  });
+});
+
+describe("frames, resizes, startup and crashes", () => {
+  test("stream chunks coalesce into a few frames instead of one per chunk", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => term.screen().includes("alpha ·"));
+    const before = term.writes.length;
+    const started = Date.now();
+    for (let i = 0; i < 40; i++) { orchs.writers.alpha!("x"); await Bun.sleep(1); }
+    const elapsed = Date.now() - started;
+    await until(() => term.screen().includes("x".repeat(40)));
+    // One frame per 16ms at most (plus the trailing one), far fewer than 40.
+    expect(term.writes.length - before).toBeLessThanOrEqual(Math.ceil(elapsed / 16) + 2);
+    app.quit();
+    await running;
+  });
+
+  test("a burst of resizes reprints once after it settles; shrinking under a tall live region stays clean", async () => {
+    const term = fakeTerm(60, 16);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("hello\r");
+    await until(() => term.screen().includes("worker-x done"));
+    term.type("one\x1b\rtwo\x1b\rthree\x1b\rfour");
+    app.openMenu("pick one", ["a", "b", "c", "d", "e", "f"].map((v) => ({ value: v, label: v })), () => {});
+    await until(() => term.screen().includes("  four") && term.screen().includes("pick one"));
+    const before = term.writes.length;
+    term.resize(50, 12);
+    term.resize(40, 9);
+    await Bun.sleep(30);
+    term.resize(30, 6);
+    app.draw(); // a draw mid-resize writes nothing with the stale geometry
+    expect(term.writes.length).toBe(before);
+    await until(() => term.display.clears === 1);
+    const after = term.writes.slice(before).join("");
+    expect(after.split("\x1b[3J").length - 1).toBe(1);
+    await until(() => term.screen().endsWith("four"));
+    const shown = term.display.screen();
+    expect(shown.length).toBe(6);
+    expect(shown.at(-1)).toBe("  four");
+    expect(shown.join("\n")).toContain("alpha · no remote");
+    expect(term.display.text().startsWith("> hello\nalpha says hi\nworker-x done\n")).toBe(true);
+    app.quit();
+    await running;
+  });
+
+  test("the live region shows 'opening…' at once; lines said or logged before the pages open are kept", async () => {
+    const term = fakeTerm(80);
+    let gate!: () => void;
+    const orchs = fakeOrchestrators();
+    const openOrchestrator: typeof orchs.openOrchestrator = async (...args) => { await new Promise<void>((r) => (gate = r)); return orchs.openOrchestrator(...args); };
+    const app = new App({ term, openOrchestrator, pollMs: 100_000 });
+    term.display.write("$ parallels start\r\n");
+    const running = app.run("alpha");
+    await until(() => term.screen().includes("opening…"));
+    app.say("early note");
+    console.warn("logged %s", "early");
+    await until(() => term.screen().includes("logged early"));
+    gate();
+    await until(() => term.screen().includes("alpha · no remote"));
+    expect(term.screen().split("\n").slice(0, 3)).toEqual(["$ parallels start", "early note", "logged early"]);
+    expect(term.display.clears).toBe(0);
+    expect(term.screen()).not.toContain("opening…");
+    app.quit();
+    await running;
+  });
+
+  test("console output and the config warning go into the scrollback, not to stderr", async () => {
+    const term = fakeTerm(200);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const log = console.log;
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    expect(console.log).not.toBe(log);
+    const stderr = spyOn(process.stderr, "write");
+    const stdout = spyOn(process.stdout, "write");
+    await Bun.write(paths.config, "maxReviewRounds = [broken");
+    try {
+      await loadConfig();
+      console.log("a log line");
+      await until(() => term.screen().includes("parallels: ignoring") && term.screen().includes("a log line"));
+      expect(stderr).not.toHaveBeenCalled();
+      expect(stdout).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+      stdout.mockRestore();
+      rmSync(paths.config, { force: true });
+    }
+    app.quit();
+    await running;
+    expect(console.log).toBe(log); // restored
+  });
+
+  test("a frame that throws is reported once and the app keeps running", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => term.screen().includes("alpha ·"));
+    let boom = true;
+    app.menu = { title: "bad", index: 0, pick: () => {}, get items(): string[] { if (boom) throw new Error("boom"); return ["ok"]; } };
+    app.draw();
+    await Bun.sleep(60);
+    boom = false;
+    app.menu = null;
+    app.draw();
+    await until(() => term.screen().includes("error drawing the screen: boom"));
+    expect(app.page!.lines.filter((l) => l.includes("boom")).length).toBe(1);
+    term.type("still here\r");
+    await until(() => term.screen().includes("worker-x done"));
+    app.quit();
+    await running;
+  });
+
+  test("escapes and controls in streamed output and replies cannot move the cursor", async () => {
+    const term = fakeTerm(80);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    orchs.writers.alpha!("tool \x1b[A\x1b[2Kout\r\x07put\nhalf \x1b[3A\x1b[J");
+    await until(() => term.screen().includes("half"));
+    app.say("said \x1b[H\x1b[2Jline\b");
+    await until(() => term.screen().includes("said line"));
+    expect(term.screen().split("\n").slice(0, 3)).toEqual(["tool output", "said line", "half"]);
+    app.quit();
+    await running;
+  });
+
+  test("the real terminal tidies up on a signal or crash: sync off, paste off, cursor on, live region erased, cooked mode", () => {
+    const make = () => {
+      const out: string[] = [];
+      const modes: boolean[] = [];
+      const handlers = new Map<string, (...a: unknown[]) => void>();
+      const exits: number[] = [];
+      const errs: string[] = [];
+      const proc = {
+        on: (e: string, fn: (...a: unknown[]) => void) => { handlers.set(e, fn); },
+        off: (e: string, fn: (...a: unknown[]) => void) => { if (handlers.get(e) === fn) handlers.delete(e); },
+        exit: (code?: number) => { exits.push(code ?? 0); },
+        stderr: { write: (s: string) => { errs.push(s); } },
+      };
+      const stdin = { isTTY: true, setRawMode: (on: boolean) => { modes.push(on); }, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
+      const stdout = { isTTY: true, columns: 80, rows: 24, write: (s: string) => { out.push(s); return true; }, on() {} };
+      const term = realTerminal(stdin as never, stdout as never, proc as never);
+      return { term, out, modes, handlers, exits, errs };
+    };
+    for (const [event, code] of [["SIGTERM", 143], ["SIGHUP", 129], ["uncaughtException", 1], ["exit", null]] as const) {
+      const t = make();
+      t.term.open();
+      expect([...t.handlers.keys()].sort()).toEqual(["SIGHUP", "SIGTERM", "exit", "uncaughtException"]);
+      t.term.eraseOnExit("\r\x1b[2A\x1b[J");
+      t.handlers.get(event)!(new Error("kaboom"));
+      expect(t.out.at(-1)).toBe("\x1b[?2026l\x1b[?2004l\x1b[?25h\r\x1b[2A\x1b[J");
+      expect(t.modes).toEqual([true, false]);
+      expect(t.exits).toEqual(code === null ? [] : [code]);
+      expect(t.errs.join("")).toContain(event === "uncaughtException" ? "kaboom" : "");
+      expect(t.handlers.size).toBe(0);
+      t.term.close(); // already restored: nothing more
+      expect(t.modes).toEqual([true, false]);
+    }
+    const t = make();
+    t.term.open();
+    t.term.close();
+    expect(t.handlers.size).toBe(0);
+    expect(t.modes).toEqual([true, false]);
   });
 });
