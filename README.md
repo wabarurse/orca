@@ -7,11 +7,13 @@ bun install
 bun src/cli.ts start [project] [git-url]
 ```
 
-`start` opens a full-screen TUI with one page per orchestrator (one per project).
-With no project named it reopens every project under `~/.parallels/projects`.
-Ctrl+N starts a new orchestrator, Ctrl+, and Ctrl+. move between pages (Alt+,
-and Alt+. in terminals that cannot tell Ctrl+, from a comma), PgUp/PgDn scroll,
-`/close` closes a page and `/quit` exits.
+`start` opens a bare full-screen TUI with one page per orchestrator (one per
+project). With no project named it reopens every project under
+`~/.parallels/projects`, or starts a fresh one. Ctrl+N starts a new orchestrator
+named `orch-xxxx` with an empty repository (`/rename <name>` renames it;
+`/new <name> <git-url>` clones instead), Ctrl+, and Ctrl+. move between pages
+(Alt+, and Alt+. in terminals that cannot tell Ctrl+, from a comma). Type
+`/help` for the rest of the commands.
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
 

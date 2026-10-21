@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "./config";
 import { put } from "./inbox";
-import { createOrchestrator } from "./orchestrator";
+import { createOrchestrator, ensureProject } from "./orchestrator";
 import type { Runner, StartOptions } from "./runner";
 import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import { message } from "./tools/message";
@@ -79,4 +79,12 @@ test("spawn seeded the worker and reviewer transcripts with their prompts", asyn
   expect(worker[0]?.content).toBe("Branch: feat/login\n\nAdd a login page");
   const reviewer = await open(paths.transcript(project, "reviewer-feat-login")).chain();
   expect(reviewer[0]?.content).toBe("Branch: feat/login\n\nReview PR #12");
+});
+
+test("ensureProject starts an empty repository when no url is given", async () => {
+  await ensureProject("fresh");
+  const head = Bun.file(paths.repo("fresh") + "/.git/HEAD");
+  expect(await head.exists()).toBe(true);
+  await ensureProject("fresh"); // idempotent
+  expect(await head.exists()).toBe(true);
 });

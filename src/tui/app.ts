@@ -1,10 +1,11 @@
-// The full-screen TUI. One page per orchestrator (one per project): Ctrl+N
-// opens a new one, Ctrl+, and Ctrl+. move between them (Alt+, / Alt+. where
-// the terminal cannot tell Ctrl+, apart from a comma). Type to talk to the
-// page's orchestrator; worker and reviewer reports arrive through its inbox
-// and show up while you wait. Slash commands open arrow-key menus.
+// The full-screen TUI, kept bare: a tab bar, the page, an input line. One
+// page per orchestrator (one per project): Ctrl+N starts a new one named
+// orch-xxxx (/rename changes it), Ctrl+, and Ctrl+. move between them (Alt+,
+// / Alt+. where the terminal cannot tell Ctrl+, apart from a comma). Type to
+// talk to the page's orchestrator; worker and reviewer reports arrive through
+// its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, listAgents, listProjects, login, modelChoices, setModel, useAccount, type Choice } from "../commands";
+import { accountChoices, listAgents, listProjects, login, modelChoices, newProjectName, renameProject, setModel, useAccount, type Choice } from "../commands";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
 import { follow } from "../view";
@@ -32,10 +33,13 @@ export interface AppDeps {
   pollMs?: number;
 }
 
-interface Prompt { label: string; submit: (text: string) => Promise<void> | void }
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
 
-const HINTS = "^N new   ^, ^. switch   /agents /models /accounts /login /close /quit   PgUp PgDn scroll";
+const HELP = [
+  "^N new orchestrator   ^, ^. switch pages (Alt+, Alt+. too)   PgUp PgDn scroll   Esc clear",
+  "/rename <name>   /new [name] [git-url]   /close   /quit",
+  "/agents   /models [id]   /accounts   /login claude|codex [profile]   /back",
+];
 
 export class App {
   pages: Page[] = [];
@@ -43,8 +47,6 @@ export class App {
   input = { text: "", cursor: 0 };
   scroll = 0;
   menu: ActiveMenu | null = null;
-  prompt: Prompt | null = null;
-  status = HINTS;
   loggingIn = false;
   private history: string[] = [];
   private historyAt = -1;
@@ -59,7 +61,7 @@ export class App {
 
   get page(): Page | undefined { return this.pages[this.active]; }
 
-  /** Run until /quit; opens the given project, or every known one, or the new-page prompt. */
+  /** Run until /quit; opens the given project, or every known one, or a fresh orch-xxxx. */
   async run(project?: string, url?: string): Promise<void> {
     const { term } = this.deps;
     term.open();
@@ -72,7 +74,7 @@ export class App {
       if (project) await this.openPage(project, url);
       else {
         for (const name of await listProjects()) await this.openPage(name);
-        if (!this.pages.length) this.newPagePrompt();
+        if (!this.pages.length) await this.newPage();
       }
       this.draw();
       await this.finished;
@@ -91,7 +93,6 @@ export class App {
   /** Append a finished line to the active page (or the screen when there is none). */
   say(line: string, page = this.page): void {
     if (page) (page.view?.lines ?? page.lines).push(line);
-    else this.status = line;
     this.draw();
   }
 
@@ -106,11 +107,11 @@ export class App {
   frame(): Frame {
     const page = this.page;
     const body = page ? (page.view ? page.view.lines : page.partial ? [...page.lines, page.partial] : page.lines) : [];
-    const prompt = this.prompt ? `${this.prompt.label} ` : page?.view ? dim(`${page.view.name} > `) : dim("> ");
+    const prompt = page?.view ? dim(`${page.view.name} > `) : dim("> ");
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       tabs: this.pages.map((p, i) => ({ title: p.view ? `${p.project} › ${p.view.name}` : p.project, active: i === this.active, busy: p.busy })),
-      lines: body, scroll: this.scroll, status: this.status,
+      lines: body, scroll: this.scroll,
       input: { prompt, text: this.input.text, cursor: this.input.cursor },
       menu: this.menu,
     };
@@ -154,20 +155,25 @@ export class App {
     this.draw();
   }
 
-  newPagePrompt(): void {
-    this.prompt = {
-      label: bold("new orchestrator:") + dim(" <project> [git-url]"),
-      submit: async (text) => {
-        const [project, url] = text.split(/\s+/).filter(Boolean);
-        if (!project) return;
-        this.status = `opening ${project}…`;
-        this.draw();
-        try { await this.openPage(project, url); }
-        catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`); }
-        this.status = HINTS;
-      },
-    };
-    this.draw();
+  /** Start a fresh orchestrator named orch-xxxx (or `name`), cloning `url` when given. */
+  async newPage(name?: string, url?: string): Promise<void> {
+    const project = name ?? newProjectName([...this.pages.map((p) => p.project), ...(await listProjects())]);
+    try {
+      const page = await this.openPage(project, url);
+      if (!name) this.say(dim("/rename <name> to rename"), page);
+    } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`); }
+  }
+
+  async renamePage(to: string): Promise<void> {
+    const page = this.page;
+    if (!page) return;
+    if (page.busy) return this.say(dim("busy; try again when the turn ends"));
+    if (this.pages.some((p) => p.project === to)) return this.say(dim(`${to} is already open`));
+    await renameProject(page.project, to);
+    const from = page.project;
+    page.project = to;
+    page.orch = await this.deps.openOrchestrator(to, undefined, (text) => this.stream(page, text));
+    this.say(dim(`${from} → ${to}`), page);
   }
 
   private async runTurn(page: Page): Promise<void> {
@@ -215,10 +221,8 @@ export class App {
   }
 
   private async modelsMenu(): Promise<void> {
-    this.status = "fetching models…";
-    this.draw();
+    this.say(dim("fetching models…"));
     const { choices, errors } = await modelChoices(dim);
-    this.status = HINTS;
     for (const e of errors) this.say(dim(e));
     if (!choices.length) return this.say(dim("no models available; sign in with /login first"));
     this.openMenu("switch model   (/models <id> for any other id)", choices, async (id) => this.say(dim(await setModel(id))));
@@ -236,11 +240,10 @@ export class App {
 
   private async login(arg: string): Promise<void> {
     this.loggingIn = true;
-    this.status = "signing in… (/quit cancels)";
-    this.draw();
+    this.say(dim("signing in… (/quit cancels)"));
     try { this.say(await login(arg, { write: (s) => this.say(s.replace(/\n$/, "")), signal: this.loginAbort.signal })); }
     catch (err) { this.say(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
-    finally { this.loggingIn = false; this.status = HINTS; this.draw(); }
+    finally { this.loggingIn = false; this.draw(); }
   }
 
   // --- input ------------------------------------------------------------------
@@ -253,14 +256,18 @@ export class App {
       if (text === "/back") page.view.leave();
       return;
     }
-    if (text === "/new") return this.newPagePrompt();
-    if (text.startsWith("/new ")) return this.newPagePrompt(), this.prompt!.submit(text.slice(5));
+    if (text === "/help") { for (const l of HELP) this.say(dim(l)); return; }
+    if (text === "/new" || text.startsWith("/new ")) {
+      const [name, url] = text.slice(4).trim().split(/\s+/).filter(Boolean);
+      return this.newPage(name, url);
+    }
+    if (text.startsWith("/rename ")) return this.renamePage(text.slice(8).trim());
     if (text === "/close") return this.closePage();
     if (text === "/login" || text.startsWith("/login ")) return this.login(text.slice(6).trim());
     if (text === "/accounts") return this.accountsMenu();
     if (text === "/models") return this.modelsMenu();
     if (text.startsWith("/models ")) return this.say(dim(await setModel(text.slice(8).trim())));
-    if (!page) return this.say(dim("no orchestrator open; ^N starts one"));
+    if (!page) return this.newPage();
     if (text === "/agents") return this.agentsMenu(page);
     if (text.startsWith("/")) return this.say(dim(`unknown command ${text.split(" ")[0]}`));
     page.lines.push(`${bold(">")} ${text}`);
@@ -271,7 +278,7 @@ export class App {
   async onKey(k: Key): Promise<void> {
     // Chords that work everywhere.
     if (k.ctrl && k.name === "c") return this.quit();
-    if (k.ctrl && k.name === "n") return this.newPagePrompt();
+    if (k.ctrl && k.name === "n") return this.newPage();
     if ((k.ctrl || k.alt) && k.name === ",") return this.switchPage(-1);
     if ((k.ctrl || k.alt) && k.name === ".") return this.switchPage(1);
     if (k.name === "pageup") { this.scroll += Math.max(1, this.deps.term.rows - 4); return this.draw(); }
@@ -286,8 +293,7 @@ export class App {
       return this.draw();
     }
     if (k.name === "escape") {
-      if (this.prompt) this.prompt = null;
-      else if (this.page?.view) this.page.view.leave();
+      if (this.page?.view) this.page.view.leave();
       else this.input = { text: "", cursor: 0 };
       return this.draw();
     }
@@ -296,8 +302,6 @@ export class App {
       this.input = { text: "", cursor: 0 };
       this.scroll = 0;
       this.historyAt = -1;
-      const prompt = this.prompt;
-      if (prompt) { this.prompt = null; this.draw(); return prompt.submit(text); }
       if (!text) return this.draw();
       this.history.unshift(text);
       this.draw();
@@ -322,11 +326,11 @@ export class App {
     else if (k.ctrl && k.name === "w") {
       const head = text.slice(0, cursor).replace(/\S+\s*$/, "");
       this.input = { text: head + text.slice(cursor), cursor: head.length };
-    } else if (k.name === "up" && !this.prompt && this.historyAt + 1 < this.history.length) {
+    } else if (k.name === "up" && this.historyAt + 1 < this.history.length) {
       this.historyAt++;
       const t = this.history[this.historyAt]!;
       this.input = { text: t, cursor: t.length };
-    } else if (k.name === "down" && !this.prompt && this.historyAt >= 0) {
+    } else if (k.name === "down" && this.historyAt >= 0) {
       this.historyAt--;
       const t = this.historyAt === -1 ? "" : this.history[this.historyAt]!;
       this.input = { text: t, cursor: t.length };

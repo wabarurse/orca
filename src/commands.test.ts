@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { newProjectName, validProjectName } from "./commands";
 import { recentModels } from "./commands";
 
 describe("recentModels", () => {
@@ -11,5 +12,19 @@ describe("recentModels", () => {
   });
   test("ignores a current model the provider does not list", () => {
     expect(recentModels(ids, "other", 3)).toEqual(["m6", "m5", "m4"]);
+  });
+});
+
+describe("project names", () => {
+  test("newProjectName is orch-xxxx and avoids taken names", () => {
+    const first = newProjectName([]);
+    expect(first).toMatch(/^orch-[a-z0-9]{4}$/);
+    const taken = Array.from({ length: 50 }, () => newProjectName([]));
+    expect(taken.every((n) => /^orch-[a-z0-9]{4}$/.test(n))).toBe(true);
+  });
+  test("validProjectName", () => {
+    expect(validProjectName("login-page")).toBe(true);
+    expect(validProjectName("bad name")).toBe(false);
+    expect(validProjectName("../x")).toBe(false);
   });
 });

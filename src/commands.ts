@@ -2,7 +2,7 @@
 // these into menus and status lines.
 
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readdir, rename } from "node:fs/promises";
 import { accounts, provider, type Account } from "./accounts";
 import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
@@ -27,6 +27,27 @@ export async function listAgents(project: string): Promise<{ name: string; live:
   const dir = paths.transcript(project, "x").replace(/x\.jsonl$/, "");
   const names = (await readdir(dir).catch(() => [])).filter((f) => f.endsWith(".jsonl")).map((f) => f.slice(0, -6));
   return names.filter((n) => n !== "orchestrator").map((name) => ({ name, live: live.has(name) }));
+}
+
+/** A fresh orchestrator name, orch-xxxx, that no project uses yet. */
+export function newProjectName(taken: string[]): string {
+  for (;;) {
+    const name = `orch-${Math.random().toString(36).slice(2, 6).padEnd(4, "0")}`;
+    if (!taken.includes(name)) return name;
+  }
+}
+
+export const validProjectName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name);
+
+/**
+ * Rename a project directory. Refused while agents run in its tmux session,
+ * since their paths and session name embed the old name.
+ */
+export async function renameProject(from: string, to: string): Promise<void> {
+  if (!validProjectName(to)) throw new Error("names are letters, digits, . _ or -");
+  if (existsSync(paths.project(to))) throw new Error(`a project named ${to} already exists`);
+  if ((await tmux.listWindows(sessionName(from)).catch(() => [])).length) throw new Error("agents are still running; wait for them or stop them first");
+  await rename(paths.project(from), paths.project(to));
 }
 
 /** Projects that have been started before: every ~/.parallels/projects/<name> with a repo. */

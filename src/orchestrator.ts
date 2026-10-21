@@ -29,14 +29,16 @@ export interface Orchestrator {
   turn(): Promise<Message[]>;
 }
 
-/** Make sure ~/.parallels/projects/<name>/repo exists, cloning it if a url is given. */
+/**
+ * Make sure ~/.parallels/projects/<name>/repo exists: clone it when a url is
+ * given, otherwise start an empty repository the orchestrator can fill.
+ */
 export async function ensureProject(project: string, url?: string): Promise<void> {
   const repo = paths.repo(project);
   mkdirSync(paths.project(project), { recursive: true });
   if (existsSync(repo)) return;
-  if (!url) throw new Error(`no repo at ${repo}; pass a git url the first time`);
-  const res = await Bun.$`git clone ${url} ${repo}`.quiet().nothrow();
-  if (res.exitCode !== 0) throw new Error(`git clone failed: ${res.stderr.toString().trim()}`);
+  const res = url ? await Bun.$`git clone ${url} ${repo}`.quiet().nothrow() : await Bun.$`git init -q ${repo}`.quiet().nothrow();
+  if (res.exitCode !== 0) throw new Error(`git ${url ? "clone" : "init"} failed: ${res.stderr.toString().trim()}`);
 }
 
 export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orchestrator> {
