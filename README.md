@@ -18,7 +18,16 @@ when it is resized). Run it inside a git repository and you get an orchestrator 
 repository: an `orch-xxxx` project cloned from its origin (reused next time you
 start there). With no project named it also reopens every project under
 `~/.parallels/projects`. The status line above the input shows the page's name,
-git remote and how many pages are open (and a spinner while a turn runs). Ctrl+N starts a new orchestrator named `orch-xxxx`, cloned from the
+git remote and how many pages are open (and a spinner while a turn runs, its
+"thinking…" shimmering). Like Codex, the input and your own messages sit on a
+subtle background the full width of the terminal, shaded from your terminal's
+own background colour (asked once at start; a neutral grey when the terminal
+does not say; none with `NO_COLOR`). Tool calls show like Claude Code's: while
+one runs, a shimmering `⏺ Bash(git status)` line sits above the input; when it
+ends that line goes into the scrollback with one summary line under it
+(`⎿  12 lines`, `exit 2: <first error line>`, `sent to orchestrator`,
+`spawned worker-feat`), its marker red when it failed. Restored pages and the
+`/agents` view show calls the same way. Ctrl+N starts a new orchestrator named `orch-xxxx`, cloned from the
 repository you started in (an empty repository otherwise; `/rename <name>`
 renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X move between pages,
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
