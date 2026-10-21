@@ -10,45 +10,51 @@ bun src/cli.ts start [project] [git-url]
 `start` opens a bare inline TUI, like Claude Code and Codex, with one page per
 orchestrator (one per project). It does not take over the screen: replies go
 into your terminal's normal scrollback (scroll with the terminal or the mouse)
-and only the bottom block (a streaming line, menus, the status line and the
-input) is redrawn; quitting leaves everything printed in place. The orchestrator's
+and only the bottom region (running calls, the input, counts and panels)
+is redrawn; quitting leaves everything printed in place. The orchestrator's
 replies are rendered as markdown (headings, emphasis, lists, quotes, code
 blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that
 repository: an `orch-xxxx` project cloned from its origin (reused next time you
 start there). With no project named it also reopens every project under
-`~/.parallels/projects`. The status line above the input shows the page's name,
-git remote and how many pages are open (and a spinner while a turn runs, its
-"thinking…" shimmering). Like Codex, the input and your own messages sit on a
+`~/.parallels/projects`. A shaded inline header shows the project, cached model,
+directory and remote. It is committed with the page, not pinned to the screen.
+The bottom band puts the input first, then running worker/reviewer counts,
+queued messages and `N questions · Ctrl+Q to view`; every menu and question
+panel opens below the input. A running turn's "thinking…/working…" shimmers. Like Codex, the input and your own messages sit on a
 subtle background the full width of the terminal, shaded from your terminal's
 own background colour (asked once at start; a neutral grey when the terminal
 does not say; none with `NO_COLOR`). Tool calls show like Claude Code's: while
 one runs, a shimmering `⏺ Bash(git status)` line sits above the input; when it
 ends that line goes into the scrollback with one summary line under it
 (`⎿  12 lines`, `exit 2: <first error line>`, `sent to orchestrator`,
-`spawned worker-feat`), its marker red when it failed. Restored pages and the
+`spawned worker-feat`), its marker red when it failed. A call whose run stops
+without a result is red with an `interrupted` summary. Truncated bash output
+shows `N+ lines (truncated)`. Restored pages and the
 `/agents` view show calls the same way. Ctrl+N starts a new orchestrator named `orch-xxxx`, cloned from the
 repository you started in (an empty repository otherwise; `/rename <name>`
 renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X move between pages,
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
 `/help` for the rest of the commands.
 
-When the orchestrator asks you something (its `ask` tool queues questions
-without waiting), the oldest open question shows above the status line, like
-Codex's pending questions, with its options numbered, then "type your own
-answer" and "skip (use default: …)". ↑↓ or 1–9 choose and Enter picks (Enter
-on the skip row lets the orchestrator use its default). Start typing, or
-choose "type your own answer", to answer in your own words: the prompt reads
-`answer>`, a question without options starts there, and a known command such
-as `/help` still runs as a command. Esc never sends anything: it clears what you
-typed, and otherwise puts the questions off like Tab, so you can chat, until a
-new one arrives or you run `/questions`, which shows them again (and lists
-them when there are several). If you were typing a message when a question
-arrives, the message stays yours ("send or clear your message to answer"), and
-keys pressed in the first half second after a question appears do not answer
-it. In an agent view (`/agents`) only the count shows. Each answer leaves one
-dim `? question → answer` line. The status line counts open questions on every
-page ("orch-x: 2 questions").
+Pressing Enter puts a chat message in the orchestrator's inbox; it appears in
+the conversation only when the orchestrator consumes it, between tool batches
+or responses. Until then the bottom band counts it as queued. This never
+interrupts a running tool. Logical conversation blocks have a neutral blank
+row between them, not between a tool's label and result or wrapped rows.
+
+Questions never open automatically or take your draft. Ctrl+Q or `/questions`
+opens the oldest pending question below the input, with numbered options,
+"type your own answer" and "skip (use default: …)". ↑↓ or 1–9 choose and Enter
+picks. Typing switches to `answer>`; an optionless question starts there.
+Esc, Tab or Ctrl+Q closes the panel without answering or skipping, and restores
+your chat draft. The answer draft is retained for reopening. Only selecting
+"skip" and pressing Enter skips. New arrivals update the count, not the input.
+When the queue is empty the panel closes; a later question needs explicit
+opening again. A half-second guard after opening prevents accidental answers.
+Menus take precedence over questions; Ctrl+Q does nothing while a menu/project
+list is open. In `/agents` only the question count shows. Each answer leaves a
+dim `? question → answer` line; background projects' question counts are shown too.
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
 
