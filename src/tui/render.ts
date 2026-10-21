@@ -36,15 +36,19 @@ export interface ProjectList {
   status: string;
 }
 
+/** How the input relates to the shown question: choosing a row, typing its answer, or holding a chat draft (which must go first). */
+export type QuestionMode = "pick" | "answer" | "guard";
+
 /** The oldest open question of the active page, as the live region shows it. */
 export interface QuestionView {
   text: string;
   options: string[];
-  /** The selected row: an option, or options.length for "type your own answer". */
+  /** The selected row: an option, options.length for "type your own answer", options.length + 1 for "skip". */
   index: number;
   default?: string;
   /** Open questions on the page, this one included. */
   count: number;
+  mode: QuestionMode;
 }
 
 /** The live region's state. */
@@ -188,20 +192,27 @@ export function projectRows(p: ProjectList, height: number): string[] {
   return [...head, ...footer];
 }
 
-export const QUESTION_HINT = "Enter answer · Esc skip (uses default) · Tab later";
+export const QUESTION_HINTS: Record<QuestionMode, string> = {
+  pick: "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later",
+  answer: "Enter send · Esc clear · Tab later",
+  guard: "send or clear your message to answer",
+};
 export const OWN_ANSWER = "type your own answer";
+export const skipRow = (def?: string) => (def ? `skip (use default: ${def})` : "skip");
+
+/** A question's rows: its options numbered (1–9 pick them), then "type your own answer" and "skip". */
+export const questionItems = (q: Pick<QuestionView, "options" | "default">): string[] => [...q.options.map((o, i) => `${i + 1}. ${o}`), OWN_ANSWER, skipRow(q.default)];
 
 /**
  * A question's rows, at most `height`, `cols` wide: its text word-wrapped,
- * then its options with "type your own answer" last (scrolled to keep the
- * selection in view), the default, and the key hint. On short terminals the
- * hint wins, then the default, then a row of text, then the options.
+ * then its rows (scrolled to keep the selection in view), and the hint for
+ * the mode. On short terminals the hint wins, then a row of text, then the rows.
  */
 export function questionRows(q: QuestionView, cols: number, height: number): string[] {
   if (height <= 0) return [];
-  const footer = [...(q.default ? [dim(`default: ${q.default}`)] : []), dim(QUESTION_HINT)].slice(-height);
+  const footer = [dim(QUESTION_HINTS[q.mode])];
   const room = height - footer.length;
-  const items = q.options.length ? [...q.options.map((o, i) => `${i + 1}. ${o}`), OWN_ANSWER] : [];
+  const items = questionItems(q);
   const head = wordWrap(`${bold("?")} ${q.text}${q.count > 1 ? dim(` (1 of ${q.count})`) : ""}`, cols);
   const textRows = Math.max(0, Math.min(head.length, room > 0 ? Math.max(1, room - items.length) : 0));
   const text = head.slice(0, textRows);

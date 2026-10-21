@@ -18,8 +18,8 @@ import type { Key } from "./keys";
 import { lineRows, type Line } from "./lines";
 import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
-import { pageQuestions, Questions, type PageQuestions, type QuestionStore } from "./questions";
-import { replyLine, reportLine, restore, userLines } from "./restore";
+import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
+import { MAX_RESTORED_ROWS, replyLine, reportLine, restore, userLines } from "./restore";
 import { append, bold, commit, erase, dim, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
 import type { Terminal } from "./term";
 
@@ -52,6 +52,8 @@ export interface Page {
   sent: string[];
   /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
   questions: PageQuestions;
+  /** Answered-question lines waiting for the streaming reply's partial line to end, so they never split it. */
+  held: Line[];
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
   view: { name: string; lines: Line[]; leave: () => void; live: boolean } | null;
 }
@@ -77,6 +79,8 @@ export interface AppDeps {
   watchdog?: (project: string) => Promise<unknown>;
   /** Where questions are read and answered (questions.ts on disk by default); tests stub it. */
   questions?: QuestionStore;
+  /** How long Enter, digits and typing are ignored after a question first shows (QUESTION_DELAY_MS); tests shorten it. */
+  questionDelayMs?: number;
 }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
@@ -109,8 +113,10 @@ const HELP = [
   "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
   "/agents   /models [id]   /accounts   /login claude|codex [profile]",
   "/review-rounds [n] review rounds before CI (0 = straight to CI)",
-  "/questions shows the orchestrator's open questions again (Enter answers, Esc skips, Tab puts off)",
+  "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later",
 ];
+/** Commands a question's answer can run (first word), as typed in chat. */
+const COMMANDS = new Set(["/quit", "/back", "/help", "/projects", "/questions", "/keys", "/new", "/rename", "/close", "/login", "/accounts", "/models", "/review-rounds", "/agents"]);
 const HELP_VIEW = "/back (or Esc) leaves the agent view";
 
 /**
@@ -199,9 +205,13 @@ export class App {
       get input() { return app.input; },
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
       say: (line, page) => app.say(line, page as Page),
-      record: (line, page) => app.toPage(page as Page, [line]),
+      record: (line, page) => app.record(page as Page, line),
+      width: () => app.deps.term.cols - visibleLength(dim("answer> ")),
+      now: () => app.clock.now(),
+      isCommand: (text) => COMMANDS.has(text.split(/\s/)[0]!),
+      run: (text) => { app.remember(text); return app.submit(text); },
       draw: () => app.draw(),
-    }, deps.questions);
+    }, deps.questions, deps.questionDelayMs ?? QUESTION_DELAY_MS);
   }
 
   get page(): Page | undefined { return this.pages[this.active]; }
@@ -319,13 +329,11 @@ export class App {
     this.endPartial(page);
     for (const m of msgs) {
       if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
-      // A question's answer: its dim line, unless answered here (shown then).
-      const asked = this.questions.inboxLines(page, m.text);
-      if (asked) { this.toPage(page, asked); continue; }
-      // Typed here: already shown when sent. From elsewhere (`parallels msg`, a question's answer): shown now, as restore shows it.
+      // Typed here: already shown when sent (checked first, so typed text that looks like an answer stays text).
       const at = page.sent.indexOf(m.text);
-      if (at !== -1) page.sent.splice(at, 1);
-      else this.toPage(page, userLines(m.text));
+      if (at !== -1) { page.sent.splice(at, 1); continue; }
+      // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`parallels msg`) as "> …", as restore shows it.
+      this.toPage(page, this.questions.inboxLines(page, m.text) ?? userLines(m.text));
     }
   }
 
@@ -333,6 +341,13 @@ export class App {
   private endPartial(page: Page): void {
     const blocks = page.md.flush();
     if (blocks.length) this.toPage(page, blocks.map((md) => ({ md, block: true })));
+    if (page.held.length) this.toPage(page, page.held.splice(0));
+  }
+
+  /** An answered question's line: into the page's history now, or once the reply streaming there ends its partial line. */
+  private record(page: Page, line: Line): void {
+    if (page.md.pending) page.held.push(line);
+    else this.toPage(page, [line]);
   }
 
   frame(): Frame {
@@ -426,6 +441,7 @@ export class App {
   /** Redraw the live region soon, committing pending lines above it first. */
   draw(): void {
     if (this.closed) return;
+    this.questions.sync(); // the input holds the chat draft or the shown question's answer, as the state now wants
     this.animate();
     if (this.frameQueued || this.resizeTimer) return;
     this.frameQueued = true;
@@ -494,10 +510,11 @@ export class App {
       if (existing !== this.active) { this.active = existing; this.reprint(); }
       return this.pages[existing]!;
     }
-    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null };
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), held: [], view: null };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs));
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
-    page.lines = [...restore(page.orch.entries?.() ?? [], this.deps.term.cols), ...page.lines];
+    const asked = await this.questions.load(page);
+    page.lines = [...restore(page.orch.entries?.() ?? [], this.deps.term.cols, MAX_RESTORED_ROWS, asked), ...page.lines];
     const saved = await loadHistory(project);
     page.inputHistory = saved.entries;
     page.historyLines = saved.lines;

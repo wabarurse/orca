@@ -272,35 +272,35 @@ describe("sanitize", () => {
 });
 
 describe("questions", () => {
-  const H = "Enter answer · Esc skip (uses default) · Tab later";
-  const q = (over: Partial<QuestionView> = {}): QuestionView => ({ text: "Which db?", options: ["postgres", "sqlite"], index: 0, default: "sqlite", count: 1, ...over });
+  const PICK = "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later";
+  const q = (over: Partial<QuestionView> = {}): QuestionView => ({ text: "Which db?", options: ["postgres", "sqlite"], index: 0, default: "sqlite", count: 1, mode: "pick", ...over });
 
-  test("a question with options: text, numbered options, type your own, default, hint", () => {
-    expect(questionRows(q(), 60, 10).map(strip)).toEqual(["? Which db?", "❯ 1. postgres", "  2. sqlite", "  type your own answer", "default: sqlite", H]);
-    expect(questionRows(q({ index: 2, count: 3 }), 60, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "default: sqlite", H]);
+  test("a question with options: text, numbered options, type your own, skip with the default, the hint for the mode", () => {
+    expect(questionRows(q(), 70, 10).map(strip)).toEqual(["? Which db?", "❯ 1. postgres", "  2. sqlite", "  type your own answer", "  skip (use default: sqlite)", PICK]);
+    expect(questionRows(q({ index: 2, count: 3, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "  skip (use default: sqlite)", "Enter send · Esc clear · Tab later"]);
+    expect(questionRows(q({ mode: "guard" }), 70, 10).map(strip).at(-1)).toBe("send or clear your message to answer");
   });
 
-  test("a question without options has no list (and no default line without a default)", () => {
-    expect(questionRows(q({ options: [], default: undefined }), 60, 10).map(strip)).toEqual(["? Which db?", H]);
+  test("a question without options: type your own answer, then a plain skip without a default", () => {
+    expect(questionRows(q({ options: [], default: undefined, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db?", "❯ type your own answer", "  skip", "Enter send · Esc clear · Tab later"]);
   });
 
   test("long text word-wraps", () => {
     const out = questionRows(q({ text: "Should the importer keep going when one row fails to parse?", options: [], default: undefined }), 20, 10).map(strip);
-    expect(out).toEqual(["? Should the", "importer keep going", "when one row fails", "to parse?", H]);
+    expect(out.slice(0, 4)).toEqual(["? Should the", "importer keep going", "when one row fails", "to parse?"]);
   });
 
-  test("on a short terminal the hint stays, then the default, a row of text, the selected option", () => {
+  test("on a short terminal the hint stays, then a row of text, then the selected row", () => {
     const long = q({ text: "word ".repeat(40).trim(), index: 1 });
-    expect(questionRows(long, 30, 1).map(strip)).toEqual([H]);
-    expect(questionRows(long, 30, 2).map(strip)).toEqual(["default: sqlite", H]);
-    const three = questionRows(long, 30, 3).map(strip);
-    expect(three[0]!.endsWith("…")).toBe(true);
-    expect(three.slice(1)).toEqual(["default: sqlite", H]);
-    expect(questionRows(long, 30, 4).map(strip).slice(1)).toEqual(["❯ 2. sqlite", "default: sqlite", H]);
+    expect(questionRows(long, 30, 1).map(strip)).toEqual([PICK]);
+    const two = questionRows(long, 30, 2).map(strip);
+    expect(two[0]!.endsWith("…")).toBe(true);
+    expect(two[1]).toBe(PICK);
+    expect(questionRows(long, 30, 3).map(strip).slice(1)).toEqual(["❯ 2. sqlite", PICK]);
     expect(questionRows(long, 30, 0)).toEqual([]);
     // In the live region: a 5-row terminal keeps the hint (cut to the width), the status line and the input.
     const live = rows({ cols: 30, rows: 5, input: { prompt: "> ", text: "", cursor: 0 }, menu: null, status: "status", question: long });
-    expect(live.slice(-3)).toEqual([H.slice(0, 29) + "…", "status", "> "]);
+    expect(live.slice(-3)).toEqual([PICK.slice(0, 29) + "…", "status", "> "]);
     expect(live.length).toBeLessThanOrEqual(5);
   });
 

@@ -24,7 +24,10 @@
 //   "? <question> → <answer>" line when it was answered; restored, the same
 //   line sits where the orchestrator read the answer from its inbox (answers
 //   from another TUI show there live too). Questions still open are not in the
-//   transcript: the queue shows them again from questions/.
+//   transcript: the queue shows them again from questions/. A reply is read
+//   by its question's id against questions/ (answered and skipped files are
+//   kept), so quotes or `": ` in the question cannot confuse it; only a
+//   missing file falls back to parsing the message text.
 // - Errors, command output (/help, /models, …), status notes ("queued; runs
 //   after sign-in") and anything else the app itself said are not in the
 //   transcript and are not restored.
