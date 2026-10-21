@@ -41,8 +41,18 @@ describe("rolePrompt", () => {
   });
   test("the orchestrator respawns once per [agent-exit] and stops if it repeats", () => {
     const p = rolePrompt("orchestrator", defaults);
-    expect(p).toContain("`[agent-exit]`: tell the user, then respawn that agent once on the same branch with its original task");
-    expect(p).toContain("If it exits the same way again, tell the user and stop.");
+    expect(p).toContain("`[agent-exit]`: tell the user.");
+    expect(p).toContain("Otherwise respawn that agent once on the same branch with its original task");
+    expect(p).toContain("if it exits the same way again, tell the user and stop.");
+  });
+  test("a merged PR's [agent-exit] is not respawned; what waited on the branch starts, and nothing is cleaned up by hand", () => {
+    for (const maxReviewRounds of [0, 1, 100]) {
+      const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
+      const line = p.split("\n").find((l) => l.includes("`[agent-exit]`"))!;
+      expect(line).toContain(`If it says "PR … merged", that branch is done: don't respawn; start what was waiting on it. Otherwise respawn`);
+      expect(line.indexOf("PR … merged")).toBeLessThan(line.indexOf("respawn that agent"));
+      expect(p).not.toMatch(/worktree remove|delete the branch|clean ?up/i);
+    }
   });
 
   test("each role gets its own short list", () => {
