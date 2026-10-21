@@ -57,7 +57,9 @@ branch goes straight to CI with no further review, and the orchestrator tells
 you what was left open. When a review is clean the orchestrator tells the reviewer to
 "watch ci": it pushes, opens the PR, runs `gh pr checks --watch`, fixes what
 fails until green, and reports ready to merge. One agent codes on a branch at a
-time.
+time: spawn waits briefly and then refuses while the branch's worker or reviewer
+is still running. A small follow-up on a branch that has not gone to CI yet can
+reuse it (its worker keeps its context); other work gets a new branch.
 
 When a branch's PR is merged, the TUI notices within about 30 seconds (it asks
 `gh pr list --repo <origin> --state merged` for each open project whose origin
