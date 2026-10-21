@@ -36,7 +36,7 @@ export interface Config {
   openaiAccount: string;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
-  /** Max review rounds before the orchestrator reports what is still open. */
+  /** Max review rounds before the orchestrator reports what is still open; 0 skips review and goes straight to CI. */
   maxReviewRounds: number;
   /** Complexity thresholds the reviewer reports against. */
   cyclomatic: number;
@@ -48,7 +48,7 @@ export const defaults: Config = {
   account: "",
   openaiAccount: "",
   maxToolResultBytes: 16 * 1024,
-  maxReviewRounds: 2,
+  maxReviewRounds: 1,
   cyclomatic: 10,
   cognitive: 15,
 };
@@ -57,7 +57,14 @@ export async function loadConfig(): Promise<Config> {
   const file = Bun.file(paths.config);
   if (!(await file.exists())) return defaults;
   const parsed = Bun.TOML.parse(await file.text()) as Partial<Config>;
-  return { ...defaults, ...parsed };
+  const config = { ...defaults, ...parsed };
+  if (!validRounds(config.maxReviewRounds)) config.maxReviewRounds = defaults.maxReviewRounds;
+  return config;
+}
+
+/** A review round count: a non-negative integer. */
+export function validRounds(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 0;
 }
 
 /** Write changed keys back to config.toml, keeping the others. */

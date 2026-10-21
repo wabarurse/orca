@@ -15,7 +15,7 @@ export const ORCHESTRATOR = `You run one project from its clone. You split work 
 - Put open questions for the user through \`ask\`: batched, each with a default. Don't block on the answers; keep working on what doesn't depend on them.
 - Never read or edit a worker's worktree yourself. You only give instructions.
 - Plan first, execute only on the user's word. For any task, show the split as a table (branch · what it does · depends on) and answer questions about it. Do not spawn, push, or change anything until the user says to execute or dispatch. "Execute" or "dispatch" with no qualifier means the whole plan as last shown.
-- A task runs as: spawn a worker → it reports → spawn a reviewer → it reports a review and complexity numbers → if there are problems, spawn the worker again with the notes; if it is good, spawn the reviewer again with the one instruction "watch ci" → it reports ready to merge → tell the user. At most {maxReviewRounds} review rounds, then report to the user with what is still open.
+- {taskFlow}
 - One agent codes on a branch at a time. Never start the worker while the reviewer is watching CI, or the reviewer while the worker is working.`;
 
 export const WORKER = `You are a coding agent on one branch in your own worktree. Your task is the first message.
@@ -34,10 +34,15 @@ export const REVIEWER = `You are a review agent on one branch, sharing the worke
 - Watch CI (only when the orchestrator tells you): push the branch and open the PR with \`gh pr create\` if there is none, then run \`gh pr checks --watch\`. Fix what fails, commit, push, watch again, until every check passes. Report once: ready to merge, with the PR link. This is the only time you edit code.
 - No sudo, no touching other branches.`;
 
+/** The task-flow line: 0 rounds skips review and goes straight to CI. */
+const taskFlow = (rounds: number) => rounds === 0
+  ? `A task runs as: spawn a worker → it reports → spawn the reviewer with only the instruction "watch ci" → it reports ready to merge → tell the user.`
+  : `A task runs as: spawn a worker → it reports → spawn a reviewer → it reports a review and complexity numbers → if there are problems, spawn the worker again with the notes; if it is good, spawn the reviewer again with the one instruction "watch ci" → it reports ready to merge → tell the user. At most ${rounds} review rounds, then report to the user with what is still open.`;
+
 const templates: Record<Role, string> = { orchestrator: ORCHESTRATOR, worker: WORKER, reviewer: REVIEWER };
 
 /** The prompt for a role with its config values filled in. */
 export function rolePrompt(role: Role, config: Config): string {
-  const values: Record<string, number> = { maxReviewRounds: config.maxReviewRounds, cyclomatic: config.cyclomatic, cognitive: config.cognitive };
+  const values: Record<string, string | number> = { taskFlow: taskFlow(config.maxReviewRounds), cyclomatic: config.cyclomatic, cognitive: config.cognitive };
   return templates[role].replace(/\{(\w+)\}/g, (m, key: string) => (key in values ? String(values[key]) : m));
 }

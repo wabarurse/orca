@@ -14,11 +14,11 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 
-function fakeTerm(cols = 40) {
+function fakeTerm(cols = 40, rows = 8) {
   const handlers: ((k: Key) => void)[] = [];
   let screen = "";
   const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; opened: boolean; closed: boolean } = {
-    cols, rows: 8, opened: false, closed: false,
+    cols, rows, opened: false, closed: false,
     write: (s) => { screen = s; },
     onKey: (cb) => { handlers.push(cb); },
     onResize: () => {},
@@ -301,10 +301,10 @@ describe("tui app", () => {
     await until(() => !!app.page);
     expect(term.screen()).not.toContain("/models");
     term.type("/help\r");
-    await until(() => term.screen().includes("/rename <name>"));
-    expect(term.screen()).toContain("/models [id]");
-    expect(term.screen()).toContain("/close closes this page");
-    expect(term.screen()).not.toContain("/back");
+    await until(() => app.page!.lines.join("\n").includes("/review-rounds"));
+    const help = app.page!.lines.join("\n");
+    for (const cmd of ["/keys", "/rename <name>", "/new [name] [git-url]", "/close closes this page", "/quit", "/agents", "/models [id]", "/accounts", "/login claude|codex", "/review-rounds [n]"]) expect(help).toContain(cmd);
+    expect(help).not.toContain("/back");
     app.quit();
     await running;
   });

@@ -59,7 +59,7 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
     async turn() {
       // run() drains the inbox itself and keeps going while messages arrive.
       if (!(await pending(project, "orchestrator"))) return [];
-      // Config is re-read every turn so /models takes effect at once.
+      // Config is re-read every turn so /models and /review-rounds take effect on the next turn.
       const config = await loadConfig();
       const { model } = config;
       const agent = createAgent({
