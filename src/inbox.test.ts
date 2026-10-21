@@ -56,3 +56,15 @@ test("parseFormatted reads back what format wrote", () => {
   expect(parseFormatted(format(msgs))).toEqual(msgs.map(({ from, text }) => ({ from, text })));
   expect(parseFormatted("no tag here")).toEqual([{ from: "", text: "no tag here" }]);
 });
+
+test("parseFormatted only takes real sender ids as tags", () => {
+  const msgs = [
+    { from: "worker-feat.x_1", text: "Report:\n\n[x] done\n\n[1] item", ts: "" },
+    { from: "user", text: "please\n\n[x] done\n\n[1] item", ts: "" },
+    { from: "reviewer", text: "ok", ts: "" },
+    { from: "orchestrator", text: "note", ts: "" },
+  ];
+  expect(parseFormatted(format(msgs))).toEqual(msgs.map(({ from, text }) => ({ from, text })));
+  expect(parseFormatted("[x] done\n\n[user] hi")).toEqual([{ from: "", text: "[x] done\n\n[user] hi" }]);
+  expect(parseFormatted("[workerx] hi")).toEqual([{ from: "", text: "[workerx] hi" }]);
+});
