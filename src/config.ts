@@ -1,7 +1,7 @@
 // Everything lives under ~/.parallels, like ~/.claude.
 //
 //   ~/.parallels/
-//     config.toml              model, byte limits, defaults
+//     config.toml              model, byte limits, defaults, pinned projects
 //     projects/<name>/
 //       name                   display name set by /rename (absent = <name>)
 //       repo/                  the orchestrator's clone
@@ -41,6 +41,8 @@ export interface Config {
   /** Complexity thresholds the reviewer reports against. */
   cyclomatic: number;
   cognitive: number;
+  /** Projects pinned to the top of the TUI's project list. */
+  pinned: string[];
 }
 
 export const defaults: Config = {
@@ -51,6 +53,7 @@ export const defaults: Config = {
   maxReviewRounds: 1,
   cyclomatic: 10,
   cognitive: 15,
+  pinned: [],
 };
 
 /** Most review rounds /review-rounds and config.toml accept. */

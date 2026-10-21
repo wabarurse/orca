@@ -2,7 +2,7 @@
 // these into menus and status lines.
 
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { $ } from "bun";
 import { accounts, provider, type Account } from "./accounts";
@@ -23,14 +23,9 @@ export function recentModels(ids: string[], current: string, limit = RECENT_MODE
   return ids.includes(current) && !head.includes(current) ? [...head, current] : head;
 }
 
-/** The agents running now: just the project's tmux windows, without reading transcripts. */
-export async function liveAgents(project: string): Promise<{ name: string; live: boolean }[]> {
-  return (await tmux.listWindows(sessionName(project)).catch(() => [])).map((name) => ({ name, live: true }));
-}
-
 /** Every agent that has a transcript, marked live when its tmux window is still open. */
 export async function listAgents(project: string): Promise<{ name: string; live: boolean }[]> {
-  const live = new Set(await tmux.listWindows(sessionName(project)).catch(() => []));
+  const live = new Set(await liveAgents(project));
   const dir = paths.transcript(project, "x").replace(/x\.jsonl$/, "");
   const names = (await readdir(dir).catch(() => [])).filter((f) => f.endsWith(".jsonl")).map((f) => f.slice(0, -6));
   return names.filter((n) => n !== "orchestrator").map((name) => ({ name, live: live.has(name) }));
@@ -104,6 +99,72 @@ export async function listProjects(): Promise<string[]> {
   const out: string[] = [];
   for (const name of names.sort()) if (existsSync(paths.repo(name))) out.push(name);
   return out;
+}
+
+// --- the project list ------------------------------------------------------------
+
+/** A project in the list: its id (folder, pins, delete) and the label it shows (its display name). */
+export interface ProjectEntry { name: string; label: string; pinned: boolean }
+
+/** Pinned projects first, then the rest, each sorted by label (then id). Pins without a project are dropped. */
+export function orderProjects(projects: { name: string; label: string }[], pinned: string[]): ProjectEntry[] {
+  const pins = new Set(pinned);
+  const byLabel = (a: { name: string; label: string }, b: { name: string; label: string }) => a.label.localeCompare(b.label) || a.name.localeCompare(b.name);
+  const sorted = [...new Map(projects.map((p) => [p.name, p])).values()].sort(byLabel);
+  return [...sorted.filter((p) => pins.has(p.name)), ...sorted.filter((p) => !pins.has(p.name))].map((p) => ({ ...p, pinned: pins.has(p.name) }));
+}
+
+/** Every project for the project list (Ctrl+B, /projects), pinned first, labelled with its display name. */
+export async function orderedProjects(): Promise<ProjectEntry[]> {
+  const projects = await Promise.all((await listProjects()).map(async (name) => ({ name, label: await displayName(name) })));
+  return orderProjects(projects, (await loadConfig()).pinned);
+}
+
+/** Pin or unpin a project in config.toml; returns whether it is pinned now. */
+export async function togglePin(name: string): Promise<boolean> {
+  const { pinned } = await loadConfig();
+  const on = !pinned.includes(name);
+  await saveConfig({ pinned: on ? [...pinned, name] : pinned.filter((n) => n !== name) });
+  return on;
+}
+
+/** The agent windows among a tmux session's windows: all but the session's idle shell. */
+export const agentWindows = (windows: string[]) => windows.filter((w) => w !== "shell");
+
+/** Agent windows still open in a project's tmux session; read from tmux alone, without transcripts. */
+export async function liveAgents(project: string): Promise<string[]> {
+  return agentWindows(await tmux.listWindows(sessionName(project)).catch(() => [] as string[]));
+}
+
+/** Close a project's (now idle) tmux session, if tmux is installed. */
+export async function killProjectSession(project: string): Promise<void> {
+  if (Bun.which("tmux")) await tmux.killSession(sessionName(project));
+}
+
+export interface DeleteOptions {
+  /** Live agent windows; defaults to the tmux session's. Tests replace it. */
+  live?: (project: string) => Promise<string[]>;
+  /** Close the project's idle tmux session; defaults to killProjectSession. Tests replace it. */
+  kill?: (project: string) => Promise<void>;
+  /** Runs once the checks pass, before anything is removed (the TUI closes the project's page here). */
+  beforeRemove?: () => Promise<void> | void;
+}
+
+/**
+ * Delete ~/.parallels/projects/<name> entirely: clone, worktrees, inboxes and
+ * transcripts. Refused while any agent still runs in its tmux session. Also
+ * drops it from the pins and closes its idle tmux session.
+ */
+export async function deleteProject(name: string, opts: DeleteOptions = {}): Promise<void> {
+  if (!validProjectName(name)) throw new Error(`not a project name: ${name}`);
+  if (!existsSync(paths.project(name))) throw new Error(`no project named ${name}`);
+  const live = await (opts.live ?? liveAgents)(name);
+  if (live.length) throw new Error(`${name} still has live agents (${live.join(", ")}); wait for them or stop them first`);
+  await opts.beforeRemove?.();
+  await (opts.kill ?? killProjectSession)(name);
+  await rm(paths.project(name), { recursive: true, force: true });
+  const { pinned } = await loadConfig();
+  if (pinned.includes(name)) await saveConfig({ pinned: pinned.filter((n) => n !== name) });
 }
 
 export async function accountChoices(dim: (s: string) => string): Promise<Choice<Account>[]> {
