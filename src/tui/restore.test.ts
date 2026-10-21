@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { format } from "../inbox";
 import { open, type Entry } from "../transcript";
 import { lineRows, type Line } from "./lines";
-import { earlier, MAX_RESTORED_ROWS, replyLine, restore, restoreItems, SUMMARIZED, toolLine } from "./restore";
+import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, toolLine } from "./restore";
 import { bold, dim } from "./render";
 
 const dir = mkdtempSync(join(tmpdir(), "parallels-restore-"));
@@ -188,4 +188,25 @@ test("report lines cut at 100 characters, not UTF-16 units", () => {
 test("tags inside a report or a user message are not senders", () => {
   const entries = transcript(meta, user(inbox(["worker-a", "Report\n\n[x] done\n\n[1] item"], ["user", "list:\n\n[x] done\n\n[1] item"])));
   expect(restore(entries, 60)).toEqual([`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item", dim("From worker-a: Report…")]);
+});
+
+test("question answers and skips restore as the dim line the page showed live, not as '> …'", () => {
+  const entries = transcript(
+    meta,
+    user(inbox(
+      ["user", '[2026-01-01T00-00-00.000Z-000001-abcd1234] answer to "Which db?": postgres'],
+      ["user", '[2026-01-01T00-00-00.000Z-000002-abcd1234] skipped "Port?"; use your default (8080)'],
+      ["user", '[2026-01-01T00-00-00.000Z-000003-abcd1234] skipped "Name?" (no default given); decide yourself'],
+      ["user", "[not a question] hello"],
+    )),
+  );
+  expect(restore(entries, 80).map(raw)).toEqual([
+    answeredLine("Which db?", "postgres"),
+    answeredLine("Port?", null, "8080"),
+    answeredLine("Name?", null),
+    `${bold(">")} [not a question] hello`,
+  ]);
+  expect(answeredLine("Port?", null, "8080")).toBe(dim("? Port? → skipped, default: 8080"));
+  expect(questionReply('[q1] answer to "a": b')).toEqual({ id: "q1", line: dim("? a → b") });
+  expect(questionReply("plain")).toBeNull();
 });

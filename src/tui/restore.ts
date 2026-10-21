@@ -18,8 +18,13 @@
 //   user next speaks (or the end), so a reply from an earlier turn that ended
 //   without the user speaking shows later than it did live, and worker or
 //   reviewer messages to "user" (not in the orchestrator's transcript) are lost.
-// - "user" messages that did not come from the TUI (`parallels msg`, question
-//   answers) show as "> …" both live and restored.
+// - "user" messages that did not come from the TUI (`parallels msg`) show as
+//   "> …" both live and restored.
+// - A question answered or skipped in this TUI showed live as its dim
+//   "? <question> → <answer>" line when it was answered; restored, the same
+//   line sits where the orchestrator read the answer from its inbox (answers
+//   from another TUI show there live too). Questions still open are not in the
+//   transcript: the queue shows them again from questions/.
 // - Errors, command output (/help, /models, …), status notes ("queued; runs
 //   after sign-in") and anything else the app itself said are not in the
 //   transcript and are not restored.
@@ -47,6 +52,30 @@ export function userLines(text: string): Line[] {
   const [first, ...rest] = text.split("\n");
   return [`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`)];
 }
+
+/** A question closed by the user, as the page shows it: one dim line, the answer or "skipped" (with the default) after an arrow. */
+export function answeredLine(question: string, answer: string | null, def?: string): string {
+  const tail = answer ?? (def ? `skipped, default: ${def}` : "skipped");
+  return dim(`? ${question} → ${tail}`);
+}
+
+/** The inbox messages questions.ts sends for an answer or a skip. */
+const ANSWERED = /^\[([\w.-]+)\] answer to "([\s\S]*?)": ([\s\S]*)$/;
+const SKIPPED = /^\[([\w.-]+)\] skipped "([\s\S]*)"(?:; use your default \(([\s\S]*)\)| \(no default given\); decide yourself)$/;
+
+/** A "user" message that is a question's answer or skip (questions.ts): its id and its line, else null. */
+export function questionReply(text: string): { id: string; line: string } | null {
+  const a = ANSWERED.exec(text);
+  if (a) return { id: a[1]!, line: answeredLine(a[2]!, a[3]!) };
+  const s = SKIPPED.exec(text);
+  return s ? { id: s[1]!, line: answeredLine(s[2]!, null, s[3]) } : null;
+}
+
+/** A message from the user as the page shows it: a question's answer as its dim line, anything else as "> …". */
+export const fromUserLines = (text: string): Line[] => {
+  const reply = questionReply(text);
+  return reply ? [reply.line] : userLines(text);
+};
 
 const REPORT_CHARS = 100;
 
@@ -96,7 +125,7 @@ const fromUser = (m: { from: string }) => m.from === "user" || m.from === "";
 function userEntry(content: MessageEntry["message"]["content"]): { items: Item[]; user: boolean } {
   const msgs = inboxMessages(content);
   const mine = msgs.filter(fromUser);
-  const items = [...mine.map((m) => now(userLines(m.text))), ...msgs.filter((m) => !fromUser(m)).map((m) => now([reportLine(m.from, m.text)]))];
+  const items = [...mine.map((m) => now(fromUserLines(m.text))), ...msgs.filter((m) => !fromUser(m)).map((m) => now([reportLine(m.from, m.text)]))];
   return { items, user: mine.length > 0 };
 }
 
