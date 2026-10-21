@@ -1,4 +1,4 @@
-import { ask as enqueue, type NewQuestion } from "../questions";
+import { cleanQuestions, ask as enqueue } from "../questions";
 import type { Tool } from "./index";
 
 // Orchestrator-only. Queues questions for the user and returns at once; the
@@ -14,11 +14,12 @@ export const ask: Tool = {
       properties: {
         questions: {
           type: "array",
+          description: "At most 10.",
           items: {
             type: "object",
             properties: {
-              text: { type: "string" },
-              options: { type: "array", items: { type: "string" }, description: "Short choices." },
+              text: { type: "string", description: "At most 500 chars." },
+              options: { type: "array", items: { type: "string" }, description: "Short choices, at most 8." },
               default: { type: "string", description: "What you will do if the user skips it." },
             },
             required: ["text"],
@@ -30,17 +31,12 @@ export const ask: Tool = {
   },
   async run(input, ctx) {
     if (ctx.role !== "orchestrator") return "refused: only the orchestrator can ask";
-    const raw = Array.isArray(input.questions) ? input.questions : [];
-    const items: NewQuestion[] = [];
-    for (const r of raw) {
-      const q = (r ?? {}) as Record<string, unknown>;
-      const text = typeof q.text === "string" ? q.text.trim() : "";
-      if (!text) return "refused: every question needs text";
-      const options = Array.isArray(q.options) ? q.options.map(String).map((o) => o.trim()).filter(Boolean) : undefined;
-      const def = typeof q.default === "string" ? q.default.trim() : undefined;
-      items.push({ text, options, default: def });
+    let items;
+    try {
+      items = cleanQuestions(input.questions);
+    } catch (e) {
+      return `refused: ${(e as Error).message}`;
     }
-    if (!items.length) return "refused: no questions";
     const qs = await enqueue(ctx.project, items);
     return `queued ${qs.length}: ${qs.map((q) => q.id).join(", ")}`;
   },

@@ -18,7 +18,7 @@ Layout:
 - `src/complexity.ts` — cyclomatic and Sonar cognitive complexity per function for JS/TS via `@babel/parser`; `src/tools/complexity.ts` is the reviewer's tool over it (changed files vs the default branch by default)
 - `src/transcript.ts` — append-only JSONL with parent pointers
 - `src/tools/` — `bash`, `spawn`, `message`, `ask` (orchestrator only), `complexity` (reviewer only); keep the set small
-- `src/questions.ts` — the orchestrator's question queue for the user (`questions/`, a file per question, inbox-style names, status open/answered/skipped, atomic writes). `ask` appends and returns ids at once, never blocking; `list`/`answer`/`skip` are the API for the TUI, and answering or skipping sends the result to the orchestrator's inbox from `user`. A second answer or skip is refused
+- `src/questions.ts` — the orchestrator's question queue for the user (`questions/`, a file per question, inbox-style names, status open/answered/skipped, atomic writes, an exclusive `<id>.closed` claim so a question closes once; input cleaned and capped by `clean`/`cleanQuestions`). `ask` appends and returns ids at once, never blocking; `list`/`answer`/`skip` are the API for the TUI, and answering or skipping sends `[<id>] ...` to the orchestrator's inbox from `user`. A second answer or skip is refused
 - `src/runner.ts` — worktree + tmux backend
 - `src/inbox.ts` — one FIFO inbox per agent (`inbox/<agent>/`, a file per message); with the transcripts, the only state on disk. `message` sends to any address: `orchestrator`, `user`, or an agent id. Agents read their inbox before the first request, after each tool call (delivered with the tool results, never interrupting one), and after every turn, and keep going while messages arrive
 

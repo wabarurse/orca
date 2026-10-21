@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "./config";
 import { drain } from "./inbox";
-import { all, answer, ask, list, skip } from "./questions";
+import { all, answer, ask, cleanQuestions, list, skip } from "./questions";
 import { ask as askTool } from "./tools/ask";
 import { registry, toolsFor } from "./tools/index";
 
@@ -32,16 +32,21 @@ test("answer and skip close the question and message the orchestrator", async ()
   expect((await all("q2")).map((q) => [q.status, q.answer])).toEqual([["answered", "postgres"], ["skipped", undefined]]);
   const msgs = await drain("q2", "orchestrator");
   expect(msgs.map((m) => m.from)).toEqual(["user", "user"]);
-  expect(msgs.map((m) => m.text)).toEqual(['answer to "Which DB?": postgres', 'skipped "Dark mode?"; use your default (no)']);
+  expect(msgs.map((m) => m.text)).toEqual([
+    `[${a!.id}] answer to "Which DB?": postgres`,
+    `[${b!.id}] skipped "Dark mode?"; use your default (no)`,
+  ]);
 });
 
 test("a double answer or skip is refused and sends nothing", async () => {
   const [q] = await ask("q3", [{ text: "Ship it?", default: "yes" }]);
   await answer("q3", q!.id, "yes");
   await drain("q3", "orchestrator");
-  expect(answer("q3", q!.id, "no")).rejects.toThrow("already answered");
-  expect(skip("q3", q!.id)).rejects.toThrow("already answered");
-  expect(answer("q3", "nope", "x")).rejects.toThrow("no question");
+  await expect(answer("q3", q!.id, "no")).rejects.toThrow("already answered");
+  await expect(skip("q3", q!.id)).rejects.toThrow("already answered");
+  await expect(answer("q3", "nope", "x")).rejects.toThrow("no question");
+  await expect(answer("q3", "../../x", "x")).rejects.toThrow("bad question id");
+  await expect(skip("q3", "..")).rejects.toThrow("bad question id");
   expect(await drain("q3", "orchestrator")).toEqual([]);
 });
 
@@ -57,4 +62,37 @@ test("the ask tool queues and returns ids at once; only the orchestrator has it"
   expect(toolsFor.worker).not.toContain("ask");
   expect(toolsFor.reviewer).not.toContain("ask");
   expect(registry.ask).toBe(askTool);
+});
+
+test("concurrent answers: exactly one wins and one message is sent", async () => {
+  const [q] = await ask("q5", [{ text: "Race?", default: "no" }]);
+  const results = await Promise.allSettled([answer("q5", q!.id, "a"), answer("q5", q!.id, "b"), skip("q5", q!.id)]);
+  expect(results.filter((r) => r.status === "fulfilled").length).toBe(1);
+  expect((await drain("q5", "orchestrator")).length).toBe(1);
+  expect(await list("q5")).toEqual([]);
+});
+
+test("a skip without a default says to decide", async () => {
+  const [q] = await ask("q6", [{ text: "Name?" }]);
+  await skip("q6", q!.id);
+  expect((await drain("q6", "orchestrator")).map((m) => m.text)).toEqual([`[${q!.id}] skipped "Name?" (no default given); decide yourself`]);
+});
+
+test("input is cleaned and capped", async () => {
+  expect(cleanQuestions([{ text: "a\nb\tc", options: ["x", "x", { y: 1 }, 3, " y "], default: "x" }])).toEqual([
+    { text: "a b c", options: ["x", "y"], default: "x" },
+  ]);
+  expect(() => cleanQuestions([{ text: "bad\u0007" }])).toThrow("control characters");
+  expect(() => cleanQuestions([{ text: "c1\u0085" }])).toThrow("control characters");
+  expect(() => cleanQuestions([{ text: "x".repeat(501) }])).toThrow("over 500");
+  expect(() => cleanQuestions([{ text: "q", options: ["o".repeat(101)] }])).toThrow("over 100");
+  expect(() => cleanQuestions([{ text: "q", default: "d".repeat(101) }])).toThrow("over 100");
+  expect(() => cleanQuestions([{ text: "q", options: Array.from({ length: 9 }, (_, i) => String(i)) }])).toThrow("over 8 options");
+  expect(() => cleanQuestions(Array.from({ length: 11 }, () => ({ text: "q" })))).toThrow("over 10 questions");
+  const ctx = { project: "q7", cwd: "/", role: "orchestrator" as const };
+  expect(await askTool.run({ questions: Array.from({ length: 11 }, () => ({ text: "q" })) }, ctx)).toBe("refused: over 10 questions in one call");
+  const [q] = await ask("q7", [{ text: "Why?", default: "x" }]);
+  await expect(answer("q7", q!.id, "bad\u0000")).rejects.toThrow("control characters");
+  await answer("q7", q!.id, "line\nbreak");
+  expect((await drain("q7", "orchestrator"))[0]?.text).toEndWith(": line break");
 });
