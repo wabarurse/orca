@@ -41,18 +41,20 @@ function fromCode(code: number, mod: number): Key | null {
   return withMods(key, mod);
 }
 
+/** Kitty's CSI code;mod u. */
+const fromKitty = (nums: number[]): Key | null => (Number.isFinite(nums[0]) ? fromCode(nums[0]!, nums[1] || 1) : null);
+
+/** CSI n;mod ~: xterm's modifyOtherKeys (27;mod;code) or a named key. */
+function fromTilde(nums: number[]): Key | null {
+  if (nums[0] === 27 && Number.isFinite(nums[2])) return fromCode(nums[2]!, nums[1] || 1);
+  const name = TILDE_KEYS[String(nums[0])];
+  return name ? withMods({ name }, nums[1] || 1) : null;
+}
+
 function fromCsi(params: string, final: string): Key | null {
   const nums = params.split(";").map((p) => (p === "" ? NaN : Number(p)));
-  if (final === "u") {
-    const code = nums[0];
-    if (!Number.isFinite(code)) return null;
-    return fromCode(code!, nums[1] || 1);
-  }
-  if (final === "~") {
-    if (nums[0] === 27 && Number.isFinite(nums[2])) return fromCode(nums[2]!, nums[1] || 1);
-    const name = TILDE_KEYS[String(nums[0])];
-    return name ? withMods({ name }, nums[1] || 1) : null;
-  }
+  if (final === "u") return fromKitty(nums);
+  if (final === "~") return fromTilde(nums);
   if (final === "Z") return { name: "tab", shift: true };
   const name = LETTER_KEYS[final];
   return name ? withMods({ name }, nums[1] || 1) : null;
@@ -62,8 +64,14 @@ const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 /** An unfinished paste is handed on in pieces of at most this size. */
 const MAX_PASTE = 1 << 20;
-/** A read that stops inside an escape sequence: CSI parameters with no final byte yet (covers a split PASTE_START), SS3 with no key, or an OSC reply with no BEL or ST yet. */
-const PARTIAL_ESC = /(?:\x1b?\x1b\[[0-9;:?<>]*|\x1bO|\x1b\][0-9]*(?:;[^\x07\x1b]*)?\x1b?)$/;
+/** A read that stops inside an escape sequence: CSI parameters with no final byte yet (covers a split PASTE_START), or SS3 with no key. */
+const PARTIAL_ESC = /(?:\x1b?\x1b\[[0-9;:?<>]*|\x1bO)$/;
+/** While a reply is expected, also a read that stops inside it: a lone ESC, or ESC ] … with no BEL or ST yet. */
+const PARTIAL_REPLY = /(?:\x1b\][0-9]*(?:;[^\x07\x1b]*)?)?\x1b?$/;
+/** An OSC reply cut off before its BEL or ST. */
+const UNTERMINATED_OSC = /^\x1b\]\d+;[^\x07\x1b]*\x1b?$/;
+/** What ends a reply being swallowed: BEL, ST, or a Ctrl+C (kept, so it still quits). */
+const REPLY_END = /\x07|\x1b\\|\x03/;
 
 /** Pasted text with line endings as \n and other control characters dropped (tabs become spaces). */
 function cleanPaste(text: string): string {
@@ -98,9 +106,15 @@ export interface KeyReader {
  * and however long the gaps: what has arrived is handed on as a paste key after
  * the idle timeout and the rest follows as more paste keys. Ctrl+C still ends a
  * paste, so a terminal that never sends the end marker cannot trap the user.
+ *
+ * While `expectReply()` holds (the terminal was asked something), a read that
+ * stops right after an ESC or inside an OSC reply is held too, so a reply cut
+ * anywhere is still one "osc" key; one still unterminated at the idle timeout
+ * is dropped, and what follows is swallowed up to its BEL or ST for one more
+ * idle period. Otherwise a lone ESC is Esc and ESC ] is Alt+] at once.
  */
-export function keyReader(emit: (k: Key) => void, idleMs = 300, setTimer: SetTimer = realTimer): KeyReader {
-  const r = new Reader(emit, idleMs, setTimer);
+export function keyReader(emit: (k: Key) => void, idleMs = 300, setTimer: SetTimer = realTimer, expectReply: () => boolean = () => false): KeyReader {
+  const r = new Reader(emit, idleMs, setTimer, expectReply);
   return { feed: (chunk) => r.feed(chunk), close: () => r.close() };
 }
 
@@ -109,21 +123,32 @@ class Reader {
   private inPaste = false;
   private paste = "";
   private cancel: (() => void) | null = null;
+  /** Dropping the rest of a reply that was cut off, up to its BEL or ST. */
+  private swallowing = false;
 
-  constructor(private readonly emit: (k: Key) => void, private readonly idleMs: number, private readonly setTimer: SetTimer) {}
+  constructor(private readonly emit: (k: Key) => void, private readonly idleMs: number, private readonly setTimer: SetTimer, private readonly expectReply: () => boolean) {}
 
   feed(chunk: string): void {
     this.stopTimer();
     let data: string | null = this.held + chunk;
     this.held = "";
-    while (data) data = this.inPaste ? this.pasteStep(data) : this.keysStep(data);
-    if (this.held || this.paste) this.cancel = this.setTimer(() => this.idle(), this.idleMs);
+    while (data) data = this.step(data);
+    if (this.held || this.paste || this.swallowing) this.startTimer();
+  }
+
+  private step(data: string): string | null {
+    if (this.swallowing) return this.swallowStep(data);
+    return this.inPaste ? this.pasteStep(data) : this.keysStep(data);
   }
 
   close(): void {
     this.stopTimer();
     this.held = this.paste = "";
-    this.inPaste = false;
+    this.inPaste = this.swallowing = false;
+  }
+
+  private startTimer(): void {
+    this.cancel = this.setTimer(() => this.idle(), this.idleMs);
   }
 
   private stopTimer(): void {
@@ -171,19 +196,41 @@ class Reader {
       this.inPaste = true;
       return data.slice(start + PASTE_START.length);
     }
-    const cut = data.search(PARTIAL_ESC);
-    const at = cut === -1 ? data.length : cut;
+    const at = this.heldFrom(data);
     this.keys(data.slice(0, at));
     this.held = data.slice(at);
     return null;
   }
 
+  /** Where an unfinished escape at the end of `data` starts (data.length for none). */
+  private heldFrom(data: string): number {
+    const cut = data.search(PARTIAL_ESC);
+    const at = cut === -1 ? data.length : cut;
+    if (!this.expectReply()) return at;
+    const reply = data.search(PARTIAL_REPLY); // always matches, at worst the empty end
+    return Math.min(at, reply);
+  }
+
+  /** The rest of a cut-off reply: dropped up to its end, then parsing goes on; a trailing ESC may be half of ST. */
+  private swallowStep(data: string): string | null {
+    const end = REPLY_END.exec(data);
+    if (!end) {
+      this.held = data.endsWith("\x1b") ? "\x1b" : "";
+      return null;
+    }
+    this.swallowing = false;
+    return data.slice(end.index + (end[0] === "\x03" ? 0 : end[0].length));
+  }
+
   private idle(): void {
     this.cancel = null;
+    if (this.swallowing) { this.swallowing = false; this.held = ""; return; }
     if (this.inPaste) return this.emitPaste(true);
     const tail = this.held;
     this.held = "";
-    this.keys(tail);
+    if (!UNTERMINATED_OSC.test(tail)) return this.keys(tail);
+    this.swallowing = true; // the reply was cut off: drop the rest when it comes, for one more idle period
+    this.startTimer();
   }
 }
 
@@ -220,24 +267,36 @@ function oscAt(input: string, i: number): Step | null {
   return m ? [{ name: "osc", text: m[1]! }, i + m[0].length] : null;
 }
 
+/** SS3 arrows and Home/End (ESC O A); null for anything else (Alt+O). */
+const ss3At = (input: string, i: number): Step | null => {
+  const name = LETTER_KEYS[input[i + 2] ?? ""];
+  return name ? [{ name }, i + 3] : null;
+};
+
+/** ESC ESC: Alt+Left / Alt+Right (ESC ESC [ C / D), else Esc, then the rest. */
+const escEscAt = (input: string, i: number): Step => (input[i + 2] === "[" ? altCsiAt(input, i) : null) ?? [{ name: "escape" }, i + 1];
+
+/** ESC [ …: a paste, or a CSI key. */
+const bracketAt = (input: string, i: number): Step => (input.startsWith(PASTE_START, i) ? pasteAt(input, i) : csiAt(input, i));
+
+/** What follows ESC, for those that start a sequence; null hands it on to `altAt`. */
+const ESCAPES: Record<string, (input: string, i: number) => Step | null> = { "[": bracketAt, "]": oscAt, O: ss3At, "\x1b": escEscAt };
+
+/**
+ * ESC-prefixed byte: Alt plus that key. This is how macOS sends Option+Backspace
+ * (ESC DEL) and Alt+Enter (ESC CR), so Esc then Backspace / Enter arriving in one
+ * read reads as the Alt chord too; separate reads stay Esc and the key.
+ */
+function altAt(input: string, i: number): Step {
+  const [inner] = parseKeys(input[i + 1]!);
+  return [inner ? { ...inner, name: inner.name === "char" ? inner.text!.toLowerCase() : inner.name, text: undefined, alt: true } : null, i + 2];
+}
+
 /** Everything starting with ESC. */
 function escapeAt(input: string, i: number): Step {
-  if (input.startsWith(PASTE_START, i)) return pasteAt(input, i);
   const next = input[i + 1];
-  if (next === "\x1b" && input[i + 2] === "[") {
-    const alt = altCsiAt(input, i);
-    if (alt) return alt;
-  }
-  if (next === "[") return csiAt(input, i);
-  const osc = next === "]" ? oscAt(input, i) : null;
-  if (osc) return osc;
-  if (next === "O" && input[i + 2] && LETTER_KEYS[input[i + 2]!]) return [{ name: LETTER_KEYS[input[i + 2]!]! }, i + 3];
-  if (next === undefined || next === "\x1b") return [{ name: "escape" }, i + 1];
-  // ESC-prefixed byte: Alt plus that key. This is how macOS sends Option+Backspace
-  // (ESC DEL) and Alt+Enter (ESC CR), so Esc then Backspace / Enter arriving in one
-  // read reads as the Alt chord too; separate reads stay Esc and the key.
-  const [inner] = parseKeys(next);
-  return [inner ? { ...inner, name: inner.name === "char" ? inner.text!.toLowerCase() : inner.name, text: undefined, alt: true } : null, i + 2];
+  if (next === undefined) return [{ name: "escape" }, i + 1];
+  return ESCAPES[next]?.(input, i) ?? altAt(input, i);
 }
 
 const CONTROL: Record<number, string> = { 13: "enter", 10: "enter", 127: "backspace", 8: "backspace", 9: "tab" };

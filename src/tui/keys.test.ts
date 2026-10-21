@@ -170,22 +170,77 @@ describe("parseKeys", () => {
   });
 });
 
+/** A keyReader that expects a terminal reply while `expect.on`, on a manual timer. */
+function replyReader() {
+  const expect = { on: true };
+  const got: Key[] = [];
+  let pending: (() => void) | null = null;
+  const r = keyReader((k) => got.push(k), 300, (fn) => { pending = fn; return () => { pending = null; }; }, () => expect.on);
+  return { got, expect, feed: r.feed, fire() { const fn = pending; pending = null; fn?.(); }, get timers() { return pending ? 1 : 0; } };
+}
+
+const REPLY = { name: "osc", text: "11;rgb:0000/0000/0000" };
+
 describe("OSC replies", () => {
   test("a terminal's OSC reply is an osc key, never typed text; Alt+] still reads as Alt+]", () => {
-    expect(parseKeys("\x1b]11;rgb:0000/0000/0000\x1b\\x")).toEqual([{ name: "osc", text: "11;rgb:0000/0000/0000" }, { name: "char", text: "x" }]);
+    expect(parseKeys("\x1b]11;rgb:0000/0000/0000\x1b\\x")).toEqual([REPLY, { name: "char", text: "x" }]);
     expect(parseKeys("\x1b]11;rgb:ffff/ffff/ffff\x07")).toEqual([{ name: "osc", text: "11;rgb:ffff/ffff/ffff" }]);
     expect(parseKeys("\x1b]11;rgb:ff")).toEqual([{ name: "osc", text: "11;rgb:ff" }]); // cut off: dropped as a reply, not typed
     expect(parseKeys("\x1b]")).toEqual([{ name: "]", alt: true }]);
   });
 
-  test("a reply split across reads waits for its end", () => {
-    const r = reader();
+  test("while a reply is expected, one split anywhere (even right after ESC) waits for its end", () => {
+    for (const cut of [1, 2, 4, 20, 23, 24]) {
+      const r = replyReader();
+      const reply = "\x1b]11;rgb:0000/0000/0000\x1b\\";
+      r.feed(reply.slice(0, cut));
+      expect(r.got).toEqual([]);
+      r.feed(`${reply.slice(cut)}hi`);
+      expect(r.got).toEqual([REPLY, { name: "char", text: "hi" }]);
+      expect(r.timers).toBe(0);
+    }
+    const r = replyReader();
+    r.feed("\x1b");
+    r.feed("]11;rgb:0000/0000/0000\x1b\\");
+    expect(r.got).toEqual([REPLY]); // no Esc, no "]11;…" typed
+  });
+
+  test("Esc and Alt+] arrive at once when no reply is expected; held ones still arrive after the idle timeout", () => {
+    const r = replyReader();
+    r.expect.on = false;
+    r.feed("\x1b");
+    r.feed("\x1b]");
+    expect(r.got).toEqual([{ name: "escape" }, { name: "]", alt: true }]);
+    expect(r.timers).toBe(0);
+    const w = replyReader();
+    w.feed("\x1b");
+    expect(w.got).toEqual([]);
+    w.fire();
+    expect(w.got).toEqual([{ name: "escape" }]);
+    w.feed("\x1b]");
+    w.fire();
+    expect(w.got).toEqual([{ name: "escape" }, { name: "]", alt: true }]);
+  });
+
+  test("a reply still unterminated at the idle timeout is dropped, and its rest swallowed up to BEL or ST for one more idle period", () => {
+    const r = replyReader();
     r.feed("\x1b]11;rgb:00");
+    r.fire();
+    expect(r.got).toEqual([]);
     r.feed("00/0000/00");
     r.feed("00\x1b");
-    expect(r.got).toEqual([]);
-    r.feed("\\hi");
-    expect(r.got).toEqual([{ name: "osc", text: "11;rgb:0000/0000/0000" }, { name: "char", text: "hi" }]);
-    expect(r.timers).toBe(0);
+    r.feed("\\ok");
+    expect(r.got).toEqual([{ name: "char", text: "ok" }]);
+    const late = replyReader();
+    late.feed("\x1b]11;rgb:00");
+    late.fire();
+    late.fire(); // the extra idle period passes: typing is typing again
+    late.feed("abc");
+    expect(late.got).toEqual([{ name: "char", text: "abc" }]);
+    const quit = replyReader();
+    quit.feed("\x1b]11;rgb:00");
+    quit.fire();
+    quit.feed("00\x03");
+    expect(quit.got).toEqual([{ name: "c", ctrl: true }]); // Ctrl+C still quits
   });
 });
