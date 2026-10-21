@@ -1,7 +1,7 @@
 // The full-screen TUI, kept bare: a tab bar, the page, an input line. One
 // page per orchestrator (one per project): Ctrl+N starts a new one named
-// orch-xxxx (/rename changes it), Ctrl+, and Ctrl+. move between them (Alt+,
-// / Alt+. where the terminal cannot tell Ctrl+, apart from a comma). Type to
+// orch-xxxx (/rename changes it), Ctrl+, and Ctrl+. move between them, as do
+// Ctrl/Alt+Left/Right in terminals that cannot tell Ctrl+, apart from a comma. Type to
 // talk to the page's orchestrator; worker and reviewer reports arrive through
 // its inbox and show up while you wait. /help lists the commands.
 
@@ -36,7 +36,8 @@ export interface AppDeps {
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
 
 const HELP = [
-  "^N new orchestrator   ^, ^. switch pages (Alt+, Alt+. too)   PgUp PgDn scroll   Esc clear",
+  "^N new orchestrator   ^, ^. or ^← ^→ switch pages (Alt works too)   PgUp PgDn scroll   Esc clear",
+  "/keys shows what your terminal sends for a chord (Esc ends)",
   "/rename <name>   /new [name] [git-url]   /close   /quit",
   "/agents   /models [id]   /accounts   /login claude|codex [profile]   /back",
 ];
@@ -48,6 +49,8 @@ export class App {
   scroll = 0;
   menu: ActiveMenu | null = null;
   loggingIn = false;
+  /** /keys: echo every key as parsed until Esc, to see what a terminal really sends. */
+  keyEcho = false;
   private history: string[] = [];
   private historyAt = -1;
   private done!: () => void;
@@ -257,6 +260,7 @@ export class App {
       return;
     }
     if (text === "/help") { for (const l of HELP) this.say(dim(l)); return; }
+    if (text === "/keys") { this.keyEcho = true; return this.say(dim("press keys; Esc ends")); }
     if (text === "/new" || text.startsWith("/new ")) {
       const [name, url] = text.slice(4).trim().split(/\s+/).filter(Boolean);
       return this.newPage(name, url);
@@ -276,11 +280,16 @@ export class App {
   }
 
   async onKey(k: Key): Promise<void> {
+    if (this.keyEcho) {
+      if (k.name === "escape") { this.keyEcho = false; return this.say(dim("done")); }
+      return this.say(dim(JSON.stringify(k)));
+    }
     // Chords that work everywhere.
     if (k.ctrl && k.name === "c") return this.quit();
     if (k.ctrl && k.name === "n") return this.newPage();
-    if ((k.ctrl || k.alt) && k.name === ",") return this.switchPage(-1);
-    if ((k.ctrl || k.alt) && k.name === ".") return this.switchPage(1);
+    // Ctrl+, and Ctrl+. need the kitty/xterm key protocols; Ctrl/Alt+arrows reach us in any terminal.
+    if ((k.ctrl || k.alt) && (k.name === "," || k.name === "left")) return this.switchPage(-1);
+    if ((k.ctrl || k.alt) && (k.name === "." || k.name === "right")) return this.switchPage(1);
     if (k.name === "pageup") { this.scroll += Math.max(1, this.deps.term.rows - 4); return this.draw(); }
     if (k.name === "pagedown") { this.scroll = Math.max(0, this.scroll - Math.max(1, this.deps.term.rows - 4)); return this.draw(); }
 

@@ -95,7 +95,11 @@ describe("tui app", () => {
     expect(app.page!.project).toBe(orchs.opened[1]!.project);
     term.press({ name: ".", ctrl: true }); // wraps around
     expect(app.page!.project).toBe("alpha");
-    term.press({ name: ",", alt: true }); // the fallback chord
+    term.press({ name: ",", alt: true }); // the fallback chords
+    expect(app.page!.project).toBe(orchs.opened[1]!.project);
+    term.type("\x1b[1;5D"); // Ctrl+Left as xterm.js and friends send it
+    expect(app.page!.project).toBe("alpha");
+    term.type("\x1b[1;3C"); // Alt+Right
     expect(app.page!.project).toBe(orchs.opened[1]!.project);
 
     term.type("/new beta git@example.com:b.git\r");
@@ -125,6 +129,24 @@ describe("tui app", () => {
     term.type("/rename bad name\r");
     await settle();
     expect(term.screen()).toContain("error: names are letters");
+    app.quit();
+    await running;
+  });
+
+  test("/keys echoes parsed keys until Esc", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await settle();
+    term.type("/keys\r");
+    await settle();
+    term.type("\x1b[44;5u");
+    term.press({ name: "escape" });
+    await settle();
+    expect(term.screen()).toContain('{"name":",","ctrl":true}');
+    expect(app.keyEcho).toBe(false);
+    expect(app.pages.length).toBe(1); // the chord was echoed, not acted on
     app.quit();
     await running;
   });
