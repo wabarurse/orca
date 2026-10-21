@@ -22,7 +22,9 @@ Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
 
 ## The cycle
 
-The orchestrator spawns a **worker** on a branch; each worker run ends in one
+The orchestrator first shows how it would split the task and answers questions;
+nothing starts until you say "execute" or "dispatch". Then it spawns a
+**worker** on a branch; each worker run ends in one
 commit and one report. It then spawns a **reviewer**, which reads the diff
 against the task's goal, runs the `complexity` tool (cyclomatic and cognitive,
 per function) and reports without touching code. Problems go back to the worker
