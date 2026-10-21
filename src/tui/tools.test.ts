@@ -86,3 +86,14 @@ describe("shimmer", () => {
     expect(shimmer("abc", 1000, { NO_COLOR: "1" })).toBe("\x1b[1mabc\x1b[0m");
   });
 });
+
+test("untrusted escapes cannot be split by the shimmer at any phase", () => {
+  for (const now of [0, 400, 800, 1200, 1600]) {
+    const row = runningRow({ name: "bash", input: { command: "\x1b[31mred\x1b[0m \x1b]8;;x\x07link\x1b]8;;\x07\x1b]52;c;evil\x07" } }, now, 50);
+    expect(shown([row], 50)).toBe("⏺ Bash(red link)");
+  }
+  const calls = new Calls();
+  calls.start({ id: "a", name: "bash", input: { command: "sleep 99" } });
+  expect(calls.interrupt()).toEqual([{ tool: "Bash(sleep 99)", summary: "interrupted", failed: true }]);
+  expect(calls.size).toBe(0);
+});

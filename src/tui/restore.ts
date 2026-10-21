@@ -36,7 +36,7 @@
 
 import { parseFormatted } from "../inbox";
 import type { Entry, MessageEntry } from "../transcript";
-import { toolLabel, toolView, type ToolOutcome } from "../toolview";
+import { interruptedView, toolView, type ToolOutcome } from "../toolview";
 import { lineRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
 import { bold, dim } from "./render";
@@ -145,7 +145,7 @@ function outcomes(chain: Entry[]): Map<string, ToolOutcome> {
 /** A call as it ended, or with "no result" when it never got one (the run stopped mid-call). */
 function callLine(b: Extract<Block, { type: "tool_use" }>, results: Map<string, ToolOutcome>): Line {
   const outcome = results.get(b.id);
-  return outcome ? toolView(b.name, b.input, outcome) : { tool: toolLabel(b.name, b.input), summary: "no result", failed: false };
+  return outcome ? toolView(b.name, b.input, outcome) : interruptedView(b.name, b.input);
 }
 
 /** Tool results by tool_use id: whether a `message` call was really sent. */

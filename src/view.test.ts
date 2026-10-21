@@ -25,7 +25,7 @@ test("render shows prompts, text, tool calls and results, and hides thinking", (
     uuid: "4", parentUuid: null, ts: "", type: "message",
     message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "a.ts\nb.ts", is_error: true }] },
   })!;
-  expect(strip(result)).toBe("  ⎿  error: a.ts");
+  expect(strip(result)).toBe("  ⎿  a.ts");
 });
 
 test("follow prints history, then new entries, then stops", async () => {

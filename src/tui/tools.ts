@@ -6,7 +6,7 @@
 // and summaries come from src/toolview.ts, shared with restore.ts and the
 // agent loop, so live and restored pages match.
 
-import { RESULT_MARK, TOOL_MARK, toolView, type ToolCall, type ToolOutcome, type ToolView } from "../toolview";
+import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../toolview";
 import type { Part } from "../view";
 import type { Line } from "./lines";
 import { dim, fit, sanitize, visibleLength, wrap } from "./render";
@@ -54,7 +54,11 @@ export class Calls {
 
   start(call: ToolCall): void { this.running.set(call.id, call); }
 
-  clear(): void { this.running.clear(); }
+  interrupt(): Line[] {
+    const lines = [...this.running.values()].map((c) => interruptedView(c.name, c.input));
+    this.running.clear();
+    return lines;
+  }
 
   /** The call ended: its history line (a call not seen starting shows as "Tool"). */
   finish(outcome: ToolOutcome): Line {

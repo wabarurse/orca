@@ -63,8 +63,8 @@ test("user messages, agent reports, assistant markdown and replies; tool calls a
 
 test("a tool call restores as the line it showed when it ended, through the formatter agent.ts and the TUI use", async () => {
   const src = await Bun.file(new URL("../agent.ts", import.meta.url)).text();
-  expect(src).toContain("toolLabel(call.name, call.input)");
-  expect(src).toContain("toolSummary(call.name, outcome)");
+  expect(src).toContain("callText(call)");
+  expect(src).toContain("resultText(call.name, outcome)");
   const entries = transcript(
     meta,
     assistant([{ type: "tool_use", id: "b1", name: "bash", input: { command: "ls" } }, { type: "tool_use", id: "b2", name: "bash", input: { command: "false" } }]),
@@ -74,7 +74,7 @@ test("a tool call restores as the line it showed when it ended, through the form
   expect(restore(entries, 60)).toEqual([
     toolView("bash", { command: "ls" }, { ok: true, text: "a\nb\n" }),
     { tool: "Bash(false)", summary: "exit 1: boom", failed: true },
-    { tool: "Bash(sleep 9)", summary: "no result", failed: false },
+    { tool: "Bash(sleep 9)", summary: "interrupted", failed: true },
   ]);
 });
 

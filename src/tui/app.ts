@@ -261,6 +261,8 @@ export class App {
    */
   private started = false;
   private stopSpinner: (() => void) | null = null;
+  private tickMs = 0;
+  private lastLive = "";
   private liveCheckedAt = 0;
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
   private readonly liveChecks = new Map<string, Promise<void>>();
@@ -411,7 +413,6 @@ export class App {
     }
   }
 
-  /** Move what a page's stream still holds into its history. */
   /** A tool call started: it ends the streamed text and runs in the live region until it ends. */
   private toolStarted(page: Page, call: ToolCall): void {
     page.streamed = true;
@@ -420,6 +421,7 @@ export class App {
     this.draw();
   }
 
+  /** Move what a page's stream still holds into its history. */
   private endPartial(page: Page): void {
     const blocks = page.md.flush();
     if (blocks.length) this.toPage(page, blocks.map((md) => ({ md, block: true })));
@@ -483,9 +485,14 @@ export class App {
 
   /** Run the spinner timer only while some page is busy or viewing a live agent. */
   private animate(): void {
-    const want = !this.closed && this.pages.some(active);
-    if (want && !this.stopSpinner) this.stopSpinner = this.clock.every(() => this.tick(), TICK_MS);
-    else if (!want && this.stopSpinner) { this.stopSpinner(); this.stopSpinner = null; }
+    const page = this.page;
+    const calls = page?.view?.calls ?? page?.calls;
+    const fast = !!calls?.size || (!!page?.busy && !page.view?.live);
+    const ms = fast ? TICK_MS : SPIN_MS;
+    const want = !this.closed && (fast || this.pages.some(active));
+    if (this.tickMs !== ms || !want) { this.stopSpinner?.(); this.stopSpinner = null; }
+    this.tickMs = ms;
+    if (want && !this.stopSpinner) this.stopSpinner = this.clock.every(() => this.tick(), ms);
   }
 
   private tick(): void {
@@ -560,12 +567,15 @@ export class App {
     try {
       this.questions.sync(); // the input holds the chat draft or the shown question's answer
       const f = this.frame();
+      const fingerprint = live(f).text;
+      if (!this.needReprint && !this.pending.length && fingerprint === this.lastLive) return;
       const pending = this.pending;
       this.pending = [];
       const out = this.needReprint ? reprint(this.screenLines(), f) : pending.length ? append(pending, f, this.shown) : live(f, this.shown);
       this.needReprint = false;
       // Synchronized output, so the terminal shows the whole update at once.
       this.deps.term.write(`\x1b[?2026h${out.text}\x1b[?2026l`);
+      this.lastLive = fingerprint;
       this.shown = out.shown;
       this.deps.term.eraseOnExit(erase(this.shown));
     } catch (err) {
@@ -801,7 +811,7 @@ export class App {
     } finally {
       this.endPartial(page);
       page.busy = false;
-      page.calls.clear(); // a turn that failed mid-call leaves nothing running
+      this.toPage(page, page.calls.interrupt());
       this.draw();
     }
   }
@@ -852,7 +862,7 @@ export class App {
     const view = page.view!;
     if (page === this.page) this.reprint();
     this.say(dim("Esc or /back returns"), page);
-    await follow(paths.transcript(page.project, name), (_s, entry) => this.toView(page, view, view.calls.absorb(parts(entry) ?? [])), stopped);
+    await follow(paths.transcript(page.project, name), (_s, entry) => this.toView(page, view, view.calls.absorb(parts(entry) ?? [])), stopped, 300, () => { if (!view.live) this.toView(page, view, view.calls.interrupt()); });
     if (page.view === view) {
       page.view = null;
       if (page === this.page) this.reprint();

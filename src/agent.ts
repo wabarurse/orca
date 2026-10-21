@@ -13,7 +13,7 @@ import { type Provider } from "./providers/index";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
-import { RESULT_MARK, TOOL_MARK, toolLabel, toolSummary, type ToolCall, type ToolOutcome } from "./toolview";
+import { callText, resultText, type ToolCall, type ToolOutcome } from "./toolview";
 
 export interface AgentOptions {
   project: string;
@@ -80,9 +80,9 @@ async function runTracked(deps: AgentDeps, block: ToolUse): Promise<ToolResultBl
 /** Show a call starting and ending: through onTool/onToolResult, else as plain lines to `write`. */
 function echo(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   return {
-    start: (call: ToolCall) => (deps.onTool ? deps.onTool(call) : write(`${TOOL_MARK} ${toolLabel(call.name, call.input)}\n`, true)),
+    start: (call: ToolCall) => (deps.onTool ? deps.onTool(call) : write(`${callText(call)}\n`, true)),
     end: (call: ToolCall, outcome: ToolOutcome) =>
-      deps.onToolResult ? deps.onToolResult(outcome) : write(`${RESULT_MARK}${toolSummary(call.name, outcome).summary}\n`, true),
+      deps.onToolResult ? deps.onToolResult(outcome) : write(`${resultText(call.name, outcome)}\n`, true),
   };
 }
 
