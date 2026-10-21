@@ -5,8 +5,8 @@ import { FakeScreen } from "./testing";
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 /** The live region's rows as text. */
 const rows = (f: Frame) => liveRows(f).rows.map(strip);
-/** Write escape codes to a fake terminal and read it back. */
-const show = (...writes: string[]) => { const s = new FakeScreen(); for (const w of writes) s.write(w); return s; };
+/** Write escape codes to a fake terminal of the given size and read it back. */
+const show = (size: { cols: number; rows: number }, ...writes: string[]) => { const s = new FakeScreen(size.cols, size.rows); for (const w of writes) s.write(w); return s; };
 
 function frame(over: Partial<Frame> = {}): Frame {
   return { cols: 20, rows: 7, input: { prompt: "> ", text: "hi", cursor: 2 }, menu: null, ...over };
@@ -37,7 +37,7 @@ describe("tabs and escapes", () => {
   });
 
   test("scrollback lines with tabs wrap instead of overflowing", () => {
-    expect(show(commit(["\tabcdef"], 10)).text()).toBe("        ab\ncdef");
+    expect(show({ cols: 10, rows: 5 }, commit(["\tabcdef"], 10)).text()).toBe("        ab\ncdef");
   });
 
   test("wrap skips colon CSI params and OSC hyperlinks like stringWidth does", () => {
@@ -52,7 +52,7 @@ describe("commit", () => {
   test("wraps finished lines to the width, splits newlines, and ends each row with CRLF", () => {
     const out = commit(["abcdefgh", "x\ny"], 5);
     expect(out.split("\r\n").map(strip)).toEqual(["abcde", "fgh", "x", "y", ""]);
-    const s = show(out);
+    const s = show({ cols: 5, rows: 10 }, out);
     expect(s.text()).toBe("abcde\nfgh\nx\ny");
     expect([s.row, s.col]).toEqual([4, 0]); // a fresh line below
   });
@@ -64,7 +64,7 @@ describe("live", () => {
     expect(rows(f)).toEqual(["streaming", "pick", "  x", "❯ y", "⠋ thinking… 3s · one", "> hi"]);
     const { text, shown } = live(f);
     expect(shown).toEqual({ height: 6, cursor: 5 });
-    const s = show(text);
+    const s = show(f, text);
     expect(s.text()).toBe("streaming\npick\n  x\n❯ y\n⠋ thinking… 3s · one\n> hi");
     expect([s.row, s.col]).toEqual([5, 4]); // after "> hi"
   });
@@ -77,7 +77,7 @@ describe("live", () => {
     expect(erase(first.shown)).toBe("\r\x1b[1A\x1b[J");
     expect(erase({ height: 3, cursor: 2 })).toBe("\r\x1b[2A\x1b[J");
     expect(erase(NOTHING)).toBe("");
-    const s = show("above\r\n", first.text, next.text);
+    const s = show({ cols: 20, rows: 12 }, "above\r\n", first.text, next.text);
     expect(s.text()).toBe("above\ns2\n> hi");
     expect([s.row, s.col]).toEqual([2, 4]);
   });
@@ -87,7 +87,7 @@ describe("live", () => {
     const a = live(f);
     const b = append(["> hello", "reply"], f, a.shown);
     const c = append(["more"], f, b.shown);
-    const s = show("$ parallels start\r\n", a.text, b.text, c.text);
+    const s = show(f, "$ parallels start\r\n", a.text, b.text, c.text);
     expect(s.text()).toBe("$ parallels start\n> hello\nreply\nmore\nbusy\n> hi");
     expect(c.text).not.toContain("\x1b[2J");
   });
@@ -95,7 +95,7 @@ describe("live", () => {
   test("reprint clears the screen and the scrollback, then writes history and the live region", () => {
     const { text } = reprint(["one", "two"], frame());
     expect(text).toContain("\x1b[2J\x1b[3J\x1b[H");
-    const s = show("old stuff\r\n", text);
+    const s = show(frame(), "old stuff\r\n", text);
     expect(s.text()).toBe("one\ntwo\n> hi");
     expect(s.clears).toBe(1);
   });
@@ -187,5 +187,62 @@ describe("live", () => {
     expect(projectRows(projects({ status: "delete one? y/n" }), 2).map(strip)).toEqual(["delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
     expect(projectRows(projects({ status: "delete one? y/n" }), 1).map(strip)).toEqual(["delete one? y/n"]);
     expect(rows(frame({ cols: 60, rows: 4, projects: projects({ status: "delete one? y/n" }) }))).toEqual(["delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes", "> hi"]);
+  });
+});
+
+describe("on a faithful terminal", () => {
+  const term = (cols: number, rows: number) => new FakeScreen(cols, rows);
+
+  test("committed lines of exactly the width, and one past it", () => {
+    const s = term(5, 6);
+    s.write(commit(["abcde", "abcdef", "x"], 5));
+    expect(s.text()).toBe("abcde\nabcde\nf\nx"); // no blank row after a full one
+    expect([s.row, s.col]).toEqual([4, 0]);
+  });
+
+  test("CJK and emoji lines wrap by display width", () => {
+    const s = term(5, 6);
+    s.write(commit(["你好世界ab", "ab😀cd😀"], 5));
+    expect(s.text()).toBe("你好\n世界a\nb\nab😀c\nd😀");
+  });
+
+  test("a 3-row wrapped input is drawn with the cursor in it, then erased", () => {
+    const f = frame({ cols: 10, rows: 12, status: "s", input: { prompt: "> ", text: "0123456789abcdefghij", cursor: 10 } });
+    const s = term(10, 12);
+    s.write("above\r\n");
+    const a = live(f);
+    s.write(a.text);
+    expect(s.screen().slice(0, 5)).toEqual(["above", "s", "> 01234567", "  89abcdef", "  ghij"]);
+    expect([s.row, s.col]).toEqual([3, 4]); // after "89"
+    s.write(erase(a.shown) + "\x1b[?25h");
+    expect(s.text()).toBe("above");
+    expect([s.row, s.col]).toEqual([1, 0]);
+  });
+
+  test("on rows=6 a menu, a partial line and a multi-row input are capped to fit, and redraw cleanly", () => {
+    const items = Array.from({ length: 8 }, (_, i) => `m${i}`);
+    const f = frame({ cols: 10, rows: 6, partial: "streaming text", status: "s", menu: { title: "pick", items, index: 5 }, input: { prompt: "> ", text: "a\nb\nc", cursor: 5 } });
+    const { rows: r } = liveRows(f);
+    expect(r.length).toBeLessThanOrEqual(6);
+    const s = term(10, 6);
+    s.write("1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n");
+    const a = live(f);
+    s.write(a.text);
+    expect(s.screen()).toEqual(r.map(strip).map((x) => x.trimEnd()));
+    expect(s.screen().slice(-3)).toEqual(["s", "  b", "  c"]);
+    expect(s.screen().join("\n")).toContain("❯ m5");
+    // Redrawn smaller: the old region is gone, the scrollback intact.
+    s.write(live(frame({ cols: 10, rows: 6 }), a.shown).text);
+    expect(s.text()).toBe("1\n2\n3\n4\n5\n6\n> hi");
+  });
+
+  test("a partial line over two rows, then committed", () => {
+    const s = term(10, 8);
+    const a = live(frame({ cols: 10, rows: 8, partial: "0123456789abc" }));
+    s.write(a.text);
+    expect(s.text()).toBe("0123456789\nabc\n> hi");
+    s.write(append(["0123456789abcdef"], frame({ cols: 10, rows: 8 }), a.shown).text);
+    expect(s.text()).toBe("0123456789\nabcdef\n> hi");
+    expect([s.row, s.col]).toEqual([2, 4]);
   });
 });

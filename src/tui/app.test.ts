@@ -20,14 +20,14 @@ const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 function fakeTerm(cols = 40, rows = 8) {
   const handlers: ((k: Key) => void)[] = [];
   const resizers: (() => void)[] = [];
-  const display = new FakeScreen();
+  const display = new FakeScreen(cols, rows);
   const writes: string[] = [];
   const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; raw(): string; writes: string[]; display: FakeScreen; resize(cols: number, rows: number): void; opened: boolean; closed: boolean } = {
     cols, rows, opened: false, closed: false, writes, display,
     write: (s) => { writes.push(s); display.write(s); },
     onKey: (cb) => { handlers.push(cb); },
     onResize: (cb) => { resizers.push(cb); },
-    resize(c, r) { this.cols = c; this.rows = r; for (const cb of resizers) cb(); },
+    resize(c, r) { this.cols = c; this.rows = r; display.resize(c, r); for (const cb of resizers) cb(); },
     open() { this.opened = true; },
     close() { this.closed = true; },
     press: (k) => { for (const h of handlers) h(k); },
