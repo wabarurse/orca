@@ -3,6 +3,7 @@ import { defaults } from "./config";
 import { rolePrompt } from "./prompts";
 import type { Runner } from "./runner";
 import { message } from "./tools/message";
+import { ask } from "./tools/ask";
 import { makeSpawn } from "./tools/spawn";
 
 describe("rolePrompt", () => {
@@ -42,7 +43,7 @@ describe("rolePrompt", () => {
   test("the orchestrator respawns once per [agent-exit] and stops if it repeats", () => {
     const p = rolePrompt("orchestrator", defaults);
     expect(p).toContain("`[agent-exit]`: tell the user.");
-    expect(p).toContain("Otherwise respawn that agent once on the same branch with its original task");
+    expect(p).toContain("Otherwise respawn that agent once on the same branch with its last task");
     expect(p).toContain("if it exits the same way again, tell the user and stop.");
   });
   test("a merged PR's [agent-exit] is not respawned; what waited on the branch starts, and nothing is cleaned up by hand", () => {
@@ -53,39 +54,42 @@ describe("rolePrompt", () => {
       expect(line.indexOf("PR … merged")).toBeLessThan(line.indexOf("respawn that agent"));
       expect(p).not.toMatch(/worktree remove|delete the branch|clean ?up/i);
       expect(p).toContain("The user's message is input, not a verdict.");
-      expect(p).toContain("never start the worker while the reviewer watches CI, or the reviewer while the worker works.");
+      expect(p).toContain("propose an alternative before acting");
       expect(p).toContain("agent status columns: agent · branch · state · last report · next step");
     }
   });
 
-  test("reuse or a new branch: the rule is in spawn's description, the orchestrator prompt points at it", () => {
-    const spec = makeSpawn({} as Runner).spec;
-    const d = spec.description ?? "";
-    // Re-spawning continues the agent with its context.
-    expect(d).toMatch(/again[^.]*continues[^.]*transcript[^.]*context/i);
-    // Reuse: same files or feature, small, no reviewer working on it.
-    const reuse = d.split("\n").find((l) => /^- Reuse/.test(l))!;
-    expect(reuse).toMatch(/spawn its worker again/i);
-    expect(reuse).toMatch(/same files or feature/i);
-    expect(reuse).toMatch(/small/i);
-    expect(reuse).toMatch(/no reviewer/i);
-    // New branch: independent, bigger PR under review, own merge order, waiting on CI or merge.
-    const fresh = d.split("\n").find((l) => /^- Start a new branch/.test(l))!;
-    for (const why of [/independent/i, /PR under review much bigger/i, /merge order/i, /waiting on CI or merge/i]) expect(fresh).toMatch(why);
-    // Unsure: the user chooses from the plan table; reuse is named there.
-    expect(d).toMatch(/unsure[^.]*plan table[^.]*user choose/i);
-    expect(d).toContain("(existing, reused)");
-    expect(d).toMatch(/merged branches[^.]*cannot be reused/i);
-    const branch = (spec.input_schema as { properties: { branch: { description: string } } }).properties.branch.description;
-    expect(branch).toMatch(/reuse/i);
+  test("reuse or a new branch: the rule lives in spawn's description, the orchestrator prompt points at it", () => {
+    const d = makeSpawn({} as Runner).spec.description ?? "";
+    expect(d).toMatch(/^- Reuse /m);
+    expect(d).toMatch(/^- Start a new branch /m);
+    expect(d).toContain('"<branch> (existing)"');
     for (const maxReviewRounds of [0, 1, 100]) {
       const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
-      expect(p).toMatch(/reusing an open branch[^.]*\(see spawn\)/i);
-      expect(p).toContain("(existing) branch · what it does · depends on");
-      expect(p.length).toBeLessThan(2000);
+      expect(p).toContain("Decide reuse vs a new branch per task (see spawn)");
+      expect(p).toContain('branch · what it does · depends on; a reused branch reads "<branch> (existing)"');
+      expect(p).toContain("(see ask)");
+      expect(p).toContain("a reused branch's new task runs the whole task flow anew");
     }
   });
 
+  test("a restarted worker takes the newest message as its next instruction, not always as review feedback", () => {
+    const w = rolePrompt("worker", defaults);
+    expect(w).not.toMatch(/started again[^\n]*it is review feedback/i);
+    expect(w).toMatch(/started again[^\n]*follow-up task/i);
+    expect(w).toContain("later messages are follow-ups");
+  });
+
+  test("ask's description carries what the prompt no longer says: batch, default, keep working", () => {
+    const d = ask.spec.description ?? "";
+    expect(d).toMatch(/batch/i);
+    expect(d).toMatch(/default/i);
+    expect(d).toMatch(/keep working/i);
+  });
+
+  // Every prompt stays under 2000 characters: it is sent with every request
+  // after the provider's identity line, and a short list keeps each rule in the
+  // model's attention. Long guidance belongs in a tool description (spawn, ask).
   test("each role gets its own short list", () => {
     for (const [role, maxReviewRounds] of [["orchestrator", 0], ["orchestrator", 1], ["orchestrator", 100], ["worker", 1], ["reviewer", 1]] as const) {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
