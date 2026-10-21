@@ -922,6 +922,11 @@ describe("inline screen", () => {
     const { appendFileSync } = await import("node:fs");
     appendFileSync(transcript, entry("worker line two"));
     await until(() => term.screen().includes("worker line one\nworker line two"));
+    // An agent's assistant text is markdown too (as Claude Code shows subagent text); a user prompt stays plain.
+    appendFileSync(transcript, entry("**bold** reply\n\n| k | v |\n|---|---|\n| a | b |"));
+    appendFileSync(transcript, JSON.stringify({ type: "message", message: { role: "user", content: "**raw** prompt" } }) + "\n");
+    await until(() => term.screen().includes("worker line two\nbold reply\n\n┌───┬───┐\n│ k │ v │"));
+    await until(() => term.screen().includes("> **raw** prompt"));
     term.type("/back\r");
     await until(() => term.display.clears === 2 && term.screen().startsWith("> hello\nviewed says hi\nworker-x done"));
     expect(term.screen()).not.toContain("worker line");
