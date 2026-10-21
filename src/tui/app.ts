@@ -4,7 +4,7 @@
 // talk to the page's orchestrator; worker and reviewer reports arrive through
 // its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, listAgents, listProjects, login, modelChoices, newProjectName, renameProject, setModel, useAccount, type Choice } from "../commands";
+import { accountChoices, listAgents, listProjects, login, modelChoices, newProjectName, remoteOf, renameProject, setModel, useAccount, type Choice } from "../commands";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
 import { follow } from "../view";
@@ -30,6 +30,8 @@ export interface AppDeps {
   openOrchestrator(project: string, url: string | undefined, write: (text: string) => void): Promise<Orchestrator>;
   /** Inbox poll period; tests shorten it. */
   pollMs?: number;
+  /** The repository `start` was run from, if any: opened on start and cloned by Ctrl+N. */
+  source?: { name: string; url: string } | null;
 }
 
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
@@ -63,7 +65,7 @@ export class App {
 
   get page(): Page | undefined { return this.pages[this.active]; }
 
-  /** Run until /quit; opens the given project, or every known one, or a fresh orch-xxxx. */
+  /** Run until /quit; opens the given project, or every known one plus the repo we were started in, or a fresh orch-xxxx. */
   async run(project?: string, url?: string): Promise<void> {
     const { term } = this.deps;
     term.open();
@@ -76,6 +78,8 @@ export class App {
       if (project) await this.openPage(project, url);
       else {
         for (const name of await listProjects()) await this.openPage(name);
+        const source = this.deps.source;
+        if (source) await this.openPage(source.name, source.url).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`));
         if (!this.pages.length) await this.newPage();
       }
       this.draw();
@@ -132,7 +136,7 @@ export class App {
     if (existing !== -1) { this.active = existing; this.draw(); return this.pages[existing]!; }
     const page: Page = { project, orch: null as unknown as Orchestrator, lines: [], partial: "", busy: false, view: null };
     page.orch = await this.deps.openOrchestrator(project, url, (text) => this.stream(page, text));
-    page.lines.push(dim(`${bold(project)}  ${paths.repo(project)}`));
+    page.lines.push(dim(`${bold(project)}  ${paths.repo(project)}  ${await remoteOf(project)}`));
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.scroll = 0;
@@ -157,11 +161,11 @@ export class App {
     this.draw();
   }
 
-  /** Start a fresh orchestrator named orch-xxxx (or `name`), cloning `url` when given. */
+  /** Start a fresh orchestrator named orch-xxxx (or `name`), cloning `url`, else the repo we were started in. */
   async newPage(name?: string, url?: string): Promise<void> {
     const project = name ?? newProjectName([...this.pages.map((p) => p.project), ...(await listProjects())]);
     try {
-      const page = await this.openPage(project, url);
+      const page = await this.openPage(project, url ?? this.deps.source?.url);
       if (!name) this.say(dim("/rename <name> to rename"), page);
     } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`); }
   }

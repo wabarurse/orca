@@ -53,6 +53,12 @@ function fakeOrchestrators() {
 }
 
 const settle = () => Bun.sleep(15);
+/** Wait until `cond` holds, up to two seconds. */
+async function until(cond: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2000;
+  while (!cond() && Date.now() < deadline) await Bun.sleep(5);
+  expect(cond()).toBe(true);
+}
 
 describe("tui app", () => {
   test("opens a page per project, types to its orchestrator and shows replies", async () => {
@@ -169,8 +175,25 @@ describe("tui app", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run();
-    await settle();
-    expect(app.pages.map((p) => p.project)).toEqual(expect.arrayContaining(["p1", "p2"]));
+    await until(() => ["p1", "p2"].every((n) => app.pages.some((p) => p.project === n)));
+    app.quit();
+    await running;
+  });
+
+  test("started inside a repo, it opens a project for it and Ctrl+N clones from it", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const source = { name: "harness", url: "git@example.com:harness.git" };
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, source });
+    const running = app.run();
+    await until(() => app.page?.project === "harness");
+    expect(orchs.opened.at(-1)).toEqual({ project: "harness", url: source.url });
+    term.press({ name: "n", ctrl: true });
+    await until(() => app.page!.project.startsWith("orch-"));
+    expect(orchs.opened.at(-1)!.url).toBe(source.url);
+    term.type("/new other\r"); // an explicit name without a url still clones the launch repo
+    await until(() => app.page?.project === "other");
+    expect(orchs.opened.at(-1)).toEqual({ project: "other", url: source.url });
     app.quit();
     await running;
   });

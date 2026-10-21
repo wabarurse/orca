@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// parallels start [project] [git-url]   open the TUI: one page per orchestrator (clones on first run)
+// parallels start [project] [git-url]   open the TUI: one page per orchestrator (clones on first run;
+//                                         run inside a git repo to get an orchestrator for it)
 // parallels msg <project> <text>        drop a message in the orchestrator's inbox
 // parallels version                    print the package.json version
 // parallels agent --project p --role r [--branch b]   internal: what spawn runs
@@ -7,6 +8,7 @@
 import pkg from "../package.json";
 import { runAgent } from "./agent";
 import { put } from "./inbox";
+import { repoHere } from "./commands";
 import { createOrchestrator, ensureProject } from "./orchestrator";
 import type { Role } from "./transcript";
 import { App } from "./tui/app";
@@ -32,6 +34,7 @@ switch (cmd) {
   case "start": {
     const app = new App({
       term: realTerminal(),
+      source: await repoHere(),
       async openOrchestrator(project, url, write) {
         await ensureProject(project, url);
         return createOrchestrator({ project, write });
