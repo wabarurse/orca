@@ -507,7 +507,7 @@ describe("tui app", () => {
     const running = app.run("alpha");
     await until(() => !!app.page);
     term.type("earlier\r");
-    await settle();
+    await until(() => orchs.said.alpha?.length === 1);
     term.type("one\x1b[13;2utwo\x1b\rthree");
     expect(app.input).toEqual({ text: "one\ntwo\nthree", cursor: 13 });
     term.type("\x1b[A");
@@ -523,7 +523,7 @@ describe("tui app", () => {
     term.type(" more words\x1b\x7f");
     expect(app.input.text).toBe("pasted\nlines more ");
     term.type("\r");
-    await settle();
+    await until(() => orchs.said.alpha?.length === 2);
     expect(orchs.said.alpha).toEqual(["earlier", "pasted\nlines more"]);
     app.quit();
     await running;
@@ -536,9 +536,9 @@ describe("tui app", () => {
     const running = app.run("alpha");
     await until(() => !!app.page);
     term.type("old\r");
-    await settle();
+    await until(() => orchs.said.alpha?.length === 1);
     term.type("\x1b[200~\n  first\nsecond\n\n\x1b[201~\r");
-    await settle();
+    await until(() => orchs.said.alpha?.length === 2);
     expect(orchs.said.alpha).toEqual(["old", "  first\nsecond"]);
     const page = app.pages[0]!;
     expect(page.lines.map(strip)).toContain(">   first");
@@ -551,6 +551,29 @@ describe("tui app", () => {
     expect(app.input.cursor).toBe(6);
     term.press({ name: "up" });
     expect(app.input.text).toBe("old");
+    app.quit();
+    await running;
+  });
+
+  test("a multi-line message queued during sign-in is split in the scrollback and sent whole", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    let finish!: () => void;
+    const login = async () => { await new Promise<void>((r) => (finish = r)); return "signed in"; };
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, login });
+    const running = app.run("queuer");
+    await until(() => !!app.page);
+    term.type("/login claude\r");
+    await until(() => app.loggingIn);
+    term.type("\x1b[200~line one\nline two\x1b[201~\r");
+    await until(() => term.screen().includes("queued; runs after sign-in"));
+    const lines = app.page!.lines.map(strip);
+    expect(lines).toContain("> line one");
+    expect(lines).toContain("  line two");
+    expect(app.page!.lines.some((l) => l.includes("\n"))).toBe(false);
+    finish();
+    await until(() => orchs.said.queuer?.length === 1);
+    expect(orchs.said.queuer).toEqual(["line one\nline two"]);
     app.quit();
     await running;
   });
