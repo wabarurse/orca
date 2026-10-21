@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { defaults } from "./config";
 import { rolePrompt } from "./prompts";
+import type { Runner } from "./runner";
+import { message } from "./tools/message";
+import { makeSpawn } from "./tools/spawn";
 
 describe("rolePrompt", () => {
   test("fills the config values in", () => {
@@ -14,12 +17,20 @@ describe("rolePrompt", () => {
     expect(rolePrompt("orchestrator", config)).toContain("Do not spawn, push, or change anything until the user says to execute or dispatch");
   });
   test("reports to the orchestrator are full; only the user gets the concise version", () => {
-    const orch = rolePrompt("orchestrator", defaults);
-    expect(orch).toContain("Be direct and concise with the user");
-    expect(orch).toContain(`ask for full reports, never "short" ones`);
-    expect(rolePrompt("worker", defaults)).toContain("no length limit");
-    expect(rolePrompt("worker", defaults)).toContain("commit hashes");
-    expect(rolePrompt("reviewer", defaults)).toContain("each with file/line and the reason");
+    for (const role of ["worker", "reviewer"] as const) {
+      const p = rolePrompt(role, defaults);
+      expect(p).not.toMatch(/\b(short|brief|concise|terse)\b/i);
+      expect(p.split("no length limit").length - 1).toBeLessThanOrEqual(1);
+    }
+    for (const maxReviewRounds of [0, 1, 100]) {
+      const orch = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
+      expect(orch.match(/concise/g)?.length).toBe(1);
+      expect(orch).toContain("concise with the user");
+      expect(orch.split("no length limit").length - 1).toBeLessThanOrEqual(1);
+    }
+    expect(message.spec.description).toContain("complete");
+    const spawn = makeSpawn({} as Runner).spec.input_schema as { properties: { prompt: { description: string } } };
+    expect(spawn.properties.prompt.description).toContain("in full");
   });
   test("0 rounds skips review and goes straight to watch ci", () => {
     const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 });

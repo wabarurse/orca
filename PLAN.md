@@ -28,7 +28,7 @@ An agent harness built around an orchestrator → worker → reviewer loop, with
 ## System prompts (keep them small)
 
 - Push back a bit and think it through; the user's message is not the final verdict.
-- Be concise and use simple terms.
+- Be concise with the user and use simple terms; agents' reports to the orchestrator are full, with no length limit.
 - Use tables for PRs and subagent status.
 
 ## Runtime and cloud

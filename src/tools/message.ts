@@ -11,7 +11,7 @@ export const message: Tool = {
     description:
       "Send a message to another agent's inbox. `to` is \"orchestrator\", \"user\", or an agent id like " +
       "\"worker-feat-login\" (what spawn returned). Delivered when they next check their inbox. " +
-      "Messages to \"orchestrator\" should be complete, not summarised: it acts only on what you send.",
+      "Messages to \"orchestrator\" should be complete, not summarized: it acts only on what you send.",
     input_schema: {
       type: "object",
       properties: {
