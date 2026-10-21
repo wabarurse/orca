@@ -167,6 +167,16 @@ const listKeyId = (k: Key): string | null => {
   return k.name.length > 1 ? k.name : null;
 };
 
+/** One layer of key handling (App.keyLayers): `takes` only looks, `handle` acts. */
+export interface KeyLayer { name: string; takes(k: Key): boolean; handle(k: Key): Promise<void> | void }
+
+/** A menu key as up / down / enter / escape: k j q are ↑ ↓ Esc, Ctrl+P is ↑; other keys by name (doing nothing unless one of those). */
+const MENU_CHARS = new Map([["k", "up"], ["j", "down"], ["q", "escape"]]);
+const menuKeyId = (k: Key): string | undefined => {
+  if (k.name === "char") return MENU_CHARS.get(k.text ?? "");
+  return k.ctrl && k.name === "p" ? "up" : k.name;
+};
+
 /** A page shows activity while its turn runs or its agent view follows a live agent. */
 const active = (p: Page) => p.busy || !!p.view?.live;
 
@@ -901,46 +911,75 @@ export class App {
     this.runTurn(page);
   }
 
-  async onKey(k: Key): Promise<void> {
-    if (this.keyEcho) {
-      if (k.name === "escape") { this.keyEcho = false; return this.say(dim("done")); }
-      return this.say(dim(JSON.stringify(k)));
-    }
-    // Chords that work everywhere.
-    if (k.ctrl && k.name === "c") return this.quit();
-    if (k.ctrl && k.name === "n") return this.newPage();
-    // Plain control bytes, so they arrive in every terminal (the TUI runs in raw mode, so ^Z does not suspend).
-    if (k.ctrl && k.name === "z") return this.switchPage(-1);
-    if (k.ctrl && k.name === "x") return this.switchPage(1);
+  /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
+  private readonly chords = new Map<string, () => Promise<void> | void>([
+    ["c", () => this.quit()],
+    ["n", () => this.newPage()],
+    ["z", () => this.switchPage(-1)],
+    ["x", () => this.switchPage(1)],
+  ]);
 
-    // Ctrl+B (tmux's prefix, hence also /projects) toggles the project list; while it is open it takes the keys.
-    if (this.projectsTake(k)) return this.projectsKey(k);
-    if (this.menu) {
-      const m = this.menu;
-      if (k.name === "up" || (k.ctrl && k.name === "p") || (k.name === "char" && k.text === "k")) m.index = (m.index + m.items.length - 1) % m.items.length;
-      else if (k.name === "down" || (k.name === "char" && k.text === "j")) m.index = (m.index + 1) % m.items.length;
-      else if (k.name === "enter") { this.menu = null; await m.pick(m.index); }
-      else if (k.name === "escape" || (k.name === "char" && k.text === "q")) this.menu = null;
-      return this.draw();
-    }
-    if (this.questions.takes(k)) return this.questions.handle(k).then(() => this.draw());
-    if (k.name === "escape") {
-      if (this.page?.view) this.page.view.leave();
-      else this.input = { text: "", cursor: 0 };
-      return this.draw();
-    }
-    if (k.name === "enter" && !k.shift && !k.alt) {
-      // Drop blank lines around the message but keep the first line's indent.
-      const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
-      this.input = { text: "", cursor: 0 };
-      this.historyAt = -1;
-      if (!text) return this.draw();
-      this.remember(text);
-      this.draw();
-      return this.submit(text);
-    }
-    this.edit(k);
+  /**
+   * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
+   * 1. keyEcho: /keys echoes every key until Esc;
+   * 2. chords: Ctrl+C quits, Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages;
+   * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
+   * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
+   * 5. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
+   * 6. escape: leaves the agent view, else clears the input;
+   * 7. enter: Enter without Shift or Alt submits;
+   * 8. editor: the rest edits the input (EDITS, ↑↓ history).
+   */
+  readonly keyLayers: readonly KeyLayer[] = [
+    { name: "keyEcho", takes: () => this.keyEcho, handle: (k) => this.echoKey(k) },
+    { name: "chords", takes: (k) => !!k.ctrl && this.chords.has(k.name), handle: (k) => this.chords.get(k.name)!() },
+    { name: "projects", takes: (k) => this.projectsTake(k), handle: (k) => this.projectsKey(k) },
+    { name: "menu", takes: () => !!this.menu, handle: (k) => this.menuKey(k) },
+    { name: "questions", takes: (k) => this.questions.takes(k), handle: (k) => this.questions.handle(k).then(() => this.draw()) },
+    { name: "escape", takes: (k) => k.name === "escape", handle: () => this.escapeKey() },
+    { name: "enter", takes: (k) => k.name === "enter" && !k.shift && !k.alt, handle: () => this.enterKey() },
+    { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
+  ];
+
+  async onKey(k: Key): Promise<void> {
+    for (const layer of this.keyLayers) if (layer.takes(k)) return layer.handle(k);
+  }
+
+  /** /keys: show each key as parsed; Esc ends. */
+  private echoKey(k: Key): void {
+    if (k.name !== "escape") return this.say(dim(JSON.stringify(k)));
+    this.keyEcho = false;
+    this.say(dim("done"));
+  }
+
+  /** Keys while a menu is open: ↑ Ctrl+P k up, ↓ j down, Enter picks, Esc q cancels; the rest do nothing. */
+  private async menuKey(k: Key): Promise<void> {
+    const m = this.menu!;
+    const id = menuKeyId(k);
+    const n = m.items.length;
+    if (id === "up") m.index = (m.index + n - 1) % n;
+    else if (id === "down") m.index = (m.index + 1) % n;
+    else if (id === "enter") { this.menu = null; await m.pick(m.index); }
+    else if (id === "escape") this.menu = null;
+    return this.draw();
+  }
+
+  /** Esc: leave the agent view, else clear the input. */
+  private escapeKey(): void {
+    if (this.page?.view) this.page.view.leave();
+    else this.input = { text: "", cursor: 0 };
+    return this.draw();
+  }
+
+  /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
+  private enterKey(): Promise<void> | void {
+    const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
+    this.input = { text: "", cursor: 0 };
+    this.historyAt = -1;
+    if (!text) return this.draw();
+    this.remember(text);
     this.draw();
+    return this.submit(text);
   }
 
   /** Editing on the input area; the logic lives in editor.ts. */
