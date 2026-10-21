@@ -4,7 +4,7 @@
 // orchestrator's text as markdown blocks cut the way the stream cuts them,
 // its tool calls as the "⏺ Bash(…)" line and "⎿ summary" each showed when it
 // ended (paired with its tool_result by id, through the same toolview.ts
-// formatter; a call with no result shows "no result"), and what each turn
+// formatter; a call with no result shows failed "interrupted"), and what each turn
 // sent the user (the transcript's `replies` entries) labelled after that
 // turn. Full tool results and thinking were never shown, so they stay hidden.
 // Only the current branch shows: the parent chain from the head back to the
@@ -142,7 +142,7 @@ function outcomes(chain: Entry[]): Map<string, ToolOutcome> {
   return new Map(chain.flatMap(toolResults).map((b) => [b.tool_use_id, { id: b.tool_use_id, ok: !b.is_error, text: resultText(b) }]));
 }
 
-/** A call as it ended, or with "no result" when it never got one (the run stopped mid-call). */
+/** A call as it ended, or failed "interrupted" when it never got one (the run stopped mid-call). */
 function callLine(b: Extract<Block, { type: "tool_use" }>, results: Map<string, ToolOutcome>): Line {
   const outcome = results.get(b.id);
   return outcome ? toolView(b.name, b.input, outcome) : interruptedView(b.name, b.input);
@@ -242,8 +242,8 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
 /**
  * The page history for the current branch at `cols` columns: the newest
  * whole messages that fit in `maxRows` rendered rows (at least the newest
- * one), led by a dim count of the messages left out. Only the messages shown
- * are laid out.
+ * one), led by a dim count of the messages left out. The budget includes neutral separators and the omission note, but not the
+ * page header. The newest whole message is retained even when it alone exceeds it.
  */
 export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS, asked?: AskedLookup): Line[] {
   const items = restoreItems(chain, asked);

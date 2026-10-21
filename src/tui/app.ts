@@ -54,7 +54,7 @@ export interface Page {
   /** Lines in the input-history file as far as this page knows, and the last write (writes go one at a time). */
   historyLines: number;
   savingHistory: Promise<void>;
-  /** What the user typed here and sent, not yet read by the orchestrator: when it reads them they are already on screen. */
+  /** Messages sent to the inbox, not yet consumed or shown; removed exactly once by onInbox. */
   sent: string[];
   /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
   questions: PageQuestions;
@@ -69,7 +69,7 @@ export interface Page {
 }
 
 export interface AppDeps {
-  /** Cached header model accessor; integrate effectiveModel(project) here once the project-model API lands. */
+  /** Cached header model accessor; defaults to effectiveModel(project). */
   projectModel?: (project: string) => Promise<string>;
   term: Terminal;
   /** Make sure the project exists (cloning when a url is given) and build its orchestrator. */
@@ -466,19 +466,20 @@ export class App {
     return `${page.name} · ${page.model ?? "loading model…"}\n${paths.repo(page.project)}\n${page.remote ? shortRemote(page.remote) : "no remote"}`;
   }
 
-  /** Call after a confirmed model save; polling also refreshes cached state, never async from render. */
+  /** Independent read generations for captured page objects. */
   private readonly modelVersions = new WeakMap<Page, number>();
 
   private readModel(project: string): Promise<string> {
     return this.deps.projectModel?.(project) ?? effectiveModel(project);
   }
 
+  /** Refresh after a confirmed save or poll; late reads cannot overwrite newer captured-page state. */
   async refreshHeader(page = this.page): Promise<void> {
     if (!page) return;
     const version = (this.modelVersions.get(page) ?? 0) + 1;
     this.modelVersions.set(page, version);
     const model = await this.readModel(page.project);
-    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || model === page.model) return;
+    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting || model === page.model) return;
     page.model = model;
     if (page === this.page) this.reprint();
   }
@@ -486,7 +487,7 @@ export class App {
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
 
   /**
-   * The dimmed line above the input: what the page is doing (a spinner while
+   * The dimmed line below the input: what the page is doing (a spinner while
    * its turn or the viewed agent runs), its name, remote and the open pages,
    * e.g. "⠋ thinking… 3s · orch-ab12 · github.com/x/y · 2 pages · 1 busy".
    */
@@ -956,15 +957,17 @@ export class App {
 
   /** Each queued message stays owned until its send attempt ends. A failure is reported by send; later messages are still attempted. */
   private async drainLogin(ok: boolean): Promise<void> {
-    for (const [page, texts] of [...this.queued]) {
-      if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
-      for (const text of [...texts]) {
-        texts.shift(); // transfer ownership to send (Page.sent), or explicitly report the drop
-        if (ok && this.pages.includes(page)) await this.send(page, text).catch(() => {});
-        else this.say(dim(`not sent after sign-in: ${text}`), page);
-      }
-      if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
+    for (const [page, texts] of [...this.queued]) await this.drainLoginPage(page, texts, ok);
+  }
+
+  private async drainLoginPage(page: Page, texts: string[], ok: boolean): Promise<void> {
+    if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
+    for (const text of [...texts]) {
+      texts.shift(); // ownership transfers to send (Page.sent), or an explicit drop report
+      if (ok && this.pages.includes(page)) await this.send(page, text).catch(() => {});
+      else this.say(dim(`not sent after sign-in (${page.name}): ${text}`), this.pages.includes(page) ? page : this.page);
     }
+    if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
   }
 
   // --- input ------------------------------------------------------------------

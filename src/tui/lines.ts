@@ -7,7 +7,7 @@ import type { ToolView } from "../toolview";
 
 /**
  * A line of history. Plain text stays as it is; the orchestrator's markdown is
- * kept as written (`md`: one streamed block, or a whole text led by `label`)
+ * kept as written (`md`: one parser block with explicit `continuation`, or a whole text led by `label`)
  * and laid out at the current width whenever it is drawn, so a reprint after a
  * resize fits tables to the new width. A line of the user's own message
  * (`user`, "> …" or its indented continuation) is drawn on the user
@@ -27,7 +27,7 @@ export function lineRows(l: Line, cols: number): string[] {
 }
 
 /** A logical boundary, not a wrapped row or a chunk of a still-streaming paragraph. */
-function startsBlock(line: Line, previous?: Line): boolean {
+function startsBlock(line: Line): boolean {
   if (typeof line === "string") return false;
   if ("user" in line) return line.user.startsWith("\x1b[1m>");
   if ("tool" in line) return true;
@@ -40,7 +40,7 @@ export function historyRows(lines: Line[], cols: number, previous?: Line): strin
   let tail = previous === undefined ? "" : lineRows(previous, cols).at(-1) ?? "";
   for (const line of lines) {
     const rows = lineRows(line, cols);
-    if (startsBlock(line, previous) && Bun.stripANSI(tail).trim() && Bun.stripANSI(rows[0] ?? "").trim()) out.push("");
+    if (startsBlock(line) && Bun.stripANSI(tail).trim() && Bun.stripANSI(rows[0] ?? "").trim()) out.push("");
     out.push(...rows);
     tail = rows.at(-1) ?? "";
     previous = line;

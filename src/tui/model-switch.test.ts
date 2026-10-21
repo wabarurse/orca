@@ -254,3 +254,61 @@ test("confirmed UI save queued behind directory replacement refuses the new proj
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
   } finally { release.resolve(); await ui.close(); }
 });
+
+test("header uses the project's startup override and global fallback through the same accessor", async () => {
+  let opened = 0;
+  const ui = await setup([], undefined, { openOrchestrator: async (project) => {
+    mkdirSync(paths.project(project), { recursive: true });
+    if (!opened++) await Bun.write(join(paths.project(project), "model"), "claude-startup\n");
+    return { async say() {}, async pending() { return false; }, async turn() { return []; } };
+  } });
+  try {
+    expect(ui.app.page!.model).toBe("claude-startup");
+    await until(() => ui.writes.some((s) => s.includes("claude-startup")));
+    await ui.app.openPage("header-global-fallback");
+    expect(ui.app.page!.model).toBe("gpt-6-astra");
+    await until(() => ui.writes.some((s) => s.includes("header-global-fallback · gpt-6-astra")));
+  } finally { await ui.close(); }
+});
+
+for (const picker of [false, true]) test(`header changes only after confirmed ${picker ? "picker" : "direct"} save`, async () => {
+  const ui = await setup([{ name: "worker-a", live: true }], async () => catalog("claude-header"));
+  async function request() {
+    await modelCommand(ui, picker ? "" : "claude-header");
+    if (picker) { ui.type("\r"); await until(() => !!ui.app.menu?.title.includes("Switch this project")); }
+  }
+  try {
+    await request();
+    expect(ui.app.page!.model).toBe("gpt-6-astra");
+    ui.type("\r"); // Cancel default
+    await until(() => !ui.app.menu);
+    expect(ui.app.page!.model).toBe("gpt-6-astra");
+    await request();
+    ui.key({ name: "down" }); ui.type("\r");
+    await until(() => ui.app.page!.model === "claude-header");
+    await until(() => ui.writes.some((s) => s.includes(`${ui.project} · claude-header`)));
+  } finally { await ui.close(); }
+});
+
+test("confirmed save refreshes captured page, not the selection changed while persistence awaited", async () => {
+  const release = deferred<void>(), entered = deferred<void>();
+  const ui = await setup([{ name: "worker-a", live: true }], undefined, { saveModel: async (id, project, identity) => {
+    entered.resolve(); await release.promise;
+    return setModel(id, project, identity);
+  } });
+  try {
+    const captured = ui.app.page!;
+    await modelCommand(ui, "claude-captured");
+    ui.key({ name: "down" }); ui.type("\r");
+    await entered.promise;
+    const other = await ui.app.openPage("header-other-selection");
+    release.resolve();
+    await until(() => captured.model === "claude-captured");
+    expect(ui.app.page).toBe(other);
+    expect(other.model).toBe("gpt-6-astra");
+    expect(await effectiveModel(captured.project)).toBe("claude-captured");
+    expect(await effectiveModel(other.project)).toBe("gpt-6-astra");
+    ui.app.switchPage(-1);
+    await until(() => ui.writes.some((s) => s.includes(`${captured.project} · claude-captured`)));
+  } finally { release.resolve(); await ui.close(); }
+});

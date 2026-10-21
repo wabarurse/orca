@@ -1,28 +1,17 @@
-// The orchestrator's questions in the TUI, like Codex's pending questions:
-// the oldest open question of the active page sits in the live region above
-// the status line (render.ts questionRows) with its options numbered, then
-// "type your own answer" and "skip (use default: …)". Nothing is ever sent
-// by Esc: it clears a typed answer, else puts the queue off like Tab, until a
-// new question arrives or /questions. The backend is ../questions.ts.
+// Explicitly opened questions in the composer-first TUI. Arrivals only update
+// the count; Ctrl+Q or /questions opens the oldest question BELOW the input.
+// Esc/Tab/Ctrl+Q closes without answering/skipping and restores the saved chat
+// draft; a typed answer remains with the question for reopening. Selecting
+// skip and pressing Enter is the only skip action. Menus take precedence.
 //
-// Modes (the input is shared with chat):
-// - pick: an option or the skip row is selected; the input is empty. ↑↓ or
-//   1–9 choose, Enter picks, typing moves to "type your own answer".
-// - answer: "answer>" (that row, or a question without options at first);
-//   Enter sends the typed text, or runs it when its first word is a known
-//   command; ↑↓ move between the answer's lines, then between rows.
-// - guard: a chat draft was in the input when the question showed; the
-//   question shows but the keys stay with chat ("send or clear your message
-//   to answer").
-// - chat: no question shown, or the page shows an agent view (only the count
-//   in the status line then).
-// The chat draft is put aside while the input holds an answer, and a
-// half-typed answer stays with its page. Enter, digits and typing are
-// ignored for a moment (delayMs) after a question first shows, so a key meant
-// for chat never answers it. A question closed elsewhere while its answer is
-// half typed leaves the text in the input as a chat draft, never moved to the
-// next question. An answered line is held while the page's reply is mid-line
-// (app.ts), and in an agent view it lands in the page, seen after /back.
+// Modes: pick (options/skip, empty input); answer (answer> edits the answer);
+// chat (panel closed, empty queue, or an agent view). Opening saves the chat
+// buffer, even when it is nonempty. If a question is closed elsewhere, its
+// orphaned answer is reported separately and the ORIGINAL chat is restored;
+// neither buffer is silently replaced or moved to the next question.
+// Enter/digits/typing have a short guard after opening. The #45 closing guard
+// keeps polls from mistaking our own in-flight answer for an external close.
+// A local answer's history line waits behind any streaming partial in app.ts.
 
 import { stat } from "node:fs/promises";
 import { paths } from "../config";
@@ -71,7 +60,7 @@ export interface PageQuestions {
   readAt: number;
   /** The read in flight, if any; polls never overlap. */
   polling: Promise<void> | null;
-  /** Put off (Tab, Esc): the ids open then; the queue shows again once another one is open. */
+  /** Ids hidden on close; expanded is the explicit open/closed state. */
   hidden: Set<string> | null;
   expanded: boolean;
   /** The selected row of the shown question: an option, then "type your own answer", then "skip". */
@@ -178,7 +167,7 @@ export class Questions {
     return q.closing && before && !open.some((x) => x.id === before.id) ? [before, ...open] : open;
   }
 
-  /** New open questions: a new one ends a put-off; a new head starts at its first row. */
+  /** Refresh the queue without opening it; a changed head starts at its first row. */
   private update(page: QuestionPage, open: Question[]): void {
     const q = page.questions;
     const before = head(q);
@@ -302,7 +291,7 @@ export class Questions {
   /**
    * Whether a key goes to the shown question; pure, so callers can ask
    * freely. Plain ↑↓ Enter Esc Tab, and typing on a row being picked (or
-   * while the delay runs). Nothing in chat or guard mode or in an agent view.
+   * while the delay runs). Nothing in chat mode or in an agent view.
    */
   takes(k: Key): boolean {
     const page = this.host.page();
@@ -346,7 +335,7 @@ export class Questions {
     this.host.input = ed.insert(this.host.input, text);
   }
 
-  /** Esc never sends: it clears a typed answer, else puts the queue off. */
+  /** Esc closes the panel, preserving both drafts; it never sends. */
   private escape(page: QuestionPage): void {
     this.hide(page);
   }
@@ -403,7 +392,7 @@ export class Questions {
     this.host.draw();
   }
 
-  /** Tab (or Esc on an empty input): put the queue off until a new question arrives or /questions. */
+  /** Close until explicit reopening, even if new questions arrive. */
   private hide(page: QuestionPage): void {
     page.questions.expanded = false;
     page.questions.hidden = new Set(page.questions.open.map((x) => x.id));
@@ -419,7 +408,7 @@ export class Questions {
 
   // --- /questions ---------------------------------------------------------------
 
-  /** /questions: read the queue now, show it again, and list it when there are several. */
+  /** /questions: read and explicitly open the queue. */
   async command(page: QuestionPage | undefined): Promise<void> {
     if (!page) return;
     const q = page.questions;

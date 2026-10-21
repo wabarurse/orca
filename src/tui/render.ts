@@ -6,13 +6,14 @@
 //
 //   the partial streaming line (until it ends and is committed)
 //   the tool calls running now, each one line with the shimmer
-//   a menu or the project list, when open, else the oldest open question
-//   the status line: spinner, page name, remote, page count
 //   the input area: wrapped rows, up to a third of the screen
+//   counts/status: agents, queued messages, questions, activity
+//   a menu or project list, else the explicitly opened question
 //
 // The input area and the user's messages (`userRows`) are drawn on the user
 // background from style.ts, full width, like Codex's composer and user cells;
-// the input gets a padding row above and below in it when the screen has room.
+// there are no composer padding rows. Input, status and panels share its band.
+// On a one-row screen a panel may be hidden while owning keys; Esc closes it.
 //
 // `reprint` clears the screen and scrollback and writes a page from scratch
 // (page switches, resizes, agent views).
@@ -42,7 +43,7 @@ export interface ProjectList {
   status: string;
 }
 
-/** How the input relates to the shown question: choosing a row, typing its answer, or holding a chat draft (which must go first). */
+/** How the input relates to the shown question: choosing a row or typing its answer, with the chat draft saved separately. */
 export type QuestionMode = "pick" | "answer";
 
 /** The oldest open question of the active page, as the live region shows it. */
@@ -67,11 +68,11 @@ export interface Frame {
   running?: string[];
   input: Input;
   menu: Menu | null;
-  /** The project list, above the status line like a menu, when open. */
+  /** The project list, below the input and status like a menu, when open. */
   projects?: ProjectList | null;
-  /** The question shown above the status line when no menu or project list is open. */
+  /** The question shown below the input and status when no menu or project list is open. */
   question?: QuestionView | null;
-  /** The status line just above the input (e.g. "⠋ thinking… 3s · name · remote · 2 pages"), or none. */
+  /** The status line just below the input (e.g. "⠋ thinking… 3s · name · remote · 2 pages"), or none. */
   status?: string | null;
   /** `inputArea(input, cols, rows, status ? 1 : 0)` when the caller already has it; computed otherwise. */
   inputArea?: InputArea;
@@ -139,7 +140,10 @@ function continuedStyle(style: string, esc: string): string {
   return /^\x1b\[(?:0)?m$/.test(esc) ? "" : style + esc;
 }
 
-/** Split a styled line into pieces at most `cols` display columns wide (one wider character may overflow a tiny width). */
+/** A two-column glyph cannot fit a one-column screen: show an ellipsis without corrupting geometry. */
+const fittingCell = (c: { text: string; width: number }, cols: number) => c.width > cols ? { text: "…", width: 1 } : c;
+
+/** Split a styled line into pieces at most `cols` display columns wide. */
 export function wrap(line: string, cols: number): string[] {
   if (cols <= 0) return [line];
   const out: string[] = [];
@@ -152,7 +156,8 @@ export function wrap(line: string, cols: number): string[] {
       style = continuedStyle(style, t.esc);
       continue;
     }
-    for (const c of cells(t.text)) {
+    for (const source of cells(t.text)) {
+      const c = fittingCell(source, cols);
       if (width > 0 && width + c.width > cols) { out.push(piece + "\x1b[0m"); piece = style; width = 0; }
       piece += c.text;
       width += c.width;
@@ -181,7 +186,7 @@ export function fit(raw: string, cols: number): string {
 /** The input area as laid out on screen: its rows (prompt on the first, indented after), the cursor within them, and the first text row shown. */
 export interface InputArea { lines: string[]; row: number; col: number; top: number }
 
-/** Lay out the input at the bottom of a `rows`-high screen, leaving `reserved` rows (the status line) above it. */
+/** Lay out the input at the bottom of a `rows`-high screen, reserving `reserved` rows for the status below it. */
 export function inputArea(input: Input, cols: number, rows: number, reserved = 0): InputArea {
   const prompt = cols < 4 ? "" : fit(input.prompt, Math.max(0, cols - 2));
   const indent = visibleLength(prompt);
@@ -267,7 +272,7 @@ export function commit(lines: string[], cols: number): string {
 /** The last `n` of `rows` (none when n is 0). */
 const lastRows = (rows: string[], n: number) => (n > 0 ? rows.slice(-n) : []);
 
-/** What sits above the status line: a menu, else the project list, else the question. */
+/** What sits below input/status: a menu, else the project list, else the question. */
 function overlayRows(f: Frame, height: number): string[] {
   if (f.menu) return menuRows(f.menu, height);
   if (f.projects) return projectRows(f.projects, height);

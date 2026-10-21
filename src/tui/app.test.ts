@@ -1607,7 +1607,7 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("answered elsewhere while typing: the text stays (as a chat draft), said, never moved into the next question", async () => {
+  test("answered elsewhere while typing: report the orphan answer without replacing chat or the next answer", async () => {
     const [first] = await askQuestions("qa-moved", [{ text: "Which db?", options: ["postgres"] }, { text: "Port?", options: ["80"] }]);
     const { term, orchs, app, stop } = await start("qa-moved");
     await until(() => live(term).includes("? Which db? (1 of 2)"));
@@ -2223,4 +2223,93 @@ test("header caches model and filters subagent counts; unchanged background fram
   expect(ticks.map((t) => t.ms)).toEqual([33]);
   app.quit();
   await running;
+});
+
+test("external question closure preserves both original chat and orphan answer, expanded or collapsed", async () => {
+  for (const collapsed of [false, true]) {
+    const project = `orphan-drafts-${collapsed}`;
+    const term = fakeTerm(100, 18);
+    const app = new App({ term, openOrchestrator: fakeOrchestrators().openOrchestrator, questionDelayMs: 0, pollMs: 10, watchdog: async () => {}, merges: async () => {} });
+    const running = app.run(project);
+    await until(() => !!app.page);
+    term.type("original chat draft");
+    const [first, next] = await askQuestions(project, [{ text: "First?" }, { text: "Next?" }]);
+    await app.questions.command(app.page);
+    term.type("orphan answer");
+    expect(app.input.text).toBe("orphan answer");
+    if (collapsed) term.press({ name: "q", ctrl: true });
+    await answerQuestion(project, first!.id, "someone else's answer");
+    await until(() => app.page!.questions.open[0]?.id === next!.id);
+    expect(app.input.text).toBe("original chat draft");
+    expect(app.page!.lines.map(raw).join(" ")).toContain("unsent answer: orphan answer");
+    expect(app.questions.view()).toBeNull();
+    await app.questions.command(app.page);
+    expect(app.input.text).toBe(""); // orphan never becomes the next question's answer
+    term.press({ name: "escape" });
+    expect(app.input.text).toBe("original chat draft");
+    app.quit(); await running;
+  }
+});
+
+test("header refresh generations reject reverse completion and closed/reopened pages", async () => {
+  const reads: ((model: string) => void)[] = [];
+  let defer = false;
+  const term = fakeTerm(80, 12);
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => defer ? new Promise<string>((r) => reads.push(r)) : "initial", openOrchestrator: fakeOrchestrators().openOrchestrator });
+  const running = app.run("refresh-a");
+  await until(() => !!app.page);
+  const a = app.page!;
+  defer = true;
+  const first = app.refreshHeader(a), second = app.refreshHeader(a);
+  reads[1]!("newest"); await second;
+  reads[0]!("old"); await first;
+  expect(a.model).toBe("newest");
+  const offscreen = app.refreshHeader(a);
+  defer = false;
+  await app.openPage("refresh-b");
+  reads[2]!("offscreen-a"); await offscreen;
+  expect(app.page!.model).toBe("initial");
+  expect(a.model).toBe("offscreen-a");
+  defer = true;
+  const stale = app.refreshHeader(a);
+  app.closePage(app.pages.indexOf(a));
+  defer = false;
+  const reopened = await app.openPage("refresh-a");
+  reads[3]!("stale-closed"); await stale;
+  expect(reopened).not.toBe(a);
+  expect(reopened.model).toBe("initial");
+  expect(a.model).toBe("offscreen-a");
+  app.quit(); await running;
+});
+
+test("sign-in queue attempts every owned message after failures across pages without duplicating consumed successes", async () => {
+  for (const failed of ["one", "two"]) {
+    const attempted: string[] = [];
+    let finish!: () => void;
+    const term = fakeTerm(100, 18);
+    const app = new App({ term, pollMs: 100_000, login: async () => { await new Promise<void>((r) => { finish = r; }); return "signed in"; }, openOrchestrator: async (_p, _u, _w, inbox) => ({
+      async say(text) { attempted.push(text); if (text === failed) throw new Error("send failed"); inbox?.([{ from: "user", text, ts: "" }]); },
+      async pending() { return false; }, async turn() { return []; },
+    }) });
+    const running = app.run(`login-drain-${failed}`);
+    await until(() => !!app.page);
+    const firstPage = app.page!;
+    term.type("/login claude\r");
+    await until(() => !!finish);
+    term.type("one\rtwo\r");
+    await until(() => app.status(firstPage).includes("2 messages queued"));
+    await app.openPage(`login-other-${failed}`);
+    const secondPage = app.page!;
+    term.type("three\r");
+    await until(() => app.status(secondPage).includes("1 messages queued"));
+    finish();
+    await until(() => attempted.length === 3 && !app.status(secondPage).includes("queued"));
+    expect(attempted).toEqual(["one", "two", "three"]);
+    const displayed = [...firstPage.lines, ...secondPage.lines].map(raw).map(strip);
+    for (const text of ["one", "two", "three"]) expect(displayed.filter((l) => l === `> ${text}`).length).toBe(text === failed ? 0 : 1);
+    expect(displayed).toContain(`not sent: ${failed}`);
+    expect(firstPage.sent).toEqual([]);
+    expect(secondPage.sent).toEqual([]);
+    app.quit(); await running;
+  }
 });

@@ -63,7 +63,7 @@ describe("commit", () => {
 });
 
 describe("live", () => {
-  test("rows top to bottom: partial line, menu, status, input; cursor in the input", () => {
+  test("rows top to bottom: partial, input, status, menu; cursor in the input", () => {
     const f = frame({ partial: "streaming", status: "⠋ thinking… 3s · one", menu: { title: "pick", items: ["x", "y"], index: 1 } });
     expect(rows(f)).toEqual(["streaming", "> hi", "⠋ thinking… 3s · one", "pick", "  x", "❯ y"]);
     const { text, shown } = live(f);
@@ -75,9 +75,9 @@ describe("live", () => {
 
   test("redraws by moving up exactly to the previous first row and clearing to the end", () => {
     const first = live(frame({ rows: 12, status: "s", input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 3 } }));
-    expect(first.shown).toEqual({ height: 4, cursor: 0 }); // status, then the cursor on "> one"
+    expect(first.shown).toEqual({ height: 4, cursor: 0 }); // input first, cursor on "> one"
     const next = live(frame({ status: "s2" }), first.shown);
-    expect(next.text).toContain("\r\x1b[J"); // up by the cursor's row, then clear down
+    expect(next.text).toContain("\r\x1b[J"); // cursor is already on the first input row; clear down
     expect(erase(first.shown)).toBe("\r\x1b[J");
     expect(erase({ height: 3, cursor: 2 })).toBe("\r\x1b[2A\x1b[J");
     expect(erase(NOTHING)).toBe("");
@@ -177,7 +177,7 @@ describe("live", () => {
     index: 1, status: "", ...over,
   });
 
-  test("the project list sits above the status line and a multi-row input", () => {
+  test("the project list sits below the multi-row input and status", () => {
     const f = frame({ cols: 60, rows: 12, partial: "half", status: "⠋ thinking… 1s", projects: projects(), input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 13 } });
     expect(rows(f)).toEqual(["half", "> one", "  two", "  three", "⠋ thinking… 1s", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
     expect(liveRows(f)).toMatchObject({ cursor: 3, col: 7 });

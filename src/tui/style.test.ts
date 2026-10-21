@@ -46,7 +46,7 @@ describe("input area", () => {
     expect([end.row, end.col]).toEqual([2, 8]);
   });
 
-  test("no padding when the screen has no room for it; the input is still filled", () => {
+  test("input and status remain filled on a short screen", () => {
     setUserFill(BG);
     const s = draw(frame({ rows: 3 }));
     expect(s.screen()).toEqual(["> hi", "s", ""]);
