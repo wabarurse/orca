@@ -18,6 +18,7 @@ export interface Turn {
 }
 
 export interface CompleteRequest {
+  signal?: AbortSignal;
   settings?: RequestSettings;
   model: string;
   /** The role's system prompt; providers put their own identity line first. */

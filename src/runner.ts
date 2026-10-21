@@ -1,3 +1,4 @@
+import { command, run } from "./proc";
 // Starts agents. v1 has one backend: a git worktree plus a tmux window on this
 // machine. A docker/container backend comes later with the same interface, so
 // agents never learn anything about the host beyond their cwd.
@@ -12,6 +13,7 @@ import { paths } from "./config";
 import type { Role } from "./transcript";
 
 export interface StartOptions {
+  signal?: AbortSignal;
   project: string;
   role: Role;
   /** Branch to work on. Omitted for the orchestrator, which runs in repo/. */
@@ -24,7 +26,7 @@ export interface Runner {
   /** Close the branch's windows and remove its worktree. */
   stop(project: string, branch: string): Promise<void>;
   /** Which of these agent ids have a live window, or null when that could not be asked. */
-  running(project: string, ids: string[]): Promise<string[] | null>;
+  running(project: string, ids: string[], signal?: AbortSignal): Promise<string[] | null>;
 }
 
 const CLI = resolve(import.meta.dir, "cli.ts");
@@ -50,18 +52,16 @@ export const sessionId = (role: Role, branch?: string) => windowName(role, branc
  * HEAD if needed. Reusing an existing worktree is how a reviewer shares the
  * worker's checkout.
  */
-export async function ensureWorktree(project: string, branch: string): Promise<string> {
+export async function ensureWorktree(project: string, branch: string, signal?: AbortSignal): Promise<string> {
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
   if (existsSync(dir)) return dir;
   if (!existsSync(repo)) throw new Error(`runner: repo not found at ${repo}`);
 
-  const exists = (await $`git -C ${repo} rev-parse --verify --quiet refs/heads/${branch}`.quiet().nothrow()).exitCode === 0;
-  const res = exists
-    ? await $`git -C ${repo} worktree add ${dir} ${branch}`.quiet().nothrow()
-    : await $`git -C ${repo} worktree add -b ${branch} ${dir} HEAD`.quiet().nothrow();
-  if (res.exitCode !== 0) throw new Error(`runner: git worktree add failed: ${res.stderr.toString().trim()}`);
+  const exists = (await command(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo, signal)).code === 0;
+  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, "HEAD"])], repo, signal);
+  if (res.code !== 0) throw new Error(`runner: git worktree add failed: ${res.err.trim()}`);
   return dir;
 }
 
@@ -79,24 +79,24 @@ export async function removeWorktree(project: string, branch: string): Promise<v
 // --- tmux --------------------------------------------------------------------
 
 export const tmux = {
-  async hasSession(session: string): Promise<boolean> {
+  async hasSession(session: string, signal?: AbortSignal): Promise<boolean> {
     need("tmux");
-    return (await $`tmux has-session -t ${"=" + session}`.quiet().nothrow()).exitCode === 0;
+    return (await command(["tmux", "has-session", "-t", "=" + session], process.cwd(), signal)).code === 0;
   },
 
   /** Create the session detached if missing. Its first window is an idle shell so the session outlives agent windows. */
-  async ensureSession(session: string, cwd: string): Promise<void> {
-    if (await tmux.hasSession(session)) return;
-    const res = await $`tmux new-session -d -s ${session} -n shell -c ${cwd}`.quiet().nothrow();
-    if (res.exitCode !== 0) throw new Error(`runner: tmux new-session failed: ${res.stderr.toString().trim()}`);
+  async ensureSession(session: string, cwd: string, signal?: AbortSignal): Promise<void> {
+    if (await tmux.hasSession(session, signal)) return;
+    const res = await command(["tmux", "new-session", "-d", "-s", session, "-n", "shell", "-c", cwd], cwd, signal);
+    if (res.code !== 0) throw new Error(`runner: tmux new-session failed: ${res.err.trim()}`);
   },
 
   /** Open a named window in `session` in `cwd`, running `command`: a shell string (run by tmux's default shell) or an argv (exec'd directly). */
-  async openWindow(session: string, name: string, cwd: string, command: string | string[]): Promise<void> {
+  async openWindow(session: string, name: string, cwd: string, commandLine: string | string[], signal?: AbortSignal): Promise<void> {
     need("tmux");
-    const argv = typeof command === "string" ? [command] : ["--", ...command];
-    const res = await $`tmux new-window -d -t ${"=" + session} -n ${name} -c ${cwd} ${argv}`.quiet().nothrow();
-    if (res.exitCode !== 0) throw new Error(`runner: tmux new-window failed: ${res.stderr.toString().trim()}`);
+    const argv = typeof commandLine === "string" ? [commandLine] : ["--", ...commandLine];
+    const res = await command(["tmux", "new-window", "-d", "-t", "=" + session, "-n", name, "-c", cwd, ...argv], cwd, signal);
+    if (res.code !== 0) throw new Error(`runner: tmux new-window failed: ${res.err.trim()}`);
   },
 
   async listWindows(session: string): Promise<string[]> {
@@ -108,11 +108,12 @@ export const tmux = {
    * null when tmux could not be asked (not installed, or any other error), so
    * callers can tell "no windows" from "don't know".
    */
-  async windows(session: string): Promise<string[] | null> {
+  async windows(session: string, signal?: AbortSignal): Promise<string[] | null> {
     if (!Bun.which("tmux")) return null;
-    const out = await $`tmux list-windows -t ${"=" + session} -F ${"#{window_name}"}`.quiet().nothrow();
-    if (out.exitCode === 0) return out.stdout.toString().split("\n").filter(Boolean);
-    const err = out.stderr.toString();
+    const out = await run(["tmux", "list-windows", "-t", "=" + session, "-F", "#{window_name}"], { cwd: process.cwd(), timeoutMs: 60_000, signal });
+    if (!out) return null;
+    if (out.code === 0) return out.out.split("\n").filter(Boolean);
+    const err = out.err;
     return /can't find session|no server running|error connecting to .*\((No such file or directory|Connection refused)\)/i.test(err) ? [] : null;
   },
 
@@ -172,14 +173,14 @@ export const local: Runner = {
     need("tmux");
     let cwd: string;
     if (opts.branch) {
-      cwd = await ensureWorktree(opts.project, opts.branch);
+      cwd = await ensureWorktree(opts.project, opts.branch, opts.signal);
     } else {
       cwd = paths.repo(opts.project);
       if (!existsSync(cwd)) throw new Error(`runner: repo not found at ${cwd}`);
     }
     const session = sessionName(opts.project);
-    await tmux.ensureSession(session, paths.repo(opts.project));
-    await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, agentCommand(opts));
+    await tmux.ensureSession(session, paths.repo(opts.project), opts.signal);
+    await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, agentCommand(opts), opts.signal);
   },
 
   async stop(project, branch) {
@@ -190,8 +191,8 @@ export const local: Runner = {
     await removeWorktree(project, branch);
   },
 
-  async running(project, ids) {
-    const w = await tmux.windows(sessionName(project));
+  async running(project, ids, signal) {
+    const w = await tmux.windows(sessionName(project), signal);
     return w && ids.filter((id) => w.includes(id));
   },
 };

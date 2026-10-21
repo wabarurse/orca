@@ -106,3 +106,16 @@ test("message delivers to the named inbox and refuses self or empty", async () =
   expect((await drain("p", "user")).map((m) => m.from)).toEqual(["orchestrator"]);
   expect((await drain("p", "worker-feat-login")).map((m) => m.text)).toEqual(["also fix the test"]);
 });
+
+test("cancelling spawn during its live-agent wait never starts a replacement", async () => {
+  const controller = new AbortController();
+  let checked!: () => void;
+  const ready = new Promise<void>(resolve => { checked = resolve; });
+  let starts = 0;
+  const tool = makeSpawn({ async start() { starts++; }, async stop() {}, async running() { checked(); return ["worker-busy"]; } });
+  const running = tool.run({ prompt: "work", branch: "busy" }, { project: "cancel-spawn", role: "orchestrator", cwd: home, signal: controller.signal });
+  await ready;
+  controller.abort(new Error("cancelled"));
+  await expect(running).rejects.toThrow("cancelled");
+  expect(starts).toBe(0);
+});

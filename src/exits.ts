@@ -1,3 +1,4 @@
+import { Cancelled } from "./cancellation";
 // Exit notices: when a worker or reviewer stops without reporting, the
 // orchestrator hears about it through its inbox, at most once per run.
 //
@@ -242,10 +243,13 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
   try {
     await body(t);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`agent crashed: ${err instanceof Error && err.stack ? err.stack : msg}`);
-    what = `crashed: ${msg}`;
-    code = 1;
+    if (err instanceof Cancelled) what = "cancelled by user";
+    else {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`agent crashed: ${err instanceof Error && err.stack ? err.stack : msg}`);
+      what = `crashed: ${msg}`;
+      code = 1;
+    }
   } finally {
     signals.off();
   }

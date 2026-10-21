@@ -21,7 +21,7 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 const started: StartOptions[] = [];
 const runner: Runner = {
   async start(o) {
-    started.push(o);
+    started.push({ project: o.project, role: o.role, branch: o.branch });
   },
   async stop() {},
   async running() { return []; },
@@ -106,4 +106,54 @@ test("onInbox gets each batch as it is read, and the turn's replies are kept in 
   expect(open(paths.transcript("inboxes", "orchestrator")).branch().map((e) => e.type)).toEqual(branch.map((e) => e.type));
   // The replies entry is not sent to the model.
   expect((await open(paths.transcript("inboxes", "orchestrator")).chain()).length).toBe(branch.filter((e) => e.type === "message").length);
+});
+
+test("cancelling a turn aborts the provider, pauses inbox polling, and next message resumes saved history", async () => {
+  const project = "cancel-orch";
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const seen: import("./providers").CompleteRequest[] = [];
+  let aborted = false;
+  const provider: import("./providers").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
+    seen.push(req);
+    if (seen.length > 1) return { stop: "end", content: [text("resumed")] };
+    started();
+    return new Promise((_resolve, reject) => req.signal!.addEventListener("abort", () => { aborted = true; reject(req.signal!.reason); }, { once: true }));
+  } };
+  const orch = await createOrchestrator({ project, provider, tools: {}, write() {} });
+  await orch.say("remember original");
+  const turn = orch.turn();
+  await ready;
+  orch.cancel!();
+  await turn;
+  expect(aborted).toBe(true);
+  await put(project, "orchestrator", { from: "worker-other", text: "background report" });
+  expect(await orch.pending()).toBe(false);
+  await orch.turn();
+  expect(seen).toHaveLength(1);
+  await orch.say("continue now");
+  expect(await orch.pending()).toBe(true);
+  await orch.turn();
+  expect(seen).toHaveLength(2);
+  expect(JSON.stringify(seen[1]!.messages)).toContain("remember original");
+  expect(JSON.stringify(seen[1]!.messages)).toContain("background report");
+  expect(JSON.stringify(seen[1]!.messages)).toContain("continue now");
+  expect(seen[1]!.signal!.aborted).toBe(false);
+});
+
+test("a new external user message (including a question answer) resumes a paused orchestrator", async () => {
+  const project = "external-resume";
+  const provider = fakeProvider([[text("answer received")]]);
+  const orch = await createOrchestrator({ project, provider, tools: {}, write() {} });
+  await put(project, "orchestrator", { from: "user", text: "already queued" });
+  orch.cancel!();
+  expect(await orch.pending()).toBe(false);
+  await Bun.sleep(2);
+  await put(project, "orchestrator", { from: "worker-other", text: "still running" });
+  expect(await orch.pending()).toBe(false);
+  await put(project, "orchestrator", { from: "user", text: "new answer" });
+  expect(await orch.pending()).toBe(true);
+  await orch.turn();
+  expect(provider.calls).toHaveLength(1);
+  expect(JSON.stringify(provider.calls[0]!.messages)).toContain("new answer");
 });

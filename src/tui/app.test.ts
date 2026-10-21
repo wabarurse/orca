@@ -145,6 +145,8 @@ describe("tui app", () => {
     await until(() => app.pages.length === 2);
     expect(app.pages.map((p) => p.project)).toEqual(["alpha", orchs.opened[1]!.project]);
     term.press({ name: "c", ctrl: true });
+    expect(term.closed).toBe(false);
+    term.press({ name: "c", ctrl: true });
     await running;
   });
 
@@ -1723,7 +1725,7 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("modifier chords never pick, put off or clear a question; Ctrl+C still quits", async () => {
+  test("modifier chords never pick, put off or clear a question; Ctrl+C cancels, twice quits", async () => {
     await ask1("qa-chord", "Which db?", ["postgres", "sqlite"], "sqlite");
     const { term, app, running } = await start("qa-chord");
     await until(() => live(term).includes("❯ 1. postgres"));
@@ -1733,6 +1735,8 @@ describe("orchestrator questions", () => {
     expect(app.page!.questions.open).toHaveLength(1);
     expect(app.page!.questions.hidden).toBeNull();
     expect(await statusOf("qa-chord")).toEqual([["Which db?", "open", null]]);
+    term.press({ name: "c", ctrl: true });
+    expect(term.closed).toBe(false);
     term.press({ name: "c", ctrl: true });
     await running;
   });
@@ -1829,6 +1833,7 @@ describe("orchestrator questions", () => {
 describe("command and key tables", () => {
   /** /help as it was written before the command table, line for line. */
   const OLD_HELP = [
+    "^C cancels selected turn/agent; twice within 2s exits (conversation kept)",
     "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)",
     "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes",
     "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
@@ -2312,4 +2317,55 @@ test("sign-in queue attempts every owned message after failures across pages wit
     expect(secondPage.sent).toEqual([]);
     app.quit(); await running;
   }
+});
+
+describe("Ctrl+C cancellation", () => {
+  test("first cancels only selected page, preserves draft, expires after 2s; second exits", async () => {
+    const term = fakeTerm(100, 20);
+    const cancelled: string[] = [];
+    const fakes = fakeOrchestrators();
+    let now = 100;
+    const app = new App({ term, pollMs: 100_000, clock: { now: () => now, every: () => () => {} },
+      async openOrchestrator(...args) { return { ...await fakes.openOrchestrator(args[0], args[1], args[2], args[3]), cancel: () => { cancelled.push(args[0]); } }; },
+    });
+    const running = app.run("cancel-a");
+    await until(() => !!app.page);
+    term.type("/new cancel-b\r");
+    await until(() => app.page?.project === "cancel-b");
+    app.input = { text: "unsent draft", cursor: 12 };
+    app.keyEcho = true; // diagnostic/menu layers must not swallow the interrupt
+    await app.onKey({ name: "c", ctrl: true });
+    expect(cancelled).toEqual(["cancel-b"]);
+    expect(app.input.text).toBe("unsent draft");
+    expect(term.closed).toBe(false);
+    await until(() => term.screen().includes("within 2 seconds to exit"));
+    now += 2001;
+    await app.onKey({ name: "c", ctrl: true });
+    expect(cancelled).toEqual(["cancel-b", "cancel-b"]);
+    expect(term.closed).toBe(false);
+    now += 1999;
+    await app.onKey({ name: "c", ctrl: true });
+    await running;
+    expect(term.closed).toBe(true);
+  });
+
+  test("agent view cancels only selected session, leaving orchestrator and other roles alone", async () => {
+    const term = fakeTerm(100, 20);
+    const cancelled: string[] = [];
+    const fakes = fakeOrchestrators();
+    const app = new App({ term, pollMs: 100_000,
+      async openOrchestrator(...args) { return { ...await fakes.openOrchestrator(args[0], args[1], args[2], args[3]), cancel: () => { cancelled.push("orchestrator"); } }; },
+      async cancelAgent(project, id) { cancelled.push(`${project}/${id}`); },
+    });
+    const running = app.run("selected-agent");
+    await until(() => !!app.page);
+    app.page!.view = { name: "reviewer-x", lines: [], live: true, calls: new Calls(), leave() {} };
+    await app.onKey({ name: "c", ctrl: true });
+    expect(cancelled).toEqual(["selected-agent/reviewer-x"]);
+    expect(app.page!.view!.name).toBe("reviewer-x");
+    expect(term.closed).toBe(false);
+    await until(() => term.screen().includes("Stopping selected agent"));
+    app.quit();
+    await running;
+  });
 });

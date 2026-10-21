@@ -51,3 +51,25 @@ test("sudo is refused", async () => {
   expect(await bash.run({ command: "sudo ls" }, ctx(home))).toBe("refused: sudo is not allowed");
   expect(await bash.run({ command: "echo pseudo" }, ctx(home))).toBe("pseudo\n");
 });
+
+test("cancellation kills a shell and its child, not just the displayed output", async () => {
+  const controller = new AbortController();
+  const pidFile = join(home, "child.pid");
+  const result = bash.run({ command: `sleep 60 & echo $! > '${pidFile}'; wait` }, { ...ctx(home), signal: controller.signal });
+  const deadline = Date.now() + 2000;
+  while (!(await Bun.file(pidFile).exists()) && Date.now() < deadline) await Bun.sleep(5);
+  const pid = Number(await Bun.file(pidFile).text());
+  expect(pid).toBeGreaterThan(0);
+  controller.abort(new Error("Cancelled by user"));
+  await expect(result).rejects.toThrow("Cancelled by user");
+  // A killed child can briefly be a zombie while reparented; ps must not show a live sleep.
+  const state = await Bun.$`ps -o stat= -p ${pid}`.quiet().nothrow().text();
+  expect(!state.trim() || state.trim().startsWith("Z")).toBe(true);
+});
+
+test("already-cancelled tools never start a command", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("cancelled"));
+  await expect(bash.run({ command: "touch should-not-exist" }, { ...ctx(home), signal: controller.signal })).rejects.toThrow("cancelled");
+  expect(await Bun.file(join(home, "should-not-exist")).exists()).toBe(false);
+});

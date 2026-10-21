@@ -21,8 +21,8 @@ export function anthropic(client: Anthropic): Provider {
           ...(req.system ? [{ type: "text" as const, text: req.system }] : []),
         ],
         ...(req.tools.length ? { tools: req.tools } : {}),
-      }, req.settings?.fast && req.model !== "claude-opus-5-5"
-        ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : undefined);
+      }, { ...(req.signal ? { signal: req.signal } : {}), ...(req.settings?.fast && req.model !== "claude-opus-5-5"
+        ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
       stream.on("text", req.onText);
       const message = await stream.finalMessage();
       return completedTurn(message);

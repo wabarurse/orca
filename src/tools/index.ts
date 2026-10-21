@@ -7,6 +7,7 @@ import { message } from "./message";
 import { spawn } from "./spawn";
 
 export interface ToolContext {
+  signal?: AbortSignal;
   project: string;
   role: Role;
   branch?: string;

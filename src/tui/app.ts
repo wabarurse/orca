@@ -1,3 +1,4 @@
+import { cancelSession } from "../cancellation";
 import { effortCommand, fastCommand } from "../project-settings";
 // The inline TUI, kept bare: like Claude Code and Codex it never takes over
 // the screen. Finished lines go once into the terminal's scrollback; only the
@@ -83,6 +84,7 @@ export interface AppDeps {
   /** Clock and repeating timer for the busy spinner; tests inject fakes so they never sleep. */
   clock?: Clock;
   /** A project's agents and which are live: /agents lists these and live views poll them. Defaults to listAgents for the menu and to tmux alone (liveAgents) for the poll. */
+  cancelAgent?: typeof cancelSession;
   agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
   /** Sign-in; tests replace it. */
   login?: typeof login;
@@ -146,6 +148,7 @@ type HelpRow = "projects" | "keys" | "pages" | "settings" | "review" | "question
 
 /** /help, top to bottom: key help as written, and the rows of commands from the table (joined by three spaces). */
 const HELP_LAYOUT: readonly (HelpRow | { text: string })[] = [
+  { text: "^C cancels selected turn/agent; twice within 2s exits (conversation kept)" },
   { text: "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)" },
   "projects",
   { text: "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words" },
@@ -325,7 +328,7 @@ export class App {
       this.stopSpinner?.();
       this.stopSpinner = null;
       this.loginAbort.abort();
-      for (const p of this.pages) p.view?.leave();
+      for (const p of this.pages) { p.orch.cancel?.(); p.view?.leave(); }
       this.leave();
       restoreConsole();
       term.close();
@@ -1084,9 +1087,26 @@ export class App {
     this.runTurn(page);
   }
 
+  private lastInterrupt = -Infinity;
+  private async interrupt(): Promise<void> {
+    const now = this.clock.now();
+    if (now - this.lastInterrupt <= 2000) return this.quit();
+    this.lastInterrupt = now;
+    const page = this.page;
+    if (page?.view) {
+      const view = page.view;
+      await (this.deps.cancelAgent ?? cancelSession)(page.project, view.name);
+      this.toView(page, view, [dim("Stopping selected agent. Press Ctrl+C again within 2 seconds to exit.")]);
+    } else {
+      page?.orch.cancel?.();
+      this.say(dim("Turn cancelled. Send a message to resume; press Ctrl+C again within 2 seconds to exit."), page);
+    }
+    this.draw();
+  }
+
   /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
   private readonly chords = new Map<string, () => Promise<void> | void>([
-    ["c", () => this.quit()],
+    ["c", () => this.interrupt()],
     ["q", () => { if (!this.menu && !this.projectList) return this.questions.toggle(); }],
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
@@ -1095,8 +1115,8 @@ export class App {
 
   /**
    * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
-   * 1. keyEcho: /keys echoes every key until Esc;
-   * 2. chords: Ctrl+C quits, Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages;
+   * 1. keyEcho: /keys echoes every key except Ctrl+C until Esc;
+   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
    * 5. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
@@ -1105,7 +1125,7 @@ export class App {
    * 8. editor: the rest edits the input (EDITS, ↑↓ history).
    */
   readonly keyLayers: readonly KeyLayer[] = [
-    { name: "keyEcho", takes: () => this.keyEcho, handle: (k) => this.echoKey(k) },
+    { name: "keyEcho", takes: (k) => this.keyEcho && !(k.ctrl && k.name === "c"), handle: (k) => this.echoKey(k) },
     { name: "chords", takes: (k) => !!k.ctrl && this.chords.has(k.name), handle: (k) => this.chords.get(k.name)!() },
     { name: "projects", takes: (k) => this.projectsTake(k), handle: (k) => this.projectsKey(k) },
     { name: "menu", takes: () => !!this.menu, handle: (k) => this.menuKey(k) },

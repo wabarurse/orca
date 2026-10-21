@@ -1,3 +1,4 @@
+import { Cancelled } from "./cancellation";
 import { withProjectStateLock } from "./project-state";
 // The orchestrator runs in the `start` process, not in tmux. One turn is:
 // drain its inbox, hand the messages to the model as one user message, run
@@ -8,7 +9,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { effectiveModel, projectModelResolver } from "./project-model";
 import { createAgent, type AgentDeps } from "./agent";
 import { loadConfig, paths } from "./config";
-import { drain, pending, put, type Message } from "./inbox";
+import { drain, pending, put, userSince, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { type Provider } from "./providers/index";
 import { registry, toolsFor, type Tool } from "./tools/index";
@@ -32,6 +33,8 @@ export interface OrchestratorDeps {
 export interface Orchestrator {
   /** Put a message from the user in the orchestrator's inbox. */
   say(text: string): Promise<void>;
+  /** Abort only this turn and pause automatic inbox turns until the user sends again. */
+  cancel?(): void;
   compact?(): Promise<void>;
   /** True when the orchestrator has unread messages. */
   pending(): Promise<boolean>;
@@ -63,29 +66,43 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
     await transcript.append({ type: "meta", role: "orchestrator", model: await effectiveModel(project) });
   }
 
+  let cancellation: AbortController | undefined;
+  let paused = false;
+  let pausedAt = 0;
+  const isPaused = async () => {
+    const since = pausedAt;
+    if (paused && await userSince(project, "orchestrator", since) && since === pausedAt) paused = false;
+    return paused;
+  };
   let requested = false;
   let running = false;
   const takeRequest = () => { const value = requested; requested = false; return value; };
   return {
-    compact: async () => { requested = true; },
-    say: (text) => put(project, "orchestrator", { from: "user", text }).then(() => {}),
-    pending: async () => requested || await pending(project, "orchestrator"),
+    cancel: () => { pausedAt = Date.now(); paused = true; requested = false; cancellation?.abort(new Cancelled()); },
+    compact: async () => { paused = false; requested = true; },
+    say: async (text) => { await put(project, "orchestrator", { from: "user", text }); paused = false; },
+    pending: async () => !(await isPaused()) && (requested || await pending(project, "orchestrator")),
     entries: () => transcript.history?.() ?? transcript.branch(),
     async turn() {
       // run() drains the inbox itself and keeps going while messages arrive.
       if (running) return [];
       running = true;
+      cancellation = new AbortController();
       try {
+        if (await isPaused()) return [];
         const hasInbox = await pending(project, "orchestrator");
         if (!requested && !hasInbox) return [];
-        const agent = await turnAgent(deps, transcript, takeRequest);
+        const agent = await turnAgent(deps, transcript, takeRequest, cancellation.signal);
         if (hasInbox) await agent.run();
         else if (takeRequest()) await agent.compact();
         const replies = await drain(project, "user");
         // Kept in the transcript so a restored page shows them where they showed live: after the turn.
         if (replies.length) await transcript.append({ type: "replies", messages: replies.map(({ from, text }) => ({ from, text })) });
         return replies;
-      } finally { running = false; }
+      } catch (error) {
+        if (!cancellation.signal.aborted) throw error;
+        return [];
+      } finally { running = false; cancellation = undefined; }
     },
   };
 }
@@ -95,10 +112,11 @@ function orchestratorTools(overrides?: Record<string, Tool>): Record<string, Too
   if (overrides) return overrides;
   return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, registry[name]]] : []));
 }
-async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean) {
+async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean, signal: AbortSignal) {
   const config = await loadConfig();
   const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return createAgent({
+    signal,
     resolveModel: projectModelResolver(deps.project, loadProvider),
     transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project),
     compaction: { enabled: config.compact, fallback: config.contextLimitFallback }, compactRequested,

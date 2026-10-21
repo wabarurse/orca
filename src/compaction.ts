@@ -70,7 +70,8 @@ async function prepare(deps: AgentDeps, messages: MessageParam[], cut: number): 
   const maxTokens = Math.min(2048, outputCap(deps));
   requireFits({ ...deps, system: instruction, tools: {}, compaction: { ...deps.compaction, measured: undefined } }, source, maxTokens, "summarization source");
   if (!deps.provider) throw new Error("no resolved provider");
-  const result = await deps.provider.complete({ model: deps.model, settings: deps.settings, system: instruction, tools: [], maxTokens, onText: () => {}, messages: source });
+  const result = await deps.provider.complete({ signal: deps.signal, model: deps.model, settings: deps.settings, system: instruction, tools: [], maxTokens, onText: () => {}, messages: source });
+  deps.signal?.throwIfAborted();
   if (result.stop !== "end" || !["end_turn", "completed"].includes(result.completion ?? "")) throw new Error("summary did not complete successfully");
   if (!result.content.length || result.content.some(b => b.type !== "text" || typeof b.text !== "string")) throw new Error("summary must contain only text");
   const text = result.content.flatMap(b => b.type === "text" ? [b.text] : []).join("\n").trim();
@@ -95,6 +96,7 @@ export async function compact(deps: AgentDeps, manual = false): Promise<boolean 
   try {
     return await checkpoint(deps, messages, limit);
   } catch (error) {
+    deps.signal?.throwIfAborted();
     status(deps, `compaction failed: ${error instanceof Error ? error.message : error}`);
     if (error instanceof ContextBlocked) throw error;
     return false;

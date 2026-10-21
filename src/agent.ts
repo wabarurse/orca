@@ -1,3 +1,4 @@
+import { watchCancellation } from "./cancellation";
 import type { RequestSettings } from "./project-settings";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/prompts.ts). The task
@@ -27,6 +28,7 @@ export interface AgentOptions {
 }
 
 export interface AgentDeps {
+  signal?: AbortSignal;
   provider?: Provider;
   settings?: RequestSettings;
   /** Internal safe-boundary snapshot: request output cap and accounting reserve. */
@@ -57,10 +59,11 @@ type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
 /** Run one tool; a thrown error becomes an is_error result, never a crash. */
 async function runTool(deps: AgentDeps, name: string, input: Record<string, unknown>): Promise<ToolResultBlockParam> {
+  if (deps.signal?.aborted) return { type: "tool_result", tool_use_id: "", content: "Cancelled by user", is_error: true };
   const tool = deps.tools[name];
   if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
   try {
-    return { type: "tool_result", tool_use_id: "", content: await tool.run(input, deps.ctx) };
+    return { type: "tool_result", tool_use_id: "", content: await tool.run(input, { ...deps.ctx, signal: deps.signal }) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { type: "tool_result", tool_use_id: "", content: msg, is_error: true };
@@ -130,6 +133,7 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
   const estimated = budget({ ...deps, compaction: undefined }, messages);
   if (!deps.provider) throw new Error("agent: no provider or resolver");
   const message = await deps.provider.complete({
+    signal: deps.signal,
     model: deps.model,
     settings: deps.settings,
     system: deps.system,
@@ -138,6 +142,7 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
     tools: Object.values(deps.tools).map((t) => t.spec),
     onText: (t) => write(t),
   });
+  deps.signal?.throwIfAborted();
   if (message.inputTokens !== undefined) {
     deps.compaction ??= {};
     deps.compaction.measured = { input: message.inputTokens, estimated, model: deps.model };
@@ -158,7 +163,9 @@ function boundaries(deps: AgentDeps) {
   let failed = false;
   let previousModel = "";
   return async (manual = false): Promise<AgentDeps> => {
+    deps.signal?.throwIfAborted();
     const current = await snapshot(deps);
+    deps.signal?.throwIfAborted();
     if (current.model !== previousModel) failed = false;
     previousModel = current.model;
     if (manual || !failed) {
@@ -173,15 +180,18 @@ function boundaries(deps: AgentDeps) {
 }
 async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<void> {
   const results = await runTools(deps, content, deps.write!);
-  const note = await inboxBlock(deps);
+  const note = deps.signal?.aborted ? null : await inboxBlock(deps);
   await deps.transcript.append({ type: "message", message: { role: "user", content: note ? [...results, note] : results } });
 }
 async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>): Promise<void> {
+  deps.signal?.throwIfAborted();
   await readInbox(deps);
   for (;;) {
     const current = await boundary(deps.compactRequested?.() ?? false);
+    deps.signal?.throwIfAborted();
     const message = await ask(current, deps.write!);
     if (message.stop === "tool_use") { await toolBatch(deps, message.content); continue; }
+    deps.signal?.throwIfAborted();
     if (await readInbox(deps)) continue;
     if (deps.compactRequested?.()) await boundary(true);
     return;
@@ -212,10 +222,18 @@ export async function runAgent(opts: AgentOptions): Promise<number> {
     branch: opts.branch,
     cwd: process.cwd(),
   };
-  return supervise(info, (tracker) => startAgent(opts, tracker));
+  return supervise(info, (tracker) => startAgent({ ...opts, run: info.run }, tracker));
 }
 
 async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> {
+  const cancellation = new AbortController();
+  const unwatch = watchCancellation(opts.project, sessionId(opts.role, opts.branch), cancellation, opts.run);
+  try { await agentSession(opts, cancellation.signal, tracker); }
+  catch (error) { throw cancellation.signal.aborted ? cancellation.signal.reason : error; }
+  finally { unwatch(); }
+}
+
+async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: Tracker): Promise<void> {
   const config = await loadConfig();
   const model = await effectiveModel(opts.project);
   // One transcript per role per branch, so a restart resumes it. spawn seeds
@@ -233,6 +251,7 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
   }
 
   const agent = createAgent({
+    signal,
     resolveModel: projectModelResolver(opts.project, opts.loadProvider),
     transcript,
     tools,

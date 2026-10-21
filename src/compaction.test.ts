@@ -170,3 +170,21 @@ test("scheduled compaction retains full UI replay and forwards subsequent tool e
   expect(orch.entries!()).toEqual(open(transcript.path).history!());
   expect(restore(orch.entries!(), 100)).toEqual(restore(open(transcript.path).history!(), 100));
 });
+
+test("cancellation aborts the summary request without committing a checkpoint or treating it as a budget failure", async () => {
+  const { deps, transcript } = await fixture();
+  const controller = new AbortController();
+  deps.signal = controller.signal;
+  const before = await Bun.file(transcript.path).text();
+  let out = "";
+  deps.write = line => { out += line; };
+  deps.provider = { ...deps.provider!, async complete(req) {
+    expect(req.signal).toBe(controller.signal);
+    controller.abort(new Error("Cancelled by user"));
+    req.signal!.throwIfAborted();
+    throw new Error("unreachable");
+  } };
+  await expect(compact(deps, true)).rejects.toThrow("Cancelled by user");
+  expect(await Bun.file(transcript.path).text()).toBe(before);
+  expect(out).not.toContain("compaction failed");
+});

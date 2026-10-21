@@ -53,6 +53,16 @@ export async function pending(project: string, agent: string): Promise<boolean> 
   return (await readdir(dir(project, agent)).catch(() => [])).some((n) => n.endsWith(".json"));
 }
 
+/** A new human message can resume a cancelled orchestrator without consuming agent reports. */
+export async function userSince(project: string, agent: string, since: number): Promise<boolean> {
+  const d = dir(project, agent);
+  for (const name of (await readdir(d).catch(() => [])).filter(n => n.endsWith(".json"))) {
+    const message = await Bun.file(join(d, name)).json().catch(() => null) as Message | null;
+    if (message?.from === "user" && Date.parse(message.ts) > since) return true;
+  }
+  return false;
+}
+
 /** Read and delete every message in `agent`'s inbox, oldest first. */
 export async function drain(project: string, agent: string): Promise<Message[]> {
   const d = dir(project, agent);

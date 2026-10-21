@@ -37,6 +37,23 @@ renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X mo
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
 `/help` for the rest of the commands.
 
+Ctrl+C cancels the selected page's current turn (including its provider request
+and running tools), without closing the harness or clearing your draft/history.
+Other projects' turns and background workers/reviewers keep running. The cancelled
+orchestrator stays paused even if agent reports arrive; your next chat message
+resumes its saved conversation. While viewing a subagent, Ctrl+C instead stops
+only that worker/reviewer, preserving its transcript and worktree; the existing
+`spawn` continuation path can restart it with that conversation. Agent views remain
+read-only (`/back` to talk to the orchestrator). A hint appears on the first press;
+a second Ctrl+C within two seconds exits the harness (`/quit` also exits). Exiting
+cancels in-process orchestrator turns but leaves background agents alone.
+
+Cancellation cannot undo side effects already completed by tools. Shell cancellation
+kills the shell's process group (including ordinary children); independently detached
+processes/services are not owned by that group. Incomplete provider output is not
+added to model history. Already-recorded tool calls receive matching error results
+for cancelled/skipped tools, so the next request has a valid transcript.
+
 Pressing Enter puts a chat message in the orchestrator's inbox; it appears in
 the conversation only when the orchestrator consumes it, between tool batches
 or responses. Until then the bottom band counts it as queued. This never
