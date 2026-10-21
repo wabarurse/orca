@@ -31,13 +31,16 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
         "Start an agent on a git branch in its own worktree and tmux window. The prompt is the only thing it is told. " +
         "role 'worker' (default) or 'reviewer'. It reports back to you through `message`.\n\n" +
         "Spawning the same role on a branch again continues that agent: same transcript, so it keeps its context, and same worktree, with its earlier commits. " +
-        "The prompt is its next instruction. One agent codes on a branch at a time, so spawn an agent again only after its last run has reported. " +
-        "Merged branches are cleaned up automatically and cannot be reused.\n\n" +
+        "The prompt is its next instruction. One agent works on a branch at a time: spawn waits briefly, then refuses while the branch's worker or reviewer is still running, " +
+        "so spawn again only after it has reported or exited.\n" +
+        "Never spawn on a branch whose PR is merged; the harness stops and cleans those up (within ~30s, when gh is available). Follow-up work goes on a new branch.\n\n" +
         "Reuse or new branch, decided per task when you plan:\n" +
-        "- Reuse an open branch (spawn its worker again with the new task) when the new work touches the same files or feature, is small, and no reviewer is working on that branch right now.\n" +
-        "- Start a new branch when the work is independent of it, would make a PR under review much bigger, needs its own merge order, or the existing branch is waiting on CI or merge.\n" +
+        "- Reuse an open branch (spawn its worker again with the new task) only before it has gone to CI or a PR: its worker has reported, and review has not started or is between rounds. " +
+        "It fits small work on the same files or feature. Its whole transcript is resent each call, so reuse a worker for small follow-ups, not a long series of tasks. " +
+        "The new task runs the whole task flow anew, with its own review rounds.\n" +
+        "- Start a new branch when the work is independent, needs its own merge order, or the existing branch has gone to CI or a PR.\n" +
         "- If unsure, say so in the plan table and let the user choose.\n" +
-        "Name what is reused in the plan table: \"<branch> (existing, reused)\".",
+        "In the plan table, mark a reused branch (existing): \"<branch> (existing)\".",
       input_schema: {
         type: "object",
         properties: {
