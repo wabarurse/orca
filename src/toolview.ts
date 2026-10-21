@@ -27,9 +27,12 @@ const ESCAPES = /\x1b\[[0-?]*[ -\/]*[@-~]?|\x9b[0-?]*[ -\/]*[@-~]?|\x1b\][^\x07\
 const CONTROLS = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/g;
 
 /** Text with no escape sequences and no controls but newlines: CRLF and lone CR as \n, tabs as a space. */
-export function plain(s: string): string {
+function textLines(s: string): string {
   return s.replace(ESCAPES, "").replace(/\r\n?/g, "\n").replace(/\t/g, " ").replace(CONTROLS, "");
 }
+
+/** A printable single line: no escapes and no C0/C1 controls, including newlines. */
+export const plain = (s: string): string => textLines(s).replace(/\n/g, " ");
 
 const str = (v: unknown) => (typeof v === "string" ? plain(v) : "");
 /** Text on one line: newlines and runs of spaces as single spaces. */
@@ -94,8 +97,9 @@ function lineCount(output: string): number {
 
 /** ": <the last line that looks like an error (and is not "0 failed"), else the first with something on it>", or nothing. */
 function errorLine(output: string): string {
-  const lines = plain(output).replace(TRUNCATED, "\n").split("\n").map((l) => oneLine(l)).filter(Boolean);
-  const line = lines.findLast((l) => ERRORISH.test(l) && !NO_ERRORS.test(l)) ?? lines[0];
+  const lines = textLines(output).replace(TRUNCATED, "\n").split("\n").map((l) => oneLine(l)).filter(Boolean);
+  const candidates = lines.filter((l) => !NO_ERRORS.test(l));
+  const line = candidates.findLast((l) => ERRORISH.test(l)) ?? candidates[0];
   return line ? `: ${line}` : "";
 }
 
@@ -129,7 +133,7 @@ const refused = (name: string, text: string) => REFUSING.has(name) && /^refused\
 /** The one-line summary of how a call ended, and whether it failed. */
 export function toolSummary(name: string, outcome: Pick<ToolOutcome, "ok" | "text">): { summary: string; failed: boolean } {
   const ok = outcome.ok;
-  const text = plain(outcome.text);
+  const text = textLines(outcome.text);
   if (!ok || refused(name, text)) return { summary: oneLine(firstLine(text)) || "error", failed: true };
   return SUMMARIES[name]?.(text) ?? { summary: oneLine(firstLine(text)) || "done", failed: false };
 }

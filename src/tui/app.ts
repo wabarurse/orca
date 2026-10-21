@@ -9,7 +9,7 @@ import { effortCommand, fastCommand } from "../project-settings";
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
 import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
-import { paths } from "../config";
+import { paths, loadConfig } from "../config";
 import { projectIdentity } from "../project-state";
 import { validateModel } from "../project-model";
 import type { Message } from "../inbox";
@@ -18,12 +18,12 @@ import { format } from "node:util";
 import { follow, parts } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
-import { lineRows, type Line } from "./lines";
+import { historyRows, type Line } from "./lines";
 import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
 import { MAX_RESTORED_ROWS, replyLine, reportLine, restore, userLines } from "./restore";
-import { append, bold, commit, erase, dim, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
+import { append, bold, commit, erase, dim, headerRow, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { Calls } from "./tools";
@@ -64,9 +64,13 @@ export interface Page {
   view: { name: string; lines: Line[]; leave: () => void; live: boolean; calls: Calls } | null;
   /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
   calls: Calls;
+  model?: string;
+  agentCount?: number;
 }
 
 export interface AppDeps {
+  /** Cached header model accessor; integrate effectiveModel(project) here once the project-model API lands. */
+  projectModel?: (project: string) => Promise<string>;
   term: Terminal;
   /** Make sure the project exists (cloning when a url is given) and build its orchestrator. */
   /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
@@ -300,6 +304,7 @@ export class App {
     term.onKey((k) => { this.onKey(k).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     term.onResize(() => this.resized());
     const poll = setInterval(() => {
+      if (this.page) { this.checkLive(this.page.project); void this.refreshHeader(this.page).catch(() => {}); }
       this.watchPages();
       this.questions.poll(this.pages);
       if (!this.loggingIn) this.runPending();
@@ -366,26 +371,28 @@ export class App {
 
   /** Finished lines of the page's own history; they reach the screen only while it is active and shows no agent. */
   private toPage(page: Page, lines: Line[]): void {
+    const previous = page.lines.at(-1);
     page.lines.push(...lines);
-    if (this.started && page === this.page && !page.view) this.pending.push(...this.rows(lines));
+    if (this.started && page === this.page && !page.view) this.pending.push(...this.rows(lines, previous));
     this.draw();
   }
 
   /** Finished lines of an agent view; on screen only while it is what the active page shows. */
   private toView(page: Page, view: NonNullable<Page["view"]>, lines: Line[]): void {
+    const previous = view.lines.at(-1);
     view.lines.push(...lines);
-    if (this.started && page === this.page && page.view === view) this.pending.push(...this.rows(lines));
+    if (this.started && page === this.page && page.view === view) this.pending.push(...this.rows(lines, previous));
     this.draw();
   }
 
   /** What the screen shows for the active page: its agent view or its history. */
   private screenLines(page = this.page): string[] {
-    return page ? this.rows(page.view?.lines ?? page.lines) : this.looseLines;
+    return page ? [...this.header(page).split("\n").map((r) => headerRow(r, this.deps.term.cols)), ...this.rows(page.view?.lines ?? page.lines)] : this.looseLines;
   }
 
   /** History lines laid out at the terminal's width. */
-  private rows(lines: Line[]): string[] {
-    return lines.flatMap((l) => lineRows(l, this.deps.term.cols));
+  private rows(lines: Line[], previous?: Line): string[] {
+    return historyRows(lines, this.deps.term.cols, previous);
   }
 
   /**
@@ -442,7 +449,7 @@ export class App {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
       running: page ? (page.view?.calls ?? page.calls).rows(this.clock.now(), this.deps.term.cols) : [],
-      status, input, inputArea: area,
+      status, input, inputArea: area, bottomBar: true,
       menu: this.menu,
       question: this.questions.view(),
       projects: this.projectList && {
@@ -455,6 +462,19 @@ export class App {
     };
   }
 
+  private header(page: Page): string {
+    return `${page.name} · ${page.model ?? "loading model…"}\n${paths.repo(page.project)}\n${page.remote ? shortRemote(page.remote) : "no remote"}`;
+  }
+
+  /** Call after a confirmed model save; polling also refreshes cached state, never async from render. */
+  async refreshHeader(page = this.page): Promise<void> {
+    if (!page) return;
+    const model = await (this.deps.projectModel?.(page.project) ?? loadConfig().then((c) => c.model));
+    if (!this.pages.includes(page) || model === page.model) return;
+    page.model = model;
+    if (page === this.page) this.reprint();
+  }
+
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
 
   /**
@@ -463,7 +483,7 @@ export class App {
    * e.g. "⠋ thinking… 3s · orch-ab12 · github.com/x/y · 2 pages · 1 busy".
    */
   status(page: Page): string {
-    const parts: string[] = [];
+    const parts = this.counts(page);
     // A live agent view wins over the page's own turn; otherwise a busy page shows its turn (its word shimmering), view or not.
     if (page.view?.live) parts.push(`${this.spinner()} following ${page.view.name}`);
     else if (page.busy) parts.push(this.turnStatus(page));
@@ -472,11 +492,26 @@ export class App {
     parts.push(`${this.pages.length} ${this.pages.length === 1 ? "page" : "pages"}`);
     const busy = this.pages.filter((p) => p !== page && active(p)).length;
     if (busy) parts.push(`${busy} busy`);
-    parts.push(...this.questions.status(page, this.pages));
-    if (page.questions.open.length) parts.push("Ctrl+Q to view");
+
+
+    return dim(parts.join(" · "));
+  }
+
+  private counts(page: Page): string[] {
+    const parts = [`${page.agentCount ?? 0} agents running`];
     const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
     if (queued) parts.push(`${queued} messages queued`);
-    return dim(parts.join(" · "));
+    parts.push(...this.questions.status(page, this.pages));
+    if (page.questions.open.length) parts.push("Ctrl+Q to view");
+    return parts;
+  }
+
+  /** Fast frames only for visible animation, never because a background page is busy. */
+  private shimmering(): boolean {
+    const page = this.page;
+    if (!page) return false;
+    if ((page.view?.calls ?? page.calls).size) return true;
+    return page.busy && !page.view?.live;
   }
 
   /** "⠋ thinking… 3s" with the word shimmering; the dim the status line is drawn in resumes after it. */
@@ -488,9 +523,7 @@ export class App {
 
   /** Run the spinner timer only while some page is busy or viewing a live agent. */
   private animate(): void {
-    const page = this.page;
-    const calls = page?.view?.calls ?? page?.calls;
-    const fast = !!calls?.size || (!!page?.busy && !page.view?.live);
+    const fast = this.shimmering();
     const ms = fast ? TICK_MS : SPIN_MS;
     const want = !this.closed && (fast || this.pages.some(active));
     if (this.tickMs !== ms || !want) { this.stopSpinner?.(); this.stopSpinner = null; }
@@ -502,7 +535,7 @@ export class App {
     const now = this.clock.now();
     if (now - this.liveCheckedAt >= LIVE_CHECK_MS) {
       this.liveCheckedAt = now;
-      for (const project of new Set(this.pages.filter((p) => p.view?.live).map((p) => p.project))) this.checkLive(project);
+      for (const project of new Set(this.pages.filter((p) => p === this.page || p.view?.live).map((p) => p.project))) this.checkLive(project);
     }
     this.draw();
   }
@@ -514,6 +547,8 @@ export class App {
     const check = agents(project)
       .then((agents) => {
         const live = new Set(agents.filter((a) => a.live).map((a) => a.name));
+        for (const p of this.pages) if (p.project === project) p.agentCount = [...live].filter((n) => /^(worker|reviewer)(-|$)/.test(n)).length;
+        this.draw();
         for (const p of this.pages) if (p.project === project && p.view?.live && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
       })
       .catch(() => {})
@@ -565,13 +600,17 @@ export class App {
     this.resizeTimer = setTimeout(() => { this.resizeTimer = null; this.reprint(); }, RESIZE_MS);
   }
 
+  private unchanged(text: string): boolean {
+    return !this.needReprint && !this.pending.length && text === this.lastLive;
+  }
+
   private flush(): void {
     this.lastFrame = Date.now();
     try {
       this.questions.sync(); // the input holds the chat draft or the shown question's answer
       const f = this.frame();
       const fingerprint = live(f).text;
-      if (!this.needReprint && !this.pending.length && fingerprint === this.lastLive) return;
+      if (this.unchanged(fingerprint)) return;
       const pending = this.pending;
       this.pending = [];
       const out = this.needReprint ? reprint(this.screenLines(), f) : pending.length ? append(pending, f, this.shown) : live(f, this.shown);
@@ -623,8 +662,10 @@ export class App {
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
     this.looseLines = [];
+    page.model = await (this.deps.projectModel?.(project) ?? loadConfig().then((c) => c.model));
     this.pages.push(page);
     this.active = this.pages.length - 1;
+    this.checkLive(project);
     this.questions.poll([page]);
     this.reprint();
     if (this.projectList) await this.refreshProjects();

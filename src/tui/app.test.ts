@@ -503,7 +503,7 @@ describe("tui app", () => {
         turn: () => new Promise((r) => (finish = () => r([]))),
       };
     };
-    const term = fakeTerm();
+    const term = fakeTerm(100);
     let writesAfterClose = 0;
     const termWrite = term.write;
     term.write = (s) => { if (term.closed) writesAfterClose++; termWrite(s); };
@@ -513,7 +513,7 @@ describe("tui app", () => {
     expect(started).toBe(0); // idle: no timer
     term.type("go\r");
     await until(() => started === 1 && term.screen().includes("⠋ thinking… 0s"));
-    expect(term.screen()).toContain("⠋ thinking… 0s · alpha · no remote · 1 …") // cut to the width;
+    expect(term.screen()).toContain("⠋ thinking… 0s · alpha") // cut to the width;
     now = 2_150;
     ticks[0]!();
     await until(() => term.screen().includes("⠙ thinking… 2s"));
@@ -851,11 +851,12 @@ describe("inline screen", () => {
     const running = app.run("alpha");
     await until(() => !!app.page && term.screen().includes(">"));
     term.type("build it");
-    await until(() => term.screen().endsWith("> build it"));
+    await until(() => term.screen().includes("> build it"));
     term.type("\r");
     await until(() => term.screen().includes("worker-x done"));
     const lines = term.screen().split("\n");
-    expect(lines.slice(0, 4)).toEqual(["$ parallels start", "> build it", "alpha says hi", "worker-x done"]);
+    expect(lines[0]).toBe("$ parallels start");
+    expect(lines.slice(4).filter(Boolean).slice(0, 3)).toEqual(["> build it", "alpha says hi", "worker-x done"]);
     expect(lines.filter((l) => l === "> build it").length).toBe(1);
     expect(term.display.clears).toBe(0);
     expect(term.raw()).not.toContain("\x1b[2J");
@@ -885,15 +886,15 @@ describe("inline screen", () => {
 
     term.type("\x1a"); // Ctrl+Z back to alpha
     await until(() => term.display.clears === 2);
-    await until(() => term.screen().startsWith("> one\nalpha says hi\nworker-x done\n"));
+    await until(() => term.screen().includes("> one\n\nalpha says hi\n\nworker-x done\n"));
     expect(term.screen()).not.toContain("beta says hi");
     const before = term.writes.length;
     term.resize(30, 8);
     await until(() => term.display.clears === 3);
     expect(term.writes.slice(before).join("")).toContain(CLEAR);
-    await until(() => term.screen().startsWith("> one\nalpha says hi\n"));
+    await until(() => term.screen().includes("> one\n\nalpha says hi\n"));
     term.type("/close\r");
-    await until(() => term.display.clears === 4 && term.screen().startsWith("> two\nbeta says hi"));
+    await until(() => term.display.clears === 4 && term.screen().includes("> two\n\nbeta says hi"));
     app.quit();
     await running;
   });
@@ -943,14 +944,14 @@ describe("inline screen", () => {
     expect(term.screen()).toContain("viewed › worker-v");
     const { appendFileSync } = await import("node:fs");
     appendFileSync(transcript, entry("worker line two"));
-    await until(() => term.screen().includes("worker line one\nworker line two"));
+    await until(() => term.screen().includes("worker line one\n\nworker line two"));
     // An agent's assistant text is markdown too (as Claude Code shows subagent text); a user prompt stays plain.
     appendFileSync(transcript, entry("**bold** reply\n\n| k | v |\n|---|---|\n| a | b |"));
     appendFileSync(transcript, JSON.stringify({ type: "message", message: { role: "user", content: "**raw** prompt" } }) + "\n");
-    await until(() => term.screen().includes("worker line two\nbold reply\n\n┌───┬───┐\n│ k │ v │"));
+    await until(() => term.screen().includes("worker line two\n\nbold reply\n\n┌───┬───┐\n│ k │ v │"));
     await until(() => term.screen().includes("> **raw** prompt"));
     term.type("/back\r");
-    await until(() => term.display.clears === 2 && term.screen().startsWith("> hello\nviewed says hi\nworker-x done"));
+    await until(() => term.display.clears === 2 && term.screen().includes("> hello\n\nviewed says hi\n\nworker-x done"));
     expect(term.screen()).not.toContain("worker line");
     app.quit();
     await running;
@@ -971,8 +972,8 @@ describe("inline screen", () => {
     await running;
     expect(term.closed).toBe(true);
     // The live region (status, input) goes; what was printed stays, the streamed half line too.
-    expect(term.screen()).toBe("> hi\nalpha says hi\nworker-x done\nhalf a line");
-    expect([term.display.row, term.display.col]).toEqual([4, 0]);
+    expect(term.screen().split("\n").slice(3).join("\n")).toBe("> hi\n\nalpha says hi\n\nworker-x done\nhalf a line");
+    expect(term.display.col).toBe(0);
     expect(term.raw()).not.toContain("1049");
 
     // The real terminal keeps raw mode and bracketed paste, and no alternate screen.
@@ -1030,12 +1031,13 @@ describe("frames, resizes, startup and crashes", () => {
     await until(() => term.display.clears === 1);
     const after = term.writes.slice(before).join("");
     expect(after.split("\x1b[3J").length - 1).toBe(1);
-    await until(() => term.screen().endsWith("four"));
+    await until(() => term.screen().includes("  four"));
     const shown = term.display.screen();
     expect(shown.length).toBe(6);
-    expect(shown.at(-1)).toBe("  four"); // no padding: the menu above takes the rows
-    expect(shown.join("\n")).toContain("alpha · no remote");
-    expect(term.display.text().startsWith("> hello\nalpha says hi\nworker-x done\n")).toBe(true);
+    expect(shown).toContain("  four");
+    expect(shown.indexOf("  four")).toBeLessThan(shown.findIndex((r) => r.includes("pick one")));
+    expect(shown.join("\n")).toContain("agents running");
+    expect(term.display.text().includes("> hello\n\nalpha says hi\n\nworker-x done\n")).toBe(true);
     app.quit();
     await running;
   });
@@ -1119,7 +1121,7 @@ describe("frames, resizes, startup and crashes", () => {
     await until(() => term.screen().includes("half"));
     app.say("said \x1b[H\x1b[2Jline\b");
     await until(() => term.screen().includes("said line"));
-    expect(term.screen().split("\n").slice(0, 3)).toEqual(["tool output", "said line", "half"]);
+    expect(term.screen().split("\n").slice(3).filter(Boolean).slice(0, 3)).toEqual(["tool output", "said line", "half"]);
     app.quit();
     await running;
   });
@@ -1237,8 +1239,8 @@ describe("restored pages", () => {
     await until(() => term.screen().includes("Worker done."));
     const restored = ["shell$ parallels start", "> what changed?", "Two things:", "- a", "- b", "⏺ Bash(ls)", "  ⎿  1 line", "From worker-feat: all done", "Worker done."];
     const rows = term.screen().split("\n");
-    expect(rows.slice(0, restored.length)).toEqual(restored);
-    expect(rows.at(-1)).toBe(">"); // the input, below the history
+    expect([rows[0], ...rows.slice(4).filter(Boolean).slice(0, restored.length - 1)]).toEqual(restored);
+    expect(term.display.buf[term.display.top + term.display.row]!.join("").trimEnd()).toBe(">"); // input before the status
     expect(term.screen()).not.toContain("SECRET-RESULT");
     expect(term.display.clears).toBe(0); // printed under the shell's output, nothing cleared
 
@@ -1253,7 +1255,7 @@ describe("restored pages", () => {
     await until(() => !term.screen().includes("Worker done."));
     term.type("\x1a"); // Ctrl+Z
     await until(() => term.screen().includes("Worker done.") && term.screen().includes("resumed says hi"));
-    expect(term.screen().split("\n").slice(0, restored.length - 1)).toEqual(restored.slice(1));
+    expect(term.screen().split("\n").slice(3).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
     app.quit();
     await running;
   });
@@ -1900,9 +1902,9 @@ describe("command and key tables", () => {
       expect(orchs.said[app.page!.project]).toEqual([]); // dropped, not sent
     }
     expect(term.screen()).not.toContain("unknown command");
-    expect(listed).toBe(0);
+    expect(app.menu).toBeNull(); // background agent-count polling may list agents
     term.type("/agents\r"); // with a page it runs
-    await until(() => listed === 1);
+    await until(() => listed > 0);
     app.quit();
     await running;
   });
@@ -2019,7 +2021,7 @@ describe("user background", () => {
     term.type("a message long enough to wrap\r");
     await until(() => term.screen().includes("worker-x done"));
     term.type("draft");
-    await until(() => term.screen().endsWith("> draft"));
+    await until(() => term.screen().includes("> draft"));
     const filled = (cols: number) => term.display.backgrounds().map((r) => r.length === cols && r.every((b) => b === "48;5;236"));
     const check = (cols: number) => {
       const text = term.display.text().split("\n");
@@ -2028,7 +2030,7 @@ describe("user background", () => {
       expect([bg[at("> a message")], bg[at("> a message") + 1], bg[at("alpha says hi")]]).toEqual([true, true, false]);
       const row = term.display.top + term.display.row;
       expect(term.display.buf[row]!.join("").trimEnd()).toBe("> draft");
-      expect([bg[row - 1], bg[row], bg[row + 1]]).toEqual([true, true, true]); // padding, input, padding
+      expect([bg[row], bg[row + 1]]).toEqual([true, true]); // input, bottom status
       expect(term.display.col).toBe(7);
     };
     check(30);

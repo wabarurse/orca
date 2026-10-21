@@ -19,7 +19,7 @@
 
 import { cells, layout, scrollWindow } from "./editor";
 import { wordWrap } from "./markdown";
-import { fillRow, userFill } from "./style";
+import { fillRow, userFill, chromeFill } from "./style";
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -61,6 +61,8 @@ export interface QuestionView {
 export interface Frame {
   cols: number;
   rows: number;
+  /** Composer first, status and panels below it, all in a background band. */
+  bottomBar?: boolean;
   /** Streamed text not committed yet (a partial line, or a held code block or table, raw); wrapped, above everything else. */
   partial?: string;
   /** Rows of the tool calls running now (tools.ts, already styled), under the partial line. */
@@ -133,6 +135,12 @@ export function expandTabs(line: string): string {
   return out;
 }
 
+/** Replay the SGR state on a soft wrap; a full reset discards its predecessors. */
+function continuedStyle(style: string, esc: string): string {
+  if (!/^\x1b\[[0-9;:]*m$/.test(esc)) return style;
+  return /^\x1b\[(?:0)?m$/.test(esc) ? "" : style + esc;
+}
+
 /** Split a styled line into pieces at most `cols` display columns wide (one wider character may overflow a tiny width). */
 export function wrap(line: string, cols: number): string[] {
   if (cols <= 0) return [line];
@@ -143,7 +151,7 @@ export function wrap(line: string, cols: number): string[] {
   for (const t of tokens(expandTabs(line))) {
     if ("esc" in t) {
       piece += t.esc;
-      if (/^\x1b\[[0-9;:]*m$/.test(t.esc)) style = /^\x1b\[(?:0)?m$/.test(t.esc) ? "" : style + t.esc;
+      style = continuedStyle(style, t.esc);
       continue;
     }
     for (const c of cells(t.text)) {
@@ -165,6 +173,7 @@ export function userRows(line: string, cols: number): string[] {
 
 /** One row: cut with an ellipsis rather than wrapped. */
 export function fit(raw: string, cols: number): string {
+  if (cols <= 0) return "";
   const line = expandTabs(raw);
   if (visibleLength(line) <= cols) return line;
   return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…\x1b[0m";
@@ -175,14 +184,15 @@ export interface InputArea { lines: string[]; row: number; col: number; top: num
 
 /** Lay out the input at the bottom of a `rows`-high screen, leaving `reserved` rows (the status line) above it. */
 export function inputArea(input: Input, cols: number, rows: number, reserved = 0): InputArea {
-  const indent = visibleLength(input.prompt);
+  const prompt = cols < 4 ? "" : fit(input.prompt, Math.max(0, cols - 2));
+  const indent = visibleLength(prompt);
   const { rows: all, row, col } = layout(input, cols - indent);
   // At most a third of the screen, less if the reserved rows and a row above would not fit;
   // past that, scroll only when the cursor leaves the window.
   const allowance = Math.max(1, Math.min(Math.floor(rows / 3), rows - 1 - reserved));
   const shown = Math.min(all.length, allowance);
   const top = scrollWindow(input.top ?? all.length, row, all.length, shown);
-  const lines = all.slice(top, top + shown).map((r, i) => (top + i === 0 ? input.prompt : " ".repeat(indent)) + r.text);
+  const lines = all.slice(top, top + shown).map((r, i) => (top + i === 0 ? prompt : " ".repeat(indent)) + r.text).map((r) => fit(r, cols));
   return { lines, row: row - top, col: Math.max(0, Math.min(cols - 1, indent + col)), top };
 }
 
@@ -276,6 +286,7 @@ function inputBox(lines: string[], cols: number, pad: number): string[] {
 
 /** The live region's rows, top to bottom, and where the cursor goes in them. */
 export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
+  if (f.bottomBar) return bottomRows(f);
   const statusRows = f.status ? 1 : 0;
   const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, statusRows);
   // Everything must fit on screen, or the cursor could not get back to the top: the overlay
@@ -291,6 +302,27 @@ export function liveRows(f: Frame): { rows: string[]; cursor: number; col: numbe
   const partial = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols))], free);
   const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...box];
   return { rows, cursor: rows.length - box.length + pad + input.row, col: input.col };
+}
+
+/** Inline header: committed once with the page, never pinned or redrawn with the composer. */
+export function headerRow(text: string, cols: number): string {
+  const row = fit(sanitize(text), cols);
+  const fill = chromeFill();
+  return fill ? fillRow(row, cols, fill) : row;
+}
+
+/** Input first; panels live BELOW it. On tiny screens the input wins, then the status, then the panel. */
+function bottomRows(f: Frame): { rows: string[]; cursor: number; col: number } {
+  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, f.status ? 1 : 0);
+  const status = f.status && f.rows > input.lines.length ? [fit(sanitize(f.status), f.cols)] : [];
+  const free = Math.max(0, f.rows - input.lines.length - status.length);
+  const panel = overlayRows(f, free).map((r) => fit(sanitize(r), f.cols));
+  const streamed = (f.partial ?? "").split("\n").filter(Boolean).flatMap((l) => wrap(sanitize(l), f.cols));
+  const above = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols))], free - panel.length);
+  const band = [...input.lines, ...status, ...panel];
+  const fill = userFill();
+  const rows = [...above, ...band.map((r) => fill ? fillRow(r, f.cols, fill) : r)];
+  return { rows, cursor: above.length + input.row, col: input.col };
 }
 
 /** Move from where `prev` left the cursor to the live region's first row and clear from there down. */

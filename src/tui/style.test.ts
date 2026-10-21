@@ -65,8 +65,8 @@ describe("input area", () => {
   test("a dim prompt and a narrow width keep the fill", () => {
     setUserFill(BG);
     const s = draw(frame({ cols: 4, input: { prompt: "\x1b[2ma>\x1b[0m ", text: "xyz", cursor: 3 } }));
-    expect(s.screen().slice(2, 4)).toEqual(["a> x", "   y"]);
-    expect(marks(s).slice(1, 6)).toEqual(Array(5).fill(full(4)));
+    expect(s.screen().slice(2, 4)).toEqual(["a…xy", "  z"]);
+    expect(marks(s).slice(1, 5)).toEqual(Array(4).fill(full(4)));
   });
 
   test("NO_COLOR: no background, no padding, the prompt as before", () => {
