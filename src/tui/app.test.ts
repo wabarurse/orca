@@ -18,7 +18,7 @@ import { open as openTranscript } from "../transcript";
 import { parseKeys, type Key } from "./keys";
 import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
-import { bold, dim } from "./render";
+import { bold, dim, live as renderLive } from "./render";
 import { setUserFill } from "./style";
 import { Calls } from "./tools";
 
@@ -2210,7 +2210,9 @@ test("header caches model and filters subagent counts; unchanged background fram
   await settle();
   expect(ticks.map((t) => t.ms)).toEqual([100]);
   const before = term.writes.length;
-  const lastBytes = Buffer.byteLength(term.writes.at(-1)!);
+  const frame = app.frame();
+  const shown = renderLive(frame).shown;
+  const lastBytes = Buffer.byteLength(`\x1b[?2026h${renderLive(frame, shown).text}\x1b[?2026l`);
   for (let i = 0; i < 10; i++) { now += 100; ticks[0]!.fn(); await Bun.sleep(20); }
   const bytes = term.writes.slice(before).reduce((n, s) => n + Buffer.byteLength(s), 0);
   expect(bytes).toBe(0);
