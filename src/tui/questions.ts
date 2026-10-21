@@ -173,14 +173,20 @@ export class Questions {
     this.update(page, open);
   }
 
+  private keepClosing(q: PageQuestions, open: Question[]): Question[] {
+    const before = head(q);
+    return q.closing && before && !open.some((x) => x.id === before.id) ? [before, ...open] : open;
+  }
+
   /** New open questions: a new one ends a put-off; a new head starts at its first row. */
   private update(page: QuestionPage, open: Question[]): void {
     const q = page.questions;
     const before = head(q);
     // A read can see the head answered by the close still in flight here: it stays until that close ends.
-    if (q.closing && before && !open.some((x) => x.id === before.id)) open = [before, ...open];
+    open = this.keepClosing(q, open);
     for (const x of open) q.seen.set(x.id, x);
     q.open = open;
+    if (!open.length) q.expanded = false;
     if (q.hidden && open.some((x) => !q.hidden!.has(x.id))) q.hidden = null;
     if (before && !open.some((x) => x.id === before.id)) this.headGone(page, before);
     else if (head(q)?.id !== before?.id) this.reset(page);
@@ -395,6 +401,7 @@ export class Questions {
       q.closing = false;
     }
     q.open = q.open.filter((x) => x.id !== h.id);
+    if (!q.open.length) q.expanded = false;
     this.sync();
     this.host.draw();
   }
@@ -423,7 +430,7 @@ export class Questions {
     q.stamp = NaN;
     await this.pollPage(page);
     q.hidden = null;
-    q.expanded = true;
+    q.expanded = q.open.length > 0;
     if (!q.open.length) return this.host.say(dim("no open questions"), page);
 
     this.sync();

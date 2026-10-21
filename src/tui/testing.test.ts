@@ -96,3 +96,14 @@ describe("FakeScreen", () => {
     expect(s.text()).toBe("");
   });
 });
+
+test("SGR dim, bold and foreground survive soft wraps but not the block reset", async () => {
+  const { commit } = await import("./render");
+  const s = new FakeScreen(4, 8);
+  s.write(commit(["\x1b[2mgraygray\x1b[31;1mredred\x1b[0m", "normal"], 4));
+  const attrs = s.attributes();
+  expect(attrs[1]!.every((c) => c.dim && !c.bold)).toBe(true);
+  expect(attrs[2]!.every((c) => c.dim && c.bold && c.foreground === "31")).toBe(true);
+  expect(attrs[3]![0]).toEqual({ dim: true, bold: true, foreground: "31" });
+  expect(attrs[4]!.every((c) => !c.dim && !c.bold && c.foreground === "")).toBe(true);
+});

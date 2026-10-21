@@ -1491,6 +1491,7 @@ describe("orchestrator questions", () => {
     expect(orchs.said["qa-typed"]).toEqual([]);
 
     await ask1("qa-typed", "Project name?");
+    await app.questions.command(app.page);
     await until(() => live(term).includes("? Project name?") && live(term).includes("answer>"));
     term.press({ name: "paste", text: "x".repeat(2001) });
     term.press({ name: "enter" });
@@ -1786,6 +1787,7 @@ describe("orchestrator questions", () => {
       answer: async (p, id, text) => { const q = await fileStore.answer(p, id, text); written = true; await gate; return q; },
     };
     const { term, app, stop } = await start("qa-race", { pollMs: 5, questions: store });
+    await app.questions.command(app.page);
     await until(() => live(term).includes("? Which db?"));
     term.type("mysql");
     await until(() => live(term).includes("answer> mysql"));
@@ -1797,6 +1799,7 @@ describe("orchestrator questions", () => {
     expect(term.screen()).not.toContain("answered elsewhere");
     expect(app.input.text).toBe("");
     await ask1("qa-race", "Project name?");
+    await app.questions.command(app.page);
     await until(() => live(term).includes("? Project name?") && live(term).includes("answer>"));
     await stop();
   });
@@ -2156,6 +2159,65 @@ test("queued user messages show only when consumed, in order, alongside external
   expect(app.page!.sent).toEqual([]);
   expect(app.page!.lines.map(raw).map(strip)).toEqual(["> one", "> two", "> external"]);
   done();
+  app.quit();
+  await running;
+});
+
+test("unfinished calls commit red in turns and finished agent transcripts", async () => {
+  const term = fakeTerm(80, 14);
+  const project = "interrupted-ui";
+  const transcript = paths.transcript(project, "worker-ended");
+  mkdirSync(join(transcript, ".."), { recursive: true });
+  await Bun.write(transcript, JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "tool_use", id: "v1", name: "bash", input: { command: "sleep forever" } }] } }) + "\n");
+  const app = new App({ term, pollMs: 100_000, agents: async () => [{ name: "worker-ended", live: false }], openOrchestrator: async (_p, _u, _w, _i, tools) => ({
+    async say() {}, async pending() { return false; },
+    async turn() { tools!.onTool({ id: "a", name: "bash", input: { command: "wait" } }); return []; },
+  }) });
+  const running = app.run(project);
+  await until(() => !!app.page);
+  term.type("go\r");
+  await until(() => term.screen().includes("⏺ Bash(wait)\n  ⎿  interrupted"));
+  expect(app.page!.calls.size).toBe(0);
+  expect(term.raw()).toContain("\x1b[31m⏺");
+  term.type("/agents\r");
+  await until(() => !!app.menu);
+  term.press({ name: "enter" });
+  await until(() => term.screen().includes("⏺ Bash(sleep forever)\n  ⎿  interrupted"));
+  expect(app.page!.view!.calls.size).toBe(0);
+  app.quit();
+  await running;
+});
+
+test("header caches model and filters subagent counts; unchanged background frames write no bytes", async () => {
+  const term = fakeTerm(80, 24);
+  const ticks: { fn: () => void; ms: number }[] = [];
+  let now = 0;
+  const clock: Clock = { now: () => now, every: (fn, ms) => { const tick = { fn, ms }; ticks.push(tick); return () => { ticks.splice(ticks.indexOf(tick), 1); }; } };
+  let model = "model-a", reads = 0;
+  const app = new App({ term, clock, pollMs: 100_000, projectModel: async () => { reads++; return model; }, agents: async () => [{ name: "orchestrator", live: true }, { name: "worker-a", live: true }, { name: "reviewer-a", live: true }, { name: "worker-old", live: false }], openOrchestrator: fakeOrchestrators().openOrchestrator });
+  const running = app.run("header-test");
+  await until(() => term.screen().includes("model-a") && term.screen().includes("2 agents running"));
+  const readOnce = reads;
+  app.frame(); app.frame();
+  expect(reads).toBe(readOnce);
+  model = "model-b";
+  await app.refreshHeader();
+  await until(() => term.screen().includes("model-b") && term.display.clears === 1);
+  const background = app.page!;
+  await app.openPage("foreground-test");
+  background.busy = true;
+  app.draw();
+  await settle();
+  expect(ticks.map((t) => t.ms)).toEqual([100]);
+  const before = term.writes.length;
+  const lastBytes = Buffer.byteLength(term.writes.at(-1)!);
+  for (let i = 0; i < 10; i++) { now += 100; ticks[0]!.fn(); await Bun.sleep(20); }
+  const bytes = term.writes.slice(before).reduce((n, s) => n + Buffer.byteLength(s), 0);
+  expect(bytes).toBe(0);
+  await Bun.write("/tmp/tui-background-bandwidth.json", JSON.stringify({ cols: 80, rows: 24, oldBytesPerSecond: lastBytes * (1000 / 33), newBytesPerSecond: bytes }));
+  app.page!.busy = true;
+  app.draw();
+  expect(ticks.map((t) => t.ms)).toEqual([33]);
   app.quit();
   await running;
 });

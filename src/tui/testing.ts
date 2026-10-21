@@ -53,6 +53,30 @@ function sgrBackground(params: string, bg: string): string {
   return bg;
 }
 
+export interface CellStyle { bold: boolean; dim: boolean; foreground: string }
+const DEFAULT_STYLE: CellStyle = { bold: false, dim: false, foreground: "" };
+
+/** The foreground/intensity part of SGR; colour payload numbers never count as flags. */
+function styledParam(p: string, style: CellStyle): CellStyle {
+  if (/^(?:0)?$/.test(p)) return { ...DEFAULT_STYLE };
+  if (p === "1") return { ...style, bold: true };
+  if (p === "2") return { ...style, dim: true };
+  if (p === "22") return { ...style, bold: false, dim: false };
+  if (p === "39") return { ...style, foreground: "" };
+  if (/^(?:3[0-7]|9[0-7]|38[:;].*)$/.test(p)) return { ...style, foreground: p };
+  return style;
+}
+
+function sgrStyle(params: string, style: CellStyle): CellStyle {
+  const ps = params.split(";");
+  for (let i = 0; i < ps.length;) {
+    const [, used] = sgrParam(ps, i, "");
+    style = styledParam(ps.slice(i, i + used).join(";"), style);
+    i += used;
+  }
+  return style;
+}
+
 /** DEC private modes it models: cursor visibility, bracketed paste, synchronized output. */
 const MODES = new Set([25, 2004, 2026]);
 
@@ -63,6 +87,8 @@ export class FakeScreen {
   private bgs: string[][] = [];
   /** The current SGR background. */
   private bg = "";
+  private style: CellStyle = { ...DEFAULT_STYLE };
+  private styles = new WeakMap<string[], CellStyle[]>();
   /** What it answers an OSC 11 query with (e.g. "rgb:0000/0000/0000"); unset, it stays silent like a terminal without it. */
   background?: string;
   /** OSC 11 queries seen, and the replies they got (the terminal's input, for the test to feed back). */
@@ -92,6 +118,8 @@ export class FakeScreen {
     const line = this.line(row);
     line.length = Math.min(line.length, n);
     this.bgLine(row).length = line.length;
+    const styles = this.styles.get(line);
+    if (styles) styles.length = line.length;
   }
 
   write(s: string): void {
@@ -115,7 +143,7 @@ export class FakeScreen {
   /** The escapes it models, tried in order: each pattern's match is handed to its handler. */
   private readonly escapes: [RegExp, (m: RegExpExecArray) => void][] = [
     [/^\x1b\[\?(\d+)([hl])/, (m) => this.mode(Number(m[1]), m[2] === "h")],
-    [/^\x1b\[([0-9;:]*)m/, (m) => { this.bg = sgrBackground(m[1]!, this.bg); }],
+    [/^\x1b\[([0-9;:]*)m/, (m) => { this.bg = sgrBackground(m[1]!, this.bg); this.style = sgrStyle(m[1]!, this.style); }],
     [/^\x1b\]11;\?(?:\x07|\x1b\\)/, () => this.query()],
     [/^\x1b\[([0-9;:]*)([ABCDGHJK])/, (m) => CSI[m[2]!]!(this, m[1] ? m[1].split(";").map((p) => Number(p) || 0) : [])],
     [/^\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/, () => {}], // OSC 8 links take no room
@@ -162,9 +190,22 @@ export class FakeScreen {
     while (line.length < this.col) { line.push(" "); bgs.push(""); }
     line[this.col] = ch;
     bgs[this.col] = this.bg;
+    this.paint(this.col, width);
     if (width === 2) { line[this.col + 1] = ""; bgs[this.col + 1] = this.bg; }
     this.col += width;
     if (this.col >= this.cols) { this.col = this.cols - 1; this.pending = true; }
+  }
+
+  private paint(col: number, width: number): void {
+    const line = this.line();
+    const styles = this.styles.get(line) ?? [];
+    for (let c = col; c < col + width; c++) styles[c] = { ...this.style };
+    this.styles.set(line, styles);
+  }
+
+  /** Foreground and intensity for every cell (scrollback first), independently of background. */
+  attributes(): CellStyle[][] {
+    return this.buf.map((row) => row.map((_, c) => ({ ...(this.styles.get(row)?.[c] ?? DEFAULT_STYLE) })));
   }
 
   /** Erased cells would take the current background on a real terminal; nothing the TUI writes relies on that. */
@@ -190,7 +231,7 @@ export class FakeScreen {
     const line = this.line();
     const bgs = this.bgLine();
     if (n === 0) this.cut(this.row, this.col);
-    else if (n === 1) for (let c = 0; c <= this.col && c < line.length; c++) { line[c] = " "; bgs[c] = ""; }
+    else if (n === 1) for (let c = 0; c <= this.col && c < line.length; c++) { line[c] = " "; bgs[c] = ""; const styles = this.styles.get(line); if (styles) styles[c] = { ...DEFAULT_STYLE }; }
     else if (n === 2) this.cut(this.row, 0);
     else throw new Error(`unmodelled K${n}`);
   }
