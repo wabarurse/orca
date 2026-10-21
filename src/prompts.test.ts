@@ -58,6 +58,34 @@ describe("rolePrompt", () => {
     }
   });
 
+  test("reuse or a new branch: the rule is in spawn's description, the orchestrator prompt points at it", () => {
+    const spec = makeSpawn({} as Runner).spec;
+    const d = spec.description ?? "";
+    // Re-spawning continues the agent with its context.
+    expect(d).toMatch(/again[^.]*continues[^.]*transcript[^.]*context/i);
+    // Reuse: same files or feature, small, no reviewer working on it.
+    const reuse = d.split("\n").find((l) => /^- Reuse/.test(l))!;
+    expect(reuse).toMatch(/spawn its worker again/i);
+    expect(reuse).toMatch(/same files or feature/i);
+    expect(reuse).toMatch(/small/i);
+    expect(reuse).toMatch(/no reviewer/i);
+    // New branch: independent, bigger PR under review, own merge order, waiting on CI or merge.
+    const fresh = d.split("\n").find((l) => /^- Start a new branch/.test(l))!;
+    for (const why of [/independent/i, /PR under review much bigger/i, /merge order/i, /waiting on CI or merge/i]) expect(fresh).toMatch(why);
+    // Unsure: the user chooses from the plan table; reuse is named there.
+    expect(d).toMatch(/unsure[^.]*plan table[^.]*user choose/i);
+    expect(d).toContain("(existing, reused)");
+    expect(d).toMatch(/merged branches[^.]*cannot be reused/i);
+    const branch = (spec.input_schema as { properties: { branch: { description: string } } }).properties.branch.description;
+    expect(branch).toMatch(/reuse/i);
+    for (const maxReviewRounds of [0, 1, 100]) {
+      const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
+      expect(p).toMatch(/reusing an open branch[^.]*\(see spawn\)/i);
+      expect(p).toContain("(existing) branch · what it does · depends on");
+      expect(p.length).toBeLessThan(2000);
+    }
+  });
+
   test("each role gets its own short list", () => {
     for (const [role, maxReviewRounds] of [["orchestrator", 0], ["orchestrator", 1], ["orchestrator", 100], ["worker", 1], ["reviewer", 1]] as const) {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
