@@ -207,6 +207,27 @@ test("question answers and skips restore as the dim line the page showed live, n
     `${bold(">")} [not a question] hello`,
   ]);
   expect(answeredLine("Port?", null, "8080")).toBe(dim("? Port? → skipped, default: 8080"));
-  expect(questionReply('[q1] answer to "a": b')).toEqual({ id: "q1", line: dim("? a → b") });
   expect(questionReply("plain")).toBeNull();
+});
+
+test("question replies: the question is looked up by id, so quotes, `\": ` and parens survive; the regex is only a fallback", () => {
+  const id = "2026-01-02T03-04-05.678Z-000007-0123abcd";
+  const text = 'Use "a": or "b"?';
+  const answered = `[${id}] answer to "${text}": say "x": y`;
+  const asked = new Map([[id, { text, default: "b (fast)", status: "answered", answer: 'say "x": y' }]]);
+  expect(questionReply(answered, (i) => asked.get(i))).toEqual({ id, line: answeredLine(text, 'say "x": y') });
+  // Still open in the file (read before it closed): the prefix is the known text.
+  const open = new Map([[id, { text }]]);
+  expect(questionReply(answered, (i) => open.get(i))!.line).toBe(answeredLine(text, 'say "x": y'));
+  const skipped = `[${id}] skipped "${text}"; use your default (b (fast))`;
+  expect(questionReply(skipped, (i) => asked.get(i))!.line).toBe(answeredLine(text, null, "b (fast)"));
+  // No file: the fallback keeps parens in the default and cuts an answer at the first `": `.
+  expect(questionReply(skipped)!.line).toBe(answeredLine(text, null, "b (fast)"));
+  expect(questionReply(`[${id}] answer to "Port?": 80 "or": 81`)!.line).toBe(answeredLine("Port?", '80 "or": 81'));
+  // Only questions.ts's id shape counts, and only one line.
+  expect(questionReply('[q1] answer to "a": b')).toBeNull();
+  expect(questionReply(`[${id}] answer to "a": b\nmore`)).toBeNull();
+  // restore() takes the lookup.
+  const entries = transcript(meta, user(inbox(["user", answered])));
+  expect(restore(entries, 80, MAX_RESTORED_ROWS, (i) => asked.get(i)).map(raw)).toEqual([answeredLine(text, 'say "x": y')]);
 });
