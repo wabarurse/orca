@@ -294,7 +294,9 @@ export class App {
     }, this.deps.pollMs ?? 2000);
     try {
       this.draw(); // "opening…" at once
+      const shaded = term.background?.then(() => this.draw()); // the input in the terminal's shade as soon as it is known
       await this.openStartPages(project, url);
+      await shaded; // the first page's user lines go into the scrollback in that shade
       this.started = true;
       this.pending.push(...this.screenLines());
       this.draw();

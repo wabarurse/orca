@@ -85,6 +85,8 @@ function fakeOrchestrators() {
 }
 
 const settle = () => Bun.sleep(15);
+/** A real terminal's clock whose background-reply window ends at once, as for a terminal that never answers (term.test.ts covers the window). */
+const NO_REPLY_WINDOW = { now: Date.now, setTimer: (fn: () => void) => { fn(); return () => {}; } };
 /** Wait until `cond` holds, up to two seconds. */
 async function until(cond: () => boolean): Promise<void> {
   const deadline = Date.now() + 2000;
@@ -972,7 +974,7 @@ describe("inline screen", () => {
     const modes: boolean[] = [];
     const stdin = { isTTY: true, setRawMode: (on: boolean) => { modes.push(on); }, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
     const stdout = { isTTY: true, columns: 80, rows: 24, write: (s: string) => { out.push(s); return true; }, on() {} };
-    const real = realTerminal(stdin as never, stdout as never);
+    const real = realTerminal(stdin as never, stdout as never, undefined, NO_REPLY_WINDOW);
     real.open();
     real.close();
     expect(modes).toEqual([true, false]);
@@ -1025,7 +1027,7 @@ describe("frames, resizes, startup and crashes", () => {
     await until(() => term.screen().endsWith("four"));
     const shown = term.display.screen();
     expect(shown.length).toBe(6);
-    expect(shown.slice(-2)).toEqual(["  four", ""]); // the input's padding row last
+    expect(shown.at(-1)).toBe("  four"); // no padding: the menu above takes the rows
     expect(shown.join("\n")).toContain("alpha · no remote");
     expect(term.display.text().startsWith("> hello\nalpha says hi\nworker-x done\n")).toBe(true);
     app.quit();
@@ -1131,7 +1133,7 @@ describe("frames, resizes, startup and crashes", () => {
       };
       const stdin = { isTTY: true, setRawMode: (on: boolean) => { modes.push(on); }, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
       const stdout = { isTTY: true, columns: 80, rows: 24, write: (s: string) => { out.push(s); return true; }, on() {} };
-      const term = realTerminal(stdin as never, stdout as never, proc as never);
+      const term = realTerminal(stdin as never, stdout as never, proc as never, NO_REPLY_WINDOW);
       return { term, out, modes, handlers, exits, errs };
     };
     for (const [event, code] of [["SIGTERM", 143], ["SIGHUP", 129], ["uncaughtException", 1], ["exit", null]] as const) {
@@ -2023,6 +2025,32 @@ describe("user background", () => {
     term.resize(24, 10);
     await until(() => term.display.clears === 1 && term.screen().includes("> draft"));
     check(24);
+    app.quit();
+    await running;
+  });
+});
+
+describe("terminal background", () => {
+  test("the first page is committed only once the terminal's background is known, in its shade; the input is redrawn in it", async () => {
+    const t = openTranscript(paths.transcript("shaded", "orchestrator"));
+    await t.append({ type: "meta", role: "orchestrator", model: "m" });
+    await t.append({ type: "message", message: { role: "user", content: "[user] earlier question" } });
+    const term = fakeTerm(30, 10);
+    let answer!: () => void;
+    term.background = new Promise<void>((resolve) => { answer = () => { setUserFill("\x1b[48;5;254m"); resolve(); }; });
+    const orchs = fakeOrchestrators();
+    const openOrchestrator: typeof orchs.openOrchestrator = async (...args) => ({ ...(await orchs.openOrchestrator(...args)), entries: () => t.branch() });
+    const app = new App({ term, openOrchestrator, pollMs: 100_000 });
+    const running = app.run("shaded");
+    await until(() => !!app.page);
+    await Bun.sleep(40);
+    expect(term.screen()).not.toContain("earlier question"); // held until the shade is known
+    answer();
+    await until(() => term.screen().includes("> earlier question"));
+    const row = term.display.text().split("\n").indexOf("> earlier question");
+    expect(term.display.backgrounds()[row]!.every((b) => b === "48;5;254")).toBe(true);
+    const input = term.display.top + term.display.row;
+    expect(term.display.backgrounds()[input]![0]).toBe("48;5;254");
     app.quit();
     await running;
   });
