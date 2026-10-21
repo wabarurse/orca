@@ -1,4 +1,4 @@
-// The full-screen TUI, kept bare: a tab bar, the page, an input line. One
+// The full-screen TUI, kept bare: a tab bar, the page, an input area. One
 // page per orchestrator (one per project): Ctrl+N starts a new one named
 // orch-xxxx (/rename gives it a display name), Ctrl+Z and Ctrl+X move between them. Type to
 // talk to the page's orchestrator; worker and reviewer reports arrive through
@@ -9,8 +9,9 @@ import { homedir } from "node:os";
 import { paths } from "../config";
 import type { Orchestrator } from "../orchestrator";
 import { follow } from "../view";
+import * as ed from "./editor";
 import type { Key } from "./keys";
-import { bold, dim, render, type Frame, type Menu } from "./render";
+import { bold, dim, inputArea, render, visibleLength, type Frame, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 
 export interface Page {
@@ -65,6 +66,8 @@ interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | voi
 
 const HELP = [
   "^N new orchestrator   ^Z ^X switch pages   PgUp PgDn scroll   Esc clear",
+  "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
+  "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history",
   "/keys shows what your terminal sends for a chord (Esc ends)",
   "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
   "/agents   /models [id]   /accounts   /login claude|codex [profile]",
@@ -74,10 +77,27 @@ const HELP_VIEW = "/back (or Esc) leaves the agent view";
 /** A page shows activity while its turn runs or its agent view follows a live agent. */
 const active = (p: Page) => p.busy || !!p.view?.live;
 
+/** Editing keys, as C- (Ctrl) M- (Alt) name; Shift is ignored. Plain Enter submits before this is reached. */
+const EDITS: Record<string, (s: ed.EditState) => ed.EditState> = {
+  enter: ed.newline, "M-enter": ed.newline,
+  backspace: ed.backspace, "M-backspace": ed.deleteWordBack, "C-backspace": ed.deleteWordBack, "C-h": ed.backspace,
+  delete: ed.deleteForward, "M-d": ed.deleteWordForward,
+  left: ed.left, right: ed.right,
+  "M-left": ed.wordLeft, "C-left": ed.wordLeft, "M-b": ed.wordLeft,
+  "M-right": ed.wordRight, "C-right": ed.wordRight, "M-f": ed.wordRight,
+  home: ed.home, "C-a": ed.home, end: ed.end, "C-e": ed.end,
+  "C-u": ed.killToStart, "C-k": ed.killToEnd, "C-w": ed.rubout,
+};
+
+/** The text a key types (a printable run or a paste), if any. */
+const typedText = (k: Key): string | undefined => ((k.name === "char" || k.name === "paste") && !k.ctrl && !k.alt ? k.text : undefined);
+
 export class App {
   pages: Page[] = [];
   active = 0;
   input = { text: "", cursor: 0 };
+  /** First input row on screen, kept between frames so the input area scrolls only when the cursor leaves it. */
+  private inputTop: number | undefined;
   scroll = 0;
   menu: ActiveMenu | null = null;
   loggingIn = false;
@@ -162,13 +182,13 @@ export class App {
   frame(): Frame {
     const page = this.page;
     const body = page ? (page.view ? page.view.lines : page.partial ? [...page.lines, page.partial] : page.lines) : [];
-    const prompt = page?.view ? dim(`${page.view.name} > `) : dim("> ");
+    const status = page ? this.status(page) : null;
+    const { input, area } = this.inputFrame(status ? 1 : 0);
     const header = page ? dim(`${page.name}  ·  ${paths.repo(page.project).replace(homedir(), "~")}  ·  ${shortRemote(page.remote)}`) : "";
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows, header,
       tabs: this.pages.map((p, i) => ({ title: p.view ? `${p.name} › ${p.view.name}` : p.name, active: i === this.active, busy: active(p), spinner: this.spinner() })),
-      lines: body, scroll: this.scroll, status: page ? this.status(page) : null,
-      input: { prompt, text: this.input.text, cursor: this.input.cursor },
+      lines: body, scroll: this.scroll, status, input, inputArea: area,
       menu: this.menu,
     };
   }
@@ -211,6 +231,19 @@ export class App {
       .catch(() => {})
       .finally(() => this.liveChecks.delete(project));
     this.liveChecks.set(project, check);
+  }
+
+  /** The input and its laid-out area, keeping the window's top row between frames. */
+  private inputFrame(reserved: number): { input: Input; area: InputArea } {
+    const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, top: this.inputTop };
+    const area = inputArea(input, this.deps.term.cols, this.deps.term.rows, reserved);
+    input.top = this.inputTop = area.top;
+    return { input, area };
+  }
+
+  private prompt(): string {
+    const view = this.page?.view;
+    return view ? dim(`${view.name} > `) : dim("> ");
   }
 
   draw(): void {
@@ -407,7 +440,8 @@ export class App {
     if (text === "/agents") return this.agentsMenu(page);
     if (text.startsWith("/")) return this.say(dim(`unknown command ${text.split(" ")[0]}`));
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
-    page.lines.push(`${bold(">")} ${text}`);
+    const [first, ...rest] = text.split("\n");
+    page.lines.push(`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`));
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
     if (this.loggingIn) {
       this.queued.set(page, [...(this.queued.get(page) ?? []), text]);
@@ -444,8 +478,9 @@ export class App {
       else this.input = { text: "", cursor: 0 };
       return this.draw();
     }
-    if (k.name === "enter") {
-      const text = this.input.text.trim();
+    if (k.name === "enter" && !k.shift && !k.alt) {
+      // Drop blank lines around the message but keep the first line's indent.
+      const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
       this.input = { text: "", cursor: 0 };
       this.scroll = 0;
       this.historyAt = -1;
@@ -458,29 +493,28 @@ export class App {
     this.draw();
   }
 
-  /** Plain line editing on the input field. */
+  /** Editing on the input area; the logic lives in editor.ts. */
   private edit(k: Key): void {
-    const { text, cursor } = this.input;
-    if (k.name === "char" && k.text && !k.ctrl && !k.alt) this.input = { text: text.slice(0, cursor) + k.text + text.slice(cursor), cursor: cursor + k.text.length };
-    else if (k.name === "backspace" && cursor > 0) this.input = { text: text.slice(0, cursor - 1) + text.slice(cursor), cursor: cursor - 1 };
-    else if (k.name === "delete") this.input = { text: text.slice(0, cursor) + text.slice(cursor + 1), cursor };
-    else if (k.name === "left") this.input.cursor = Math.max(0, cursor - 1);
-    else if (k.name === "right") this.input.cursor = Math.min(text.length, cursor + 1);
-    else if (k.name === "home" || (k.ctrl && k.name === "a")) this.input.cursor = 0;
-    else if (k.name === "end" || (k.ctrl && k.name === "e")) this.input.cursor = text.length;
-    else if (k.ctrl && k.name === "u") this.input = { text: text.slice(cursor), cursor: 0 };
-    else if (k.ctrl && k.name === "k") this.input = { text: text.slice(0, cursor), cursor };
-    else if (k.ctrl && k.name === "w") {
-      const head = text.slice(0, cursor).replace(/\S+\s*$/, "");
-      this.input = { text: head + text.slice(cursor), cursor: head.length };
-    } else if (k.name === "up" && this.historyAt + 1 < this.history.length) {
-      this.historyAt++;
-      const t = this.history[this.historyAt]!;
-      this.input = { text: t, cursor: t.length };
-    } else if (k.name === "down" && this.historyAt >= 0) {
-      this.historyAt--;
-      const t = this.historyAt === -1 ? "" : this.history[this.historyAt]!;
-      this.input = { text: t, cursor: t.length };
-    }
+    const text = typedText(k);
+    if (text) { this.input = ed.insert(this.input, text); return; }
+    if (k.name === "up" || k.name === "down") return this.upDown(k.name === "up" ? -1 : 1);
+    const action = EDITS[`${k.ctrl ? "C-" : ""}${k.alt ? "M-" : ""}${k.name}`];
+    if (action) this.input = action(this.input);
+  }
+
+  /** Up / Down move between rows; on the first / last row they walk the history. */
+  private upDown(dir: -1 | 1): void {
+    const moved = ed.vertical(this.input, this.deps.term.cols - visibleLength(this.prompt()), dir);
+    if (moved) this.input = moved;
+    else this.recall(dir);
+  }
+
+
+  private recall(dir: -1 | 1): void {
+    if (dir === -1 && this.historyAt + 1 < this.history.length) this.historyAt++;
+    else if (dir === 1 && this.historyAt >= 0) this.historyAt--;
+    else return;
+    const t = this.historyAt === -1 ? "" : this.history[this.historyAt]!;
+    this.input = { text: t, cursor: t.length };
   }
 }

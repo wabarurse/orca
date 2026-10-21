@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { parseKeys } from "./keys";
+import { keyReader, parseKeys, type Key, type SetTimer } from "./keys";
+
+/** A keyReader on a manual timer: fire() runs the pending idle flush. */
+function reader() {
+  const got: Key[] = [];
+  let pending: (() => void) | null = null;
+  const setTimer: SetTimer = (fn) => { pending = fn; return () => { pending = null; }; };
+  const r = keyReader((k) => got.push(k), 300, setTimer);
+  return {
+    got, feed: r.feed, close: r.close,
+    fire() { const fn = pending; pending = null; fn?.(); },
+    get timers() { return pending ? 1 : 0; },
+  };
+}
 
 describe("parseKeys", () => {
   test("printable runs are batched", () => {
@@ -36,6 +49,120 @@ describe("parseKeys", () => {
 
   test("xterm modifyOtherKeys encodes Ctrl+, too", () => {
     expect(parseKeys("\x1b[27;5;44~")).toEqual([{ name: ",", ctrl: true }]);
+  });
+
+  test("alt+backspace in every encoding", () => {
+    const want = [{ name: "backspace", alt: true }];
+    expect(parseKeys("\x1b\x7f")).toEqual(want);
+    expect(parseKeys("\x1b[127;3u")).toEqual(want);
+    expect(parseKeys("\x1b[27;3;127~")).toEqual(want);
+  });
+
+  test("word movement and deletion chords", () => {
+    expect(parseKeys("\x1b[1;3D\x1b[1;3C")).toEqual([{ name: "left", alt: true }, { name: "right", alt: true }]);
+    expect(parseKeys("\x1b\x1b[D")).toEqual([{ name: "left", alt: true }]);
+    expect(parseKeys("\x1bb\x1bf\x1bd")).toEqual([{ name: "b", alt: true }, { name: "f", alt: true }, { name: "d", alt: true }]);
+    expect(parseKeys("\x1b[100;3u")).toEqual([{ name: "d", alt: true }]);
+    expect(parseKeys("\x17")).toEqual([{ name: "w", ctrl: true }]);
+  });
+
+  test("shift+enter and alt+enter", () => {
+    expect(parseKeys("\x1b[13;2u")).toEqual([{ name: "enter", shift: true }]);
+    expect(parseKeys("\x1b[27;2;13~")).toEqual([{ name: "enter", shift: true }]);
+    expect(parseKeys("\x1b\r")).toEqual([{ name: "enter", alt: true }]);
+  });
+
+  test("bracketed paste is one key with normalised newlines", () => {
+    expect(parseKeys("a\x1b[200~one\r\ntwo\rthree\x1b[201~b")).toEqual([
+      { name: "char", text: "a" }, { name: "paste", text: "one\ntwo\nthree" }, { name: "char", text: "b" },
+    ]);
+  });
+
+  test("a paste split across reads waits for its end marker", () => {
+    const r = reader();
+    r.feed("x\x1b[200~line one\r");
+    expect(r.got).toEqual([{ name: "char", text: "x" }]);
+    r.feed("\nline two\x1b[20");
+    r.feed("1~y");
+    expect(r.got).toEqual([{ name: "char", text: "x" }, { name: "paste", text: "line one\nline two" }, { name: "char", text: "y" }]);
+  });
+
+  test("a read that ends inside the paste start marker waits for the rest", () => {
+    const r = reader();
+    r.feed("ab\x1b[20");
+    expect(r.got).toEqual([{ name: "char", text: "ab" }]);
+    r.feed("0~x\ry\x1b[201~");
+    expect(r.got).toEqual([{ name: "char", text: "ab" }, { name: "paste", text: "x\ny" }]);
+  });
+
+  test("unfinished escapes wait for the next read or the timeout; a lone Esc does not", () => {
+    const r = reader();
+    r.feed("\x1b[1;");
+    r.feed("3D");
+    expect(r.got).toEqual([{ name: "left", alt: true }]);
+    r.feed("\x1bO");
+    expect(r.got.length).toBe(1);
+    r.feed("A");
+    expect(r.got[1]).toEqual({ name: "up" });
+    r.feed("\x1b");
+    expect(r.got[2]).toEqual({ name: "escape" });
+    r.feed("\x1b[");
+    expect(r.got.length).toBe(3);
+    r.fire();
+    expect(r.got[3]).toEqual({ name: "escape" });
+  });
+
+  test("a stalled paste stays paste text after the timeout: no Enter", () => {
+    const r = reader();
+    r.feed("\x1b[200~part one\r");
+    r.fire();
+    r.feed("part two\rmore\x1b[201~");
+    expect(r.got.some((k) => k.name === "enter")).toBe(false);
+    expect(r.got.map((k) => k.text).join("")).toBe("part one\npart two\nmore");
+    expect(r.got.every((k) => k.name === "paste")).toBe(true);
+  });
+
+  test("a stalled paste flushes what arrived, then keeps reading paste text", () => {
+    const r = reader();
+    r.feed("\x1b[200~part one ");
+    r.fire();
+    expect(r.got).toEqual([{ name: "paste", text: "part one " }]);
+    r.feed("part two\rmore\x1b[201~\r");
+    expect(r.got).toEqual([{ name: "paste", text: "part one " }, { name: "paste", text: "part two\nmore" }, { name: "enter" }]);
+  });
+
+  test("Ctrl+C ends an unterminated paste", () => {
+    const r = reader();
+    r.feed("\x1b[200~stuck");
+    r.feed("\x03");
+    expect(r.got).toEqual([{ name: "paste", text: "stuck" }, { name: "c", ctrl: true }]);
+    expect(parseKeys("\x1b[200~stuck\x03")).toEqual([{ name: "paste", text: "stuck" }, { name: "c", ctrl: true }]);
+  });
+
+  test("close drops what is held and stops the timer", () => {
+    const r = reader();
+    r.feed("\x1b[200~half");
+    r.close();
+    expect(r.timers).toBe(0);
+    r.feed("a");
+    expect(r.got).toEqual([{ name: "char", text: "a" }]);
+  });
+
+  test("the real timer flushes after idleMs", async () => {
+    const got: Key[] = [];
+    const r = keyReader((k) => got.push(k), 10);
+    r.feed("\x1b[");
+    await Bun.sleep(100);
+    expect(got).toEqual([{ name: "escape" }]);
+    r.close();
+  });
+
+  test("Esc then an arrow: one read or two, the Esc survives; only Left/Right become Alt", () => {
+    expect(parseKeys("\x1b\x1b[A")).toEqual([{ name: "escape" }, { name: "up" }]);
+    expect([...parseKeys("\x1b"), ...parseKeys("\x1b[A")]).toEqual([{ name: "escape" }, { name: "up" }]);
+    expect(parseKeys("\x1b\x1b[B")).toEqual([{ name: "escape" }, { name: "down" }]);
+    expect(parseKeys("\x1b\x1b[5~")).toEqual([{ name: "escape" }, { name: "pageup" }]);
+    expect(parseKeys("\x1b\x1b[C")).toEqual([{ name: "right", alt: true }]);
   });
 
   test("a mixed buffer keeps order", () => {
