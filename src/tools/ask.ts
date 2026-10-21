@@ -20,7 +20,7 @@ export const ask: Tool = {
             properties: {
               text: { type: "string", description: "At most 500 chars." },
               options: { type: "array", items: { type: "string" }, description: "Short choices, at most 8." },
-              default: { type: "string", description: "What you will do if the user skips it." },
+              default: { type: "string", description: "What you will do if the user skips it. At most 100 chars." },
             },
             required: ["text"],
           },

@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "./config";
@@ -82,8 +82,9 @@ test("input is cleaned and capped", async () => {
   expect(cleanQuestions([{ text: "a\nb\tc", options: ["x", "x", { y: 1 }, 3, " y "], default: "x" }])).toEqual([
     { text: "a b c", options: ["x", "y"], default: "x" },
   ]);
-  expect(() => cleanQuestions([{ text: "bad\u0007" }])).toThrow("control characters");
-  expect(() => cleanQuestions([{ text: "c1\u0085" }])).toThrow("control characters");
+  expect(() => cleanQuestions([{ text: "bad\u0007" }])).toThrow("control or bidi characters");
+  expect(() => cleanQuestions([{ text: "c1\u0085" }])).toThrow("control or bidi characters");
+  for (const ch of ["\u202e", "\u2066", "\u2069", "\u2028", "\u2029"]) expect(() => cleanQuestions([{ text: `a${ch}b` }])).toThrow("bidi");
   expect(() => cleanQuestions([{ text: "x".repeat(501) }])).toThrow("over 500");
   expect(() => cleanQuestions([{ text: "q", options: ["o".repeat(101)] }])).toThrow("over 100");
   expect(() => cleanQuestions([{ text: "q", default: "d".repeat(101) }])).toThrow("over 100");
@@ -92,7 +93,20 @@ test("input is cleaned and capped", async () => {
   const ctx = { project: "q7", cwd: "/", role: "orchestrator" as const };
   expect(await askTool.run({ questions: Array.from({ length: 11 }, () => ({ text: "q" })) }, ctx)).toBe("refused: over 10 questions in one call");
   const [q] = await ask("q7", [{ text: "Why?", default: "x" }]);
-  await expect(answer("q7", q!.id, "bad\u0000")).rejects.toThrow("control characters");
+  await expect(answer("q7", q!.id, "bad\u0000")).rejects.toThrow("control or bidi characters");
   await answer("q7", q!.id, "line\nbreak");
   expect((await drain("q7", "orchestrator"))[0]?.text).toEndWith(": line break");
+});
+
+test("a failed inbox send leaves the question open and answerable", async () => {
+  const [q] = await ask("q8", [{ text: "Retry?", default: "yes" }]);
+  const box = join(paths.inbox("q8"), "orchestrator");
+  mkdirSync(paths.inbox("q8"), { recursive: true });
+  writeFileSync(box, "not a directory");
+  await expect(answer("q8", q!.id, "first")).rejects.toThrow();
+  expect((await list("q8")).map((x) => [x.id, x.status, x.answer])).toEqual([[q!.id, "open", undefined]]);
+  rmSync(box);
+  await answer("q8", q!.id, "second");
+  expect((await drain("q8", "orchestrator")).map((m) => m.text)).toEqual([`[${q!.id}] answer to "Retry?": second`]);
+  expect(await list("q8")).toEqual([]);
 });

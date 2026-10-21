@@ -5,7 +5,7 @@
 // orchestrator as an ordinary inbox message from "user".
 
 import { mkdirSync } from "node:fs";
-import { open, readdir, rename } from "node:fs/promises";
+import { open, readdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "./config";
 import { put } from "./inbox";
@@ -26,10 +26,10 @@ export type NewQuestion = Pick<Question, "text" | "options" | "default">;
 
 export const limits = { text: 500, option: 100, options: 8, questions: 10, answer: 2000 };
 
-/** Trim, turn newlines and tabs into spaces, refuse control characters and over-long text. */
+/** Trim, turn newlines and tabs into spaces, refuse control, line-separator and bidi characters and over-long text. */
 export function clean(value: string, max: number, what: string): string {
   const s = value.replace(/[\r\n\t]+/g, " ").trim();
-  if (/[\u0000-\u001f\u007f-\u009f]/.test(s)) throw new Error(`${what} has control characters`);
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(s)) throw new Error(`${what} has control or bidi characters`);
   if (s.length > max) throw new Error(`${what} is over ${max} characters`);
   return s;
 }
@@ -100,21 +100,38 @@ export async function list(project: string): Promise<Question[]> {
   return (await all(project)).filter((q) => q.status === "open");
 }
 
-async function close(project: string, id: string, status: Exclude<Status, "open">, answer?: string): Promise<Question> {
+/** Claim a question exclusively so two concurrent closes can't both pass the status check. */
+async function claim(project: string, id: string): Promise<string> {
+  const path = join(paths.questions(project), `${id}.closed`);
+  try {
+    await (await open(path, "wx")).close();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`question ${id} is already closed`);
+    throw e;
+  }
+  return path;
+}
+
+/** Close an open question and tell the orchestrator. If either step fails the
+ * question is put back to open and the claim released, so it can be retried. */
+async function close(project: string, id: string, status: Exclude<Status, "open">, tell: (q: Question) => string, answer?: string): Promise<Question> {
   if (!/^[\w.-]+$/.test(id) || id.includes("..")) throw new Error(`bad question id ${id}`);
   const f = Bun.file(file(project, id));
   if (!(await f.exists())) throw new Error(`no question ${id}`);
   const q = (await f.json()) as Question;
   if (q.status !== "open") throw new Error(`question ${id} is already ${q.status}`);
-  // Claim it exclusively so two concurrent closes can't both pass the check.
+  const lock = await claim(project, id);
+  const next: Question = { ...q, status, ...(answer === undefined ? {} : { answer }) };
+  let written = false;
   try {
-    await (await open(join(paths.questions(project), `${id}.closed`), "wx")).close();
+    await write(project, next);
+    written = true;
+    await put(project, "orchestrator", { from: "user", text: tell(next) });
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`question ${id} is already closed`);
+    if (written) await write(project, q);
+    await unlink(lock).catch(() => {});
     throw e;
   }
-  const next: Question = { ...q, status, ...(answer === undefined ? {} : { answer }) };
-  await write(project, next);
   return next;
 }
 
@@ -122,15 +139,13 @@ async function close(project: string, id: string, status: Exclude<Status, "open"
 export async function answer(project: string, id: string, text: string): Promise<Question> {
   const a = clean(text, limits.answer, "answer");
   if (!a) throw new Error("empty answer");
-  const q = await close(project, id, "answered", a);
-  await put(project, "orchestrator", { from: "user", text: `[${q.id}] answer to "${q.text}": ${a}` });
-  return q;
+  return close(project, id, "answered", (q) => `[${q.id}] answer to "${q.text}": ${a}`, a);
 }
 
 /** Skip an open question; the orchestrator falls back to its default. */
 export async function skip(project: string, id: string): Promise<Question> {
-  const q = await close(project, id, "skipped");
-  const tail = q.default ? `; use your default (${q.default})` : " (no default given); decide yourself";
-  await put(project, "orchestrator", { from: "user", text: `[${q.id}] skipped "${q.text}"${tail}` });
-  return q;
+  return close(project, id, "skipped", (q) => {
+    const tail = q.default ? `; use your default (${q.default})` : " (no default given); decide yourself";
+    return `[${q.id}] skipped "${q.text}"${tail}`;
+  });
 }
