@@ -1,9 +1,13 @@
 // The terminal behind the TUI: raw mode, bracketed paste, size and key
 // events. No alternate screen: the TUI is inline, writing into the normal
 // screen and its scrollback. The real one wraps stdin/stdout; tests pass a
-// fake with the same shape.
+// fake with the same shape. Opening asks the terminal for its background
+// colour (OSC 11) without waiting: a reply within BG_REPLY_MS sets the user
+// background's shade (style.ts); later or other OSC replies are dropped, and
+// none of them ever reaches the app as keys.
 
 import { keyReader, type Key } from "./keys";
+import { BG_QUERY, BG_REPLY_MS, parseBgReply, useTerminalBackground } from "./style";
 
 export interface Terminal {
   cols: number;
@@ -51,20 +55,26 @@ function attempt(fn: () => void): void {
   try { fn(); } catch { /* nothing left to restore */ }
 }
 
-export function realTerminal(stdin = process.stdin, stdout = process.stdout, proc: Proc = process): Terminal {
+export function realTerminal(stdin = process.stdin, stdout = process.stdout, proc: Proc = process, now: () => number = Date.now): Terminal {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error("parallels start needs a terminal; run it from an interactive shell");
-  return new RealTerminal(stdin, stdout, proc);
+  return new RealTerminal(stdin, stdout, proc, now);
 }
 
 class RealTerminal implements Terminal {
   private opened = false;
   private eraser = "";
   private readonly keyHandlers: ((k: Key) => void)[] = [];
-  private readonly reader = keyReader((key) => { for (const h of this.keyHandlers) h(key); });
+  /** When the background query went out; null once answered (or never asked). It goes out once. */
+  private asked: number | null = null;
+  private queried = false;
+  private readonly reader = keyReader((key) => {
+    if (key.name === "osc") return this.reply(key.text ?? "");
+    for (const h of this.keyHandlers) h(key);
+  });
   private readonly onData = (chunk: string) => this.reader.feed(chunk);
   private readonly handlers: [string, Handler][];
 
-  constructor(private readonly stdin: typeof process.stdin, private readonly stdout: typeof process.stdout, private readonly proc: Proc) {
+  constructor(private readonly stdin: typeof process.stdin, private readonly stdout: typeof process.stdout, private readonly proc: Proc, private readonly now: () => number) {
     this.handlers = exitHandlers(() => this.rescue(), proc);
   }
 
@@ -74,6 +84,14 @@ class RealTerminal implements Terminal {
   onKey(cb: (k: Key) => void): void { this.keyHandlers.push(cb); }
   onResize(cb: () => void): void { this.stdout.on("resize", cb); }
   eraseOnExit(text: string): void { this.eraser = text; }
+
+  /** An OSC reply: the first background reply in time sets the shade; anything else is dropped. */
+  private reply(body: string): void {
+    const bg = body.startsWith("11;") ? parseBgReply(body) : null;
+    if (!bg || this.asked === null) return;
+    if (this.now() - this.asked <= BG_REPLY_MS) useTerminalBackground(bg);
+    this.asked = null;
+  }
 
   private install(on: boolean): void {
     for (const [event, fn] of this.handlers) (on ? this.proc.on : this.proc.off).call(this.proc, event as "exit", fn);
@@ -97,6 +115,7 @@ class RealTerminal implements Terminal {
     this.stdin.on("data", this.onData);
     this.stdin.resume();
     this.stdout.write(ENTER);
+    if (!this.queried) { this.queried = true; this.asked = this.now(); this.stdout.write(BG_QUERY); }
   }
 
   close(): void {

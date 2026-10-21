@@ -169,3 +169,23 @@ describe("parseKeys", () => {
     expect(parseKeys("ab\x1b[A\rc")).toEqual([{ name: "char", text: "ab" }, { name: "up" }, { name: "enter" }, { name: "char", text: "c" }]);
   });
 });
+
+describe("OSC replies", () => {
+  test("a terminal's OSC reply is an osc key, never typed text; Alt+] still reads as Alt+]", () => {
+    expect(parseKeys("\x1b]11;rgb:0000/0000/0000\x1b\\x")).toEqual([{ name: "osc", text: "11;rgb:0000/0000/0000" }, { name: "char", text: "x" }]);
+    expect(parseKeys("\x1b]11;rgb:ffff/ffff/ffff\x07")).toEqual([{ name: "osc", text: "11;rgb:ffff/ffff/ffff" }]);
+    expect(parseKeys("\x1b]11;rgb:ff")).toEqual([{ name: "osc", text: "11;rgb:ff" }]); // cut off: dropped as a reply, not typed
+    expect(parseKeys("\x1b]")).toEqual([{ name: "]", alt: true }]);
+  });
+
+  test("a reply split across reads waits for its end", () => {
+    const r = reader();
+    r.feed("\x1b]11;rgb:00");
+    r.feed("00/0000/00");
+    r.feed("00\x1b");
+    expect(r.got).toEqual([]);
+    r.feed("\\hi");
+    expect(r.got).toEqual([{ name: "osc", text: "11;rgb:0000/0000/0000" }, { name: "char", text: "hi" }]);
+    expect(r.timers).toBe(0);
+  });
+});

@@ -1,18 +1,21 @@
 // Turn raw terminal input into key events. Understands the legacy encodings
 // (control bytes, ESC-prefixed Alt, CSI arrows) and, for terminals that use
 // them, xterm's modifyOtherKeys (CSI 27;mod;code~) and the kitty keyboard
-// protocol (CSI code;mod u).
+// protocol (CSI code;mod u). Strings the terminal sends back (OSC replies,
+// such as the answer to the background query) come out as "osc" keys, never
+// as typed text; the terminal layer takes them.
 
 export interface Key {
   /** "char" (see text), "enter", "backspace", "tab", "escape", "up", "down",
    *  "left", "right", "home", "end", "pageup", "pagedown", "delete", or a
-   *  "paste" (bracketed paste, see text), or a single character for modifier
+   *  "paste" (bracketed paste, see text), an "osc" reply from the terminal
+   *  (text is its body, e.g. "11;rgb:0000/0000/0000"), or a single character for modifier
    *  chords such as Ctrl+N ({ name: "n", ctrl }). */
   name: string;
   ctrl?: boolean;
   alt?: boolean;
   shift?: boolean;
-  /** Printable text for name "char" (consecutive characters are batched) and "paste". */
+  /** Printable text for name "char" (consecutive characters are batched) and "paste"; the body for "osc". */
   text?: string;
 }
 
@@ -59,8 +62,8 @@ const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 /** An unfinished paste is handed on in pieces of at most this size. */
 const MAX_PASTE = 1 << 20;
-/** A read that stops inside an escape sequence: CSI parameters with no final byte yet (covers a split PASTE_START), or SS3 with no key. */
-const PARTIAL_ESC = /(?:\x1b?\x1b\[[0-9;:?<>]*|\x1bO)$/;
+/** A read that stops inside an escape sequence: CSI parameters with no final byte yet (covers a split PASTE_START), SS3 with no key, or an OSC reply with no BEL or ST yet. */
+const PARTIAL_ESC = /(?:\x1b?\x1b\[[0-9;:?<>]*|\x1bO|\x1b\][0-9]*(?:;[^\x07\x1b]*)?\x1b?)$/;
 
 /** Pasted text with line endings as \n and other control characters dropped (tabs become spaces). */
 function cleanPaste(text: string): string {
@@ -211,6 +214,12 @@ function csiAt(input: string, i: number): Step {
   return [fromCsi(input.slice(i + 2, j), input[j]!), j + 1];
 }
 
+/** ESC ] digits ; body, ended by BEL or ST (or by the input when cut off): an OSC reply from the terminal; null for anything else (Alt+]). */
+function oscAt(input: string, i: number): Step | null {
+  const m = /^\x1b\](\d+;[^\x07\x1b]*)(?:\x07|\x1b\\)?/.exec(input.slice(i));
+  return m ? [{ name: "osc", text: m[1]! }, i + m[0].length] : null;
+}
+
 /** Everything starting with ESC. */
 function escapeAt(input: string, i: number): Step {
   if (input.startsWith(PASTE_START, i)) return pasteAt(input, i);
@@ -220,6 +229,8 @@ function escapeAt(input: string, i: number): Step {
     if (alt) return alt;
   }
   if (next === "[") return csiAt(input, i);
+  const osc = next === "]" ? oscAt(input, i) : null;
+  if (osc) return osc;
   if (next === "O" && input[i + 2] && LETTER_KEYS[input[i + 2]!]) return [{ name: LETTER_KEYS[input[i + 2]!]! }, i + 3];
   if (next === undefined || next === "\x1b") return [{ name: "escape" }, i + 1];
   // ESC-prefixed byte: Alt plus that key. This is how macOS sends Option+Backspace
