@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { append, commit, erase, expandTabs, inputArea, live, liveRows, menuRows, NOTHING, projectRows, reprint, visibleLength, windowStart, wrap, type Frame, type ProjectList } from "./render";
+import { append, commit, erase, sanitize, expandTabs, inputArea, live, liveRows, menuRows, NOTHING, projectRows, reprint, visibleLength, windowStart, wrap, type Frame, type ProjectList } from "./render";
 import { FakeScreen } from "./testing";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
@@ -244,5 +244,23 @@ describe("on a faithful terminal", () => {
     s.write(append(["0123456789abcdef"], frame({ cols: 10, rows: 8 }), a.shown).text);
     expect(s.text()).toBe("0123456789\nabcdef\n> hi");
     expect([s.row, s.col]).toEqual([2, 4]);
+  });
+});
+
+describe("sanitize", () => {
+  test("keeps SGR and OSC 8 links, drops every other escape and control", () => {
+    const link = "\x1b]8;;https://x.y\x07L\x1b]8;;\x1b\\";
+    expect(sanitize(`a\x1b[2Kb\x1b[Ac\r\b\x07\x0b\x0c\x1b]0;title\x07\x1b[1mB\x1b[0m${link}\x1bM\x1b[?1049h\x9b\x1bPq#0\x1b\\\x1b`)).toBe(`abc\x1b[1mB\x1b[0m${link}`);
+    expect(sanitize("tab\tkept")).toBe("tab\tkept");
+  });
+
+  test("stray cursor moves in committed or streaming text cannot break the erase", () => {
+    const evil = "out\x1b[A\x1b[2K\x1b[H\r\bput";
+    const s = new FakeScreen(20, 8);
+    const f = frame({ partial: evil, status: "s" });
+    const a = append([evil, "next"], f, NOTHING);
+    s.write(a.text);
+    s.write(live(frame({ status: "s2" }), a.shown).text);
+    expect(s.text()).toBe("output\nnext\ns2\n> hi");
   });
 });

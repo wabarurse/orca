@@ -72,6 +72,25 @@ function* tokens(line: string): Generator<{ esc: string } | { text: string }> {
   }
 }
 
+/**
+ * One escape sequence (CSI, OSC, DCS/SOS/PM/APC strings, two-byte ESC
+ * sequences, a bare ESC) or one C0/C1 control other than the tab (expanded
+ * later): \r, \b, BEL, \v, \f, \n and the rest.
+ */
+const UNSAFE = /\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[PX^_][^\x1b]*(?:\x1b\\)?|[ -\/]*[0-~])?|[\x00-\x08\x0a-\x1a\x1c-\x1f\x7f-\x9f]/g;
+/** What stays: SGR styling and OSC 8 hyperlinks. */
+const KEPT = /^(?:\x1b\[[0-9;:]*m|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\))$/;
+
+/**
+ * Text that is safe to put on screen: only SGR styling and OSC 8 links stay;
+ * every other escape (cursor moves, clears, titles…) and control character
+ * goes, so stray tool output cannot move the cursor and break the live
+ * region's erase. Split at newlines first: this drops them.
+ */
+export function sanitize(line: string): string {
+  return line.replace(UNSAFE, (m) => (KEPT.test(m) ? m : ""));
+}
+
 /** Replace tabs with spaces up to the next 8-column stop (stringWidth counts a tab as nothing). */
 export function expandTabs(line: string): string {
   if (!line.includes("\t")) return line;
@@ -165,8 +184,11 @@ export function menuRows(m: Menu, height: number): string[] {
 
 /** Finished lines as they go into the scrollback: split at newlines, wrapped to `cols`, each ending in CRLF. */
 export function commit(lines: string[], cols: number): string {
-  return lines.flatMap((l) => l.split("\n")).flatMap((l) => wrap(l, cols)).map((r) => `${r}\x1b[0m\r\n`).join("");
+  return lines.flatMap((l) => l.split("\n")).flatMap((l) => wrap(sanitize(l), cols)).map((r) => `${r}\x1b[0m\r\n`).join("");
 }
+
+/** The last `n` of `rows` (none when n is 0). */
+const lastRows = (rows: string[], n: number) => (n > 0 ? rows.slice(-n) : []);
 
 /** The live region's rows, top to bottom, and where the cursor goes in them. */
 export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
@@ -175,10 +197,10 @@ export function liveRows(f: Frame): { rows: string[]; cursor: number; col: numbe
   // Everything must fit on screen, or the cursor could not get back to the top: the overlay
   // gets what the input and status leave (but a row), the partial line the rest, showing its end.
   let free = Math.max(0, f.rows - statusRows - input.lines.length);
-  const overlay = (f.menu ? menuRows(f.menu, free - 1) : f.projects ? projectRows(f.projects, free - 1) : []).map((r) => fit(r, f.cols));
+  const overlay = (f.menu ? menuRows(f.menu, free - 1) : f.projects ? projectRows(f.projects, free - 1) : []).map((r) => fit(sanitize(r), f.cols));
   free -= overlay.length;
-  const partial = f.partial ? wrap(f.partial, f.cols).slice(-free).slice(0, free) : [];
-  const rows = [...partial, ...overlay, ...(f.status ? [fit(f.status, f.cols)] : []), ...input.lines];
+  const partial = f.partial ? lastRows(wrap(sanitize(f.partial), f.cols), free) : [];
+  const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...input.lines];
   return { rows, cursor: rows.length - input.lines.length + input.row, col: input.col };
 }
 
