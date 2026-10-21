@@ -52,6 +52,9 @@ describe("rolePrompt", () => {
       expect(line).toContain(`If it says "PR … merged", that branch is done: don't respawn; start what was waiting on it. Otherwise respawn`);
       expect(line.indexOf("PR … merged")).toBeLessThan(line.indexOf("respawn that agent"));
       expect(p).not.toMatch(/worktree remove|delete the branch|clean ?up/i);
+      expect(p).toContain("The user's message is input, not a verdict.");
+      expect(p).toContain("never start the worker while the reviewer watches CI, or the reviewer while the worker works.");
+      expect(p).toContain("agent status columns: agent · branch · state · last report · next step");
     }
   });
 
