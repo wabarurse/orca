@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { format } from "../inbox";
 import { open, type Entry } from "../transcript";
 import { lineRows, type Line } from "./lines";
-import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, toolLine } from "./restore";
+import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED } from "./restore";
+import { toolView } from "../toolview";
 import { bold, dim } from "./render";
 
 const dir = mkdtempSync(join(tmpdir(), "parallels-restore-"));
@@ -30,7 +31,7 @@ const meta = { type: "meta", role: "orchestrator", model: "m" } as const;
 const user = (content: unknown, extra = {}) => ({ type: "message", message: { role: "user", content }, ...extra }) as never;
 const assistant = (content: unknown, extra = {}) => ({ type: "message", message: { role: "assistant", content }, ...extra }) as never;
 const inbox = (...msgs: [string, string][]) => format(msgs.map(([from, text]) => ({ from, text, ts: "" })));
-const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : l.md);
+const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : l.md);
 
 test("user messages, agent reports, assistant markdown and replies; tool calls as live, results and thinking hidden", () => {
   const entries = transcript(
@@ -41,7 +42,7 @@ test("user messages, agent reports, assistant markdown and replies; tool calls a
       { type: "text", text: "# Plan\n\n| a | b |\n|---|---|\n| 1 | 2 |\n" },
       { type: "tool_use", id: "t1", name: "spawn", input: { branch: "feat/login" } },
     ]),
-    user([{ type: "tool_result", tool_use_id: "t1", content: "started worker-feat-login" }, { type: "text", text: inbox(["worker-feat-login", "Done.\n\nAll green."]) }]),
+    user([{ type: "tool_result", tool_use_id: "t1", content: "worker-feat-login" }, { type: "text", text: inbox(["worker-feat-login", "Done.\n\nAll green."]) }]),
     assistant([{ type: "tool_use", id: "t2", name: "message", input: { to: "user", text: "Login is **done**." } }, { type: "tool_use", id: "t3", name: "message", input: { to: "user", text: "refused one" } }]),
     user([{ type: "tool_result", tool_use_id: "t2", content: "sent to user" }, { type: "tool_result", tool_use_id: "t3", content: "refused: empty message", is_error: true }]),
     assistant([{ type: "text", text: "All set." }]),
@@ -50,20 +51,31 @@ test("user messages, agent reports, assistant markdown and replies; tool calls a
   expect(lines).toEqual([
     { user: `${bold(">")} build a login` }, { user: "  page please" },
     { md: "# Plan", block: true }, { md: "", block: true }, { md: "| a | b |\n|---|---|\n| 1 | 2 |", block: true },
-    toolLine("spawn", { branch: "feat/login" }),
+    { tool: "Spawn(feat/login, worker)", summary: "spawned worker-feat-login", failed: false },
     dim("From worker-feat-login: Done.…"),
-    toolLine("message", { to: "user", text: "Login is **done**." }),
-    toolLine("message", { to: "user", text: "refused one" }),
+    { tool: "Message(user: Login is **done**.)", summary: "sent to user", failed: false },
+    { tool: "Message(user: refused one)", summary: "refused: empty message", failed: true },
     { md: "All set.", block: true },
     { md: "Login is **done**.", label: bold("orchestrator") },
   ]);
-  expect(lines.some((l) => raw(l).includes("started worker") || raw(l).includes("hmm"))).toBe(false);
+  expect(lines.some((l) => raw(l).includes("All green") || raw(l).includes("hmm"))).toBe(false);
 });
 
-test("the tool line is the one agent.ts writes live", async () => {
+test("a tool call restores as the line it showed when it ended, through the formatter agent.ts and the TUI use", async () => {
   const src = await Bun.file(new URL("../agent.ts", import.meta.url)).text();
-  expect(src).toContain("write(`${toolLine(block.name, block.input)}\\n`, true);");
-  expect(toolLine("bash", { command: "ls" })).toBe(dim('▸ bash {"command":"ls"}'));
+  expect(src).toContain("toolLabel(call.name, call.input)");
+  expect(src).toContain("toolSummary(call.name, outcome)");
+  const entries = transcript(
+    meta,
+    assistant([{ type: "tool_use", id: "b1", name: "bash", input: { command: "ls" } }, { type: "tool_use", id: "b2", name: "bash", input: { command: "false" } }]),
+    user([{ type: "tool_result", tool_use_id: "b1", content: "a\nb\n" }, { type: "tool_result", tool_use_id: "b2", content: "boom\n[exit 1]" }]),
+    assistant([{ type: "tool_use", id: "b3", name: "bash", input: { command: "sleep 9" } }]), // never got a result
+  );
+  expect(restore(entries, 60)).toEqual([
+    toolView("bash", { command: "ls" }, { ok: true, text: "a\nb\n" }),
+    { tool: "Bash(false)", summary: "exit 1: boom", failed: true },
+    { tool: "Bash(sleep 9)", summary: "no result", failed: false },
+  ]);
 });
 
 test("a summary: only the branch from the head back to it, led by a dim note", () => {
@@ -131,7 +143,7 @@ test("older transcripts: a reply waits for the end of the run, past a report tha
     user(inbox(["user", "next"])),
     assistant([{ type: "text", text: "sure" }]),
   );
-  const tool = toolLine("message", { to: "user", text: "Started." });
+  const tool = { tool: "Message(user: Started.)", summary: "sent to user", failed: false };
   expect(restore(entries, 60)).toEqual([
     { user: `${bold(">")} go` }, tool, { md: "ok", block: true }, dim("From worker-a: done"), { md: "more text", block: true },
     replyLine("orchestrator", "Started."),

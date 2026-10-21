@@ -4,6 +4,7 @@
 import { existsSync, statSync } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import type { Entry } from "./transcript";
+import { firstLine as firstNonBlank, RESULT_MARK, TOOL_MARK, toolLabel, type ToolCall, type ToolOutcome } from "./toolview";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -13,11 +14,12 @@ const firstLine = (s: string, max = 100) => {
   return line.length > max ? line.slice(0, max) + "…" : line;
 };
 
-/** A tool call as the agent loop echoes it while it runs (and the TUI shows it, live or restored). */
-export const toolLine = (name: string, input: unknown): string => dim(`▸ ${name} ${JSON.stringify(input).slice(0, 100)}`);
-
-/** A piece of an entry as shown: plain styled text, or an assistant's markdown (`md`) for a renderer that lays it out. */
-export type Part = string | { md: string };
+/**
+ * A piece of an entry as shown: plain styled text, an assistant's markdown
+ * (`md`) for a renderer that lays it out, or a tool call starting (`call`) or
+ * ending (`result`), for a renderer that pairs them (the TUI's tools.ts).
+ */
+export type Part = string | { md: string } | { call: ToolCall } | { result: ToolOutcome };
 
 type Block = Exclude<Extract<Entry, { type: "message" }>["message"]["content"], string>[number];
 
@@ -27,8 +29,8 @@ const resultText = (content: unknown): string =>
 /** A content block as shown, or null for blocks with nothing to show (thinking). */
 function blockPart(block: Block, text: (t: string) => Part): Part | null {
   if (block.type === "text") return text(block.text);
-  if (block.type === "tool_use") return dim(`▸ ${block.name} ${firstLine(JSON.stringify(block.input))}`);
-  if (block.type === "tool_result") return dim(`  ${block.is_error ? "error: " : ""}${firstLine(resultText(block.content))}`);
+  if (block.type === "tool_use") return { call: { id: block.id, name: block.name, input: block.input } };
+  if (block.type === "tool_result") return { result: { id: block.tool_use_id, ok: !block.is_error, text: resultText(block.content) } };
   return null;
 }
 
@@ -44,10 +46,18 @@ export function parts(entry: Entry): Part[] | null {
   return out.length ? out : null;
 }
 
+/** A part as plain terminal text: markdown as written, a call as its "⏺" line, a result as its first line. */
+function partText(p: Part): string {
+  if (typeof p === "string") return p;
+  if ("md" in p) return p.md;
+  if ("call" in p) return `${TOOL_MARK} ${toolLabel(p.call.name, p.call.input)}`;
+  return dim(`${RESULT_MARK}${p.result.ok ? "" : "error: "}${firstNonBlank(p.result.text)}`);
+}
+
 /** One entry as terminal lines (markdown left as written), or null for entries with nothing to show. */
 export function render(entry: Entry): string | null {
   const ps = parts(entry);
-  return ps && ps.map((p) => (typeof p === "string" ? p : p.md)).join("\n");
+  return ps && ps.map(partText).join("\n");
 }
 
 /** Show one transcript line, skipping blank, partial or foreign ones. */

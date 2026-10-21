@@ -2,9 +2,11 @@
 // `claude --continue` or `codex resume`: what the page showed live, in the
 // same form. User messages as "> …", agents' messages as "From <id>: …", the
 // orchestrator's text as markdown blocks cut the way the stream cuts them,
-// its tool calls as the dim "▸" lines the agent loop writes, and what each
-// turn sent the user (the transcript's `replies` entries) labelled after that
-// turn. Tool results and thinking were never shown, so they stay hidden.
+// its tool calls as the "⏺ Bash(…)" line and "⎿ summary" each showed when it
+// ended (paired with its tool_result by id, through the same toolview.ts
+// formatter; a call with no result shows "no result"), and what each turn
+// sent the user (the transcript's `replies` entries) labelled after that
+// turn. Full tool results and thinking were never shown, so they stay hidden.
 // Only the current branch shows: the parent chain from the head back to the
 // root or to the latest summary (compaction), which then leads with a dim
 // note. A long history keeps its newest MAX_RESTORED_ROWS rendered rows.
@@ -34,12 +36,10 @@
 
 import { parseFormatted } from "../inbox";
 import type { Entry, MessageEntry } from "../transcript";
-import { toolLine } from "../view";
+import { toolLabel, toolView, type ToolOutcome } from "../toolview";
 import { lineRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
 import { bold, dim } from "./render";
-
-export { toolLine };
 
 /** A restored page shows about this many rendered rows: whole messages from the newest back. */
 export const MAX_RESTORED_ROWS = 200;
@@ -137,6 +137,17 @@ const resultText = (b: Extract<Block, { type: "tool_result" }>): string =>
 const toolResults = (e: Entry) =>
   e.type === "message" && typeof e.message.content !== "string" ? e.message.content.filter((b) => b.type === "tool_result") : [];
 
+/** Every tool result in the branch by its tool_use id, as the call's outcome. */
+function outcomes(chain: Entry[]): Map<string, ToolOutcome> {
+  return new Map(chain.flatMap(toolResults).map((b) => [b.tool_use_id, { id: b.tool_use_id, ok: !b.is_error, text: resultText(b) }]));
+}
+
+/** A call as it ended, or with "no result" when it never got one (the run stopped mid-call). */
+function callLine(b: Extract<Block, { type: "tool_use" }>, results: Map<string, ToolOutcome>): Line {
+  const outcome = results.get(b.id);
+  return outcome ? toolView(b.name, b.input, outcome) : { tool: toolLabel(b.name, b.input), summary: "no result", failed: false };
+}
+
 /** Tool results by tool_use id: whether a `message` call was really sent. */
 function sentIds(chain: Entry[]): Set<string> {
   const ok = chain.flatMap(toolResults).filter((b) => !b.is_error && resultText(b).startsWith("sent to"));
@@ -159,14 +170,14 @@ function userEntry(content: MessageEntry["message"]["content"], asked?: AskedLoo
   return { items, user: mine.length > 0 };
 }
 
-/** An assistant entry's lines: its text through a fresh stream (every entry ends flushed live), then its tool lines. */
-function assistantLines(parts: Content): Line[] {
+/** An assistant entry's lines: its text through a fresh stream (every entry ends flushed live), then its tool calls as they ended. */
+function assistantLines(parts: Content, results: Map<string, ToolOutcome>): Line[] {
   const md = new MarkdownStream();
   const out: string[] = [];
   const said = parts.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
   if (said) out.push(...md.feed(`${said}\n`), ...md.flush());
   const lines: Line[] = out.map((b) => ({ md: b, block: true }));
-  for (const b of parts) if (b.type === "tool_use") lines.push(toolLine(b.name, b.input));
+  for (const b of parts) if (b.type === "tool_use") lines.push(callLine(b, results));
   return lines;
 }
 
@@ -178,11 +189,11 @@ function sentReply(b: Block, sent: Set<string>): Item | null {
 }
 
 /** An assistant entry as an item (none when it holds only thinking), and its sent `message` calls to the user. */
-function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<string>): { item: Item | null; replies: Item[] } {
+function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<string>, results: Map<string, ToolOutcome>): { item: Item | null; replies: Item[] } {
   const parts: Content = typeof content === "string" ? [{ type: "text", text: content }] : content;
   const shows = parts.some((b) => (b.type === "text" && b.text) || b.type === "tool_use");
   const replies = parts.map((b) => sentReply(b, sent)).filter((r): r is Item => r !== null);
-  return { item: shows ? { lines: () => assistantLines(parts) } : null, replies };
+  return { item: shows ? { lines: () => assistantLines(parts, results) } : null, replies };
 }
 
 /**
@@ -196,13 +207,13 @@ export function restoreItems(chain: Entry[], asked?: AskedLookup): Item[] {
   const firstReplies = chain.findIndex((e) => e.type === "replies");
   const legacy = firstReplies === -1 ? chain.length : firstReplies;
   const sent = sentIds(chain.slice(0, legacy));
-  const state: Fold = { items: [], held: [] };
+  const state: Fold = { items: [], held: [], results: outcomes(chain) };
   chain.forEach((e, i) => step(state, e, i < legacy ? sent : new Set(), asked));
   return release(state).items;
 }
 
-/** The items so far, and the stand-in replies waiting for the user to speak. */
-interface Fold { items: Item[]; held: Item[] }
+/** The items so far, the stand-in replies waiting for the user to speak, and every call's outcome. */
+interface Fold { items: Item[]; held: Item[]; results: Map<string, ToolOutcome> }
 
 function release(state: Fold): Fold {
   state.items.push(...state.held);
@@ -225,7 +236,7 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
     state.items.push(...items);
     return;
   }
-  const { item, replies } = assistantEntry(e.message.content, sent);
+  const { item, replies } = assistantEntry(e.message.content, sent, state.results);
   if (item) state.items.push(item);
   state.held.push(...replies);
 }

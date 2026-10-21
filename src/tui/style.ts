@@ -15,6 +15,11 @@ export interface Rgb { r: number; g: number; b: number }
 
 type Env = Record<string, string | undefined>;
 
+/** NO_COLOR (set and not empty) or TERM=dumb: no colours at all. */
+export const noColour = (env: Env = process.env) => !!env.NO_COLOR || env.TERM === "dumb";
+/** Whether 24-bit colour is supported, as COLORTERM says. */
+export const truecolor = (env: Env = process.env) => /^(truecolor|24bit)$/i.test(env.COLORTERM ?? "");
+
 /** Ask the terminal for its background colour; answered as `ESC ] 11 ; rgb:RRRR/GGGG/BBBB` and BEL or ST. */
 export const BG_QUERY = "\x1b]11;?\x1b\\";
 /** How long after the query a reply still counts; a later one is dropped, so the shade does not change after lines went into the scrollback. */
@@ -72,11 +77,11 @@ export function nearest256(c: Rgb): number {
 
 /** The SGR that starts the user background, or null for none; `terminal` is the background the terminal reported, if it did. */
 export function pickFill(env: Env, terminal: Rgb | null = null): string | null {
-  if (env.NO_COLOR || env.TERM === "dumb") return null;
+  if (noColour(env)) return null;
   const bg = terminal ?? fromColorFgBg(env.COLORFGBG);
   if (!bg) return FALLBACK;
   const c = shade(bg);
-  return /^(truecolor|24bit)$/i.test(env.COLORTERM ?? "") ? `\x1b[48;2;${c.r};${c.g};${c.b}m` : `\x1b[48;5;${nearest256(c)}m`;
+  return truecolor(env) ? `\x1b[48;2;${c.r};${c.g};${c.b}m` : `\x1b[48;5;${nearest256(c)}m`;
 }
 
 let fill: string | null = pickFill(process.env);
@@ -86,7 +91,14 @@ export const userFill = (): string | null => fill;
 /** Set the user background directly (tests, or null to turn it off). */
 export function setUserFill(f: string | null): void { fill = f; }
 /** Use the background the terminal reported (OSC 11). */
-export function useTerminalBackground(c: Rgb, env: Env = process.env): void { fill = pickFill(env, c); }
+export function useTerminalBackground(c: Rgb, env: Env = process.env): void { fill = pickFill(env, c); terminal = c; }
+
+let terminal: Rgb | null = null;
+/** The background the terminal reported, if it did (the shimmer blends towards its opposite). */
+export const terminalBackground = (): Rgb | null => terminal;
+/** Forget it (tests). */
+export function setTerminalBackground(c: Rgb | null): void { terminal = c; }
+
 
 const SGR = /\x1b\[([0-9;:]*)m/g;
 

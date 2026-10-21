@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
-import { App, helpLines, parseCommand, type Clock, type Line } from "./app";
+import { App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
 import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
@@ -20,6 +20,7 @@ import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
 import { bold, dim } from "./render";
 import { setUserFill } from "./style";
+import { Calls } from "./tools";
 
 const home = mkdtempSync(join(tmpdir(), "parallels-tui-"));
 process.env.PARALLELS_HOME = home;
@@ -34,7 +35,7 @@ beforeEach(() => setUserFill(USER_BG));
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 /** A history line's text: plain lines as they are, markdown as written. */
-const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : l.md);
+const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : l.md);
 
 /** A fake terminal: records every raw write and applies it to a FakeScreen, so `screen()` is the scrollback plus the screen. */
 function fakeTerm(cols = 40, rows = 8) {
@@ -192,7 +193,7 @@ describe("tui app", () => {
     await until(() => !!app.page);
     const page = app.page!;
     let left = 0;
-    const view = { name: "worker-x", lines: [] as string[], leave: () => { left++; }, live: false };
+    const view = { name: "worker-x", lines: [] as string[], leave: () => { left++; }, live: false, calls: new Calls() };
     page.view = view;
     term.type("/help\r");
     await until(() => view.lines.join("\n").includes("/back (or Esc) leaves the agent view"));
@@ -262,7 +263,7 @@ describe("tui app", () => {
     const running = app.run("rounds");
     await until(() => !!app.page);
     const page = app.page!;
-    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false };
+    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false, calls: new Calls() };
     page.view = view;
     term.type("/review-rounds 3\r");
     await until(() => view.lines.join("\n").includes("review rounds set to 3"));
@@ -1180,7 +1181,7 @@ describe("markdown replies", () => {
     await until(() => term.screen().includes("┌"));
     expect(term.screen()).toContain('▸ bash {"command":"**ls**"}');
     expect(term.screen()).toContain("│ tui-markdown │ Render markdown in the chat area │");
-    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : "md" in l ? l.md : l.user))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
+    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : "md" in l ? l.md : "user" in l ? l.user : l.tool))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
     app.quit();
     await running;
   });
@@ -1229,7 +1230,7 @@ describe("restored pages", () => {
     const app = new App({ term, openOrchestrator, pollMs: 100_000 });
     const running = app.run("resumed");
     await until(() => term.screen().includes("Worker done."));
-    const restored = ["shell$ parallels start", "> what changed?", "Two things:", "- a", "- b", '▸ bash {"command":"ls"}', "From worker-feat: all done", "Worker done."];
+    const restored = ["shell$ parallels start", "> what changed?", "Two things:", "- a", "- b", "⏺ Bash(ls)", "  ⎿  1 line", "From worker-feat: all done", "Worker done."];
     const rows = term.screen().split("\n");
     expect(rows.slice(0, restored.length)).toEqual(restored);
     expect(rows.at(-1)).toBe(">"); // the input, below the history
@@ -1264,8 +1265,8 @@ describe("restored pages", () => {
       [said("Got it."), toolUse("t3", "message", { to: "user", text: "Second." })],
       [said("Done.")],
     ]);
-    const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void) =>
-      createOrchestrator({ project: p, provider, tools, write, onInbox });
+    const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void, events?: ToolEvents) =>
+      createOrchestrator({ project: p, provider, tools, write, onInbox, ...events });
     // Both lines are typed before the first turn reads the inbox: its turn waits for the second say to land.
     const typed: Promise<void>[] = [];
     const openLive: typeof open = async (...args) => {
@@ -1285,6 +1286,12 @@ describe("restored pages", () => {
     await until(() => !app.page!.busy);
     const live = app.page!.lines;
     expect(live.map(raw)).toContain("All set.");
+    expect(live.filter((l) => typeof l !== "string" && "tool" in l)).toEqual([
+      { tool: "Spawn(feat, worker)", summary: "spawned worker-feat", failed: false },
+      { tool: "Message(user: Started **feat**.)", summary: "sent to user", failed: false },
+      { tool: "Message(user: Second.)", summary: "sent to user", failed: false },
+    ]);
+    expect(term.screen()).toContain("⏺ Spawn(feat, worker)\n  ⎿  spawned worker-feat");
     expect(live.map(raw).filter((l) => l.endsWith("> go") || l.endsWith("m go"))).toEqual([`${bold(">")} go`]); // typed here: shown once
     expect(live.map(raw)).toContain(`${bold(">")} from the cli`);
     expect(live.map(raw).some((l) => l.includes("From worker-feat: Report:…"))).toBe(true);
@@ -1903,7 +1910,7 @@ describe("command and key tables", () => {
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("viewer");
     await until(() => !!app.page);
-    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false };
+    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false, calls: new Calls() };
     app.page!.view = view;
     term.type("/keys\r");
     await until(() => app.keyEcho);
@@ -2051,6 +2058,74 @@ describe("terminal background", () => {
     expect(term.display.backgrounds()[row]!.every((b) => b === "48;5;254")).toBe(true);
     const input = term.display.top + term.display.row;
     expect(term.display.backgrounds()[input]![0]).toBe("48;5;254");
+    app.quit();
+    await running;
+  });
+});
+
+describe("tool calls", () => {
+  /** An orchestrator whose turn runs the tool calls the test drives through `events`, on an injected clock. */
+  function scripted() {
+    const state = { now: 1000, events: null as ToolEvents | null, finish: null as (() => void) | null, ticks: [] as (() => void)[] };
+    const clock: Clock = { now: () => state.now, every: (fn) => { state.ticks.push(fn); return () => { state.ticks.splice(state.ticks.indexOf(fn), 1); }; } };
+    const openOrchestrator = async (_p: string, _u: string | undefined, _w: (t: string, plain?: boolean) => void, _i?: unknown, events?: ToolEvents): Promise<Orchestrator> => {
+      state.events = events!;
+      return { async say() {}, async pending() { return false; }, turn: () => new Promise((r) => (state.finish = () => r([]))) };
+    };
+    return { state, clock, openOrchestrator };
+  }
+
+  test("a running call shimmers in the live region; when it ends its ⏺ line and ⎿ summary go to the scrollback; a failure is red", async () => {
+    const term = fakeTerm(50, 12);
+    const { state, clock, openOrchestrator } = scripted();
+    const app = new App({ term, openOrchestrator, pollMs: 100_000, clock });
+    const running = app.run("tooly");
+    await until(() => !!app.page);
+    term.type("go\r");
+    await until(() => !!state.finish);
+    state.events!.onTool({ id: "c1", name: "bash", input: { command: "git status" } });
+    await until(() => term.screen().includes("⏺ Bash(git status)"));
+    expect(app.page!.lines.some((l) => typeof l !== "string" && "tool" in l)).toBe(false); // live only, not committed
+    expect(term.screen()).toContain("working…"); // the status line's word, shimmering too
+    const frame = () => app.frame().running!.join("");
+    const first = frame();
+    expect(frame()).toBe(first); // same instant, same frame
+    state.now += 400;
+    expect(frame()).not.toBe(first); // the band moved
+    expect(state.ticks.length).toBe(1); // the animation timer runs while the turn does
+    state.events!.onToolResult({ id: "c1", ok: true, text: "M a.ts\nM b.ts\n" });
+    await until(() => term.screen().includes("⏺ Bash(git status)\n  ⎿  2 lines"));
+    expect(app.frame().running).toEqual([]);
+    state.events!.onTool({ id: "c2", name: "bash", input: { command: "make" } });
+    state.events!.onToolResult({ id: "c2", ok: true, text: "x: error 1\n[exit 2]" });
+    await until(() => term.screen().includes("⏺ Bash(make)\n  ⎿  exit 2: x: error 1"));
+    expect(term.raw()).toContain("\x1b[31m⏺");
+    state.finish!();
+    await until(() => !app.page!.busy);
+    expect(state.ticks.length).toBe(0); // nothing runs: no timer
+    app.quit();
+    await running;
+  });
+
+  test("the /agents view shows a followed agent's running call live, then its lines when the result lands", async () => {
+    const term = fakeTerm(60, 12);
+    const orchs = fakeOrchestrators();
+    const transcript = paths.transcript("toolview", "worker-t");
+    mkdirSync(join(transcript, ".."), { recursive: true });
+    const line = (role: string, content: unknown) => JSON.stringify({ type: "message", message: { role, content } }) + "\n";
+    await Bun.write(transcript, line("assistant", [{ type: "text", text: "checking" }, { type: "tool_use", id: "u1", name: "bash", input: { command: "bun test" } }]));
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, agents: async () => [{ name: "worker-t", live: true }] });
+    const running = app.run("toolview");
+    await until(() => !!app.page);
+    term.type("/agents\r");
+    await until(() => !!app.menu);
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("checking") && term.screen().includes("⏺ Bash(bun test)"));
+    expect(app.page!.view!.lines.some((l) => typeof l !== "string" && "tool" in l)).toBe(false); // still running
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(transcript, line("user", [{ type: "tool_result", tool_use_id: "u1", content: "1 pass\n0 fail\n" }]));
+    await until(() => term.screen().includes("⏺ Bash(bun test)\n  ⎿  2 lines"));
+    expect(app.page!.view!.calls.size).toBe(0);
     app.quit();
     await running;
   });

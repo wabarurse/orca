@@ -13,7 +13,7 @@ import { type Provider } from "./providers/index";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
-import { toolLine } from "./view";
+import { RESULT_MARK, TOOL_MARK, toolLabel, toolSummary, type ToolCall, type ToolOutcome } from "./toolview";
 
 export interface AgentOptions {
   project: string;
@@ -41,6 +41,9 @@ export interface AgentDeps {
   tracker?: Tracker;
   /** Each batch of inbox messages as it is read, before it reaches the transcript (the TUI shows them). */
   onInbox?: (msgs: Message[]) => void;
+  /** A tool call starting and ending (the TUI shows it running, then its line and summary). Without them, `write` gets the "⏺" line and its "⎿" summary as plain lines. */
+  onTool?: (call: ToolCall) => void;
+  onToolResult?: (outcome: ToolOutcome) => void;
 }
 
 const MAX_TOKENS = 64000;
@@ -74,13 +77,26 @@ async function runTracked(deps: AgentDeps, block: ToolUse): Promise<ToolResultBl
   return { ...result, tool_use_id: block.id };
 }
 
-/** Run a turn's tool calls in order, echoing each one. */
+/** Show a call starting and ending: through onTool/onToolResult, else as plain lines to `write`. */
+function echo(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
+  return {
+    start: (call: ToolCall) => (deps.onTool ? deps.onTool(call) : write(`${TOOL_MARK} ${toolLabel(call.name, call.input)}\n`, true)),
+    end: (call: ToolCall, outcome: ToolOutcome) =>
+      deps.onToolResult ? deps.onToolResult(outcome) : write(`${RESULT_MARK}${toolSummary(call.name, outcome).summary}\n`, true),
+  };
+}
+
+/** Run a turn's tool calls in order, showing each one as it starts and ends. */
 async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: string, plain?: boolean) => void): Promise<ToolResultBlockParam[]> {
   const results: ToolResultBlockParam[] = [];
+  const show = echo(deps, write);
   for (const block of content) {
     if (block.type !== "tool_use") continue;
-    write(`${toolLine(block.name, block.input)}\n`, true);
-    results.push(await runTracked(deps, block));
+    const call: ToolCall = { id: block.id, name: block.name, input: block.input };
+    show.start(call);
+    const result = await runTracked(deps, block);
+    show.end(call, { id: block.id, ok: !result.is_error, text: String(result.content ?? "") });
+    results.push(result);
   }
   return results;
 }

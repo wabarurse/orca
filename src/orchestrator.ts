@@ -6,7 +6,7 @@ import { withProjectStateLock } from "./project-state";
 
 import { existsSync, mkdirSync } from "node:fs";
 import { effectiveModel, projectModelResolver } from "./project-model";
-import { createAgent } from "./agent";
+import { createAgent, type AgentDeps } from "./agent";
 import { loadConfig, paths } from "./config";
 import { drain, pending, put, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
@@ -24,6 +24,9 @@ export interface OrchestratorDeps {
   write?: (text: string, plain?: boolean) => void;
   /** Each batch of inbox messages (the user's and agents') as the orchestrator reads it. */
   onInbox?: (msgs: Message[]) => void;
+  /** Each tool call as it starts and ends (the TUI shows it running, then its line and summary). */
+  onTool?: AgentDeps["onTool"];
+  onToolResult?: AgentDeps["onToolResult"];
 }
 
 export interface Orchestrator {
@@ -83,6 +86,8 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
         ctx: { project, role: "orchestrator", cwd: paths.repo(project) },
         write: deps.write,
         onInbox: deps.onInbox,
+        onTool: deps.onTool,
+        onToolResult: deps.onToolResult,
       });
       await agent.run();
       const replies = await drain(project, "user");

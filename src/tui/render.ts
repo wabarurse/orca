@@ -5,6 +5,7 @@
 // at the bottom is (`live`), top to bottom:
 //
 //   the partial streaming line (until it ends and is committed)
+//   the tool calls running now, each one line with the shimmer
 //   a menu or the project list, when open, else the oldest open question
 //   the status line: spinner, page name, remote, page count
 //   the input area: wrapped rows, up to a third of the screen
@@ -62,6 +63,8 @@ export interface Frame {
   rows: number;
   /** Streamed text not committed yet (a partial line, or a held code block or table, raw); wrapped, above everything else. */
   partial?: string;
+  /** Rows of the tool calls running now (tools.ts, already styled), under the partial line. */
+  running?: string[];
   input: Input;
   menu: Menu | null;
   /** The project list, above the status line like a menu, when open. */
@@ -156,7 +159,7 @@ export function userRows(line: string, cols: number): string[] {
 }
 
 /** One row: cut with an ellipsis rather than wrapped. */
-function fit(raw: string, cols: number): string {
+export function fit(raw: string, cols: number): string {
   const line = expandTabs(raw);
   if (visibleLength(line) <= cols) return line;
   return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…\x1b[0m";
@@ -279,7 +282,8 @@ export function liveRows(f: Frame): { rows: string[]; cursor: number; col: numbe
   const pad = userFill() && free >= 3 ? 1 : 0;
   free -= 2 * pad;
   const box = inputBox(input.lines, f.cols, pad);
-  const partial = f.partial ? lastRows(f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)), free) : [];
+  const streamed = f.partial ? f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)) : [];
+  const partial = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols))], free);
   const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...box];
   return { rows, cursor: rows.length - box.length + pad + input.row, col: input.col };
 }
