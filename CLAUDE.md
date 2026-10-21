@@ -14,12 +14,14 @@ Layout:
 - `src/claude-auth.ts` / `src/codex-auth.ts` — provider-specific OAuth login, import and refresh. `src/oauth.ts` shares PKCE callbacks, private atomic writes and cross-process locks. State is under `auth/anthropic/` or `auth/openai/`. Tests use temporary homes and fake tokens, never native credentials.
 - `src/view.ts` — renders and follows a transcript for the terminal
 - `src/agent.ts` — the loop; all three roles are this with a different prompt and tool set
+- `src/prompts.ts` — the three role system prompts: short behaviour lists, with `maxReviewRounds` and the complexity thresholds filled from config. The cycle is orchestrator-driven: worker → reviewer (review mode: diff recon + `complexity`, no code changes) → worker again with notes, or reviewer again with "watch ci" (the only time it edits code; it pushes, opens the PR, runs `gh pr checks --watch`, fixes until green)
+- `src/complexity.ts` — cyclomatic and Sonar cognitive complexity per function for JS/TS via `@babel/parser`; `src/tools/complexity.ts` is the reviewer's tool over it (changed files vs the default branch by default)
 - `src/transcript.ts` — append-only JSONL with parent pointers
-- `src/tools/` — `bash`, `spawn`, `message`; keep the set small
+- `src/tools/` — `bash`, `spawn`, `message`, `complexity` (reviewer only); keep the set small
 - `src/runner.ts` — worktree + tmux backend
 - `src/inbox.ts` — one FIFO inbox per agent (`inbox/<agent>/`, a file per message); with the transcripts, the only state on disk. `message` sends to any address: `orchestrator`, `user`, or an agent id. Agents read their inbox before the first request, after each tool call (delivered with the tool results, never interrupting one), and after every turn, and keep going while messages arrive
 
-Each agent gets its task from the first user message (spawn's brief or the inbox) and the tool descriptions, so keep those descriptions precise. The providers add only their Claude Code/Codex compatibility identity; there are no role-specific system prompts.
+Each agent gets its task from the first user message (spawn's brief or the inbox) and the tool descriptions, so keep those descriptions precise. The system prompt is the provider's Claude Code/Codex identity line followed by the role prompt from `src/prompts.ts`; keep those prompts short lists.
 
 Rules:
 

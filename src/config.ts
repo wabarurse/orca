@@ -32,8 +32,11 @@ export interface Config {
   openaiAccount: string;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
-  /** Max review rounds before the reviewer gives up and reports to the orchestrator. */
+  /** Max review rounds before the orchestrator reports what is still open. */
   maxReviewRounds: number;
+  /** Complexity thresholds the reviewer reports against. */
+  cyclomatic: number;
+  cognitive: number;
 }
 
 export const defaults: Config = {
@@ -42,6 +45,8 @@ export const defaults: Config = {
   openaiAccount: "",
   maxToolResultBytes: 16 * 1024,
   maxReviewRounds: 2,
+  cyclomatic: 10,
+  cognitive: 15,
 };
 
 export async function loadConfig(): Promise<Config> {

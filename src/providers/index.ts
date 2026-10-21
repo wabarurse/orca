@@ -15,6 +15,8 @@ export interface Turn {
 
 export interface CompleteRequest {
   model: string;
+  /** The role's system prompt; providers put their own identity line first. */
+  system?: string;
   messages: MessageParam[];
   tools: ApiTool[];
   maxTokens: number;
