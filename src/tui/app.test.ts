@@ -13,11 +13,11 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 
-function fakeTerm() {
+function fakeTerm(cols = 40) {
   const handlers: ((k: Key) => void)[] = [];
   let screen = "";
   const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; opened: boolean; closed: boolean } = {
-    cols: 40, rows: 8, opened: false, closed: false,
+    cols, rows: 8, opened: false, closed: false,
     write: (s) => { screen = s; },
     onKey: (cb) => { handlers.push(cb); },
     onResize: () => {},
@@ -88,12 +88,11 @@ describe("tui app", () => {
     const running = app.run("alpha");
     await settle();
     term.press({ name: "n", ctrl: true });
-    await settle();
+    await until(() => app.pages.length === 2);
     expect(orchs.opened[1]!.project).toMatch(/^orch-[a-z0-9]{4}$/);
     expect(orchs.opened[1]!.url).toBeUndefined();
-    expect(app.pages.length).toBe(2);
     expect(app.page!.project).toBe(orchs.opened[1]!.project);
-    expect(term.screen()).toContain("/rename <name> to rename");
+    await until(() => term.screen().includes("/rename <name> to rename"));
 
     term.type("\x1a"); // Ctrl+Z
     expect(app.page!.project).toBe("alpha");
@@ -105,10 +104,10 @@ describe("tui app", () => {
     expect(app.page!.project).toBe("alpha");
 
     term.type("/new beta git@example.com:b.git\r");
-    await settle();
+    await until(() => app.page?.project === "beta");
     expect(orchs.opened[2]).toEqual({ project: "beta", url: "git@example.com:b.git" });
     term.type("/close\r");
-    await settle();
+    await until(() => app.pages.length === 2);
     expect(app.pages.map((p) => p.project)).toEqual(["alpha", orchs.opened[1]!.project]);
     term.press({ name: "c", ctrl: true });
     await running;
@@ -122,15 +121,13 @@ describe("tui app", () => {
     const running = app.run("orch-old");
     await settle();
     term.type("/rename login-page\r");
-    await settle();
+    await until(() => term.screen().includes("orch-old → login-page"));
     expect(app.page!.project).toBe("login-page");
     expect(orchs.opened.map((o) => o.project)).toEqual(["orch-old", "login-page"]);
     expect(existsSync(join(home, "projects", "login-page", "repo"))).toBe(true);
     expect(existsSync(join(home, "projects", "orch-old"))).toBe(false);
-    expect(term.screen()).toContain("orch-old → login-page");
     term.type("/rename bad name\r");
-    await settle();
-    expect(term.screen()).toContain("error: names are letters");
+    await until(() => term.screen().includes("error: names are letters"));
     app.quit();
     await running;
   });
@@ -180,22 +177,37 @@ describe("tui app", () => {
     await running;
   });
 
-  test("started inside a repo, it opens a project for it and Ctrl+N clones from it", async () => {
-    const term = fakeTerm();
+  test("started inside a repo, it opens an orch-xxxx cloned from it, reused next time; Ctrl+N clones it too", async () => {
+    const term = fakeTerm(200);
     const orchs = fakeOrchestrators();
-    const source = { name: "harness", url: "git@example.com:harness.git" };
+    const source = "git@example.com:harness.git";
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, source });
     const running = app.run();
-    await until(() => app.page?.project === "harness");
-    expect(orchs.opened.at(-1)).toEqual({ project: "harness", url: source.url });
+    await until(() => !!app.page?.project.startsWith("orch-"));
+    const first = orchs.opened.find((o) => o.url === source)!;
+    expect(first.project).toMatch(/^orch-[a-z0-9]{4}$/);
+    expect(app.page!.project).toBe(first.project);
     term.press({ name: "n", ctrl: true });
-    await until(() => app.page!.project.startsWith("orch-"));
-    expect(orchs.opened.at(-1)!.url).toBe(source.url);
+    await until(() => app.page!.project !== first.project);
+    expect(orchs.opened.at(-1)!.project).toMatch(/^orch-/);
+    expect(orchs.opened.at(-1)!.url).toBe(source);
     term.type("/new other\r"); // an explicit name without a url still clones the launch repo
     await until(() => app.page?.project === "other");
-    expect(orchs.opened.at(-1)).toEqual({ project: "other", url: source.url });
+    expect(orchs.opened.at(-1)).toEqual({ project: "other", url: source });
+    await until(() => term.screen().includes("/projects/other/repo")); // the header shows the clone path
     app.quit();
     await running;
+
+    // A project with this remote on disk is reused instead of cloned again.
+    const repo = join(home, "projects", "cloned", "repo");
+    mkdirSync(repo, { recursive: true });
+    await Bun.$`git init -q ${repo}`.quiet();
+    await Bun.$`git -C ${repo} remote add origin ${source}`.quiet();
+    const again = new App({ term: fakeTerm(), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000, source });
+    const running2 = again.run();
+    await until(() => again.page?.project === "cloned");
+    again.quit();
+    await running2;
   });
 
   test("a report that lands while idle is picked up by the poll", async () => {
@@ -203,7 +215,7 @@ describe("tui app", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 20 });
     const running = app.run("alpha");
-    await settle();
+    await until(() => !!app.page);
     // Something arrives in the inbox without the user typing.
     await app.page!.orch.say("note");
     await Bun.sleep(60);

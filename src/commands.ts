@@ -3,7 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { readdir, rename } from "node:fs/promises";
-import { basename } from "node:path";
+import { homedir } from "node:os";
 import { $ } from "bun";
 import { accounts, provider, type Account } from "./accounts";
 import { importClaudeCode, loginClaude } from "./claude-auth";
@@ -63,13 +63,23 @@ export async function remoteOf(project: string): Promise<string> {
  * when it has one (so pushes go to the real remote), else its path. Null
  * outside a repository.
  */
-export async function repoHere(cwd = process.cwd()): Promise<{ name: string; url: string } | null> {
+export async function repoHere(cwd = process.cwd()): Promise<string | null> {
   const top = await $`git -C ${cwd} rev-parse --show-toplevel`.quiet().nothrow();
   if (top.exitCode !== 0) return null;
   const path = top.stdout.toString().trim();
   const origin = await $`git -C ${path} remote get-url origin`.quiet().nothrow();
-  const name = basename(path).replace(/\.git$/, "");
-  return { name: validProjectName(name) ? name : "repo", url: origin.exitCode === 0 ? origin.stdout.toString().trim() : path };
+  return origin.exitCode === 0 ? origin.stdout.toString().trim() : path;
+}
+
+/** The known project whose clone came from `url`, if any. */
+export async function projectFor(url: string): Promise<string | null> {
+  for (const name of await listProjects()) if ((await remoteOf(name)) === url) return name;
+  return null;
+}
+
+/** A clone source for people: no scheme, no .git, home as ~. */
+export function shortRemote(url: string): string {
+  return url.replace(/^[a-z+]+:\/\//, "").replace(/^git@([^:]+):/, "$1/").replace(/\.git$/, "").replace(homedir(), "~");
 }
 
 /** Projects that have been started before: every ~/.parallels/projects/<name> with a repo. */

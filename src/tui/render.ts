@@ -1,6 +1,7 @@
 // Draw one frame of the TUI as a string. Pure: state in, escape codes out.
 //
 //   ┌ tab bar: one tab per orchestrator page ─────────────┐
+//   │ header: the page's clone path and remote             │
 //   │ body: the page's scrollback (or a menu over it)      │
 //   │ input line                                           │
 //   └──────────────────────────────────────────────────────┘
@@ -17,6 +18,8 @@ export interface Frame {
   cols: number;
   rows: number;
   tabs: Tab[];
+  /** One line under the tabs: where the active page's clone is and came from. */
+  header: string;
   /** The active page's scrollback, oldest first. */
   lines: string[];
   /** How many lines up from the bottom the body is scrolled. */
@@ -51,6 +54,12 @@ export function wrap(line: string, cols: number): string[] {
   return out;
 }
 
+/** One row: cut with an ellipsis rather than wrapped. */
+function fit(line: string, cols: number): string {
+  if (visibleLength(line) <= cols) return line;
+  return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…";
+}
+
 function tabBar(tabs: Tab[], cols: number): string {
   if (tabs.length === 0) return "";
   const cells = tabs.map((t) => {
@@ -61,7 +70,7 @@ function tabBar(tabs: Tab[], cols: number): string {
 }
 
 export function render(f: Frame): string {
-  const bodyRows = Math.max(0, f.rows - 2);
+  const bodyRows = Math.max(0, f.rows - 3);
   const wrapped = f.lines.flatMap((l) => wrap(l, f.cols));
   const end = Math.max(0, wrapped.length - f.scroll);
   const body = wrapped.slice(Math.max(0, end - bodyRows), end);
@@ -72,7 +81,7 @@ export function render(f: Frame): string {
     const shown = rows.slice(-bodyRows);
     body.splice(body.length - shown.length, shown.length, ...shown);
   }
-  const out: string[] = [tabBar(f.tabs, f.cols), ...body];
+  const out: string[] = [tabBar(f.tabs, f.cols), fit(f.header, f.cols), ...body];
   const inputLine = f.input.prompt + f.input.text;
   out.push(wrap(inputLine, f.cols).at(-1) ?? "");
   // Clear each row before writing so shorter lines never leave debris.
