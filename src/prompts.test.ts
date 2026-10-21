@@ -8,6 +8,7 @@ describe("rolePrompt", () => {
     expect(rolePrompt("orchestrator", config)).toContain("At most 3 review rounds");
     expect(rolePrompt("reviewer", config)).toContain("cyclomatic > 7, cognitive > 9");
     expect(rolePrompt("worker", config)).not.toMatch(/\{\w+\}/);
+    expect(rolePrompt("orchestrator", config)).toContain("Do not spawn, push, or change anything until the user says to execute or dispatch");
   });
   test("each role gets its own short list", () => {
     for (const role of ["orchestrator", "worker", "reviewer"] as const) {
