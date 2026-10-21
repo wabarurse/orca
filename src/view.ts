@@ -34,6 +34,12 @@ function blockPart(block: Block, text: (t: string) => Part): Part | null {
   return null;
 }
 
+/** Assistant text blocks in one model response are one logical message, as the streaming path concatenates them. */
+function joinedText(blocks: Block[]): Block[] {
+  const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("");
+  return [...(text ? [{ type: "text" as const, text }] : []), ...blocks.filter((b) => b.type !== "text")];
+}
+
 /** One entry as pieces to show, or null for entries with nothing to show. */
 export function parts(entry: Entry): Part[] | null {
   if (entry.type === "meta") return [dim(`— ${entry.role}${entry.branch ? ` on ${entry.branch}` : ""} (${entry.model || "default model"})`)];
@@ -42,7 +48,8 @@ export function parts(entry: Entry): Part[] | null {
   const { role, content } = entry.message;
   const text = (t: string): Part => (role === "user" ? `${bold(">")} ${t}` : { md: t });
   if (typeof content === "string") return [text(content)];
-  const out = content.map((b) => blockPart(b, text)).filter((p): p is Part => p !== null);
+  const blocks = role === "assistant" ? joinedText(content) : content;
+  const out = blocks.map((b) => blockPart(b, text)).filter((p): p is Part => p !== null);
   return out.length ? out : null;
 }
 

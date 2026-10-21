@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { format } from "../inbox";
 import { open, type Entry } from "../transcript";
-import { lineRows, type Line } from "./lines";
+import { historyRows, lineRows, type Line } from "./lines";
 import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED } from "./restore";
 import { toolView } from "../toolview";
 import { bold, dim } from "./render";
@@ -50,7 +50,7 @@ test("user messages, agent reports, assistant markdown and replies; tool calls a
   const lines = restore(entries, 60);
   expect(lines).toEqual([
     { user: `${bold(">")} build a login` }, { user: "  page please" },
-    { md: "# Plan", block: true }, { md: "", block: true }, { md: "| a | b |\n|---|---|\n| 1 | 2 |", block: true },
+    { md: "# Plan", block: true }, { md: "", block: true, continuation: true }, { md: "| a | b |\n|---|---|\n| 1 | 2 |", block: true, continuation: true },
     { tool: "Spawn(feat/login, worker)", summary: "spawned worker-feat-login", failed: false },
     dim("From worker-feat-login: Done.…"),
     { tool: "Message(user: Login is **done**.)", summary: "sent to user", failed: false },
@@ -102,14 +102,14 @@ test("a long history keeps the newest whole messages within the cap, led by how 
   for (let i = 0; i < 150; i++) items.push(user(inbox(["user", `question ${i}`])), assistant([{ type: "text", text: `answer ${i}\nline two` }]));
   const entries = transcript(...items);
   const lines = restore(entries, 60);
-  const rows = lines.slice(1).flatMap((l) => lineRows(l, 60));
-  expect(rows.length).toBe(MAX_RESTORED_ROWS);
+  const rows = historyRows(lines, 60);
+  expect(rows.length).toBe(MAX_RESTORED_ROWS - 1);
   const total = restoreItems(entries).length;
-  // 300 messages of 1 and 2 rows: the newest 133 fill exactly 200 rows, so 167 were left out.
+  // Spaced display, including omission note: 79 whole messages fill 199 rows; one more would exceed 200.
   expect(total).toBe(300);
-  expect(lines[0]).toBe(earlier(167));
+  expect(lines[0]).toBe(earlier(221));
   expect(raw(lines.at(-1)!)).toBe("line two");
-  expect(raw(lines[1]!)).toBe("answer 83");
+  expect(raw(lines[1]!)).toBe("answer 110");
   // Under the cap nothing is left out; a newest message longer than the cap still shows whole.
   expect(restore(transcript(meta, user(inbox(["user", "hi"]))), 60)).toEqual([{ user: `${bold(">")} hi` }]);
   const huge = restore(transcript(meta, user(inbox(["user", "hi"])), assistant([{ type: "text", text: Array.from({ length: 300 }, (_, i) => `l${i}`).join("\n") }])), 60);
@@ -179,9 +179,9 @@ test("a capped history that began at a summary drops the summary note and counts
   const items = [meta as never, user(inbox(["user", "old"])), { type: "summary", text: "s", parentUuid: "u1" } as never];
   for (let i = 0; i < 120; i++) items.push(user(inbox(["user", `q${i}`])), assistant([{ type: "text", text: `a${i}` }]));
   const lines = restore(transcript(...items), 60);
-  // 240 one-row messages after the summary: the newest 200 show, 40 are counted, the note is not.
-  expect(lines.length).toBe(201);
-  expect(lines[0]).toBe(earlier(40));
+  // Note plus 99 one-row messages and their separators: 199 rows; 141 messages omitted.
+  expect(lines.length).toBe(100);
+  expect(lines[0]).toBe(earlier(141));
   expect(lines).not.toContain(SUMMARIZED);
   expect(lines.some((l) => raw(l).includes("old"))).toBe(false);
   // Just under the cap the note leads.

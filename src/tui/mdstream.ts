@@ -6,6 +6,7 @@
 // lay it out again at another width. Feeding a text in any chunks gives the
 // same blocks as `takeBlocks(sourceLines(text), true)`.
 
+import type { Line } from "./lines";
 import { isBlank, takeBlocks } from "./markdown";
 
 export class MarkdownStream {
@@ -15,6 +16,7 @@ export class MarkdownStream {
   private partial = "";
   /** Set once a non-blank line has arrived: blank lines before it are dropped. */
   private started = false;
+  private emitted = false;
 
   /** Add a chunk; returns the blocks it completed. */
   feed(chunk: string): string[] {
@@ -31,6 +33,23 @@ export class MarkdownStream {
     const blocks = this.take(true);
     this.started = false;
     return blocks;
+  }
+
+  /** Renderable history with explicit message continuity, independent of parser blocks/chunks. */
+  feedLines(chunk: string): Line[] { return this.history(this.feed(chunk)); }
+
+  flushLines(): Line[] {
+    const lines = this.history(this.flush());
+    this.emitted = false;
+    return lines;
+  }
+
+  private history(blocks: string[]): Line[] {
+    return blocks.map((md) => {
+      const line: Line = { md, block: true, ...(this.emitted ? { continuation: true as const } : {}) };
+      this.emitted = true;
+      return line;
+    });
   }
 
   /** The raw text held back: an unfinished block and the line being written. */

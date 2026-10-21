@@ -9,9 +9,9 @@ import { effortCommand, fastCommand } from "../project-settings";
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
 import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
-import { paths, loadConfig } from "../config";
+import { paths } from "../config";
 import { projectIdentity } from "../project-state";
-import { validateModel } from "../project-model";
+import { validateModel, effectiveModel } from "../project-model";
 import type { Message } from "../inbox";
 import type { Orchestrator } from "../orchestrator";
 import { format } from "node:util";
@@ -402,7 +402,7 @@ export class App {
    */
   private stream(page: Page, text: string, plain = false): void {
     page.streamed = true;
-    if (!plain) return this.toPage(page, page.md.feed(text).map((md) => ({ md, block: true })));
+    if (!plain) return this.toPage(page, page.md.feedLines(text));
     this.endPartial(page);
     this.toPage(page, text.replace(/\n$/, "").split("\n"));
   }
@@ -430,8 +430,8 @@ export class App {
 
   /** Move what a page's stream still holds into its history. */
   private endPartial(page: Page): void {
-    const blocks = page.md.flush();
-    if (blocks.length) this.toPage(page, blocks.map((md) => ({ md, block: true })));
+    const blocks = page.md.flushLines();
+    if (blocks.length) this.toPage(page, blocks);
     if (page.held.length) this.toPage(page, page.held.splice(0));
   }
 
@@ -449,7 +449,7 @@ export class App {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
       running: page ? (page.view?.calls ?? page.calls).rows(this.clock.now(), this.deps.term.cols) : [],
-      status, input, inputArea: area, bottomBar: true,
+      status, input, inputArea: area,
       menu: this.menu,
       question: this.questions.view(),
       projects: this.projectList && {
@@ -467,10 +467,18 @@ export class App {
   }
 
   /** Call after a confirmed model save; polling also refreshes cached state, never async from render. */
+  private readonly modelVersions = new WeakMap<Page, number>();
+
+  private readModel(project: string): Promise<string> {
+    return this.deps.projectModel?.(project) ?? effectiveModel(project);
+  }
+
   async refreshHeader(page = this.page): Promise<void> {
     if (!page) return;
-    const model = await (this.deps.projectModel?.(page.project) ?? loadConfig().then((c) => c.model));
-    if (!this.pages.includes(page) || model === page.model) return;
+    const version = (this.modelVersions.get(page) ?? 0) + 1;
+    this.modelVersions.set(page, version);
+    const model = await this.readModel(page.project);
+    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || model === page.model) return;
     page.model = model;
     if (page === this.page) this.reprint();
   }
@@ -662,7 +670,7 @@ export class App {
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
     this.looseLines = [];
-    page.model = await (this.deps.projectModel?.(project) ?? loadConfig().then((c) => c.model));
+    page.model = await this.readModel(project);
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.checkLive(project);
@@ -941,15 +949,22 @@ export class App {
     } catch (err) { this.say(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { this.loggingIn = false; }
     // Text typed meanwhile was held back: send it now, or drop it when sign-in failed.
-    const queued = [...this.queued];
-    this.queued.clear();
-    for (const [page, texts] of queued) {
-      if (!this.pages.includes(page)) continue; // closed meanwhile
-      if (ok) for (const t of texts) await this.send(page, t);
-      else this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
-    }
+    await this.drainLogin(ok);
     this.draw();
     this.runPending();
+  }
+
+  /** Each queued message stays owned until its send attempt ends. A failure is reported by send; later messages are still attempted. */
+  private async drainLogin(ok: boolean): Promise<void> {
+    for (const [page, texts] of [...this.queued]) {
+      if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
+      for (const text of [...texts]) {
+        texts.shift(); // transfer ownership to send (Page.sent), or explicitly report the drop
+        if (ok && this.pages.includes(page)) await this.send(page, text).catch(() => {});
+        else this.say(dim(`not sent after sign-in: ${text}`), page);
+      }
+      if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
+    }
   }
 
   // --- input ------------------------------------------------------------------
@@ -1031,6 +1046,7 @@ export class App {
     // the shared project-state lock protect deletion/recreation, not selection.
     const result = await (this.deps.saveModel ?? setModel)(id, page.project, identity);
     this.say(dim(result), page);
+    await this.refreshHeader(page);
   }
 
   /**

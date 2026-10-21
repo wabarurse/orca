@@ -115,7 +115,7 @@ export const pageQuestions = (): PageQuestions => ({ open: [], seen: new Map(), 
 
 type Mode = "chat" | QuestionMode;
 /** What the input holds in a mode: the chat draft, the question's answer, or nothing (a row is being picked). */
-const bufferOf = (m: Mode) => (m === "chat" || m === "guard" ? "chat" : m === "answer" ? "answer" : "none");
+const bufferOf = (m: Mode) => (m === "chat" ? "chat" : m === "answer" ? "answer" : "none");
 
 const head = (q: PageQuestions) => q.open[0];
 const visible = (q: PageQuestions) => q.expanded && q.open.length > 0 && (!q.hidden || q.open.some((x) => !q.hidden!.has(x.id)));
@@ -212,21 +212,18 @@ export class Questions {
     return this.shown.page === page && this.shown.mode === "answer" ? this.host.input : page.questions.answer;
   }
 
-  /**
-   * The head closed elsewhere: say so, and keep a typed answer — in the input
-   * as a chat draft (so the next question waits behind it), or in the note
-   * when the page is not showing it. It never moves to the next question.
-   */
+  /** Preserve the original chat buffer; an orphaned answer is reported separately, never assigned to the next question. */
   private keepTyped(page: QuestionPage, note: string): void {
-    const q = page.questions;
-    const inInput = this.shown.page === page && this.shown.mode === "answer";
     const typed = this.typed(page);
-    q.expanded = false;
-    q.index = 0;
-    q.answer = EMPTY;
-    if (!typed.text.trim()) { if (inInput) this.host.input = EMPTY; }
-    else if (inInput) this.shown = { page, mode: "chat" };
-    else note += `; your unsent answer: ${typed.text}`;
+    const active = this.shown.page === page && this.shown.mode !== "chat";
+    page.questions.expanded = false;
+    page.questions.index = 0;
+    page.questions.answer = EMPTY;
+    if (active) {
+      this.host.input = this.chat;
+      this.shown = { page, mode: "chat" };
+    }
+    if (typed.text.trim()) note += `; your unsent answer: ${typed.text}`;
     this.host.say(dim(note), page);
   }
 
@@ -279,7 +276,7 @@ export class Questions {
     if (this.shown.page === page && this.shown.mode === want) return;
     const from = bufferOf(this.shown.mode);
     if (this.shown.page !== page || from !== bufferOf(want)) this.swap(page, want);
-    if (page && want !== "chat") this.arm(page.questions, from === "chat" && want !== "guard");
+    if (page && want !== "chat") this.arm(page.questions, from === "chat");
     this.shown = { page, mode: want };
   }
 
@@ -310,7 +307,7 @@ export class Questions {
   takes(k: Key): boolean {
     const page = this.host.page();
     const mode = this.want(page);
-    if (mode === "chat" || mode === "guard") return false;
+    if (mode === "chat") return false;
     if (typing(k)) return mode === "pick" || !this.ready(page!.questions);
     return plain(k) && TAKEN.has(k.name);
   }

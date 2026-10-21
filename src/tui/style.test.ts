@@ -23,59 +23,59 @@ const committed = (lines: Parameters<typeof lineRows>[0][], cols: number, rows =
 };
 
 describe("input area", () => {
-  test("every input row and a padding row above and below are on the background, full width; the cursor stays put", () => {
+  test("input and status rows are full-width bands; styling never changes the cursor", () => {
     const f = frame();
     setUserFill(null);
     const plain = draw(f);
     setUserFill(BG);
     const s = draw(f);
-    expect(s.screen().slice(0, 4)).toEqual(["s", "", "> hi", ""]);
-    expect(marks(s).slice(0, 4)).toEqual([".".repeat(20), full(20), full(20), full(20)]);
-    expect([s.row, s.col]).toEqual([plain.row + 1, plain.col]); // one padding row lower, same column
-    expect([s.row, s.col]).toEqual([2, 4]);
+    expect(s.screen().slice(0, 2)).toEqual(["> hi", "s"]);
+    expect(marks(s).slice(0, 2)).toEqual([full(20), full(20)]);
+    expect([s.row, s.col]).toEqual([plain.row, plain.col]);
+    expect([s.row, s.col]).toEqual([0, 4]);
   });
 
   test("a wrapped multi-row input: every row filled, the cursor on its row and column", () => {
     setUserFill(BG);
     const text = "0123456789abcdefghij\nsecond";
     const s = draw(frame({ input: { prompt: "> ", text, cursor: 12 } }));
-    expect(s.screen().slice(0, 6)).toEqual(["s", "", "> 0123456789abcdefgh", "  ij", "  second", ""]);
-    expect(marks(s).slice(1, 6)).toEqual(Array(5).fill(full(20)));
-    expect([s.row, s.col]).toEqual([2, 14]); // after "> 0123456789ab"
+    expect(s.screen().slice(0, 4)).toEqual(["> 0123456789abcdefgh", "  ij", "  second", "s"]);
+    expect(marks(s).slice(0, 4)).toEqual(Array(4).fill(full(20)));
+    expect([s.row, s.col]).toEqual([0, 14]); // after "> 0123456789ab"
     const end = draw(frame({ input: { prompt: "> ", text, cursor: text.length } }));
-    expect([end.row, end.col]).toEqual([4, 8]);
+    expect([end.row, end.col]).toEqual([2, 8]);
   });
 
   test("no padding when the screen has no room for it; the input is still filled", () => {
     setUserFill(BG);
     const s = draw(frame({ rows: 3 }));
-    expect(s.screen()).toEqual(["s", "> hi", ""]);
-    expect(marks(s).slice(0, 2)).toEqual([".".repeat(20), full(20)]);
-    expect([s.row, s.col]).toEqual([1, 4]);
+    expect(s.screen()).toEqual(["> hi", "s", ""]);
+    expect(marks(s).slice(0, 2)).toEqual([full(20), full(20)]);
+    expect([s.row, s.col]).toEqual([0, 4]);
   });
 
   test("CJK input pads by display width", () => {
     setUserFill(BG);
     const s = draw(frame({ cols: 9, input: { prompt: "> ", text: "你好世界", cursor: 4 } }));
-    expect(s.screen()[2]).toBe("> 你好世");
-    expect(s.screen()[3]).toBe("  界");
-    expect(marks(s).slice(1, 5)).toEqual(Array(4).fill(full(9)));
+    expect(s.screen()[0]).toBe("> 你好世");
+    expect(s.screen()[1]).toBe("  界");
+    expect(marks(s).slice(0, 3)).toEqual(Array(3).fill(full(9)));
   });
 
   test("a dim prompt and a narrow width keep the fill", () => {
     setUserFill(BG);
     const s = draw(frame({ cols: 4, input: { prompt: "\x1b[2ma>\x1b[0m ", text: "xyz", cursor: 3 } }));
-    expect(s.screen().slice(2, 4)).toEqual(["a…xy", "  z"]);
-    expect(marks(s).slice(1, 5)).toEqual(Array(4).fill(full(4)));
+    expect(s.screen().slice(0, 2)).toEqual(["a…xy", "  z"]);
+    expect(marks(s).slice(0, 3)).toEqual(Array(3).fill(full(4)));
   });
 
   test("NO_COLOR: no background, no padding, the prompt as before", () => {
     setUserFill(pickFill({ NO_COLOR: "1" }));
     expect(userFill()).toBeNull();
     const s = draw(frame());
-    expect(s.screen().slice(0, 2)).toEqual(["s", "> hi"]);
+    expect(s.screen().slice(0, 2)).toEqual(["> hi", "s"]);
     expect(marks(s).every((r) => !r.includes("#"))).toBe(true);
-    expect(liveRows(frame()).cursor).toBe(1);
+    expect(liveRows(frame()).cursor).toBe(0);
   });
 });
 

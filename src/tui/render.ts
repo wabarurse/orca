@@ -43,7 +43,7 @@ export interface ProjectList {
 }
 
 /** How the input relates to the shown question: choosing a row, typing its answer, or holding a chat draft (which must go first). */
-export type QuestionMode = "pick" | "answer" | "guard";
+export type QuestionMode = "pick" | "answer";
 
 /** The oldest open question of the active page, as the live region shows it. */
 export interface QuestionView {
@@ -61,8 +61,6 @@ export interface QuestionView {
 export interface Frame {
   cols: number;
   rows: number;
-  /** Composer first, status and panels below it, all in a background band. */
-  bottomBar?: boolean;
   /** Streamed text not committed yet (a partial line, or a held code block or table, raw); wrapped, above everything else. */
   partial?: string;
   /** Rows of the tool calls running now (tools.ts, already styled), under the partial line. */
@@ -176,6 +174,7 @@ export function fit(raw: string, cols: number): string {
   if (cols <= 0) return "";
   const line = expandTabs(raw);
   if (visibleLength(line) <= cols) return line;
+  if (cols === 1) return "…";
   return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…\x1b[0m";
 }
 
@@ -224,8 +223,7 @@ export function projectRows(p: ProjectList, height: number): string[] {
 
 export const QUESTION_HINTS: Record<QuestionMode, string> = {
   pick: "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later",
-  answer: "Enter send · Esc clear · Tab later",
-  guard: "send or clear your message to answer",
+  answer: "Enter send · Esc/Tab close",
 };
 export const OWN_ANSWER = "type your own answer";
 export const skipRow = (def?: string) => (def ? `skip (use default: ${def})` : "skip");
@@ -276,34 +274,6 @@ function overlayRows(f: Frame, height: number): string[] {
   return f.question ? questionRows(f.question, f.cols, height) : [];
 }
 
-/** The input's rows on the user background, with `pad` blank rows above and below; as they are without a fill. */
-function inputBox(lines: string[], cols: number, pad: number): string[] {
-  const fill = userFill();
-  if (!fill) return lines;
-  const padding = Array<string>(pad).fill("");
-  return [...padding, ...lines, ...padding].map((r) => fillRow(r, cols, fill));
-}
-
-/** The live region's rows, top to bottom, and where the cursor goes in them. */
-export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
-  if (f.bottomBar) return bottomRows(f);
-  const statusRows = f.status ? 1 : 0;
-  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, statusRows);
-  // Everything must fit on screen, or the cursor could not get back to the top: the overlay
-  // gets what the input and status leave (but a row), the partial line the rest, showing its end.
-  let free = Math.max(0, f.rows - statusRows - input.lines.length);
-  const overlay = overlayRows(f, free - 1).map((r) => fit(sanitize(r), f.cols));
-  free -= overlay.length;
-  // A padding row above and below the input when the overlay keeps every row and a row is still left above.
-  const pad = userFill() && free >= 3 ? 1 : 0;
-  free -= 2 * pad;
-  const box = inputBox(input.lines, f.cols, pad);
-  const streamed = f.partial ? f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)) : [];
-  const partial = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols))], free);
-  const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...box];
-  return { rows, cursor: rows.length - box.length + pad + input.row, col: input.col };
-}
-
 /** Inline header: committed once with the page, never pinned or redrawn with the composer. */
 export function headerRow(text: string, cols: number): string {
   const row = fit(sanitize(text), cols);
@@ -312,12 +282,12 @@ export function headerRow(text: string, cols: number): string {
 }
 
 /** Input first; panels live BELOW it. On tiny screens the input wins, then the status, then the panel. */
-function bottomRows(f: Frame): { rows: string[]; cursor: number; col: number } {
+export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
   const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, f.status ? 1 : 0);
   const status = f.status && f.rows > input.lines.length ? [fit(sanitize(f.status), f.cols)] : [];
   const free = Math.max(0, f.rows - input.lines.length - status.length);
   const panel = overlayRows(f, free).map((r) => fit(sanitize(r), f.cols));
-  const streamed = (f.partial ?? "").split("\n").filter(Boolean).flatMap((l) => wrap(sanitize(l), f.cols));
+  const streamed = f.partial ? f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)) : [];
   const above = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols))], free - panel.length);
   const band = [...input.lines, ...status, ...panel];
   const fill = userFill();

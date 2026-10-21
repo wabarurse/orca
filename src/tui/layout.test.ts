@@ -8,7 +8,7 @@ import { pickFill, setUserFill } from "./style";
 
 const bg = "\x1b[48;5;236m";
 afterEach(() => setUserFill(null));
-const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, bottomBar: true, status: "2 agents running · 1 question · Ctrl+Q to view", input: { prompt: "> ", text: "hello\n你好", cursor: 8 }, menu: { title: "models", items: ["one", "two"], index: 0 } });
+const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, status: "2 agents running · 1 question · Ctrl+Q to view", input: { prompt: "> ", text: "hello\n你好", cursor: 8 }, menu: { title: "models", items: ["one", "two"], index: 0 } });
 
 test("bottom bar input precedes counts and modal; cursor and backgrounds survive append and resize", () => {
   setUserFill(bg);
@@ -59,7 +59,7 @@ test("header is committed once above chat, not pinned in the live region", () =>
 
 test("logical block separators are neutral, tools stay paired, lists and wrapped rows stay together", () => {
   setUserFill(bg);
-  const lines: Line[] = [...userLines("hello long message\ncontinuation"), { md: "reply", block: true }, { md: "", block: true }, { md: "- a", block: true }, { md: "- b", block: true }, { tool: "Bash(ls)", summary: "2 lines", failed: false }, { tool: "Bash(sleep)", summary: "interrupted", failed: true }];
+  const lines: Line[] = [...userLines("hello long message\ncontinuation"), { md: "reply", block: true }, { md: "", block: true }, { md: "- a", block: true }, { md: "- b", block: true, continuation: true }, { tool: "Bash(ls)", summary: "2 lines", failed: false }, { tool: "Bash(sleep)", summary: "interrupted", failed: true }];
   const full = historyRows(lines, 12);
   const split = [...historyRows(lines.slice(0, 4), 12), ...historyRows(lines.slice(4), 12, lines[3])];
   expect(split).toEqual(full);
@@ -74,8 +74,8 @@ test("stream chunk boundaries do not change spacing", () => {
   function rows(chunks: string[]) {
     const md = new MarkdownStream();
     const lines: Line[] = [];
-    for (const chunk of chunks) lines.push(...md.feed(chunk).map((md) => ({ md, block: true })));
-    lines.push(...md.flush().map((md) => ({ md, block: true })));
+    for (const chunk of chunks) lines.push(...md.feedLines(chunk));
+    lines.push(...md.flushLines());
     return historyRows(lines, 10);
   }
   expect(rows([...text])).toEqual(rows([text]));

@@ -15,7 +15,7 @@ import type { ToolView } from "../toolview";
  * (`tool`, its `summary`, `failed`) shows as its "⏺" line and "⎿" summary,
  * cut to the width (tools.ts `toolRows`).
  */
-export type Line = string | { md: string; block?: boolean; label?: string } | { user: string } | ToolView;
+export type Line = string | { md: string; block?: boolean; label?: string; continuation?: true } | { user: string } | ToolView;
 
 /** A history line as screen lines at `cols` columns. */
 export function lineRows(l: Line, cols: number): string[] {
@@ -31,14 +31,7 @@ function startsBlock(line: Line, previous?: Line): boolean {
   if (typeof line === "string") return false;
   if ("user" in line) return line.user.startsWith("\x1b[1m>");
   if ("tool" in line) return true;
-  if (previous && typeof previous !== "string" && "md" in previous && continuesList(previous.md, line.md)) return false;
-  return !!line.md.trim();
-}
-
-/** Adjacent list items/indented continuation lines belong to one markdown list. */
-function continuesList(before: string, after: string): boolean {
-  const list = /^\s*(?:[-+*] |\d+[.)] )/;
-  return list.test(before) && (list.test(after) || /^ {2,}\S/.test(after));
+  return !line.continuation && !!line.md.trim();
 }
 
 /** History at the current width; one neutral blank between logical blocks, never doubling an existing markdown blank. `previous` supports incremental commits. */

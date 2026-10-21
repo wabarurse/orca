@@ -1386,7 +1386,7 @@ describe("restored pages", () => {
 
 describe("orchestrator questions", () => {
   const PICK = "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later";
-  const ANSWER = "Enter send · Esc clear · Tab later";
+  const ANSWER = "Enter send · Esc/Tab close";
   const GUARD = "send or clear your message to answer";
   const live = (term: ReturnType<typeof fakeTerm>) => term.display.screen().join("\n");
   const ask1 = (project: string, text: string, options?: string[], def?: string) => askQuestions(project, [{ text, ...(options ? { options } : {}), ...(def ? { default: def } : {}) }]);
@@ -1616,8 +1616,8 @@ describe("orchestrator questions", () => {
     await answerQuestion("qa-moved", first!.id, "sqlite"); // another TUI
     await until(() => term.screen().includes('"Which db?" was answered elsewhere'));
     await until(() => !app.questions.view());
-    expect(app.input.text).toBe("my answer");
-    expect(live(term)).toContain("> my answer");
+    expect(app.input.text).toBe("");
+    expect(term.screen()).toContain("unsent answer: my answer");
     expect(live(term)).not.toContain("answer> my answer");
     expect(app.page!.questions.answer.text).toBe("");
     term.press({ name: "escape" }); // clear chat draft
@@ -1637,7 +1637,8 @@ describe("orchestrator questions", () => {
     await answerQuestion("qa-race", first!.id, "sqlite"); // another TUI; no poll sees it
     term.press({ name: "enter" });
     await until(() => term.screen().includes("already answered elsewhere; your answer was not sent"));
-    expect(app.input.text).toBe("mine");
+    expect(app.input.text).toBe("");
+    expect(app.page!.lines.map(raw).join(" ")).toContain("unsent answer: mine");
     await until(() => !app.questions.view());
     term.press({ name: "escape" });
     term.press({ name: "q", ctrl: true });

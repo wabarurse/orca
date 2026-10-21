@@ -37,9 +37,9 @@
 import { parseFormatted } from "../inbox";
 import type { Entry, MessageEntry } from "../transcript";
 import { interruptedView, toolView, type ToolOutcome } from "../toolview";
-import { lineRows, type Line } from "./lines";
+import { historyRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
-import { bold, dim } from "./render";
+import { bold, dim, wrap } from "./render";
 
 /** A restored page shows about this many rendered rows: whole messages from the newest back. */
 export const MAX_RESTORED_ROWS = 200;
@@ -173,10 +173,8 @@ function userEntry(content: MessageEntry["message"]["content"], asked?: AskedLoo
 /** An assistant entry's lines: its text through a fresh stream (every entry ends flushed live), then its tool calls as they ended. */
 function assistantLines(parts: Content, results: Map<string, ToolOutcome>): Line[] {
   const md = new MarkdownStream();
-  const out: string[] = [];
   const said = parts.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-  if (said) out.push(...md.feed(`${said}\n`), ...md.flush());
-  const lines: Line[] = out.map((b) => ({ md: b, block: true }));
+  const lines: Line[] = said ? [...md.feedLines(`${said}\n`), ...md.flushLines()] : [];
   for (const b of parts) if (b.type === "tool_use") lines.push(callLine(b, results));
   return lines;
 }
@@ -250,14 +248,14 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
 export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS, asked?: AskedLookup): Line[] {
   const items = restoreItems(chain, asked);
   const shown: Line[][] = [];
-  let rows = 0;
   let from = items.length;
   while (from > 0) {
     const lines = items[from - 1]!.lines();
-    const n = lines.reduce((sum, l) => sum + lineRows(l, cols).length, 0);
-    if (shown.length && rows + n > maxRows) break;
+    const omitted = items.slice(0, from - 1).filter((it) => !it.summary).length;
+    const combined = [...(from > 1 ? [earlier(omitted)] : []), ...lines, ...shown.flat()];
+    const n = historyRows(combined, cols).reduce((n, row) => n + wrap(row, cols).length, 0);
+    if (shown.length && n > maxRows) break;
     shown.unshift(lines);
-    rows += n;
     from--;
   }
   const dropped = items.slice(0, from).filter((it) => !it.summary).length;

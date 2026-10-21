@@ -65,25 +65,25 @@ describe("commit", () => {
 describe("live", () => {
   test("rows top to bottom: partial line, menu, status, input; cursor in the input", () => {
     const f = frame({ partial: "streaming", status: "⠋ thinking… 3s · one", menu: { title: "pick", items: ["x", "y"], index: 1 } });
-    expect(rows(f)).toEqual(["streaming", "pick", "  x", "❯ y", "⠋ thinking… 3s · one", "> hi"]);
+    expect(rows(f)).toEqual(["streaming", "> hi", "⠋ thinking… 3s · one", "pick", "  x", "❯ y"]);
     const { text, shown } = live(f);
-    expect(shown).toEqual({ height: 6, cursor: 5 });
+    expect(shown).toEqual({ height: 6, cursor: 1 });
     const s = show(f, text);
-    expect(s.text()).toBe("streaming\npick\n  x\n❯ y\n⠋ thinking… 3s · one\n> hi");
-    expect([s.row, s.col]).toEqual([5, 4]); // after "> hi"
+    expect(s.text()).toBe("streaming\n> hi\n⠋ thinking… 3s · one\npick\n  x\n❯ y");
+    expect([s.row, s.col]).toEqual([1, 4]); // after "> hi"
   });
 
   test("redraws by moving up exactly to the previous first row and clearing to the end", () => {
     const first = live(frame({ rows: 12, status: "s", input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 3 } }));
-    expect(first.shown).toEqual({ height: 4, cursor: 1 }); // status, then the cursor on "> one"
+    expect(first.shown).toEqual({ height: 4, cursor: 0 }); // status, then the cursor on "> one"
     const next = live(frame({ status: "s2" }), first.shown);
-    expect(next.text).toContain("\r\x1b[1A\x1b[J"); // up by the cursor's row, then clear down
-    expect(erase(first.shown)).toBe("\r\x1b[1A\x1b[J");
+    expect(next.text).toContain("\r\x1b[J"); // up by the cursor's row, then clear down
+    expect(erase(first.shown)).toBe("\r\x1b[J");
     expect(erase({ height: 3, cursor: 2 })).toBe("\r\x1b[2A\x1b[J");
     expect(erase(NOTHING)).toBe("");
     const s = show({ cols: 20, rows: 12 }, "above\r\n", first.text, next.text);
-    expect(s.text()).toBe("above\ns2\n> hi");
-    expect([s.row, s.col]).toEqual([2, 4]);
+    expect(s.text()).toBe("above\n> hi\ns2");
+    expect([s.row, s.col]).toEqual([1, 4]);
   });
 
   test("committing erases the live region, writes the lines above, and draws it again", () => {
@@ -92,7 +92,7 @@ describe("live", () => {
     const b = append(["> hello", "reply"], f, a.shown);
     const c = append(["more"], f, b.shown);
     const s = show(f, "$ parallels start\r\n", a.text, b.text, c.text);
-    expect(s.text()).toBe("$ parallels start\n> hello\nreply\nmore\nbusy\n> hi");
+    expect(s.text()).toBe("$ parallels start\n> hello\nreply\nmore\n> hi\nbusy");
     expect(c.text).not.toContain("\x1b[2J");
   });
 
@@ -124,8 +124,8 @@ describe("live", () => {
     expect(rows(end)).toEqual(["  3", "  4", "  5"]);
     expect(liveRows(end)).toMatchObject({ cursor: 2, col: 3 });
     const start = frame({ rows: 9, status: "s", input: { prompt: "> ", text, cursor: 0 } });
-    expect(rows(start)).toEqual(["s", "> 1", "  2", "  3"]);
-    expect(liveRows(start)).toMatchObject({ cursor: 1, col: 2 });
+    expect(rows(start)).toEqual(["> 1", "  2", "  3", "s"]);
+    expect(liveRows(start)).toMatchObject({ cursor: 0, col: 2 });
   });
 
   test("the input window keeps its top until the cursor leaves it", () => {
@@ -151,16 +151,13 @@ describe("live", () => {
     expect(menuRows({ title: "pick", items, index: 8 }, 4).map(strip)).toEqual(["pick", "  m6", "  m7", "❯ m8"]);
     const r = rows(frame({ rows: 6, status: "s", menu: { title: "pick", items, index: 0 } }));
     expect(r.length).toBeLessThanOrEqual(6);
-    expect(r.slice(-2)).toEqual(["s", "> hi"]);
+    expect(r.slice(0, 2)).toEqual(["> hi", "s"]);
   });
 
-  test("with the user background, the input's padding rows give way so a menu that fits stays whole", () => {
+  test("the full-width band puts a whole seven-item menu below the input without padding", () => {
     setUserFill("\x1b[48;5;236m");
     const items = Array.from({ length: 7 }, (_, i) => `m${i}`);
-    const r = rows(frame({ rows: 10, menu: { title: "pick", items, index: 0 } }));
-    expect(r).toEqual(["pick", "❯ m0", ...items.slice(1).map((m) => `  ${m}`), "> hi".padEnd(20)]); // no padding rows
-    const roomy = rows(frame({ rows: 12, menu: { title: "pick", items, index: 0 } }));
-    expect(roomy.slice(-4)).toEqual(["  m6", "".padEnd(20), "> hi".padEnd(20), "".padEnd(20)]); // room to spare: padded
+    expect(rows(frame({ rows: 10, menu: { title: "pick", items, index: 0 } })).map((s) => s.trimEnd())).toEqual(["> hi", "pick", "❯ m0", ...items.slice(1).map((m) => `  ${m}`)]);
   });
 
   test("a long menu or status row is cut to the width with … and its style closed", () => {
@@ -168,7 +165,7 @@ describe("live", () => {
     const r = liveRows(f).rows;
     expect(visibleLength(r[1]!)).toBe(40);
     expect(r[1]!.endsWith("…\x1b[0m")).toBe(true);
-    expect(strip(r[2]!)).toBe("z".repeat(39) + "…");
+    expect(strip(r[1]!)).toBe("z".repeat(39) + "…");
   });
 
   const projects = (over: Partial<ProjectList> = {}): ProjectList => ({
@@ -182,8 +179,8 @@ describe("live", () => {
 
   test("the project list sits above the status line and a multi-row input", () => {
     const f = frame({ cols: 60, rows: 12, partial: "half", status: "⠋ thinking… 1s", projects: projects(), input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 13 } });
-    expect(rows(f)).toEqual(["half", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ Enter opens   p pins   d deletes   Esc closes", "⠋ thinking… 1s", "> one", "  two", "  three"]);
-    expect(liveRows(f)).toMatchObject({ cursor: 9, col: 7 });
+    expect(rows(f)).toEqual(["half", "> one", "  two", "  three", "⠋ thinking… 1s", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(liveRows(f)).toMatchObject({ cursor: 3, col: 7 });
   });
 
   test("project rows scroll to keep the selection in view, with the status under the list", () => {
@@ -199,7 +196,7 @@ describe("live", () => {
   test("on a short terminal the status and hint stay ahead of the list", () => {
     expect(projectRows(projects({ status: "delete one? y/n" }), 2).map(strip)).toEqual(["delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
     expect(projectRows(projects({ status: "delete one? y/n" }), 1).map(strip)).toEqual(["delete one? y/n"]);
-    expect(rows(frame({ cols: 60, rows: 4, projects: projects({ status: "delete one? y/n" }) }))).toEqual(["delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes", "> hi"]);
+    expect(rows(frame({ cols: 60, rows: 4, projects: projects({ status: "delete one? y/n" }) }))).toEqual(["> hi", "projects", "delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
   });
 });
 
@@ -225,8 +222,8 @@ describe("on a faithful terminal", () => {
     s.write("above\r\n");
     const a = live(f);
     s.write(a.text);
-    expect(s.screen().slice(0, 5)).toEqual(["above", "s", "> 01234567", "  89abcdef", "  ghij"]);
-    expect([s.row, s.col]).toEqual([3, 4]); // after "89"
+    expect(s.screen().slice(0, 5)).toEqual(["above", "> 01234567", "  89abcdef", "  ghij", "s"]);
+    expect([s.row, s.col]).toEqual([2, 4]); // after "89"
     s.write(erase(a.shown) + "\x1b[?25h");
     expect(s.text()).toBe("above");
     expect([s.row, s.col]).toEqual([1, 0]);
@@ -242,7 +239,7 @@ describe("on a faithful terminal", () => {
     const a = live(f);
     s.write(a.text);
     expect(s.screen()).toEqual(r.map(strip).map((x) => x.trimEnd()));
-    expect(s.screen().slice(-3)).toEqual(["s", "  b", "  c"]);
+    expect(s.screen().slice(0, 3)).toEqual(["  b", "  c", "s"]);
     expect(s.screen().join("\n")).toContain("❯ m5");
     // Redrawn smaller: the old region is gone, the scrollback intact.
     s.write(live(frame({ cols: 10, rows: 6 }), a.shown).text);
@@ -280,7 +277,7 @@ describe("sanitize", () => {
     const a = append([evil, "next"], f, NOTHING);
     s.write(a.text);
     s.write(live(frame({ status: "s2" }), a.shown).text);
-    expect(s.text()).toBe("output\nnext\ns2\n> hi");
+    expect(s.text()).toBe("output\nnext\n> hi\ns2");
   });
 });
 
@@ -290,12 +287,11 @@ describe("questions", () => {
 
   test("a question with options: text, numbered options, type your own, skip with the default, the hint for the mode", () => {
     expect(questionRows(q(), 70, 10).map(strip)).toEqual(["? Which db?", "❯ 1. postgres", "  2. sqlite", "  type your own answer", "  skip (use default: sqlite)", PICK]);
-    expect(questionRows(q({ index: 2, count: 3, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "  skip (use default: sqlite)", "Enter send · Esc clear · Tab later"]);
-    expect(questionRows(q({ mode: "guard" }), 70, 10).map(strip).at(-1)).toBe("send or clear your message to answer");
+    expect(questionRows(q({ index: 2, count: 3, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "  skip (use default: sqlite)", "Enter send · Esc/Tab close"]);
   });
 
   test("a question without options: type your own answer, then a plain skip without a default", () => {
-    expect(questionRows(q({ options: [], default: undefined, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db?", "❯ type your own answer", "  skip", "Enter send · Esc clear · Tab later"]);
+    expect(questionRows(q({ options: [], default: undefined, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db?", "❯ type your own answer", "  skip", "Enter send · Esc/Tab close"]);
   });
 
   test("long text word-wraps", () => {
@@ -313,7 +309,8 @@ describe("questions", () => {
     expect(questionRows(long, 30, 0)).toEqual([]);
     // In the live region: a 5-row terminal keeps the hint (cut to the width), the status line and the input.
     const live = rows({ cols: 30, rows: 5, input: { prompt: "> ", text: "", cursor: 0 }, menu: null, status: "status", question: long });
-    expect(live.slice(-3)).toEqual([PICK.slice(0, 29) + "…", "status", "> "]);
+    expect(live.slice(0, 2)).toEqual(["> ", "status"]);
+    expect(live.at(-1)).toBe(PICK.slice(0, 29) + "…");
     expect(live.length).toBeLessThanOrEqual(5);
   });
 
