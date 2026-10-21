@@ -25,21 +25,30 @@ const CSI: Record<string, Csi> = {
   K: (s, n) => s.eraseLine(n[0] ?? 0),
 };
 
+/** 38/48/58 at ps[i] with its 5;n or 2;r;g;b arguments: the background it leaves, and how many params it took. */
+function extendedColour(ps: string[], i: number, bg: string): [bg: string, used: number] {
+  const len = ({ "5": 2, "2": 4 } as Record<string, number>)[ps[i + 1] ?? ""];
+  if (!len || i + len >= ps.length) throw new Error(`unmodelled SGR ${ps.join(";")}`);
+  return [ps[i] === "48" ? ps.slice(i, i + len + 1).join(";") : bg, len + 1];
+}
+
+/** The background one SGR param (with what follows it in `ps`) leaves, from `bg`; and how many params it took. */
+function sgrParam(ps: string[], i: number, bg: string): [bg: string, used: number] {
+  const p = ps[i]!;
+  if (p.includes(":")) return [p.startsWith("48:") ? p : bg, 1]; // 48:5:n, 48:2::r:g:b
+  if (/^(38|48|58)$/.test(p)) return extendedColour(ps, i, bg);
+  if (/^0*$|^49$/.test(p)) return ["", 1];
+  return [/^(4[0-7]|10[0-7])$/.test(p) ? p : bg, 1];
+}
+
 /** An SGR's params as the background they leave, from `bg` (a cell's background is its params, e.g. "48;5;236", or "" for none). */
 function sgrBackground(params: string, bg: string): string {
   if (params === "") return "";
   const ps = params.split(";");
-  for (let i = 0; i < ps.length; i++) {
-    const p = ps[i]!;
-    if (p.includes(":")) { if (p.startsWith("48:")) bg = p; continue; }
-    const n = Number(p || 0);
-    if (n === 38 || n === 48 || n === 58) {
-      const len = ps[i + 1] === "5" ? 2 : ps[i + 1] === "2" ? 4 : -1;
-      if (len < 0 || i + len >= ps.length) throw new Error(`unmodelled SGR ${params}`);
-      if (n === 48) bg = ps.slice(i, i + len + 1).join(";");
-      i += len;
-    } else if (n === 0 || n === 49) bg = "";
-    else if ((n >= 40 && n <= 47) || (n >= 100 && n <= 107)) bg = String(n);
+  for (let i = 0; i < ps.length;) {
+    const [next, used] = sgrParam(ps, i, bg);
+    bg = next;
+    i += used;
   }
   return bg;
 }

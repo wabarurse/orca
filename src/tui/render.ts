@@ -258,20 +258,27 @@ function overlayRows(f: Frame, height: number): string[] {
   return f.question ? questionRows(f.question, f.cols, height) : [];
 }
 
+/** The input's rows on the user background, with `pad` blank rows above and below; as they are without a fill. */
+function inputBox(lines: string[], cols: number, pad: number): string[] {
+  const fill = userFill();
+  if (!fill) return lines;
+  const padding = Array<string>(pad).fill("");
+  return [...padding, ...lines, ...padding].map((r) => fillRow(r, cols, fill));
+}
+
 /** The live region's rows, top to bottom, and where the cursor goes in them. */
 export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
   const statusRows = f.status ? 1 : 0;
   const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, statusRows);
   // Everything must fit on screen, or the cursor could not get back to the top: the overlay
   // gets what the input and status leave (but a row), the partial line the rest, showing its end.
-  const fill = userFill();
-  // A padding row above and below the input, on its background, when that still leaves a row above.
-  const pad = fill && f.rows - statusRows - input.lines.length >= 3 ? 1 : 0;
-  const padding = Array<string>(pad).fill("");
-  const box = fill ? [...padding, ...input.lines, ...padding].map((r) => fillRow(r, f.cols, fill)) : input.lines;
-  let free = Math.max(0, f.rows - statusRows - box.length);
+  let free = Math.max(0, f.rows - statusRows - input.lines.length);
   const overlay = overlayRows(f, free - 1).map((r) => fit(sanitize(r), f.cols));
   free -= overlay.length;
+  // A padding row above and below the input when the overlay keeps every row and a row is still left above.
+  const pad = userFill() && free >= 3 ? 1 : 0;
+  free -= 2 * pad;
+  const box = inputBox(input.lines, f.cols, pad);
   const partial = f.partial ? lastRows(f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)), free) : [];
   const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...box];
   return { rows, cursor: rows.length - box.length + pad + input.row, col: input.col };

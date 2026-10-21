@@ -90,16 +90,20 @@ export function useTerminalBackground(c: Rgb, env: Env = process.env): void { fi
 
 const SGR = /\x1b\[([0-9;:]*)m/g;
 
+/** How many arguments follow an extended colour (38/48/58) at ps[i]: 5;n or 2;r;g;b. */
+export const colourArgs = (ps: string[], i: number) => (ps[i + 1] === "5" ? 2 : ps[i + 1] === "2" ? 4 : 1);
+
+/** Whether one plain SGR param ends a background or foreground: a reset, 39 or 49. */
+const resets = (p: string) => { const n = Number(p || 0); return n === 0 || n === 39 || n === 49; };
+
 /** Whether an SGR's params end a background or foreground: a reset (empty, 0), 39 or 49; extended colour arguments are skipped. */
 function resetsFill(params: string): boolean {
   if (params === "") return true;
   const ps = params.split(";");
   for (let i = 0; i < ps.length; i++) {
     const p = ps[i]!;
-    if (p.includes(":")) continue; // 38:5:n / 48:2::r:g:b carry their own arguments
-    const n = Number(p || 0);
-    if (n === 38 || n === 48 || n === 58) { i += ps[i + 1] === "5" ? 2 : ps[i + 1] === "2" ? 4 : 1; continue; }
-    if (n === 0 || n === 39 || n === 49) return true;
+    if (/^(38|48|58)$/.test(p)) i += colourArgs(ps, i);
+    else if (!p.includes(":") && resets(p)) return true; // 38:5:n / 48:2::r:g:b carry their own arguments
   }
   return false;
 }

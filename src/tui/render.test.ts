@@ -154,6 +154,15 @@ describe("live", () => {
     expect(r.slice(-2)).toEqual(["s", "> hi"]);
   });
 
+  test("with the user background, the input's padding rows give way so a menu that fits stays whole", () => {
+    setUserFill("\x1b[48;5;236m");
+    const items = Array.from({ length: 7 }, (_, i) => `m${i}`);
+    const r = rows(frame({ rows: 10, menu: { title: "pick", items, index: 0 } }));
+    expect(r).toEqual(["pick", "❯ m0", ...items.slice(1).map((m) => `  ${m}`), "> hi".padEnd(20)]); // no padding rows
+    const roomy = rows(frame({ rows: 12, menu: { title: "pick", items, index: 0 } }));
+    expect(roomy.slice(-4)).toEqual(["  m6", "".padEnd(20), "> hi".padEnd(20), "".padEnd(20)]); // room to spare: padded
+  });
+
   test("a long menu or status row is cut to the width with … and its style closed", () => {
     const f = frame({ cols: 40, rows: 9, status: "z".repeat(50), menu: { title: "pick", items: [`\x1b[2m${"y".repeat(60)}`], index: 0 } });
     const r = liveRows(f).rows;
