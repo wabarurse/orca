@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newProjectName, repoHere, validProjectName } from "./commands";
+import { newProjectName, repoHere, shortRemote, validProjectName } from "./commands";
 import { recentModels } from "./commands";
 
 describe("recentModels", () => {
@@ -33,14 +33,18 @@ describe("project names", () => {
 });
 
 describe("repoHere", () => {
-  test("names the project after the repo and prefers its origin url", async () => {
+  test("shortRemote drops scheme and .git", () => {
+    expect(shortRemote("https://github.com/wabarurse/parallels.git")).toBe("github.com/wabarurse/parallels");
+    expect(shortRemote("git@github.com:me/app.git")).toBe("github.com/me/app");
+  });
+  test("prefers the origin url over the path", async () => {
     const dir = mkdtempSync(join(tmpdir(), "parallels-here-"));
     try {
       const repo = join(dir, "my-app");
       await Bun.$`git init -q ${repo}`.quiet();
-      expect(await repoHere(repo)).toEqual({ name: "my-app", url: realpathSync(repo) });
+      expect(await repoHere(repo)).toBe(realpathSync(repo));
       await Bun.$`git -C ${repo} remote add origin git@example.com:me/my-app.git`.quiet();
-      expect(await repoHere(join(repo))).toEqual({ name: "my-app", url: "git@example.com:me/my-app.git" });
+      expect(await repoHere(join(repo))).toBe("git@example.com:me/my-app.git");
       expect(await repoHere(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
