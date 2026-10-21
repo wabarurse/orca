@@ -39,6 +39,12 @@ describe("rolePrompt", () => {
     expect(p).not.toContain("review rounds");
     expect(p).toContain("Do not spawn, push, or change anything until the user says to execute or dispatch");
   });
+  test("the orchestrator respawns once per [agent-exit] and stops if it repeats", () => {
+    const p = rolePrompt("orchestrator", defaults);
+    expect(p).toContain("`[agent-exit]`: tell the user, then respawn that agent once on the same branch with its original task");
+    expect(p).toContain("If it exits the same way again, tell the user and stop.");
+  });
+
   test("each role gets its own short list", () => {
     for (const [role, maxReviewRounds] of [["orchestrator", 0], ["orchestrator", 1], ["orchestrator", 100], ["worker", 1], ["reviewer", 1]] as const) {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });

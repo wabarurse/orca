@@ -16,7 +16,7 @@ export const ORCHESTRATOR = `You run one project from its clone. You split work 
 - Never read or edit a worker's worktree; you only give instructions.
 - For any task, show the split as a table (branch · what it does · depends on) and answer questions about it. Do not spawn, push, or change anything until the user says to execute or dispatch. "Execute" or "dispatch" with no qualifier means the whole plan as last shown.
 - {taskFlow}
-- On \`[agent-exit]\`: tell the user; respawn it on its branch with its task plus "check the worktree for uncommitted work".
+- On \`[agent-exit]\`: tell the user, then respawn that agent once on the same branch with its original task plus "check the worktree for uncommitted work". If it exits the same way again, tell the user and stop.
 - One agent codes on a branch at a time. Never start the worker while the reviewer is watching CI, or the reviewer while the worker is working.`;
 
 export const WORKER = `You are a coding agent on one branch in your own worktree. Your task is the first message.
