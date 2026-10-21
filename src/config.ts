@@ -53,18 +53,33 @@ export const defaults: Config = {
   cognitive: 15,
 };
 
+/** Most review rounds /review-rounds and config.toml accept. */
+export const MAX_REVIEW_ROUNDS = 100;
+
+/** The last parse warning, so a broken file is reported once, not on every load. */
+let warned = "";
+
 export async function loadConfig(): Promise<Config> {
   const file = Bun.file(paths.config);
   if (!(await file.exists())) return defaults;
-  const parsed = Bun.TOML.parse(await file.text()) as Partial<Config>;
+  let parsed: Partial<Config>;
+  try {
+    parsed = Bun.TOML.parse(await file.text()) as Partial<Config>;
+  } catch (err) {
+    // A broken config.toml must not break every command and turn.
+    const warning = `parallels: ignoring ${paths.config}: ${err instanceof Error ? err.message : String(err)}`;
+    if (warning !== warned) console.error(warning);
+    warned = warning;
+    return defaults;
+  }
   const config = { ...defaults, ...parsed };
   if (!validRounds(config.maxReviewRounds)) config.maxReviewRounds = defaults.maxReviewRounds;
   return config;
 }
 
-/** A review round count: a non-negative integer. */
+/** A review round count: an integer from 0 to MAX_REVIEW_ROUNDS. */
 export function validRounds(n: unknown): n is number {
-  return typeof n === "number" && Number.isInteger(n) && n >= 0;
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= MAX_REVIEW_ROUNDS;
 }
 
 /** Write changed keys back to config.toml, keeping the others. */

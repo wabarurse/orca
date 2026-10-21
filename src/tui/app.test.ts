@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
+import { loadConfig } from "../config";
 import { App, type Clock } from "./app";
 import { parseKeys, type Key } from "./keys";
 import type { Terminal } from "./term";
@@ -217,6 +218,37 @@ describe("tui app", () => {
     await until(() => term.screen().includes("signer says hi"));
     expect(orchs.said.signer).toEqual(["hi"]);
     expect(app.loggingIn).toBe(false);
+    app.quit();
+    await running;
+  });
+
+  test("/review-rounds works while viewing an agent and while signing in", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    let finish!: () => void;
+    const login = async () => { await new Promise<void>((r) => (finish = r)); return "signed in"; };
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, login });
+    const running = app.run("rounds");
+    await until(() => !!app.page);
+    const page = app.page!;
+    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false };
+    page.view = view;
+    term.type("/review-rounds 3\r");
+    await until(() => view.lines.join("\n").includes("review rounds set to 3"));
+    expect((await loadConfig()).maxReviewRounds).toBe(3);
+    page.view = null;
+    term.type("/login claude\r");
+    await until(() => app.loggingIn);
+    term.type("/review-rounds 0\r");
+    await until(() => page.lines.join("\n").includes("review rounds set to 0"));
+    expect((await loadConfig()).maxReviewRounds).toBe(0);
+    term.type("/review-rounds\r");
+    await until(() => page.lines.join("\n").includes("review rounds: 0"));
+    expect(page.lines.join("\n")).not.toContain("queued");
+    finish();
+    await until(() => !app.loggingIn);
+    await Bun.sleep(20);
+    expect(orchs.said.rounds).toEqual([]); // nothing was queued for the orchestrator
     app.quit();
     await running;
   });

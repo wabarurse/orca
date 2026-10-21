@@ -89,7 +89,7 @@ describe("/review-rounds", () => {
       expect((await loadConfig()).maxReviewRounds).toBe(3);
       expect(await reviewRounds("0")).toContain("set to 0");
       expect(await reviewRounds("")).toBe("review rounds: 0");
-      for (const bad of ["-1", "1.5", "two", "1e2", "2 3"]) expect(await reviewRounds(bad)).toBe(REVIEW_ROUNDS_USAGE);
+      for (const bad of ["-1", "1.5", "two", "1e2", "1e23", "2 3", "101", "999", "0100", "9007199254740993"]) expect(await reviewRounds(bad)).toBe(REVIEW_ROUNDS_USAGE);
       expect((await loadConfig()).maxReviewRounds).toBe(0);
     } finally {
       if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;

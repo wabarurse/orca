@@ -37,7 +37,7 @@ export const REVIEWER = `You are a review agent on one branch, sharing the worke
 /** The task-flow line: 0 rounds skips review and goes straight to CI. */
 const taskFlow = (rounds: number) => rounds === 0
   ? `A task runs as: spawn a worker → it reports → spawn the reviewer with only the instruction "watch ci" → it reports ready to merge → tell the user.`
-  : `A task runs as: spawn a worker → it reports → spawn a reviewer → it reports a review and complexity numbers → if there are problems, spawn the worker again with the notes; if it is good, spawn the reviewer again with the one instruction "watch ci" → it reports ready to merge → tell the user. At most ${rounds} review rounds, then report to the user with what is still open.`;
+  : `A task runs as: spawn a worker → it reports → spawn a reviewer → it reports a review and complexity numbers → if there are problems, spawn the worker again with the notes, then review again; if it is good, spawn the reviewer again with the one instruction "watch ci" → it reports ready to merge → tell the user. At most ${rounds} review ${rounds === 1 ? "round" : "rounds"}: if review ${rounds} still finds problems, spawn the worker once more with the notes, then the reviewer with "watch ci" and no further review, and tell the user what was left open.`;
 
 const templates: Record<Role, string> = { orchestrator: ORCHESTRATOR, worker: WORKER, reviewer: REVIEWER };
 

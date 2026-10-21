@@ -24,9 +24,30 @@ describe("maxReviewRounds", () => {
     expect((await loadConfig()).maxReviewRounds).toBe(4);
   });
   test("anything else falls back to the default", async () => {
-    for (const bad of [`"2"`, "-1", "1.5", "true"]) {
+    for (const bad of [`"2"`, "-1", "1.5", "true", "101", "1e21", "1e23"]) {
       await Bun.write(paths.config, `maxReviewRounds = ${bad}\n`);
       expect((await loadConfig()).maxReviewRounds).toBe(defaults.maxReviewRounds);
+    }
+  });
+  test("100 is the most it reads", async () => {
+    await Bun.write(paths.config, "maxReviewRounds = 100\n");
+    expect((await loadConfig()).maxReviewRounds).toBe(100);
+  });
+  test("a config.toml that does not parse falls back to defaults and warns once", async () => {
+    const errors: string[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { errors.push(a.join(" ")); };
+    try {
+      await Bun.write(paths.config, "maxReviewRounds = 9007199254740993\n");
+      expect(await loadConfig()).toEqual(defaults);
+      expect(await loadConfig()).toEqual(defaults);
+      expect(errors.length).toBe(1);
+      expect(errors[0]).toContain(paths.config);
+      await Bun.write(paths.config, "model = [unclosed\n");
+      expect(await loadConfig()).toEqual(defaults);
+      expect(errors.length).toBe(2);
+    } finally {
+      console.error = orig;
     }
   });
   test("saveConfig keeps the other keys", async () => {
