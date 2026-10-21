@@ -177,6 +177,8 @@ test("Codex terminal metadata distinguishes refusal and omitted nontext output f
   const p = openai(async () => fakeCodexTokens());
   expect((await p.complete(request())).completion).toBe("refusal");
   output = [message, { ...reasoning, encrypted_content: undefined }];
-  expect((await p.complete(request())).completion).toBe("nontext");
+  expect((await p.complete(request())).completion).toBe("completed");
+  output = [reasoning, message]; expect((await p.complete(request())).completion).toBe("completed");
+  output = [message, call]; expect((await p.complete(request())).completion).toBe("nontext");
   output = [message]; expect((await p.complete(request())).completion).toBe("completed");
 });

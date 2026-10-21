@@ -32,6 +32,18 @@ for (const content of [[], [text("")], [toolUse("a", "bash", {})], [text("summar
   const { deps, transcript } = await fixture(async () => ({ ...end(), content: content as any }));
   const before = await saved(transcript); expect(await compact(deps, true)).toBe(false); expect(await saved(transcript)).toEqual(before);
 });
+test("completed Claude summary keeps visible text and discards signed/redacted reasoning", async () => {
+  const { deps, transcript } = await fixture(async () => ({ ...end(), content: [
+    { type: "thinking", thinking: "private reasoning", signature: "signed" },
+    { type: "redacted_thinking", data: "redacted" },
+    text("Goal and progress."),
+  ] }));
+  expect(await compact(deps, true)).toBe(true);
+  const checkpoint = (await transcript.chain())[0]!.content;
+  expect(checkpoint).toContain("Goal and progress.");
+  expect(checkpoint).not.toContain("private reasoning");
+  expect(checkpoint).not.toContain("redacted");
+});
 test("full original >2000 chars survives repeated checkpoints; amendment remains historical data and warning identifies source", async () => {
   const { deps, transcript, original } = await fixture();
   expect(await compact(deps, true)).toBe(true);
