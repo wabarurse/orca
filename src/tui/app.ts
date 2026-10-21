@@ -718,6 +718,7 @@ export class App {
     const midTurn = `${label} is mid-turn; try again when it ends`;
     if (page?.busy) { list.status = dim(midTurn); return; }
     if (page) page.deleting = true;
+    let status: string;
     try {
       await deleteProject(name, {
         ...this.deps.projects,
@@ -728,12 +729,14 @@ export class App {
           if (at !== -1) this.closePage(at);
         },
       });
-      list.status = dim(`deleted ${label}`);
+      status = `deleted ${label}`;
     } catch (err) {
       if (page) page.deleting = false;
-      list.status = dim(err instanceof Error ? err.message : String(err));
+      status = err instanceof Error ? err.message : String(err);
     }
+    // The status goes up once the list shows the result, as for a pin.
     await this.refreshProjects();
+    if (this.projectList) this.projectList.status = dim(status);
   }
 
   private async runTurn(page: Page): Promise<void> {
