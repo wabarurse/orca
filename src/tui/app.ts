@@ -7,7 +7,7 @@
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deleteProject, exitWatchdog, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
+import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { paths } from "../config";
 import type { Message } from "../inbox";
 import type { Orchestrator } from "../orchestrator";
@@ -77,6 +77,8 @@ export interface AppDeps {
   projects?: Pick<DeleteOptions, "live" | "kill">;
   /** Exit watchdog run with each inbox poll (commands.ts exitWatchdog); tests stub it. */
   watchdog?: (project: string) => Promise<unknown>;
+  /** Merged-PR watcher run with each inbox poll (commands.ts mergeWatch); tests stub it. */
+  merges?: (project: string) => Promise<unknown>;
   /** Where questions are read and answered (questions.ts on disk by default); tests stub it. */
   questions?: QuestionStore;
   /** How long Enter, digits and typing are ignored after a question first shows (QUESTION_DELAY_MS); tests shorten it. */
@@ -811,11 +813,13 @@ export class App {
   }
 
   private watch?: (project: string) => Promise<unknown>;
+  private merges?: (project: string) => Promise<unknown>;
 
-  /** Exit watchdog for every open page (commands.ts exitWatchdog); notices land in the orchestrator's inbox. */
+  /** Exit watchdog and merged-PR watcher for every open page (commands.ts); notices land in the orchestrator's inbox. */
   private watchPages(): void {
     this.watch ??= this.deps.watchdog ?? exitWatchdog();
-    for (const p of this.pages) this.watch(p.project).catch(() => {});
+    this.merges ??= this.deps.merges ?? mergeWatch();
+    for (const p of this.pages) for (const w of [this.watch, this.merges]) w(p.project).catch(() => {});
   }
 
   /** Start a turn on every idle page whose orchestrator has unread messages. */

@@ -10,6 +10,7 @@ import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
 import { loadConfig, paths, saveConfig, validRounds, MAX_REVIEW_ROUNDS } from "./config";
 import { watchdog } from "./exits";
+import { mergeWatcher } from "./merges";
 import type { ProviderName } from "./providers/index";
 import { sessionName, tmux } from "./runner";
 
@@ -149,6 +150,12 @@ export async function liveAgentsOrNull(project: string): Promise<string[] | null
  * notice get an `[agent-exit]` notice. `live` is stubbed in tests.
  */
 export const exitWatchdog = (live: (project: string) => Promise<string[] | null> = liveAgentsOrNull) => watchdog({ live });
+
+/**
+ * The TUI's merge watcher (src/merges.ts), checked for every open page on each
+ * inbox poll next to the exit watchdog; it asks gh about every 30s per project.
+ */
+export const mergeWatch = (live: (project: string) => Promise<string[] | null> = liveAgentsOrNull) => mergeWatcher({ live });
 
 /** Close a project's (now idle) tmux session, if tmux is installed. */
 export async function killProjectSession(project: string): Promise<void> {

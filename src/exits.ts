@@ -14,6 +14,7 @@ import { open as openFile, readdir, rename, stat, unlink } from "node:fs/promise
 import { join } from "node:path";
 import { paths } from "./config";
 import { put } from "./inbox";
+import { run } from "./proc";
 import { SETTLED_EXIT, slug } from "./runner";
 import type { Role } from "./transcript";
 
@@ -80,23 +81,8 @@ export const claimed = (project: string, id: string, run: string) => existsSync(
  * --no-optional-locks keeps it from touching the index lock of a live agent.
  */
 export async function dirtyCount(cwd: string, timeoutMs = GIT_TIMEOUT_MS): Promise<number | null> {
-  let proc: ReturnType<typeof Bun.spawn<"ignore", "pipe", "ignore">>;
-  try {
-    proc = Bun.spawn(["git", "--no-optional-locks", "status", "--porcelain"], { cwd, env: process.env, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
-  } catch {
-    return null;
-  }
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; proc.kill("SIGKILL"); }, timeoutMs);
-  try {
-    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    if (timedOut || code !== 0) return null;
-    return out.split("\n").filter(Boolean).length;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const res = await run(["git", "--no-optional-locks", "status", "--porcelain"], { cwd, timeoutMs });
+  return res && res.code === 0 ? res.out.split("\n").filter(Boolean).length : null;
 }
 
 /** One line, capped, for a notice. */
