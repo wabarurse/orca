@@ -1,3 +1,5 @@
+import { effectiveSettings, type RequestSettings } from "./project-settings";
+import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./project-state";
 // A project override never changes the default used by other projects.
 import { rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,21 +24,30 @@ export async function effectiveModel(project: string): Promise<string> {
   validateModel(model);
   return model;
 }
-export async function saveProjectModel(project: string, model: string): Promise<void> {
-  validateModel(model);
+export function saveProjectModel(project: string, model: string, identity?: string): Promise<void> {
+  // Capture identity and reserve queue position synchronously, before any await.
+  try {
+    validateModel(model);
+    modelPath(project);
+    const expected = identity ?? projectIdentity(project);
+    return withProjectStateLock(project, () => commitModel(project, model, expected));
+  } catch (error) { return Promise.reject(error); }
+}
+async function commitModel(project: string, model: string, identity: string): Promise<void> {
+  assertProjectIdentity(project, identity);
   const path = modelPath(project);
   const temp = `${path}.${crypto.randomUUID()}.tmp`;
   try {
-    // Existing project only: don't resurrect a page deleted during a picker.
     await Bun.write(temp, model + "\n", { createPath: false });
+    assertProjectIdentity(project, identity);
     await rename(temp, path);
   } finally { await unlink(temp).catch(() => {}); }
 }
 /** Re-read just before each request, never during a tool or an in-flight call. */
-export function projectModelResolver(project: string, load: typeof provider = provider): () => Promise<{ model: string; provider: Provider }> {
+export function projectModelResolver(project: string, load: typeof provider = provider): () => Promise<{ model: string; provider: Provider; settings: RequestSettings }> {
   return async () => {
     const model = await effectiveModel(project);
-    try { return { model, provider: await load(providerFor(model)) }; }
+    try { return { model, provider: await load(providerFor(model)), settings: await effectiveSettings(project, model) }; }
     catch (error) { throw new Error(`Cannot load provider for project ${project} model ${model}: ${error instanceof Error ? error.message : error}`); }
   };
 }

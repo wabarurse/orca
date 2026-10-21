@@ -1,0 +1,38 @@
+// Serialize model commits and managed project creation/deletion, across processes.
+// Locks live outside projects so deleting/recreating a directory cannot replace its lock.
+import { mkdir, rm } from "node:fs/promises";
+import { statSync } from "node:fs";
+import { join } from "node:path";
+import { paths } from "./config";
+
+export function projectIdentity(project: string): string {
+  const s = statSync(paths.project(project), { bigint: true });
+  return `${s.dev}:${s.ino}:${s.birthtimeNs}`;
+}
+export function assertProjectIdentity(project: string, identity: string): void {
+  if (projectIdentity(project) !== identity) throw new Error("project changed while switching model; try again");
+}
+const queues = new Map<string, Promise<unknown>>();
+/** Invocation-order queue locally, exclusive directory lock between processes. */
+export function withProjectStateLock<T>(project: string, action: () => Promise<T>): Promise<T> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project)) return Promise.reject(new Error("invalid project id"));
+  const key = join(paths.root, "project-locks", project);
+  const next = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() => locked(key, action));
+  queues.set(key, next);
+  void next.finally(() => { if (queues.get(key) === next) queues.delete(key); }).catch(() => {});
+  return next;
+}
+async function acquire(path: string): Promise<void> {
+  await mkdir(join(path, ".."), { recursive: true });
+  for (let attempt = 0; attempt < 500; attempt++) {
+    try { await mkdir(path); return; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    await Bun.sleep(10);
+  }
+  throw new Error(`project state is locked; try again (if no parallels process is active, remove stale lock ${path})`);
+}
+async function locked<T>(path: string, action: () => Promise<T>): Promise<T> {
+  await acquire(path);
+  try { return await action(); }
+  finally { await rm(path, { recursive: true, force: true }); }
+}

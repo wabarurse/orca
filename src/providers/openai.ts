@@ -1,3 +1,4 @@
+import { validateSettings, type RequestSettings } from "../project-settings";
 import OpenAI from "openai";
 import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
@@ -79,15 +80,7 @@ function clientFor(tokens: CodexTokens): OpenAI {
 
 /** OpenAI models always use the Codex subscription endpoint. */
 export function openai(credentials: ReturnType<typeof codexCredentials>): Provider {
-  async function request<T>(run: (client: OpenAI) => Promise<T>): Promise<T> {
-    const tokens = await credentials();
-    try { return await run(clientFor(tokens)); }
-    catch (error) {
-      if (!(error instanceof OpenAI.APIError) || error.status !== 401) throw error;
-      // Retry only the initial HTTP request, never a partially consumed stream.
-      return run(clientFor(await credentials({ forceRefresh: true })));
-    }
-  }
+  const request = <T>(run: (client: OpenAI) => Promise<T>) => authorizedRequest(credentials, run);
   return {
     name: "openai",
     async complete(req) {
@@ -95,24 +88,11 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
         // The SDK's platform type requires server IDs that Codex's stateless history omits.
         model: req.model, input: toResponses(req.messages) as ResponseInputItem[], instructions: req.system ? `You are Codex, an AI coding agent.\n\n${req.system}` : "You are Codex, an AI coding agent.",
         store: false, stream: true, parallel_tool_calls: true,
-        reasoning: { summary: "auto" }, include: ["reasoning.encrypted_content"],
+        ...codexRequestSettings(req.model, req.settings), include: ["reasoning.encrypted_content"],
         ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
         // Codex manages its output budget; the backend rejects max_output_tokens.
       }));
-      const doneItems = new Map<number, ResponseOutputItem>();
-      let output: ResponseOutputItem[] | undefined;
-      for await (const event of stream as AsyncIterable<CodexStreamEvent>) {
-        if (event.type === "response.output_text.delta") req.onText(event.delta);
-        else if (event.type === "response.output_item.done") doneItems.set(event.output_index, event.item);
-        else if (event.type === "response.completed" || event.type === "response.done") {
-          if (event.response.status && event.response.status !== "completed") throw new Error("Codex response did not complete successfully.");
-          output = event.response.output ?? [...doneItems].sort(([a], [b]) => a - b).map(([, item]) => item);
-          break;
-        } else if (event.type === "response.failed" || event.type === "response.incomplete" || event.type === "error") {
-          throw new Error("Codex response failed or was incomplete; no tool calls were executed.");
-        }
-      }
-      if (!output) throw new Error("Codex stream ended before the response completed.");
+      const output = await completedOutput(stream as AsyncIterable<CodexStreamEvent>, req.onText);
       const content = fromResponses(output);
       return { content, stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
     },
@@ -125,4 +105,38 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
         .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)).map((model) => model.slug);
     },
   };
+}
+
+export function codexRequestSettings(model: string, settings: RequestSettings = {}) {
+  validateSettings(model, settings);
+  return {
+    reasoning: { summary: "auto" as const, ...(settings.effort ? { effort: settings.effort } : {}) },
+    ...(settings.fast ? { service_tier: "priority" as const } : {}),
+  };
+}
+
+const FAILED_EVENTS = new Set(["response.failed", "response.incomplete", "error"]);
+async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: (text: string) => void): Promise<ResponseOutputItem[]> {
+  const doneItems = new Map<number, ResponseOutputItem>();
+  for await (const event of stream) {
+    if (event.type === "response.output_text.delta") onText(event.delta);
+    else if (event.type === "response.output_item.done") doneItems.set(event.output_index, event.item);
+    else if (event.type === "response.completed" || event.type === "response.done") return finalOutput(event, doneItems);
+    else if (FAILED_EVENTS.has(event.type)) throw new Error("Codex response failed or was incomplete; no tool calls were executed.");
+  }
+  throw new Error("Codex stream ended before the response completed.");
+}
+function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEvent, "type"> & { type: "response.done" }), items: Map<number, ResponseOutputItem>): ResponseOutputItem[] {
+  if (event.response.status && event.response.status !== "completed") throw new Error("Codex response did not complete successfully.");
+  return event.response.output ?? [...items].sort(([a], [b]) => a - b).map(([, item]) => item);
+}
+
+async function authorizedRequest<T>(credentials: ReturnType<typeof codexCredentials>, run: (client: OpenAI) => Promise<T>): Promise<T> {
+  const tokens = await credentials();
+  try { return await run(clientFor(tokens)); }
+  catch (error) {
+    if (!(error instanceof OpenAI.APIError) || error.status !== 401) throw error;
+    // Retry only the initial HTTP request, never a partially consumed stream.
+    return run(clientFor(await credentials({ forceRefresh: true })));
+  }
 }

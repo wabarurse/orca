@@ -1,3 +1,4 @@
+import type { RequestSettings } from "./project-settings";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/prompts.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).
@@ -20,12 +21,14 @@ export interface AgentOptions {
   branch?: string;
   /** Run id from agentCommand, shared with the shell follow-up; random when absent. */
   run?: string;
+  /** Injectable credentials boundary; production defaults to accounts.provider. */
+  loadProvider?: Parameters<typeof projectModelResolver>[1];
 }
 
 export interface AgentDeps {
   provider?: Provider;
   /** Resolve the project setting immediately before every model request. */
-  resolveModel?: () => Promise<{ model: string; provider: Provider }>;
+  resolveModel?: () => Promise<{ model: string; provider: Provider; settings?: RequestSettings }>;
   transcript: Transcript;
   tools: Record<string, Tool>;
   model: string;
@@ -102,9 +105,10 @@ async function readInbox(deps: AgentDeps): Promise<boolean> {
 /** One model request, streamed and appended to the transcript. */
 async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   await deps.tracker?.model();
-  const current = deps.resolveModel ? await deps.resolveModel() : { model: deps.model, provider: deps.provider! };
+  const current = deps.resolveModel ? await deps.resolveModel() : { model: deps.model, provider: deps.provider!, settings: undefined };
   const message = await current.provider.complete({
     model: current.model,
+    settings: current.settings,
     system: deps.system,
     maxTokens: MAX_TOKENS,
     messages: await deps.transcript.chain(),
@@ -185,7 +189,7 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
   }
 
   const agent = createAgent({
-    resolveModel: projectModelResolver(opts.project),
+    resolveModel: projectModelResolver(opts.project, opts.loadProvider),
     transcript,
     tools,
     model,

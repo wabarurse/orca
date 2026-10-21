@@ -1,3 +1,4 @@
+import { withProjectStateLock } from "./project-state";
 // The orchestrator runs in the `start` process, not in tmux. One turn is:
 // drain its inbox, hand the messages to the model as one user message, run
 // the loop until it stops calling tools, then drain the user's inbox for
@@ -16,6 +17,7 @@ import { open, type Entry, type Transcript } from "./transcript";
 export interface OrchestratorDeps {
   project: string;
   provider?: Provider;
+  loadProvider?: Parameters<typeof projectModelResolver>[1];
   tools?: Record<string, Tool>;
   transcript?: Transcript;
   /** Streamed model text; `plain` marks tool lines, which are not markdown. */
@@ -39,7 +41,10 @@ export interface Orchestrator {
  * Make sure ~/.parallels/projects/<name>/repo exists: clone it when a url is
  * given, otherwise start an empty repository the orchestrator can fill.
  */
-export async function ensureProject(project: string, url?: string): Promise<void> {
+export function ensureProject(project: string, url?: string): Promise<void> {
+  return withProjectStateLock(project, () => initializeProject(project, url));
+}
+async function initializeProject(project: string, url?: string): Promise<void> {
   const repo = paths.repo(project);
   mkdirSync(paths.project(project), { recursive: true });
   if (existsSync(repo)) return;
@@ -57,6 +62,7 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   const tools: Record<string, Tool> = deps.tools ?? {};
   if (!deps.tools) for (const name of toolsFor.orchestrator) if (registry[name]) tools[name] = registry[name];
 
+  const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return {
     say: (text) => put(project, "orchestrator", { from: "user", text }).then(() => {}),
     pending: () => pending(project, "orchestrator"),
@@ -69,7 +75,7 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
       const model = await effectiveModel(project);
       const agent = createAgent({
         provider: deps.provider,
-        resolveModel: projectModelResolver(project, deps.provider ? async () => deps.provider! : undefined),
+        resolveModel: projectModelResolver(project, loadProvider),
         transcript,
         tools,
         model,

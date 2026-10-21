@@ -1,3 +1,4 @@
+import { withProjectStateLock } from "./project-state";
 import { effectiveModel, saveProjectModel, validateModel } from "./project-model";
 // What the slash commands do, apart from how they are shown. The TUI turns
 // these into menus and status lines.
@@ -184,7 +185,7 @@ export async function deleteProject(name: string, opts: DeleteOptions = {}): Pro
   if (live.length) throw new Error(`${name} still has live agents (${live.join(", ")}); wait for them or stop them first`);
   await opts.beforeRemove?.();
   await (opts.kill ?? killProjectSession)(name);
-  await rm(paths.project(name), { recursive: true, force: true });
+  await withProjectStateLock(name, () => rm(paths.project(name), { recursive: true, force: true }));
   const { pinned } = await loadConfig();
   if (pinned.includes(name)) await saveConfig({ pinned: pinned.filter((n) => n !== name) });
 }
@@ -217,11 +218,11 @@ export async function modelChoices(dim: (s: string) => string, project?: string)
   return { choices, errors, current: model };
 }
 
-export async function setModel(id: string, project?: string): Promise<string> {
+export async function setModel(id: string, project?: string, identity?: string): Promise<string> {
   validateModel(id);
-  if (project) await saveProjectModel(project, id);
+  if (project) await saveProjectModel(project, id, identity);
   else await saveConfig({ model: id }); // Retain the programmatic global-default API.
-  return `model set to ${id} (applies before each agent’s next model request; running tools finish; exited agents stay exited)`;
+  return `model set to ${id} (applies before each agent’s next model request; running tools finish; failed/stopped turns need another message to resume; exited agents require restart)`;
 }
 
 export const REVIEW_ROUNDS_USAGE = `usage: /review-rounds [n]  (n = 0 to ${MAX_REVIEW_ROUNDS}; 0 skips review and goes straight to CI)`;
