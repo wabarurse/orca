@@ -18,7 +18,8 @@ export interface OrchestratorDeps {
   provider?: Provider;
   tools?: Record<string, Tool>;
   transcript?: Transcript;
-  write?: (text: string) => void;
+  /** Streamed model text; `plain` marks tool lines, which are not markdown. */
+  write?: (text: string, plain?: boolean) => void;
 }
 
 export interface Orchestrator {

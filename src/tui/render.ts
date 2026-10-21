@@ -39,7 +39,7 @@ export interface ProjectList {
 export interface Frame {
   cols: number;
   rows: number;
-  /** Streamed text that has not reached a newline yet; wrapped, above everything else. */
+  /** Streamed text not committed yet (a partial line, or a held code block or table, raw); wrapped, above everything else. */
   partial?: string;
   input: Input;
   menu: Menu | null;
@@ -199,7 +199,7 @@ export function liveRows(f: Frame): { rows: string[]; cursor: number; col: numbe
   let free = Math.max(0, f.rows - statusRows - input.lines.length);
   const overlay = (f.menu ? menuRows(f.menu, free - 1) : f.projects ? projectRows(f.projects, free - 1) : []).map((r) => fit(sanitize(r), f.cols));
   free -= overlay.length;
-  const partial = f.partial ? lastRows(wrap(sanitize(f.partial), f.cols), free) : [];
+  const partial = f.partial ? lastRows(f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)), free) : [];
   const rows = [...partial, ...overlay, ...(f.status ? [fit(sanitize(f.status), f.cols)] : []), ...input.lines];
   return { rows, cursor: rows.length - input.lines.length + input.row, col: input.col };
 }

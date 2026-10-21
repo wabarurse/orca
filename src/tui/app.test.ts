@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
-import { App, type Clock } from "./app";
+import { App, type Clock, type Line } from "./app";
 import { parseKeys, type Key } from "./keys";
 import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
@@ -19,6 +19,8 @@ const screenErrors: string[] = [];
 afterEach(() => { expect(screenErrors).toEqual([]); screenErrors.length = 0; });
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
+/** A history line's text: plain lines as they are, markdown as written. */
+const raw = (l: Line) => (typeof l === "string" ? l : l.md);
 
 /** A fake terminal: records every raw write and applies it to a FakeScreen, so `screen()` is the scrollback plus the screen. */
 function fakeTerm(cols = 40, rows = 8) {
@@ -278,7 +280,7 @@ describe("tui app", () => {
     await until(() => app.loggingIn);
     term.type("one\r");
     term.type("two\r");
-    await until(() => app.page!.lines.filter((l) => l.includes("queued; runs after sign-in")).length === 2);
+    await until(() => app.page!.lines.filter((l) => raw(l).includes("queued; runs after sign-in")).length === 2);
     fail(new Error("denied"));
     await until(() => term.screen().includes("sign-in failed; dropped 2 queued message(s)"));
     expect(term.screen()).toContain("login failed: denied");
@@ -624,9 +626,9 @@ describe("tui app", () => {
     await until(() => orchs.said.alpha?.length === 2);
     expect(orchs.said.alpha).toEqual(["old", "  first\nsecond"]);
     const page = app.pages[0]!;
-    expect(page.lines.map(strip)).toContain(">   first");
-    expect(page.lines.map(strip)).toContain("  second");
-    expect(page.lines.some((l) => l.includes("\n"))).toBe(false);
+    expect(page.lines.map(raw).map(strip)).toContain(">   first");
+    expect(page.lines.map(raw).map(strip)).toContain("  second");
+    expect(page.lines.some((l) => raw(l).includes("\n"))).toBe(false);
     term.press({ name: "up" });
     expect(app.input).toEqual({ text: "  first\nsecond", cursor: 14 });
     term.press({ name: "up" });
@@ -702,10 +704,10 @@ describe("tui app", () => {
     await until(() => app.loggingIn);
     term.type("\x1b[200~line one\nline two\x1b[201~\r");
     await until(() => term.screen().includes("queued; runs after sign-in"));
-    const lines = app.page!.lines.map(strip);
+    const lines = app.page!.lines.map(raw).map(strip);
     expect(lines).toContain("> line one");
     expect(lines).toContain("  line two");
-    expect(app.page!.lines.some((l) => l.includes("\n"))).toBe(false);
+    expect(app.page!.lines.some((l) => raw(l).includes("\n"))).toBe(false);
     finish();
     await until(() => orchs.said.queuer?.length === 1);
     expect(orchs.said.queuer).toEqual(["line one\nline two"]);
@@ -888,8 +890,8 @@ describe("inline screen", () => {
     alpha.busySince = Date.now();
     app.draw();
     await until(() => term.screen().includes("2 pages · 1 busy"));
-    expect(alpha.lines).toContain("background line");
-    expect(alpha.partial).toBe("half");
+    expect(alpha.lines.map(raw)).toContain("background line");
+    expect(alpha.md.pending).toBe("half");
     expect(strip(term.raw())).not.toContain("background line");
     expect(strip(term.raw())).not.toContain("half");
     alpha.busy = false;
@@ -920,6 +922,11 @@ describe("inline screen", () => {
     const { appendFileSync } = await import("node:fs");
     appendFileSync(transcript, entry("worker line two"));
     await until(() => term.screen().includes("worker line one\nworker line two"));
+    // An agent's assistant text is markdown too (as Claude Code shows subagent text); a user prompt stays plain.
+    appendFileSync(transcript, entry("**bold** reply\n\n| k | v |\n|---|---|\n| a | b |"));
+    appendFileSync(transcript, JSON.stringify({ type: "message", message: { role: "user", content: "**raw** prompt" } }) + "\n");
+    await until(() => term.screen().includes("worker line two\nbold reply\n\n┌───┬───┐\n│ k │ v │"));
+    await until(() => term.screen().includes("> **raw** prompt"));
     term.type("/back\r");
     await until(() => term.display.clears === 2 && term.screen().startsWith("> hello\nviewed says hi\nworker-x done"));
     expect(term.screen()).not.toContain("worker line");
@@ -1073,7 +1080,7 @@ describe("frames, resizes, startup and crashes", () => {
     app.menu = null;
     app.draw();
     await until(() => term.screen().includes("error drawing the screen: boom"));
-    expect(app.page!.lines.filter((l) => l.includes("boom")).length).toBe(1);
+    expect(app.page!.lines.filter((l) => raw(l).includes("boom")).length).toBe(1);
     term.type("still here\r");
     await until(() => term.screen().includes("worker-x done"));
     app.quit();
@@ -1132,5 +1139,60 @@ describe("frames, resizes, startup and crashes", () => {
     t.term.close();
     expect(t.handlers.size).toBe(0);
     expect(t.modes).toEqual([true, false]);
+  });
+});
+
+describe("markdown replies", () => {
+  const TABLE = "| Branch | What it does |\n|---|---|\n| tui-markdown | Render markdown in the chat area |\n";
+
+  test("streamed markdown is rendered block by block; held blocks show raw in the live region; the rest stays plain", async () => {
+    const term = fakeTerm(60, 12);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    term.type("keep **this** raw\r");
+    await until(() => term.screen().includes("> keep **this** raw"));
+    const write = orchs.writers.alpha! as (t: string, plain?: boolean) => void;
+    write("Some **bold** and snake_case\n| Branch | What");
+    await until(() => term.screen().includes("Some bold and snake_case"));
+    await until(() => term.display.screen().some((r) => r === "| Branch | What")); // held, raw, in the live region
+    write(TABLE.slice("| Branch | What".length));
+    await settle();
+    expect(term.screen()).not.toContain("┌");
+    write("\x1b[2m▸ bash {\"command\":\"**ls**\"}\x1b[0m\n", true); // a tool line ends the table and stays plain
+    await until(() => term.screen().includes("┌"));
+    expect(term.screen()).toContain('▸ bash {"command":"**ls**"}');
+    expect(term.screen()).toContain("│ tui-markdown │ Render markdown in the chat area │");
+    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : l.md))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
+    app.quit();
+    await running;
+  });
+
+  test("replies render as markdown after their sender, and a resize re-lays out a table from the raw text", async () => {
+    const term = fakeTerm(60, 30);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    const page = app.page!;
+    (page.orch as { turn: () => Promise<unknown> }).turn = async () => {
+      orchs.writers.alpha!(`Plan:\n${TABLE}`);
+      return [{ from: "orchestrator", text: `**Done**: see below\n\n${TABLE}`, ts: "t" }];
+    };
+    term.type("go\r");
+    await until(() => term.screen().includes("orchestrator Done: see below"));
+    const wide = "│ tui-markdown │ Render markdown in the chat area │";
+    await until(() => term.screen().split(wide).length === 3);
+    expect(page.lines.some((l) => typeof l === "string" && l.includes("┌"))).toBe(false); // raw kept, not rendered rows
+    term.resize(34, 30);
+    await until(() => term.display.clears === 1);
+    await until(() => term.screen().includes("orchestrator Done: see below"));
+    const shown = term.screen().split("\n");
+    expect(shown).not.toContain(wide);
+    expect(shown.filter((r) => r === "│ tui-markdown │ Render markdown │").length).toBe(2);
+    expect(shown.every((r) => Bun.stringWidth(r) <= 34)).toBe(true);
+    app.quit();
+    await running;
   });
 });

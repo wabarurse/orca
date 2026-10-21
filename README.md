@@ -11,7 +11,10 @@ bun src/cli.ts start [project] [git-url]
 orchestrator (one per project). It does not take over the screen: replies go
 into your terminal's normal scrollback (scroll with the terminal or the mouse)
 and only the bottom block (a streaming line, menus, the status line and the
-input) is redrawn; quitting leaves everything printed in place. Run it inside a git repository and you get an orchestrator for that
+input) is redrawn; quitting leaves everything printed in place. The orchestrator's
+replies are rendered as markdown (headings, emphasis, lists, quotes, code
+blocks, links and box-drawn tables that fit the terminal's width, re-laid out
+when it is resized). Run it inside a git repository and you get an orchestrator for that
 repository: an `orch-xxxx` project cloned from its origin (reused next time you
 start there). With no project named it also reopens every project under
 `~/.parallels/projects`. The status line above the input shows the page's name,

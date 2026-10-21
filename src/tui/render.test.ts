@@ -245,6 +245,12 @@ describe("on a faithful terminal", () => {
     expect(s.text()).toBe("0123456789\nabcdef\n> hi");
     expect([s.row, s.col]).toEqual([2, 4]);
   });
+
+  test("a held multi-line partial (a code block or table still streaming) keeps its line breaks", () => {
+    const s = term(10, 8);
+    s.write(live(frame({ cols: 10, rows: 8, partial: "```sh\nls -la /tmp" })).text);
+    expect(s.text()).toBe("```sh\nls -la /tm\np\n> hi");
+  });
 });
 
 describe("sanitize", () => {
