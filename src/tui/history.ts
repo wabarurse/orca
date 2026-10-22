@@ -16,7 +16,8 @@ export const MAX_INPUT_HISTORY = 500;
 /** The file is trimmed back to MAX_INPUT_HISTORY entries once it holds this many lines. */
 export const COMPACT_AT = 2 * MAX_INPUT_HISTORY;
 
-/** Commands safe to keep: they carry nothing secret. /new is kept unless its URL has credentials. */
+/** /clear is deliberately not recalled: resets always require a freshly typed command.
+ * Commands safe to keep: they carry nothing secret. /new is kept unless its URL has credentials. */
 const SAFE_COMMANDS = new Set(["/compact", "/agents", "/models", "/help", "/projects", "/review-rounds", "/back", "/close", "/quit", "/keys", "/rename", "/new", "/questions"]);
 
 /** A URL with a user or password in it (`https://user:token@host`, `ssh://user@host`). */

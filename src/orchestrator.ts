@@ -1,6 +1,6 @@
 import { inputEpoch, advanceInputEpoch } from "./user-input";
 import { Cancelled } from "./cancellation";
-import { withProjectStateLock } from "./project-state";
+import { projectIdentity, withProjectStateLock } from "./project-state";
 // The orchestrator runs in the `start` process, not in tmux. One turn is:
 // drain its inbox, hand the messages to the model as one user message, run
 // the loop until it stops calling tools, then drain the user's inbox for
@@ -10,7 +10,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { effectiveModel, projectModelResolver } from "./project-model";
 import { createAgent, type AgentDeps } from "./agent";
 import { loadConfig, paths } from "./config";
-import { drain, pending, put, userInEpoch, type Message } from "./inbox";
+import { drain, pending, pendingInput, put, userInEpoch, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { type Provider } from "./providers/index";
 import { registry, toolsFor, type Tool } from "./tools/index";
@@ -41,6 +41,10 @@ export interface Orchestrator {
   /** Abort only this turn and pause automatic inbox turns until the user sends again. */
   cancel?(): void;
   compact?(): Promise<void>;
+  /** Refuse unless this session is idle and its raw durable inbox is empty (even paused input). */
+  checkClear?(): Promise<void>;
+  /** Locally confirmed reset; no provider calls, input draining, retries or restarts. */
+  clear?(signal?: AbortSignal): Promise<void>;
   /** True when the orchestrator has unread messages. */
   pending(): Promise<boolean>;
   /** Run one turn over the inbox. Returns what was sent to the user meanwhile. */
@@ -80,11 +84,14 @@ class TurnControl {
   cancellation?: AbortController;
   requested = false;
   running = false;
+  clearing?: AbortController;
+  submitting = 0;
   constructor(private project: string) {}
   cancel(): void {
     this.paused = advanceInputEpoch(this.project);
     this.requested = false;
     this.cancellation?.abort(new Cancelled());
+    this.clearing?.abort(new Cancelled());
   }
   async isPaused(): Promise<boolean> {
     const epoch = this.paused;
@@ -93,24 +100,56 @@ class TurnControl {
     if (fresh && this.paused === epoch) this.paused = undefined;
     return this.paused !== undefined;
   }
-  compact(): void { this.paused = undefined; this.requested = true; }
+  compact(): void {
+    if (this.clearing) throw new Error("context clear in progress");
+    this.paused = undefined; this.requested = true;
+  }
   takeRequest = (): boolean => { const value = this.requested; this.requested = false; return value; };
 }
 function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Orchestrator {
   const state = new TurnControl(deps.project);
+  // A Page/session cannot acquire ownership of a deleted/recreated project.
+  const identity = existsSync(paths.project(deps.project)) ? projectIdentity(deps.project) : undefined;
+  const check = async () => {
+    if (!identity || projectIdentity(deps.project) !== identity) throw new Error("project changed; reopen it before clearing context");
+    if (state.running || state.requested) throw new Error("orchestrator is running or compacting; wait before clearing context");
+    if (state.submitting || await pendingInput(deps.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
+  };
   return {
+    checkClear: async () => {
+      if (state.clearing) throw new Error("context clear in progress");
+      await check();
+    },
+    clear: async signal => {
+      if (state.clearing) throw new Error("context clear in progress");
+      if (state.running || state.requested) throw new Error("orchestrator is running or compacting; wait before clearing context");
+      if (state.submitting) throw new Error("input is pending; context was not cleared");
+      const clearing = state.clearing = new AbortController();
+      const authorization = signal ? AbortSignal.any([signal, clearing.signal]) : clearing.signal;
+      try {
+        await withProjectStateLock(deps.project, async () => {
+          authorization.throwIfAborted();
+          await check();
+          await transcript.append({ type: "context-boundary" }, authorization);
+        });
+      } finally { state.clearing = undefined; }
+    },
     cancel: () => state.cancel(),
     compact: async () => state.compact(),
     submission: () => inputEpoch(deps.project),
-    say: (text, submission = inputEpoch(deps.project), inputId) =>
-      (deps.put ?? put)(deps.project, "orchestrator", { from: "user", text, userEpoch: submission, ...(inputId ? { inputId } : {}) }).then(() => {}),
+    say: async (text, submission = inputEpoch(deps.project), inputId) => {
+      state.submitting++;
+      state.clearing?.abort(new Error("input arrived; context was not cleared"));
+      try { await (deps.put ?? put)(deps.project, "orchestrator", { from: "user", text, userEpoch: submission, ...(inputId ? { inputId } : {}) }); }
+      finally { state.submitting--; }
+    },
     pending: async () => !(await state.isPaused()) && (state.requested || await pending(deps.project, "orchestrator")),
     entries: () => transcript.history?.() ?? transcript.branch(),
     turn: () => orchestratorTurn(deps, transcript, state),
   };
 }
 async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, state: TurnControl): Promise<Message[]> {
-  if (state.running) return [];
+  if (state.running || state.clearing) return [];
   state.running = true;
   const cancellation = state.cancellation = new AbortController();
   try {

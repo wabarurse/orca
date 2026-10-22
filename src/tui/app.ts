@@ -132,6 +132,13 @@ const LIVE_CHECK_MS = 1000;
 interface ProjectListState { items: ProjectEntry[]; index: number; status: string; confirm: ProjectEntry | null }
 
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
+interface ClearConfirmation {
+  page: Page;
+  identity: string;
+  controller: AbortController;
+  menu?: ActiveMenu;
+  committing?: boolean;
+}
 
 /**
  * A slash command. Commands match by name (the text up to the first space).
@@ -199,10 +206,11 @@ const typedText = (k: Key): string | undefined => ((k.name === "char" || k.name 
 export class App {
   pages: Page[] = [];
   private modelGeneration = 0;
+  private clearing?: ClearConfirmation;
   private _active = 0;
   get active(): number { return this._active; }
   set active(index: number) {
-    if (index !== this._active) { this.modelGeneration++; this.helpTop = null; }
+    if (index !== this._active) { this.cancelClear(); this.modelGeneration++; this.helpTop = null; }
     this._active = index;
   }
   private looseLines: string[] = [];
@@ -340,7 +348,7 @@ export class App {
     return () => methods.forEach((m, i) => { console[m] = saved[i]!; });
   }
 
-  quit(): void { this.modelGeneration++; this.done(); }
+  quit(): void { this.cancelClear(); this.modelGeneration++; this.done(); }
 
   // --- output -----------------------------------------------------------------
 
@@ -592,6 +600,7 @@ export class App {
   /** A resize: wait until it settles, drawing nothing meanwhile (the old region's rows no longer match), then reprint. */
   private resized(): void {
     if (this.closed) return;
+    this.cancelClear();
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.resizeTimer = setTimeout(() => { this.resizeTimer = null; this.reprint(); }, RESIZE_MS);
   }
@@ -694,6 +703,7 @@ export class App {
   }
 
   closePage(index = this.active): void {
+    this.cancelClear();
     this.helpTop = null;
     this.modelGeneration++;
     const page = this.pages[index];
@@ -751,6 +761,7 @@ export class App {
   }
 
   async openProjects(): Promise<void> {
+    this.cancelClear();
     this.modelGeneration++;
     const items = await orderedProjects();
     const index = Math.max(0, items.findIndex((it) => it.name === this.page?.project));
@@ -886,6 +897,7 @@ export class App {
   // --- menus ------------------------------------------------------------------
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
+    this.cancelClear();
     if (modelOperation === undefined) this.modelGeneration++;
     if (!choices.length) return;
     this.helpTop = null;
@@ -926,6 +938,7 @@ export class App {
   }
 
   private async attach(page: Page, name: string, live: boolean): Promise<void> {
+    this.cancelClear();
     const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live, calls: new Calls() }));
     const view = page.view!;
     if (page === this.page) this.reprint();
@@ -1002,6 +1015,7 @@ export class App {
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "Browse and follow agent conversations" } }],
     ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { group: "settings", label: "/effort [level|default]", description: "Show or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "Show or set project/model fast mode" } }],
+    ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "Clear model context after confirmation; keep full history" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "Summarize model context; keep full history" } }],
     ["/models", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { group: "settings", label: "/models [id]", description: "Choose or set the project model" } }],
     ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "Choose a subscription account" } }],
@@ -1011,6 +1025,89 @@ export class App {
     ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "Return from agent view (also Esc)", viewOnly: true } }],
     ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "Commands and keyboard shortcuts; Esc closes" } }],
   ]);
+
+  /** Clear is a local modal, never a prompt or a scheduled model turn. */
+  private async clearCommand(page?: Page): Promise<void> {
+    this.cancelClear();
+    if (!page) return this.say(dim("open a project before clearing context"));
+    let operation: ClearConfirmation | undefined;
+    try {
+      this.checkClearPage(page);
+      operation = { page, identity: projectIdentity(page.project), controller: new AbortController() };
+      this.clearing = operation;
+      await page.orch.checkClear!();
+      if (!this.clearCurrent(operation)) return;
+      this.checkClearPage(page);
+      this.helpTop = null;
+      this.projectList = null;
+      this.menu = operation.menu = {
+        title: dim(`Clear model context for ${page.name}? History/files/agents stay. ↑↓ Enter · Esc`),
+        items: ["Cancel", "Clear context"], index: 0,
+        pick: index => { if (index === 1) return this.confirmClear(operation!); this.cancelClear(); this.draw(); },
+      };
+      this.draw();
+    } catch (error) {
+      if (!operation || this.clearCurrent(operation)) {
+        this.cancelClear();
+        this.say(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), page);
+      }
+    }
+  }
+
+  private checkClearPage(page: Page): void {
+    if (!this.pages.includes(page) || page !== this.page || page.deleting) throw new Error("project changed; try again");
+    if (page.view) throw new Error(`viewing ${page.view.name}; /back first to clear the orchestrator`);
+    if (page.busy) throw new Error("orchestrator is running or compacting; wait before clearing context");
+    if (page.sent.length || this.queued.get(page)?.length || page.questions.closing) throw new Error("input is pending; context was not cleared");
+    if (!page.orch.checkClear || !page.orch.clear) throw new Error("this session does not support clearing context");
+  }
+
+  private clearCurrent(operation: ClearConfirmation): boolean {
+    return this.clearing === operation && !operation.controller.signal.aborted && !this.closed
+      && this.page === operation.page && this.pages.includes(operation.page);
+  }
+
+  private cancelClear(): void {
+    const operation = this.clearing;
+    if (!operation) return;
+    operation.controller.abort(new Error("clear cancelled"));
+    if (this.menu === operation.menu) this.menu = null;
+    this.clearing = undefined;
+  }
+
+  private async confirmClear(operation: ClearConfirmation): Promise<void> {
+    if (!this.clearCurrent(operation) || operation.committing) return;
+    operation.committing = true;
+    const page = operation.page;
+    try {
+      this.checkClearPage(page);
+      if (projectIdentity(page.project) !== operation.identity) throw new Error("project changed; reopen it before clearing context");
+      // Backend rechecks inside its publication lock and blocks overlapping turns.
+      await page.orch.clear!(operation.controller.signal);
+      this.say(dim("Model context cleared. Saved history, files and agents are unchanged."), page);
+    } catch (error) {
+      if (this.clearCurrent(operation)) this.say(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), page);
+    } finally {
+      if (this.clearing === operation) this.cancelClear();
+      this.draw();
+    }
+  }
+
+  /** Own all typing/paste/question keys, even when a tiny footer hides the modal.
+   * Navigation cancels first; Enter only confirms after an explicit plain arrow selection. */
+  private clearKey(k: Key): Promise<void> | void {
+    if (k.name === "escape" || k.ctrl && k.name === "c") { this.cancelClear(); return this.draw(); }
+    if (k.ctrl && ["n", "z", "x", "b"].includes(k.name)) { this.cancelClear(); return this.onKey(k); }
+    const operation = this.clearing!;
+    if (operation.committing || !operation.menu || k.ctrl || k.alt || k.shift) return;
+    const menu = operation.menu;
+    if (k.name === "up" || k.name === "down") menu.index = 1 - menu.index;
+    if (k.name === "enter") {
+      if (menu.index === 1) return this.confirmClear(operation);
+      this.cancelClear();
+    }
+    this.draw();
+  }
 
   /** /new [name] [git-url]: the name must be a valid project id. */
   private newCommand(args: string): Promise<void> | void {
@@ -1078,6 +1175,7 @@ export class App {
    * 5. plain text goes to the orchestrator (talk), refused in an agent view and queued while signing in.
    */
   private async submit(text: string): Promise<void> {
+    this.cancelClear();
     const call = parseCommand(text, this.commands);
     if (call && call.name !== "/models") this.modelGeneration++;
     if (call?.command && !call.command.needsPage) return call.command.run(call.args, this.page);
@@ -1106,6 +1204,7 @@ export class App {
 
   private lastInterrupt = -Infinity;
   private async interrupt(): Promise<void> {
+    this.cancelClear();
     const now = this.clock.now();
     if (now - this.lastInterrupt <= 2000) return this.quit();
     this.lastInterrupt = now;
@@ -1133,6 +1232,7 @@ export class App {
 
   /**
    * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
+   * 0. clear: local Cancel-default confirmation owns all keys; navigation cancels it first;
    * 1. keyEcho: /keys echoes every key except Ctrl+C until Esc;
    * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
@@ -1144,6 +1244,7 @@ export class App {
    * 9. editor: the rest edits the input (EDITS, ↑↓ history).
    */
   readonly keyLayers: readonly KeyLayer[] = [
+    { name: "clear", takes: () => !!this.clearing, handle: k => this.clearKey(k) },
     { name: "keyEcho", takes: (k) => this.keyEcho && !(k.ctrl && k.name === "c"), handle: (k) => this.echoKey(k) },
     { name: "chords", takes: (k) => !!k.ctrl && this.chords.has(k.name), handle: (k) => this.chords.get(k.name)!() },
     { name: "projects", takes: (k) => this.projectsTake(k), handle: (k) => this.projectsKey(k) },
@@ -1162,7 +1263,7 @@ export class App {
   }
 
   private canScroll(k: Key): boolean {
-    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.questions.view();
+    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.questions.view();
   }
 
   private scroll(k: Key): void {
@@ -1188,6 +1289,7 @@ export class App {
 
   /** Explicit modal, independent of chat/answer buffers and conversation scroll. */
   private toggleHelp(): void {
+    this.cancelClear();
     this.helpTop = this.helpTop === null ? 0 : null;
     if (this.helpTop !== null) { this.menu = null; this.projectList = null; }
     this.draw();

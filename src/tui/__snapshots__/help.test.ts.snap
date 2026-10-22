@@ -14,22 +14,23 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ 1 question
-Help · commands & keys                                                  1–9/42
+Help · commands & keys                                                  1–9/43
   Conversation
   /agents     Browse and follow agent conversations
+  /clear      Clear model context after confirmation; keep full history
   /questions  Open questions; Enter answers or picks skip, Esc/Tab closes
   /help       Commands and keyboard shortcuts; Esc closes
 
   Projects
   /projects              Browse projects: Enter opens, p pins, d deletes
   /rename <name>         Change display name only; project ID stays fixed
-  /new [name] [git-url]  Create a project page
 ↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
   /agents     Browse and follow agent conversations
+  /clear      Clear model context after confirmation; keep full history
   /questions  Open questions; Enter answers or picks skip, Esc/Tab closes
   /help       Commands and keyboard shortcuts; Esc closes
 
@@ -87,15 +88,15 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 1 question
-Help                            1–8/86
+Help                            1–8/89
   Conversation
   /agents     Browse and follow agent
               conversations
+  /clear      Clear model context
+              after confirmation; keep
+              full history
   /questions  Open questions; Enter
               answers or picks skip,
-              Esc/Tab closes
-  /help       Commands and keyboard
-              shortcuts; Esc closes
 ↑↓ scroll · Esc close"
 `;
 
@@ -103,6 +104,9 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
 "  Conversation
   /agents     Browse and follow agent
               conversations
+  /clear      Clear model context
+              after confirmation; keep
+              full history
   /questions  Open questions; Enter
               answers or picks skip,
               Esc/Tab closes
@@ -202,7 +206,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ 1 question
-Help · commands & keys                                                34–42/42
+Help · commands & keys                                                35–43/43
   Alt+D                Delete next word
   Home/End / Ctrl+A/E  Start / end of current line
   Ctrl+U / Ctrl+K      Delete to start / end of current line
