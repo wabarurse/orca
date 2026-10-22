@@ -12,11 +12,60 @@ Workers, reviewers and orchestrators use the same path. Status goes through the
 scoped plain writer (stdout in standalone agents), never assistant content.
 
 **Compaction is lossy, best-effort summarization, not a semantic guarantee.**
-The complete original task is kept verbatim, but later amendments and details
+The complete original task in the current context epoch is kept verbatim, but later amendments and details
 may be missed by the summarizer. Every checkpoint warns about that limitation
 and identifies the source transcript path and boundary UUID, with instructions
 to retrieve original entries when uncertain. Original messages remain on disk and
 in UI replay. A success notice explicitly says “best-effort”.
+
+## Clear model context (not saved history)
+
+`/clear` takes no arguments and opens a **local, Cancel-default** confirmation
+in the existing bottom menu area. Enter alone cancels. Select **Clear context**
+with an arrow, then Enter to confirm. Escape or Ctrl+C cancels without changing
+chat/answer drafts or saved history. Typing, pastes and question shortcuts cannot
+leak through the modal. Switching/closing pages, opening another menu, or resizing
+invalidates it; even a tiny/hidden modal still owns its keys. `/clear` is deliberately
+excluded from input recall. In a worker/reviewer view it refuses: `/back` first.
+With no project open it explains rather than creating one.
+
+This clears only the active orchestrator's **model conversation context**. It does
+not erase disk/UI/exit history, project identity, files/worktrees, model/settings,
+accounts, questions/task records, worker/reviewer sessions, or any inbox. Normal
+system instructions and tool definitions are still supplied on the next request.
+Clearing does not call a provider, schedule a turn/compaction, retry a failed turn,
+restart a session, or resume a cancelled orchestrator.
+
+Both opening the confirmation and confirming require an idle orchestrator and
+empty input queues: no running/requested compaction, raw durable orchestrator inbox
+(including paused/cancelled entries), local submissions still being persisted,
+sign-in-held text, queued previews, or in-flight local question answers. Pending
+messages are never drained or discarded to make clearing possible. Inbox inspection
+errors fail closed. A stale confirmation cannot change a different or
+removed/recreated project: both Page ownership and captured directory identity are
+checked, and publication uses the shared project-state lock.
+
+The transcript appends an explicit `context-boundary` record with its parent still
+pointing to the previous head. This is neither an empty summary nor a new root.
+After reopen, `chain()` and `branch()` start **after** the latest boundary;
+`history()` still walks through it to all original entries. The marker itself is
+not model content or a visible chat message. Later compaction only pins the first
+original task **after** that boundary, including across repeated compactions;
+checkpoint retrieval warnings explicitly exclude earlier epochs. Clearing is not
+secure deletion: old context remains readable in saved history/files, and agents
+may independently send reports referring to earlier work.
+
+The same staged/fsync/rename protocol below protects the boundary. Pre-publication
+failure or cancellation leaves the prior bytes/head/context usable. After rename,
+the clear is committed even if a late cancellation arrives; directory durability
+failure is a warning, not a rollback. The session blocks overlapping turns and
+compaction while publishing. Local `say()` during publication cancels a not-yet-
+committed clear without losing the new input. Orchestrator inbox `put()` and clear
+share the project lock across processes: an external send ordered after the clear
+is retained as new input, not deleted. Local queued writes and leftover inbox temp
+files conservatively refuse clearing. These guarantees cover managed project and
+inbox operations; arbitrary external filesystem edits and concurrent independent
+writers to one transcript still require external serialization (see below).
 
 ## Policy and configuration
 
@@ -156,5 +205,5 @@ post-publication directory failures, then append again and reopen.
 `Transcript.chain()`/`branch()` follow context checkpoints. `history()` traverses
 original entries through checkpoints and excludes synthetic checkpoint tails,
 showing each original message exactly once. `Orchestrator.entries()` exposes full
-UI replay; normal UI row limits still apply. Invalid/truncated legacy JSON records
+UI replay, including the complete scrollable history and exit transcript. Invalid/truncated legacy JSON records
 are ignored without deleting their bytes, and future appends remain recoverable.

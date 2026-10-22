@@ -25,7 +25,7 @@ test("remember skips blanks and repeats of the last entry and keeps the newest p
 
 test("only plain messages and harmless commands are kept; never sign-in or credentials", () => {
   for (const t of ["build it", "/agents", "/models gpt-5", "/help", "/projects", "/review-rounds 2", "/back", "/close", "/quit", "/keys", "/rename x", "/new demo", "/new demo https://github.com/a/b.git"]) expect(keepable(t, false)).toBe(true);
-  for (const t of ["/login claude", "/login", "/accounts", "/new demo https://user:TOKEN@github.com/a/b.git", "/new demo https://TOKEN@github.com/a/b", "/new d ssh://git@host/x", "/unknown", "  "]) expect(keepable(t, false)).toBe(false);
+  for (const t of ["/clear", "/clear secret argument", "/login claude", "/login", "/accounts", "/new demo https://user:TOKEN@github.com/a/b.git", "/new demo https://TOKEN@github.com/a/b", "/new d ssh://git@host/x", "/unknown", "  "]) expect(keepable(t, false)).toBe(false);
   expect(keepable("my message", true)).toBe(false); // typed while signing in
 });
 

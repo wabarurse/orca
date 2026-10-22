@@ -3,7 +3,8 @@
 // the conversation sent to the model is the chain from the latest leaf back
 // to the root. Compaction appends a `summary` entry whose parent is the last
 // message; its retained tail and the chain forward are the new context.
-// history() walks past checkpoints for UI replay without duplicating retained turns.
+// Explicit context-boundary entries reset model context without cutting parent links.
+// history() walks past both for UI replay without duplicating retained turns.
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { publish, disk, type Storage } from "./transcript-storage";
@@ -44,7 +45,17 @@ export interface RepliesEntry extends BaseEntry {
   messages: { from: string; text: string }[];
 }
 
-export type Entry = MessageEntry | SummaryEntry | MetaEntry | RepliesEntry;
+/** Explicit reset of model context, not a message or summary. Parent preserves full history. */
+export interface ContextBoundaryEntry extends BaseEntry {
+  type: "context-boundary";
+}
+
+export type Entry = MessageEntry | SummaryEntry | MetaEntry | RepliesEntry | ContextBoundaryEntry;
+
+/** Original entries in the current context epoch, including turns hidden by compaction. */
+export function afterContextBoundary(entries: Entry[]): Entry[] {
+  return entries.slice(entries.findLastIndex(e => e.type === "context-boundary") + 1);
+}
 
 /** An entry as passed to append(): uuid/ts are filled in, parentUuid defaults to head(). */
 export type NewEntry = Entry extends infer E
@@ -57,22 +68,23 @@ export interface Transcript {
   path: string;
   /** Append one entry and return it with uuid/ts filled in. */
   append(entry: NewEntry, signal?: AbortSignal): Promise<Entry>;
-  /** Walk from the latest leaf to the root (or latest summary) and return API messages. */
+  /** Walk from the latest leaf to the root (or latest summary/context boundary) and return API messages. */
   chain(): Promise<MessageParam[]>;
-  /** The entries of that walk, oldest first, the summary (if any) first: what the conversation is now. */
+  /** The entries of that walk, oldest first, the summary (if any) first, excluding the context boundary: what the conversation is now. */
   branch(): Entry[];
   history?(): Entry[];
   /** uuid of the latest entry, used as parentUuid for the next append. */
   head(): string | null;
 }
 
-/** The entries from `head` back to the root or the latest summary, oldest first (a loop in the parent pointers ends the walk). */
+/** The entries from `head` back to the root, latest summary or context boundary, oldest first (a loop in the parent pointers ends the walk). */
 function walk(byUuid: Map<string, Entry>, head: string | null, context = true): Entry[] {
   const entries: Entry[] = [];
   const seen = new Set<string>();
   let cur = head ? byUuid.get(head) : undefined;
   while (cur && !seen.has(cur.uuid)) {
     seen.add(cur.uuid);
+    if (context && cur.type === "context-boundary") break;
     entries.push(cur);
     if (context && cur.type === "summary") break;
     cur = cur.parentUuid ? byUuid.get(cur.parentUuid) : undefined;

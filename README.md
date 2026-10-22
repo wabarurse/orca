@@ -56,6 +56,17 @@ Esc closes it without changing your draft or leaving an agent view. Help is
 read-only while open; close it before typing. Global cancellation/page shortcuts
 still work, and Ctrl+Q replaces help with the explicit question toggle.
 
+`/clear` clears only the current orchestrator's **model context**, after a local
+confirmation. **Cancel is selected by default** (Enter alone cancels); choose
+**Clear context**, then Enter to confirm. Esc cancels without changing drafts.
+Saved conversation/UI history, system/tool instructions, settings/accounts, files,
+questions and worker/reviewer sessions stay intact. It refuses while the
+orchestrator is running/compacting or any input is queued (including paused inbox
+messages and sign-in-held prompts). Return from agent views with `/back` first.
+Clearing makes no model request and never retries or restarts work. Page changes
+and resize cancel the confirmation. See [COMPACTION.md](COMPACTION.md) for persistence
+and later-compaction semantics; `/compact` remains the summarizing alternative.
+
 Ctrl+C cancels the selected page's current turn (including its provider request
 and running tools), without closing the harness or clearing your draft/history.
 Other projects' turns and background workers/reviewers keep running. The cancelled

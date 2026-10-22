@@ -1,3 +1,4 @@
+import { withProjectStateLock } from "./project-state";
 import { inputEpoch } from "./user-input";
 // Every agent has its own inbox: a durable FIFO queue of files under
 // inbox/<agent>/. Anyone can put a message in anyone's inbox; only the owner
@@ -42,11 +43,15 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
   const n = String(seq++).padStart(6, "0");
   const name = `${full.ts.replaceAll(":", "-")}-${n}-${crypto.randomUUID().slice(0, 8)}.json`;
   const tmp = join(d, `.${name}.tmp`);
-  const done = (writing.get(d) ?? Promise.resolve()).then(async () => {
+  const publish = async () => {
     await Bun.write(tmp, JSON.stringify(full) + "\n");
     await rename(tmp, join(d, name));
     return full;
-  });
+  };
+  // Clear and orchestrator input publication share the project lock. A send
+  // published after a clear is new input, never silently discarded by it.
+  const done = (writing.get(d) ?? Promise.resolve()).then(() => to === "orchestrator"
+    ? withProjectStateLock(project, publish) : publish());
   const tail = done.catch(() => {});
   writing.set(d, tail);
   tail.then(() => { if (writing.get(d) === tail) writing.delete(d); });
@@ -56,6 +61,19 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
 /** True when `agent` has unread messages. */
 export async function pending(project: string, agent: string): Promise<boolean> {
   return (await readdir(dir(project, agent)).catch(() => [])).some((n) => n.endsWith(".json"));
+}
+
+/** Fail-closed clear guard, including local writes not yet durably published.
+ * Call under the project-state lock to exclude concurrent orchestrator puts.
+ * Unlike polling, unreadable directories are errors, not an empty inbox.
+ */
+export async function pendingInput(project: string, agent: string): Promise<boolean> {
+  const d = dir(project, agent);
+  const names = await readdir(d).catch(error => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  return writing.has(d) || names.some(n => n.endsWith(".json") || n.endsWith(".tmp"));
 }
 
 /** A new human message can resume a cancelled orchestrator without consuming agent reports. */

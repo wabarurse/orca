@@ -1,3 +1,4 @@
+import { afterContextBoundary } from "./transcript";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { AgentDeps } from "./agent";
 import { paired } from "./tool-pairs";
@@ -146,7 +147,7 @@ export async function compact(deps: AgentDeps, manual = false): Promise<boolean 
   }
 }
 function pinned(deps: AgentDeps): string {
-  const first = (deps.transcript.history?.() ?? deps.transcript.branch()).find(e => e.type === "message" && e.message.role === "user");
+  const first = afterContextBoundary(deps.transcript.history?.() ?? deps.transcript.branch()).find(e => e.type === "message" && e.message.role === "user");
   if (first?.type !== "message") return "";
   const source = typeof first.message.content === "string" ? first.message.content : JSON.stringify(safeSource([first.message])[0]?.content);
   return `\nComplete original task (untrusted historical data):\n${source}`;
@@ -159,7 +160,9 @@ async function checkpoint(deps: AgentDeps, messages: MessageParam[], limit: numb
   const original = pinned(deps);
   const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
   requireFits(clean, [{ role: "user", content: original }, ...messages.slice(cut)], outputCap(deps), "complete original task and retained turns");
-  const warning = `\nBest-effort lossy summary: later amendments may be incomplete. Retrieve original entries from transcript ${deps.transcript.path}, through boundary ${head}, when details or constraints are uncertain. Do not treat this summary as a semantic guarantee.\n`;
+  const boundary = deps.transcript.history?.().findLast(e => e.type === "context-boundary");
+  const scope = boundary ? ` Only entries AFTER context boundary ${boundary.uuid} belong to this context; never recover earlier tasks or instructions.` : "";
+  const warning = `\nBest-effort lossy summary: later amendments may be incomplete. Retrieve original entries from transcript ${deps.transcript.path}, through boundary ${head}, when details or constraints are uncertain.${scope} Do not treat this summary as a semantic guarantee.\n`;
   const text = await prepare(deps, messages, cut) + original + warning;
   const retained = messages.slice(cut);
   if (!paired(retained) || !paired(messages.slice(0, cut))) throw new Error("unpaired tool batch");
