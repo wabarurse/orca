@@ -10,11 +10,15 @@ bun src/cli.ts start [project] [git-url]
 `start` opens a TUI with one page per orchestrator (one per project). Orchestrator
 tabs and project details stay at the top; the input, counts and panels stay at
 the bottom. The conversation scrolls between them with Page Up/Page Down or the
-mouse wheel. Hold Shift for native terminal text selection. Only changed screen
-rows are redrawn. Quitting restores your shell and prints the active conversation
-into its normal scrollback, including original history before compaction and
-messages omitted from the bounded startup viewport. The orchestrator's
-replies are rendered as markdown (headings, emphasis, lists, quotes, code
+mouse wheel when the terminal delivers mouse reports. Use the terminal's selection
+modifier (often Shift) for native text selection. Only changed screen rows are
+redrawn. All saved conversation, including original history before compaction,
+is reachable by scrolling inside the app; startup does not discard older messages
+from the live viewport. Quitting restores your shell and prints the active
+conversation into its normal scrollback. Apple Terminal's ordinary wheel behavior
+still needs native verification: see [terminal isolation](TERMINAL_ISOLATION.md)
+if a gesture reveals prelaunch shell history instead of scrolling the conversation.
+The orchestrator's replies are rendered as markdown (headings, emphasis, lists, quotes, code
 blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that
 repository: an `orch-xxxx` project cloned from its origin (reused next time you

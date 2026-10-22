@@ -1,14 +1,123 @@
 # Wheel scrolling: screen-isolation investigation
 
-## Outcome and scope
+## Current finding from `da5cc7405944ef253dbe6c95f8a3e564cf6e5a71`
+
+Two separate issues must not be conflated:
+
+- **Confirmed and fixed: older saved conversation was inaccessible inside the
+  live app.** `App.restorePage()` requested only `MAX_RESTORED_ROWS` (200), while
+  `exitHistory` expanded the originals only after quitting. It now restores all
+  originals from the orchestrator's `Transcript.history()` accessor into the
+  live page, preserving order and the usual exit transcript. Model compaction
+  does not replace those originals. The bounded restore helper remains available
+  for explicit previews, but is no longer the live conversation's access limit.
+- **Not established or fixed: Apple Terminal's physical ordinary wheel/trackpad
+  gesture revealing prelaunch shell history.** The user's evidence includes
+  `Updating 4c3dbd8..da5cc74`, fast-forward output, and `bun run dev start` /
+  `$ bun src/cli.ts start`. That is a fresh source launch, not evidence of a stale
+  binary. It does not tell us which bytes (if any) reached stdin, whether the
+  terminal's native history viewport moved while alternate screen stayed active,
+  or whether their main UI has an intermediary such as tmux. Workers being in
+  tmux establishes none of that.
+
+### Application change and resource use
+
+The app still owns one alternate-screen page with its existing pinned header,
+multiline composer/footer, modal precedence and scroll clamps. No terminal mode,
+mouse protocol, parser, terminal preference or selection binding was changed.
+Rendered conversation rows remain cached between ordinary input/activity frames;
+`stickyRows()` now slices only the visible history/tail rows instead of copying
+all cached history on every key. Full restore/first render, page changes and
+resize reflow still cost proportional to history, and complete history remains
+in memory. This is not disk-backed pagination, nor an assurance of constant
+startup/resize time for arbitrarily large transcripts. It removes the silent
+access limit without introducing a new paging/anchor subsystem.
+
+### Input-path evidence and native boundary
+
+A second source audit found the same lifecycle as the earlier record below:
+`term.open()` installs input/raw mode and enables `1049`, `1000`, `1006`, `2004`
+once; `App.onKey()` routes delivered wheel reports to body scrolling unless an
+explicit modal owns input; only cleanup leaves alternate screen. No ordinary
+wheel path disables mouse reporting, scrolls the primary screen or invokes the
+legacy scrollback-clearing renderer. Thus neither duplicate/repeated mode writes
+nor clearing shell history is justified by the evidence.
+
+Read-only public documentation adds an important distinction:
+
+- Apple's [Terminal keyboard shortcuts](https://support.apple.com/guide/terminal/keyboard-shortcuts-trmlshtcts/mac)
+  explicitly lists **Toggle “Allow Mouse Reporting”** (Command-R), and separate
+  **Show/Hide alternate screen** commands. These are native Terminal controls,
+  independent of the app requesting mouse reporting. This is evidence such a
+  permission exists, **not** evidence of its current setting in the user's window.
+  No permission was inspected live or toggled during this investigation.
+- The [xterm control-sequence reference](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Mouse-Tracking)
+  documents normal tracking (`1000`), SGR encoding (`1006`), wheel button codes,
+  and native scroll-back versus alternate-scroll cursor-key translation. It
+  explains the protocol the app requests; it is not an Apple Terminal gesture
+  implementation or a claim Apple follows every xterm behavior.
+
+If Terminal (or an intermediary) consumes the gesture without forwarding input,
+application code cannot intercept it. A reporting-permission change or another
+terminal would require an explicit user choice, not automatic preference writes
+or redesign into an inline CLI/browser. No search fallback service was used:
+subscription search returned no results; the cited public pages were read via
+ordinary HTTP. Fragmentation, legacy X10 and horizontal-wheel parser limitations
+remain hypotheses unrelated to the shell reveal until real input is observed.
+
+The minimal next observation is **draft-safe `/keys` in the user's current app**:
+use an empty composer, or save a nonempty draft elsewhere first because entering
+the slash command replaces it; make one normal gesture over the conversation and
+report whether wheel JSON appears or the whole screen instead moves to shell
+history. `/keys` echoes rather than scrolling; Esc exits it. This does not require
+restarting the app or changing preferences. If no report arrives, the next step
+is read-only inspection of the active window's **Allow Mouse Reporting** state
+and whether the main UI is inside tmux, not toggling anything without approval.
+
+### Regression evidence for this change
+
+- App regression restores 140 wrapped assistant messages plus original user and
+  post-checkpoint messages, exceeding twice the old 200-row preview budget. It
+  reaches the original pre-compaction message **while alternate screen is still
+  active**, preserves multiline draft/cursor and pinned bars, clamps at the top,
+  keeps position during live output and resize, follows the tail again, switches
+  projects and verifies complete ordered exit output without duplicate messages.
+- A 100,000-row cache regression counts history accesses: ordinary frame/draft
+  updates read at most the body viewport height, including frames straddling or
+  entirely inside the transient tail, not all saved rows.
+- `src/tui/scroll.pty.test.ts` runs the real source CLI in an owned PTY/shell,
+  temporary HOME/PARALLELS_HOME, empty inbox and synthetic checkpointed history,
+  without inherited credentials or tmux/gh on PATH. Sixty prelaunch shell
+  sentinels, a multiline draft, injected SGR sweeps/clamps and `/quit` verify
+  complete live history access, pinned bars, one mode entry/leave, no `3J`,
+  preserved shell sentinels and exact before/after `stty -g` restoration.
+
+These are **simulated input** and application-lifecycle tests, not physical Apple
+Terminal verification. The physical acceptance target remains unverified until
+the user checks it, including after any restart they choose to perform.
+
+Local checks on this change (Bun 1.4.2; no hosted CI):
+
+- Targeted app/sticky/term/keys/restore/continuity/layout/FakeScreen/owned-PTY suites:
+  **171 pass, 0 fail**, 5,673 assertions across nine files.
+- Full `bun test`: **708 pass, 0 fail**, five snapshots, 8,508 assertions across
+  56 files.
+- `bun run check`, `bun run build`, and `git diff --check`: passed.
+- The owned PTY runs source through Bun, like the supplied reproduction; the
+  successful build is a separate compile check, not native gesture verification.
+
+## Earlier PR #53 investigation (documentation only)
+
+### Outcome and scope
 
 Investigated from `4c3dbd819a84491501e1c61e918491c879c7f067` (PR #52).
 **No application fault explaining ordinary wheel/trackpad scrolling revealing
 shell content was reproduced. No production behavior was changed.** This is not
 a claim that the reported Apple Terminal behavior is fixed or disproved.
 
-The reported client is Apple Terminal, with no modifier held. Whether the user
-restarted after #52 remains unknown. The parent process reported
+The reported client is Apple Terminal, with no modifier held. At the time of
+this earlier investigation, restart status was unknown; the fresh-source launch
+evidence above supersedes that uncertainty. The parent process reported
 `Apple_Terminal` / `470.2` / `xterm-256color`; this investigation's worker was in
 tmux. Neither that worker environment nor the private tmux tests establishes
 that the user's TUI runs inside tmux.
@@ -170,7 +279,9 @@ Apple Terminal's actual text-selection modifier.
 Before further action, ask the user to perform a small native check; do not drive
 or restart their existing session automatically:
 
-1. Preserve any draft. In a suitable idle app, enter `/keys`, then make an
+1. Use an empty composer or save its draft elsewhere first: entering `/keys`
+   replaces composer text and does not automatically preserve a nonempty draft.
+   In a suitable idle app, enter `/keys`, then make an
    ordinary wheel/trackpad gesture **over the content area, with no modifier**.
    The expected evidence is `wheelup` / `wheeldown` JSON. `/keys` intentionally
    echoes rather than scrolling the application history; Esc ends it. Report
@@ -180,11 +291,11 @@ or restart their existing session automatically:
    Terminal window's mouse-reporting permission and relevant scrolling settings.
    Missing reports could be Terminal/native scrollback behavior, an intermediary
    such as tmux, or actual gesture location. Do not infer which from `TERM` alone.
-3. Separately verify a **fresh build/start in a new, isolated Terminal session**,
-   explicitly launching the freshly built `./dist/parallels` rather than an
-   unverified `parallels` on PATH, using the synthetic-history/empty-inbox setup
-   above (or a fake orchestrator), not live project data. Leave the current session alone. The current running
-   process predating #52 remains a possibility until that comparison is made.
+3. The user has since supplied a fresh updated-source launch through
+   `bun run dev start`; a stale compiled binary is not an explanation for that
+   reproduction. After choosing to restart their own app with changes, the user
+   must verify physical gestures themselves. Do not restart or drive their live
+   session as part of an automated test.
 4. If a fresh native run receives valid wheel events yet exposes shell content,
    collect the exact emitted modes, wheel bytes and whether it is the native
    history viewport moving. That would provide evidence for an app/terminal
@@ -195,7 +306,7 @@ participation/approval first. Retain application mouse-wheel capture and
 terminal-modifier selection; disabling capture or clearing shell scrollback is
 not an acceptable workaround.
 
-## Local checks on the investigated base
+## Local checks on the earlier investigated base
 
 After `bun install --frozen-lockfile` (the isolated worktree initially had no
 local dependency install):
@@ -208,6 +319,6 @@ local dependency install):
 - `bun run build`: passed; fresh compiled CLI used by the probes above.
 - `git diff --check`: passed.
 
-Only this investigation record is committed. There is no production fix to
-claim, no new behavior to merge with the independent `/help` work, and no hosted
-CI result implied by these local checks.
+In PR #53 only the earlier investigation record was committed. There was no
+production fix in that PR, no new behavior to merge with the independent `/help`
+work, and no hosted CI result implied by those local checks.

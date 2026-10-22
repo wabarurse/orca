@@ -200,3 +200,28 @@ test("table interiors retain their source block rather than guessing a row acros
   const anchor = captureAnchor(lines, 80, 5);
   expect(resolveAnchor(lines, 10, anchor)).toBe(plainHistory(lines, 10).findIndex(row => row.startsWith("Key:")));
 });
+
+test("large cached histories read only visible rows on frames and keys, including the transient-tail boundary", () => {
+  let reads = 0;
+  const history = new Proxy(Array.from({ length: 100_000 }, (_, i) => `saved ${i}`), {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const partial = Array.from({ length: 30 }, (_, i) => `partial ${i}`);
+  const f = { ...frame(), partial: partial.join("\n"), running: ["running tool"], activity: "working…" };
+  for (const start of [0, 50_000, 99_990, 100_001, null]) {
+    reads = 0;
+    const screen = stickyRows(f, history, chrome, start);
+    expect(reads).toBeLessThanOrEqual(screen.bodyHeight);
+    expect(screen.maxStart).toBe(history.length + partial.length + 2 - screen.bodyHeight);
+    const expected = [...Array.from({ length: history.length }, (_, i) => `saved ${i}`), ...partial, "running tool", "working…"]
+      .slice(screen.start, screen.start + screen.bodyHeight);
+    expect(screen.rows.slice(chrome.length, chrome.length + screen.bodyHeight)).toEqual(expected);
+    // Editing a draft still uses the same viewport-sized slice, not an O(history) copy.
+    reads = 0;
+    stickyRows({ ...f, input: { ...f.input, text: "draft!", cursor: 6 } }, history, chrome, start);
+    expect(reads).toBeLessThanOrEqual(screen.bodyHeight);
+  }
+});
