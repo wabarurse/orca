@@ -1,0 +1,213 @@
+# Wheel scrolling: screen-isolation investigation
+
+## Outcome and scope
+
+Investigated from `4c3dbd819a84491501e1c61e918491c879c7f067` (PR #52).
+**No application fault explaining ordinary wheel/trackpad scrolling revealing
+shell content was reproduced. No production behavior was changed.** This is not
+a claim that the reported Apple Terminal behavior is fixed or disproved.
+
+The reported client is Apple Terminal, with no modifier held. Whether the user
+restarted after #52 remains unknown. The parent process reported
+`Apple_Terminal` / `470.2` / `xterm-256color`; this investigation's worker was in
+tmux. Neither that worker environment nor the private tmux tests establishes
+that the user's TUI runs inside tmux.
+
+The investigation used Bun 1.4.2, macOS 26.6.2 and, for an independent terminal
+emulator check, a newly created private tmux 3.7c server. No existing GUI window,
+user session, live project, credentials, terminal preferences or shell history
+was modified. No model requests were made.
+
+## Source-path audit
+
+- `src/tui/term.ts`: `open()` enables alternate screen (`1049`), basic mouse
+  reporting (`1000`), SGR mouse encoding (`1006`) and bracketed paste (`2004`)
+  once. Normal close disables them and restores the cursor. Rescue also ends
+  synchronized updates on `SIGTERM`, `SIGHUP`, uncaught exceptions and process
+  exit. A close while the background reply is pending drains input in raw mode
+  before handing stdin back. These modes were already present; adding duplicate
+  sequences would not address the report.
+- `src/tui/keys.ts`: ordinary delivered SGR wheel reports become `wheelup` or
+  `wheeldown`, not draft text. Incomplete CSI parameters are buffered. There are
+  separate parser limitations below; this is not a universal mouse-protocol or
+  fragmentation guarantee.
+- `src/tui/app.ts`: unmodal wheel events change only the conversation's scroll
+  offset, by three rows per event, clamped between zero and the newest viewport.
+  Menus, project lists, explicit question panels and `/keys` own input instead
+  when open. They do not disable reporting or exit alternate screen.
+- `src/tui/sticky.ts`: drawing uses bounded rows, absolute cursor positioning and
+  row erasure, not line-feed scrolling of the primary buffer. Header/footer and
+  composer remain pinned. The app's active drawing path does not call the legacy
+  `render.reprint()` helper that contains a screen/scrollback clear.
+- `src/tui/render.ts`: visible content is sanitized to remove screen-switching,
+  scrolling and clearing escapes; only styling and hyperlinks remain. Normal
+  `App.run()` cleanup deliberately restores the primary screen **before**
+  printing the active transcript. Shell content becoming available after exit
+  is expected, unlike a live wheel gesture escaping the conversation.
+
+Uncatchable termination such as SIGKILL cannot guarantee terminal restoration;
+that is not an ordinary live scrolling path.
+
+No existing layout, history, draft, Ctrl+Q, selected-session Ctrl+C,
+consumption-boundary queued-display or terminal-modifier selection behavior was
+changed.
+
+## Fresh-build, owned-terminal evidence
+
+The probes were temporary investigation harnesses, not new product commands or
+new tests included in the repository test count below.
+
+### Compiled CLI through real PTYs
+
+Built `dist/parallels` with `bun run build`, then launched it through
+`Bun.spawn({ terminal: { cols: 100, rows: 24, ... } })` in fresh temporary homes.
+Each child had an explicit environment: temporary `HOME` and `PARALLELS_HOME`,
+`PATH=/usr/bin:/bin` (no tmux or gh), `TERM=xterm-256color`, no inherited provider
+credentials, and no Git global/system configuration. Its cwd was the temporary
+home, not a user's repository.
+
+Reproduction setup and assertions:
+
+1. Seed `projects/probe/repo/` and a single synthetic assistant transcript entry
+   containing `APP_ROW_000` through `APP_ROW_159`; leave the inbox empty. Starting
+   this restored, idle orchestrator does not call a model.
+2. In an owned shell, record `stty -g` and print 60 `SHELL_SENTINEL_n` lines before
+   launching the freshly compiled `parallels start probe`.
+3. Capture actual process output. Send `ESC [ < 64 ; 10 ; 10 M` and the equivalent
+   button-65 report through the PTY, not directly to `App.onKey()`.
+4. Send 1,000 up events, 20 more at the top boundary, then 1,000 down events.
+   Check that the body reaches/clamps at its first and last rows, the header and
+   footer stay fixed, the draft survives, and no alternate-screen leave or
+   scrollback-clear sequence is emitted during the live interaction.
+5. Split a report after `ESC[<64;` across writes: scrolling still works and the
+   report is not inserted into the draft. In `/keys`, complete wheel reports
+   produce `{"name":"wheelup"}` and `{"name":"wheeldown"}`.
+6. Inject `1049l`, `1047l`, `47l`, `3J` and `2S` escapes into the first/last
+   synthetic transcript rows. They are removed before visible output; they do
+   not leave alternate screen, clear shell history or scroll the terminal.
+7. Exercise exit paths; compare the owned shell's before/after `stty -g`, count
+   alternate-screen transitions, and replay complete captured output through
+   `FakeScreen` to check the visible buffer and preserved shell sentinels.
+
+| Exit path | Child status | Alternate entry / leave | Terminal attributes |
+| --- | ---: | --- | --- |
+| `/quit` after wheel tests | 0 | one / one | restored exactly |
+| `SIGTERM` | 143 | one / one | restored exactly |
+| `SIGHUP` | 129 | one / one | restored exactly |
+| `/quit` entered during startup | 0 | one / one | restored exactly |
+| Startup error: project path is a regular file | 1 | one / one | restored exactly |
+| Uncaught exception in a fresh compiled fake-orchestrator fixture | 1 | one / one | restored exactly |
+
+The crash fixture used the real `App` and terminal, a synthetic history, no-op
+liveness/watchers, and an orchestrator whose send/turn methods throw instead of
+calling a model. Only that owned fixture deliberately crashed. The ordinary
+CLI was used for the other five cases. For the startup-error case, assertions
+checked raw mode/escape restoration rather than replaying diagnostic stderr as
+TUI content. Early `/quit` does not prove close-before-background-timeout: the app
+still awaits startup/background completion; the existing terminal unit tests
+cover close during that reply window directly.
+
+PTY delivery establishes byte handling, **not** physical wheel-to-byte conversion
+by Apple Terminal. `FakeScreen` is also not an implementation of Terminal's
+native scrollback UI.
+
+### Independent private tmux terminal emulator
+
+Started a new server with an explicitly private temporary socket and
+`-f /dev/null`, using only that socket for every tmux command. No existing server
+was queried or reconfigured. The child again ran the fresh CLI in an isolated
+home, with no tmux/gh in its PATH. The server was destroyed after the probe.
+
+The same sentinel/history setup and injected SGR sweeps passed. Visible captures
+contained only the TUI while running. `alternate_on`, `mouse_standard_flag` and
+`mouse_sgr_flag` were all `1`. Resizing the owned pane through `100x25`, `23x12`,
+`6x6`, `1x1`, `80x24` and `100x24`, and scrolling at each size, did not expose a
+shell sentinel in the visible pane. `/close` of the last page kept alternate
+screen and reporting enabled; `/quit` restored them to `0` and restored terminal
+attributes exactly.
+
+**Important distinction:** tmux retained 36 primary-history rows while alternate
+screen was active. A capture explicitly requesting *all history* (`capture-pane
+-S -`) could retrieve those shell sentinels, whereas the normal visible capture
+could not. The history size stayed 36 during live scrolling and resizing; it was
+39 after closing the last page and quitting. This is preserved native history,
+not proof the application left alternate screen. It also demonstrates why a
+FakeScreen-only check cannot prove that a terminal's own history UI is
+inaccessible. This observation is about the private tmux instance, not the
+user's unidentified execution context or Apple Terminal's physical gestures.
+
+## Parser limitations distinguished from screen isolation
+
+Small direct `keyReader` / `parseKeys` characterizations also found:
+
+- Splitting an SGR report immediately after its **first ESC**, after the
+  background-query window, emits `escape` and then printable report text. A lone
+  ESC is intentionally delivered immediately by the current parser; holding an
+  incomplete CSI only helps once `ESC[` has arrived. Splits tested after 2, 3,
+  6 and 10 characters produced the expected wheel event.
+- Legacy X10 mouse payload bytes are not decoded as wheel events; the parser
+  requests/supports SGR instead. A synthetic `ESC[M` plus its three payload bytes
+  leaves payload text as characters.
+- SGR horizontal-wheel button values 66/67 are currently interpreted as vertical
+  up/down, rather than distinguished from 64/65.
+
+These can affect scrolling accuracy or draft text if those inputs actually
+arrive. None of the characterized inputs caused an alternate-screen leave or
+made the app scroll the primary buffer. No evidence connects them to the user's
+reported shell reveal, and actual Apple Terminal bytes were not captured.
+Changing immediate-Esc semantics, adding mouse protocols, or changing gesture
+handling speculatively was therefore deferred, not presented as a fix for this
+report. A raw-byte capture would be needed if `/keys` exposes malformed reports.
+
+## What still needs native/user verification
+
+Read-only inspection of persisted Terminal settings found no explicit
+mouse/scroll/alternate-screen keys. This does **not** establish the active
+window's profile, effective defaults, runtime mouse-reporting permission or
+physical gesture behavior. No preference was toggled. No claim is made about
+Apple Terminal's actual text-selection modifier.
+
+Before further action, ask the user to perform a small native check; do not drive
+or restart their existing session automatically:
+
+1. Preserve any draft. In a suitable idle app, enter `/keys`, then make an
+   ordinary wheel/trackpad gesture **over the content area, with no modifier**.
+   The expected evidence is `wheelup` / `wheeldown` JSON. `/keys` intentionally
+   echoes rather than scrolling the application history; Esc ends it. Report
+   whether the whole screen instead moves to shell content, whether the header
+   stays fixed, or whether the composer receives report fragments/arrows.
+2. If no wheel events reach `/keys`, inspect (without toggling) the active
+   Terminal window's mouse-reporting permission and relevant scrolling settings.
+   Missing reports could be Terminal/native scrollback behavior, an intermediary
+   such as tmux, or actual gesture location. Do not infer which from `TERM` alone.
+3. Separately verify a **fresh build/start in a new, isolated Terminal session**,
+   explicitly launching the freshly built `./dist/parallels` rather than an
+   unverified `parallels` on PATH, using the synthetic-history/empty-inbox setup
+   above (or a fake orchestrator), not live project data. Leave the current session alone. The current running
+   process predating #52 remains a possibility until that comparison is made.
+4. If a fresh native run receives valid wheel events yet exposes shell content,
+   collect the exact emitted modes, wheel bytes and whether it is the native
+   history viewport moving. That would provide evidence for an app/terminal
+   compatibility fix instead of duplicating modes or erasing history.
+
+Native interaction or a preference-change experiment requires the user's
+participation/approval first. Retain application mouse-wheel capture and
+terminal-modifier selection; disabling capture or clearing shell scrollback is
+not an acceptable workaround.
+
+## Local checks on the investigated base
+
+After `bun install --frozen-lockfile` (the isolated worktree initially had no
+local dependency install):
+
+- Terminal/key/sticky/FakeScreen/layout/continuity suites: **62 pass, 0 fail**,
+  4,352 assertions across six files.
+- `bun test src/tui/app.test.ts`: **87 pass, 0 fail**, 1,098 assertions.
+- Full `bun test`: **652 pass, 0 fail**, 7,961 assertions across 51 files.
+- `bun run check`: passed.
+- `bun run build`: passed; fresh compiled CLI used by the probes above.
+- `git diff --check`: passed.
+
+Only this investigation record is committed. There is no production fix to
+claim, no new behavior to merge with the independent `/help` work, and no hosted
+CI result implied by these local checks.
