@@ -1,5 +1,6 @@
 import { headerHeight } from "./chrome";
-import { historyRows, type Line } from "./lines";
+import type { Line } from "./lines";
+import { captureAnchor, resolveAnchor } from "./anchor";
 import { fit, liveRows, sanitize, wrap, type Frame } from "./render";
 
 export interface StickyScreen {
@@ -12,20 +13,9 @@ export interface StickyScreen {
   maxStart: number;
 }
 
-/** Reflow a scrolled-back viewport within the same logical conversation block.
- * Relative wrapped-row position is retained; switching owners still follows tail.
- */
+/** One-shot reflow; App retains the captured content anchor across repeated resizes. */
 export function reflowAnchor(lines: Line[], oldCols: number, cols: number, top: number): number {
-  let before = 0, after = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const block = [lines[i]!], previous = lines[i - 1];
-    const oldHeight = historyRows(block, oldCols, previous).length;
-    const newHeight = historyRows(block, cols, previous).length;
-    if (top < before + oldHeight) return after + Math.min(newHeight - 1, Math.floor((top - before) * newHeight / oldHeight));
-    before += oldHeight;
-    after += newHeight;
-  }
-  return after;
+  return resolveAnchor(lines, cols, captureAnchor(lines, oldCols, top));
 }
 
 /** The bars occupy fixed screen rows; only the middle viewport scrolls. */

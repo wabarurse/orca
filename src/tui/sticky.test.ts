@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { stickyRows, stickyUpdate, reflowAnchor } from "./sticky";
 import { tabRow, chapterRows, headerHeight } from "./chrome";
-import { historyRows, type Line } from "./lines";
+import { historyRows, lineRows, type Line } from "./lines";
+import { captureAnchor, resolveAnchor } from "./anchor";
+import { userLines } from "./restore";
 import { type Frame } from "./render";
 import { FakeScreen } from "./testing";
 import { parseKeys } from "./keys";
@@ -103,13 +105,98 @@ test("native sticky geometry is cell-correct through narrow/tiny resizes, panels
   }
 });
 
-test("reflow anchors the current logical block rather than a stale rendered row number", () => {
-  const lines: Line[] = Array.from({ length: 40 }, (_, i) => `record ${i}: ` + "words ".repeat(25));
-  const before = historyRows(lines, 80);
-  const top = before.findIndex(row => row.startsWith("record 20:"));
-  const anchored = reflowAnchor(lines, 80, 23, top);
-  expect(historyRows(lines, 23)[anchored]).toStartWith("record 20:");
-  expect(reflowAnchor(lines, 23, 80, anchored)).toBe(top);
-  // Within a wrapped record, keep a proportional offset rather than jumping to its start.
-  expect(reflowAnchor(lines, 80, 23, top + 1)).toBeGreaterThan(anchored);
+const plainHistory = (lines: Line[], cols: number) => historyRows(lines, cols).map(Bun.stripANSI);
+
+test("message starts and neutral separators reflow separately in both directions (review reproductions)", () => {
+  const lines: Line[] = [{ md: "previous message" }, { md: "record 20: " + "words ".repeat(25) }];
+  for (const [from, to, expected] of [[80, 23, 2], [80, 10, 3], [23, 80, 2]]) {
+    const before = plainHistory(lines, from!);
+    const after = plainHistory(lines, to!);
+    expect(before.length).not.toBe(after.length);
+    const top = before.findIndex(row => row.startsWith("record 20:"));
+    const start = reflowAnchor(lines, from!, to!, top);
+    expect(start).toBe(expected!);
+    expect(after[start]).toStartWith("record 20:");
+    expect(reflowAnchor(lines, from!, to!, top - 1)).toBe(start - 1);
+    expect(after[start - 1]).toBe("");
+  }
+});
+
+test("structured markdown AND user fixtures genuinely wrap; forty-message starts survive repeated resizes", () => {
+  for (const make of [(text: string): Line => ({ md: text }), (text: string): Line => userLines(text)[0]!]) {
+    const lines = Array.from({ length: 40 }, (_, i) => make(`record ${i}: ` + "words ".repeat(25)));
+    const before = plainHistory(lines, 80);
+    const narrow = plainHistory(lines, 23);
+    expect(before.length).toBeGreaterThan(40);
+    expect(narrow.length).toBeGreaterThan(before.length);
+    let width = 80;
+    let top = before.findIndex(row => row.includes("record 20:"));
+    for (const cols of [23, 80, 10, 53, 23, 80]) {
+      top = reflowAnchor(lines, width, cols, top);
+      expect(top).toBe(historyRows(lines.slice(0, 20), cols).length + 1);
+      expect(plainHistory(lines, cols)[top]).toBe(Bun.stripANSI(lineRows(lines[20]!, cols)[0]!));
+      width = cols;
+    }
+  }
+});
+
+test("nonuniform multiline markdown anchors source parts and interior code graphemes, not whole-block ratios", () => {
+  const code = "code-" + "0123456789".repeat(40);
+  const lines: Line[] = [{ md: "previous" }, { md: ["long paragraph ".repeat(30), "short source line", "```ts", "tiny", code, "last", "```", "end"].join("\n") }];
+  const before = plainHistory(lines, 80);
+  const firstCode = before.findIndex(row => row.startsWith("│ code-"));
+  const interior = firstCode + 1; // character 78 of this source line, NOT the next message
+  expect(before[interior]).toBe("│ " + code.slice(78, 156));
+  const anchor = captureAnchor(lines, 80, interior);
+  for (const cols of [23, 10, 120, 40, 23, 80]) {
+    const after = plainHistory(lines, cols);
+    expect(after.length).not.toBe(plainHistory(lines, cols === 80 ? 23 : 80).length);
+    const start = after.findIndex(row => row.startsWith("│ code-"));
+    const at = resolveAnchor(lines, cols, anchor);
+    const offset = Math.floor(78 / (cols - 2));
+    expect(at).toBe(start + offset);
+    expect(after[at]).toBe("│ " + code.slice(offset * (cols - 2), (offset + 1) * (cols - 2)));
+    const short = before.indexOf("short source line");
+    expect(reflowAnchor(lines, 80, cols, short)).toBe(after.findIndex(row => row.startsWith(cols < 16 ? "short" : "short source line")));
+  }
+  expect(resolveAnchor(lines, 80, anchor)).toBe(interior);
+});
+
+test("interior user positions retain grapheme offsets across repeated widths, including wide-cell substitution", () => {
+  const lines = userLines("first short line\n" + "界é👩‍💻 abc ".repeat(40));
+  const before = plainHistory(lines, 23);
+  const anchor = captureAnchor(lines, 23, 4);
+  expect(anchor.line).toBe(1);
+  expect(anchor.offset).toBeGreaterThan(0);
+  for (const cols of [80, 10, 1, 50, 23]) {
+    const row = resolveAnchor(lines, cols, anchor);
+    const mapped = captureAnchor(lines, cols, row);
+    const next = captureAnchor(lines, cols, row + 1);
+    expect(mapped.line).toBe(anchor.line);
+    expect(mapped.offset).toBeLessThanOrEqual(anchor.offset);
+    expect(next.offset).toBeGreaterThan(anchor.offset);
+  }
+  expect(resolveAnchor(lines, 23, anchor)).toBe(4);
+  expect(plainHistory(lines, 80).length).toBeLessThan(before.length);
+});
+
+test("anchor traces match actual rows for paragraphs, labels, quotes, lists, blanks and fenced code", () => {
+  const body = "some **bold** [link](https://example.test) " + "界é👩‍💻 word ".repeat(10);
+  const samples: Line[] = [
+    { md: `${body}\nshort\n\n> ${body}\n- ${body}\n# heading\n---\n\`\`\`ts\nshort\n${body}\n\nend\n\`\`\`` },
+    { md: body, label: "From worker:" }, { md: `# ${body}`, label: "From worker:" },
+    { md: "", label: "From worker:" }, { md: "", block: true, continuation: true },
+    { md: `\`\`\`\n${body}\n\`\`\``, block: true },
+  ];
+  for (const line of samples) for (const cols of [10, 23, 80]) {
+    const lines = [{ md: "previous" }, line];
+    const rows = plainHistory(lines, cols);
+    for (let top = 0; top < rows.length; top++) expect(resolveAnchor(lines, cols, captureAnchor(lines, cols, top))).toBe(top);
+  }
+});
+
+test("table interiors retain their source block rather than guessing a row across grid/stacked layouts", () => {
+  const lines: Line[] = [{ md: "previous" }, { md: "| Key | Value |\n|---|---|\n| a | long value words |\n| b | another |" }];
+  const anchor = captureAnchor(lines, 80, 5);
+  expect(resolveAnchor(lines, 10, anchor)).toBe(plainHistory(lines, 10).findIndex(row => row.startsWith("Key:")));
 });

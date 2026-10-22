@@ -27,9 +27,10 @@ import { bold, commit, dim, inputArea, inputGeometry, statusRows, type Frame, ty
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { chapterRows, headerHeight } from "./chrome";
+import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./anchor";
 import { Calls } from "./tools";
 import type { ToolCall, ToolOutcome } from "../toolview";
-import { stickyRows, stickyUpdate, reflowAnchor, type StickyScreen } from "./sticky";
+import { stickyRows, stickyUpdate, type StickyScreen } from "./sticky";
 
 export { lineRows, type Line } from "./lines";
 
@@ -271,6 +272,7 @@ export class App {
   private screenHistory: string[] = [];
   private screenOwner: Page | Page["view"] | undefined;
   private scrollTop: number | null = null;
+  private scrollAnchor?: HistoryAnchor;
   private liveCheckedAt = 0;
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
   private readonly liveChecks = new Map<string, Promise<void>>();
@@ -648,10 +650,12 @@ export class App {
 
   /** Only a resize of the same conversation can reuse its scroll anchor. */
   private anchorScroll(owner: typeof this.screenOwner, cols: number): void {
-    if (owner !== this.screenOwner) { this.scrollTop = null; return; }
-    if (this.scrollTop === null || !this.screen || this.screen.cols === cols) return;
+    if (owner !== this.screenOwner) this.scrollTop = null;
+    if (this.scrollTop === null) { this.scrollAnchor = undefined; return; }
+    if (!this.screen || this.screen.cols === cols) return;
     const lines = this.page?.view?.lines ?? this.page?.lines ?? this.looseLines;
-    this.scrollTop = reflowAnchor(lines, this.screen.cols, cols, this.scrollTop);
+    this.scrollAnchor ??= captureAnchor(lines, this.screen.cols, this.scrollTop);
+    this.scrollTop = resolveAnchor(lines, cols, this.scrollAnchor);
   }
 
   /** The last drawing error said, so a frame that keeps failing is reported once. */
@@ -1168,6 +1172,7 @@ export class App {
     const start = this.scrollTop ?? screen.maxStart;
     const top = Math.max(0, Math.min(screen.maxStart, start + (k.name.endsWith("up") ? -delta : delta)));
     this.scrollTop = top === screen.maxStart ? null : top;
+    this.scrollAnchor = undefined;
     this.draw();
   }
 

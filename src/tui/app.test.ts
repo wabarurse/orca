@@ -10,7 +10,8 @@ import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
 import { fileStore, type QuestionStore } from "./questions";
-import { answeredLine } from "./restore";
+import { answeredLine, userLines } from "./restore";
+import { historyRows, lineRows } from "./lines";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../tools/message";
 import { makeSpawn } from "../tools/spawn";
@@ -2465,31 +2466,52 @@ test("current-view resize anchoring ignores unrelated sessions, and tail activit
     await app.openPage("unrelated-e");
     app.page!.busy = true;
     app.switchPage(-1);
-    for (let i = 0; i < 50; i++) app.say(`record ${i}: ` + "words ".repeat(20), page);
+    const records: Line[] = Array.from({ length: 50 }, (_, i) => {
+      const text = `record ${i}: ` + "words ".repeat(25);
+      return i % 2 ? userLines(text)[0]! : { md: text };
+    });
+    page.lines.push(...records);
+    expect(historyRows(page.lines, 80).length).toBeGreaterThan(records.length);
+    expect(historyRows(page.lines, 23).length).toBeGreaterThan(historyRows(page.lines, 80).length);
+    app.reprint();
+    term.type("reading draft");
     page.busy = true;
     page.busySince = 0;
     app.draw();
     await until(() => term.screen().includes("thinking… 5s"));
+    for (let i = 0; i < 30; i++) term.press({ name: "pageup" });
+    await until(() => bodyRows(term)[0]!.startsWith("record 0:"));
+    const top = historyRows(records, 80).findIndex(row => Bun.stripANSI(row).startsWith("> record 21:"));
+    expect(top % 3).toBe(0);
+    for (let i = 0; i < top / 3; i++) term.press({ name: "wheeldown" });
+    await until(() => bodyRows(term)[0]!.startsWith("> record 21:"));
+    const reading = "> record 21:";
+    const visible = bodyRows(term);
+    orchs.writers[page.project]!("appended structured paragraph " + "new words ".repeat(30) + "\n");
+    orchs.writers["unrelated-e"]!("background owner paragraph " + "elsewhere ".repeat(20) + "\n");
+    await Bun.sleep(30);
+    expect(bodyRows(term)).toEqual(visible);
+    expect(app.input.text).toBe("reading draft");
     const durable = JSON.stringify(page.lines);
-    term.press({ name: "pageup" });
-    term.press({ name: "pageup" });
-    await until(() => !term.screen().includes("thinking…"));
-    const reading = bodyRows(term).find(row => row.startsWith("record "))!.match(/record \d+:/)![0];
-    term.resize(23, 24);
-    await Bun.sleep(160);
-    expect(bodyRows(term).find(row => row.startsWith("record "))).toStartWith(reading);
-    expect(term.screen()).not.toContain("thinking…");
-    expect(JSON.stringify(page.lines)).toBe(durable);
+    for (const cols of [23, 80, 10, 53, 23, 80]) {
+      term.resize(cols, 24);
+      await Bun.sleep(170);
+      expect(bodyRows(term)[0]).toBe(Bun.stripANSI(lineRows(records[21]!, cols)[0]!).trimEnd());
+      expect(term.screen()).not.toContain("thinking…");
+      expect(app.input.text).toBe("reading draft");
+      expect(term.display.col).toBe(app.frame().inputArea!.col);
+      expect(JSON.stringify(page.lines)).toBe(durable);
+    }
     app.switchPage(1);
-    await until(() => term.screen().includes("thinking…"));
+    await until(() => term.screen().includes("working…"));
     expect(term.screen()).not.toContain("record ");
     app.switchPage(-1);
-    await until(() => term.screen().includes("thinking… 5s"));
+    await until(() => term.screen().includes("working… 5s"));
     // A different conversation owns a different viewport: switching back follows its tail.
     expect(term.screen()).not.toContain(reading);
     page.busy = false;
     app.draw();
-    await until(() => !term.screen().includes("thinking…"));
+    await until(() => !term.screen().includes("working…"));
     expect(app.frame().activity).toBeUndefined(); // background session remains busy
     expect(JSON.stringify(page.lines)).toBe(durable);
   } finally { app.quit(); await running; }
@@ -2533,5 +2555,50 @@ test("boxed input and question vertical editing share rendered geometry across r
     await until(() => app.questions.answering());
     expect(app.input.text).toBe(answer);
     expect(app.page!.sent).toEqual([]);
+  } finally { app.quit(); await running; }
+});
+
+test("App retains an interior source offset across widening/narrowing and resets it on new wheel intent", async () => {
+  const term = fakeTerm(23, 24);
+  const orchs = fakeOrchestrators();
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+  const running = app.run("source-anchor-e");
+  try {
+    await until(() => !!app.page);
+    const code = "code-" + "0123456789".repeat(40);
+    const lines: Line[] = [
+      { md: ["long first line ".repeat(30), "short", "```ts", "tiny", code, "last", "```"].join("\n") },
+      ...Array.from({ length: 30 }, (_, i) => ({ md: `later ${i} ` + "wrapped content ".repeat(20) })),
+    ];
+    const codeStart = () => historyRows(lines, 23).findIndex(row => Bun.stripANSI(row).startsWith("│ code-"));
+    while ((codeStart() + 3) % 3) lines.unshift("fixed preface");
+    const top = codeStart() + 3; // offset 63 within this source line
+    const reading = "│ " + code.slice(63, 84);
+    expect(Bun.stripANSI(historyRows(lines, 23)[top]!)).toBe(reading);
+    app.page!.lines.push(...lines);
+    app.reprint();
+    await until(() => term.screen().includes("wrapped content"));
+    for (let i = 0; i < 300; i++) term.press({ name: "pageup" });
+    await until(() => bodyRows(term)[0] === Bun.stripANSI(historyRows(lines, 23)[0]!));
+    for (let i = 0; i < top / 3; i++) term.press({ name: "wheeldown" });
+    await until(() => bodyRows(term)[0] === reading);
+    for (const cols of [80, 40, 23, 10, 80, 23]) {
+      term.resize(cols, 24);
+      await Bun.sleep(170);
+      const offset = Math.floor(63 / (cols - 2)) * (cols - 2);
+      expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
+      const visible = bodyRows(term);
+      orchs.writers[app.page!.project]!("new structured background output " + "words ".repeat(20) + "\n");
+      await Bun.sleep(25);
+      expect(bodyRows(term)).toEqual(visible);
+    }
+    term.press({ name: "wheeldown" }); // a new reading intent: offset 126, not 63
+    await until(() => bodyRows(term)[0] === "│ " + code.slice(126, 147));
+    for (const cols of [80, 23]) {
+      term.resize(cols, 24);
+      await Bun.sleep(170);
+      const offset = Math.floor(126 / (cols - 2)) * (cols - 2);
+      expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
+    }
   } finally { app.quit(); await running; }
 });
