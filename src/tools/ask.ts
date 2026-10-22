@@ -7,8 +7,13 @@ export const ask: Tool = {
   spec: {
     name: "ask",
     description:
-      "Queue questions for the user. Returns their ids at once; answers arrive later in your inbox. " +
-      "Batch related questions in one call, always give a default, and keep working on what you can meanwhile.",
+      "Queue necessary questions for the user. Returns ids at once; answers arrive later in your inbox.\n" +
+      "- Ask only for a currently unresolved decision or missing information needed now that materially affects scope/results, involves destructive/data-loss risk, or requires new access, credentials, provider or billing beyond existing authorization. Do not treat real scope expansion or destructive changes as routine.\n" +
+      "- Do not ask about routine implementation details, local tests, debugging, review or bounded verification within an approved task, or repeatedly seek approval for its normal steps. For harmless reversible details, preserve established behavior or state a reasonable assumption.\n" +
+      "- Before asking, use known project requirements, conversation and any known pending question IDs/content to avoid duplicating unanswered questions. Honor clear answers and authorization already given in chat; do not repeat approvals just because they were not clicked in Ctrl+Q. This tool cannot list or close pending questions; chat replies do not close them.\n" +
+      "- No speculative questions for paused/later work, status updates, or 'shall I continue?' when continuation is already authorized.\n" +
+      "- Batch genuinely related necessary decisions in one call; keep questions/options concise, include a safe default, and keep working on unaffected parts.\n" +
+      "- A default applies only when the user explicitly skips, never because of silence or closing the panel. Never use a default or silence to authorize destructive steps or bypass explicit execution authorization for the shown branch plan.",
     input_schema: {
       type: "object",
       properties: {
@@ -20,7 +25,7 @@ export const ask: Tool = {
             properties: {
               text: { type: "string", description: "At most 500 chars." },
               options: { type: "array", items: { type: "string" }, description: "Short choices, at most 8." },
-              default: { type: "string", description: "What you will do if the user skips it. At most 100 chars." },
+              default: { type: "string", description: "Safe fallback only if the user explicitly skips; never permission for destructive steps or an unapproved plan. At most 100 chars." },
             },
             required: ["text"],
           },

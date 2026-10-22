@@ -3,7 +3,6 @@ import { defaults } from "./config";
 import { rolePrompt } from "./prompts";
 import type { Runner } from "./runner";
 import { message } from "./tools/message";
-import { ask } from "./tools/ask";
 import { makeSpawn } from "./tools/spawn";
 
 describe("rolePrompt", () => {
@@ -15,7 +14,6 @@ describe("rolePrompt", () => {
     expect(rolePrompt("orchestrator", config)).toContain("spawn a reviewer");
     expect(rolePrompt("reviewer", config)).toContain("cyclomatic > 7, cognitive > 9");
     expect(rolePrompt("worker", config)).not.toMatch(/\{\w+\}/);
-    expect(rolePrompt("orchestrator", config)).toContain("Do not spawn, push, or change anything until the user says to execute or dispatch");
   });
   test("reports to the orchestrator are full; only the user gets the concise version", () => {
     for (const role of ["worker", "reviewer"] as const) {
@@ -38,7 +36,6 @@ describe("rolePrompt", () => {
     expect(p).toContain(`spawn the reviewer with only the instruction "watch ci"`);
     expect(p).not.toContain("spawn a reviewer");
     expect(p).not.toContain("review rounds");
-    expect(p).toContain("Do not spawn, push, or change anything until the user says to execute or dispatch");
   });
   test("the orchestrator respawns once per [agent-exit] and stops if it repeats", () => {
     const p = rolePrompt("orchestrator", defaults);
@@ -66,10 +63,10 @@ describe("rolePrompt", () => {
     expect(d).toContain('"<branch> (existing)"');
     for (const maxReviewRounds of [0, 1, 100]) {
       const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
-      expect(p).toContain("Decide reuse vs a new branch per task (see spawn)");
-      expect(p).toContain('branch · what it does · depends on; a reused branch reads "<branch> (existing)"');
+      expect(p).toMatch(/Reuse vs new: see spawn/);
+      expect(p).toContain('branch · what it does · depends on; reused: "<branch> (existing)"');
       expect(p).toContain("(see ask)");
-      expect(p).toContain("a reused branch's new task runs the whole task flow anew");
+      expect(p).toContain("reused branches run the full task flow");
     }
   });
 
@@ -80,11 +77,17 @@ describe("rolePrompt", () => {
     expect(w).toContain("later messages are follow-ups");
   });
 
-  test("ask's description carries what the prompt no longer says: batch, default, keep working", () => {
-    const d = ask.spec.description ?? "";
-    expect(d).toMatch(/batch/i);
-    expect(d).toMatch(/default/i);
-    expect(d).toMatch(/keep working/i);
+  test("ask avoids routine approvals without removing the plan and execution gate", () => {
+    for (const maxReviewRounds of [0, 1, 100]) {
+      const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
+      const guidance = p.split("\n").find((line) => line.includes("(see ask)"))!;
+      expect(guidance).toMatch(/only for necessary unresolved decisions/);
+      expect(guidance).toMatch(/not routine approved work/);
+      expect(p).toMatch(/Show each task's plan table/);
+      expect(p).toMatch(/Before spawning, changing or pushing, wait for explicit user authorization/);
+      expect(p).toMatch(/execute, dispatch or clear chat equivalent/);
+      expect(p).toContain('"Execute"/"dispatch" alone means the whole plan last shown');
+    }
   });
 
   // Every prompt stays under 2000 characters: it is sent with every request
