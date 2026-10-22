@@ -11,8 +11,9 @@ import { fillRow, userFill } from "./style";
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 
-/** Explicit help is already wrapped to the current width; only its viewport is transient. */
-export interface Help { lines: string[]; top: number }
+/** Scrollable footer content is already wrapped to the current width; its viewport is transient. */
+export interface Help { lines: string[]; top: number; heading?: string }
+export interface TaskInboxView extends Help { state: "loading" | "error" | "ready" }
 export interface Menu { title: string; items: string[]; index: number }
 export interface Input {
   prompt: string;
@@ -65,6 +66,8 @@ export interface Frame {
   menu: Menu | null;
   /** Explicit scrollable help below the composer; never part of the transcript. */
   help?: Help | null;
+  /** Read-only structured task inbox below the composer; independent of message queues. */
+  inbox?: TaskInboxView | null;
   /** The project list, below the input and status like a menu, when open. */
   projects?: ProjectList | null;
   /** The question shown below the input and status when no menu or project list is open. */
@@ -325,30 +328,46 @@ function footerBase(f: Frame): { status: string[]; input: InputArea; queued: str
 
 /** Help leaves conversation space even on ordinary 24-row terminals. Input/status win on tiny screens. */
 export function helpPanel(f: Frame): { rows: string[]; top: number; bodyHeight: number; maxTop: number } {
+  return scrollPanel(f, f.help, "Help · commands & keys", "Help");
+}
+
+/** Same bounded footer geometry as help, without displacing the composer. */
+export function taskInboxPanel(f: Frame): ReturnType<typeof helpPanel> {
+  const state = f.inbox?.state;
+  return scrollPanel(f, f.inbox,
+    state === "error" ? "Error · task inbox (snapshot may be stale)" : state === "loading" ? "Loading · task inbox" : "Task inbox · read-only",
+    state === "error" ? "Error · inbox" : state === "loading" ? "Loading · inbox" : "Inbox", true);
+}
+
+function scrollPanel(f: Frame, view: Help | null | undefined, title: string, shortTitle: string, inbox = false): ReturnType<typeof helpPanel> {
   const { free } = footerBase(f);
   // stickyRows already reserves one body row; leave two more where possible.
   const height = Math.min(free, 18, Math.max(1, Math.floor(f.rows * 0.65)), Math.max(1, free - 2));
-  const lines = f.help?.lines ?? [];
-  const bodyHeight = Math.max(0, height - 2);
+  const lines = view?.lines ?? [];
+  const headingRows = view?.heading && height >= 4 ? [view.heading] : [];
+  const bodyHeight = Math.max(0, height - 2 - headingRows.length);
   const maxTop = Math.max(0, lines.length - Math.max(1, bodyHeight));
-  const top = Math.max(0, Math.min(f.help?.top ?? 0, maxTop));
-  if (!f.help || height <= 0) return { rows: [], top, bodyHeight, maxTop };
+  const top = Math.max(0, Math.min(view?.top ?? 0, maxTop));
+  if (!view || height <= 0) return { rows: [], top, bodyHeight, maxTop };
   const range = bodyHeight ? `${top + 1}–${Math.min(lines.length, top + bodyHeight)}/${lines.length}` : "";
-  const title = f.cols >= 48 ? "Help · commands & keys" : "Help";
+  title = f.cols >= 48 ? title : shortTitle;
   const gap = f.cols - visibleLength(title) - visibleLength(range) - 2;
   const heading = bold(title) + (gap > 0 && range ? " ".repeat(gap) + dim(range) : "");
-  const hint = f.cols >= 58 ? "↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close" : f.cols >= 24 ? "↑↓ scroll · Esc close" : "Esc close · ↑↓";
+  const hint = inbox
+    ? f.cols >= 64 ? "↑↓ / wheel · PgUp/PgDn · Home/End · r refresh · Esc close" : f.cols >= 30 ? "↑↓ scroll · r refresh · Esc close" : "Esc close · ↑↓"
+    : f.cols >= 58 ? "↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close" : f.cols >= 24 ? "↑↓ scroll · Esc close" : "Esc close · ↑↓";
   // Even when only one panel row fits, dismissal stays discoverable. If no
   // rows fit the help key layer still owns keys, like other hidden modals.
-  const rows = height === 1 ? [dim("Esc close help")] : [heading, ...lines.slice(top, top + bodyHeight), dim(hint)];
+  const rows = height === 1 ? [dim(`Esc close ${inbox ? "inbox" : "help"}`)] : [heading, ...headingRows, ...lines.slice(top, top + bodyHeight), dim(hint)];
   return { rows: rows.map(row => fit(row, f.cols)), top, bodyHeight, maxTop };
 }
 
-/** What sits below input/status: a menu, projects, help, or the question. */
+/** What sits below input/status: a menu, projects, help, task inbox, or question. */
 function overlayRows(f: Frame, height: number): string[] {
   if (f.menu) return menuRows(f.menu, height);
   if (f.projects) return projectRows(f.projects, height);
   if (f.help) return helpPanel(f).rows;
+  if (f.inbox) return taskInboxPanel(f).rows;
   return f.question ? questionRows(f.question, f.cols, height) : [];
 }
 

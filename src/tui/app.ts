@@ -1,3 +1,5 @@
+import { listTasks } from "../tasks";
+import { taskInboxLines, type TaskInboxData } from "./task-inbox";
 import { cancelSession } from "../cancellation";
 import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } from "../project-settings";
 // Sticky top and bottom bars around a scrollable conversation. Only changed
@@ -24,7 +26,7 @@ import { MarkdownStream } from "./mdstream";
 import { helpLines, type CommandHelp } from "./help";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
 import { replyLine, reportLine, restore, userLines } from "./restore";
-import { bold, commit, dim, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type Input, type InputArea, type Menu } from "./render";
+import { bold, commit, dim, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { chapterRows, headerHeight } from "./chrome";
@@ -104,6 +106,8 @@ export interface AppDeps {
   merges?: (project: string) => Promise<unknown>;
   /** Where questions are read and answered (questions.ts on disk by default); tests stub it. */
   questions?: QuestionStore;
+  /** Active structured task rows; read-only, defaults to the durable registry. */
+  tasks?: typeof listTasks;
   /** How long Enter, digits and typing are ignored after a question first shows (QUESTION_DELAY_MS); tests shorten it. */
   questionDelayMs?: number;
 }
@@ -132,6 +136,13 @@ const LIVE_CHECK_MS = 1000;
 interface ProjectListState { items: ProjectEntry[]; index: number; status: string; confirm: ProjectEntry | null }
 
 interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
+interface TaskInboxState extends TaskInboxData {
+  page: Page;
+  top: number;
+  pending?: Promise<void>;
+  content?: { cols: number; lines: string[]; heading?: string };
+}
+
 interface ClearConfirmation {
   page: Page;
   identity: string;
@@ -210,7 +221,7 @@ export class App {
   private _active = 0;
   get active(): number { return this._active; }
   set active(index: number) {
-    if (index !== this._active) { this.cancelClear(); this.modelGeneration++; this.helpTop = null; }
+    if (index !== this._active) { this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
     this._active = index;
   }
   private looseLines: string[] = [];
@@ -219,6 +230,8 @@ export class App {
   private inputTop: number | undefined;
   /** Null until explicitly opened; only a footer scroll position, never a history line. */
   private helpTop: number | null = null;
+  /** One explicit panel, owned by the captured page object; never reused across projects. */
+  private taskInbox: TaskInboxState | null = null;
   private helpContent?: { cols: number; inView: boolean; lines: string[] };
   menu: ActiveMenu | null = null;
   projectList: ProjectListState | null = null;
@@ -348,7 +361,7 @@ export class App {
     return () => methods.forEach((m, i) => { console[m] = saved[i]!; });
   }
 
-  quit(): void { this.cancelClear(); this.modelGeneration++; this.done(); }
+  quit(): void { this.taskInbox = null; this.cancelClear(); this.modelGeneration++; this.done(); }
 
   // --- output -----------------------------------------------------------------
 
@@ -447,6 +460,7 @@ export class App {
       queued: page ? { project: page.name, texts: [...page.sent.map(item => item.text), ...(this.queued.get(page) ?? []).map(item => item.text)] } : undefined,
       menu: this.menu,
       help: this.helpView(),
+      inbox: this.taskInboxView(),
       question: this.questions.view(),
       projects: this.projectList && {
         index: this.projectList.index, status: this.projectList.status,
@@ -703,6 +717,7 @@ export class App {
   }
 
   closePage(index = this.active): void {
+    this.taskInbox = null;
     this.cancelClear();
     this.helpTop = null;
     this.modelGeneration++;
@@ -761,6 +776,7 @@ export class App {
   }
 
   async openProjects(): Promise<void> {
+    this.taskInbox = null;
     this.cancelClear();
     this.modelGeneration++;
     const items = await orderedProjects();
@@ -897,6 +913,7 @@ export class App {
   // --- menus ------------------------------------------------------------------
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
+    this.taskInbox = null;
     this.cancelClear();
     if (modelOperation === undefined) this.modelGeneration++;
     if (!choices.length) return;
@@ -958,7 +975,13 @@ export class App {
   private watchPages(): void {
     this.watch ??= this.deps.watchdog ?? exitWatchdog();
     this.merges ??= this.deps.merges ?? mergeWatch();
-    for (const p of this.pages) for (const w of [this.watch, this.merges]) w(p.project).catch(() => {});
+    // Reuse the existing poll, including an after-watch read so newly archived
+    // rows disappear without waiting for another interval. No overlapping reads.
+    void this.refreshTaskInbox();
+    for (const p of this.pages) {
+      void Promise.all([this.watch, this.merges].map(w => w(p.project).catch(() => {})))
+        .then(() => this.refreshTaskInbox(p));
+    }
   }
 
   /** Start a turn on every idle page whose orchestrator has unread messages. */
@@ -1012,6 +1035,7 @@ export class App {
     ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [git-url]", description: "Create a project page" } }],
     ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "Close this page; keep its project and history" } }],
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "Exit; keep conversation history" } }],
+    ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "Read structured tasks and PR links; confirmed merges leave the inbox" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "Browse and follow agent conversations" } }],
     ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { group: "settings", label: "/effort [level|default]", description: "Show or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "Show or set project/model fast mode" } }],
@@ -1039,6 +1063,7 @@ export class App {
       if (!this.clearCurrent(operation)) return;
       this.checkClearPage(page);
       this.helpTop = null;
+      this.taskInbox = null;
       this.projectList = null;
       this.menu = operation.menu = {
         title: dim(`Clear model context for ${page.name}? History/files/agents stay. ↑↓ Enter · Esc`),
@@ -1224,7 +1249,7 @@ export class App {
   private readonly chords = new Map<string, () => Promise<void> | void>([
     ["c", () => this.interrupt()],
     ["g", () => this.commands.get("/keys")!.run("", this.page)],
-    ["q", () => { if (!this.menu && !this.projectList) { this.helpTop = null; this.draw(); return this.questions.toggle(); } }],
+    ["q", () => { if (!this.menu && !this.projectList) { this.taskInbox = null; this.helpTop = null; this.draw(); return this.questions.toggle(); } }],
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
     ["x", () => this.switchPage(1)],
@@ -1238,10 +1263,11 @@ export class App {
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
    * 5. help: scroll or dismiss the explicit help panel, preserving the composer;
-   * 6. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
-   * 7. escape: leaves the agent view, else clears the input;
-   * 8. enter: Enter without Shift or Alt submits;
-   * 9. editor: the rest edits the input (EDITS, ↑↓ history).
+   * 6. inbox: scroll/refresh/dismiss the read-only structured task panel;
+   * 7. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
+   * 8. escape: leaves the agent view, else clears the input;
+   * 9. enter: Enter without Shift or Alt submits;
+   * 10. editor: the rest edits the input (EDITS, ↑↓ history).
    */
   readonly keyLayers: readonly KeyLayer[] = [
     { name: "clear", takes: () => !!this.clearing, handle: k => this.clearKey(k) },
@@ -1250,6 +1276,7 @@ export class App {
     { name: "projects", takes: (k) => this.projectsTake(k), handle: (k) => this.projectsKey(k) },
     { name: "menu", takes: () => !!this.menu, handle: (k) => this.menuKey(k) },
     { name: "help", takes: () => this.helpTop !== null, handle: (k) => this.helpKey(k) },
+    { name: "inbox", takes: () => !!this.taskInbox, handle: (k) => this.taskInboxKey(k) },
     { name: "questions", takes: (k) => this.questions.takes(k), handle: (k) => this.questions.handle(k).then(() => this.draw()) },
     { name: "escape", takes: (k) => k.name === "escape", handle: () => this.escapeKey() },
     { name: "enter", takes: (k) => k.name === "enter" && !k.shift && !k.alt, handle: () => this.enterKey() },
@@ -1263,7 +1290,7 @@ export class App {
   }
 
   private canScroll(k: Key): boolean {
-    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.questions.view();
+    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.taskInbox && !this.questions.view();
   }
 
   private scroll(k: Key): void {
@@ -1289,6 +1316,7 @@ export class App {
 
   /** Explicit modal, independent of chat/answer buffers and conversation scroll. */
   private toggleHelp(): void {
+    this.taskInbox = null;
     this.cancelClear();
     this.helpTop = this.helpTop === null ? 0 : null;
     if (this.helpTop !== null) { this.menu = null; this.projectList = null; }
@@ -1303,6 +1331,71 @@ export class App {
     const delta: Record<string, number> = { up: -1, down: 1, pageup: -step, pagedown: step, wheelup: -3, wheeldown: 3 };
     const top = k.name === "home" ? 0 : k.name === "end" ? panel.maxTop : panel.top + (delta[k.name] ?? 0);
     this.helpTop = Math.max(0, Math.min(panel.maxTop, top));
+    this.draw();
+  }
+
+  /** Local read-only modal. Opening never changes chat/answer buffers or queues. */
+  private toggleTaskInbox(page: Page | undefined): void {
+    if (this.taskInbox) { this.taskInbox = null; this.draw(); return; }
+    if (!page || page !== this.page || page.deleting || !this.pages.includes(page)) return;
+    this.cancelClear();
+    this.modelGeneration++;
+    this.helpTop = null;
+    this.menu = null;
+    this.projectList = null;
+    this.taskInbox = { page, top: 0, loading: true };
+    void this.refreshTaskInbox(page);
+    this.draw();
+  }
+
+  private taskInboxCurrent(view: TaskInboxState): boolean {
+    return !this.closed && this.taskInbox === view && this.page === view.page &&
+      this.pages.includes(view.page) && !view.page.deleting;
+  }
+
+  private refreshTaskInbox(page = this.page): Promise<void> {
+    const view = this.taskInbox;
+    if (!view || view.page !== page || !this.taskInboxCurrent(view)) return Promise.resolve();
+    if (view.pending) return view.pending;
+    view.loading = true;
+    view.content = undefined;
+    // Promise boundary also catches synchronous failures in an injected store.
+    view.pending = Promise.resolve().then(() => (this.deps.tasks ?? listTasks)(view.page.project))
+      .then(rows => {
+        if (!this.taskInboxCurrent(view)) return;
+        view.rows = rows;
+        view.error = undefined;
+      }, err => {
+        if (this.taskInboxCurrent(view)) view.error = err instanceof Error ? err.message : String(err);
+      }).finally(() => {
+        view.pending = undefined;
+        view.loading = false;
+        view.content = undefined;
+        if (this.taskInboxCurrent(view)) this.draw();
+      });
+    this.draw();
+    return view.pending;
+  }
+
+  private taskInboxView(): TaskInboxView | null {
+    const view = this.taskInbox;
+    if (!view || !this.taskInboxCurrent(view)) return null;
+    const cols = this.deps.term.cols;
+    view.content ??= { cols, ...taskInboxLines(view, cols) };
+    if (view.content.cols !== cols) view.content = { cols, ...taskInboxLines(view, cols) };
+    return { ...view.content, top: view.top, state: view.error ? "error" : view.loading ? "loading" : "ready" };
+  }
+
+  private taskInboxKey(k: Key): void {
+    const view = this.taskInbox!;
+    if (k.name === "escape") { this.taskInbox = null; this.draw(); return; }
+    if (k.ctrl || k.alt) return;
+    if (k.name === "char" && k.text === "r") { void this.refreshTaskInbox(); return; }
+    const panel = taskInboxPanel({ ...this.frame(), rows: this.composerRows() });
+    const step = Math.max(1, panel.bodyHeight - 1);
+    const delta: Record<string, number> = { up: -1, down: 1, pageup: -step, pagedown: step, wheelup: -3, wheeldown: 3 };
+    const top = k.name === "home" ? 0 : k.name === "end" ? panel.maxTop : panel.top + (delta[k.name] ?? 0);
+    view.top = Math.max(0, Math.min(panel.maxTop, top));
     this.draw();
   }
 
@@ -1335,7 +1428,7 @@ export class App {
   /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
   private enterKey(): Promise<void> | void {
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
-    if (text !== "/help") this.scrollTop = null;
+    if (text !== "/help" && text !== "/inbox") this.scrollTop = null;
     this.input = { text: "", cursor: 0 };
     this.historyAt = -1;
     if (!text) return this.draw();
