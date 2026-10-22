@@ -1,5 +1,5 @@
-import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./web-search";
-import { codexSearchResults } from "./search-results";
+import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./web-search";
+import { codexSearchItemSources, codexSearchResults } from "./search-results";
 import { validateSettings, type RequestSettings } from "../project-settings";
 import OpenAI from "openai";
 import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
@@ -150,14 +150,35 @@ async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: 
   const doneItems = new Map<number, ResponseOutputItem>();
   for await (const event of stream) {
     if (event.type === "response.output_text.delta") onText(event.delta);
-    else if (event.type === "response.output_item.done") doneItems.set(event.output_index, event.item);
+    else if (event.type === "response.output_item.done") {
+      if (strict) {
+        if (!Number.isInteger(event.output_index) || event.output_index < 0 || doneItems.has(event.output_index)) throw new SearchError("malformed");
+        codexSearchItemSources(event.item);
+      }
+      doneItems.set(event.output_index, event.item);
+    }
     else if (event.type === "response.completed" || event.type === "response.done") return finalOutput(event, doneItems, strict);
-    else if (FAILED_EVENTS.has(event.type)) throw new Error("Codex response failed or was incomplete; no tool calls were executed.");
+    else if (FAILED_EVENTS.has(event.type)) {
+      if (strict) throw new SearchError("incomplete");
+      throw new Error("Codex response failed or was incomplete; no tool calls were executed.");
+    }
   }
+  if (strict) throw new SearchError("incomplete");
   throw new Error("Codex stream ended before the response completed.");
 }
 function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEvent, "type"> & { type: "response.done" }), items: Map<number, ResponseOutputItem>, strict = false): ResponseOutputItem[] {
-  if (strict && event.response.status !== "completed") throw new Error("Codex search did not complete successfully.");
+  if (strict) {
+    if (!event.response || typeof event.response !== "object") throw new SearchError("malformed");
+    if (event.response.status !== "completed") throw new SearchError("incomplete");
+    const output = event.response.output;
+    if (output != null && !Array.isArray(output)) throw new SearchError("malformed");
+    if (output?.length) return output;
+    // Live Codex sends complete items via output_item.done, then a completed
+    // response with output: []. Empty is not an authoritative "no items" here.
+    const entries = [...items].sort(([a], [b]) => a - b);
+    if (entries.some(([index], position) => index !== position)) throw new SearchError("malformed");
+    return entries.map(([, item]) => item);
+  }
   if (event.response.status && event.response.status !== "completed") throw new Error("Codex response did not complete successfully.");
   return event.response.output ?? [...items].sort(([a], [b]) => a - b).map(([, item]) => item);
 }

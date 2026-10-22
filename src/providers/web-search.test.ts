@@ -3,10 +3,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
 import { openai } from "./openai";
 import { claudeSearchResults, codexSearchResults } from "./search-results";
-import { boundedSearchResponse, SEARCH_RESPONSE_BYTES, searchOperation } from "./web-search";
+import { boundedSearchResponse, SEARCH_RESPONSE_BYTES, SearchError, searchOperation } from "./web-search";
 import { web_search } from "../tools/web-search";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
-import { claudeSearchFixture, codexSearchFixture } from "../test/web-search";
+import { claudeSearchFixture, codexSearchFixture, codexStreamSearchFixture } from "../test/web-search";
 import type { Provider } from "./index";
 import { CLAUDE_BETAS } from "../claude-auth";
 
@@ -219,4 +219,107 @@ for (const make of [claude, codex]) test(`${make.name} invalid explicit settings
     selected: { provider: make(), model: "unknown-model", settings: { fast: true } },
   })).rejects.toThrow("web_search:");
   expect(calls).toBe(0);
+});
+
+for (const type of ["response.completed", "response.done"]) test(`live-shaped Codex ${type} output: [] retains completed done items and citations`, async () => {
+  const { events, terminal } = codexStreamSearchFixture();
+  intercept(() => codexSSE([...events, { ...terminal, type }]));
+  const text = await invoke(codex());
+  expect(text).toStartWith("Web search: 2 sources (limited).");
+  expect(JSON.parse(text.split("\n")[2]!)).toEqual({ limited: true, sources: [
+    { url: "https://example.org/docs/0", title: "Public docs 0" },
+    { url: "https://example.org/docs/1", title: "Public docs 1" },
+  ] });
+  expect(text).not.toContain("synthetic"); expect(text).not.toContain("Generated answer");
+  expect(text).not.toContain('"excerpt"');
+});
+
+async function expectSearchCode(events: unknown[], code: SearchError["code"]) {
+  intercept(() => codexSSE(events));
+  const error = await invoke(codex()).catch(error => error);
+  expect(error).toBeInstanceOf(SearchError);
+  expect(error.code).toBe(code);
+  expect(error.message).toBe(new SearchError(code).message);
+  expect(error.message).not.toContain("SECRET");
+}
+
+for (const status of [undefined, "in_progress", "incomplete", "failed"]) test(`done items plus empty terminal output cannot rescue ${status} response status`, async () => {
+  const { events, terminal } = codexStreamSearchFixture();
+  await expectSearchCode([...events, { ...terminal, response: { status, output: [], error: "SECRET" } }], "incomplete");
+});
+
+test("live-shaped done items need terminal success, not just citations or search completion events", async () => {
+  const { events, terminal } = codexStreamSearchFixture();
+  await expectSearchCode(events, "incomplete");
+  for (const type of ["response.failed", "response.incomplete", "error"]) {
+    // The SDK consumes generic error events itself before yielding them.
+    const failure = type === "error" ? { type, error: { message: "SECRET" } }
+      : { type, response: { status: type.slice(9), error: { message: "SECRET" } } };
+    await expectSearchCode([...events, failure], type === "error" ? "failed" : "incomplete");
+  }
+  await expectSearchCode([terminal], "no_search");
+  await expectSearchCode(events.filter(e => e.type !== "response.output_item.done").concat(terminal as any), "no_search");
+});
+
+for (const status of ["failed", "in_progress", "searching", "incomplete", undefined]) test(`a ${status} native done action cannot be hidden by later successful final output`, async () => {
+  const { events, output } = codexStreamSearchFixture();
+  const failed = { ...output[1], status };
+  const modified = events.map(event => event.type === "response.output_item.done" && event.output_index === 1 ? { ...event, item: failed } : event);
+  for (const finalOutput of [[], output]) {
+    await expectSearchCode([...modified, { type: "response.completed", response: { status: "completed", output: finalOutput } }], "native");
+  }
+});
+
+test("empty-output reconstruction fails closed on malformed items, refusals and unsupported actions", async () => {
+  const { output } = codexStreamSearchFixture();
+  const bad: [unknown, SearchError["code"]][] = [
+    [null, "malformed"],
+    [{ ...output[1], action: undefined }, "malformed"],
+    [{ ...output[1], action: { type: "search", sources: {} } }, "malformed"],
+    [{ ...output[1], action: { type: "open_page", url: "https://example.com" } }, "action"],
+    [{ type: "function_call", name: "bash", arguments: "SECRET" }, "action"],
+    [{ ...output.at(-1), content: [{ type: "refusal", refusal: "SECRET" }] }, "refusal"],
+    [{ ...output.at(-1), content: [{ type: "output_text", text: "SECRET", annotations: {} }] }, "malformed"],
+    [{ ...output[0], status: "incomplete" }, "incomplete"],
+  ];
+  for (const [item, code] of bad) {
+    const { events, terminal } = codexStreamSearchFixture();
+    await expectSearchCode([...events, { type: "response.output_item.done", output_index: 8, item }, terminal], code);
+  }
+});
+
+test("reconstruction rejects sparse, duplicate and invalid indices or a malformed terminal output", async () => {
+  for (const output_index of [-1, 0.5, 0, 10]) {
+    const { events, terminal, output } = codexStreamSearchFixture();
+    await expectSearchCode([...events, { type: "response.output_item.done", output_index, item: output[0] }, terminal], "malformed");
+  }
+  const { events, terminal } = codexStreamSearchFixture();
+  await expectSearchCode([...events, { ...terminal, response: { status: "completed", output: {} } }], "malformed");
+});
+
+test("no-search, missing-attribution and refusal have distinct safe error classifications", async () => {
+  const { terminal, output } = codexStreamSearchFixture();
+  for (const [items, code] of [
+    [[output.at(-1)], "no_search"],
+    [[output[1]], "sources"],
+    [[{ ...output.at(-1), content: [{ type: "refusal", refusal: "SECRET" }] }], "refusal"],
+  ] as const) await expectSearchCode([{ ...terminal, response: { status: "completed", output: items } }], code);
+});
+
+test("cancellation after live-shaped done items does not return partial sources or wait for the terminal event", async () => {
+  const { events } = codexStreamSearchFixture();
+  let cancelled = false, started!: () => void;
+  const entered = new Promise<void>(resolve => { started = resolve; });
+  intercept(() => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join("")));
+      started();
+    },
+    cancel() { cancelled = true; },
+  }), { headers: { "content-type": "text/event-stream" } }));
+  const controller = new AbortController();
+  const pending = invoke(codex(), controller.signal);
+  await entered; await Bun.sleep(0); controller.abort(new Error("SECRET"));
+  await expect(pending).rejects.toThrow(new SearchError("cancelled").message);
+  expect(cancelled).toBe(true);
 });
