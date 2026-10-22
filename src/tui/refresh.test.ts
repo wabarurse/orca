@@ -14,6 +14,8 @@ import { ask, skip, answer, all } from "../questions";
 import { registerTask, setTaskAttention } from "../tasks";
 import { setDisplayName, togglePin } from "../commands";
 import { inputEpoch } from "../user-input";
+import { tryStorageLock } from "../storage-lock";
+import { projectTurnLock } from "../project-state";
 import { saveProjectSettings } from "../project-settings";
 
 const previous = process.env.PARALLELS_HOME;
@@ -267,4 +269,36 @@ test("manual refresh preserves a scrolled history anchor, composer cursor and pi
   expect(app.input).toEqual({ text: "scroll draft\nsecond line", cursor: 7 });
   expect(screen.screen().slice(0, 3).join("\n")).toContain("fake-model");
   expect(raw(app)).toContain("external row 0"); expect(raw(app)).toContain("external row 59");
+});
+
+
+test("a turn that loses shared ownership cannot mark an unrendered snapshot as displayed", async () => {
+  const provider = fakeProvider([]);
+  const { app, submit } = await setup({ openOrchestrator: async (project, _url, write, onInbox, events) => {
+    mkdirSync(paths.repo(project), { recursive: true });
+    return createOrchestrator({ project, provider, tools: {}, write, onInbox, ...events });
+  } });
+  const page = app.page!, refresh = page.orch.refresh!;
+  await open(paths.transcript("a", "orchestrator")).append({ type: "message", message: { role: "assistant", content: "external snapshot not yet rendered" } });
+  // pending() can load this snapshot independently of the presentation refresh.
+  await refresh();
+  const release = await tryStorageLock(projectTurnLock("a"));
+  expect(release).toBeDefined();
+  const gate = deferred();
+  page.orch.refresh = async () => { await gate.promise; return refresh(); };
+  try {
+    await submit("waiting for the other owner");
+    await until(() => !page.busy);
+    app.input = { text: "keep this draft", cursor: 4 };
+    gate.resolve();
+    await app.refreshSessions();
+    expect(raw(app)).toContain("external snapshot not yet rendered");
+    expect(page.sent.map(m => m.text)).toEqual(["waiting for the other owner"]);
+    expect(app.input).toEqual({ text: "keep this draft", cursor: 4 });
+    expect(provider.calls).toHaveLength(0);
+  } finally {
+    gate.resolve();
+    page.orch.refresh = refresh;
+    await release?.();
+  }
 });

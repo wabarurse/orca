@@ -176,3 +176,13 @@ modules), and `git diff --check` passed. Five help snapshots were intentionally
 updated for the added command; there are still eight snapshots in the suite.
 No live provider, installed-app, hosted-CI or mixed-version runtime validation
 was performed. Reviewer must rerun checks on its exact reviewed head.
+
+Reviewer follow-up: a losing turn could incorrectly mark a refreshed-but-unrendered
+snapshot as already displayed, hiding another window's saved conversation until a
+later transcript append. Rendered-head advancement now requires that turn's
+pre-stream presentation callback. An isolated real-orchestrator lock-contention
+regression failed before the fix and passes afterward, preserving the pending
+prompt and draft without any model calls. Reviewer local validation: focused
+refresh suites **20 passed, 162 assertions**; full suite **997 passed, 0 failed,
+8 snapshots, 17,953 assertions across 74 files**; typecheck, build and whitespace
+checks passed. GitHub reports no workflows/checks; no hosted run was requested.

@@ -279,6 +279,7 @@ export class App {
   private refreshForce = false;
   private readonly deferredRefresh = new Set<Page>();
   private readonly renderedHeads = new WeakMap<Page, string | undefined>();
+  private readonly refreshedTurns = new WeakSet<Page>();
   private readonly notices = new WeakMap<Page, Line[]>();
 
   /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
@@ -794,7 +795,7 @@ export class App {
       return this.pages[existing]!;
     }
     const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), held: [], view: null, calls: new Calls() };
-    const tools: ToolEvents = { onRefresh: () => this.syncTranscript(page), onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]) };
+    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     const asked = await this.questions.load(page);
@@ -997,6 +998,7 @@ export class App {
 
   private async runTurn(page: Page): Promise<void> {
     if (page.busy || !this.validPage(page)) return;
+    this.refreshedTurns.delete(page);
     page.busy = true;
     page.busySince = this.clock.now();
     page.streamed = false;
@@ -1014,7 +1016,9 @@ export class App {
     } finally {
       this.endPartial(page);
       page.busy = false;
-      this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
+      // Only a turn that rendered its initial shared snapshot can claim its
+      // subsequent streamed head. Losing turn ownership renders nothing.
+      if (this.refreshedTurns.delete(page)) this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
       this.toPage(page, page.calls.interrupt());
       if (failed) {
         const saved = restore(page.orch.entries?.() ?? [], this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
