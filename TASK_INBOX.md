@@ -1,60 +1,99 @@
-# Structured task inbox
+# USER inbox: Tasks + Questions
 
-The task inbox is a **per-project registry**, not an agent-message inbox, queued
-user prompts, Ctrl+Q questions, or a scheduler. Nothing here consumes, answers,
-skips or dispatches those queues. There is no historical-chat migration or
-historical task reconstruction. Open the read-only table with **`/inbox`**.
+The **per-project USER inbox** combines two distinct backing stores: the durable
+structured **task registry** (`tasks.json`) and the existing **questions** store
+(`questions/`). This is a display move, not a migration, scheduler or agent-message
+inbox: no task reconstruction, record recreation, automatic answer/skip or queue
+consumption. **`/agents` remains a separate agent list/transcript view.**
 
-## Read-only TUI (`/inbox`)
+## TUI (`/inbox`, Ctrl+Q, `/questions`)
 
-`/inbox` opens the selected project's active registry rows in a footer panel
-**below the multiline composer and counts**, like `/help`. It accepts no arguments
-and creates no project/session when no page is open. The table columns are
-**Name | Summary | Status | PR link**. The four stage labels are **queued**,
-**working**, **reviewing**, and **ready to merge**. Attention is explicit:
-**waiting**, **blocked**, **cancelled**, **closed**, or **unknown**, with its reason;
-a stage is not a claim that a process is currently running. Exit/report text never
-establishes readiness or completion.
+`/inbox` opens **Tasks**, below the multiline composer and counts, like `/help`.
+**Shift+Tab** switches **Tasks / Questions** without selecting an answer; **Esc**
+or plain **Tab** closes. Ctrl+Q opens **Questions** from chat, Tasks or help, and
+closes it when already shown. `/questions` remains a compatible direct shortcut.
+Commands accept no arguments and create no project/session with no page open.
+Question arrivals only update the badge; they never open a panel.
 
-* **↑/↓**, **Page Up/Down**, **wheel**, **Home/End** scroll the panel, not the
-  conversation or composer. **Esc** closes it without leaving an agent view.
-  **r** rereads the local registry (not an immediate GitHub lookup).
-* Enter, typing and paste do nothing in this read-only panel. Close it to edit.
-  Opening/closing does not submit chat/answer drafts, answer/skip questions,
-  consume pending prompts, invoke a provider, or update task records. Existing
-  background turns/polling continue independently. Pending-input previews remain.
-* Global cancellation and page-navigation shortcuts still work. Ctrl+B opens
-  projects; Ctrl+Q replaces the panel with the explicit question toggle. Question
-  arrivals alone never open questions. Changing/closing/deleting pages closes the
-  panel; reopening starts a fresh read. Late results from old panels/pages are
-  ignored, including deletion/recreation of the same project ID.
-* Reads refresh through the existing TUI poll (normally every 2s), including after
+The footer says **Inbox N**: N counts **unanswered questions in the selected
+project**, not tasks, running agents or queued prompts. **Inbox 0** means a
+successful read found no unanswered questions, **Inbox ?** means not yet read or
+a read failed. Background open pages contribute **(+N elsewhere)**; unknown
+background data is **(+? elsewhere)** (or **(+N+? elsewhere)** with known pending
+questions too). Narrow status rows shorten this to **Inbox N +M**. Counts remain
+separate from running-agent counts and queued-prompt counts/previews; tiny screens
+may clip/hide them to preserve the composer. Failed question reads retain their
+last snapshot with a visible stale/error warning, never a fabricated zero.
+
+* Chat drafts and unfinished answer drafts (including their cursors) belong to
+  their captured page. Switching sections, closing/reopening or switching
+  projects preserves both. Project changes close the inbox; explicitly reopen
+  Questions to resume its answer. Navigation never submits, consumes pending
+  prompts, calls a provider, mutates task records or answers/skips questions.
+  Background turns and existing polling continue independently.
+* Questions reuse the existing controller/store. The oldest pending question
+  shows numbered options, **type your own answer**, and **skip (use default: …)**.
+  ↑↓ moves among rows (and within multiline answers); 1–9 picks an option on an
+  option row; typing enters `answer>`. Enter explicitly sends the selected option
+  or typed answer. **Only selecting skip and pressing Enter invokes the default**.
+  A half-second guard applies on opening/reopening and each new question. During
+  answer/skip delivery input is frozen, but dismissal/section/page navigation
+  still works; failures retain the answer. The existing durable reply format and
+  orchestrator delivery path are unchanged. Successful final answers close the
+  panel; explicitly opening an empty queue shows **No open questions**.
+* An externally answered row disappears. If it had an unfinished answer, that
+  orphan text is reported separately, never silently assigned to the next question
+  or substituted for the original chat draft. Menus/help retain precedence. Ctrl+B
+  projects, model/settings menus, `/help`, cancellation and Cancel-default `/clear`
+  still work. Ctrl+Q does nothing while a menu/project list owns keys.
+* In an agent transcript, opening Questions shows an explanatory guard and takes
+  no answers: close Inbox, then Esc or `/back` to return to the project
+  orchestrator. Closing Inbox itself never leaves the agent view. Agent lists
+  are not part of Inbox. Late agent-menu results cannot attach a different page.
+* Captured page/panel ownership suppresses late reads and answer UI results after
+  closing/deleting/recreating pages. A successful in-flight answer belongs only
+  to its original still-open page, even if another page is selected; late errors
+  and orphan-answer notes also stay in the project history, never an agent view. Reads never
+  reopen a closed panel or switch its section. A started durable answer is not
+  undone by navigation.
+
+### Tasks section (read-only)
+
+The existing table remains **Name | Summary | Status | PR link**, with stage
+labels **queued**, **working**, **reviewing**, **ready to merge** and explicit
+**waiting**, **blocked**, **cancelled**, **closed**, **unknown** attention/reasons.
+A stage is not a claim that a process is running. Exit/report prose never
+establishes readiness/completion.
+
+* **↑/↓**, **Page Up/Down**, **wheel**, **Home/End** scroll Tasks, not the
+  conversation/composer. **r** rereads the local registry, not GitHub immediately.
+  Enter, typing and paste do nothing. Close before editing chat.
+* Reads refresh through the existing TUI poll (normally 2s), including after
   watchdog/merge-watcher work. The existing GitHub watcher normally queries every
-  30s. A **confirmed** merge removes matching explicitly associated rows on refresh;
-  archived records remain on disk. No separate polling process, transcript scan,
-  branch/name guess, or archive pruning is added.
-* Loading and query failures are shown explicitly. A refresh failure labels any
-  retained snapshot as potentially stale, even while scrolled; it never means an
-  empty inbox. An empty registry means **no active registered tasks**, not that
-  historical/unregistered work completed. Offline or failed GitHub observation
-  cannot prove merge/readiness; stored status is the last observed state.
-* At 72+ columns the table has a pinned column heading; narrower terminals use
-  labelled records. Long fields and URLs wrap instead of silently disappearing.
-  The composer/header win on tiny screens; the panel can be hidden but still owns
-  its keys until Esc. Panel scrolling is transient and resize reflows its lines;
-  the underlying conversation/draft is not replaced. Very large registries are
-  read/validated and laid out in full, not paginated.
-* Only the canonical structured GitHub PR URL is linked. Each wrapped fragment
-  uses a validated OSC 8 hyperlink, with the actual URL also visible for terminals
-  without hyperlink support. No browser command is launched. Untrusted fields,
-  reasons and query errors have terminal styling/control/bidi sequences stripped;
-  unsafe/mismatched links are not used. Native hyperlink/wheel behavior depends on
-  the terminal; physical Apple Terminal wheel/shell-history isolation remains
-  unverified. Synthetic rendering tests do not establish that it is fixed.
+  30s. Only a **confirmed exact associated PR merge** removes matching rows on
+  refresh; archived records stay on disk. No separate polling process, transcript
+  scan, branch/name guess or archive pruning is added.
+* Loading and query failures are explicit. Failed refreshes label retained
+  snapshots potentially stale even while scrolled. Empty means **no active
+  registered tasks**, not that historical/unregistered work completed. Offline or
+  failed GitHub observation proves nothing about merge/readiness; stored status
+  is last observed, not a real-time remote guarantee.
+* At 72+ columns the table has a pinned heading; narrower screens use labelled
+  records. Long fields/URLs wrap. The composer/header win on tiny screens; a
+  hidden panel still owns keys until Esc. The selected question decision and key
+  hint take priority over question text on short screens. Panel scrolling is
+  transient; resize reflows without replacing the underlying conversation/draft.
+  Large registries are read/validated/laid out in full, not paginated.
+* Only canonical structured GitHub PR URLs are linked. Wrapped fragments use
+  validated OSC 8 links with the actual URL visible; no browser command launches.
+  Untrusted task/question fields, defaults/options and errors have terminal
+  styling/control/bidi sequences stripped. Native link/wheel behavior depends on
+  the terminal; **physical Apple Terminal wheel/shell-history isolation remains
+  unverified**. Synthetic tests do not prove it fixed.
 
-This is not a scheduler, task editor, historical archive browser, or a replacement
-for the separate message/question inboxes. The panel is never saved as chat or
-printed into the exit transcript. `/help` lists `/inbox` under Conversation.
+Neither section is saved as chat or printed in the exit transcript. This is not a
+task editor, historical archive browser or replacement for agent message queues.
+`/help` lists Inbox navigation and both entry commands under Conversation.
 
 ## Producers and tools
 

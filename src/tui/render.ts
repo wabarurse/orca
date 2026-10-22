@@ -13,7 +13,12 @@ export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 
 /** Scrollable footer content is already wrapped to the current width; its viewport is transient. */
 export interface Help { lines: string[]; top: number; heading?: string }
-export interface TaskInboxView extends Help { state: "loading" | "error" | "ready" }
+export interface TaskInboxView extends Help {
+  state: "loading" | "error" | "ready";
+  section?: "tasks" | "questions";
+  question?: QuestionView | null;
+  notice?: string;
+}
 export interface Menu { title: string; items: string[]; index: number }
 export interface Input {
   prompt: string;
@@ -66,7 +71,7 @@ export interface Frame {
   menu: Menu | null;
   /** Explicit scrollable help below the composer; never part of the transcript. */
   help?: Help | null;
-  /** Read-only structured task inbox below the composer; independent of message queues. */
+  /** User inbox: distinct task registry and question stores, never a message queue. */
   inbox?: TaskInboxView | null;
   /** The project list, below the input and status like a menu, when open. */
   projects?: ProjectList | null;
@@ -116,6 +121,12 @@ const KEPT = /^(?:\x1b\[[0-9;:]*m|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\))$/;
  */
 export function sanitize(line: string): string {
   return line.replace(UNSAFE, (m) => (KEPT.test(m) ? m : ""));
+}
+
+/** Untrusted plain fields: no terminal styling, hyperlinks, controls or bidi overrides. */
+export function plainText(text: string): string {
+  return Bun.stripANSI(sanitize(text.replace(/\r\n?|\n|\t|\u2028|\u2029/g, " ")))
+    .replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
 }
 
 /** Replace tabs with spaces up to the next 8-column stop (stringWidth counts a tab as nothing). */
@@ -215,7 +226,9 @@ export function statusRows(status: string | null | undefined, cols: number, rows
   if (!status || rows < 3) return [];
   const groups = sanitize(status).split(" │ ");
   const out: string[] = [];
-  for (const group of groups) {
+  for (const full of groups) {
+    // Keep the background unanswered badge recognizable when stacking counts.
+    const group = visibleLength(full) > cols ? full.replace(/^(Inbox \S+) \(\+(.+) elsewhere\)$/, "$1 +$2") : full;
     const last = out.at(-1);
     if (last && visibleLength(`${last} │ ${group}`) <= cols) out[out.length - 1] = `${last} │ ${group}`;
     else out.push(fit(group, cols));
@@ -262,15 +275,15 @@ export const questionItems = (q: Pick<QuestionView, "options" | "default">): str
 /**
  * A question's rows, at most `height`, `cols` wide: its text word-wrapped,
  * then its rows (scrolled to keep the selection in view), and the hint for
- * the mode. On short terminals the hint wins, then a row of text, then the rows.
+ * the mode. On short terminals the hint and selected decision win over text.
  */
 export function questionRows(q: QuestionView, cols: number, height: number): string[] {
   if (height <= 0) return [];
   const footer = [dim(QUESTION_HINTS[q.mode])];
   const room = height - footer.length;
-  const items = questionItems(q);
-  const head = wordWrap(`${bold("?")} ${q.text}${q.count > 1 ? dim(` (1 of ${q.count})`) : ""}`, cols);
-  const textRows = Math.max(0, Math.min(head.length, room > 0 ? Math.max(1, room - items.length) : 0));
+  const items = questionItems({ options: q.options.map(plainText), default: q.default && plainText(q.default) });
+  const head = wordWrap(`${bold("?")} ${plainText(q.text)}${q.count > 1 ? dim(` (1 of ${q.count})`) : ""}`, cols);
+  const textRows = Math.max(0, Math.min(head.length, room > 1 ? Math.max(1, room - items.length) : 0));
   const text = head.slice(0, textRows);
   if (textRows > 0 && textRows < head.length) text[textRows - 1] += "…";
   const listRows = room - text.length;
@@ -334,9 +347,26 @@ export function helpPanel(f: Frame): { rows: string[]; top: number; bodyHeight: 
 /** Same bounded footer geometry as help, without displacing the composer. */
 export function taskInboxPanel(f: Frame): ReturnType<typeof helpPanel> {
   const state = f.inbox?.state;
+  if (f.inbox?.section === "questions") {
+    const view = f.inbox;
+    // Questions retain their selected-row window. Spend the available footer
+    // on decisions rather than a second (task-style) scrolling hint row.
+    const height = Math.min(18, footerBase(f).free);
+    const panel = { rows: [] as string[], top: 0, bodyHeight: Math.max(0, height - 1), maxTop: 0 };
+    if (height <= 0) return panel;
+    if (height === 1) return { ...panel, rows: [fit(dim("Esc close inbox"), f.cols)] };
+    const title = view.state === "error"
+      ? f.cols >= 48 ? "Inbox · Tasks / [Questions] · Error · Shift+Tab" : "Inbox · Questions · Error"
+      : f.cols >= 48 ? "Inbox · Tasks / [Questions] · Shift+Tab switch" : "Inbox · Questions · Shift+Tab";
+    const room = panel.bodyHeight;
+    const notice = view.notice ? wrap(plainText(view.notice), f.cols).slice(0, Math.max(0, room - (view.question ? 3 : 1))) : [];
+    const content = view.question ? questionRows(view.question, f.cols, room - notice.length)
+      : [...view.lines.slice(0, Math.max(0, room - notice.length - 1)), dim("Esc/Tab close · Shift+Tab Tasks")];
+    return { ...panel, rows: [bold(title), ...notice.map(dim), ...content].map(row => fit(row, f.cols)) };
+  }
   return scrollPanel(f, f.inbox,
-    state === "error" ? "Error · task inbox (snapshot may be stale)" : state === "loading" ? "Loading · task inbox" : "Task inbox · read-only",
-    state === "error" ? "Error · inbox" : state === "loading" ? "Loading · inbox" : "Inbox", true);
+    state === "error" ? "Inbox · [Tasks] / Questions · Error (snapshot may be stale)" : state === "loading" ? "Inbox · [Tasks] / Questions · Loading" : "Inbox · [Tasks] / Questions · read-only",
+    state === "error" ? "Inbox · Tasks · Error" : state === "loading" ? "Inbox · Tasks · Loading" : "Inbox · [Tasks]", true);
 }
 
 function scrollPanel(f: Frame, view: Help | null | undefined, title: string, shortTitle: string, inbox = false): ReturnType<typeof helpPanel> {
@@ -354,7 +384,7 @@ function scrollPanel(f: Frame, view: Help | null | undefined, title: string, sho
   const gap = f.cols - visibleLength(title) - visibleLength(range) - 2;
   const heading = bold(title) + (gap > 0 && range ? " ".repeat(gap) + dim(range) : "");
   const hint = inbox
-    ? f.cols >= 64 ? "↑↓ / wheel · PgUp/PgDn · Home/End · r refresh · Esc close" : f.cols >= 30 ? "↑↓ scroll · r refresh · Esc close" : "Esc close · ↑↓"
+    ? f.cols >= 64 ? "Esc/Tab close · Shift+Tab Questions · ↑↓/PgUp/PgDn · r refresh" : f.cols >= 38 ? "Esc close · Shift+Tab switch · r refresh" : "Esc close · Shift+Tab"
     : f.cols >= 58 ? "↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close" : f.cols >= 24 ? "↑↓ scroll · Esc close" : "Esc close · ↑↓";
   // Even when only one panel row fits, dismissal stays discoverable. If no
   // rows fit the help key layer still owns keys, like other hidden modals.

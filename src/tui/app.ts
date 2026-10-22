@@ -221,7 +221,7 @@ export class App {
   private _active = 0;
   get active(): number { return this._active; }
   set active(index: number) {
-    if (index !== this._active) { this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
+    if (index !== this._active) { if (this.page) this.questions.hide(this.page); this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
     this._active = index;
   }
   private looseLines: string[] = [];
@@ -283,9 +283,11 @@ export class App {
     const app = this;
     this.questions = new Questions({
       page: () => app.page,
+      valid: page => !app.closed && app.pages.includes(page as Page) && !(page as Page).deleting,
+      opening: () => { app.cancelClear(); app.modelGeneration++; app.taskInbox = null; app.helpTop = null; app.menu = null; app.projectList = null; },
       get input() { return app.input; },
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
-      say: (line, page) => app.say(line, page as Page),
+      say: (line, page) => app.toPage(page as Page, [line]),
       record: (line, page) => app.record(page as Page, line),
       width: () => app.inputWidth("answer> "),
       now: () => app.clock.now(),
@@ -505,9 +507,12 @@ export class App {
   status(page: Page): string {
     const agents = page.agentCount ?? 0;
     const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
-    const questions = page.questions.open.length;
-    const elsewhere = this.pages.reduce((n, p) => n + (p === page ? 0 : p.questions.open.length), 0);
-    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, `${queued} ${queued === 1 ? "message" : "messages"} queued`, `${questions} ${questions === 1 ? "question" : "questions"}${elsewhere ? ` (+${elsewhere} elsewhere)` : ""}`].join(" │ ");
+    const known = (p: Page) => p.questions.loaded && !p.questions.error;
+    const questions = known(page) ? page.questions.open.length : "?";
+    const background = this.pages.filter(p => p !== page);
+    const elsewhere = background.reduce((n, p) => n + (known(p) ? p.questions.open.length : 0), 0);
+    const unknown = background.some(p => !known(p));
+    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, `${queued} ${queued === 1 ? "message" : "messages"} queued`, `Inbox ${questions}${elsewhere || unknown ? ` (+${elsewhere || ""}${unknown ? (elsewhere ? "+?" : "?") : ""} elsewhere)` : ""}`].join(" │ ");
   }
 
   /** Only the selected conversation can animate; tool rows already carry their own shimmer. */
@@ -723,6 +728,7 @@ export class App {
     this.modelGeneration++;
     const page = this.pages[index];
     if (!page) return;
+    this.questions.hide(page);
     page.view?.leave();
     this.pages.splice(index, 1);
     if (index < this.active) this.active--;
@@ -928,13 +934,17 @@ export class App {
   }
 
   private async agentsMenu(page: Page): Promise<void> {
-    this.modelGeneration++;
+    const operation = ++this.modelGeneration;
+    const view = page.view;
+    const current = () => operation === this.modelGeneration && page === this.page && this.pages.includes(page) && !page.deleting && page.view === view;
     const agents = await (this.deps.agents ?? listAgents)(page.project);
+    if (!current()) return;
     if (!agents.length) return this.say(dim("no agents yet"));
     this.openMenu("attach to an agent", agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })), (name) => {
+      if (!current()) return;
       page.view?.leave();
       return this.attach(page, name, agents.find((a) => a.name === name)?.live ?? false);
-    });
+    }, operation);
   }
 
   private async accountsMenu(): Promise<void> {
@@ -1035,7 +1045,7 @@ export class App {
     ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [git-url]", description: "Create a project page" } }],
     ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "Close this page; keep its project and history" } }],
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "Exit; keep conversation history" } }],
-    ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "Read structured tasks and PR links; confirmed merges leave the inbox" } }],
+    ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "User inbox: Tasks / Questions; Shift+Tab switches sections, Esc/Tab closes" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "Browse and follow agent conversations" } }],
     ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { group: "settings", label: "/effort [level|default]", description: "Show or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "Show or set project/model fast mode" } }],
@@ -1045,7 +1055,7 @@ export class App {
     ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "Choose a subscription account" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "Sign in to a subscription account" } }],
     ["/review-rounds", { args: true, run: async (args) => this.say(dim(await reviewRounds(args))), help: { group: "advanced", label: "/review-rounds [n]", description: "Review rounds before CI; 0 goes straight to CI" } }],
-    ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "Open questions; Enter answers or picks skip, Esc/Tab closes" } }],
+    ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab Tasks" } }],
     ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "Return from agent view (also Esc)", viewOnly: true } }],
     ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "Commands and keyboard shortcuts; Esc closes" } }],
   ]);
@@ -1249,7 +1259,11 @@ export class App {
   private readonly chords = new Map<string, () => Promise<void> | void>([
     ["c", () => this.interrupt()],
     ["g", () => this.commands.get("/keys")!.run("", this.page)],
-    ["q", () => { if (!this.menu && !this.projectList) { this.taskInbox = null; this.helpTop = null; this.draw(); return this.questions.toggle(); } }],
+    ["q", () => {
+      if (this.menu || this.projectList) return;
+      if (this.taskInbox || this.helpTop !== null) return this.questions.command(this.page);
+      return this.questions.toggle();
+    }],
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
     ["x", () => this.switchPage(1)],
@@ -1263,7 +1277,7 @@ export class App {
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
    * 5. help: scroll or dismiss the explicit help panel, preserving the composer;
-   * 6. inbox: scroll/refresh/dismiss the read-only structured task panel;
+   * 6. inbox: section navigation/dismissal; tasks and empty/agent-view questions own input;
    * 7. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
    * 8. escape: leaves the agent view, else clears the input;
    * 9. enter: Enter without Shift or Alt submits;
@@ -1276,7 +1290,7 @@ export class App {
     { name: "projects", takes: (k) => this.projectsTake(k), handle: (k) => this.projectsKey(k) },
     { name: "menu", takes: () => !!this.menu, handle: (k) => this.menuKey(k) },
     { name: "help", takes: () => this.helpTop !== null, handle: (k) => this.helpKey(k) },
-    { name: "inbox", takes: () => !!this.taskInbox, handle: (k) => this.taskInboxKey(k) },
+    { name: "inbox", takes: k => !!this.taskInbox || (!!this.page?.questions.expanded && ((!k.ctrl && !k.alt && (k.name === "escape" && !k.shift || k.name === "tab")) || !this.questions.view())), handle: (k) => this.taskInboxKey(k) },
     { name: "questions", takes: (k) => this.questions.takes(k), handle: (k) => this.questions.handle(k).then(() => this.draw()) },
     { name: "escape", takes: (k) => k.name === "escape", handle: () => this.escapeKey() },
     { name: "enter", takes: (k) => k.name === "enter" && !k.shift && !k.alt, handle: () => this.enterKey() },
@@ -1290,7 +1304,7 @@ export class App {
   }
 
   private canScroll(k: Key): boolean {
-    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.taskInbox && !this.questions.view();
+    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.taskInbox && !this.page?.questions.expanded;
   }
 
   private scroll(k: Key): void {
@@ -1343,6 +1357,7 @@ export class App {
     this.helpTop = null;
     this.menu = null;
     this.projectList = null;
+    this.questions.hide(page);
     this.taskInbox = { page, top: 0, loading: true };
     void this.refreshTaskInbox(page);
     this.draw();
@@ -1379,16 +1394,39 @@ export class App {
 
   private taskInboxView(): TaskInboxView | null {
     const view = this.taskInbox;
-    if (!view || !this.taskInboxCurrent(view)) return null;
+    if (!view) {
+      const page = this.page;
+      if (!page?.questions.expanded || page.deleting) return null;
+      const q = page.questions;
+      return { section: "questions", top: 0, state: q.error ? "error" : !q.loaded ? "loading" : "ready",
+        question: this.questions.view(),
+        notice: page.view ? "Questions belong to the project orchestrator. Close Inbox, then /back to answer; /agents stays separate."
+          : q.error ? `Questions unavailable: ${q.error}${q.loaded ? " · Last snapshot may be stale." : ""} Close and Ctrl+Q to retry.`
+          : q.closing ? "Sending answer/skip…" : undefined,
+        lines: q.error || page.view || q.open.length ? [] : [q.loaded ? "No open questions." : "Loading questions…"],
+      };
+    }
+    if (!this.taskInboxCurrent(view)) return null;
     const cols = this.deps.term.cols;
     view.content ??= { cols, ...taskInboxLines(view, cols) };
     if (view.content.cols !== cols) view.content = { cols, ...taskInboxLines(view, cols) };
-    return { ...view.content, top: view.top, state: view.error ? "error" : view.loading ? "loading" : "ready" };
+    return { ...view.content, section: "tasks", top: view.top, state: view.error ? "error" : view.loading ? "loading" : "ready" };
   }
 
-  private taskInboxKey(k: Key): void {
-    const view = this.taskInbox!;
-    if (k.name === "escape") { this.taskInbox = null; this.draw(); return; }
+  private taskInboxKey(k: Key): Promise<void> | void {
+    if (k.name === "escape" || (k.name === "tab" && !k.ctrl && !k.alt && !k.shift)) {
+      this.taskInbox = null;
+      if (this.page) this.questions.hide(this.page);
+      this.draw(); return;
+    }
+    // Shift+Tab is navigation, never an option digit or an answer character.
+    // Plain Tab retains the existing draft-safe dismissal behavior.
+    if (k.name === "tab" && k.shift && !k.ctrl && !k.alt) {
+      if (this.taskInbox) return this.questions.command(this.page);
+      return this.toggleTaskInbox(this.page);
+    }
+    const view = this.taskInbox;
+    if (!view) return; // empty/loading/agent-view Questions owns input, too
     if (k.ctrl || k.alt) return;
     if (k.name === "char" && k.text === "r") { void this.refreshTaskInbox(); return; }
     const panel = taskInboxPanel({ ...this.frame(), rows: this.composerRows() });
@@ -1428,7 +1466,7 @@ export class App {
   /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
   private enterKey(): Promise<void> | void {
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
-    if (text !== "/help" && text !== "/inbox") this.scrollTop = null;
+    if (text !== "/help" && text !== "/inbox" && text !== "/questions") this.scrollTop = null;
     this.input = { text: "", cursor: 0 };
     this.historyAt = -1;
     if (!text) return this.draw();

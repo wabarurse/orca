@@ -301,11 +301,11 @@ describe("questions", () => {
     expect(out.slice(0, 4)).toEqual(["? Should the", "importer keep going", "when one row fails", "to parse?"]);
   });
 
-  test("on a short terminal the hint stays, then a row of text, then the selected row", () => {
+  test("on a short terminal the hint and selected decision stay ahead of text", () => {
     const long = q({ text: "word ".repeat(40).trim(), index: 1 });
     expect(questionRows(long, 30, 1).map(strip)).toEqual([PICK]);
     const two = questionRows(long, 30, 2).map(strip);
-    expect(two[0]!.endsWith("…")).toBe(true);
+    expect(two[0]).toBe("❯ 2. sqlite");
     expect(two[1]).toBe(PICK);
     expect(questionRows(long, 30, 3).map(strip).slice(1)).toEqual(["❯ 2. sqlite", PICK]);
     expect(questionRows(long, 30, 0)).toEqual([]);

@@ -28,9 +28,9 @@ marked `>`), cached model, effort, fast mode, directory and remote, and refreshe
 when settings change.
 Short terminals collapse header details to keep the input usable.
 The bottom band puts queued prompt previews immediately above the boxed input,
-then grouped running worker/reviewer, queued-message and question counts; these
+then grouped running worker/reviewer, queued-message and **Inbox** counts (unanswered questions only); these
 stack on narrow screens. Every menu
-and question panel opens below the input and retains its own key hints. There
+and user inbox opens below the input and retains its own key hints. There
 is no persistent shortcut row; Ctrl+B, Ctrl+Q and the other keys still work.
 A running turn's "thinking…/working…" shimmers at the selected conversation's
 current tail, not in the pinned footer. Scrolling back hides that activity with
@@ -54,7 +54,7 @@ and counts, not in the conversation history. Scroll help with ↑/↓, Page Up/D
 or the wheel; Home/End jumps to its start/end (including advanced diagnostics).
 Esc closes it without changing your draft or leaving an agent view. Help is
 read-only while open; close it before typing. Global cancellation/page shortcuts
-still work, and Ctrl+Q replaces help with the explicit question toggle.
+still work, and Ctrl+Q replaces help with the Inbox's Questions section.
 
 `/clear` clears only the current orchestrator's **model context**, after a local
 confirmation. **Cancel is selected by default** (Enter alone cancels); choose
@@ -112,18 +112,28 @@ The orchestrator should reserve questions for necessary unresolved decisions, no
 routine approved work. Clear answers and authorization in chat count, but do not
 close existing queued questions.
 
+The per-project **USER inbox** (`/inbox`) has **Tasks / Questions**, not an agent
+list: `/agents` stays separate. **Shift+Tab** switches sections; **Esc/Tab** closes.
+The footer **Inbox N** counts unanswered questions only (not tasks, queued prompts
+or agents); **0** is a successful empty read and **?** means unknown/failed data.
+Background pending questions show **(+N elsewhere)** (shortened on narrow screens),
+with **?** for unknown background data. Task and question stores remain distinct.
+
 Questions never open automatically or take your draft. Ctrl+Q or `/questions`
-opens the oldest pending question below the input, with numbered options,
+opens the Questions section with the oldest pending question below the input, with numbered options,
 "type your own answer" and "skip (use default: …)". ↑↓ or 1–9 choose and Enter
 picks. Typing switches to `answer>`; an optionless question starts there.
 Esc, Tab or Ctrl+Q closes the panel without answering or skipping, and restores
-your chat draft. The answer draft is retained for reopening. Only selecting
+your chat draft. The answer draft and cursor are retained across sections, closing and project switches.
+Project switches close Inbox; explicitly reopen to resume the answer. Only selecting
 "skip" and pressing Enter skips. New arrivals update the count, not the input.
-When the queue is empty the panel closes; a later question needs explicit
-opening again. A half-second guard after opening prevents accidental answers.
+Answering the last question closes the panel; a later question needs explicit
+opening again. Explicitly opening an empty queue shows No open questions. A half-second guard after opening prevents accidental answers.
 Menus take precedence over questions; Ctrl+Q does nothing while a menu/project
 list is open. On a one-row terminal the input takes the whole live region: a modal panel
-can be hidden while still owning keys; Esc closes it. In `/agents` only the question count shows. Each answer leaves a
+can be hidden while still owning keys; Esc closes it. In an agent view Questions
+shows a guard, never an answer field: close Inbox, then Esc or `/back` to the
+project orchestrator before answering. Each answer leaves a
 dim `? question → answer` line; background projects' question counts are shown too.
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
@@ -261,13 +271,14 @@ confirmed merges archive rows without deleting history. Readiness requires an
 explicit reviewer validation of the current PR head. This is separate from
 message/question/prompt queues.
 
-**`/inbox`** opens a read-only **Name | Summary | Status | PR link** table below
+**`/inbox`** opens the USER inbox’s **Tasks** section: a read-only
+**Name | Summary | Status | PR link** table below
 the composer/counts, showing only the selected project's active registered tasks.
 Waiting/blocked/cancelled/closed/unknown attention and query errors stay explicit;
 empty means no active registered tasks, not that unregistered work completed.
 Scroll with ↑/↓, Page Up/Down, wheel or Home/End; **r** refreshes the local snapshot;
-**Esc** closes without submitting or changing drafts. Ctrl+Q explicitly replaces
-it with questions; project changes close it and discard late reads. The existing
+**Esc/Tab** closes without submitting or changing drafts. **Shift+Tab** switches
+Tasks / Questions; Ctrl+Q goes directly to Questions; project changes close it and discard late reads. The existing
 poll/watchers refresh rows, so confirmed merged PRs disappear without deleting
 archive history. Long fields/verified URLs wrap; narrow terminals use labelled
 records. Links use the canonical structured URL (OSC 8 where supported); no browser
