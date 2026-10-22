@@ -2602,3 +2602,112 @@ test("App retains an interior source offset across widening/narrowing and resets
     }
   } finally { app.quit(); await running; }
 });
+
+test("combined E viewport cancels actual tools, keeps full pre-checkpoint exit history and no revived activity", async () => {
+  const project = "combined-cancel-e", path = paths.transcript(project, "orchestrator");
+  mkdirSync(paths.repo(project), { recursive: true });
+  const t = openTranscript(path);
+  await t.append({ type: "meta", role: "orchestrator", model: "m" });
+  await t.append({ type: "message", message: { role: "user", content: "FULL-HISTORY-SENTINEL" } });
+  for (let i = 0; i < 105; i++) await t.append({ type: "message", message: { role: "assistant", content: `durable record ${i}: ` + "wrapping words ".repeat(5) } });
+  await t.append({ type: "summary", text: "compressed model-only summary", retained: [], boundary: t.head() });
+  const marker = join(home, "combined-bash-ready");
+  const provider = fakeProvider([
+    [toolUse("cancel-real", "bash", { command: `echo started > '${marker}'; sleep 60` }), toolUse("never", "bash", { command: "echo NEVER-EXECUTED" })],
+    [said("authorized continuation")],
+  ]);
+  const { bash } = await import("../tools/bash");
+  const { paired } = await import("../tool-pairs");
+  const term = fakeTerm(100, 24);
+  const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {},
+    openOrchestrator: async (project, _url, write, onInbox, events) => createOrchestrator({ project, transcript: t, provider, tools: { bash }, write, onInbox, ...events }),
+  });
+  const running = app.run(project);
+  try {
+    await until(() => !!app.page);
+    expect(app.page!.lines.map(raw).join("\n")).not.toContain("FULL-HISTORY-SENTINEL"); // viewport remains bounded
+    term.type("start cancellable tool\r");
+    await until(() => existsSync(marker));
+    expect(app.page!.calls.size).toBe(1);
+    term.type("draft 界é👩‍💻");
+    const draft = { ...app.input };
+    const header = term.display.buf.slice(term.display.top, term.display.top + 4).map(row => row.join(""));
+    term.press({ name: "pageup" });
+    term.resize(23, 24);
+    await Bun.sleep(160);
+    term.resize(100, 24);
+    await Bun.sleep(160);
+    expect(app.input).toEqual(draft);
+    term.type("\x03");
+    await until(() => !app.page!.busy);
+    expect(app.page!.calls.size).toBe(0);
+    expect(app.frame().activity).toBeUndefined();
+    expect(app.frame().running).toEqual([]);
+    expect(app.input).toEqual(draft);
+    expect(paired(await t.chain())).toBe(true);
+    expect(provider.calls).toHaveLength(1);
+    expect(await app.page!.orch.pending()).toBe(false);
+    expect(term.display.buf.slice(term.display.top, term.display.top + 4).map(row => row.join(""))).toEqual(header);
+    term.press({ name: "escape" }); // only intentional draft clearing for this continuation
+    term.type("resume saved turn\r");
+    await until(() => provider.calls.length === 2 && !app.page!.busy);
+    expect(JSON.stringify(provider.calls[1]!.messages)).toContain("Cancelled by user");
+    expect(JSON.stringify(provider.calls[1]!.messages)).toContain("resume saved turn");
+    expect(app.page!.calls.size).toBe(0);
+  } finally { app.quit(); await running; }
+  const exit = term.screen();
+  expect(exit).toContain("FULL-HISTORY-SENTINEL");
+  expect(exit).toContain("durable record 104");
+  expect(exit).toContain("authorized continuation");
+  expect(exit).not.toContain("compressed model-only summary");
+  expect(exit).not.toMatch(/thinking…|working…|messages queued|agents running/);
+  expect(term.display.modes.get(1049)).toBe(false);
+});
+
+test("Ctrl+C through pinned question/modal layers preserves owners and drafts without resuming the cancelled request", async () => {
+  const project = "cancel-question-e";
+  let requested = false, aborted = false;
+  const provider: import("../providers").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
+    requested = true;
+    return new Promise((_resolve, reject) => req.signal!.addEventListener("abort", () => { aborted = true; reject(req.signal!.reason); }, { once: true }));
+  } };
+  const term = fakeTerm(80, 24);
+  const app = new App({ term, pollMs: 20, questionDelayMs: 0, watchdog: async () => {}, merges: async () => {},
+    openOrchestrator: async (project, _url, write, onInbox, events) => createOrchestrator({ project, provider, tools: {}, write, onInbox, ...events }),
+  });
+  const running = app.run(project);
+  try {
+    await until(() => !!app.page);
+    const owner = app.page!;
+    term.type("start request\r");
+    await until(() => requested);
+    term.type("chat draft 界");
+    const chat = { ...app.input };
+    await askQuestions(project, [{ text: "Keep this question?" }]);
+    await until(() => owner.questions.open.length === 1);
+    term.press({ name: "q", ctrl: true });
+    await until(() => app.questions.answering());
+    term.type("answer draft 👩‍💻");
+    const answer = { ...app.input };
+    term.press({ name: "c", ctrl: true });
+    await until(() => aborted && !owner.busy);
+    expect(app.page).toBe(owner);
+    expect(app.questions.answering()).toBe(true);
+    expect(app.input).toEqual(answer);
+    expect(owner.questions.open).toHaveLength(1);
+    expect(await owner.orch.pending()).toBe(false);
+    term.press({ name: "escape" });
+    expect(app.input).toEqual(chat);
+    term.press({ name: "q", ctrl: true });
+    await until(() => app.questions.answering());
+    expect(app.input).toEqual(answer);
+    // A project modal hides, but must not steal, the question's answer buffer.
+    term.press({ name: "b", ctrl: true });
+    await until(() => !!app.projectList);
+    expect(app.input).toEqual(answer);
+    term.press({ name: "escape" });
+    expect(app.input).toEqual(answer);
+    expect(app.questions.answering()).toBe(true);
+    expect(app.frame().activity).toBeUndefined();
+  } finally { app.quit(); await running; }
+});

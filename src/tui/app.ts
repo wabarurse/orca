@@ -661,16 +661,32 @@ export class App {
   /** The last drawing error said, so a frame that keeps failing is reported once. */
   private drawError = "";
 
+  /** Expand only the initial capped restore on exit; live notes keep their exact order. */
+  private readonly exitHistory = new WeakMap<Page, () => Line[]>();
+
   /** After restoring the primary screen, print the active history and any partial reply. */
   private leave(): void {
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
-    const lines = [...(page ? this.header(page) : []), ...this.screenLines(), ...(held ? held.split("\n") : [])];
+    const history = page && !page.view ? this.exitHistory.get(page)?.() ?? page.lines : page?.view?.lines ?? this.looseLines;
+    const lines = [...(page ? this.header(page) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
   }
 
   // --- pages ------------------------------------------------------------------
+
+  private restorePage(page: Page, asked: import("./restore").AskedLookup): void {
+    const entries = page.orch.entries?.() ?? [];
+    const shown = restore(entries, this.deps.term.cols, MAX_RESTORED_ROWS, asked);
+    page.lines = [...shown, ...page.lines];
+    if (!shown.length) return;
+    this.exitHistory.set(page, () => {
+      const start = page.lines.indexOf(shown[0]!);
+      if (start < 0) return page.lines;
+      return [...page.lines.slice(0, start), ...restore(entries, this.deps.term.cols, Infinity, asked), ...page.lines.slice(start + shown.length)];
+    });
+  }
 
   async openPage(project: string, url?: string): Promise<Page> {
     this.modelGeneration++;
@@ -684,7 +700,7 @@ export class App {
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     const asked = await this.questions.load(page);
-    page.lines = [...restore(page.orch.entries?.() ?? [], this.deps.term.cols, MAX_RESTORED_ROWS, asked), ...page.lines];
+    this.restorePage(page, asked);
     const saved = await loadHistory(project);
     page.inputHistory = saved.entries;
     page.historyLines = saved.lines;

@@ -7,9 +7,9 @@
 // formatter; a call with no result shows failed "interrupted"), and what each turn
 // sent the user (the transcript's `replies` entries) labelled after that
 // turn. Full tool results and thinking were never shown, so they stay hidden.
-// Only the current branch shows: the parent chain from the head back to the
-// root or to the latest summary (compaction), which then leads with a dim
-// note. A long history keeps its newest MAX_RESTORED_ROWS rendered rows.
+// The caller chooses the entries: full Transcript.history() for the UI, or a
+// model branch (which can lead with a summary). A long viewport restore keeps
+// its newest MAX_RESTORED_ROWS; Infinity restores every item on terminal exit.
 //
 // Known differences from the live page:
 // - A user message typed mid-turn showed live where it was typed; restored, it
@@ -247,6 +247,7 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
  */
 export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS, asked?: AskedLookup): Line[] {
   const items = restoreItems(chain, asked);
+  if (maxRows === Infinity) return items.flatMap(item => item.lines());
   const shown: Line[][] = [];
   let from = items.length;
   while (from > 0) {
