@@ -34,8 +34,8 @@ export interface OrchestratorDeps {
 }
 
 export interface Orchestrator {
-  /** Put a message from the user in the orchestrator's inbox. */
-  say(text: string, submission?: string): Promise<void>;
+  /** Put a user message in the inbox; optional inputId round-trips unchanged through onInbox for UI ownership. */
+  say(text: string, submission?: string, inputId?: string): Promise<void>;
   /** Capture before holding input for login (or any other asynchronous UI operation). */
   submission?(): string;
   /** Abort only this turn and pause automatic inbox turns until the user sends again. */
@@ -102,8 +102,8 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Or
     cancel: () => state.cancel(),
     compact: async () => state.compact(),
     submission: () => inputEpoch(deps.project),
-    say: (text, submission = inputEpoch(deps.project)) =>
-      (deps.put ?? put)(deps.project, "orchestrator", { from: "user", text, userEpoch: submission }).then(() => {}),
+    say: (text, submission = inputEpoch(deps.project), inputId) =>
+      (deps.put ?? put)(deps.project, "orchestrator", { from: "user", text, userEpoch: submission, ...(inputId ? { inputId } : {}) }).then(() => {}),
     pending: async () => !(await state.isPaused()) && (state.requested || await pending(deps.project, "orchestrator")),
     entries: () => transcript.history?.() ?? transcript.branch(),
     turn: () => orchestratorTurn(deps, transcript, state),

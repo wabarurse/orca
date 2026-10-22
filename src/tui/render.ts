@@ -46,6 +46,9 @@ export interface QuestionView {
   mode: QuestionMode;
 }
 
+/** A read-only projection of submitted input, never a delivery queue or a draft. */
+export interface QueuedInput { project: string; texts: readonly string[] }
+
 /** The live region's state. */
 export interface Frame {
   cols: number;
@@ -57,6 +60,8 @@ export interface Frame {
   /** Transient selected-conversation activity; never persisted or part of the footer. */
   activity?: string;
   input: Input;
+  /** The selected project's orchestrator inbox/sign-in-held input, oldest first (even in an agent view). */
+  queued?: QueuedInput;
   menu: Menu | null;
   /** Explicit scrollable help below the composer; never part of the transcript. */
   help?: Help | null;
@@ -287,11 +292,40 @@ export function commit(lines: string[], cols: number): string {
 /** The last `n` of `rows` (none when n is 0). */
 const lastRows = (rows: string[], n: number) => (n > 0 ? rows.slice(-n) : []);
 
-/** Help leaves conversation space even on ordinary 24-row terminals. Input/status win on tiny screens. */
-export function helpPanel(f: Frame): { rows: string[]; top: number; bodyHeight: number; maxTop: number } {
+/** Plain previews cannot inject terminal controls or borrow styling from the prompt. */
+const preview = (text: string) => Bun.stripANSI(sanitize(text.replace(/\r\n?|\n/g, " ↵ ")));
+
+/**
+ * Oldest first, one cell-clipped preview per prompt. The heading's shown/total
+ * ratio survives narrow widths; ellipses mark clipped text and ↵ marks newlines.
+ * A one-row budget folds the first preview into the label, rather than becoming
+ * only a count. At truly tiny sizes the composer/status take precedence.
+ */
+export function queuedRows(queue: QueuedInput | undefined, cols: number, height: number): string[] {
+  if (!queue?.texts.length || height <= 0) return [];
+  const shown = Math.min(queue.texts.length, Math.max(1, height - 1));
+  const count = `${shown}/${queue.texts.length}`;
+  if (height === 1) return [dim(fit(`Queued ${count} · orch: ${preview(queue.texts[0]!)}`, cols))];
+  const hidden = queue.texts.length - shown;
+  const title = `Queued ${count} · ${cols < 48 ? "orch" : "orchestrator"}${hidden ? ` · ${hidden} hidden` : ""} · ${preview(queue.project)}`;
+  return [dim(fit(title, cols)), ...queue.texts.slice(0, shown).map((text, i) => dim(fit(`  ${i + 1}. ${preview(text)}`, cols)))];
+}
+
+/** Share the queue budget with help's scrolling geometry; never shrink/reflow the editor for previews. */
+function footerBase(f: Frame): { status: string[]; input: InputArea; queued: string[]; free: number } {
   const status = statusRows(f.status, f.cols, f.rows);
   const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, status.length);
-  const free = Math.max(0, f.rows - input.lines.length - status.length);
+  const available = Math.max(0, f.rows - input.lines.length - status.length);
+  // stickyRows already reserves one conversation row. Leave two more when
+  // possible, cap previews at six rows / a third of the remaining terminal.
+  const height = Math.min(6, Math.floor(f.rows / 3), Math.max(0, available - 2));
+  const queued = queuedRows(f.queued, f.cols, height);
+  return { status, input, queued, free: available - queued.length };
+}
+
+/** Help leaves conversation space even on ordinary 24-row terminals. Input/status win on tiny screens. */
+export function helpPanel(f: Frame): { rows: string[]; top: number; bodyHeight: number; maxTop: number } {
+  const { free } = footerBase(f);
   // stickyRows already reserves one body row; leave two more where possible.
   const height = Math.min(free, 18, Math.max(1, Math.floor(f.rows * 0.65)), Math.max(1, free - 2));
   const lines = f.help?.lines ?? [];
@@ -318,18 +352,16 @@ function overlayRows(f: Frame, height: number): string[] {
   return f.question ? questionRows(f.question, f.cols, height) : [];
 }
 
-/** Input first; panels live BELOW it. On tiny screens the input wins, then the status, then the panel. */
+/** Queued previews immediately ABOVE input; counts/panels below. Input and status win on tiny screens. */
 export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
-  const status = statusRows(f.status, f.cols, f.rows);
-  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, status.length);
-  const free = Math.max(0, f.rows - input.lines.length - status.length);
+  const { status, input, queued, free } = footerBase(f);
   const panel = overlayRows(f, free).map((r) => fit(sanitize(r), f.cols));
   const streamed = f.partial ? f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)) : [];
   const above = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols)), ...(f.activity ? [fit(sanitize(f.activity), f.cols)] : [])], free - panel.length);
-  const band = [...input.lines, ...status, ...panel];
+  const band = [...queued, ...input.lines, ...status, ...panel];
   const fill = userFill();
   const rows = [...above, ...band.map((r) => fill ? fillRow(r, f.cols, fill) : r)];
-  return { rows, cursor: above.length + input.row, col: input.col };
+  return { rows, cursor: above.length + queued.length + input.row, col: input.col };
 }
 
 /** Move from where `prev` left the cursor to the live region's first row and clear from there down. */

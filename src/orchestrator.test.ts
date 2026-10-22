@@ -235,3 +235,19 @@ test("the real CLI send resumes a cancelled orchestrator across processes", asyn
   await orch.turn();
   expect(JSON.stringify(provider.calls[0]!.messages)).toContain("external continuation");
 });
+
+
+test("local prompt identities survive persistence unchanged and are reported only at consumption", async () => {
+  const project = "input-identity", seen: import("./inbox").Message[] = [];
+  const provider = fakeProvider([[text("received")]]);
+  const orch = await createOrchestrator({ project, provider, tools: {}, onInbox: messages => seen.push(...messages) });
+  await orch.say("identical", undefined, "local-first");
+  await put(project, "orchestrator", { from: "user", text: "identical" });
+  await orch.say("identical", undefined, "local-last");
+  expect(seen).toEqual([]);
+  await orch.turn();
+  expect(seen.map(message => message.inputId)).toEqual(["local-first", undefined, "local-last"]);
+  expect(provider.calls[0]!.messages.at(-1)?.content).toBe("[user] identical\n\n[user] identical\n\n[user] identical");
+  await orch.turn();
+  expect(seen).toHaveLength(3);
+});
