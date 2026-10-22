@@ -359,7 +359,7 @@ describe("agentCommand", () => {
   // One fake `bun` for every test here, made and run once at load: on macOS the first exec of a new
   // file waits for a system policy check, which took over 5s (the test timeout) under parallel load.
   // It logs its argv and $PARALLELS_HOME into $FAKE_BUN and exits with $FAKE_BUN/code for `agent`.
-  const fakeBin = mkdtempSync(join(home, "bin-"));
+  const fakeBin = mkdtempSync(join(home, "bin ' space-"));
   writeFileSync(join(fakeBin, "bun"), `#!/bin/sh\nd="$FAKE_BUN"\nprintf '%s' "$PARALLELS_HOME" > "$d/home"\nfor a in "$@"; do printf '%s\\n' "$a"; done >> "$d/log"\necho --- >> "$d/log"\nif [ "$2" = agent ]; then exit "$(cat "$d/code")"; fi\nexit 0\n`);
   chmodSync(join(fakeBin, "bun"), 0o755);
   Bun.spawnSync([join(fakeBin, "bun")], { env: { ...process.env, FAKE_BUN: mkdtempSync(join(home, "warm-")) } });
@@ -380,7 +380,7 @@ describe("agentCommand", () => {
     const weirdHome = join(home, `ho'me\\ $x`);
     process.env.PARALLELS_HOME = weirdHome;
     try {
-      return { argv: agentCommand({ project: nasty, role: "worker", branch: nastyBranch }, run), weirdHome };
+      return { argv: agentCommand({ project: nasty, role: "worker", branch: nastyBranch }, run, [join(fakeBin, "bun"), "source ' $space \\back/cli.ts"]), weirdHome };
     } finally {
       process.env.PARALLELS_HOME = home;
     }

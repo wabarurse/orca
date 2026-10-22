@@ -69,13 +69,13 @@ describe("worktrees", () => {
 test("agentCommand is an argv: workers run the fixed sh -c wrapper with values as parameters", () => {
   const cmd = agentCommand({ project: "p", role: "worker", branch: "feat/b" }, "r1");
   expect(cmd.slice(0, 2)).toEqual(["sh", "-c"]);
-  expect(cmd.slice(3)).toEqual(["sh", home, expect.stringMatching(/cli\.ts$/), "p", "worker", "feat/b", "r1"]);
-  expect(cmd[2]).toContain(`agent --project "$3" --role "$4" --branch "$5" --run "$6"`);
+  expect(cmd.slice(3)).toEqual(["sh", home, "p", "worker", "feat/b", "r1", process.execPath, expect.stringMatching(/cli\.ts$/)]);
+  expect(cmd[2]).toContain(`agent --project "$project" --role "$role" --branch "$branch" --run "$run"`);
   expect(cmd[2]).toContain("0|70) ;;");
   expect(cmd[2]).not.toContain(home);
   expect(slug("feat/b c")).toBe("feat-b-c");
   const orch = agentCommand({ project: "p", role: "orchestrator" }, "r1");
-  expect(orch).toEqual(["env", `PARALLELS_HOME=${home}`, "bun", expect.stringMatching(/cli\.ts$/), "agent", "--project", "p", "--role", "orchestrator"]);
+  expect(orch).toEqual(["env", `PARALLELS_HOME=${home}`, process.execPath, expect.stringMatching(/cli\.ts$/), "agent", "--project", "p", "--role", "orchestrator"]);
 });
 
 describe.skipIf(!hasTmux)("tmux", () => {
