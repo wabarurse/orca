@@ -44,7 +44,12 @@ shows `N+ lines (truncated)`. Restored pages and the
 repository you started in (an empty repository otherwise; `/rename <name>`
 renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X move between pages,
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
-`/help` for the rest of the commands.
+`/help` for grouped commands and keyboard shortcuts in a panel below the input
+and counts, not in the conversation history. Scroll help with ↑/↓, Page Up/Down
+or the wheel; Home/End jumps to its start/end (including advanced diagnostics).
+Esc closes it without changing your draft or leaving an agent view. Help is
+read-only while open; close it before typing. Global cancellation/page shortcuts
+still work, and Ctrl+Q replaces help with the explicit question toggle.
 
 Ctrl+C cancels the selected page's current turn (including its provider request
 and running tools), without closing the harness or clearing your draft/history.

@@ -1,0 +1,216 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`help appearance fixtures 80x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
+"── >[demo] ─────────────────────────────────────────────────────────────────────
+model example-model · effort default · fast off
+/isolated/demo
+example/repo
+────────────────────────────────────────────────────────────────────────────────
+Conversation record 27
+Conversation record 28
+Conversation record 29
+Conversation record 30
+┌──────────────────────────────────────────────────────────────────────────────┐
+│> draft 界                                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+2 agents running │ 1 message queued │ 1 question
+Help · commands & keys                                                  1–9/42
+  Conversation
+  /agents     Browse and follow agent conversations
+  /questions  Open questions; Enter answers or picks skip, Esc/Tab closes
+  /help       Commands and keyboard shortcuts; Esc closes
+
+  Projects
+  /projects              Browse projects: Enter opens, p pins, d deletes
+  /rename <name>         Change display name only; project ID stays fixed
+  /new [name] [git-url]  Create a project page
+↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
+`;
+
+exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
+"  Conversation
+  /agents     Browse and follow agent conversations
+  /questions  Open questions; Enter answers or picks skip, Esc/Tab closes
+  /help       Commands and keyboard shortcuts; Esc closes
+
+  Projects
+  /projects              Browse projects: Enter opens, p pins, d deletes
+  /rename <name>         Change display name only; project ID stays fixed
+  /new [name] [git-url]  Create a project page
+  /close                 Close this page; keep its project and history
+  /quit                  Exit; keep conversation history
+
+  Model & accounts
+  /effort [level|default]        Show or set project/model reasoning effort
+  /fast [on|off]                 Show or set project/model fast mode
+  /models [id]                   Choose or set the project model
+  /accounts                      Choose a subscription account
+  /login claude|codex [profile]  Sign in to a subscription account
+
+  Keyboard · navigation
+  Ctrl+N             New orchestrator
+  Ctrl+Z / Ctrl+X    Previous / next project page
+  Ctrl+B             Open or close projects
+  Ctrl+Q             Open or close questions; arrivals never open them
+  PgUp/PgDn / wheel  Scroll conversation; scroll help while it is open
+  Ctrl+C             Cancel selected turn/agent; twice within 2s exits,
+                     keeping history
+  Esc                Close panel, else leave agent view, else clear input
+
+  Keyboard · editing
+  Shift/Alt+Enter      New line
+  Alt+←/→ / Alt+B/F    Move by word
+  Alt+⌫ / Ctrl+W       Delete previous word
+  Alt+D                Delete next word
+  Home/End / Ctrl+A/E  Start / end of current line
+  Ctrl+U / Ctrl+K      Delete to start / end of current line
+  ↑ / ↓                Move between input rows, then project input history
+
+  Advanced & diagnostics
+  /keys               Diagnose terminal key chords; Esc ends
+  /compact            Summarize model context; keep full history
+  /review-rounds [n]  Review rounds before CI; 0 goes straight to CI"
+`;
+
+exports[`help appearance fixtures 40x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
+"── >[demo] ─────────────────────────────
+model example-model · effort default · f
+ast off
+/isolated/demo
+example/repo
+────────────────────────────────────────
+Conversation record 28
+Conversation record 29
+Conversation record 30
+┌──────────────────────────────────────┐
+│> draft 界                            │
+└──────────────────────────────────────┘
+2 agents running │ 1 message queued
+1 question
+Help                            1–8/86
+  Conversation
+  /agents     Browse and follow agent
+              conversations
+  /questions  Open questions; Enter
+              answers or picks skip,
+              Esc/Tab closes
+  /help       Commands and keyboard
+              shortcuts; Esc closes
+↑↓ scroll · Esc close"
+`;
+
+exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
+"  Conversation
+  /agents     Browse and follow agent
+              conversations
+  /questions  Open questions; Enter
+              answers or picks skip,
+              Esc/Tab closes
+  /help       Commands and keyboard
+              shortcuts; Esc closes
+
+  Projects
+  /projects
+    Browse projects: Enter opens, p
+    pins, d deletes
+  /rename <name>
+    Change display name only; project
+    ID stays fixed
+  /new [name] [git-url]
+    Create a project page
+  /close
+    Close this page; keep its project
+    and history
+  /quit
+    Exit; keep conversation history
+
+  Model & accounts
+  /effort [level|default]
+    Show or set project/model
+    reasoning effort
+  /fast [on|off]
+    Show or set project/model fast
+    mode
+  /models [id]
+    Choose or set the project model
+  /accounts
+    Choose a subscription account
+  /login claude|codex [profile]
+    Sign in to a subscription account
+
+  Keyboard · navigation
+  Ctrl+N
+    New orchestrator
+  Ctrl+Z / Ctrl+X
+    Previous / next project page
+  Ctrl+B
+    Open or close projects
+  Ctrl+Q
+    Open or close questions; arrivals
+    never open them
+  PgUp/PgDn / wheel
+    Scroll conversation; scroll help
+    while it is open
+  Ctrl+C
+    Cancel selected turn/agent; twice
+    within 2s exits, keeping history
+  Esc
+    Close panel, else leave agent
+    view, else clear input
+
+  Keyboard · editing
+  Shift/Alt+Enter
+    New line
+  Alt+←/→ / Alt+B/F
+    Move by word
+  Alt+⌫ / Ctrl+W
+    Delete previous word
+  Alt+D
+    Delete next word
+  Home/End / Ctrl+A/E
+    Start / end of current line
+  Ctrl+U / Ctrl+K
+    Delete to start / end of current
+    line
+  ↑ / ↓
+    Move between input rows, then
+    project input history
+
+  Advanced & diagnostics
+  /keys
+    Diagnose terminal key chords; Esc
+    ends
+  /compact
+    Summarize model context; keep full
+    history
+  /review-rounds [n]
+    Review rounds before CI; 0 goes
+    straight to CI"
+`;
+
+exports[`help appearance fixtures End reaches diagnostics with a bounded range and dismissal hint 1`] = `
+"── >[demo] ─────────────────────────────────────────────────────────────────────
+model example-model · effort default · fast off
+/isolated/demo
+example/repo
+────────────────────────────────────────────────────────────────────────────────
+Conversation record 27
+Conversation record 28
+Conversation record 29
+Conversation record 30
+┌──────────────────────────────────────────────────────────────────────────────┐
+│> draft 界                                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+2 agents running │ 1 message queued │ 1 question
+Help · commands & keys                                                34–42/42
+  Alt+D                Delete next word
+  Home/End / Ctrl+A/E  Start / end of current line
+  Ctrl+U / Ctrl+K      Delete to start / end of current line
+  ↑ / ↓                Move between input rows, then project input history
+
+  Advanced & diagnostics
+  /keys               Diagnose terminal key chords; Esc ends
+  /compact            Summarize model context; keep full history
+  /review-rounds [n]  Review rounds before CI; 0 goes straight to CI
+↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
+`;

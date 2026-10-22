@@ -21,9 +21,10 @@ import type { Key } from "./keys";
 import { historyRows, type Line } from "./lines";
 import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
+import { helpLines, type CommandHelp } from "./help";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
 import { MAX_RESTORED_ROWS, replyLine, reportLine, restore, userLines } from "./restore";
-import { bold, commit, dim, inputArea, inputGeometry, statusRows, type Frame, type Input, type InputArea, type Menu } from "./render";
+import { bold, commit, dim, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { chapterRows, headerHeight } from "./chrome";
@@ -32,6 +33,7 @@ import { Calls } from "./tools";
 import type { ToolCall, ToolOutcome } from "../toolview";
 import { stickyRows, stickyUpdate, type StickyScreen } from "./sticky";
 
+export { helpLines } from "./help";
 export { lineRows, type Line } from "./lines";
 
 export interface Page {
@@ -142,37 +144,8 @@ export interface Command {
   args?: true;
   /** Needs an open page: with none, a fresh orch-xxxx opens instead and the command is dropped (as for plain text and unknown commands). */
   needsPage?: true;
-  /** Its /help text and the row it shares; none for /help itself. */
-  help?: { row: HelpRow; text: string };
-}
-
-/** Rows of /help that list commands, in table order; "view" shows only in an agent view. */
-type HelpRow = "projects" | "keys" | "pages" | "settings" | "review" | "questions" | "view";
-
-/** /help, top to bottom: key help as written, and the rows of commands from the table (joined by three spaces). */
-const HELP_LAYOUT: readonly (HelpRow | { text: string })[] = [
-  { text: "^C cancels selected turn/agent; twice within 2s exits (conversation kept)" },
-  { text: "^N new orchestrator   ^Z ^X switch pages   Esc clear   PgUp/PgDn or mouse wheel scroll" },
-  "projects",
-  { text: "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words" },
-  { text: "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history" },
-  "keys",
-  "pages",
-  "settings",
-  "review",
-  "questions",
-  "view",
-];
-
-/** The /help lines for this command table; the "view" row only while viewing an agent. */
-export function helpLines(commands: ReadonlyMap<string, Command>, inView: boolean): string[] {
-  const all = [...commands.values()];
-  return HELP_LAYOUT.flatMap((entry) => {
-    if (typeof entry !== "string") return [entry.text];
-    if (entry === "view" && !inView) return [];
-    const texts = all.filter((c) => c.help?.row === entry).map((c) => c.help!.text);
-    return texts.length ? [texts.join("   ")] : [];
-  });
+  /** Presentation only; arguments and guards remain in the command handler. */
+  help: CommandHelp;
 }
 
 /** A typed line as a command: its name, trimmed arguments and table entry (none when unknown, or when it takes no arguments and got some); null for plain text. */
@@ -229,13 +202,16 @@ export class App {
   private _active = 0;
   get active(): number { return this._active; }
   set active(index: number) {
-    if (index !== this._active) this.modelGeneration++;
+    if (index !== this._active) { this.modelGeneration++; this.helpTop = null; }
     this._active = index;
   }
   private looseLines: string[] = [];
   input = { text: "", cursor: 0 };
   /** First input row on screen, kept between frames so the input area scrolls only when the cursor leaves it. */
   private inputTop: number | undefined;
+  /** Null until explicitly opened; only a footer scroll position, never a history line. */
+  private helpTop: number | null = null;
+  private helpContent?: { cols: number; inView: boolean; lines: string[] };
   menu: ActiveMenu | null = null;
   projectList: ProjectListState | null = null;
   loggingIn = false;
@@ -458,6 +434,7 @@ export class App {
       activity: !this.started ? dim("opening…") : page ? this.activity(page) : undefined,
       status, input, inputArea: area,
       menu: this.menu,
+      help: this.helpView(),
       question: this.questions.view(),
       projects: this.projectList && {
         index: this.projectList.index, status: this.projectList.status,
@@ -720,6 +697,7 @@ export class App {
   }
 
   closePage(index = this.active): void {
+    this.helpTop = null;
     this.modelGeneration++;
     const page = this.pages[index];
     if (!page) return;
@@ -779,6 +757,7 @@ export class App {
     this.modelGeneration++;
     const items = await orderedProjects();
     const index = Math.max(0, items.findIndex((it) => it.name === this.page?.project));
+    this.helpTop = null;
     this.menu = null;
     this.projectList = { items, index, status: "", confirm: null };
     this.draw();
@@ -912,6 +891,7 @@ export class App {
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
     if (modelOperation === undefined) this.modelGeneration++;
     if (!choices.length) return;
+    this.helpTop = null;
     this.menu = {
       title: dim(title) + dim("   ↑↓ Enter   Esc cancels"),
       items: choices.map((c) => `${c.current ? "●" : " "} ${c.label}`),
@@ -1013,26 +993,26 @@ export class App {
   /**
    * The slash commands, by name. Every one works at any time: mid-turn, while
    * viewing an agent and while signing in (a second /login is refused by
-   * login() itself). Table order is the order within a /help row.
+   * login() itself). Table order is the order within a /help group.
    */
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
-    ["/projects", { run: () => this.openProjects(), help: { row: "projects", text: "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes" } }],
-    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { row: "keys", text: "/keys shows what your terminal sends for a chord (Esc ends)" } }],
-    ["/rename", { args: true, run: (args) => this.renamePage(args), help: { row: "pages", text: "/rename <name>" } }],
-    ["/new", { args: true, run: (args) => this.newCommand(args), help: { row: "pages", text: "/new [name] [git-url]" } }],
-    ["/close", { run: () => this.closePage(), help: { row: "pages", text: "/close closes this page" } }],
-    ["/quit", { run: () => this.quit(), help: { row: "pages", text: "/quit" } }],
-    ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { row: "settings", text: "/agents" } }],
-    ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { row: "settings", text: "/effort [level|default]" } }],
-    ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { row: "settings", text: "/fast [on|off]" } }],
-    ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { row: "settings", text: "/compact summarizes model context (keeps history)" } }],
-    ["/models", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { row: "settings", text: "/models [id]" } }],
-    ["/accounts", { run: () => this.accountsMenu(), help: { row: "settings", text: "/accounts" } }],
-    ["/login", { args: true, run: (args) => this.login(args), help: { row: "settings", text: "/login claude|codex [profile]" } }],
-    ["/review-rounds", { args: true, run: async (args) => this.say(dim(await reviewRounds(args))), help: { row: "review", text: "/review-rounds [n] review rounds before CI (0 = straight to CI)" } }],
-    ["/questions", { run: (_, page) => this.questions.command(page), help: { row: "questions", text: "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later" } }],
-    ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { row: "view", text: "/back (or Esc) leaves the agent view" } }],
-    ["/help", { run: (_, page) => { for (const l of helpLines(this.commands, !!page?.view)) this.say(dim(l)); } }],
+    ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "Browse projects: Enter opens, p pins, d deletes" } }],
+    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose terminal key chords; Esc ends" } }],
+    ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
+    ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [git-url]", description: "Create a project page" } }],
+    ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "Close this page; keep its project and history" } }],
+    ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "Exit; keep conversation history" } }],
+    ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "Browse and follow agent conversations" } }],
+    ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { group: "settings", label: "/effort [level|default]", description: "Show or set project/model reasoning effort" } }],
+    ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "Show or set project/model fast mode" } }],
+    ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "Summarize model context; keep full history" } }],
+    ["/models", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { group: "settings", label: "/models [id]", description: "Choose or set the project model" } }],
+    ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "Choose a subscription account" } }],
+    ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "Sign in to a subscription account" } }],
+    ["/review-rounds", { args: true, run: async (args) => this.say(dim(await reviewRounds(args))), help: { group: "advanced", label: "/review-rounds [n]", description: "Review rounds before CI; 0 goes straight to CI" } }],
+    ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "Open questions; Enter answers or picks skip, Esc/Tab closes" } }],
+    ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "Return from agent view (also Esc)", viewOnly: true } }],
+    ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "Commands and keyboard shortcuts; Esc closes" } }],
   ]);
 
   /** /new [name] [git-url]: the name must be a valid project id. */
@@ -1143,7 +1123,7 @@ export class App {
   /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
   private readonly chords = new Map<string, () => Promise<void> | void>([
     ["c", () => this.interrupt()],
-    ["q", () => { if (!this.menu && !this.projectList) return this.questions.toggle(); }],
+    ["q", () => { if (!this.menu && !this.projectList) { this.helpTop = null; this.draw(); return this.questions.toggle(); } }],
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
     ["x", () => this.switchPage(1)],
@@ -1155,16 +1135,18 @@ export class App {
    * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
-   * 5. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
-   * 6. escape: leaves the agent view, else clears the input;
-   * 7. enter: Enter without Shift or Alt submits;
-   * 8. editor: the rest edits the input (EDITS, ↑↓ history).
+   * 5. help: scroll or dismiss the explicit help panel, preserving the composer;
+   * 6. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
+   * 7. escape: leaves the agent view, else clears the input;
+   * 8. enter: Enter without Shift or Alt submits;
+   * 9. editor: the rest edits the input (EDITS, ↑↓ history).
    */
   readonly keyLayers: readonly KeyLayer[] = [
     { name: "keyEcho", takes: (k) => this.keyEcho && !(k.ctrl && k.name === "c"), handle: (k) => this.echoKey(k) },
     { name: "chords", takes: (k) => !!k.ctrl && this.chords.has(k.name), handle: (k) => this.chords.get(k.name)!() },
     { name: "projects", takes: (k) => this.projectsTake(k), handle: (k) => this.projectsKey(k) },
     { name: "menu", takes: () => !!this.menu, handle: (k) => this.menuKey(k) },
+    { name: "help", takes: () => this.helpTop !== null, handle: (k) => this.helpKey(k) },
     { name: "questions", takes: (k) => this.questions.takes(k), handle: (k) => this.questions.handle(k).then(() => this.draw()) },
     { name: "escape", takes: (k) => k.name === "escape", handle: () => this.escapeKey() },
     { name: "enter", takes: (k) => k.name === "enter" && !k.shift && !k.alt, handle: () => this.enterKey() },
@@ -1178,7 +1160,7 @@ export class App {
   }
 
   private canScroll(k: Key): boolean {
-    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.keyEcho && !this.menu && !this.projectList && !this.questions.view();
+    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.questions.view();
   }
 
   private scroll(k: Key): void {
@@ -1189,6 +1171,34 @@ export class App {
     const top = Math.max(0, Math.min(screen.maxStart, start + (k.name.endsWith("up") ? -delta : delta)));
     this.scrollTop = top === screen.maxStart ? null : top;
     this.scrollAnchor = undefined;
+    this.draw();
+  }
+
+  /** Only rewrap on width/context changes, not on every live-activity tick. */
+  private helpView(): Help | null {
+    if (this.helpTop === null) return null;
+    const cols = this.deps.term.cols, inView = !!this.page?.view;
+    if (this.helpContent?.cols !== cols || this.helpContent.inView !== inView) {
+      this.helpContent = { cols, inView, lines: helpLines(this.commands, inView, cols) };
+    }
+    return { lines: this.helpContent.lines, top: this.helpTop };
+  }
+
+  /** Explicit modal, independent of chat/answer buffers and conversation scroll. */
+  private toggleHelp(): void {
+    this.helpTop = this.helpTop === null ? 0 : null;
+    if (this.helpTop !== null) { this.menu = null; this.projectList = null; }
+    this.draw();
+  }
+
+  private helpKey(k: Key): void {
+    if (k.name === "escape") { this.helpTop = null; this.draw(); return; }
+    if (k.ctrl || k.alt) return;
+    const panel = helpPanel({ ...this.frame(), rows: this.composerRows() });
+    const step = Math.max(1, panel.bodyHeight - 1);
+    const delta: Record<string, number> = { up: -1, down: 1, pageup: -step, pagedown: step, wheelup: -3, wheeldown: 3 };
+    const top = k.name === "home" ? 0 : k.name === "end" ? panel.maxTop : panel.top + (delta[k.name] ?? 0);
+    this.helpTop = Math.max(0, Math.min(panel.maxTop, top));
     this.draw();
   }
 
@@ -1220,8 +1230,8 @@ export class App {
 
   /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
   private enterKey(): Promise<void> | void {
-    this.scrollTop = null;
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
+    if (text !== "/help") this.scrollTop = null;
     this.input = { text: "", cursor: 0 };
     this.historyAt = -1;
     if (!text) return this.draw();

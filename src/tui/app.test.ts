@@ -206,7 +206,10 @@ describe("tui app", () => {
     const view = { name: "worker-x", lines: [] as string[], leave: () => { left++; }, live: false, calls: new Calls() };
     page.view = view;
     term.type("/help\r");
-    await until(() => view.lines.join("\n").includes("/back (or Esc) leaves the agent view"));
+    await until(() => !!app.frame().help);
+    expect(app.frame().help!.lines.join("\n")).toContain("/back");
+    expect(view.lines).toEqual([]);
+    term.press({ name: "escape" });
     term.type("hello\r");
     await until(() => view.lines.join("\n").includes("/back first"));
     expect(orchs.said.viewer).toEqual([]);
@@ -215,8 +218,9 @@ describe("tui app", () => {
     term.type("/new beta\r");
     await until(() => app.page?.project === "beta");
     term.type("/help\r");
-    await until(() => app.page!.lines.join("\n").includes("/models [id]"));
-    expect(app.page!.lines.join("\n")).not.toContain("/back");
+    await until(() => !!app.frame().help);
+    expect(app.frame().help!.lines.join("\n")).not.toContain("/back");
+    term.press({ name: "escape" });
     term.type("/back\r");
     await until(() => app.page!.lines.join("\n").includes("not viewing an agent"));
     term.type("\x1a"); // back to viewer
@@ -246,7 +250,8 @@ describe("tui app", () => {
     term.type("/rename signing\r");
     await until(() => app.page!.name === "signing");
     term.type("/help\r");
-    await until(() => app.page!.lines.map(raw).join("\n").includes("/models [id]"));
+    await until(() => !!app.frame().help);
+    term.press({ name: "escape" });
     term.type("hi\r");
     await until(() => term.screen().includes("queued; runs after sign-in"));
     expect(orchs.said.signer).toEqual([]); // held back until sign-in succeeds
@@ -375,9 +380,10 @@ describe("tui app", () => {
     await until(() => !!app.page);
     expect(term.screen()).not.toContain("/models");
     term.type("/help\r");
-    await until(() => app.page!.lines.join("\n").includes("/review-rounds"));
-    const help = app.page!.lines.join("\n");
-    for (const cmd of ["/keys", "/rename <name>", "/new [name] [git-url]", "/close closes this page", "/quit", "/agents", "/models [id]", "/accounts", "/login claude|codex", "/review-rounds [n]"]) expect(help).toContain(cmd);
+    await until(() => !!app.frame().help);
+    const help = app.frame().help!.lines.join("\n");
+    expect(app.page!.lines).toEqual([]);
+    for (const cmd of ["/keys", "/rename <name>", "/new [name] [git-url]", "/close", "/quit", "/agents", "/models [id]", "/accounts", "/login claude|codex", "/review-rounds [n]"]) expect(help).toContain(cmd);
     expect(help).not.toContain("/back");
     app.quit();
     await running;
@@ -1580,7 +1586,8 @@ describe("orchestrator questions", () => {
     const { term, stop } = await start("qa-cmd");
     await until(() => live(term).includes("answer>"));
     term.type("/help\r");
-    await until(() => term.screen().includes("/questions shows the orchestrator's open questions again"));
+    await until(() => term.screen().includes("Help"));
+    term.press({ name: "escape" });
     expect(await statusOf("qa-cmd")).toEqual([["Name?", "open", null]]);
     await until(() => live(term).includes("answer>") && live(term).includes("? Name?"));
     term.type("/srv/data\r");
@@ -1844,34 +1851,19 @@ describe("orchestrator questions", () => {
 });
 
 describe("command and key tables", () => {
-  /** /help as it was written before the command table, line for line. */
-  const OLD_HELP = [
-    "^C cancels selected turn/agent; twice within 2s exits (conversation kept)",
-    "^N new orchestrator   ^Z ^X switch pages   Esc clear   PgUp/PgDn or mouse wheel scroll",
-    "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes",
-    "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
-    "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history",
-    "/keys shows what your terminal sends for a chord (Esc ends)",
-    "/rename <name>   /new [name] [git-url]   /close closes this page   /quit",
-    "/agents   /effort [level|default]   /fast [on|off]   /compact summarizes model context (keeps history)   /models [id]   /accounts   /login claude|codex [profile]",
-    "/review-rounds [n] review rounds before CI (0 = straight to CI)",
-    "/questions shows the orchestrator's open questions again: ↑↓ or 1–9 choose, Enter picks (or skips on the skip row), type to answer, Esc/Tab later",
-  ];
-  const OLD_HELP_VIEW = "/back (or Esc) leaves the agent view";
   const bare = () => new App({ term: fakeTerm(), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000 });
 
-  test("/help is built from the table: every command but /help is listed, /back only in an agent view, text unchanged", () => {
+  test("/help is built from all 17 handlers, with /back contextual and diagnostics grouped last", () => {
     const app = bare();
     const help = helpLines(app.commands, false).join("\n");
     const inView = helpLines(app.commands, true).join("\n");
     for (const name of app.commands.keys()) {
-      if (name === "/help") continue; // never listed itself, as before
       expect(inView).toContain(name);
       if (name !== "/back") expect(help).toContain(name);
     }
     expect(help).not.toContain("/back");
-    expect(helpLines(app.commands, false)).toEqual(OLD_HELP);
-    expect(helpLines(app.commands, true)).toEqual([...OLD_HELP, OLD_HELP_VIEW]);
+    expect(help.indexOf("Advanced & diagnostics")).toBeGreaterThan(help.indexOf("Keyboard · editing"));
+    expect(help.indexOf("/keys")).toBeGreaterThan(help.indexOf("Advanced & diagnostics"));
     expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/close", "/compact", "/effort", "/fast", "/help", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/rename", "/review-rounds"]);
   });
 
@@ -1915,7 +1907,8 @@ describe("command and key tables", () => {
       await until(() => app.pages.length === 0);
       await until(() => app.frame().status === null && term.screen().includes("│>")); // let the close's reprint land first (a reprint with no page drops lines said before it)
       term.type("/help\r"); // needs no page: runs with none
-      await until(() => term.screen().includes("/review-rounds [n]"));
+      await until(() => term.screen().includes("Help"));
+      term.press({ name: "escape" });
       expect(app.pages.length).toBe(0);
       term.type(`${t}\r`);
       await until(() => app.pages.length === 1);
@@ -1972,7 +1965,7 @@ describe("command and key tables", () => {
   });
 
   test("key layers run in the documented order", () => {
-    expect(bare().keyLayers.map((l) => l.name)).toEqual(["keyEcho", "chords", "projects", "menu", "questions", "escape", "enter", "editor"]);
+    expect(bare().keyLayers.map((l) => l.name)).toEqual(["keyEcho", "chords", "projects", "menu", "help", "questions", "escape", "enter", "editor"]);
   });
 
   test("a key two layers could take goes to the earlier one", async () => {
@@ -2626,6 +2619,8 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint exit h
   try {
     await until(() => !!app.page);
     expect(app.page!.lines.map(raw).join("\n")).not.toContain("FULL-HISTORY-SENTINEL"); // viewport remains bounded
+    // Page data can precede the throttled first frame; never capture "opening…" as the header.
+    await until(() => term.display.screen()[0]!.includes(">[combined-cancel-e]"));
     term.type("start cancellable tool\r");
     await until(() => existsSync(marker));
     expect(app.page!.calls.size).toBe(1);
@@ -2710,4 +2705,238 @@ test("Ctrl+C through pinned question/modal layers preserves owners and drafts wi
     expect(app.questions.answering()).toBe(true);
     expect(app.frame().activity).toBeUndefined();
   } finally { app.quit(); await running; }
+});
+
+describe("explicit footer help", () => {
+  test("modal keys preserve draft/cursor/history, navigation reaches diagnostics, and Esc never leaves an agent view", async () => {
+    const term = fakeTerm(80, 24);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("help-draft");
+    try {
+      await until(() => !!app.page);
+      const page = app.page!;
+      const draft = { text: "kept\nchat 界 draft", cursor: 6 };
+      app.input = { ...draft };
+      const history = [...page.inputHistory];
+      let left = 0;
+      page.view = { name: "worker-help", lines: [], leave: () => { left++; }, live: true, calls: new Calls() };
+      await app.commands.get("/help")!.run("", page);
+      await until(() => term.screen().includes("Help"));
+      expect(app.frame().help!.lines.join("\n")).toContain("/back");
+      for (const key of [{ name: "enter" }, { name: "char", text: "1" }, { name: "paste", text: "not inserted" }, { name: "backspace" }, { name: "tab" }]) await app.onKey(key);
+      expect(app.input).toEqual(draft);
+      expect(page.inputHistory).toEqual(history);
+      expect(orchs.said[page.project]).toEqual([]);
+      await app.onKey({ name: "pagedown" });
+      expect(app.frame().help!.top).toBeGreaterThan(0);
+      await app.onKey({ name: "end" });
+      await until(() => term.screen().includes("/review-rounds"));
+      await app.onKey({ name: "home" });
+      expect(app.frame().help!.top).toBe(0);
+      await app.onKey({ name: "wheeldown" });
+      expect(app.frame().help!.top).toBe(3);
+      await app.onKey({ name: "wheelup" });
+      expect(app.frame().help!.top).toBe(0);
+      await app.onKey({ name: "escape" });
+      expect(app.frame().help).toBeNull();
+      expect(left).toBe(0);
+      expect(app.input).toEqual(draft);
+      expect(page.view.lines).toEqual([]);
+      await app.commands.get("/help")!.run("", page);
+      await app.commands.get("/help")!.run("", page);
+      expect(app.frame().help).toBeNull();
+      expect(app.input).toEqual(draft);
+      await app.onKey({ name: "escape" });
+      expect(left).toBe(1);
+    } finally { app.quit(); await running; }
+  });
+
+  test("/help submission, help scrolling and resize retain the conversation's interior source anchor amid live output", async () => {
+    const term = fakeTerm(23, 24);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("help-anchor");
+    try {
+      await until(() => !!app.page);
+      const code = "code-" + "0123456789".repeat(40);
+      const lines: Line[] = [{ md: "```ts\n" + code + "\n```" }, ...Array.from({ length: 100 }, (_, i) => `later ${i}`)];
+      const codeStart = () => historyRows(lines, 23).findIndex(row => Bun.stripANSI(row).startsWith("│ code-"));
+      while ((codeStart() + 3) % 3) lines.unshift("preface");
+      app.page!.lines.push(...lines);
+      app.reprint();
+      await until(() => term.screen().includes("later 99"));
+      for (let i = 0; i < 100; i++) term.press({ name: "pageup" });
+      for (let i = 0; i < (codeStart() + 3) / 3; i++) term.press({ name: "wheeldown" });
+      const reading = "│ " + code.slice(63, 84);
+      await until(() => bodyRows(term)[0] === reading);
+      term.type("/help\r"); // Must not use Enter's normal jump-to-tail path.
+      await until(() => term.screen().includes("Help"));
+      expect(bodyRows(term)[0]).toBe(reading);
+      term.press({ name: "wheeldown" });
+      term.press({ name: "pagedown" });
+      for (const cols of [80, 40, 23, 10, 80, 23]) {
+        term.resize(cols, 24);
+        await Bun.sleep(170);
+        const offset = Math.floor(63 / (cols - 2)) * (cols - 2);
+        expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
+        orchs.writers[app.page!.project]!("live output while reading help\n");
+        await Bun.sleep(25);
+        expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
+        expect(app.frame().help).not.toBeNull();
+      }
+      term.press({ name: "escape" });
+      await until(() => !term.screen().includes("Help"));
+      expect(bodyRows(term)[0]).toBe(reading);
+      expect(app.page!.lines.map(raw).join("\n")).not.toContain("/help");
+    } finally { app.quit(); await running; }
+  });
+
+  test("page/menu/project transitions close help, and a hidden tiny-terminal panel still owns keys", async () => {
+    const term = fakeTerm(80, 24);
+    const app = new App({ term, openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000 });
+    const running = app.run("help-transition-a");
+    const help = () => app.commands.get("/help")!.run("", app.page);
+    try {
+      await until(() => !!app.page);
+      await app.openPage("help-transition-b");
+      const draft = { text: "draft unchanged", cursor: 3 };
+      app.input = { ...draft };
+      await help();
+      await app.onKey({ name: "z", ctrl: true });
+      expect(app.frame().help).toBeNull();
+      expect(app.input).toEqual(draft);
+      await help();
+      app.openMenu("example menu", [{ value: "one", label: "one" }], () => {});
+      expect(app.frame().help).toBeNull();
+      await app.onKey({ name: "escape" });
+      await help();
+      await app.onKey({ name: "b", ctrl: true });
+      expect(app.projectList).not.toBeNull();
+      expect(app.frame().help).toBeNull();
+      await app.onKey({ name: "escape" });
+      await help();
+      term.resize(1, 1);
+      await Bun.sleep(170);
+      expect(app.frame().help).not.toBeNull();
+      await app.onKey({ name: "enter" });
+      await app.onKey({ name: "char", text: "x" });
+      await app.onKey({ name: "pagedown" });
+      expect(app.input).toEqual(draft);
+      await app.onKey({ name: "escape" });
+      expect(app.frame().help).toBeNull();
+      expect(app.input).toEqual(draft);
+      term.resize(80, 24);
+      await Bun.sleep(170);
+      expect(term.screen()).not.toContain("Help");
+      await help();
+      app.closePage();
+      expect(app.frame().help).toBeNull();
+    } finally { app.quit(); await running; }
+  });
+
+  test("question arrivals stay opt-in; help never answers/skips and preserves original chat and answer through external close", async () => {
+    const project = "help-questions";
+    const term = fakeTerm(80, 24);
+    let cancelled = 0;
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, pollMs: 20, watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0,
+      openOrchestrator: async (p, url, write, inbox) => ({ ...await orchs.openOrchestrator(p, url, write, inbox), cancel: () => { cancelled++; } }),
+    });
+    const running = app.run(project);
+    const help = () => app.commands.get("/help")!.run("", app.page);
+    try {
+      await until(() => !!app.page);
+      const chat = { text: "original chat", cursor: 4 };
+      app.input = { ...chat };
+      await help();
+      const [q] = await askQuestions(project, [{ text: "Question one?" }]);
+      await until(() => app.page!.questions.open.length === 1);
+      expect(app.frame().question).toBeNull();
+      expect(app.input).toEqual(chat);
+      expect(app.frame().help).not.toBeNull();
+      await app.onKey({ name: "enter" });
+      await app.onKey({ name: "escape" });
+      expect(app.frame().question).toBeNull();
+      expect(app.input).toEqual(chat);
+      await help();
+      await app.onKey({ name: "q", ctrl: true }); // Explicit opening replaces help.
+      expect(app.frame().help).toBeNull();
+      expect(app.questions.answering()).toBe(true);
+      const answer = { text: "answer draft", cursor: 5 };
+      app.input = { ...answer };
+      await help();
+      await app.onKey({ name: "enter" });
+      await app.onKey({ name: "char", text: "1" });
+      await app.onKey({ name: "c", ctrl: true }); // Cancellation still goes to the owner, not help.
+      expect(cancelled).toBe(1);
+      expect(app.frame().help).not.toBeNull();
+      expect(app.input).toEqual(answer);
+      expect((await allQuestions(project))[0]!.status).toBe("open");
+      await app.onKey({ name: "escape" }); // Only help closes; answer is untouched.
+      expect(app.questions.answering()).toBe(true);
+      expect(app.input).toEqual(answer);
+      await help();
+      await askQuestions(project, [{ text: "Question two?" }]);
+      await answerQuestion(project, q!.id, "answered elsewhere");
+      await until(() => app.page!.questions.open.length === 1 && app.page!.questions.open[0]!.text === "Question two?");
+      expect(app.input).toEqual(chat);
+      expect(app.frame().help).not.toBeNull();
+      expect(app.frame().question).toBeNull();
+      expect(app.page!.lines.map(raw).join("\n")).toContain("answer draft");
+      await app.onKey({ name: "escape" });
+      await app.onKey({ name: "q", ctrl: true });
+      expect(app.input.text).toBe(""); // Orphan answer never attaches to the next question.
+      await app.onKey({ name: "escape" });
+      expect(app.input).toEqual(chat);
+    } finally { app.quit(); await running; }
+  });
+
+  test("help works before a page exists, never enters durable/exit history, and does not reopen after restart", async () => {
+    const project = "help-durable";
+    const path = paths.transcript(project, "orchestrator");
+    mkdirSync(paths.repo(project), { recursive: true });
+    const transcript = openTranscript(path);
+    await transcript.append({ type: "meta", role: "orchestrator", model: "m" });
+    await transcript.append({ type: "message", message: { role: "user", content: "DURABLE-HELP-SENTINEL" } });
+    for (let i = 0; i < 80; i++) await transcript.append({ type: "message", message: { role: "assistant", content: `record ${i} ` + "old history ".repeat(10) } });
+    await transcript.append({ type: "summary", text: "model-only summary", retained: [], boundary: transcript.head() });
+    const saved = await Bun.file(path).text();
+    let ready!: () => void;
+    const waiting = new Promise<void>(resolve => { ready = resolve; });
+    const orchs = fakeOrchestrators();
+    const open: ConstructorParameters<typeof App>[0]["openOrchestrator"] = async (p, url, write, inbox) => { await waiting; return { ...await orchs.openOrchestrator(p, url, write, inbox), entries: () => transcript.history!() }; };
+    const term = fakeTerm(80, 24);
+    const app = new App({ term, openOrchestrator: open, pollMs: 100_000 });
+    const running = app.run(project);
+    try {
+      term.type("/help\r");
+      await until(() => term.screen().includes("Help"));
+      expect(app.pages).toHaveLength(0);
+      expect(app.frame().help).not.toBeNull();
+      term.press({ name: "escape" });
+      ready();
+      await until(() => !!app.page);
+      expect(app.frame().help).toBeNull();
+      const before = [...app.page!.lines];
+      term.type("/help\r");
+      await until(() => term.screen().includes("Help"));
+      expect(app.page!.lines).toEqual(before);
+      expect(app.page!.inputHistory).toEqual(["/help"]);
+      await app.page!.savingHistory;
+    } finally { ready(); app.quit(); await running; }
+    expect(term.screen()).toContain("DURABLE-HELP-SENTINEL");
+    expect(term.screen()).not.toContain("Advanced & diagnostics");
+    expect(term.screen()).not.toContain("/help");
+    expect(await Bun.file(path).text()).toBe(saved);
+    const again = new App({ term: fakeTerm(80, 24), openOrchestrator: open, pollMs: 100_000 });
+    const restarted = again.run(project);
+    try {
+      await until(() => !!again.page);
+      expect(again.frame().help).toBeNull();
+      expect(again.page!.lines.map(raw).join("\n")).not.toContain("/help");
+      await again.onKey({ name: "up" });
+      expect(again.input.text).toBe("/help");
+    } finally { again.quit(); await restarted; }
+  });
 });
