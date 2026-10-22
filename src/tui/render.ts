@@ -11,6 +11,8 @@ import { fillRow, userFill } from "./style";
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 
+/** Explicit help is already wrapped to the current width; only its viewport is transient. */
+export interface Help { lines: string[]; top: number }
 export interface Menu { title: string; items: string[]; index: number }
 export interface Input {
   prompt: string;
@@ -56,6 +58,8 @@ export interface Frame {
   activity?: string;
   input: Input;
   menu: Menu | null;
+  /** Explicit scrollable help below the composer; never part of the transcript. */
+  help?: Help | null;
   /** The project list, below the input and status like a menu, when open. */
   projects?: ProjectList | null;
   /** The question shown below the input and status when no menu or project list is open. */
@@ -283,10 +287,34 @@ export function commit(lines: string[], cols: number): string {
 /** The last `n` of `rows` (none when n is 0). */
 const lastRows = (rows: string[], n: number) => (n > 0 ? rows.slice(-n) : []);
 
-/** What sits below input/status: a menu, else the project list, else the question. */
+/** Help leaves conversation space even on ordinary 24-row terminals. Input/status win on tiny screens. */
+export function helpPanel(f: Frame): { rows: string[]; top: number; bodyHeight: number; maxTop: number } {
+  const status = statusRows(f.status, f.cols, f.rows);
+  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, status.length);
+  const free = Math.max(0, f.rows - input.lines.length - status.length);
+  // stickyRows already reserves one body row; leave two more where possible.
+  const height = Math.min(free, 18, Math.max(1, Math.floor(f.rows * 0.65)), Math.max(1, free - 2));
+  const lines = f.help?.lines ?? [];
+  const bodyHeight = Math.max(0, height - 2);
+  const maxTop = Math.max(0, lines.length - Math.max(1, bodyHeight));
+  const top = Math.max(0, Math.min(f.help?.top ?? 0, maxTop));
+  if (!f.help || height <= 0) return { rows: [], top, bodyHeight, maxTop };
+  const range = bodyHeight ? `${top + 1}–${Math.min(lines.length, top + bodyHeight)}/${lines.length}` : "";
+  const title = f.cols >= 48 ? "Help · commands & keys" : "Help";
+  const gap = f.cols - visibleLength(title) - visibleLength(range) - 2;
+  const heading = bold(title) + (gap > 0 && range ? " ".repeat(gap) + dim(range) : "");
+  const hint = f.cols >= 58 ? "↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close" : f.cols >= 24 ? "↑↓ scroll · Esc close" : "Esc close · ↑↓";
+  // Even when only one panel row fits, dismissal stays discoverable. If no
+  // rows fit the help key layer still owns keys, like other hidden modals.
+  const rows = height === 1 ? [dim("Esc close help")] : [heading, ...lines.slice(top, top + bodyHeight), dim(hint)];
+  return { rows: rows.map(row => fit(row, f.cols)), top, bodyHeight, maxTop };
+}
+
+/** What sits below input/status: a menu, projects, help, or the question. */
 function overlayRows(f: Frame, height: number): string[] {
   if (f.menu) return menuRows(f.menu, height);
   if (f.projects) return projectRows(f.projects, height);
+  if (f.help) return helpPanel(f).rows;
   return f.question ? questionRows(f.question, f.cols, height) : [];
 }
 
