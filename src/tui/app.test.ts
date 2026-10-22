@@ -1434,16 +1434,17 @@ describe("orchestrator questions", () => {
     const { term, orchs, app, stop } = await start("qa-opt");
     await until(() => live(term).includes("? Which db?") && live(term).includes("❯ 1. postgres"));
     expect(live(term)).toContain("type your own answer");
-    expect(live(term)).toContain("skip (use default: sqlite)");
+    // The new section heading costs one row at 70x16; decisions scroll to selection.
+    expect(app.frame().question?.default).toBe("sqlite");
     expect(live(term)).toContain(PICK);
-    expect(live(term)).toContain("1 question");
+    expect(live(term)).toContain("Inbox 1");
     term.press({ name: "down" });
     await until(() => live(term).includes("❯ 2. sqlite"));
     term.press({ name: "enter" });
     await until(() => term.screen().includes("? Which db? → sqlite"));
     expect(await statusOf("qa-opt")).toEqual([["Which db?", "answered", "sqlite"]]);
     await until(() => !live(term).includes(PICK));
-    expect(live(term)).toContain("0 questions");
+    expect(live(term)).toContain("Inbox 0");
     expect(orchs.said["qa-opt"]).toEqual([]); // not sent as a chat message
     const inbox = await drain("qa-opt", "orchestrator");
     expect(inbox.map((m) => [m.from, m.text])).toEqual([["user", `[${q!.id}] answer to "Which db?": sqlite`]]);
@@ -1536,7 +1537,7 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("? Port? (1 of 2)"));
     term.press({ name: "escape" }); // empty input: put off, like Tab
     await until(() => !live(term).includes("? Port?"));
-    expect(live(term)).toContain("2 questions");
+    expect(live(term)).toContain("Inbox 2");
     term.type("/questions\r");
     await until(() => live(term).includes("? Port? (1 of 2)"));
     term.type("90");
@@ -1559,7 +1560,7 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("in an agent view questions take no keys and only the count shows; Esc leaves the view", async () => {
+  test("in an agent view Inbox Questions is guarded; Esc closes it before leaving the separate view", async () => {
     const transcript = paths.transcript("qa-view", "worker-v");
     mkdirSync(join(transcript, ".."), { recursive: true });
     await Bun.write(transcript, JSON.stringify({ type: "message", message: { role: "assistant", content: "worker line" } }) + "\n");
@@ -1572,14 +1573,18 @@ describe("orchestrator questions", () => {
     term.press({ name: "enter" });
     await until(() => term.screen().includes("worker line"));
     term.type("/questions\r"); // shown again, but not over an agent view
-    await settle();
+    await until(() => live(term).includes("Questions belong to the project orchestrator"));
     expect(live(term)).not.toContain("Which db?");
-    expect(live(term)).toContain("1 question");
+    expect(live(term)).toContain("Inbox 1");
+    expect(live(term)).toContain("Questions belong to the project orchestrator");
     term.type("1");
-    await until(() => live(term).includes("worker-v > 1"));
-    term.press({ name: "u", ctrl: true });
+    term.press({ name: "enter" });
+    expect(app.input.text).toBe("");
+    term.press({ name: "escape" }); // inbox, not agent
+    expect(app.page!.view).not.toBeNull();
     term.press({ name: "escape" });
     await until(() => !app.page!.view);
+    term.press({ name: "q", ctrl: true });
     await until(() => live(term).includes("? Which db?"));
     expect(await statusOf("qa-view")).toEqual([["Which db?", "open", null]]);
     await stop();
@@ -1713,7 +1718,7 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("? Which db?"));
     term.press({ name: "tab" });
     await until(() => !live(term).includes("? Which db?"));
-    expect(live(term)).toContain("1 question"); // still counted
+    expect(live(term)).toContain("Inbox 1"); // still counted
     term.type("hello\r");
     await until(() => orchs.said["qa-tab"]?.length === 1);
     expect(orchs.said["qa-tab"]).toEqual(["hello"]);
@@ -1722,7 +1727,7 @@ describe("orchestrator questions", () => {
     term.press({ name: "u", ctrl: true });
 
     await ask1("qa-tab", "Port?");
-    await until(() => live(term).includes("2 questions")); // arrival only updates the count
+    await until(() => live(term).includes("Inbox 2")); // arrival only updates the count
     await until(() => !live(term).includes("? Which db?"));
     term.type("/questions\r");
     await until(() => live(term).includes("? Which db? (1 of 2)"));
@@ -1744,7 +1749,7 @@ describe("orchestrator questions", () => {
     await until(() => app.page?.project === "qa-bg");
     term.press({ name: "q", ctrl: true });
     await until(() => live(term).includes("? One? (1 of 2)"));
-    expect(live(term)).toContain("2 questions");
+    expect(live(term)).toContain("Inbox 2");
     expect(live(term)).not.toContain("qa-bg: 2");
     await stop();
   });
@@ -1753,7 +1758,7 @@ describe("orchestrator questions", () => {
     await ask1("qa-chord", "Which db?", ["postgres", "sqlite"], "sqlite");
     const { term, app, running } = await start("qa-chord");
     await until(() => live(term).includes("❯ 1. postgres"));
-    for (const k of [{ name: "down", ctrl: true }, { name: "down", alt: true }, { name: "enter", ctrl: true }, { name: "escape", alt: true }, { name: "tab", shift: true }, { name: "j", ctrl: true }, { name: "2", alt: true }]) term.press(k);
+    for (const k of [{ name: "down", ctrl: true }, { name: "down", alt: true }, { name: "enter", ctrl: true }, { name: "escape", alt: true }, { name: "j", ctrl: true }, { name: "2", alt: true }]) term.press(k);
     await settle();
     expect(live(term)).toContain("❯ 1. postgres");
     expect(app.page!.questions.open).toHaveLength(1);
@@ -3091,6 +3096,8 @@ describe("queued input footer", () => {
       expect(app.frame().queued?.texts).toEqual(["pending B"]);
       app.switchPage(-1);
       expect(app.page).toBe(a);
+      expect(app.input).toEqual(chat); // project switches close Inbox, not its drafts
+      await app.onKey({ name: "q", ctrl: true });
       expect(app.input).toEqual(answer);
       for (const [cols, rows] of [[12, 8], [23, 16], [90, 24]]) {
         term.resize(cols!, rows!);

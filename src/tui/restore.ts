@@ -39,7 +39,7 @@ import type { Entry, MessageEntry } from "../transcript";
 import { interruptedView, toolView, type ToolOutcome } from "../toolview";
 import { historyRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
-import { bold, dim, wrap } from "./render";
+import { plainText, bold, dim, wrap } from "./render";
 
 /** Default budget for bounded previews; the live page explicitly restores all rows. */
 export const MAX_RESTORED_ROWS = 200;
@@ -59,7 +59,7 @@ export function userLines(text: string): Line[] {
 /** A question closed by the user, as the page shows it: one dim line, the answer or "skipped" (with the default) after an arrow. */
 export function answeredLine(question: string, answer: string | null, def?: string): string {
   const tail = answer ?? (def ? `skipped, default: ${def}` : "skipped");
-  return dim(`? ${question} → ${tail}`);
+  return dim(`? ${plainText(question)} → ${plainText(tail)}`);
 }
 
 /** A question id as questions.ts makes them: its ask time, a sequence number and a random suffix. */

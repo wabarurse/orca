@@ -110,3 +110,18 @@ test("a failed inbox send leaves the question open and answerable", async () => 
   expect((await drain("q8", "orchestrator")).map((m) => m.text)).toEqual([`[${q!.id}] answer to "Retry?": second`]);
   expect(await list("q8")).toEqual([]);
 });
+
+test("unreadable or malformed question stores fail visibly instead of fabricating an empty unanswered queue", async () => {
+  expect(await list("missing-store")).toEqual([]);
+  mkdirSync(paths.project("bad-store"), { recursive: true });
+  writeFileSync(paths.questions("bad-store"), "not a directory");
+  await expect(list("bad-store")).rejects.toThrow();
+  mkdirSync(paths.questions("broken-question"), { recursive: true });
+  const file = join(paths.questions("broken-question"), "q.json");
+  writeFileSync(file, "{"); await expect(list("broken-question")).rejects.toThrow();
+  writeFileSync(file, JSON.stringify({ id: "q", status: "mystery" }));
+  await expect(list("broken-question")).rejects.toThrow("invalid question record");
+  expect(await Bun.file(file).json()).toEqual({ id: "q", status: "mystery" }); // no reset/migration
+  writeFileSync(file, JSON.stringify({ id: "q", text: "Q?", ts: "t", status: "answered", answer: 123 }));
+  await expect(list("broken-question")).rejects.toThrow("invalid question record");
+});

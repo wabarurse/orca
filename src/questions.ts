@@ -84,13 +84,21 @@ export async function ask(project: string, items: NewQuestion[]): Promise<Questi
 /** Every question, oldest first. Reads every file on each call: answered and
  * skipped files are kept as history, so this grows with the project. */
 export async function all(project: string): Promise<Question[]> {
-  const names = (await readdir(paths.questions(project)).catch(() => [])).filter((n) => n.endsWith(".json")).sort();
+  const names = (await readdir(paths.questions(project)).catch(err => { if (err.code === "ENOENT") return []; throw err; })).filter((n) => n.endsWith(".json")).sort();
   const out: Question[] = [];
   for (const name of names) {
     try {
-      out.push((await Bun.file(join(paths.questions(project), name)).json()) as Question);
-    } catch {
-      // Unreadable; skip it.
+      const q = await Bun.file(join(paths.questions(project), name)).json() as Question;
+      if (!q || typeof q.id !== "string" || typeof q.text !== "string" || typeof q.ts !== "string"
+        || !["open", "answered", "skipped"].includes(q.status)
+        || (q.options !== undefined && (!Array.isArray(q.options) || q.options.some(o => typeof o !== "string")))
+        || (q.default !== undefined && typeof q.default !== "string")
+        || (q.answer !== undefined && typeof q.answer !== "string")) throw new Error(`invalid question record: ${name}`);
+      out.push(q);
+    } catch (err) {
+      // A disappearing file may have been removed with the project. Other
+      // failures must reach the UI, not fabricate a zero unanswered badge.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
   }
   return out;

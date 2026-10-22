@@ -13,27 +13,28 @@ Conversation record 30
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
-2 agents running │ 1 message queued │ 1 question
-Help · commands & keys                                                  1–9/45
+2 agents running │ 1 message queued │ Inbox 1
+Help · commands & keys                                                  1–9/48
   Conversation
-  /inbox      Read structured tasks and PR links; confirmed merges leave the
-              inbox
+  /inbox      User inbox: Tasks / Questions; Shift+Tab switches sections,
+              Esc/Tab closes
   /agents     Browse and follow agent conversations
   /clear      Clear model context after confirmation; keep full history
-  /questions  Open questions; Enter answers or picks skip, Esc/Tab closes
+  /questions  Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab
+              Tasks
   /help       Commands and keyboard shortcuts; Esc closes
 
-  Projects
 ↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
-  /inbox      Read structured tasks and PR links; confirmed merges leave the
-              inbox
+  /inbox      User inbox: Tasks / Questions; Shift+Tab switches sections,
+              Esc/Tab closes
   /agents     Browse and follow agent conversations
   /clear      Clear model context after confirmation; keep full history
-  /questions  Open questions; Enter answers or picks skip, Esc/Tab closes
+  /questions  Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab
+              Tasks
   /help       Commands and keyboard shortcuts; Esc closes
 
   Projects
@@ -54,8 +55,10 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   Ctrl+N             New orchestrator
   Ctrl+Z / Ctrl+X    Previous / next project page
   Ctrl+B             Open or close projects
-  Ctrl+Q             Open or close questions; arrivals never open them
-  PgUp/PgDn / wheel  Scroll conversation, help or task inbox
+  Ctrl+Q             Inbox Questions toggle; arrivals never open Inbox
+  Shift+Tab (Inbox)  Switch Tasks / Questions; Esc or Tab closes without
+                     answering
+  PgUp/PgDn / wheel  Scroll conversation, help or Inbox Tasks
   Ctrl+C             Cancel selected turn/agent; twice within 2s exits,
                      keeping history
   Esc                Close panel, else leave agent view, else clear input
@@ -89,32 +92,34 @@ Conversation record 30
 │> draft 界                            │
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
-1 question
-Help                            1–8/92
+Inbox 1
+Help                            1–8/97
   Conversation
-  /inbox      Read structured tasks
-              and PR links; confirmed
-              merges leave the inbox
+  /inbox      User inbox: Tasks /
+              Questions; Shift+Tab
+              switches sections,
+              Esc/Tab closes
   /agents     Browse and follow agent
               conversations
   /clear      Clear model context
-              after confirmation; keep
 ↑↓ scroll · Esc close"
 `;
 
 exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
-  /inbox      Read structured tasks
-              and PR links; confirmed
-              merges leave the inbox
+  /inbox      User inbox: Tasks /
+              Questions; Shift+Tab
+              switches sections,
+              Esc/Tab closes
   /agents     Browse and follow agent
               conversations
   /clear      Clear model context
               after confirmation; keep
               full history
-  /questions  Open questions; Enter
-              answers or picks skip,
-              Esc/Tab closes
+  /questions  Inbox Questions
+              (Ctrl+Q); Enter answers
+              or picks skip; Shift+Tab
+              Tasks
   /help       Commands and keyboard
               shortcuts; Esc closes
 
@@ -155,11 +160,14 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   Ctrl+B
     Open or close projects
   Ctrl+Q
-    Open or close questions; arrivals
-    never open them
+    Inbox Questions toggle; arrivals
+    never open Inbox
+  Shift+Tab (Inbox)
+    Switch Tasks / Questions; Esc or
+    Tab closes without answering
   PgUp/PgDn / wheel
-    Scroll conversation, help or task
-    inbox
+    Scroll conversation, help or Inbox
+    Tasks
   Ctrl+C
     Cancel selected turn/agent; twice
     within 2s exits, keeping history
@@ -210,8 +218,8 @@ Conversation record 30
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
-2 agents running │ 1 message queued │ 1 question
-Help · commands & keys                                                37–45/45
+2 agents running │ 1 message queued │ Inbox 1
+Help · commands & keys                                                40–48/48
   Alt+D                Delete next word
   Home/End / Ctrl+A/E  Start / end of current line
   Ctrl+U / Ctrl+K      Delete to start / end of current line

@@ -11,8 +11,9 @@ const NAVIGATION: HelpEntry[] = [
   { label: "Ctrl+N", description: "New orchestrator" },
   { label: "Ctrl+Z / Ctrl+X", description: "Previous / next project page" },
   { label: "Ctrl+B", description: "Open or close projects" },
-  { label: "Ctrl+Q", description: "Open or close questions; arrivals never open them" },
-  { label: "PgUp/PgDn / wheel", description: "Scroll conversation, help or task inbox" },
+  { label: "Ctrl+Q", description: "Inbox Questions toggle; arrivals never open Inbox" },
+  { label: "Shift+Tab (Inbox)", description: "Switch Tasks / Questions; Esc or Tab closes without answering" },
+  { label: "PgUp/PgDn / wheel", description: "Scroll conversation, help or Inbox Tasks" },
   { label: "Ctrl+C", description: "Cancel selected turn/agent; twice within 2s exits, keeping history" },
   { label: "Esc", description: "Close panel, else leave agent view, else clear input" },
 ];

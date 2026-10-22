@@ -19,12 +19,12 @@ Queued 1/1 · orchestrator · isolated
 │> draft 界                                                                                        │
 │  second line                                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-0 agents running │ 1 message queued │ 1 question
-Task inbox · read-only                                                                       1–2/2
+0 agents running │ 1 message queued │ Inbox 1
+Inbox · [Tasks] / Questions · read-only                                                      1–2/2
 Name               | Summary                       | Status         | PR link
 Task one           | A brief structured summary    | queued         | https://github.com/owner/repo/
                    |                               |                | pull/62
-↑↓ / wheel · PgUp/PgDn · Home/End · r refresh · Esc close"
+Esc/Tab close · Shift+Tab Questions · ↑↓/PgUp/PgDn · r refresh"
 `;
 
 exports[`80x24 task inbox footer appearance 1`] = `
@@ -46,12 +46,12 @@ Queued 1/1 · orchestrator · isolated
 │> draft 界                                                                    │
 │  second line                                                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
-0 agents running │ 1 message queued │ 1 question
-Task inbox · read-only                                                   1–2/2
+0 agents running │ 1 message queued │ Inbox 1
+Inbox · [Tasks] / Questions · read-only                                  1–2/2
 Name           | Summary              | Status         | PR link
 Task one       | A brief structured   | queued         | https://github.com/owne
                | summary              |                | r/repo/pull/62
-↑↓ / wheel · PgUp/PgDn · Home/End · r refresh · Esc close"
+Esc/Tab close · Shift+Tab Questions · ↑↓/PgUp/PgDn · r refresh"
 `;
 
 exports[`40x24 task inbox footer appearance 1`] = `
@@ -71,12 +71,12 @@ Queued 1/1 · orch · isolated
 │  second line                         │
 └──────────────────────────────────────┘
 0 agents running │ 1 message queued
-1 question
-Inbox                            1–5/5
+Inbox 1
+Inbox · [Tasks]                  1–5/5
 Name: Task one
 Summary: A brief structured summary
 Status: queued
 PR link:
 https://github.com/owner/repo/pull/62
-↑↓ scroll · r refresh · Esc close"
+Esc close · Shift+Tab switch · r refresh"
 `;

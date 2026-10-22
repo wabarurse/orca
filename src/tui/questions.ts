@@ -20,7 +20,7 @@ import * as ed from "./editor";
 import type { EditState } from "./editor";
 import type { Key } from "./keys";
 import type { Line } from "./lines";
-import { dim, type QuestionMode, type QuestionView } from "./render";
+import { dim, plainText, type QuestionMode, type QuestionView } from "./render";
 import { answeredLine, questionReply, type AskedLookup } from "./restore";
 
 type Question = store.Question;
@@ -36,7 +36,7 @@ export interface QuestionStore {
 }
 
 export const fileStore: QuestionStore = {
-  stamp: (project) => stat(paths.questions(project)).then((s) => s.mtimeMs, () => -1),
+  stamp: (project) => stat(paths.questions(project)).then((s) => s.mtimeMs, err => { if (err.code === "ENOENT") return -1; throw err; }),
   all: store.all,
   list: store.list,
   answer: store.answer,
@@ -53,6 +53,9 @@ const SETTLE_MS = 1000;
 export interface PageQuestions {
   /** Open questions, oldest first, as of the last read. */
   open: Question[];
+  /** Unknown until a successful read; errors never masquerade as zero. */
+  loaded: boolean;
+  error?: string;
   /** Every question seen, by id (answered and skipped ones from the first read too), to read replies by their question's own text. */
   seen: Map<string, Question>;
   /** The questions dir's stamp at the last read, and when that read started (wall clock). */
@@ -82,11 +85,15 @@ export interface QuestionPage { project: string; name: string; questions: PageQu
 /** What the controller needs from the app. */
 export interface QuestionHost {
   page(): QuestionPage | undefined;
+  /** Captured page ownership; removed/deleting pages cannot publish late results. */
+  valid?(page: QuestionPage): boolean;
+  /** Explicit section navigation, never called by polling. */
+  opening?(page: QuestionPage): void;
   input: EditState;
   /** Columns the answer's text gets (the screen less the prompt), for ↑↓ between its lines. */
   width(): number;
   now(): number;
-  /** A note: on screen now, in an agent view too. */
+  /** A note in the captured project conversation, never an agent transcript. */
   say(line: string, page: QuestionPage): void;
   /** A line of the page's own history (an answered question), as the orchestrator's transcript will show it. */
   record(line: string, page: QuestionPage): void;
@@ -100,7 +107,7 @@ const EMPTY: EditState = { text: "", cursor: 0 };
 /** How long Enter, digits and typing are ignored after a question first shows. */
 export const QUESTION_DELAY_MS = 500;
 
-export const pageQuestions = (): PageQuestions => ({ open: [], seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, expanded: false, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
+export const pageQuestions = (): PageQuestions => ({ open: [], loaded: false, seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, expanded: false, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
 
 type Mode = "chat" | QuestionMode;
 /** What the input holds in a mode: the chat draft, the question's answer, or nothing (a row is being picked). */
@@ -151,16 +158,27 @@ export class Questions {
 
   private pollPage(page: QuestionPage): Promise<void> {
     const q = page.questions;
-    q.polling ??= this.read(page).catch(() => {}).finally(() => { q.polling = null; });
+    q.polling ??= this.read(page).catch(err => {
+      if (!this.valid(page)) return;
+      q.error = plainText(message(err)) || "Could not read questions.";
+      q.stamp = NaN;
+      this.host.draw();
+    }).finally(() => { q.polling = null; });
     return q.polling;
   }
+
+  private valid(page: QuestionPage): boolean { return this.host.valid?.(page) ?? true; }
 
   private async read(page: QuestionPage): Promise<void> {
     const q = page.questions;
     const started = Date.now();
     const stamp = await this.store.stamp(page.project);
+    if (!this.valid(page)) return;
     if (stamp === q.stamp && q.readAt - stamp > SETTLE_MS) return;
     const open = (await this.store.list(page.project)).filter((x) => !q.mine.has(x.id));
+    if (!this.valid(page)) return;
+    q.loaded = true;
+    q.error = undefined;
     q.stamp = stamp;
     q.readAt = started;
     this.update(page, open);
@@ -179,7 +197,7 @@ export class Questions {
     open = this.keepClosing(q, open);
     for (const x of open) q.seen.set(x.id, x);
     q.open = open;
-    if (!open.length) q.expanded = false;
+    if (before && !open.length) q.expanded = false;
     if (q.hidden && open.some((x) => !q.hidden!.has(x.id))) q.hidden = null;
     if (before && !open.some((x) => x.id === before.id)) this.headGone(page, before);
     else if (head(q)?.id !== before?.id) this.reset(page);
@@ -217,14 +235,14 @@ export class Questions {
       this.shown = { page, mode: "chat" };
     }
     if (typed.text.trim()) note += `; your unsent answer: ${typed.text}`;
-    this.host.say(dim(note), page);
+    this.host.say(dim(plainText(note)), page);
   }
 
   // --- what shows -------------------------------------------------------------
 
   /** The mode the active page wants now: what sync moves the input to. */
   private want(page = this.host.page()): Mode {
-    if (!page || page.view || !visible(page.questions)) return "chat";
+    if (!page || !this.valid(page) || page.view || !visible(page.questions)) return "chat";
 
     return page.questions.index === ownRow(page.questions) ? "answer" : "pick";
   }
@@ -259,7 +277,10 @@ export class Questions {
   sync(): void {
     const page = this.host.page();
     const want = this.want(page);
-    if (this.shown.page === page && this.shown.mode === want) return;
+    if (this.shown.page === page && this.shown.mode === want) {
+      if (page && want !== "chat") this.arm(page.questions, false);
+      return;
+    }
     const from = bufferOf(this.shown.mode);
     if (this.shown.page !== page || from !== bufferOf(want)) this.swap(page, want);
     if (page && want !== "chat") this.arm(page.questions, from === "chat");
@@ -296,6 +317,7 @@ export class Questions {
     const page = this.host.page();
     const mode = this.want(page);
     if (mode === "chat") return false;
+    if (page!.questions.closing) return true;
     if (typing(k)) return mode === "pick" || !this.ready(page!.questions);
     return plain(k) && TAKEN.has(k.name);
   }
@@ -305,6 +327,7 @@ export class Questions {
     this.sync();
     const page = this.host.page();
     if (!page || bufferOf(this.shown.mode) === "chat") return;
+    if (page.questions.closing) return;
     const named = this.keys[k.name];
     if (named) return named(page);
     if (!this.ready(page.questions)) return; // Enter, digits and typing wait out the delay
@@ -361,7 +384,7 @@ export class Questions {
     try {
       answer = store.clean(text, store.limits.answer, "answer");
     } catch (err) {
-      return this.host.say(dim(`not sent: ${message(err)}`), page);
+      return this.host.say(dim(`not sent: ${plainText(message(err))}`), page);
     }
     if (!answer) return this.host.say(dim("type an answer, or choose skip"), page);
     return this.close(page, answer);
@@ -371,19 +394,23 @@ export class Questions {
   private async close(page: QuestionPage, answer: string | null): Promise<void> {
     const q = page.questions;
     const h = head(q);
-    if (!h || q.closing) return;
+    if (!h || q.closing || !this.valid(page)) return;
     q.closing = true;
+    this.host.draw();
     try {
       if (answer === null) await this.store.skip(page.project, h.id);
       else await this.store.answer(page.project, h.id, answer);
+      if (!this.valid(page)) return;
       q.mine.add(h.id);
       this.host.record(answeredLine(h.text, answer, h.default), page);
       this.reset(page);
     } catch (err) {
-      if (!closedElsewhere(err)) return this.host.say(dim(`could not ${answer === null ? "skip" : "answer"}: ${message(err)}`), page);
+      if (!this.valid(page)) return;
+      if (!closedElsewhere(err)) return this.host.say(dim(`could not ${answer === null ? "skip" : "answer"}: ${plainText(message(err))}`), page);
       this.keepTyped(page, "already answered elsewhere; your answer was not sent");
     } finally {
       q.closing = false;
+      if (this.valid(page)) this.host.draw();
     }
     q.open = q.open.filter((x) => x.id !== h.id);
     if (!q.open.length) q.expanded = false;
@@ -392,7 +419,7 @@ export class Questions {
   }
 
   /** Close until explicit reopening, even if new questions arrive. */
-  private hide(page: QuestionPage): void {
+  hide(page: QuestionPage): void {
     page.questions.expanded = false;
     page.questions.hidden = new Set(page.questions.open.map((x) => x.id));
     this.sync();
@@ -410,15 +437,18 @@ export class Questions {
   /** /questions: read and explicitly open the queue. */
   async command(page: QuestionPage | undefined): Promise<void> {
     if (!page) return;
+    if (!this.valid(page) || page !== this.host.page()) return;
+    this.host.opening?.(page);
     const q = page.questions;
-    await q.polling;
-    q.stamp = NaN;
-    await this.pollPage(page);
     q.hidden = null;
-    q.expanded = q.open.length > 0;
-    if (!q.open.length) return this.host.say(dim("no open questions"), page);
-
+    q.expanded = true;
     this.sync();
     this.host.draw();
+    // Open synchronously. A late read may update the captured page's data, but
+    // must never reopen a closed panel, change sections, or steal another draft.
+    await q.polling;
+    if (!this.valid(page)) return;
+    q.stamp = NaN;
+    await this.pollPage(page);
   }
 }

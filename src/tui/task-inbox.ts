@@ -1,7 +1,7 @@
 // Read-only presentation of the durable registry. Never inspect agents/transcripts.
 import { taskPR, taskStatusLabels, type TaskRow } from "../tasks";
 import { wordWrap } from "./markdown";
-import { bold, sanitize, visibleLength, wrap } from "./render";
+import { bold, plainText, visibleLength, wrap } from "./render";
 
 export interface TaskInboxData {
   rows?: TaskRow[];
@@ -11,10 +11,7 @@ export interface TaskInboxData {
 
 /** Registry text is untrusted, even when it passed storage validation. No SGR,
  * OSC links, C0/C1 or bidi controls from fields/errors may reach the terminal. */
-export function inboxText(text: string): string {
-  return Bun.stripANSI(sanitize(text.replace(/\r\n?|\n|\t|\u2028|\u2029/g, " ")))
-    .replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
-}
+export const inboxText = plainText;
 const bounded = (text: string, width: number) => wordWrap(text, width).flatMap(row => wrap(row, width));
 
 /** Only the canonical structured URL, never a link found in name/summary/prose.
