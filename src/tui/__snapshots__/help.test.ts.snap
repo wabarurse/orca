@@ -14,21 +14,23 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ 1 question
-Help · commands & keys                                                  1–9/43
+Help · commands & keys                                                  1–9/45
   Conversation
+  /inbox      Read structured tasks and PR links; confirmed merges leave the
+              inbox
   /agents     Browse and follow agent conversations
   /clear      Clear model context after confirmation; keep full history
   /questions  Open questions; Enter answers or picks skip, Esc/Tab closes
   /help       Commands and keyboard shortcuts; Esc closes
 
   Projects
-  /projects              Browse projects: Enter opens, p pins, d deletes
-  /rename <name>         Change display name only; project ID stays fixed
 ↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
+  /inbox      Read structured tasks and PR links; confirmed merges leave the
+              inbox
   /agents     Browse and follow agent conversations
   /clear      Clear model context after confirmation; keep full history
   /questions  Open questions; Enter answers or picks skip, Esc/Tab closes
@@ -53,7 +55,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   Ctrl+Z / Ctrl+X    Previous / next project page
   Ctrl+B             Open or close projects
   Ctrl+Q             Open or close questions; arrivals never open them
-  PgUp/PgDn / wheel  Scroll conversation; scroll help while it is open
+  PgUp/PgDn / wheel  Scroll conversation, help or task inbox
   Ctrl+C             Cancel selected turn/agent; twice within 2s exits,
                      keeping history
   Esc                Close panel, else leave agent view, else clear input
@@ -88,20 +90,23 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 1 question
-Help                            1–8/89
+Help                            1–8/92
   Conversation
+  /inbox      Read structured tasks
+              and PR links; confirmed
+              merges leave the inbox
   /agents     Browse and follow agent
               conversations
   /clear      Clear model context
               after confirmation; keep
-              full history
-  /questions  Open questions; Enter
-              answers or picks skip,
 ↑↓ scroll · Esc close"
 `;
 
 exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
+  /inbox      Read structured tasks
+              and PR links; confirmed
+              merges leave the inbox
   /agents     Browse and follow agent
               conversations
   /clear      Clear model context
@@ -153,8 +158,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     Open or close questions; arrivals
     never open them
   PgUp/PgDn / wheel
-    Scroll conversation; scroll help
-    while it is open
+    Scroll conversation, help or task
+    inbox
   Ctrl+C
     Cancel selected turn/agent; twice
     within 2s exits, keeping history
@@ -206,7 +211,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ 1 question
-Help · commands & keys                                                35–43/43
+Help · commands & keys                                                37–45/45
   Alt+D                Delete next word
   Home/End / Ctrl+A/E  Start / end of current line
   Ctrl+U / Ctrl+K      Delete to start / end of current line

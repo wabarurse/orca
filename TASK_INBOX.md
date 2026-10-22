@@ -1,9 +1,60 @@
-# Structured task inbox (data/lifecycle)
+# Structured task inbox
 
 The task inbox is a **per-project registry**, not an agent-message inbox, queued
 user prompts, Ctrl+Q questions, or a scheduler. Nothing here consumes, answers,
-skips or dispatches those queues. There is no historical-chat migration and no
-TUI panel/command in this implementation.
+skips or dispatches those queues. There is no historical-chat migration or
+historical task reconstruction. Open the read-only table with **`/inbox`**.
+
+## Read-only TUI (`/inbox`)
+
+`/inbox` opens the selected project's active registry rows in a footer panel
+**below the multiline composer and counts**, like `/help`. It accepts no arguments
+and creates no project/session when no page is open. The table columns are
+**Name | Summary | Status | PR link**. The four stage labels are **queued**,
+**working**, **reviewing**, and **ready to merge**. Attention is explicit:
+**waiting**, **blocked**, **cancelled**, **closed**, or **unknown**, with its reason;
+a stage is not a claim that a process is currently running. Exit/report text never
+establishes readiness or completion.
+
+* **↑/↓**, **Page Up/Down**, **wheel**, **Home/End** scroll the panel, not the
+  conversation or composer. **Esc** closes it without leaving an agent view.
+  **r** rereads the local registry (not an immediate GitHub lookup).
+* Enter, typing and paste do nothing in this read-only panel. Close it to edit.
+  Opening/closing does not submit chat/answer drafts, answer/skip questions,
+  consume pending prompts, invoke a provider, or update task records. Existing
+  background turns/polling continue independently. Pending-input previews remain.
+* Global cancellation and page-navigation shortcuts still work. Ctrl+B opens
+  projects; Ctrl+Q replaces the panel with the explicit question toggle. Question
+  arrivals alone never open questions. Changing/closing/deleting pages closes the
+  panel; reopening starts a fresh read. Late results from old panels/pages are
+  ignored, including deletion/recreation of the same project ID.
+* Reads refresh through the existing TUI poll (normally every 2s), including after
+  watchdog/merge-watcher work. The existing GitHub watcher normally queries every
+  30s. A **confirmed** merge removes matching explicitly associated rows on refresh;
+  archived records remain on disk. No separate polling process, transcript scan,
+  branch/name guess, or archive pruning is added.
+* Loading and query failures are shown explicitly. A refresh failure labels any
+  retained snapshot as potentially stale, even while scrolled; it never means an
+  empty inbox. An empty registry means **no active registered tasks**, not that
+  historical/unregistered work completed. Offline or failed GitHub observation
+  cannot prove merge/readiness; stored status is the last observed state.
+* At 72+ columns the table has a pinned column heading; narrower terminals use
+  labelled records. Long fields and URLs wrap instead of silently disappearing.
+  The composer/header win on tiny screens; the panel can be hidden but still owns
+  its keys until Esc. Panel scrolling is transient and resize reflows its lines;
+  the underlying conversation/draft is not replaced. Very large registries are
+  read/validated and laid out in full, not paginated.
+* Only the canonical structured GitHub PR URL is linked. Each wrapped fragment
+  uses a validated OSC 8 hyperlink, with the actual URL also visible for terminals
+  without hyperlink support. No browser command is launched. Untrusted fields,
+  reasons and query errors have terminal styling/control/bidi sequences stripped;
+  unsafe/mismatched links are not used. Native hyperlink/wheel behavior depends on
+  the terminal; physical Apple Terminal wheel/shell-history isolation remains
+  unverified. Synthetic rendering tests do not establish that it is fixed.
+
+This is not a scheduler, task editor, historical archive browser, or a replacement
+for the separate message/question inboxes. The panel is never saved as chat or
+printed into the exit transcript. `/help` lists `/inbox` under Conversation.
 
 ## Producers and tools
 

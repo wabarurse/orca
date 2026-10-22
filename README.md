@@ -237,10 +237,11 @@ inference require validation with your account; automated tests use fake tokens.
 
 ## Web search
 
-There are **six tools**: `bash`, `spawn`, `message`, `ask`, `complexity`, and
-`web_search`. Search is available to every role (orchestrator: 5 tools, worker: 3,
-reviewer: 4). It uses the current model's existing Claude/Codex subscription,
-with no extra API key, search service, slash command or browser tool.
+There are **seven tools**: `bash`, `spawn`, `message`, `ask`, `complexity`,
+`web_search`, and `task`. Search and structured task access are available to every
+role (orchestrator: 6 tools, worker: 4, reviewer: 5). Search uses the current model's
+existing Claude/Codex subscription, with no extra API key, search service, slash
+command or browser tool.
 
 `web_search` accepts a public `query` and optional `max_results` (1–10, default 5),
 and returns source URLs, titles and actual quoted excerpts where supported.
@@ -258,5 +259,18 @@ task IDs independent of branch reuse. The persisted registry exposes task name,
 summary, queued/working/reviewing/ready-to-merge status and a verified PR link;
 confirmed merges archive rows without deleting history. Readiness requires an
 explicit reviewer validation of the current PR head. This is separate from
-message/question/prompt queues; no task table UI is added here yet. See
-[TASK_INBOX.md](TASK_INBOX.md) for the API, lifecycle and operational limits.
+message/question/prompt queues.
+
+**`/inbox`** opens a read-only **Name | Summary | Status | PR link** table below
+the composer/counts, showing only the selected project's active registered tasks.
+Waiting/blocked/cancelled/closed/unknown attention and query errors stay explicit;
+empty means no active registered tasks, not that unregistered work completed.
+Scroll with ↑/↓, Page Up/Down, wheel or Home/End; **r** refreshes the local snapshot;
+**Esc** closes without submitting or changing drafts. Ctrl+Q explicitly replaces
+it with questions; project changes close it and discard late reads. The existing
+poll/watchers refresh rows, so confirmed merged PRs disappear without deleting
+archive history. Long fields/verified URLs wrap; narrow terminals use labelled
+records. Links use the canonical structured URL (OSC 8 where supported); no browser
+command is launched. Status is last observed, not a real-time GitHub guarantee.
+See [TASK_INBOX.md](TASK_INBOX.md) for navigation, read-only/isolation guarantees,
+the API, lifecycle, terminal limitations and storage limits.

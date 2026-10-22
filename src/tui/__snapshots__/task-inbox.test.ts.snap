@@ -1,0 +1,82 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`100x24 task inbox footer appearance 1`] = `
+"── >[isolated] ─────────────────────────────────────────────────────────────────────────────────────
+model fake-model
+/isolated/repo
+owner/repo
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Conversation 23
+Conversation 24
+Conversation 25
+Conversation 26
+Conversation 27
+Conversation 28
+Conversation 29
+Queued 1/1 · orchestrator · isolated
+  1. pending input
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> draft 界                                                                                        │
+│  second line                                                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+0 agents running │ 1 message queued │ 1 question
+Task inbox · read-only                                                                       1–2/2
+Name               | Summary                       | Status         | PR link
+Task one           | A brief structured summary    | queued         | https://github.com/owner/repo/
+                   |                               |                | pull/62
+↑↓ / wheel · PgUp/PgDn · Home/End · r refresh · Esc close"
+`;
+
+exports[`80x24 task inbox footer appearance 1`] = `
+"── >[isolated] ─────────────────────────────────────────────────────────────────
+model fake-model
+/isolated/repo
+owner/repo
+────────────────────────────────────────────────────────────────────────────────
+Conversation 23
+Conversation 24
+Conversation 25
+Conversation 26
+Conversation 27
+Conversation 28
+Conversation 29
+Queued 1/1 · orchestrator · isolated
+  1. pending input
+┌──────────────────────────────────────────────────────────────────────────────┐
+│> draft 界                                                                    │
+│  second line                                                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+0 agents running │ 1 message queued │ 1 question
+Task inbox · read-only                                                   1–2/2
+Name           | Summary              | Status         | PR link
+Task one       | A brief structured   | queued         | https://github.com/owne
+               | summary              |                | r/repo/pull/62
+↑↓ / wheel · PgUp/PgDn · Home/End · r refresh · Esc close"
+`;
+
+exports[`40x24 task inbox footer appearance 1`] = `
+"── >[isolated] ─────────────────────────
+model fake-model
+/isolated/repo
+owner/repo
+────────────────────────────────────────
+Conversation 26
+Conversation 27
+Conversation 28
+Conversation 29
+Queued 1/1 · orch · isolated
+  1. pending input
+┌──────────────────────────────────────┐
+│> draft 界                            │
+│  second line                         │
+└──────────────────────────────────────┘
+0 agents running │ 1 message queued
+1 question
+Inbox                            1–5/5
+Name: Task one
+Summary: A brief structured summary
+Status: queued
+PR link:
+https://github.com/owner/repo/pull/62
+↑↓ scroll · r refresh · Esc close"
+`;
