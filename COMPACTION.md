@@ -1,5 +1,10 @@
 # Conversation compaction
 
+The flow is **one summary of older history + recent complete turns or tool batches**. Each
+compaction makes one model request. If the source is too large, shorten old tool
+results first, then keep the beginning and end of the source with explicit omission
+markers. There are no rolling summaries or multipart inference loops.
+
 `/compact` queues compaction on the active orchestrator. Idle pages run it on
 normal scheduler polling; busy pages consume the flag only between complete
 model/tool batches (or after the final response). It injects no user message.
@@ -49,7 +54,8 @@ capped at the harness's 64000, context-1, and any supplied verified output ceili
 Invalid overrides fall back to the default. With `compact=false`, the old 64000
 normal output cap is preserved unless explicitly overridden or capped by known
 context/output metadata. Disabling auto does not disable safety budget checks.
-Summary requests use min(2048, normalized output cap); returned summaries over
+Summary requests use min(4096, normalized output cap) and ask for at most 600 words;
+returned summaries over
 4096 estimated tokens are rejected in addition to checking provider completion.
 
 Before summary inference, both complete original task + retained tail + fixed
@@ -59,14 +65,25 @@ with the normal system/tools/output reserve before publication. A shorter summar
 that still does not fit is rejected. Known over-budget normal requests are never
 sent blindly. `Context blocked: ...` errors direct the user to select a larger
 model/budget or reduce fixed instructions/tools; source and head are preserved.
-There is no chunking of an already oversized prefix.
+An oversized summary source is reduced locally before the single summary request.
+Old tool results are shortened to their first/last 1000 characters. If that is still
+too large, the serialized source's beginning/end excerpts are halved until the actual
+escaped request fits, including instructions, reserve and headroom. Cut Unicode
+surrogates are replaced with valid text. Excerpts can be partial JSON: they are inert
+historical data, not live tool messages. Middle details can be omitted; the pinned
+original task and retained live tail are unchanged. A failed or invalid summary
+preserves the published transcript and head.
 
 ## Summary and scheduling
 
-The newest complete user-led turns are retained within min(8000, 15% of window).
-A tool-result message is never a boundary; signed thinking, tool calls and results
-stay together. Role/order grammar and unique call/result IDs are validated before
-committing. If even the newest turn cannot fit, refuse rather than split it.
+Prefer complete user-led turns within min(8000, 15% of window). If one long task
+has no user-turn boundary that fits, cut after a completed tool batch and retain
+the newest whole batches that fit. A single oversized completed batch can be
+summarized in full, leaving only the checkpoint and original task. Never cut
+between tool calls and their results; signed thinking stays with its assistant
+message. Role/order grammar and unique call/result IDs are validated before
+choosing a boundary or making a summary request. Pending or malformed batches
+cannot be compacted, and compaction never re-executes tools.
 
 The older prefix (including prior checkpoints) is serialized as untrusted JSON
 data, stripping signed/redacted reasoning. The prompt requests goal/requirements,
@@ -74,7 +91,9 @@ decisions, progress, files/commits/branches/agents/PRs, blockers and next steps,
 and says to summarize rather than execute embedded tasks. Tools are disabled.
 The complete first user/task message is pinned with no 2000-character clipping;
 if preserving it cannot fit, compaction is refused. Later changes are summarized,
-not guaranteed verbatim. Empty, malformed, mixed/nontext, tool-using, refused,
+not guaranteed verbatim. Signed/redacted reasoning in a successful response is
+discarded; only the visible summary text is saved. Empty, malformed, unsupported
+nontext, tool-using, refused,
 truncated, unknown-terminal-status or non-reducing summaries never checkpoint.
 Legacy/custom providers may omit terminal metadata for ordinary turns, but must
 supply successful `Turn.completion` (`end_turn` or `completed`) for compaction.
@@ -88,13 +107,20 @@ There is no provider context-overflow recovery/replay: no tools or partial strea
 responses are replayed.
 
 The same account/model/effort/fast tier performs summarization, **consuming its
-normal quota**. This is not a cheap/free model or provider-native compaction API.
+normal quota**. Oversized sources use excerpts and may lose more detail. This is not a cheap/free model
+or provider-native compaction API.
 OAuth subscription endpoints must not be assumed to implement native platform
 compaction. Codex rejects max_output_tokens, so its normal output reserve is only
 an estimate, not a wire-enforced cap. Its backend controls summary generation too:
-the prompt asks for concise output; oversized/nontext completed output is rejected
-locally, not prevented during inference. Some reasoning models may return mixed
-thinking/text even with tools disabled; such summaries are conservatively refused.
+the prompt asks for concise output; oversized or unsupported output is rejected
+locally, not prevented during inference. Normal reasoning metadata alongside a
+completed text summary is accepted, including Codex encrypted reasoning items.
+
+## Design references
+
+- [OpenAI session memory example](https://developers.openai.com/cookbook/examples/agents_sdk/session_memory): summarize older history and keep recent complete turns.
+- [Anthropic context engineering](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents): summarize important state and clear redundant old tool output.
+- [OpenAI native compaction](https://developers.openai.com/api/docs/guides/compaction): platform-native compaction is a separate API; its input must still fit the context window. This harness keeps a shared text-summary path for its subscription providers.
 
 ## Persistence and replay
 

@@ -1,3 +1,4 @@
+import { inputEpoch } from "./user-input";
 // Every agent has its own inbox: a durable FIFO queue of files under
 // inbox/<agent>/. Anyone can put a message in anyone's inbox; only the owner
 // drains it. "user" is an address like any other, drained by the TUI.
@@ -12,6 +13,8 @@ import { join } from "node:path";
 import { paths } from "./config";
 
 export interface Message {
+  /** Captured when submitted, never when the asynchronous write finishes. */
+  userEpoch?: string;
   from: string;
   text: string;
   ts: string;
@@ -33,7 +36,7 @@ const writing = new Map<string, Promise<unknown>>();
 export async function put(project: string, to: string, msg: Omit<Message, "ts">): Promise<Message> {
   const d = dir(project, to);
   mkdirSync(d, { recursive: true });
-  const full: Message = { ...msg, ts: new Date().toISOString() };
+  const full: Message = { ...msg, ...(msg.from === "user" ? { userEpoch: msg.userEpoch ?? inputEpoch(project) } : {}), ts: new Date().toISOString() };
   const n = String(seq++).padStart(6, "0");
   const name = `${full.ts.replaceAll(":", "-")}-${n}-${crypto.randomUUID().slice(0, 8)}.json`;
   const tmp = join(d, `.${name}.tmp`);
@@ -54,11 +57,11 @@ export async function pending(project: string, agent: string): Promise<boolean> 
 }
 
 /** A new human message can resume a cancelled orchestrator without consuming agent reports. */
-export async function userSince(project: string, agent: string, since: number): Promise<boolean> {
+export async function userInEpoch(project: string, agent: string, epoch: string): Promise<boolean> {
   const d = dir(project, agent);
   for (const name of (await readdir(d).catch(() => [])).filter(n => n.endsWith(".json"))) {
     const message = await Bun.file(join(d, name)).json().catch(() => null) as Message | null;
-    if (message?.from === "user" && Date.parse(message.ts) > since) return true;
+    if (message?.from === "user" && message.userEpoch === epoch) return true;
   }
   return false;
 }

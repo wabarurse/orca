@@ -49,3 +49,42 @@ for (const mode of ["short", "zero", "partial-error", "sync", "close", "rename",
   expect(await open(f.path).chain()).toEqual(await t.chain());
   expect(open(f.path).history!()).toEqual(t.history!());
 });
+
+for (const boundary of ["write", "sync", "close", "renamed", "directory"]) test(`checkpoint cancellation at ${boundary}: precommit preserves bytes/head, postcommit remains published`, async () => {
+  const f = fixture("none");
+  const controller = new AbortController();
+  let armed = false;
+  const io: Storage = { ...disk,
+    async rename(from, to) { await disk.rename(from, to); if (armed && boundary === "renamed") controller.abort(Error("cancelled checkpoint")); },
+    async open(path, flags) {
+      const file = await disk.open(path, flags);
+      const cancel = (at: string) => { if (armed && at === boundary) controller.abort(Error("cancelled checkpoint")); };
+      return {
+        async write(bytes) { const result = await file.write(bytes); cancel("write"); return result; },
+        async sync() { await file.sync(); cancel(flags === "wx" ? "sync" : "directory"); },
+        async close() { await file.close(); if (flags === "wx") cancel("close"); },
+      };
+    },
+  };
+  const t = open(f.path, io);
+  await t.append({ type: "message", message: { role: "user", content: "keep exact original bytes" } });
+  const before = await Bun.file(f.path).text(), head = t.head();
+  armed = true;
+  const op = t.append({ type: "summary", text: "summary", retained: [], boundary: head }, controller.signal);
+  if (["renamed", "directory"].includes(boundary)) {
+    await op;
+    expect(t.head()).not.toBe(head);
+    expect((await Bun.file(f.path).text()).startsWith(before)).toBe(true);
+  } else {
+    await expect(op).rejects.toThrow("cancelled checkpoint");
+    expect(t.head()).toBe(head);
+    expect(await Bun.file(f.path).text()).toBe(before);
+  }
+  expect(open(f.path).head()).toBe(t.head());
+  expect(await open(f.path).chain()).toEqual(await t.chain());
+  const { readdir } = await import("node:fs/promises");
+  expect((await readdir(join(f.path, ".."))).filter(p => p.endsWith(".pending"))).toEqual([]);
+  // Mandatory tool-result cleanup is intentionally nonabortable.
+  await t.append({ type: "message", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "cancelled-tool", content: "Cancelled by user", is_error: true }] } });
+  expect(open(f.path).head()).toBe(t.head());
+});

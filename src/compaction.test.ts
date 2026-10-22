@@ -53,10 +53,10 @@ test("atomic checkpoint, repeated compactions and restart keep original UI histo
   expect(open(transcript.path).history!()).toHaveLength(7);
   expect((await transcript.chain()).at(-1)?.content).toBe("new task");
 });
-test("complete tool/thinking turn stays together", () => {
+test("complete tool/thinking batch stays together, including when the entire batch must be summarized", () => {
   const messages: any[] = [{ role: "user", content: "old" }, { role: "assistant", content: "done" }, { role: "user", content: "task" }, { role: "assistant", content: [{ type: "thinking", thinking: "x", signature: "s" }, { type: "tool_use", id: "a", name: "bash", input: {} }, { type: "tool_use", id: "b", name: "bash", input: {} }] }, { role: "user", content: [{ type: "tool_result", tool_use_id: "a", content: "a" }, { type: "tool_result", tool_use_id: "b", content: "b" }] }];
   expect(splitHistory(messages)).toBe(2);
-  expect(splitHistory(messages, 1)).toBe(0);
+  expect(splitHistory(messages, 1)).toBe(messages.length);
 });
 for (const failure of ["", "x".repeat(30000), new Error("offline")]) test(`failed summary leaves bytes/head/context unchanged: ${String(failure).slice(0, 20)}`, async () => {
   const { deps, transcript } = await fixture();

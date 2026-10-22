@@ -32,6 +32,18 @@ for (const content of [[], [text("")], [toolUse("a", "bash", {})], [text("summar
   const { deps, transcript } = await fixture(async () => ({ ...end(), content: content as any }));
   const before = await saved(transcript); expect(await compact(deps, true)).toBe(false); expect(await saved(transcript)).toEqual(before);
 });
+test("completed Claude summary keeps visible text and discards signed/redacted reasoning", async () => {
+  const { deps, transcript } = await fixture(async () => ({ ...end(), content: [
+    { type: "thinking", thinking: "private reasoning", signature: "signed" },
+    { type: "redacted_thinking", data: "redacted" },
+    text("Goal and progress."),
+  ] }));
+  expect(await compact(deps, true)).toBe(true);
+  const checkpoint = (await transcript.chain())[0]!.content;
+  expect(checkpoint).toContain("Goal and progress.");
+  expect(checkpoint).not.toContain("private reasoning");
+  expect(checkpoint).not.toContain("redacted");
+});
 test("full original >2000 chars survives repeated checkpoints; amendment remains historical data and warning identifies source", async () => {
   const { deps, transcript, original } = await fixture();
   expect(await compact(deps, true)).toBe(true);
@@ -40,10 +52,9 @@ test("full original >2000 chars survives repeated checkpoints; amendment remains
   await transcript.append({ type: "message", message: { role: "user", content: "continue" } });
   expect(await compact(deps, true)).toBe(true); context = JSON.stringify(await transcript.chain()); expect(context).toContain(original); expect(context).toContain("use green");
 });
-for (const kind of ["original", "source", "system", "tools"]) test(`blocked ${kind} makes zero summary/normal requests`, async () => {
+for (const kind of ["original", "system", "tools"]) test(`blocked ${kind} makes zero summary/normal requests`, async () => {
   let calls = 0; const { deps, transcript } = await fixture(async () => { calls++; return end(); });
   if (kind === "original") { deps.transcript = open(join(deps.ctx.cwd, "huge.jsonl")); await deps.transcript.append({ type: "message", message: { role: "user", content: "u".repeat(60000) } }); await deps.transcript.append({ type: "message", message: { role: "user", content: "next" } }); }
-  if (kind === "source") deps.compaction!.contextLimit = 10000;
   if (kind === "system") deps.system = "s".repeat(60000);
   if (kind === "tools") deps.tools = { x: { spec: { name: "x", description: "d".repeat(60000), input_schema: { type: "object" } }, run: async () => "" } };
   const before = await saved(deps.transcript);

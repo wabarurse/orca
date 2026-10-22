@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cancelSession, watchCancellation } from "./cancellation";
+import { cancelSession, publishLaunch, watchCancellation } from "./cancellation";
 import { paths } from "./config";
 import { runAgent } from "./agent";
 import { open } from "./transcript";
@@ -22,15 +22,18 @@ async function until(check: () => boolean) {
 
 test("session cancellation targets only one role and ignores stale requests on restart", async () => {
   const worker = new AbortController(), reviewer = new AbortController();
-  const off = watchCancellation("p", "worker-x", worker);
-  const otherOff = watchCancellation("p", "reviewer-x", reviewer);
+  publishLaunch("p", "worker-x", "first");
+  publishLaunch("p", "reviewer-x", "reviewer");
+  const off = watchCancellation("p", "worker-x", worker, "first");
+  const otherOff = watchCancellation("p", "reviewer-x", reviewer, "reviewer");
   let nextOff = () => {};
   try {
     await cancelSession("p", "worker-x");
     await until(() => worker.signal.aborted);
     expect(reviewer.signal.aborted).toBe(false);
     const next = new AbortController();
-    nextOff = watchCancellation("p", "worker-x", next);
+    publishLaunch("p", "worker-x", "next");
+    nextOff = watchCancellation("p", "worker-x", next, "next");
     await Bun.sleep(150);
     expect(next.signal.aborted).toBe(false);
     await cancelSession("p", "worker-x");
@@ -63,6 +66,7 @@ test("selected worker cancels real bash, saves paired results, exits cleanly, an
 test("cancellation during supervised startup targets that run, never its replacement", async () => {
   const project = "startup", id = "reviewer-x";
   await Bun.write(`${paths.runs(project)}/${id}.json`, JSON.stringify({ run: "first" }));
+  publishLaunch(project, id, "first");
   await cancelSession(project, id);
   const first = new AbortController(), next = new AbortController();
   const off = watchCancellation(project, id, first, "first");
@@ -72,4 +76,50 @@ test("cancellation during supervised startup targets that run, never its replace
     await Bun.sleep(110);
     expect(next.signal.aborted).toBe(false);
   } finally { off(); nextOff(); }
+});
+
+test("undefined and stale run requests never match a later exact launch", async () => {
+  const project = "foreign", id = "worker-x";
+  publishLaunch(project, id, "new");
+  for (const run of [undefined, "old"]) {
+    await Bun.write(`${paths.transcript(project, id)}.cancel`, JSON.stringify({ token: "foreign", run }));
+    const controller = new AbortController();
+    const off = watchCancellation(project, id, controller, "new");
+    try { await Bun.sleep(110); expect(controller.signal.aborted).toBe(false); }
+    finally { off(); }
+  }
+});
+
+test("cancelled notice reaches orchestrator with non-recovery policy; only user continuation spawns again", async () => {
+  const { supervise } = await import("./exits");
+  const { Cancelled } = await import("./cancellation");
+  const { createOrchestrator } = await import("./orchestrator");
+  const { makeSpawn } = await import("./tools/spawn");
+  const project = "cancel-notice";
+  await supervise({ project, id: "worker-x", run: "cancelled", role: "worker", branch: "x", cwd: home }, async t => {
+    await t.reported(); // cancellation is still distinct even just after a report
+    throw new Cancelled();
+  });
+  let calls = 0, starts = 0;
+  const provider: import("./providers").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
+    calls++;
+    const messages = JSON.stringify(req.messages);
+    expect(messages).toContain("[agent-cancelled]");
+    expect(messages).not.toContain("[agent-exit]");
+    expect(messages).toContain("leave stopped until the user explicitly authorizes continuation");
+    expect(req.system).toContain("no respawn or tool retry without explicit user authorization");
+    if (calls === 2) {
+      expect(messages).toContain("Continue worker-x");
+      return { stop: "tool_use", content: [toolUse("restart", "spawn", { branch: "x", prompt: "Continue authorized task" })] };
+    }
+    return { stop: "end", content: [text("stopped as requested")] };
+  } };
+  const orch = await createOrchestrator({ project, provider, write() {}, tools: { spawn: makeSpawn({ async running() { return []; }, async start() { starts++; }, async stop() {} }) } });
+  await orch.turn();
+  expect(calls).toBe(1);
+  expect(starts).toBe(0);
+  expect(await orch.pending()).toBe(false);
+  await orch.say("Continue worker-x");
+  await orch.turn();
+  expect(starts).toBe(1);
 });

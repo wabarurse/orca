@@ -157,3 +157,81 @@ test("a new external user message (including a question answer) resumes a paused
   expect(provider.calls).toHaveLength(1);
   expect(JSON.stringify(provider.calls[0]!.messages)).toContain("new answer");
 });
+
+test("say submitted before cancellation cannot resume when its persistence finishes afterward", async () => {
+  const project = "delayed-say";
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let defer = true;
+  const provider = fakeProvider([[text("resumed with both messages")]]);
+  const orch = await createOrchestrator({ project, provider, tools: {}, write() {},
+    put: async (...args) => { if (defer) await gate; return put(...args); },
+  });
+  const earlier = orch.say("submitted before cancel");
+  orch.cancel!();
+  defer = false;
+  release();
+  await earlier;
+  expect(await orch.pending()).toBe(false);
+  await orch.turn();
+  expect(provider.calls).toHaveLength(0);
+  await orch.say("authorized later");
+  await orch.turn();
+  expect(provider.calls[0]!.messages.at(-1)?.content).toBe("[user] submitted before cancel\n\n[user] authorized later");
+});
+
+test("external sends and repeated cancellations are ordered even at one timestamp, with no queued input lost", async () => {
+  const { spyOn } = await import("bun:test");
+  const time = spyOn(Date.prototype, "toISOString").mockReturnValue("2026-01-01T00:00:00.000Z");
+  const project = "equal-time";
+  const provider = fakeProvider([[text("all received")]]);
+  const orch = await createOrchestrator({ project, provider, tools: {}, write() {} });
+  try {
+    const old = put(project, "orchestrator", { from: "user", text: "before first cancel" });
+    orch.cancel!();
+    await old;
+    expect(await orch.pending()).toBe(false);
+    const between = put(project, "orchestrator", { from: "user", text: "between cancels" });
+    orch.cancel!();
+    await between;
+    expect(await orch.pending()).toBe(false);
+    await put(project, "orchestrator", { from: "worker-other", text: "background" });
+    expect(await orch.pending()).toBe(false);
+    await put(project, "orchestrator", { from: "user", text: "after second cancel" });
+    expect(await orch.pending()).toBe(true);
+    await orch.turn();
+    expect(provider.calls[0]!.messages.at(-1)?.content).toBe("[user] before first cancel\n\n[user] between cancels\n\n[worker-other] background\n\n[user] after second cancel");
+  } finally { time.mockRestore(); }
+});
+
+test("question answers capture authorization at submission, not after asynchronous question writes", async () => {
+  const { answer, ask } = await import("./questions");
+  const project = "question-order";
+  const provider = fakeProvider([[text("question received")]]);
+  const orch = await createOrchestrator({ project, provider, tools: {}, write() {} });
+  const [first, second] = await ask(project, [{ text: "First?" }, { text: "Second?" }]);
+  const preCancel = answer(project, first!.id, "old answer");
+  orch.cancel!();
+  await preCancel;
+  expect(await orch.pending()).toBe(false);
+  await answer(project, second!.id, "new answer");
+  expect(await orch.pending()).toBe(true);
+  await orch.turn();
+  const input = JSON.stringify(provider.calls[0]!.messages);
+  expect(input).toContain("old answer");
+  expect(input).toContain("new answer");
+});
+
+test("the real CLI send resumes a cancelled orchestrator across processes", async () => {
+  const project = "cli-resume";
+  const provider = fakeProvider([[text("cli received")]]);
+  const orch = await createOrchestrator({ project, provider, tools: {}, write() {} });
+  orch.cancel!();
+  const proc = Bun.spawn(["bun", `${import.meta.dir}/cli.ts`, "msg", project, "external continuation"], {
+    env: { ...process.env, PARALLELS_HOME: home }, stdout: "pipe", stderr: "pipe",
+  });
+  expect(await proc.exited).toBe(0);
+  expect(await orch.pending()).toBe(true);
+  await orch.turn();
+  expect(JSON.stringify(provider.calls[0]!.messages)).toContain("external continuation");
+});

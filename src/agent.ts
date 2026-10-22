@@ -1,4 +1,4 @@
-import { watchCancellation } from "./cancellation";
+import { publishLaunch, watchCancellation } from "./cancellation";
 import type { RequestSettings } from "./project-settings";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/prompts.ts). The task
@@ -210,6 +210,9 @@ export function createAgent(input: AgentDeps) {
  * Returns the process exit code.
  */
 export async function runAgent(opts: AgentOptions): Promise<number> {
+  const run = opts.run ?? crypto.randomUUID();
+  if (!opts.run) publishLaunch(opts.project, sessionId(opts.role, opts.branch), run);
+  opts = { ...opts, run };
   if (opts.role === "orchestrator" || !opts.branch) {
     await startAgent(opts);
     return 0;
@@ -227,7 +230,7 @@ export async function runAgent(opts: AgentOptions): Promise<number> {
 
 async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> {
   const cancellation = new AbortController();
-  const unwatch = watchCancellation(opts.project, sessionId(opts.role, opts.branch), cancellation, opts.run);
+  const unwatch = watchCancellation(opts.project, sessionId(opts.role, opts.branch), cancellation, opts.run!);
   try { await agentSession(opts, cancellation.signal, tracker); }
   catch (error) { throw cancellation.signal.aborted ? cancellation.signal.reason : error; }
   finally { unwatch(); }

@@ -1,6 +1,6 @@
 // The terminal behind the TUI: raw mode, bracketed paste, size and key
-// events. No alternate screen: the TUI is inline, writing into the normal
-// screen and its scrollback. The real one wraps stdin/stdout; tests pass a
+// events. The alternate screen keeps sticky bars separate from the shell's
+// scrollback; mouse reporting lets the app scroll its middle viewport. Tests pass a
 // fake with the same shape. Opening asks the terminal for its background
 // colour (OSC 11) once, without blocking: a reply within BG_REPLY_MS sets the
 // user background's shade (style.ts) and settles `background` (so does the
@@ -27,11 +27,11 @@ export interface Terminal {
   background?: Promise<void>;
 }
 
-// Bracketed paste, so a pasted newline is text, not Enter. Leaving keeps the screen as it is.
-const ENTER = "\x1b[?2004h";
-const LEAVE = "\x1b[?2004l\x1b[?25h";
+// Restore the primary screen and disable all modes we enabled on every exit path.
+const ENTER = "\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h";
+const LEAVE = "\x1b[0m\x1b[?1006l\x1b[?1000l\x1b[?2004l\x1b[?1049l\x1b[?25h";
 /** On a crash or signal: end any synchronized update, paste mode and a hidden cursor first. */
-const RESCUE = "\x1b[?2026l\x1b[?2004l\x1b[?25h";
+const RESCUE = `\x1b[?2026l${LEAVE}`;
 
 /** The parts of `process` the crash and signal handlers use; tests pass a fake. */
 export interface Proc {

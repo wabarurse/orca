@@ -7,18 +7,20 @@ bun install
 bun src/cli.ts start [project] [git-url]
 ```
 
-`start` opens a bare inline TUI, like Claude Code and Codex, with one page per
-orchestrator (one per project). It does not take over the screen: replies go
-into your terminal's normal scrollback (scroll with the terminal or the mouse)
-and only the bottom region (running calls, the input, counts and panels)
-is redrawn; quitting leaves everything printed in place. The orchestrator's
+`start` opens a TUI with one page per orchestrator (one per project). Orchestrator
+tabs and project details stay at the top; the input, counts and panels stay at
+the bottom. The conversation scrolls between them with Page Up/Page Down or the
+mouse wheel. Hold Shift for native terminal text selection. Only changed screen
+rows are redrawn. Quitting restores your shell and prints the active conversation
+into its normal scrollback. The orchestrator's
 replies are rendered as markdown (headings, emphasis, lists, quotes, code
 blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that
 repository: an `orch-xxxx` project cloned from its origin (reused next time you
 start there). With no project named it also reopens every project under
-`~/.parallels/projects`. A shaded inline header shows the project, cached model,
-directory and remote. It is committed with the page, not pinned to the screen.
+`~/.parallels/projects`. The shaded, pinned header shows the project, cached model,
+effort, fast mode, directory and remote, and refreshes when settings change.
+Short terminals collapse header details to keep the input usable.
 The bottom band puts the input first, then running worker/reviewer counts,
 queued messages and `N questions · Ctrl+Q to view`; every menu and question
 panel opens below the input. A running turn's "thinking…/working…" shimmers. Like Codex, the input and your own messages sit on a
@@ -47,6 +49,13 @@ only that worker/reviewer, preserving its transcript and worktree; the existing
 read-only (`/back` to talk to the orchestrator). A hint appears on the first press;
 a second Ctrl+C within two seconds exits the harness (`/quit` also exits). Exiting
 cancels in-process orchestrator turns but leaves background agents alone.
+
+Cancellation notices use `[agent-cancelled]`, not crash recovery's `[agent-exit]`:
+the orchestrator must leave the agent stopped until the user explicitly authorizes
+continuation. Input submitted before cancellation (including messages held during
+login or still being persisted) stays queued but cannot resume a paused turn.
+Ordering uses submission epochs rather than millisecond timestamps; a later UI,
+CLI, or question reply resumes even in the same clock tick.
 
 Cancellation cannot undo side effects already completed by tools. Shell cancellation
 kills the shell's process group (including ordinary children); independently detached

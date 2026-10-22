@@ -100,7 +100,10 @@ export function noticeText(id: string, what: string, s: Pick<RunState, "role" | 
   if (s.tool && s.tool !== s.step) facts.push(`last tool: ${s.tool}`);
   facts.push(`uncommitted changes: ${dirty ?? "unknown"}`);
   const sep = what.startsWith("'") ? "" : " ";
-  return `[agent-exit] ${id}${sep}${oneLine(what, 600)} (${facts.join("; ")})`;
+  const cancelled = what === "cancelled by user";
+  const tag = cancelled ? "agent-cancelled" : "agent-exit";
+  const policy = cancelled ? "; leave stopped until the user explicitly authorizes continuation" : "";
+  return `[${tag}] ${id}${sep}${oneLine(what, 600)} (${facts.join("; ")})${policy}`;
 }
 
 /** Close the run and send its notice to the orchestrator from `id`. False when the run was already closed. */
@@ -199,7 +202,7 @@ export interface SuperviseOptions {
  * `what` with the facts from the in-memory state. Returns whether a notice went out.
  */
 async function closeRun(info: RunInfo, s: RunState, what: string, gitMs: number, log: (s: string) => void): Promise<boolean> {
-  if (s.state === "reported") {
+  if (s.state === "reported" && what !== "cancelled by user") {
     await claim(info.project, info.id, info.run);
     return false;
   }

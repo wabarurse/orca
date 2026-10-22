@@ -1,3 +1,4 @@
+import { publishLaunch } from "./cancellation";
 import { command, run } from "./proc";
 // Starts agents. v1 has one backend: a git worktree plus a tmux window on this
 // machine. A docker/container backend comes later with the same interface, so
@@ -13,6 +14,8 @@ import { paths } from "./config";
 import type { Role } from "./transcript";
 
 export interface StartOptions {
+  /** Exact launch, published before this session becomes selectable. */
+  run?: string;
   signal?: AbortSignal;
   project: string;
   role: Role;
@@ -180,7 +183,9 @@ export const local: Runner = {
     }
     const session = sessionName(opts.project);
     await tmux.ensureSession(session, paths.repo(opts.project), opts.signal);
-    await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, agentCommand(opts), opts.signal);
+    const run = opts.run ?? crypto.randomUUID();
+    if (!opts.run) publishLaunch(opts.project, sessionId(opts.role, opts.branch), run);
+    await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, agentCommand(opts, run), opts.signal);
   },
 
   async stop(project, branch) {

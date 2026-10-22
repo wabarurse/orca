@@ -56,7 +56,7 @@ export type NewEntry = Entry extends infer E
 export interface Transcript {
   path: string;
   /** Append one entry and return it with uuid/ts filled in. */
-  append(entry: NewEntry): Promise<Entry>;
+  append(entry: NewEntry, signal?: AbortSignal): Promise<Entry>;
   /** Walk from the latest leaf to the root (or latest summary) and return API messages. */
   chain(): Promise<MessageParam[]>;
   /** The entries of that walk, oldest first, the summary (if any) first: what the conversation is now. */
@@ -102,13 +102,13 @@ export function open(path: string, io: Storage = disk): Transcript {
   const byUuid = load(path);
   let head = [...byUuid.keys()].at(-1) ?? null;
   const branch = () => walk(byUuid, head);
-  async function append(partial: NewEntry): Promise<Entry> {
+  async function append(partial: NewEntry, signal?: AbortSignal): Promise<Entry> {
     const entry = { ...partial, parentUuid: partial.parentUuid ?? head,
       uuid: crypto.randomUUID(), ts: new Date().toISOString() } as Entry;
     await publish(path, JSON.stringify(entry), io, () => {
       byUuid.set(entry.uuid, entry);
       head = entry.uuid;
-    });
+    }, signal);
     return entry;
   }
   return { path, head: () => head, branch, append,

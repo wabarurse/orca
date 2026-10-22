@@ -1,9 +1,8 @@
 import { cancelSession } from "../cancellation";
-import { effortCommand, fastCommand } from "../project-settings";
-// The inline TUI, kept bare: like Claude Code and Codex it never takes over
-// the screen. Finished lines go once into the terminal's scrollback; only the
-// live region at the bottom (a streaming line, a menu, the status line, the
-// input area) is redrawn. One page per orchestrator (one per project): Ctrl+N starts a new one named
+import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } from "../project-settings";
+// Sticky top and bottom bars around a scrollable conversation. Only changed
+// screen rows are redrawn; on exit the active transcript is printed back to
+// the terminal's normal scrollback. One page per orchestrator: Ctrl+N starts one named
 // orch-xxxx (/rename gives it a display name), Ctrl+Z and Ctrl+X move between
 // them, Ctrl+B or /projects lists every project (open, pin, delete) like a
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
@@ -24,11 +23,12 @@ import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
 import { MAX_RESTORED_ROWS, replyLine, reportLine, restore, userLines } from "./restore";
-import { append, bold, commit, erase, dim, headerRow, inputArea, live, NOTHING, reprint, visibleLength, type Frame, type Input, type InputArea, type Menu, type Shown } from "./render";
+import { bold, commit, dim, inputArea, visibleLength, type Frame, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { Calls } from "./tools";
 import type { ToolCall, ToolOutcome } from "../toolview";
+import { stickyRows, stickyUpdate, tabs, type StickyScreen } from "./sticky";
 
 export { lineRows, type Line } from "./lines";
 
@@ -40,7 +40,7 @@ export interface Page {
   orch: Orchestrator;
   /** Where the clone came from, for the status line. */
   remote: string;
-  /** Finished lines, oldest first: written once to the scrollback while active, reprinted on a switch back. */
+  /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
   /** The streaming reply: markdown blocks leave it as they complete; the rest shows raw in the live region. */
   md: MarkdownStream;
@@ -66,6 +66,7 @@ export interface Page {
   /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
   calls: Calls;
   model?: string;
+  settings?: RequestSettings;
   agentCount?: number;
 }
 
@@ -149,7 +150,7 @@ type HelpRow = "projects" | "keys" | "pages" | "settings" | "review" | "question
 /** /help, top to bottom: key help as written, and the rows of commands from the table (joined by three spaces). */
 const HELP_LAYOUT: readonly (HelpRow | { text: string })[] = [
   { text: "^C cancels selected turn/agent; twice within 2s exits (conversation kept)" },
-  { text: "^N new orchestrator   ^Z ^X switch pages   Esc clear (scroll with your terminal)" },
+  { text: "^N new orchestrator   ^Z ^X switch pages   Esc clear   PgUp/PgDn or mouse wheel scroll" },
   "projects",
   { text: "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words" },
   { text: "Home End ^A ^E ^U ^K act on the current line   ↑↓ move between rows, then history" },
@@ -237,7 +238,7 @@ export class App {
   projectList: ProjectListState | null = null;
   loggingIn = false;
   /** Text typed while signing in, per page; sent when sign-in succeeds, dropped when it fails. */
-  private readonly queued = new Map<Page, string[]>();
+  private readonly queued = new Map<Page, { text: string; submission?: string }[]>();
   /** /keys: echo every key as parsed until Esc, to see what a terminal really sends. */
   keyEcho = false;
   /** Input history while no page is open; a page keeps its own. */
@@ -254,22 +255,21 @@ export class App {
   private frameTimer: ReturnType<typeof setTimeout> | null = null;
   /** Pending resize reprint; nothing is drawn until it fires, as the old geometry is stale. */
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
-  /** What the live region left on screen last time, so the next draw can erase exactly it. */
-  private shown: Shown = NOTHING;
-  /** Finished lines of what the screen shows, not yet written above the live region. */
+  /** Finished rows not yet added to the active viewport's rendered history. */
   private pending: string[] = [];
-  /** The next draw clears the screen and scrollback and reprints the page (switches, resizes, agent views). */
+  /** Rebuild the rendered history on the next draw (switches, resizes, agent views). */
   private needReprint = false;
   /**
-   * Set once the pages from start are open. Before that only the live region
-   * ("opening…") and lines said with no page are drawn, and nothing is
-   * cleared; then the active page's history is committed under the shell's
-   * output, like Claude Code.
+   * Set once pages and terminal background are ready. Until then show only
+   * startup notes and the "opening…" status.
    */
   private started = false;
   private stopSpinner: (() => void) | null = null;
   private tickMs = 0;
-  private lastLive = "";
+  private screen: StickyScreen | undefined;
+  private screenHistory: string[] = [];
+  private screenOwner: Page | Page["view"] | undefined;
+  private scrollTop: number | null = null;
   private liveCheckedAt = 0;
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
   private readonly liveChecks = new Map<string, Promise<void>>();
@@ -318,7 +318,7 @@ export class App {
       await this.openStartPages(project, url);
       await shaded; // the first page's user lines go into the scrollback in that shade
       this.started = true;
-      this.pending.push(...this.screenLines());
+      this.needReprint = true;
       this.draw();
       await this.finished;
     } finally {
@@ -329,9 +329,9 @@ export class App {
       this.stopSpinner = null;
       this.loginAbort.abort();
       for (const p of this.pages) { p.orch.cancel?.(); p.view?.leave(); }
-      this.leave();
       restoreConsole();
       term.close();
+      this.leave();
     }
   }
 
@@ -390,7 +390,7 @@ export class App {
 
   /** What the screen shows for the active page: its agent view or its history. */
   private screenLines(page = this.page): string[] {
-    return page ? [...this.header(page).split("\n").map((r) => headerRow(r, this.deps.term.cols)), ...this.rows(page.view?.lines ?? page.lines)] : this.looseLines;
+    return page ? this.rows(page.view?.lines ?? page.lines) : this.looseLines;
   }
 
   /** History lines laid out at the terminal's width. */
@@ -466,7 +466,8 @@ export class App {
   }
 
   private header(page: Page): string {
-    return `${page.name} · ${page.model ?? "loading model…"}\n${paths.repo(page.project)}\n${page.remote ? shortRemote(page.remote) : "no remote"}`;
+    const settings = page.settings;
+    return `${page.name} · ${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}\n${paths.repo(page.project)}\n${page.remote ? shortRemote(page.remote) : "no remote"}`;
   }
 
   /** Independent read generations for captured page objects. */
@@ -482,9 +483,12 @@ export class App {
     const version = (this.modelVersions.get(page) ?? 0) + 1;
     this.modelVersions.set(page, version);
     const model = await this.readModel(page.project);
-    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting || model === page.model) return;
+    const settings = await effectiveSettings(page.project, model).catch(() => undefined);
+    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
+    if (model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings)) return;
     page.model = model;
-    if (page === this.page) this.reprint();
+    page.settings = settings;
+    if (page === this.page) this.draw();
   }
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
@@ -598,7 +602,7 @@ export class App {
     }, wait);
   }
 
-  /** Clear the screen and scrollback and show the active page (or agent view) from the start, then the live region. */
+  /** Reflow the active conversation while preserving the bars and shell scrollback. */
   reprint(): void {
     if (!this.started) return this.draw(); // nothing of ours is on screen yet but the live region
     this.needReprint = true;
@@ -612,45 +616,47 @@ export class App {
     this.resizeTimer = setTimeout(() => { this.resizeTimer = null; this.reprint(); }, RESIZE_MS);
   }
 
-  private unchanged(text: string): boolean {
-    return !this.needReprint && !this.pending.length && text === this.lastLive;
-  }
-
   private flush(): void {
     this.lastFrame = Date.now();
     try {
       this.questions.sync(); // the input holds the chat draft or the shown question's answer
-      const f = this.frame();
-      const fingerprint = live(f).text;
-      if (this.unchanged(fingerprint)) return;
-      const pending = this.pending;
-      this.pending = [];
-      const out = this.needReprint ? reprint(this.screenLines(), f) : pending.length ? append(pending, f, this.shown) : live(f, this.shown);
+      const next = this.viewport(this.frame());
+      const output = stickyUpdate(next, this.screen);
       this.needReprint = false;
       // Synchronized output, so the terminal shows the whole update at once.
-      this.deps.term.write(`\x1b[?2026h${out.text}\x1b[?2026l`);
-      this.lastLive = fingerprint;
-      this.shown = out.shown;
-      this.deps.term.eraseOnExit(erase(this.shown));
+      if (output) this.deps.term.write(`\x1b[?2026h${output}\x1b[?2026l`);
+      this.screen = next;
+      this.deps.term.eraseOnExit("");
     } catch (err) {
       // A bad frame must not take the app down. Its lines are still in the page's history; say so once and reprint next time.
       const note = `error drawing the screen: ${err instanceof Error ? err.message : String(err)}`;
+      this.screen = undefined;
       if (this.started) this.needReprint = true;
       if (note !== this.drawError) { this.drawError = note; this.say(dim(note)); }
     }
   }
 
+  private viewport(f: Frame): StickyScreen {
+    const owner = this.page?.view ?? this.page;
+    if (owner !== this.screenOwner) this.scrollTop = null;
+    if (this.needReprint || owner !== this.screenOwner) this.screenHistory = this.started ? this.screenLines() : [...this.looseLines];
+    else this.screenHistory.push(...this.pending);
+    this.screenOwner = owner;
+    this.pending = [];
+    const chrome = this.page ? [tabs(this.pages, this.active, f.cols), ...this.header(this.page).split("\n")] : [];
+    return stickyRows(f, this.screenHistory, chrome, this.scrollTop);
+  }
+
   /** The last drawing error said, so a frame that keeps failing is reported once. */
   private drawError = "";
 
-  /** On quit: drop the live region, keep everything committed (and a half-streamed line), and leave the cursor on a fresh line. */
+  /** After restoring the primary screen, print the active history and any partial reply. */
   private leave(): void {
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
-    const lines = [...this.pending, ...(held ? held.split("\n") : [])];
+    const lines = [...(page ? this.header(page).split("\n") : []), ...this.screenLines(), ...(held ? held.split("\n") : [])];
     this.pending = [];
-    this.deps.term.write(`${erase(this.shown)}${commit(lines, this.deps.term.cols)}\x1b[?25h`);
-    this.shown = NOTHING;
+    this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
   }
 
   // --- pages ------------------------------------------------------------------
@@ -673,8 +679,10 @@ export class App {
     page.historyLines = saved.lines;
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
+    page.lines.unshift(...this.looseLines);
     this.looseLines = [];
     page.model = await this.readModel(project);
+    page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.checkLive(project);
@@ -963,11 +971,11 @@ export class App {
     for (const [page, texts] of [...this.queued]) await this.drainLoginPage(page, texts, ok);
   }
 
-  private async drainLoginPage(page: Page, texts: string[], ok: boolean): Promise<void> {
+  private async drainLoginPage(page: Page, texts: { text: string; submission?: string }[], ok: boolean): Promise<void> {
     if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
-    for (const text of [...texts]) {
+    for (const { text, submission } of [...texts]) {
       texts.shift(); // ownership transfers to send (Page.sent), or an explicit drop report
-      if (ok && this.pages.includes(page)) await this.send(page, text).catch(() => {});
+      if (ok && this.pages.includes(page)) await this.send(page, text, submission).catch(() => {});
       else this.say(dim(`not sent after sign-in (${page.name}): ${text}`), this.pages.includes(page) ? page : this.page);
     }
     if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
@@ -1011,6 +1019,7 @@ export class App {
   private async requestSetting(page: Page | undefined, args: string, command: typeof effortCommand): Promise<void> {
     if (!page) return this.say(dim("open a project before changing its model settings"));
     this.say(dim(await command(page.project, args)), page);
+    await this.refreshHeader(page);
   }
 
   private async modelsCommand(id: string, page?: Page): Promise<void> {
@@ -1080,7 +1089,7 @@ export class App {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
     if (this.loggingIn) {
-      this.queued.set(page, [...(this.queued.get(page) ?? []), text]);
+      this.queued.set(page, [...(this.queued.get(page) ?? []), { text, submission: page.orch.submission?.() }]);
       return this.say(dim("queued; runs after sign-in"), page);
     }
     await this.send(page, text);
@@ -1136,8 +1145,23 @@ export class App {
   ];
 
   async onKey(k: Key): Promise<void> {
+    if (this.canScroll(k)) return this.scroll(k);
     if (k.name === "escape") this.modelGeneration++;
     for (const layer of this.keyLayers) if (layer.takes(k)) return layer.handle(k);
+  }
+
+  private canScroll(k: Key): boolean {
+    return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.keyEcho && !this.menu && !this.projectList && !this.questions.view();
+  }
+
+  private scroll(k: Key): void {
+    const screen = this.screen;
+    if (!screen) return;
+    const delta = k.name.startsWith("wheel") ? 3 : Math.max(1, screen.bodyHeight - 1);
+    const start = this.scrollTop ?? screen.maxStart;
+    const top = Math.max(0, Math.min(screen.maxStart, start + (k.name.endsWith("up") ? -delta : delta)));
+    this.scrollTop = top === screen.maxStart ? null : top;
+    this.draw();
   }
 
   /** /keys: show each key as parsed; Esc ends. */
@@ -1168,6 +1192,7 @@ export class App {
 
   /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
   private enterKey(): Promise<void> | void {
+    this.scrollTop = null;
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
     this.input = { text: "", cursor: 0 };
     this.historyAt = -1;
@@ -1195,10 +1220,10 @@ export class App {
 
 
   /** Send what the user typed on a page to its orchestrator, remembering it was shown already. */
-  private async send(page: Page, text: string): Promise<void> {
+  private async send(page: Page, text: string, submission?: string): Promise<void> {
     page.sent.push(text);
     this.draw();
-    try { await page.orch.say(text); }
+    try { await page.orch.say(text, submission); }
     catch (err) {
       const at = page.sent.lastIndexOf(text);
       if (at !== -1) page.sent.splice(at, 1);

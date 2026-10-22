@@ -1,8 +1,8 @@
-import { delay } from "../cancellation";
+import { delay, publishLaunch } from "../cancellation";
 import { paths } from "../config";
 import { local, sessionId, type Runner } from "../runner";
 import { open } from "../transcript";
-import type { Tool } from "./index";
+import type { Tool, ToolContext } from "./index";
 
 // Orchestrator-only. Seeds the agent's transcript with the prompt, then starts
 // it in a worktree on `branch`. Spawning again on the same branch and role
@@ -65,16 +65,22 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       ctx.signal?.throwIfAborted();
       if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
-      const id = sessionId(role, branch);
-      const t = open(paths.transcript(ctx.project, id));
-      if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
-      await t.append({ type: "message", message: { role: "user", content: `Branch: ${branch}\n\n${prompt}` } });
-
-      ctx.signal?.throwIfAborted();
-      await runner.start({ project: ctx.project, role, branch, ...(ctx.signal ? { signal: ctx.signal } : {}) });
-      return id;
+      return launch(runner, prompt, branch, role, ctx);
     },
   };
+}
+
+/** Publish identity before the first transcript entry (the TUI lists transcripts). */
+async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", ctx: ToolContext): Promise<string> {
+  const id = sessionId(role, branch);
+  const run = crypto.randomUUID();
+  publishLaunch(ctx.project, id, run);
+  const t = open(paths.transcript(ctx.project, id));
+  if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
+  await t.append({ type: "message", message: { role: "user", content: `Branch: ${branch}\n\n${prompt}` } });
+  ctx.signal?.throwIfAborted();
+  await runner.start({ project: ctx.project, role, branch, run, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+  return id;
 }
 
 export const spawn: Tool = makeSpawn(local);

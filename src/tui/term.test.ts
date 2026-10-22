@@ -36,6 +36,25 @@ const settled = async (p: Promise<void> | undefined) => {
   return done;
 };
 
+test("sticky screen and mouse modes restore the primary screen on close and crash", () => {
+  for (const crash of [false, true]) {
+    const t = make();
+    t.screen.write("shell prompt\r\n");
+    const before = t.screen.text();
+    t.term.open();
+    t.advance(BG_REPLY_MS);
+    expect(t.screen.modes.get(1049)).toBe(true);
+    expect(t.screen.modes.get(1000)).toBe(true);
+    t.screen.write("agent screen");
+    expect(t.screen.text()).not.toContain("shell prompt");
+    if (crash) t.procHandlers.get("SIGTERM")!();
+    else t.term.close();
+    expect(t.screen.text()).toBe(before);
+    for (const mode of [1049, 1000, 1006, 2004]) expect(t.screen.modes.get(mode)).toBe(false);
+    expect(t.raw).toEqual([true, false]);
+  }
+});
+
 describe("terminal background (OSC 11)", () => {
   test("open asks once; a reply in time sets the shade, settles `background`, and never reaches the app as keys", async () => {
     setUserFill("fallback");
