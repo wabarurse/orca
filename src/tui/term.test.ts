@@ -10,9 +10,9 @@ afterEach(() => setUserFill(null));
 function make(background?: string) {
   const screen = new FakeScreen(40, 5);
   screen.background = background;
-  let onData: ((chunk: string) => void) | null = null;
+  let onData: ((chunk: string | Uint8Array) => void) | null = null;
   const raw: boolean[] = [];
-  const stdin = { isTTY: true, setRawMode: (on: boolean) => { raw.push(on); }, setEncoding() {}, on: (_: string, fn: (c: string) => void) => { onData = fn; }, off: () => { onData = null; }, resume() {}, pause() {} };
+  const stdin = { isTTY: true, setRawMode: (on: boolean) => { raw.push(on); }, setEncoding() {}, on: (_: string, fn: (c: string | Uint8Array) => void) => { onData = fn; }, off: () => { onData = null; }, resume() {}, pause() {} };
   const stdout = { isTTY: true, columns: 40, rows: 5, write: (s: string) => { screen.write(s); return true; }, on() {} };
   const procHandlers = new Map<string, (...a: unknown[]) => void>();
   const proc = { on: (e: string, fn: () => void) => { procHandlers.set(e, fn); }, off: (e: string) => { procHandlers.delete(e); }, exit() {}, stderr: { write() {} } };
@@ -26,7 +26,7 @@ function make(background?: string) {
   const term = realTerminal(stdin as never, stdout as never, proc as never, clock);
   const keys: Key[] = [];
   term.onKey((k) => keys.push(k));
-  return { term, screen, clock, advance, keys, raw, procHandlers, timers, input: (s: string) => onData?.(s), get reading() { return onData !== null; } };
+  return { term, screen, clock, advance, keys, raw, procHandlers, timers, input: (s: string | Uint8Array) => onData?.(s), get reading() { return onData !== null; } };
 }
 
 const settled = async (p: Promise<void> | undefined) => {
@@ -127,4 +127,22 @@ describe("terminal background (OSC 11)", () => {
     killed.procHandlers.get("exit")!();
     expect(killed.raw).toEqual([true, false]); // exiting mid-drain still leaves raw mode
   });
+});
+
+test("raw mouse bytes and fragmented UTF-8 survive the terminal after the OSC window; close/crash drop held input", async () => {
+  for (const crash of [false, true]) {
+    const t = make();
+    t.term.open(); t.advance(BG_REPLY_MS);
+    const stream = Buffer.concat([Buffer.from("\x1b[<64;1;2M"), Buffer.from([27, 91, 77, 97, 194, 160]), Buffer.from("界👩‍💻")]);
+    for (const byte of stream) t.input(Uint8Array.of(byte));
+    expect(t.keys.slice(0, 2)).toEqual([{ name: "wheelup" }, { name: "wheeldown" }]);
+    expect(t.keys.slice(2).map(k => k.text).join("")).toBe("界👩‍💻");
+    t.input("\x1b"); // the new short timer must not survive cleanup
+    if (crash) t.procHandlers.get("SIGTERM")!(); else t.term.close();
+    expect(t.reading).toBe(false);
+    await Bun.sleep(40);
+    expect(t.keys.some(k => k.name === "escape")).toBe(false);
+    expect(t.raw).toEqual([true, false]);
+    expect(t.procHandlers.size).toBe(0);
+  }
 });

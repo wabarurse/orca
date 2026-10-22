@@ -67,7 +67,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   ↑ / ↓                Move between input rows, then project input history
 
   Advanced & diagnostics
-  /keys               Diagnose terminal key chords; Esc ends
+  /keys               Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends
   /compact            Summarize model context; keep full history
   /review-rounds [n]  Review rounds before CI; 0 goes straight to CI"
 `;
@@ -178,8 +178,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
 
   Advanced & diagnostics
   /keys
-    Diagnose terminal key chords; Esc
-    ends
+    Diagnose keys/wheel; Ctrl+G keeps
+    draft; Esc ends
   /compact
     Summarize model context; keep full
     history
@@ -209,7 +209,7 @@ Help · commands & keys                                                34–42/4
   ↑ / ↓                Move between input rows, then project input history
 
   Advanced & diagnostics
-  /keys               Diagnose terminal key chords; Esc ends
+  /keys               Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends
   /compact            Summarize model context; keep full history
   /review-rounds [n]  Review rounds before CI; 0 goes straight to CI
 ↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
