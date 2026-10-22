@@ -64,8 +64,10 @@ committed clear without losing the new input. Orchestrator inbox `put()` and cle
 share the project lock across processes: an external send ordered after the clear
 is retained as new input, not deleted. Local queued writes and leftover inbox temp
 files conservatively refuse clearing. These guarantees cover managed project and
-inbox operations; arbitrary external filesystem edits and concurrent independent
-writers to one transcript still require external serialization (see below).
+inbox operations. Clear and deletion also acquire the shared orchestrator turn
+lock, refusing while another updated session owns a turn. Arbitrary filesystem
+edits and older binaries that do not honor these locks remain unsupported (see
+[SESSION_REFRESH.md](SESSION_REFRESH.md)).
 
 ## Policy and configuration
 
@@ -179,8 +181,12 @@ copy-on-write + rename: the previous byte prefix is preserved exactly, never tri
 or re-serialized. This trades O(history size) I/O per append for simple recoverable
 publication. It does not preserve the old inode; no old messages are deleted.
 The same publication protocol protects normal appends too. Newly staged files have
-0600 permissions. Only one logical writer per transcript is supported; cross-process
-concurrent TUIs/writers require external serialization, as before.
+0600 permissions. Updated writers serialize reload/parent selection/publication
+with a per-transcript directory lock, and orchestrators additionally own a
+cross-process lock for the whole model/tool turn. Reloads use the latest committed
+disk head; old binaries and arbitrary external writers do not participate in this
+protocol. Inbox receipts survive compaction and context clear, so cleanup residue
+cannot replay previously consumed prompts. See [SESSION_REFRESH.md](SESSION_REFRESH.md).
 
 1. Read published bytes, append a separator if a legacy damaged final line lacks
    a newline, and encode the new record in a unique temporary file.

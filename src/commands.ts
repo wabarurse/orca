@@ -1,4 +1,5 @@
-import { withProjectStateLock } from "./project-state";
+import { tryStorageLock } from "./storage-lock";
+import { projectTurnLock, withProjectStateLock } from "./project-state";
 import { effectiveModel, saveProjectModel, validateModel } from "./project-model";
 // What the slash commands do, apart from how they are shown. The TUI turns
 // these into menus and status lines.
@@ -181,13 +182,17 @@ export interface DeleteOptions {
 export async function deleteProject(name: string, opts: DeleteOptions = {}): Promise<void> {
   if (!validProjectName(name)) throw new Error(`not a project name: ${name}`);
   if (!existsSync(paths.project(name))) throw new Error(`no project named ${name}`);
-  const live = await (opts.live ?? liveAgents)(name);
-  if (live.length) throw new Error(`${name} still has live agents (${live.join(", ")}); wait for them or stop them first`);
-  await opts.beforeRemove?.();
-  await (opts.kill ?? killProjectSession)(name);
-  await withProjectStateLock(name, () => rm(paths.project(name), { recursive: true, force: true }));
-  const { pinned } = await loadConfig();
-  if (pinned.includes(name)) await saveConfig({ pinned: pinned.filter((n) => n !== name) });
+  const release = await tryStorageLock(projectTurnLock(name));
+  if (!release) throw new Error(`${name} orchestrator is running in another session; wait before deleting`);
+  try {
+    const live = await (opts.live ?? liveAgents)(name);
+    if (live.length) throw new Error(`${name} still has live agents (${live.join(", ")}); wait for them or stop them first`);
+    await opts.beforeRemove?.();
+    await (opts.kill ?? killProjectSession)(name);
+    await withProjectStateLock(name, () => rm(paths.project(name), { recursive: true, force: true }));
+    const { pinned } = await loadConfig();
+    if (pinned.includes(name)) await saveConfig({ pinned: pinned.filter((n) => n !== name) });
+  } finally { await release(); }
 }
 
 export async function accountChoices(dim: (s: string) => string): Promise<Choice<Account>[]> {

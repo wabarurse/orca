@@ -1,0 +1,178 @@
+# Shared local session refresh and prompt delivery
+
+## User contract
+
+`/refresh` reads the persisted state used by windows sharing the same
+`PARALLELS_HOME` (normally `~/.parallels`). It reconciles names, pins and the
+project picker; full saved conversation and next-turn model context; tasks in
+an open Inbox panel; open/closed questions; agent liveness; and applicable
+model/settings. The picker is read on opening when closed. Accounts/config
+continue to be loaded by their normal menus and request boundaries.
+
+Every prompt submission requests the same refresh, even while locally busy or
+held during login. Inbox publication starts first and **does not await refresh**.
+Held prompts capture project/Page ownership, immutable `inputId` and cancellation
+`userEpoch` when submitted, not when login finishes. Refresh requests coalesce,
+with a trailing pass when another request arrives during a read. Passive polling
+also reconciles receipts from other windows; it retains the question directory's
+unchanged-stamp optimization rather than forcing a full question reread each tick.
+
+Safe presentation data can update during a turn. The local orchestrator's
+transcript/context reload and history replacement defer while that turn is
+running or clearing, and run at idle or before a new turn starts streaming.
+Refresh preserves the selected page/panels, prompt and answer ownership, drafts
+and cursors, queued input, original pre-compaction history, local diagnostics,
+and a source-based scroll anchor where the source still exists. It does not
+replay historical tools or reopen answered/skipped questions. If a question was
+closed elsewhere, the existing orphan-answer behavior keeps the original chat
+draft and reports the typed answer separately.
+
+Refresh is **not** Git pull, harness installation/update, restart, or cross-laptop
+synchronization. It does not submit or retry prompts, run the model/tools, advance
+cancellation epochs, restart agents, or invoke the exit/merge watchers. Existing
+normal inbox polling/work scheduling is separate and continues unchanged. A
+refresh error is reported without failing an already submitted prompt.
+
+## Exact consumption, not text matching
+
+The earlier queue symptom had evidence of the user's text already in the
+transcript and no unread inbox file, with two running sessions. That suggested
+cross-window consumption with stale sender UI; it did not prove every queue bug.
+The old local callback ran before transcript commit, discarded input identities
+when formatting context, and could not notify another sender window. Inbox
+read-then-unlink and cached transcript heads also lacked cross-consumer safety.
+
+The new context-consumption transaction is:
+
+1. Acquire the recipient inbox's cooperative directory lock, refresh the
+   transcript snapshot, and read a sorted snapshot of published inbox files.
+2. Ignore exact already-committed delivery IDs (`recipient/filename`) and user
+   input IDs. Deduplicate repeated input IDs within this batch too. Invalid or
+   unreadable records fail closed; no prompt in that batch is silently deleted.
+3. Append **one transcript entry containing both model-visible payload and hidden
+   `inbox` receipt metadata**. Tool results and newly read instructions still
+   commit as one paired user message. User-facing agent replies use the same
+   transaction and a `replies` entry.
+4. Only after transcript publication commits, remove that inbox snapshot and
+   notify local `onInbox`. A failed append leaves original files available.
+   Cleanup errors do not turn a committed operation into a failed send.
+
+`Transcript.consumed()` scans all saved entries, including records before a
+summary, context boundary or alternate branch. Compaction and `/clear` do not
+expire receipts. Crash residue is cleaned without re-delivery, and an
+orchestrator cannot run another model turn merely because already-consumed files
+remain: it requires fresh consumed input (explicit compaction is separate).
+
+The queue acknowledges only exact **committed `inputId`** evidence, either from
+that local post-commit callback or a refreshed snapshot. Text equality, successful
+enqueue, turn completion, cancellation, and file disappearance are not receipts.
+A provider failure **after** consumption leaves the prompt in model context and
+clears its preview; it does not retry automatically. Another explicit prompt can
+continue with that retained context. `drain()` remains a serialized destructive
+legacy API, not a context-commit API; production context callers use `consume()`.
+
+This is at-most-once context delivery, not exactly-once model execution or tool
+side effects. A crash between context commit and the model request does not
+replay the request on refresh. A user decides whether to continue. The pending
+preview is local to the submitting window; it is not a global inbox inventory.
+
+## Concurrency and cancellation boundaries
+
+- `storage-lock.ts` uses exclusive directory creation plus PID/time owner metadata.
+  Short transactions have invocation-order local queues and bounded cross-process
+  waits. No timer-based lock stealing.
+- Transcript reload, parent selection and staged/fsync/rename publication share
+  a per-file lock (`transcripts/<session>.jsonl.lock`). Publication preserves the
+  exact old byte prefix. Refresh replaces its snapshot only after successful
+  reading/parsing; damaged legacy lines are preserved on disk, not replayed.
+- A project-wide `turn-locks/<project>` outside the project directory is held for
+  the **whole orchestrator model/tool turn**. A losing window returns without
+  starting a competing turn; normal polling checks later. The winner reloads
+  shared context before starting. Workers retain their existing role/session
+  ownership; this is not new worker scheduling or restart behavior.
+- Inbox locks (`inbox/<recipient>.lock`) protect consumption transactions.
+  Concurrent puts are atomic and not blocked on a model turn; files published
+  after a consumer's snapshot wait for a later boundary. Per-process submission
+  FIFO is preserved. Simultaneous independent windows have no invented global
+  keystroke order beyond their persisted filename order.
+- `/clear` and project deletion acquire the turn lock too. Clear still uses the
+  project-state lock shared with orchestrator publication, and refuses queued
+  input. Captured directory identity prevents stale Pages/queued publications
+  from acquiring a deleted/recreated project's state.
+- The persisted cancellation epoch also gates other windows' later turns.
+  Refresh never changes it. Pre-cancel input (including late login/persistence)
+  and agent reports cannot resume a paused project; fresh human input or an
+  explicit compact request is required. Explicit `/compact` retains its existing
+  local resume permission until the epoch changes; refresh cannot create that
+  permission. Cancellation still aborts the local
+  owning request/tools, not arbitrary already-running work in another process.
+
+## Limitations and recovery
+
+**All concurrent consumers/writers must use this protocol.** Older binaries can
+still read the additive transcript metadata, but they do not honor new locks or
+write exact receipts. A mixed-version running population cannot guarantee
+exclusive consumption, safe transcript publication or cross-window queue
+acknowledgement. Already-consumed legacy messages cannot be assigned receipts
+by text or missing-file inference. Never automatically resend them to repair a
+badge. This change does not upgrade or restart any existing process.
+
+A crashed process may leave a lock directory. Ownership is deliberately not
+stolen based on age: a long model/tool request may still be active. A stale turn
+lock can leave input waiting; transaction locks time out with a path-specific
+error. Recovery is an **explicit operator action**: first verify all relevant
+owners are no longer operating on that project/storage, inspect `owner.json`
+(PID reuse means the PID alone is insufficient), and only then remove the
+specific orphan lock. Do not remove inbox/transcript data or run a second
+consumer as a workaround. No recovery action is performed by refresh or tests.
+
+Legacy non-cooperating filesystem editors, network filesystems with weaker
+locking/rename semantics, power-loss guarantees beyond the existing publication
+protocol, and automatic dead-owner recovery are outside scope. Reload/receipt
+scanning is linear in saved history, and copy-on-write append remains linear in
+file size; no receipt pruning is introduced because it could permit duplicates.
+
+## Local validation and reviewer handoff
+
+Implementation base: `2aff05c8f2a8af9ad3073a23eb83bd730f9f5b32` (merged CLI/pull
+PR #69), branch `feat-session-refresh`. The worker commits locally only. A
+separate reviewer starts with `watch ci` and owns publication; **that phrase does
+not authorize hosted CI for this task**. Run local review/checks and report exact
+head evidence before publication/readiness, using the orchestrator's task flow.
+
+Constraints for this branch: no live inbox/transcript experiments; no changes to
+the user's checkout/stash, other worktrees, shell configuration/history,
+installed `~/.local/bin/parallels` or `~/.parallels/app`; no live process
+restarts/kills, desktop automation, web/provider/billing fallback, clone-UX
+changes, or hosted CI. Do not touch gallery server `127.0.0.1:64830`. Use only
+isolated temporary test storage and fake providers/tools; do not validate via
+live sign-in/inference. Worker must not push or create a PR.
+
+Relevant local commands:
+
+```sh
+bun install --frozen-lockfile
+bun test src/session-refresh.test.ts src/tui/refresh.test.ts
+bun test
+bun run check
+bun run build
+git diff --check
+```
+
+Core regressions cover exact cross-window acknowledgement; same text/different
+IDs; overlapping turns and busy input order; failed reads/writes; post-commit
+cleanup residue; provider failure; shared cancellation; separate child-process
+publication/consumption; legacy drains; malformed input and duplicate-ID batches.
+UI regressions cover nonblocking/failed refresh, busy deferral, periodic remote
+acknowledgement and busy-to-idle processing, persisted projects/pins/model/settings,
+tasks/questions, full pre-stream history, login-held epochs/FIFO, drafts/cursors,
+scroll anchoring and pinned bars. Existing suites cover clear/delete, input/editing,
+question ownership, cancellations, model settings, and terminal isolation.
+
+Worker's final local validation (Bun 1.4.2): focused regressions **19 passed,
+0 failed, 155 assertions**; full suite **996 passed, 0 failed, 8 snapshots,
+17,946 assertions across 74 files**. `bun run check`, `bun run build` (549 bundled
+modules), and `git diff --check` passed. Five help snapshots were intentionally
+updated for the added command; there are still eight snapshots in the suite.
+No live provider, installed-app, hosted-CI or mixed-version runtime validation
+was performed. Reviewer must rerun checks on its exact reviewed head.

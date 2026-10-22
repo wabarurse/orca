@@ -14,21 +14,23 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                  1–9/48
+Help · commands & keys                                                  1–9/50
   Conversation
+  /refresh    Reload shared local state; active context waits until idle;
+              never runs work
   /inbox      User inbox: Tasks / Questions; Shift+Tab switches sections,
               Esc/Tab closes
   /agents     Browse and follow agent conversations
   /clear      Clear model context after confirmation; keep full history
   /questions  Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab
               Tasks
-  /help       Commands and keyboard shortcuts; Esc closes
-
 ↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
+  /refresh    Reload shared local state; active context waits until idle;
+              never runs work
   /inbox      User inbox: Tasks / Questions; Shift+Tab switches sections,
               Esc/Tab closes
   /agents     Browse and follow agent conversations
@@ -93,20 +95,24 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 Inbox 1
-Help                            1–8/97
+Help                           1–8/101
   Conversation
+  /refresh    Reload shared local
+              state; active context
+              waits until idle; never
+              runs work
   /inbox      User inbox: Tasks /
               Questions; Shift+Tab
               switches sections,
-              Esc/Tab closes
-  /agents     Browse and follow agent
-              conversations
-  /clear      Clear model context
 ↑↓ scroll · Esc close"
 `;
 
 exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
+  /refresh    Reload shared local
+              state; active context
+              waits until idle; never
+              runs work
   /inbox      User inbox: Tasks /
               Questions; Shift+Tab
               switches sections,
@@ -219,7 +225,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                40–48/48
+Help · commands & keys                                                42–50/50
   Alt+D                Delete next word
   Home/End / Ctrl+A/E  Start / end of current line
   Ctrl+U / Ctrl+K      Delete to start / end of current line
