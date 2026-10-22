@@ -5,7 +5,7 @@ import { command, run } from "./proc";
 // agents never learn anything about the host beyond their cwd.
 //
 // Everything is keyed by branch: one worktree, one window per role, and one
-// transcript per role on that branch. There is no task list on disk.
+// transcript per role on that branch. tasks.ts separately binds immutable tasks to exact runs.
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";

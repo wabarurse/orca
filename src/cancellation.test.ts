@@ -100,6 +100,8 @@ test("cancelled notice reaches orchestrator with non-recovery policy; only user 
     await t.reported(); // cancellation is still distinct even just after a report
     throw new Cancelled();
   });
+  const { registerTask } = await import("./tasks");
+  const taskId = (await registerTask(project, { name: "Resume x", summary: "Authorized original task", branch: "x", authorized: true })).id;
   let calls = 0, starts = 0;
   const provider: import("./providers").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
     calls++;
@@ -110,7 +112,7 @@ test("cancelled notice reaches orchestrator with non-recovery policy; only user 
     expect(req.system).toContain("no respawn or tool retry without explicit user authorization");
     if (calls === 2) {
       expect(messages).toContain("Continue worker-x");
-      return { stop: "tool_use", content: [toolUse("restart", "spawn", { branch: "x", prompt: "Continue authorized task" })] };
+      return { stop: "tool_use", content: [toolUse("restart", "spawn", { taskId, branch: "x", prompt: "Continue authorized task" })] };
     }
     return { stop: "end", content: [text("stopped as requested")] };
   } };

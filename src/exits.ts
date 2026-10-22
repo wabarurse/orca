@@ -1,3 +1,4 @@
+import { allTasks, startTaskRun, stopTaskRun, invalidateTaskBranch } from "./tasks";
 import { Cancelled } from "./cancellation";
 // Exit notices: when a worker or reviewer stops without reporting, the
 // orchestrator hears about it through its inbox, at most once per run.
@@ -164,15 +165,17 @@ export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracke
     await save();
   };
   await save();
+  await startTaskRun(project, run);
   return {
     state: () => ({ ...s }),
     model: () => set({ step: "model request" }),
-    tool: (name, input) => {
+    tool: async (name, input) => {
+      if (name === "bash") await invalidateTaskBranch(project, run);
       const step = describeTool(name, input);
       return set({ step, tool: step, state: "running" });
     },
     reported: () => set({ state: "reported" }),
-    instructed: () => (s.state === "running" ? Promise.resolve() : set({ state: "running" })),
+    instructed: async () => { await invalidateTaskBranch(project, run); if (s.state !== "running") await set({ state: "running" }); },
   };
 }
 
@@ -202,6 +205,10 @@ export interface SuperviseOptions {
  * `what` with the facts from the in-memory state. Returns whether a notice went out.
  */
 async function closeRun(info: RunInfo, s: RunState, what: string, gitMs: number, log: (s: string) => void): Promise<boolean> {
+  try {
+    const kind = what === "cancelled by user" ? "cancelled" : what.startsWith("crashed") ? "blocked" : s.state === "reported" && what === "finished without reporting" ? "waiting" : "unknown";
+    await stopTaskRun(info.project, info.run, kind, kind === "waiting" ? "Agent reported; awaiting next explicit task step" : oneLine(what));
+  } catch (err) { log(`agent: could not update task: ${String(err)}`); }
   if (s.state === "reported" && what !== "cancelled by user") {
     await claim(info.project, info.id, info.run);
     return false;
@@ -270,6 +277,8 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
 export async function afterExit(info: RunInfo & { code: number }): Promise<boolean> {
   const s = await readRun(info.project, info.id);
   const mine = s?.run === info.run ? s : null;
+  try { await stopTaskRun(info.project, info.run, "unknown", `Agent exited with code ${info.code}; not a readiness signal`); }
+  catch (err) { console.error(`agent: could not update task: ${String(err)}`); }
   if (mine?.state === "reported") {
     await claim(info.project, info.id, info.run);
     return false;
@@ -359,6 +368,8 @@ export function watchdog(opts: WatchdogOptions) {
     try {
       const now = await opts.live(project);
       if (now === null) return [];
+      try { await recoverTaskRuns(project, new Set(now), probe.alive); }
+      catch (err) { console.error(`watchdog: could not recover tasks: ${String(err)}`); }
       const { sent, keep } = await sweep(project, new Set(now), seen.get(project), probe);
       seen.set(project, keep);
       return sent;
@@ -366,4 +377,17 @@ export function watchdog(opts: WatchdogOptions) {
       busy.delete(project);
     }
   };
+}
+
+/** Restart recovery never guesses completion. A missing/stopped process leaves a visible reason.
+ * Prepared launches get a grace period so a second TUI cannot race normal startup. */
+export async function recoverTaskRuns(project: string, live: Set<string>, alive = pidAlive, now = Date.now()): Promise<void> {
+  for (const task of await allTasks(project)) {
+    const r = task.runs.at(-1);
+    if (task.archive || !r || !["prepared", "started"].includes(r.state) || live.has(r.agent)) continue;
+    if (r.state === "prepared" && now - Date.parse(r.preparedAt) < 30_000) continue;
+    const state = await readRun(project, r.agent);
+    if (state?.run === r.id && alive(state.pid)) continue;
+    await stopTaskRun(project, r.id, "unknown", "Agent is no longer observable; task needs explicit reconciliation");
+  }
 }

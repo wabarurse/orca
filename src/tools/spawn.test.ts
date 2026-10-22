@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../config";
@@ -8,7 +8,25 @@ import type { Runner, StartOptions } from "../runner";
 import { open } from "../transcript";
 import type { ToolContext } from "./index";
 import { message } from "./message";
-import { makeSpawn } from "./spawn";
+import { makeSpawn as realSpawn } from "./spawn";
+import { registerTask, stopTaskRun, taskForRun } from "../tasks";
+// Legacy spawn behavior tests use explicit authorized records and simulated finished runs.
+const taskIds = new Map<string, string>();
+function makeSpawn(...args: Parameters<typeof realSpawn>) {
+  const tool = realSpawn(...args);
+  return { ...tool, async run(input: Record<string, unknown>, ctx: ToolContext) {
+    if (typeof input.branch !== "string" || !input.prompt || ctx.role !== "orchestrator") return tool.run(input, ctx);
+    mkdirSync(paths.project(ctx.project), { recursive: true });
+    const key = `${ctx.project}/${input.branch}`;
+    let id = taskIds.get(key);
+    if (!id) { id = (await registerTask(ctx.project, { name: "Test task", summary: "Authorized test work", branch: input.branch, authorized: true })).id; taskIds.set(key, id); }
+    const result = await tool.run({ ...input, taskId: id }, ctx);
+    const { launchIdentity } = await import("../cancellation");
+    const run = launchIdentity(ctx.project, result);
+    if (run && await taskForRun(ctx.project, run)) await stopTaskRun(ctx.project, run, "waiting", "Fake process ended");
+    return result;
+  } };
+}
 
 const home = mkdtempSync(join(tmpdir(), "parallels-spawn-"));
 process.env.PARALLELS_HOME = home;

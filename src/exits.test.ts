@@ -488,3 +488,17 @@ test("the TUI runs the watchdog for each open page on every inbox poll", async (
   await running;
   expect(checked.slice(0, 2)).toEqual(["watched", "watched"]);
 });
+
+test("corrupt task registry cannot suppress shell exit or watchdog notices", async () => {
+  const cwd = await repo(0);
+  await beginRun(info(cwd, "shell"), DEAD_PID);
+  writeFileSync(join(paths.project(project), "tasks.json"), "corrupt");
+  expect(await afterExit({ ...info(cwd, "shell"), code: 137 })).toBe(true);
+  expect((await inbox())[0]?.text).toContain("exited (code 137");
+  rmSync(join(paths.project(project), "tasks.json"));
+  await beginRun(info(cwd, "watchdog"), DEAD_PID);
+  writeFileSync(join(paths.project(project), "tasks.json"), "corrupt");
+  const watch = watchdog({ live: async () => [], alive: () => false, dirty: async () => 0 });
+  expect(await watch(project)).toEqual(["worker-feat"]);
+  expect((await inbox())[0]?.text).toContain("stopped while the TUI was not watching");
+});

@@ -22,6 +22,11 @@
 // inboxes and runs/ files go. `git worktree remove --force` also deletes
 // ignored files in the worktree, such as .env.
 
+import { originRepo } from "./github";
+export { githubRepo, originRepo } from "./github";
+import { archiveMergedTasks, allTasks, observeTaskPR, setTaskAttention, taskPR } from "./tasks";
+import { ghTaskPR } from "./github";
+import type { PRObservation, TaskPR } from "./tasks";
 import { existsSync, linkSync, mkdirSync, statSync } from "node:fs";
 import { readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -65,24 +70,10 @@ const exec = (argv: string[], cwd: string, timeoutMs: number) => run(argv, { cwd
 const git = (cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS) => exec(["git", "-C", cwd, ...args], cwd, timeoutMs);
 const ok = (r: ProcResult | null) => r?.code === 0;
 
-/** "owner/name" for a GitHub remote url (https, ssh or scp-like), else null. */
-export function githubRepo(url: string): string | null {
-  const m = url.trim().match(/^(?:(?:https?|ssh|git):\/\/(?:[^@/]+@)?github\.com(?::\d+)?\/|(?:[^@/:]+@)?github\.com:)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/i);
-  return m ? `${m[1]}/${m[2]}` : null;
-}
-
-/** The project's origin as "owner/name" when it is on GitHub. */
-export async function originRepo(project: string): Promise<string | null> {
-  const repo = paths.repo(project);
-  if (!existsSync(repo)) return null;
-  const res = await git(repo, ["remote", "get-url", "origin"]);
-  return ok(res) ? githubRepo(res!.out) : null;
-}
-
 const isPR = (p: unknown): p is MergedPR => {
   const r = p as MergedPR;
   return !!r && Number.isInteger(r.number) && r.number > 0 && typeof r.headRefName === "string" && r.headRefName !== ""
-    && typeof r.url === "string" && typeof r.headRefOid === "string" && /^[0-9a-f]{40,64}$/.test(r.headRefOid) && typeof r.isCrossRepository === "boolean";
+    && typeof r.mergedAt === "string" && Number.isFinite(Date.parse(r.mergedAt)) && typeof r.url === "string" && typeof r.headRefOid === "string" && /^[0-9a-f]{40,64}$/.test(r.headRefOid) && typeof r.isCrossRepository === "boolean";
 };
 
 /** `repo`'s merged PRs via `gh`, or null when gh is missing, fails, times out or prints something else. */
@@ -105,6 +96,8 @@ export interface MergeWatchOptions {
   gh?: (cwd: string, repo: string) => Promise<MergedPR[] | null>;
   /** The project's origin as "owner/name", null when it is not on GitHub (then nothing is checked). */
   repo?: (project: string) => Promise<string | null>;
+  /** Read-only exact PR refresh for registered tasks, including PRs outside the newest-100 merge list. */
+  pr?: (project: string, pr: TaskPR) => Promise<PRObservation | null>;
   /** Live agent windows, or null when tmux could not be asked (then the check is skipped). */
   live: (project: string) => Promise<string[] | null>;
   /** Close an agent window. */
@@ -416,7 +409,15 @@ async function handleProject(project: string, w: Watcher): Promise<number[]> {
   const repo = await w.d.repo(project).catch(() => null);
   if (!repo) return [];
   const prs = await w.d.gh(paths.repo(project), repo).catch(() => null);
-  if (!prs) return [];
+  if (!prs) { await refreshTaskPRs(project, repo, w); return []; }
+  // Archive before cleanup claims, tmux checks or worktree deletion. Invalid/foreign
+  // observations never remove a row; repeats are idempotent, including after restart.
+  for (const pr of prs) {
+    if (pr.isCrossRepository) continue;
+    try { await archiveMergedTasks(project, taskPR({ repository: repo, number: pr.number, url: pr.url, head: pr.headRefOid }), pr.mergedAt); }
+    catch { /* unknown/malformed merge or failed persistence: retain and retry */ }
+  }
+  await refreshTaskPRs(project, repo, w);
   const todo = await candidates(project, prs, w);
   if (!todo.length) return [];
   const live = await w.d.live(project).catch(() => null);
@@ -450,6 +451,7 @@ async function checkProject(project: string, w: Watcher): Promise<number[]> {
 export function mergeWatcher(opts: MergeWatchOptions) {
   const w: Watcher = {
     d: {
+      pr: opts.pr ?? ghTaskPR,
       gh: opts.gh ?? ((cwd, repo) => ghMerged(cwd, repo)),
       repo: opts.repo ?? originRepo,
       live: opts.live,
@@ -465,4 +467,16 @@ export function mergeWatcher(opts: MergeWatchOptions) {
     defaults: new Map(),
   };
   return (project: string) => checkProject(project, w);
+}
+
+async function refreshTaskPRs(project: string, repository: string, w: Watcher): Promise<void> {
+  const tasks = (await allTasks(project)).filter(t => !t.archive && t.pr?.repository === repository.toLowerCase());
+  const observations = new Map<string, PRObservation | null>();
+  for (const t of tasks) {
+    const key = `${t.pr!.repository}#${t.pr!.number}`;
+    if (!observations.has(key)) observations.set(key, await w.d.pr(project, t.pr!).catch(() => null));
+    const observation = observations.get(key);
+    if (!observation && t.readiness) await setTaskAttention(project, t.id, { kind: "unknown", reason: "PR lookup unavailable; revalidate readiness when GitHub is observable" }, t.revision).catch(() => {});
+    if (observation) await observeTaskPR(project, t.id, observation, t.revision).catch(() => {});
+  }
 }

@@ -11,6 +11,8 @@ import { createOrchestrator, ensureProject } from "./orchestrator";
 import type { Runner, StartOptions } from "./runner";
 import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import { message } from "./tools/message";
+import { startTaskRun, stopTaskRun } from "./tasks";
+import { task } from "./tools/task";
 import { makeSpawn } from "./tools/spawn";
 import { open } from "./transcript";
 
@@ -21,17 +23,21 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 const started: StartOptions[] = [];
 const runner: Runner = {
   async start(o) {
+    await startTaskRun(o.project, o.run!);
+    await stopTaskRun(o.project, o.run!, "waiting", "Fake agent reported");
     started.push({ project: o.project, role: o.role, branch: o.branch });
   },
   async stop() {},
   async running() { return []; },
 };
-const tools = { spawn: makeSpawn(runner), message };
+const tools = { task, spawn: makeSpawn(runner), message };
 const project = "demo";
+const taskId = crypto.randomUUID();
 
 test("user asks for a feature: orchestrator spawns a worker and replies", async () => {
   const provider = fakeProvider([
-    [text("Splitting that into one task."), toolUse("tu1", "spawn", { prompt: "Add a login page", branch: "feat/login" })],
+    [toolUse("register", "task", { action: "register", taskId, name: "Login", summary: "Add login page", branch: "feat/login", authorized: true })],
+    [text("Splitting that into one task."), toolUse("tu1", "spawn", { taskId, prompt: "Add a login page", branch: "feat/login" })],
     [toolUse("tu2", "message", { to: "user", text: "Started a worker on feat/login." })],
     [text("done")],
   ]);
@@ -50,7 +56,7 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
 
 test("worker reports back: orchestrator spawns a reviewer on the same branch", async () => {
   const provider = fakeProvider([
-    [toolUse("tu3", "spawn", { prompt: "Review PR #12", branch: "feat/login", role: "reviewer" }), toolUse("tu4", "message", { to: "user", text: "feat/login is in review." })],
+    [toolUse("tu3", "spawn", { taskId, prompt: "Review PR #12", branch: "feat/login", role: "reviewer" }), toolUse("tu4", "message", { to: "user", text: "feat/login is in review." })],
     [text("ok")],
   ]);
   const orch = await createOrchestrator({ project, provider, tools, write: () => {} });

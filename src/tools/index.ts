@@ -7,10 +7,13 @@ import { ask } from "./ask";
 import { bash } from "./bash";
 import { complexity } from "./complexity";
 import { message } from "./message";
+import { task } from "./task";
 import { spawn } from "./spawn";
 
 export interface ToolContext {
   signal?: AbortSignal;
+  /** Exact supervised run; not a branch-derived task identity. */
+  run?: string;
   /** Snapshot that produced this tool call; never re-resolve mid-batch. */
   selected?: { model: string; provider: Provider; settings?: RequestSettings };
   project: string;
@@ -26,9 +29,9 @@ export interface Tool {
 
 // Which tools each role gets. The set is deliberately small.
 export const toolsFor: Record<Role, string[]> = {
-  orchestrator: ["bash", "spawn", "message", "ask", "web_search"],
-  worker: ["bash", "message", "web_search"],
-  reviewer: ["bash", "message", "complexity", "web_search"],
+  orchestrator: ["bash", "spawn", "message", "ask", "web_search", "task"],
+  worker: ["bash", "message", "web_search", "task"],
+  reviewer: ["bash", "message", "complexity", "web_search", "task"],
 };
 
-export const registry: Record<string, Tool> = { bash, spawn, message, ask, complexity, web_search };
+export const registry: Record<string, Tool> = { bash, spawn, message, ask, complexity, web_search, task };
