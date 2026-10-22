@@ -483,3 +483,49 @@ test("the TUI runs the merge watcher for each open page on every inbox poll", as
   await running;
   expect(checked.slice(0, 2)).toEqual(["watched", "watched"]);
 });
+
+test("task merge archival precedes cleanup and live-window checks, retains registry even with cleanup blocked", async () => {
+  const { registerTask, observeTaskPR, listTasks, getTask } = await import("./tasks");
+  const task = await registerTask(project, { name: "Inbox", summary: "Implement registry", branch: "feat/data", authorized: true });
+  const { oid } = await branch("feat/data");
+  await observeTaskPR(project, task.id, { pr: { repository: "o/r", number: 901, url: url(901), head: oid }, branch: task.branch, state: "OPEN", checks: "unknown", ready: false });
+  // Tmux unavailable means no cleanup; confirmed merge still archives the row.
+  const check = watch([pr(901, task.branch, oid)], { live: async () => null, pr: async () => null });
+  expect(await check(project)).toEqual([]);
+  expect(await listTasks(project)).toEqual([]);
+  expect((await getTask(project, task.id)).archive?.reason).toBe("merged");
+  expect(existsSync(paths.worktree(project, slug(task.branch)))).toBe(true);
+  // Fresh watcher after restart does not duplicate merge history.
+  await watch([pr(901, task.branch, oid)], { live: async () => null, pr: async () => null })(project);
+  expect((await getTask(project, task.id)).history.filter(e => e.kind === "merged")).toHaveLength(1);
+});
+
+test("task exact PR polling retains failed/unknown/closed rows and handles merges outside newest-100 list", async () => {
+  const { registerTask, observeTaskPR, listTasks, getTask } = await import("./tasks");
+  const task = await registerTask(project, { name: "Task", summary: "Test polling", branch: "feat/older", authorized: true });
+  const identity = { repository: "o/r", number: 902, url: url(902), head: NO_OID };
+  const observed = { pr: identity, branch: task.branch, state: "OPEN" as const, checks: "unknown" as const, ready: false };
+  await observeTaskPR(project, task.id, observed);
+  for (const gh of [async () => null, async () => [], async () => { throw new Error("network"); }]) {
+    await mergeWatcher({ repo: async () => "o/r", gh, live: async () => [], pr: async () => null })(project);
+    expect(await listTasks(project)).toHaveLength(1);
+  }
+  await watch([], { pr: async () => ({ ...observed, state: "CLOSED" }) })(project);
+  expect((await getTask(project, task.id)).attention?.kind).toBe("closed");
+  expect(await listTasks(project)).toHaveLength(1);
+  await watch([], { pr: async () => ({ ...observed, state: "MERGED", mergedAt: future() }) })(project);
+  expect(await listTasks(project)).toEqual([]); expect((await getTask(project, task.id)).archive).toBeDefined();
+});
+
+test("malformed/foreign merged lookup never removes task rows; unassociated newer task on same branch survives", async () => {
+  const { registerTask, observeTaskPR, listTasks } = await import("./tasks");
+  const task = await registerTask(project, { name: "Old", summary: "Older task", branch: "feat/shared", authorized: true });
+  const next = await registerTask(project, { name: "Next", summary: "Newer task", branch: task.branch, authorized: true });
+  await observeTaskPR(project, task.id, { pr: { repository: "o/r", number: 903, url: url(903), head: NO_OID }, branch: task.branch, state: "OPEN", checks: "unknown", ready: false });
+  for (const extra of [{ url: "https://github.com/other/r/pull/903" }, { mergedAt: "" }, { isCrossRepository: true }]) {
+    await watch([pr(903, task.branch, NO_OID, extra)], { live: async () => null, pr: async () => null })(project);
+    expect(await listTasks(project)).toHaveLength(2);
+  }
+  await watch([pr(903, task.branch)], { live: async () => null, pr: async () => null })(project);
+  expect((await listTasks(project)).map(t => t.id)).toEqual([next.id]);
+});

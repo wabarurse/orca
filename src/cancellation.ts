@@ -2,6 +2,7 @@
 // a branch (which can have both a worker and a reviewer).
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { stopTaskRun } from "./tasks";
 import { paths } from "./config";
 
 export class Cancelled extends Error {
@@ -31,6 +32,7 @@ export async function cancelSession(project: string, id: string): Promise<void> 
     await Bun.write(tmp, JSON.stringify({ token, run }));
     renameSync(tmp, path);
   } finally { rmSync(tmp, { force: true }); }
+  await stopTaskRun(project, run, "cancelled", "Cancelled by user; leave stopped until explicitly authorized to continue");
 }
 
 /** Only the exact launch can accept its request, including requests before startup. */

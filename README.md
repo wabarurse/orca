@@ -239,3 +239,13 @@ unsupported/unfinished native searches fail explicitly, without a billing,
 provider or shell fallback. Subscription/model capability has **not** been
 live-validated. See [WEB_SEARCH.md](WEB_SEARCH.md) for provider evidence, privacy,
 limits and attribution/compaction semantics.
+
+### Structured task data
+
+Authorized work is registered with the `task` tool before `spawn`, with immutable
+task IDs independent of branch reuse. The persisted registry exposes task name,
+summary, queued/working/reviewing/ready-to-merge status and a verified PR link;
+confirmed merges archive rows without deleting history. Readiness requires an
+explicit reviewer validation of the current PR head. This is separate from
+message/question/prompt queues; no task table UI is added here yet. See
+[TASK_INBOX.md](TASK_INBOX.md) for the API, lifecycle and operational limits.

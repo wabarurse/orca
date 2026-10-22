@@ -262,7 +262,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: T
     model,
     compaction: { enabled: config.compact, fallback: config.contextLimitFallback },
     system: rolePrompt(opts.role, config),
-    ctx: { project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
+    ctx: { run: opts.run, project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
     tracker,
   });
   await agent.run();

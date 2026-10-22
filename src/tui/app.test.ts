@@ -14,6 +14,7 @@ import { answeredLine, MAX_RESTORED_ROWS, userLines } from "./restore";
 import { historyRows, lineRows } from "./lines";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../tools/message";
+import { registerTask } from "../tasks";
 import { makeSpawn } from "../tools/spawn";
 import { open as openTranscript } from "../transcript";
 import { parseKeys, type Key } from "./keys";
@@ -1283,11 +1284,13 @@ describe("restored pages", () => {
   });
 
   test("a restored page shows what it showed live: real orchestrator, scripted model", async () => {
+    mkdirSync(paths.project("fidelity"), { recursive: true });
+    const taskId = (await registerTask("fidelity", { name: "Feature", summary: "Test work", branch: "feat", authorized: true })).id;
     const TABLE_MD = "| a | b |\n|---|---|\n| 1 | 2 |";
     const runner = { async start() { await put("fidelity", "orchestrator", { from: "worker-feat", text: "Report:\n\nall green" }); }, async stop() {}, async running() { return []; } };
     const tools = { spawn: makeSpawn(runner), message };
     const provider = fakeProvider([
-      [said(`Plan:\n${TABLE_MD}\nthen *go*`), toolUse("t1", "spawn", { prompt: "do it", branch: "feat" })],
+      [said(`Plan:\n${TABLE_MD}\nthen *go*`), toolUse("t1", "spawn", { taskId, prompt: "do it", branch: "feat" })],
       [said("```ts\nconst x = 1;\n"), toolUse("t2", "message", { to: "user", text: "Started **feat**." })],
       [said("All set.")],
       // A second turn, started by the poll: a message from `parallels msg` and a report, nothing typed here.
