@@ -5,7 +5,7 @@ import OpenAI from "openai";
 import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../codex-auth";
-import type { Provider } from "./index";
+import type { Provider, Turn } from "./index";
 
 // Protocol/catalog compatibility snapshot, matching Codex CLI 0.154.0.
 export const CODEX_CLIENT_VERSION = "0.154.0";
@@ -101,9 +101,10 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
         ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
         // Codex manages its output budget; the backend rejects max_output_tokens.
       }, { signal: req.signal }));
-      const output = await completedOutput(stream as AsyncIterable<CodexStreamEvent>, req.onText);
+      let usage: Turn["usage"];
+      const output = await completedOutput(stream as AsyncIterable<CodexStreamEvent>, req.onText, false, value => { usage = value; });
       const content = fromResponses(output);
-      return { completion: summaryCompletion(output), content, stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
+      return { completion: summaryCompletion(output), content, ...(usage ? { usage, inputTokens: usage.input } : {}), stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
     },
     async search(req) {
       req.signal.throwIfAborted();
@@ -146,7 +147,7 @@ export function codexRequestSettings(model: string, settings: RequestSettings = 
 }
 
 const FAILED_EVENTS = new Set(["response.failed", "response.incomplete", "error"]);
-async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: (text: string) => void, strict = false): Promise<ResponseOutputItem[]> {
+async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: (text: string) => void, strict = false, onUsage?: (usage: NonNullable<Turn["usage"]>) => void): Promise<ResponseOutputItem[]> {
   const doneItems = new Map<number, ResponseOutputItem>();
   for await (const event of stream) {
     if (event.type === "response.output_text.delta") onText(event.delta);
@@ -157,7 +158,13 @@ async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: 
       }
       doneItems.set(event.output_index, event.item);
     }
-    else if (event.type === "response.completed" || event.type === "response.done") return finalOutput(event, doneItems, strict);
+    else if (event.type === "response.completed" || event.type === "response.done") {
+      const output = finalOutput(event, doneItems, strict);
+      const usage = event.response.usage;
+      if (usage) onUsage?.({ input: usage.input_tokens, cachedInput: usage.input_tokens_details?.cached_tokens,
+        output: usage.output_tokens, reasoning: usage.output_tokens_details?.reasoning_tokens });
+      return output;
+    }
     else if (FAILED_EVENTS.has(event.type)) {
       if (strict) throw new SearchError("incomplete");
       throw new Error("Codex response failed or was incomplete; no tool calls were executed.");

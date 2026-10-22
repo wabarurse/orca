@@ -9,6 +9,7 @@ import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/
 export type ProviderName = "anthropic" | "openai";
 
 export interface Turn {
+  usage?: { input: number; cachedInput?: number; cacheWriteInput?: number; output: number; reasoning?: number };
   /** Assistant content, Anthropic-shaped. */
   content: ContentBlock[];
   /** Whether the model wants tools run before it continues. */

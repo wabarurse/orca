@@ -43,7 +43,9 @@ test("truncateMiddle keeps head and tail", () => {
 test("long command output is truncated", async () => {
   const out = await bash.run({ command: "echo START; yes x | head -c 100000; echo END" }, ctx(home));
   expect(out.startsWith("START")).toBe(true);
-  expect(out.trimEnd().endsWith("END")).toBe(true);
+  expect(out).toContain("END\n");
+  expect(out).toContain("full output:");
+  expect(Buffer.byteLength(out)).toBeLessThanOrEqual(4096);
   expect(out).toContain("[truncated");
 });
 

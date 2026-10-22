@@ -59,3 +59,12 @@ describe("maxReviewRounds", () => {
     expect(config.model).toBe("m");
   });
 });
+
+test("efficiency defaults are enabled and overrides remain bounded", async () => {
+  expect((await loadConfig()).anthropicPromptCache).toBe(true);
+  expect((await loadConfig()).toolConcurrency).toBe(4);
+  await Bun.write(paths.config, 'anthropicPromptCache = false\ntoolConcurrency = 1\nmaxToolResultBytes = 8192\nmaxToolOutputBytes = 2048\n');
+  expect(await loadConfig()).toMatchObject({ anthropicPromptCache: false, toolConcurrency: 1, maxToolResultBytes: 8192, maxToolOutputBytes: 2048 });
+  await Bun.write(paths.config, 'anthropicPromptCache = "yes"\ntoolConcurrency = 0\nmaxToolResultBytes = -1\nmaxToolOutputBytes = 1\n');
+  expect(await loadConfig()).toMatchObject({ anthropicPromptCache: true, toolConcurrency: 4, maxToolResultBytes: 16384, maxToolOutputBytes: 67108864 });
+});

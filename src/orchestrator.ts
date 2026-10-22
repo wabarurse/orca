@@ -180,6 +180,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
   const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return createAgent({
     signal,
+    toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(deps.project, loadProvider),
     transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project),
     compaction: { enabled: config.compact, fallback: config.contextLimitFallback }, compactRequested,

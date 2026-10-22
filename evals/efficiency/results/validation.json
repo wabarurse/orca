@@ -1,0 +1,44 @@
+{
+  "typecheck": "pass",
+  "compiledBuild": "pass",
+  "focusedTests": {
+    "pass": 49,
+    "fail": 0,
+    "files": 8,
+    "log": "/tmp/parallels-efficiency-feature-tests.log"
+  },
+  "earlierFullSuite": {
+    "pass": 889,
+    "fail": 0,
+    "log": "/tmp/parallels-efficiency-final-tests.log"
+  },
+  "finalFullSuite": {
+    "pass": 888,
+    "fail": 2,
+    "log": "/tmp/parallels-efficiency-release-tests.log"
+  },
+  "targetedRetry": {
+    "pass": 131,
+    "fail": 2,
+    "log": "/tmp/parallels-efficiency-targeted-retry.log"
+  },
+  "baselineQueuedInputRepetitions": {
+    "commit": "50a5ef9",
+    "pass": 4,
+    "fail": 8,
+    "log": "/tmp/parallels-efficiency-baseline-ui.log"
+  },
+  "remainingTestIssues": [
+    "Existing queued-input UI race reproduces on untouched baseline; no UI changes made.",
+    "Merge-test fixture beforeEach/afterEach hook timed out in final suite and targeted retry; it passed in earlier full run. Root cause not established; no timeout increase or test removal."
+  ],
+  "liveTrials": {
+    "retained": 108,
+    "originalPassed": 86,
+    "originalCount": 90,
+    "directRepairPassed": 18,
+    "directRepairCount": 18,
+    "primaryPassed": 89,
+    "primaryCount": 90
+  }
+}

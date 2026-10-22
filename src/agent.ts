@@ -16,6 +16,7 @@ import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
 import { callText, resultText, type ToolCall, type ToolOutcome } from "./toolview";
+import { scheduleTools } from "./tool-scheduler";
 
 export interface AgentOptions {
   project: string;
@@ -28,6 +29,8 @@ export interface AgentOptions {
 }
 
 export interface AgentDeps {
+  /** Maximum overlap of calls explicitly marked independent. Other tools are barriers. */
+  toolConcurrency?: number;
   signal?: AbortSignal;
   provider?: Provider;
   settings?: RequestSettings;
@@ -78,9 +81,9 @@ function isReport(name: string, input: unknown, result: ToolResultBlockParam): b
 }
 
 /** Run one tool call and tell the tracker: the step before, a report after. */
-async function runTracked(deps: AgentDeps, block: ToolUse): Promise<ToolResultBlockParam> {
+async function runTracked(deps: AgentDeps, block: ToolUse, track: (name: string, input: unknown) => Promise<void>): Promise<ToolResultBlockParam> {
   const input = block.input as Record<string, unknown>;
-  await deps.tracker?.tool(block.name, input);
+  await track(block.name, input);
   const result = await runTool(deps, block.name, input);
   if (isReport(block.name, input, result)) await deps.tracker?.reported();
   return { ...result, tool_use_id: block.id };
@@ -95,19 +98,23 @@ function echo(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   };
 }
 
-/** Run a turn's tool calls in order, showing each one as it starts and ends. */
+/** Preserve result order; optionally overlap independent calls between barriers. */
 async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: string, plain?: boolean) => void): Promise<ToolResultBlockParam[]> {
-  const results: ToolResultBlockParam[] = [];
   const show = echo(deps, write);
-  for (const block of content) {
-    if (block.type !== "tool_use") continue;
+  // Run-state writes still have one writer even when tool execution overlaps.
+  let tracking = Promise.resolve();
+  const track = (name: string, input: unknown) => {
+    tracking = tracking.then(() => deps.tracker?.tool(name, input));
+    return tracking;
+  };
+  const calls = content.filter((b): b is ToolUse => b.type === "tool_use");
+  return scheduleTools(calls, b => deps.tools[b.name]?.parallel?.(b.input as Record<string, unknown>) ?? false, async block => {
     const call: ToolCall = { id: block.id, name: block.name, input: block.input };
     show.start(call);
-    const result = await runTracked(deps, block);
+    const result = await runTracked(deps, block, track);
     show.end(call, { id: block.id, ok: !result.is_error, text: String(result.content ?? "") });
-    results.push(result);
-  }
-  return results;
+    return result;
+  }, deps.toolConcurrency ?? 1);
 }
 
 /** Waiting inbox messages as one text block, or null when there are none. New messages mean new instructions. */
@@ -256,6 +263,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: T
 
   const agent = createAgent({
     signal,
+    toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(opts.project, opts.loadProvider),
     transcript,
     tools,

@@ -214,3 +214,19 @@ test("Codex cancellation aborts a partially consumed stream", async () => {
   await expect(result).rejects.toThrow();
   expect(aborted).toBe(true);
 });
+
+
+test("Codex terminal usage retains cached context and optional reasoning metrics", async () => {
+  for (const terminal of ["response.completed", "response.done"]) {
+    intercept(async () => codexSSE([{ type: terminal, response: { status: "completed", output: [message], usage: {
+      input_tokens: 1000, input_tokens_details: { cached_tokens: 800 }, output_tokens: 40, output_tokens_details: { reasoning_tokens: 30 },
+    } } }]));
+    const result = await openai(async () => fakeCodexTokens()).complete(request());
+    expect(result.usage).toEqual({ input: 1000, cachedInput: 800, output: 40, reasoning: 30 });
+    expect(result.inputTokens).toBe(1000);
+    mockFetch?.mockRestore(); mockFetch = undefined;
+  }
+  intercept(async () => codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]));
+  const missing = await openai(async () => fakeCodexTokens()).complete(request());
+  expect(missing.usage).toBeUndefined(); expect(missing.inputTokens).toBeUndefined();
+});

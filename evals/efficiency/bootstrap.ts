@@ -1,0 +1,12 @@
+import { mkdir, mkdtemp, symlink } from "node:fs/promises";
+import { join } from "node:path";
+import { paths } from "../../src/config";
+await mkdir(join(paths.root, "evals"), { recursive: true });
+const root = await mkdtemp(join(paths.root, "evals", "efficiency-"));
+const baseline = join(root, "baseline"); await mkdir(baseline);
+const archive = Bun.spawn(["git", "archive", "50a5ef9"], { cwd: join(import.meta.dir, "../.."), stdout: "pipe", stderr: "inherit" });
+const tar = Bun.spawn(["tar", "-xf", "-", "-C", baseline], { stdin: archive.stdout, stdout: "ignore", stderr: "inherit" });
+if (await tar.exited || await archive.exited) throw new Error("Could not freeze baseline");
+await symlink(join(import.meta.dir, "../../node_modules"), join(baseline, "node_modules"));
+await Bun.write(join(import.meta.dir, "results/paths.json"), JSON.stringify({ root, baseline, baselineCommit: "50a5ef9", after: join(import.meta.dir, "../..") }, null, 2));
+console.log(root);
