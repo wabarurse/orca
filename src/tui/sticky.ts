@@ -25,10 +25,14 @@ export function stickyRows(f: Frame, history: string[], chrome: string[], scroll
   const bottom = liveRows({ ...f, rows: Math.max(1, height - top.length - 1), partial: "", running: [], activity: undefined });
   const bodyHeight = Math.max(0, height - top.length - bottom.rows.length);
   const partial = f.partial ? f.partial.split("\n").flatMap(line => wrap(sanitize(line), f.cols)) : [];
-  const body = [...history, ...partial, ...(f.running ?? []), ...(f.activity ? [f.activity] : [])];
-  const maxStart = Math.max(0, body.length - bodyHeight);
+  const tail = [...partial, ...(f.running ?? []), ...(f.activity ? [f.activity] : [])];
+  const maxStart = Math.max(0, history.length + tail.length - bodyHeight);
   const start = scrollTop === null ? maxStart : Math.max(0, Math.min(scrollTop, maxStart));
-  const visible = body.slice(start, start + bodyHeight).map(line => fit(sanitize(line), f.cols));
+  // Do not copy/visit the complete cached history on every key or activity tick.
+  // Slice the viewport across the saved-history / transient-tail boundary only.
+  const end = start + bodyHeight;
+  const visible = [...history.slice(start, end), ...tail.slice(Math.max(0, start - history.length), Math.max(0, end - history.length))]
+    .map(line => fit(sanitize(line), f.cols));
   const padding = Array.from({ length: bodyHeight - visible.length }, () => "");
   return { rows: [...top, ...visible, ...padding, ...bottom.rows], cols: f.cols, cursor: height - bottom.rows.length + bottom.cursor, col: bottom.col, bodyHeight, start, maxStart };
 }

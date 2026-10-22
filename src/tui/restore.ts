@@ -8,8 +8,8 @@
 // sent the user (the transcript's `replies` entries) labelled after that
 // turn. Full tool results and thinking were never shown, so they stay hidden.
 // The caller chooses the entries: full Transcript.history() for the UI, or a
-// model branch (which can lead with a summary). A long viewport restore keeps
-// its newest MAX_RESTORED_ROWS; Infinity restores every item on terminal exit.
+// model branch (which can lead with a summary). The live UI uses Infinity so
+// every original message remains scrollable; finite budgets are explicit previews.
 //
 // Known differences from the live page:
 // - A user message typed mid-turn showed live where it was typed; restored, it
@@ -41,7 +41,7 @@ import { historyRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
 import { bold, dim, wrap } from "./render";
 
-/** A restored page shows about this many rendered rows: whole messages from the newest back. */
+/** Default budget for bounded previews; the live page explicitly restores all rows. */
 export const MAX_RESTORED_ROWS = 200;
 
 /** The note leading a history that a summary replaced. */

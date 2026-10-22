@@ -23,7 +23,7 @@ import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { helpLines, type CommandHelp } from "./help";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
-import { MAX_RESTORED_ROWS, replyLine, reportLine, restore, userLines } from "./restore";
+import { replyLine, reportLine, restore, userLines } from "./restore";
 import { bold, commit, dim, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
@@ -638,14 +638,11 @@ export class App {
   /** The last drawing error said, so a frame that keeps failing is reported once. */
   private drawError = "";
 
-  /** Expand only the initial capped restore on exit; live notes keep their exact order. */
-  private readonly exitHistory = new WeakMap<Page, () => Line[]>();
-
   /** After restoring the primary screen, print the active history and any partial reply. */
   private leave(): void {
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
-    const history = page && !page.view ? this.exitHistory.get(page)?.() ?? page.lines : page?.view?.lines ?? this.looseLines;
+    const history = page?.view?.lines ?? page?.lines ?? this.looseLines;
     const lines = [...(page ? this.header(page) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
@@ -655,14 +652,10 @@ export class App {
 
   private restorePage(page: Page, asked: import("./restore").AskedLookup): void {
     const entries = page.orch.entries?.() ?? [];
-    const shown = restore(entries, this.deps.term.cols, MAX_RESTORED_ROWS, asked);
-    page.lines = [...shown, ...page.lines];
-    if (!shown.length) return;
-    this.exitHistory.set(page, () => {
-      const start = page.lines.indexOf(shown[0]!);
-      if (start < 0) return page.lines;
-      return [...page.lines.slice(0, start), ...restore(entries, this.deps.term.cols, Infinity, asked), ...page.lines.slice(start + shown.length)];
-    });
+    // All saved conversation must be scrollable before exit, including originals
+    // before model compaction. Cache rendered rows in viewport(); only the visible
+    // slice is drawn on keys/ticks, rather than capping access to older messages.
+    page.lines = [...restore(entries, this.deps.term.cols, Infinity, asked), ...page.lines];
   }
 
   async openPage(project: string, url?: string): Promise<Page> {

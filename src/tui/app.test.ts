@@ -10,7 +10,7 @@ import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
 import { fileStore, type QuestionStore } from "./questions";
-import { answeredLine, userLines } from "./restore";
+import { answeredLine, MAX_RESTORED_ROWS, userLines } from "./restore";
 import { historyRows, lineRows } from "./lines";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../tools/message";
@@ -2233,6 +2233,70 @@ test("scrolling and new output keep both bars fixed, preserve the draft, and fol
   } finally { app.quit(); await running; }
 });
 
+test("saved history beyond the preview budget remains reachable before exit, including before compaction", async () => {
+  const project = "full-scroll", t = openTranscript(paths.transcript(project, "orchestrator"));
+  await t.append({ type: "meta", role: "orchestrator", model: "m" });
+  await t.append({ type: "message", message: { role: "user", content: "ORIGINAL-BEFORE-COMPACTION" } });
+  for (let i = 0; i < 140; i++) await t.append({ type: "message", message: { role: "assistant", content: `saved record ${i}: ` + "wrapping words ".repeat(6) } });
+  await t.append({ type: "summary", text: "MODEL-ONLY-SUMMARY", retained: [], boundary: t.head() });
+  await t.append({ type: "message", message: { role: "assistant", content: "AFTER-COMPACTION" } });
+  const term = fakeTerm(100, 24), orchs = fakeOrchestrators();
+  for (let i = 0; i < 40; i++) term.write(`PRELAUNCH-SHELL-${i}\r\n`);
+  const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {},
+    openOrchestrator: async (p, url, write, inbox) => ({ ...await orchs.openOrchestrator(p, url, write, inbox), entries: () => p === project ? t.history!() : [] }),
+  });
+  const running = app.run(project);
+  try {
+    await until(() => term.screen().includes("AFTER-COMPACTION"));
+    const rows = historyRows(app.page!.lines, term.cols).length;
+    expect(rows).toBeGreaterThan(MAX_RESTORED_ROWS * 2);
+    expect(app.page!.lines.map(raw).join("\n")).not.toMatch(/MODEL-ONLY-SUMMARY|earlier messages/);
+    term.type("\x1b[200~draft 界é👩‍💻\nsecond line\x1b[201~");
+    await until(() => term.screen().includes("second line"));
+    const draft = { ...app.input }, top = bodyStart(term);
+    const header = term.display.screen().slice(0, top), footer = term.display.screen().slice(-5);
+    // Injected reports exercise the application path, NOT physical Apple Terminal gestures.
+    const scrollToStart = async () => {
+      term.type("\x1b[<64;10;8M".repeat(Math.ceil(rows / 3) + 10));
+      await until(() => term.screen().includes("ORIGINAL-BEFORE-COMPACTION"));
+    };
+    await scrollToStart();
+    expect(term.display.screen()[top]).toBe("> ORIGINAL-BEFORE-COMPACTION");
+    const body = term.display.screen().slice(top, -5);
+    term.type("\x1b[<64;10;8M".repeat(20)); // clamp at the original first message
+    app.say("LIVE-WHILE-READING");
+    await Bun.sleep(40);
+    expect(term.display.screen().slice(top, -5)).toEqual(body);
+    expect(term.display.screen().slice(0, top)).toEqual(header);
+    expect(term.display.screen().slice(-5)).toEqual(footer);
+    expect(term.screen()).not.toContain("PRELAUNCH-SHELL");
+    expect(term.display.modes.get(1049)).toBe(true);
+    for (const cols of [23, 100]) {
+      term.resize(cols, 24);
+      await Bun.sleep(170);
+      expect(bodyRows(term)[0]).toStartWith("> ORIGINAL-BEFORE");
+      expect(app.input).toEqual(draft);
+    }
+    // Tail-following resumes at the bottom; switching projects never drops the original history.
+    term.type("\x1b[<65;10;8M".repeat(rows));
+    await until(() => term.screen().includes("LIVE-WHILE-READING"));
+    await app.openPage("other-scroll");
+    term.type("\x1a");
+    await until(() => term.screen().includes("LIVE-WHILE-READING"));
+    await scrollToStart();
+    expect(app.input).toEqual(draft);
+    expect(term.raw()).not.toContain("\x1b[?1049l");
+    expect(term.raw()).not.toContain("\x1b[3J");
+  } finally { app.quit(); await running; }
+  const exit = term.screen();
+  expect(exit).toContain("PRELAUNCH-SHELL-0");
+  for (const text of ["ORIGINAL-BEFORE-COMPACTION", "AFTER-COMPACTION", "LIVE-WHILE-READING"]) expect(exit.split(text).length - 1).toBe(1);
+  expect(exit.indexOf("ORIGINAL-BEFORE-COMPACTION")).toBeLessThan(exit.indexOf("saved record 0:"));
+  expect(exit.indexOf("saved record 139:")).toBeLessThan(exit.indexOf("AFTER-COMPACTION"));
+  expect(exit).not.toContain("MODEL-ONLY-SUMMARY");
+  expect(term.display.modes.get(1049)).toBe(false);
+});
+
 test("header caches model and filters subagent counts; unchanged background frames write no bytes", async () => {
   const term = fakeTerm(80, 24);
   const ticks: { fn: () => void; ms: number }[] = [];
@@ -2596,7 +2660,7 @@ test("App retains an interior source offset across widening/narrowing and resets
   } finally { app.quit(); await running; }
 });
 
-test("combined E viewport cancels actual tools, keeps full pre-checkpoint exit history and no revived activity", async () => {
+test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/exit history and no revived activity", async () => {
   const project = "combined-cancel-e", path = paths.transcript(project, "orchestrator");
   mkdirSync(paths.repo(project), { recursive: true });
   const t = openTranscript(path);
@@ -2618,7 +2682,7 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint exit h
   const running = app.run(project);
   try {
     await until(() => !!app.page);
-    expect(app.page!.lines.map(raw).join("\n")).not.toContain("FULL-HISTORY-SENTINEL"); // viewport remains bounded
+    expect(app.page!.lines.map(raw).join("\n")).toContain("FULL-HISTORY-SENTINEL"); // live history is complete, not just exit output
     // Page data can precede the throttled first frame; never capture "opening…" as the header.
     await until(() => term.display.screen()[0]!.includes(">[combined-cancel-e]"));
     term.type("start cancellable tool\r");
