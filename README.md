@@ -27,8 +27,9 @@ start there). With no project named it also reopens every project under
 marked `>`), cached model, effort, fast mode, directory and remote, and refreshes
 when settings change.
 Short terminals collapse header details to keep the input usable.
-The bottom band puts the boxed input first, then grouped running worker/reviewer,
-queued-message and question counts; these stack on narrow screens. Every menu
+The bottom band puts queued prompt previews immediately above the boxed input,
+then grouped running worker/reviewer, queued-message and question counts; these
+stack on narrow screens. Every menu
 and question panel opens below the input and retains its own key hints. There
 is no persistent shortcut row; Ctrl+B, Ctrl+Q and the other keys still work.
 A running turn's "thinking…/working…" shimmers at the selected conversation's
@@ -81,8 +82,18 @@ for cancelled/skipped tools, so the next request has a valid transcript.
 
 Pressing Enter puts a chat message in the orchestrator's inbox; it appears in
 the conversation only when the orchestrator consumes it, between tool batches
-or responses. Until then the bottom band counts it as queued. This never
-interrupts a running tool. Assistant message identity is retained across streamed paragraph/quote/list
+or responses. Until then the pinned footer previews text submitted here above the
+composer, in submission order, labelled `Queued shown/total · orchestrator · project`. The
+previews use the existing inbox/sign-in-held tracking, not another delivery
+queue; drafts and already consumed messages are never queued previews. Multiline
+prompts use `↵`, long text ends in `…`, and the heading counts hidden items. The
+area is capped at six rows and a third of the space below the header, leaving
+conversation and composer space; at tiny sizes input/status take precedence.
+Switching projects selects that project's queue and draft (including its cursor).
+When viewing an agent, the footer still labels the queue as the **orchestrator's**.
+Successful inbox writes, turn completion and cancellation are not consumption.
+Submitting never interrupts a running tool. Assistant message identity is retained
+across streamed paragraph/quote/list
 source lines and transcript entries. Logical conversation blocks have a neutral blank
 row between them, not between a tool's label and result or wrapped rows.
 

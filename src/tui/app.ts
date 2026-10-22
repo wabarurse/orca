@@ -59,8 +59,8 @@ export interface Page {
   /** Lines in the input-history file as far as this page knows, and the last write (writes go one at a time). */
   historyLines: number;
   savingHistory: Promise<void>;
-  /** Messages sent to the inbox, not yet consumed or shown; removed exactly once by onInbox. */
-  sent: string[];
+  /** Submitted inbox prompts, previewed in the footer but not yet in history; removed by identity at onInbox. */
+  sent: { readonly inputId: string; text: string }[];
   /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
   questions: PageQuestions;
   /** Answered-question lines waiting for the streaming reply's partial line to end, so they never split it. */
@@ -389,13 +389,14 @@ export class App {
     this.toPage(page, text.replace(/\n$/, "").split("\n"));
   }
 
-  /** Messages as the orchestrator reads them, ending any markdown in the stream: an agent's as one dim line, the user's as "> …" unless typed here. */
+  /** Consumption is the only normal path from a queued prompt to conversation history. */
   private inbox(page: Page, msgs: Message[]): void {
     this.endPartial(page);
     for (const m of msgs) {
       if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
+      // Match identity, not text: an identical external message is not an acknowledgement.
       // Typed here: show only now, at the consumption boundary (answer-shaped chat stays chat).
-      const at = page.sent.indexOf(m.text);
+      const at = m.inputId ? page.sent.findIndex(item => item.inputId === m.inputId) : -1;
       if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines(m.text)); continue; }
       // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`parallels msg`) as "> …", as restore shows it.
       this.toPage(page, this.questions.inboxLines(page, m.text) ?? userLines(m.text));
@@ -433,6 +434,9 @@ export class App {
       running: page ? (page.view?.calls ?? page.calls).rows(this.clock.now(), this.deps.term.cols) : [],
       activity: !this.started ? dim("opening…") : page ? this.activity(page) : undefined,
       status, input, inputArea: area,
+      // Project-owned submitted text only: never reconstruct from conversation
+      // user lines or from the chat/answer draft. This is presentation, not delivery.
+      queued: page ? { project: page.name, texts: [...page.sent.map(item => item.text), ...(this.queued.get(page) ?? []).map(item => item.text)] } : undefined,
       menu: this.menu,
       help: this.helpView(),
       question: this.questions.view(),
@@ -973,8 +977,8 @@ export class App {
 
   private async drainLoginPage(page: Page, texts: { text: string; submission?: string }[], ok: boolean): Promise<void> {
     if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
-    for (const { text, submission } of [...texts]) {
-      texts.shift(); // ownership transfers to send (Page.sent), or an explicit drop report
+    while (texts.length) {
+      const { text, submission } = texts.shift()!; // ownership transfers to send (Page.sent), or an explicit drop report
       if (ok && this.pages.includes(page)) await this.send(page, text, submission).catch(() => {});
       else this.say(dim(`not sent after sign-in (${page.name}): ${text}`), this.pages.includes(page) ? page : this.page);
     }
@@ -1088,8 +1092,12 @@ export class App {
   private async talk(page: Page, text: string): Promise<void> {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
-    if (this.loggingIn) {
-      this.queued.set(page, [...(this.queued.get(page) ?? []), { text, submission: page.orch.submission?.() }]);
+    if (this.loggingIn || this.queued.has(page)) {
+      // Append to the same owner while login is draining too, so a new submit
+      // cannot overtake older held input during an asynchronous inbox write.
+      const texts = this.queued.get(page) ?? [];
+      texts.push({ text, submission: page.orch.submission?.() });
+      this.queued.set(page, texts);
       return this.say(dim("queued; runs after sign-in"), page);
     }
     await this.send(page, text);
@@ -1250,13 +1258,14 @@ export class App {
   }
 
 
-  /** Send what the user typed on a page to its orchestrator, remembering it was shown already. */
+  /** Track submitted input until onInbox consumes it; a failed write is explicitly reported, never echoed as sent. */
   private async send(page: Page, text: string, submission?: string): Promise<void> {
-    page.sent.push(text);
+    const sent = { inputId: crypto.randomUUID(), text };
+    page.sent.push(sent);
     this.draw();
-    try { await page.orch.say(text, submission); }
+    try { await page.orch.say(text, submission, sent.inputId); }
     catch (err) {
-      const at = page.sent.lastIndexOf(text);
+      const at = page.sent.indexOf(sent);
       if (at !== -1) page.sent.splice(at, 1);
       this.say(dim(`not sent: ${text}`), page);
       throw err;

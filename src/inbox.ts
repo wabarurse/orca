@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { paths } from "./config";
 
 export interface Message {
+  /** Optional immutable identity of a locally submitted prompt; echoed unchanged at consumption. */
+  inputId?: string;
   /** Captured when submitted, never when the asynchronous write finishes. */
   userEpoch?: string;
   from: string;

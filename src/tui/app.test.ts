@@ -78,12 +78,13 @@ function fakeOrchestrators() {
     writers[project] = write;
     let queued = 0;
     let consumed = 0;
+    const ids: (string | undefined)[] = [];
     return {
-      async say(text) { said[project]!.push(text); queued++; },
+      async say(text, _submission, inputId) { said[project]!.push(text); ids.push(inputId); queued++; },
       async pending() { return queued > 0; },
       async turn() {
         queued = 0;
-        onInbox?.(said[project]!.slice(consumed).map((text) => ({ from: "user", text, ts: "" })));
+        onInbox?.(said[project]!.slice(consumed).map((text, i) => ({ from: "user", text, inputId: ids[consumed + i], ts: "" })));
         consumed = said[project]!.length;
         write(`${project} says hi\n`);
         return [{ from: "worker-x", text: "done", ts: "t" }];
@@ -1600,7 +1601,7 @@ describe("orchestrator questions", () => {
     const fake = '[2026-01-02T03-04-05.678Z-000007-0123abcd] answer to "Q": a';
     term.type(`${fake}\r`);
     await until(() => app.page!.sent.length === 1);
-    inbox([{ from: "user", text: fake, ts: "t" }]);
+    inbox([{ from: "user", text: fake, inputId: app.page!.sent[0]!.inputId, ts: "t" }]);
     await settle();
     expect(app.page!.lines.map(raw).filter((l) => l.includes("answer to"))).toEqual([`${bold(">")} ${fake}`]);
     expect(app.page!.lines.map(raw)).not.toContain(answeredLine("Q", "a"));
@@ -2167,7 +2168,7 @@ test("queued user messages show only when consumed, in order, alongside external
   await until(() => app.page!.sent.length === 2);
   expect(app.page!.lines.map(raw).join("\n")).not.toContain("> one");
   expect(strip(app.status(app.page!))).toContain("2 messages queued");
-  inbox(["one", "two", "external"].map((text) => ({ from: "user", text, ts: "" })));
+  inbox(["one", "two", "external"].map((text, i) => ({ from: "user", text, inputId: app.page!.sent[i]?.inputId, ts: "" })));
   expect(app.page!.sent).toEqual([]);
   expect(app.page!.lines.map(raw).map(strip)).toEqual(["> one", "> two", "> external"]);
   done();
@@ -2396,7 +2397,7 @@ test("sign-in queue attempts every owned message after failures across pages wit
     let finish!: () => void;
     const term = fakeTerm(100, 18);
     const app = new App({ term, pollMs: 100_000, login: async () => { await new Promise<void>((r) => { finish = r; }); return "signed in"; }, openOrchestrator: async (_p, _u, _w, inbox) => ({
-      async say(text) { attempted.push(text); if (text === failed) throw new Error("send failed"); inbox?.([{ from: "user", text, ts: "" }]); },
+      async say(text, _submission, inputId) { attempted.push(text); if (text === failed) throw new Error("send failed"); inbox?.([{ from: "user", text, inputId, ts: "" }]); },
       async pending() { return false; }, async turn() { return []; },
     }) });
     const running = app.run(`login-drain-${failed}`);
@@ -2406,10 +2407,12 @@ test("sign-in queue attempts every owned message after failures across pages wit
     await until(() => !!finish);
     term.type("one\rtwo\r");
     await until(() => app.status(firstPage).includes("2 messages queued"));
+    expect(app.frame().queued?.texts).toEqual(["one", "two"]);
     await app.openPage(`login-other-${failed}`);
     const secondPage = app.page!;
     term.type("three\r");
     await until(() => app.status(secondPage).includes("1 message queued"));
+    expect(app.frame().queued?.texts).toEqual(["three"]);
     finish();
     await until(() => attempted.length === 3 && app.status(secondPage).includes("0 messages queued"));
     expect(attempted).toEqual(["one", "two", "three"]);
@@ -2418,6 +2421,9 @@ test("sign-in queue attempts every owned message after failures across pages wit
     expect(displayed).toContain(`not sent: ${failed}`);
     expect(firstPage.sent).toEqual([]);
     expect(secondPage.sent).toEqual([]);
+    expect(app.frame().queued?.texts).toEqual([]);
+    app.switchPage(-1);
+    expect(app.frame().queued?.texts).toEqual([]);
     app.quit(); await running;
   }
 });
@@ -2869,6 +2875,8 @@ describe("explicit footer help", () => {
       await help();
       await app.onKey({ name: "z", ctrl: true });
       expect(app.frame().help).toBeNull();
+      expect(app.input).toEqual({ text: "", cursor: 0 }); // the other project's own draft
+      await app.onKey({ name: "x", ctrl: true });
       expect(app.input).toEqual(draft);
       await help();
       app.openMenu("example menu", [{ value: "one", label: "one" }], () => {});
@@ -3003,4 +3011,284 @@ describe("explicit footer help", () => {
       expect(again.input.text).toBe("/help");
     } finally { again.quit(); await restarted; }
   });
+});
+
+describe("queued input footer", () => {
+  test("several submissions stay above input until each consumption, never inserting drafts or double-echoing identical prompts", async () => {
+    const term = fakeTerm(100, 24);
+    let inbox!: (msgs: Message[]) => void, finish!: () => void;
+    const app = new App({ term, pollMs: 100_000, openOrchestrator: async (_p, _u, _w, read) => {
+      inbox = read!;
+      return { async say() {}, async pending() { return false; }, turn: () => new Promise(resolve => { finish = () => resolve([]); }) };
+    } });
+    const running = app.run("queued-order");
+    try {
+      await until(() => !!app.page);
+      term.type("first\r");
+      await until(() => !!finish);
+      term.type("\x1b[200~second\nline 界é👩‍💻\x1b[201~\rfirst\r");
+      const texts = ["first", "second\nline 界é👩‍💻", "first"];
+      await until(() => app.frame().queued?.texts.length === 3);
+      term.type("\x1b[200~unsent\ndraft\x1b[201~");
+      term.press({ name: "left" });
+      const draft = { ...app.input };
+      await until(() => term.screen().includes("Queued 3/3"));
+      const rows = term.display.screen();
+      const heading = rows.findIndex(row => row.startsWith("Queued"));
+      expect(rows.slice(heading, heading + 5)).toEqual([
+        "Queued 3/3 · orchestrator · queued-order", "  1. first", "  2. second ↵ line 界é👩‍💻", "  3. first", "┌" + "─".repeat(98) + "┐",
+      ]);
+      expect(app.page!.lines).toEqual([]);
+      expect(app.frame().queued?.texts).toEqual(texts);
+      for (let i = 0; i < texts.length; i++) {
+        inbox([{ from: "user", ...app.page!.sent[0]!, ts: "synthetic" }]);
+        expect(app.page!.busy).toBe(true); // not turn completion, a real consumption boundary
+        expect(app.frame().queued?.texts).toEqual(texts.slice(i + 1));
+        expect(app.page!.lines).toEqual(texts.slice(0, i + 1).flatMap(userLines));
+        expect(app.input).toEqual(draft);
+      }
+      inbox([{ from: "user", text: "external user", ts: "synthetic" }]);
+      expect(app.page!.lines).toEqual([...texts, "external user"].flatMap(userLines));
+      finish();
+      await until(() => !term.screen().includes("Queued"));
+      expect(app.input).toEqual(draft);
+    } finally { finish?.(); app.quit(); await running; }
+    expect(term.screen()).not.toContain("Queued"); // no footer previews in exit transcript
+    expect(term.screen().split("> first")).toHaveLength(3);
+  });
+
+  test("project, answer and agent-view drafts stay independent from pending orchestrator previews through switches and resizes", async () => {
+    const term = fakeTerm(90, 24), reads = new Map<string, (msgs: Message[]) => void>();
+    const app = new App({ term, pollMs: 100_000, questionDelayMs: 0, openOrchestrator: async (project, _u, _w, inbox) => {
+      reads.set(project, inbox!);
+      return { async say() {}, async pending() { return false; }, async turn() { return []; } };
+    } });
+    const running = app.run("queued-project-a");
+    try {
+      await until(() => !!app.page);
+      term.type("pending A\r");
+      await until(() => app.frame().queued?.texts.length === 1);
+      const a = app.page!, chat = { text: "chat A\n界 draft", cursor: 8 };
+      app.input = { ...chat }; app.draw();
+      await askQuestions(a.project, [{ text: "Synthetic question?" }]);
+      await app.onKey({ name: "q", ctrl: true });
+      app.input = { text: "answer draft 👩‍💻", cursor: 7 }; app.draw();
+      const answer = { ...app.input };
+      expect(app.questions.answering()).toBe(true);
+      expect(app.frame().queued?.texts).toEqual(["pending A"]);
+      await app.onKey({ name: "b", ctrl: true });
+      expect(app.projectList).not.toBeNull();
+      await app.onKey({ name: "escape" });
+      expect(app.input).toEqual(answer);
+      await app.openPage("queued-project-b");
+      term.type("pending B\r");
+      await until(() => app.frame().queued?.texts.length === 1);
+      const b = app.page!, chatB = { text: "draft B", cursor: 3 };
+      app.input = { ...chatB }; app.draw();
+      expect(app.frame().queued?.texts).toEqual(["pending B"]);
+      app.switchPage(-1);
+      expect(app.page).toBe(a);
+      expect(app.input).toEqual(answer);
+      for (const [cols, rows] of [[12, 8], [23, 16], [90, 24]]) {
+        term.resize(cols!, rows!);
+        await Bun.sleep(160);
+        expect(app.input).toEqual(answer);
+        expect(app.frame().queued?.texts).toEqual(["pending A"]);
+      }
+      await app.onKey({ name: "q", ctrl: true });
+      expect(app.input).toEqual(chat);
+      a.view = { name: "worker-synthetic", lines: [], live: true, calls: new Calls(), leave() {} };
+      a.name = "Renamed display"; // identity remains the original project id
+      app.draw();
+      await until(() => term.screen().includes("Queued 1/1 · orchestrator · Renamed display"));
+      expect(app.frame().queued?.texts).toEqual(["pending A"]);
+      reads.get(a.project)!([{ from: "user", ...a.sent[0]!, ts: "synthetic" }]);
+      expect(a.view.lines).toEqual([]);
+      expect(a.lines).toEqual(userLines("pending A"));
+      expect(app.input).toEqual(chat);
+      expect(a.project).toBe("queued-project-a");
+      app.switchPage(1);
+      expect(app.page).toBe(b);
+      expect(app.input).toEqual(chatB);
+      expect(app.frame().queued?.texts).toEqual(["pending B"]);
+    } finally { app.quit(); await running; }
+  });
+
+  test("real inbox consumption during a tool turn removes only consumed previews and inserts each user exactly once", async () => {
+    const term = fakeTerm(90, 24), project = "queued-real-turn";
+    let release!: () => void, started = false, response!: () => void;
+    let afterExternal: readonly string[] | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const responseGate = new Promise<void>(resolve => { response = resolve; });
+    const scripted = fakeProvider([[toolUse("wait-1", "wait", {})], [said("finished")]]);
+    let requests = 0;
+    const provider = { ...scripted, async complete(req: Parameters<typeof scripted.complete>[0]) {
+      if (++requests === 2) await responseGate;
+      return scripted.complete(req);
+    } };
+    const app = new App({ term, pollMs: 100_000, openOrchestrator: async (project, _url, write, onInbox, events) => createOrchestrator({ project, provider, write, ...events,
+      onInbox: messages => {
+        for (const msg of messages) {
+          onInbox?.([msg]);
+          if (msg.text === "next one" && !msg.inputId) afterExternal = app.frame().queued?.texts;
+        }
+      },
+      tools: { wait: { spec: { name: "wait", description: "Synthetic gate", input_schema: { type: "object" } }, async run() { started = true; await gate; return "ok"; } } },
+    }) });
+    const running = app.run(project);
+    try {
+      await until(() => !!app.page);
+      term.type("start\r");
+      await until(() => started);
+      await put(project, "orchestrator", { from: "user", text: "next one" }); // external, identical to a local prompt
+      term.type("next one\rnext two\r");
+      await until(() => app.frame().queued?.texts.length === 2);
+      await until(() => term.screen().includes("  2. next two"));
+      expect(app.page!.lines.filter((line): boolean => typeof line === "object" && "user" in line)).toEqual(userLines("start"));
+      release();
+      await until(() => requests === 2);
+      expect(app.page!.busy).toBe(true);
+      expect(app.frame().queued?.texts).toEqual([]);
+      expect(afterExternal).toEqual(["next one", "next two"]); // external consumption must not acknowledge identical local text
+      expect(app.page!.lines.filter((line): boolean => typeof line === "object" && "user" in line)).toEqual(["start", "next one", "next one", "next two"].flatMap(userLines));
+      response();
+      await until(() => !app.page!.busy);
+      const transcript = await openTranscript(paths.transcript(project, "orchestrator")).chain();
+      for (const text of ["start", "next one", "next two"]) expect(JSON.stringify(transcript).split(`[user] ${text}`)).toHaveLength(text === "next one" ? 3 : 2);
+    } finally { release(); response(); app.quit(); await running; }
+  });
+
+  test("login transfer retains previews and FIFO even for submissions made during a delayed send", async () => {
+    const term = fakeTerm(100, 24), attempted: string[] = [];
+    let signedIn!: () => void, persisted!: () => void, read!: (msgs: Message[]) => void;
+    const loginGate = new Promise<void>(resolve => { signedIn = resolve; });
+    const writeGate = new Promise<void>(resolve => { persisted = resolve; });
+    const app = new App({ term, pollMs: 100_000, login: async () => { await loginGate; return "signed in"; }, openOrchestrator: async (_p, _u, _w, inbox) => {
+      read = inbox!;
+      return { async say(text) { attempted.push(text); if (text === "one") await writeGate; }, async pending() { return false; }, async turn() { return []; } };
+    } });
+    const running = app.run("queued-login-transfer");
+    try {
+      await until(() => !!app.page);
+      term.type("/login claude\r");
+      await until(() => app.loggingIn);
+      term.type("one\rtwo\r");
+      await until(() => app.frame().queued?.texts.length === 2);
+      expect(app.frame().queued?.texts).toEqual(["one", "two"]);
+      signedIn();
+      await until(() => attempted.length === 1);
+      expect(app.loggingIn).toBe(false);
+      expect(app.frame().queued?.texts).toEqual(["one", "two"]);
+      term.type("three\r");
+      await until(() => app.frame().queued?.texts.length === 3);
+      expect(attempted).toEqual(["one"]);
+      expect(app.frame().queued?.texts).toEqual(["one", "two", "three"]);
+      persisted();
+      await until(() => attempted.length === 3);
+      expect(attempted).toEqual(["one", "two", "three"]);
+      expect(app.frame().queued?.texts).toEqual(attempted); // successful persistence alone is not consumption
+      read(app.page!.sent.map(item => ({ from: "user", ...item, ts: "synthetic" })));
+      expect(app.frame().queued?.texts).toEqual([]);
+      expect(app.page!.lines.filter((line): boolean => typeof line === "object" && "user" in line)).toEqual(attempted.flatMap(userLines));
+    } finally { signedIn(); persisted(); app.quit(); await running; }
+  });
+});
+
+for (const boundary of ["cancel", "error"] as const) test(`queued footer survives a real ${boundary} boundary without acknowledging pending input`, async () => {
+  const term = fakeTerm(100, 24), project = `queued-boundary-${boundary}`;
+  let reject!: (error: Error) => void, calls = 0;
+  const scripted = fakeProvider([[said("resumed")]]);
+  const provider = { ...scripted, async complete(req: Parameters<typeof scripted.complete>[0]) {
+    if (++calls !== 1) return scripted.complete(req);
+    return new Promise<Awaited<ReturnType<typeof scripted.complete>>>((_resolve, fail) => {
+      reject = fail;
+      req.signal!.addEventListener("abort", () => fail(req.signal!.reason), { once: true });
+    });
+  } };
+  const app = new App({ term, pollMs: 100_000, openOrchestrator: async (project, _u, write, onInbox) => createOrchestrator({ project, provider, tools: {}, write, onInbox }) });
+  const running = app.run(project);
+  try {
+    await until(() => !!app.page);
+    term.type("consumed before boundary\r");
+    await until(() => !!reject);
+    term.type("still pending");
+    await app.onKey({ name: "enter" }); // wait for persistence before failing the active request
+    await until(() => app.frame().queued?.texts.length === 1);
+    term.type("draft stays");
+    const draft = { ...app.input };
+    if (boundary === "cancel") await app.onKey({ name: "c", ctrl: true });
+    else reject(new Error("synthetic request failure"));
+    await until(() => !app.page!.busy && term.screen().includes("  1. still pending"));
+    expect(calls).toBe(1);
+    expect(app.frame().queued?.texts).toEqual(["still pending"]);
+    expect(app.input).toEqual(draft);
+    expect(app.page!.lines.filter((line): boolean => typeof line === "object" && "user" in line)).toEqual(userLines("consumed before boundary"));
+    await app.onKey({ name: "escape" }); // explicit clearing of this fixture's draft only
+    term.type("resume now\r");
+    await until(() => calls === 2 && !app.page!.busy);
+    expect(app.frame().queued?.texts).toEqual([]);
+    expect(app.page!.lines.filter((line): boolean => typeof line === "object" && "user" in line)).toEqual(["consumed before boundary", "still pending", "resume now"].flatMap(userLines));
+    const transcript = JSON.stringify(await openTranscript(paths.transcript(project, "orchestrator")).chain());
+    for (const text of ["consumed before boundary", "still pending", "resume now"]) expect(transcript.split(`[user] ${text}`)).toHaveLength(2);
+  } finally { reject?.(new Error("test cleanup")); app.quit(); await running; }
+});
+
+test("queued footer removal preserves a scrolled source anchor and Enter still follows the tail, without changing terminal input modes", async () => {
+  const term = fakeTerm(100, 24);
+  let read!: (msgs: Message[]) => void;
+  const app = new App({ term, pollMs: 100_000, openOrchestrator: async (_p, _u, _w, inbox) => {
+    read = inbox!;
+    return { async say() {}, async pending() { return false; }, async turn() { return []; } };
+  } });
+  const running = app.run("queued-scroll");
+  try {
+    await until(() => !!app.page);
+    for (let i = 0; i < 80; i++) app.say(`history ${i}`);
+    await until(() => term.screen().includes("history 79"));
+    term.press({ name: "pageup" });
+    await until(() => !term.screen().includes("history 79"));
+    const top = bodyStart(term), before = term.writes.length;
+    term.type("queue one\rqueue two\r");
+    await until(() => term.screen().includes("Queued 2/2"));
+    expect(term.screen()).toContain("history 79"); // existing Enter contract: follow the tail
+    term.press({ name: "pageup" });
+    await until(() => !term.screen().includes("history 79"));
+    const anchor = term.display.screen()[top];
+    term.type("kept draft");
+    const draft = { ...app.input };
+    read([{ from: "user", ...app.page!.sent[0]!, ts: "synthetic" }]);
+    await until(() => term.screen().includes("Queued 1/1"));
+    expect(term.display.screen()[top]).toBe(anchor);
+    term.type("\x1b[<65;10;8M".repeat(100)); // injected SGR, not a physical gesture
+    await until(() => term.screen().includes("> queue one"));
+    read([{ from: "user", ...app.page!.sent[0]!, ts: "synthetic" }]);
+    await until(() => term.screen().includes("> queue two") && !term.screen().includes("Queued"));
+    expect(app.input).toEqual(draft);
+    expect(term.display.top).toBe(0);
+    expect(term.writes.slice(before).join("")).not.toMatch(/\x1b\[\?(1049|1000|1006|2004)[hl]/);
+  } finally { app.quit(); await running; }
+});
+
+
+test("a failed write removes that submission, not a later identical pending prompt", async () => {
+  const term = fakeTerm(100, 24);
+  let fail!: (error: Error) => void, attempts = 0;
+  const app = new App({ term, pollMs: 100_000, openOrchestrator: async () => ({
+    async say() { if (++attempts === 1) await new Promise<void>((_resolve, reject) => { fail = reject; }); },
+    async pending() { return false; }, async turn() { return []; },
+  }) });
+  const running = app.run("queued-identical-failure");
+  try {
+    await until(() => !!app.page);
+    term.type("same\rmiddle\rsame\r");
+    await until(() => attempts === 3);
+    const original = [...app.page!.sent];
+    expect(new Set(original.map(item => item.inputId)).size).toBe(3);
+    fail(new Error("synthetic write failure"));
+    await until(() => app.page!.sent.length === 2);
+    expect(app.page!.sent).toEqual(original.slice(1));
+    expect(app.frame().queued?.texts).toEqual(["middle", "same"]);
+    expect(app.page!.lines.map(raw).map(strip)).toContain("not sent: same");
+    expect(app.page!.lines.some(line => typeof line === "object" && "user" in line)).toBe(false);
+  } finally { fail?.(new Error("cleanup")); app.quit(); await running; }
 });

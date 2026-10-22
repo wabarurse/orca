@@ -125,8 +125,13 @@ const TAKEN = new Set(["up", "down", "enter", "escape", "tab"]);
 export class Questions {
   /** Which page's which mode the input was last synced to. */
   private shown: { page: QuestionPage | undefined; mode: Mode } = { page: undefined, mode: "chat" };
-  /** The chat draft, while the input holds a question's answer. */
-  private chat: EditState = EMPTY;
+  /** Chat drafts belong to page objects, just like answers; switching projects must not carry a draft across. */
+  private readonly chats = new WeakMap<QuestionPage, EditState>();
+  private looseChat: EditState = EMPTY;
+
+  private chat(page: QuestionPage | undefined): EditState {
+    return page ? this.chats.get(page) ?? EMPTY : this.looseChat;
+  }
 
   constructor(private readonly host: QuestionHost, private readonly store: QuestionStore = fileStore, private readonly delayMs = QUESTION_DELAY_MS) {}
 
@@ -208,7 +213,7 @@ export class Questions {
     page.questions.index = 0;
     page.questions.answer = EMPTY;
     if (active) {
-      this.host.input = this.chat;
+      this.host.input = this.chat(page);
       this.shown = { page, mode: "chat" };
     }
     if (typed.text.trim()) note += `; your unsent answer: ${typed.text}`;
@@ -264,10 +269,12 @@ export class Questions {
   /** Put what the input holds aside (chat draft or the shown page's answer) and load the buffer `want` uses. */
   private swap(page: QuestionPage | undefined, want: Mode): void {
     const from = bufferOf(this.shown.mode);
-    if (from === "chat") this.chat = this.host.input;
-    else if (from === "answer") this.shown.page!.questions.answer = this.host.input;
+    if (from === "chat") {
+      if (this.shown.page) this.chats.set(this.shown.page, this.host.input);
+      else this.looseChat = this.host.input;
+    } else if (from === "answer") this.shown.page!.questions.answer = this.host.input;
     const to = bufferOf(want);
-    this.host.input = to === "chat" ? this.chat : to === "answer" ? page!.questions.answer : EMPTY;
+    this.host.input = to === "chat" ? this.chat(page) : to === "answer" ? page!.questions.answer : EMPTY;
   }
 
   /** Start the delay for a head not shown before, or when `again` (keys coming back from chat). */
