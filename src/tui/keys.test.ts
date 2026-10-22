@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { keyReader, parseKeys, type Key, type SetTimer } from "./keys";
+import { keyReader, parseKeys, type Key, type SetTimer, ESC_DELAY_MS } from "./keys";
 
 /** A keyReader on a manual timer: fire() runs the pending idle flush. */
 function reader() {
   const got: Key[] = [];
   let pending: (() => void) | null = null;
-  const setTimer: SetTimer = (fn) => { pending = fn; return () => { pending = null; }; };
+  let delay = 0;
+  const setTimer: SetTimer = (fn, ms) => { delay = ms; pending = fn; return () => { pending = null; }; };
   const r = keyReader((k) => got.push(k), 300, setTimer);
   return {
     got, feed: r.feed, close: r.close,
     fire() { const fn = pending; pending = null; fn?.(); },
     get timers() { return pending ? 1 : 0; },
+    get delay() { return delay; },
   };
 }
 
@@ -95,7 +97,7 @@ describe("parseKeys", () => {
     expect(r.got).toEqual([{ name: "char", text: "ab" }, { name: "paste", text: "x\ny" }]);
   });
 
-  test("unfinished escapes wait for the next read or the timeout; a lone Esc does not", () => {
+  test("unfinished escapes wait; a lone Esc has a short bounded disambiguation window", () => {
     const r = reader();
     r.feed("\x1b[1;");
     r.feed("3D");
@@ -105,6 +107,9 @@ describe("parseKeys", () => {
     r.feed("A");
     expect(r.got[1]).toEqual({ name: "up" });
     r.feed("\x1b");
+    expect(r.got).toHaveLength(2);
+    expect(r.delay).toBe(ESC_DELAY_MS);
+    r.fire();
     expect(r.got[2]).toEqual({ name: "escape" });
     r.feed("\x1b[");
     expect(r.got.length).toBe(3);
@@ -205,10 +210,11 @@ describe("OSC replies", () => {
     expect(r.got).toEqual([REPLY]); // no Esc, no "]11;…" typed
   });
 
-  test("Esc and Alt+] arrive at once when no reply is expected; held ones still arrive after the idle timeout", () => {
+  test("Esc has a short wait outside the reply window; Alt+] stays immediate", () => {
     const r = replyReader();
     r.expect.on = false;
     r.feed("\x1b");
+    r.fire();
     r.feed("\x1b]");
     expect(r.got).toEqual([{ name: "escape" }, { name: "]", alt: true }]);
     expect(r.timers).toBe(0);
@@ -243,4 +249,147 @@ describe("OSC replies", () => {
     quit.feed("00\x03");
     expect(quit.got).toEqual([{ name: "c", ctrl: true }]); // Ctrl+C still quits
   });
+});
+
+/** Ignore read-dependent batching of adjacent text events, but no other differences. */
+function normalized(keys: Key[]): Key[] {
+  const out: Key[] = [];
+  for (const k of keys) {
+    const last = out.at(-1);
+    if (k.name === "char" && last?.name === "char") last.text += k.text!;
+    else out.push({ ...k });
+  }
+  return out;
+}
+const sgr = (button: number, final = "M") => `\x1b[<${button};10;20${final}`;
+const x10 = (button: number, x = 42, y = 42) => Buffer.from([27, 91, 77, button + 32, x, y]);
+
+describe("mouse input framing (not native gestures)", () => {
+  test("SGR and raw legacy X10 vertical wheels, every split including immediately after ESC", () => {
+    for (const mod of [0, 4, 8, 16, 28]) for (const [button, name] of [[64, "wheelup"], [65, "wheeldown"]] as const) {
+      for (const packet of [Buffer.from(sgr(button + mod)), x10(button + mod), x10(button + mod, 194, 160), x10(button + mod, 255, 254)]) {
+        for (let cut = 1; cut < packet.length; cut++) {
+          const r = reader();
+          r.feed(packet.subarray(0, cut));
+          expect(r.got).toEqual([]);
+          r.feed(packet.subarray(cut));
+          expect(r.got).toEqual([{ name }]);
+          expect(r.timers).toBe(0);
+        }
+        const r = reader();
+        for (const byte of packet) r.feed(Uint8Array.of(byte));
+        expect(r.got).toEqual([{ name }]);
+      }
+    }
+    expect(parseKeys("\x1b[M`**")).toEqual([{ name: "wheelup" }]);
+  });
+
+  test("horizontal, release, motion, clicks, extended and malformed reports are consumed, never vertical scroll or text", () => {
+    const ignored = [
+      ...[0, 1, 2, 3, 32, 66, 67, 96, 97, 128, 192, 193, 256, 320].flatMap(button => [Buffer.from(sgr(button)), ...(button <= 223 ? [x10(button)] : [])]),
+      Buffer.from(sgr(64, "m")), Buffer.from(sgr(65, "m")),
+      ...["<64", "<64;10", "<64;1;2;3", "<64;;2", "<64;0;2", "<64;-1;2", "<64;1.5;2", "<64;1;0", "<64;9007199254740992;2", "<9007199254741056;1;2"].map(p => Buffer.from(`\x1b[${p}M`)),
+      x10(64, 32), Buffer.from("\x1b[?9999h"), Buffer.from("\x1b[<64;1;2Z"),
+    ];
+    for (const packet of ignored) for (let cut = 1; cut < packet.length; cut++) {
+      const r = reader();
+      r.feed(packet.subarray(0, cut));
+      r.feed(packet.subarray(cut));
+      expect(r.got).toEqual([]);
+      r.feed("draft 界");
+      expect(r.got).toEqual([{ name: "char", text: "draft 界" }]);
+      expect(r.timers).toBe(0);
+    }
+  });
+
+  test("coalesced Unicode, reports, Alt, paste and Ctrl+C preserve order at every byte boundary", () => {
+    const stream = Buffer.concat([
+      Buffer.from(`界é👩‍💻${sgr(64)}${sgr(66)}\x1b[<64M`), x10(65, 194, 160), x10(0),
+      Buffer.from("\x1b界\x1b\x7f\x1b[1;3D\x1b[200~paste 界\r\n👩‍💻\x1b[201~\x03end"),
+    ]);
+    const want: Key[] = [{ name: "char", text: "界é👩‍💻" }, { name: "wheelup" }, { name: "wheeldown" },
+      { name: "界", alt: true, text: undefined }, { name: "backspace", alt: true, text: undefined }, { name: "left", alt: true },
+      { name: "paste", text: "paste 界\n👩‍💻" }, { name: "c", ctrl: true }, { name: "char", text: "end" }];
+    for (let cut = 0; cut <= stream.length; cut++) {
+      const r = reader();
+      r.feed(stream.subarray(0, cut)); r.feed(stream.subarray(cut));
+      expect(normalized(r.got)).toEqual(want);
+      expect(r.timers).toBe(0);
+    }
+    const r = reader();
+    for (const byte of stream) r.feed(Uint8Array.of(byte));
+    expect(normalized(r.got)).toEqual(want);
+  });
+
+  test("Escape and Alt remain responsive; completed packets do not leave an Escape timer", () => {
+    const r = reader();
+    r.feed("\x1b");
+    expect(r.delay).toBe(25);
+    r.feed("b");
+    expect(r.got).toEqual([{ name: "b", alt: true, text: undefined }]);
+    expect(r.timers).toBe(0);
+    r.feed("\x1b"); r.fire(); r.feed("b");
+    expect(r.got.slice(1)).toEqual([{ name: "escape" }, { name: "char", text: "b" }]);
+    r.feed("\x1b"); r.feed(sgr(64).slice(1)); r.fire();
+    expect(r.got.at(-1)).toEqual({ name: "wheelup" });
+    r.feed("\x1b"); r.close(); r.fire();
+    expect(r.got.at(-1)).toEqual({ name: "wheelup" });
+  });
+
+  test("incomplete mouse reports time out without Escape/draft mutation; Ctrl+C interrupts malformed packets", () => {
+    for (const partial of ["\x1b[<", "\x1b[<64;", "\x1b[M", "\x1b[M`*"]) {
+      const r = reader(); r.feed(partial); r.fire();
+      expect(r.got).toEqual([]);
+      r.feed("ok");
+      expect(r.got).toEqual([{ name: "char", text: "ok" }]);
+      const quit = reader(); quit.feed(partial); quit.feed("\x03");
+      expect(quit.got).toEqual([{ name: "c", ctrl: true }]);
+    }
+    const r = reader(); r.feed(Buffer.from([0xc2, 3]));
+    expect(r.got.at(-1)).toEqual({ name: "c", ctrl: true });
+    r.feed("\x1b[<64;\x1b[<65;1;1M");
+    expect(r.got.at(-1)).toEqual({ name: "wheeldown" });
+  });
+
+  test("idle paste pieces retain incomplete UTF-8 and control-like content stays paste", () => {
+    const r = reader();
+    r.feed(Buffer.concat([Buffer.from("\x1b[200~a"), Buffer.from("界").subarray(0, 1)]));
+    r.fire();
+    expect(r.got).toEqual([{ name: "paste", text: "a" }]);
+    r.feed(Buffer.concat([Buffer.from("界").subarray(1), Buffer.from(`${sgr(64)}\x1b[201~`)]));
+    expect(r.got).toEqual([{ name: "paste", text: "a" }, { name: "paste", text: "界[<64;10;20M" }]);
+  });
+});
+
+test("keyboard protocols and OSC survive every boundary; Ctrl+C interrupts a pending reply", () => {
+  for (const seq of ["\x1bb", "\x1b\x7f", "\x1b\r", "\x1b界", "\x1b\x1b[D", "\x1b[1;3C", "\x1b[27;5;44~", "\x1b[44;5u", "\x1bOA"]) {
+    const packet = Buffer.from(seq);
+    for (let cut = 1; cut < packet.length; cut++) {
+      const r = reader(); r.feed(packet.subarray(0, cut)); r.feed(packet.subarray(cut));
+      expect(r.got).toEqual(parseKeys(seq));
+      expect(r.timers).toBe(0);
+    }
+  }
+  for (const end of ["\x07", "\x1b\\"]) {
+    const seq = `\x1b]11;rgb:0000/0000/0000${end}`;
+    for (let cut = 1; cut < seq.length; cut++) {
+      const r = replyReader(); r.feed(seq.slice(0, cut)); r.feed(seq.slice(cut));
+      expect(r.got).toEqual([REPLY]);
+      expect(r.timers).toBe(0);
+    }
+  }
+  const r = replyReader(); r.feed("\x1b]11;rgb:00"); r.feed("\x03");
+  expect(r.got).toEqual([{ name: "c", ctrl: true }]);
+});
+
+
+test("a slow UTF-8 character is not replaced at the sequence timeout, including Alt chords", () => {
+  for (const prefix of ["", "\x1b"]) {
+    const r = reader(), packet = Buffer.from("👩");
+    r.feed(Buffer.concat([Buffer.from(prefix), packet.subarray(0, 1)]));
+    r.fire();
+    expect(r.got).toEqual([]);
+    r.feed(packet.subarray(1));
+    expect(r.got).toEqual(prefix ? [{ name: "👩", alt: true, text: undefined }] : [{ name: "char", text: "👩" }]);
+  }
 });

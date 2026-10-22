@@ -51,11 +51,19 @@ function fromTilde(nums: number[]): Key | null {
   return name ? withMods({ name }, nums[1] || 1) : null;
 }
 
+/** Only vertical wheel presses, with optional Shift/Alt/Ctrl bits. Not motion,
+ * horizontal wheels, releases or extended buttons that happen to contain 64. */
+function wheel(button: number): Key | null {
+  const base = button & ~28;
+  if (!Number.isSafeInteger(button) || button < 0 || button > 255 || (base !== 64 && base !== 65)) return null;
+  return { name: base === 64 ? "wheelup" : "wheeldown" };
+}
+
 function fromCsi(params: string, final: string): Key | null {
-  if (params.startsWith("<") && (final === "M" || final === "m")) {
-    const button = Number(params.slice(1).split(";")[0]);
-    if (final !== "M" || !(button & 64)) return null;
-    return { name: button & 1 ? "wheeldown" : "wheelup" };
+  if (params.startsWith("<")) {
+    const m = /^<(\d+);(\d+);(\d+)$/.exec(params);
+    if (final !== "M" || !m || !m.slice(2).every(n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) return null;
+    return wheel(Number(m[1]));
   }
   const nums = params.split(";").map((p) => (p === "" ? NaN : Number(p)));
   if (final === "u") return fromKitty(nums);
@@ -69,10 +77,8 @@ const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 /** An unfinished paste is handed on in pieces of at most this size. */
 const MAX_PASTE = 1 << 20;
-/** A read that stops inside an escape sequence: CSI parameters with no final byte yet (covers a split PASTE_START), or SS3 with no key. */
-const PARTIAL_ESC = /(?:\x1b?\x1b\[[0-9;:?<>]*|\x1bO)$/;
-/** While a reply is expected, also a read that stops inside it: a lone ESC, or ESC ] … with no BEL or ST yet. */
-const PARTIAL_REPLY = /(?:\x1b\][0-9]*(?:;[^\x07\x1b]*)?)?\x1b?$/;
+/** Bound lone-Escape latency without treating read boundaries as key boundaries. */
+export const ESC_DELAY_MS = 25;
 /** An OSC reply cut off before its BEL or ST. */
 const UNTERMINATED_OSC = /^\x1b\]\d+;[^\x07\x1b]*\x1b?$/;
 /** What ends a reply being swallowed: BEL, ST, or a Ctrl+C (kept, so it still quits). */
@@ -99,14 +105,15 @@ const realTimer: SetTimer = (fn, ms) => {
 
 export interface KeyReader {
   /** Feed one raw read. */
-  feed(chunk: string): void;
+  feed(chunk: string | Uint8Array): void;
   /** Stop the idle timer and drop anything held. */
   close(): void;
 }
 
 /**
  * Turn raw reads into keys. A read may stop inside an escape sequence; that tail
- * waits for the next read, or `idleMs` without input, then is parsed as it is.
+ * waits for the next read, or `idleMs` without input (incomplete mouse reports
+ * are dropped). Partial UTF-8 characters wait for completion, like stdin's decoder.
  * Between the paste markers everything is paste text, however the reads are cut
  * and however long the gaps: what has arrived is handed on as a paste key after
  * the idle timeout and the rest follows as more paste keys. Ctrl+C still ends a
@@ -116,7 +123,9 @@ export interface KeyReader {
  * stops right after an ESC or inside an OSC reply is held too, so a reply cut
  * anywhere is still one "osc" key; one still unterminated at the idle timeout
  * is dropped, and what follows is swallowed up to its BEL or ST for one more
- * idle period. Otherwise a lone ESC is Esc and ESC ] is Alt+] at once.
+ * idle period. Outside that window a lone ESC waits at most ESC_DELAY_MS;
+ * ESC ] remains Alt+] at once. Bytes are framed before UTF-8 decoding, because
+ * legacy X10 mouse payloads are three raw bytes, not UTF-8 text.
  */
 export function keyReader(emit: (k: Key) => void, idleMs = 300, setTimer: SetTimer = realTimer, expectReply: () => boolean = () => false): KeyReader {
   const r = new Reader(emit, idleMs, setTimer, expectReply);
@@ -133,9 +142,11 @@ class Reader {
 
   constructor(private readonly emit: (k: Key) => void, private readonly idleMs: number, private readonly setTimer: SetTimer, private readonly expectReply: () => boolean) {}
 
-  feed(chunk: string): void {
+  feed(chunk: string | Uint8Array): void {
     this.stopTimer();
-    let data: string | null = this.held + chunk;
+    // A byte-preserving string makes ASCII control framing cheap. Decode text
+    // only after framing; decoding all stdin as UTF-8 would corrupt X10 bytes.
+    let data: string | null = this.held + Buffer.from(chunk).toString("latin1");
     this.held = "";
     while (data) data = this.step(data);
     if (this.held || this.paste || this.swallowing) this.startTimer();
@@ -153,7 +164,8 @@ class Reader {
   }
 
   private startTimer(): void {
-    this.cancel = this.setTimer(() => this.idle(), this.idleMs);
+    const ms = /^\x1b{1,2}$/.test(this.held) && !this.expectReply() && !this.inPaste && !this.swallowing ? Math.min(ESC_DELAY_MS, this.idleMs) : this.idleMs;
+    this.cancel = this.setTimer(() => this.idle(), ms);
   }
 
   private stopTimer(): void {
@@ -162,13 +174,14 @@ class Reader {
   }
 
   private keys(text: string): void {
-    for (const k of parseKeys(text)) this.emit(k);
+    for (const k of parse(text, true)) this.emit(k);
   }
 
-  /** Hand on the paste text so far; a trailing \r may be half of \r\n, so `keepCr` keeps it for the next piece. */
+  /** Keep a trailing CR or incomplete UTF-8 character for the next paste piece. */
   private emitPaste(keepCr: boolean): void {
-    const cut = keepCr && this.paste.endsWith("\r") ? this.paste.length - 1 : this.paste.length;
-    if (cut > 0) this.emit({ name: "paste", text: cleanPaste(this.paste.slice(0, cut)) });
+    let cut = keepCr ? completeUtf8End(this.paste) : this.paste.length;
+    if (keepCr && this.paste[cut - 1] === "\r") cut--;
+    if (cut > 0) this.emit({ name: "paste", text: cleanPaste(unwire(this.paste.slice(0, cut))) });
     this.paste = this.paste.slice(cut);
   }
 
@@ -193,27 +206,22 @@ class Reader {
     return null;
   }
 
-  /** Outside a paste: keys up to a paste start (returns what follows it) or an unfinished escape (held; returns null). */
+  /** Frame one token at a time: an OSC or X10 payload must never be scanned
+   * as another key/paste marker, even when several reports share a read. */
   private keysStep(data: string): string | null {
-    const start = data.indexOf(PASTE_START);
-    if (start !== -1) {
-      this.keys(data.slice(0, start));
-      this.inPaste = true;
-      return data.slice(start + PASTE_START.length);
+    let i = 0;
+    while (i < data.length) {
+      if (data.startsWith(PASTE_START, i)) {
+        this.inPaste = true;
+        return data.slice(i + PASTE_START.length);
+      }
+      const step = keyAt(data, i, true, true, this.expectReply());
+      if (!step) { this.held = data.slice(i); return null; }
+      const [key, next] = step;
+      if (key) this.emit(key);
+      i = next;
     }
-    const at = this.heldFrom(data);
-    this.keys(data.slice(0, at));
-    this.held = data.slice(at);
     return null;
-  }
-
-  /** Where an unfinished escape at the end of `data` starts (data.length for none). */
-  private heldFrom(data: string): number {
-    const cut = data.search(PARTIAL_ESC);
-    const at = cut === -1 ? data.length : cut;
-    if (!this.expectReply()) return at;
-    const reply = data.search(PARTIAL_REPLY); // always matches, at worst the empty end
-    return Math.min(at, reply);
   }
 
   /** The rest of a cut-off reply: dropped up to its end, then parsing goes on; a trailing ESC may be half of ST. */
@@ -232,7 +240,13 @@ class Reader {
     if (this.swallowing) { this.swallowing = false; this.held = ""; return; }
     if (this.inPaste) return this.emitPaste(true);
     const tail = this.held;
+    // Like a streaming UTF-8 decoder, never time out halfway through a character,
+    // including a fragmented Alt+Unicode chord. Ctrl+C can still interrupt it.
+    const text = tail.startsWith("\x1b") ? tail.slice(1) : tail;
+    if (text && completeUtf8End(text) === 0) return;
     this.held = "";
+    // Incomplete mouse reports are not Escape (which can clear a draft).
+    if (tail.startsWith("\x1b[<") || tail.startsWith("\x1b[M")) return;
     if (!UNTERMINATED_OSC.test(tail)) return this.keys(tail);
     this.swallowing = true; // the reply was cut off: drop the rest when it comes, for one more idle period
     this.startTimer();
@@ -249,81 +263,122 @@ function pasteAt(input: string, i: number): Step {
   return [{ name: "paste", text: cleanPaste(input.slice(i + PASTE_START.length, stop)) }, stop];
 }
 
-/** ESC ESC [ …: Alt+Left / Alt+Right in terminals that send Alt as an ESC prefix; null for anything else (Esc, then the key). */
-function altCsiAt(input: string, i: number): Step | null {
-  let j = i + 3;
-  while (j < input.length && !CSI_FINAL.test(input[j]!)) j++;
-  if (j >= input.length) return null;
-  const key = fromCsi(input.slice(i + 3, j), input[j]!);
-  return key && (key.name === "left" || key.name === "right") ? [{ ...key, alt: true }, j + 1] : null;
+/** Byte string -> Unicode, only after controls and binary mouse payloads are framed. */
+const unwire = (s: string): string => Buffer.from(s, "latin1").toString("utf8");
+const textOf = (s: string, bytes: boolean): string => bytes ? unwire(s) : s;
+const utf8Size = (n: number): number => n >= 0xc2 && n <= 0xdf ? 2 : n >= 0xe0 && n <= 0xef ? 3 : n >= 0xf0 && n <= 0xf4 ? 4 : 1;
+/** Invalid UTF-8 must not hide an ASCII control (notably Ctrl+C). */
+function byteCharSize(s: string, i: number): number {
+  const size = utf8Size(s.charCodeAt(i));
+  for (let j = i + 1; j < Math.min(s.length, i + size); j++) if ((s.charCodeAt(j) & 0xc0) !== 0x80) return 1;
+  return size;
+}
+function completeUtf8End(s: string): number {
+  let i = Math.max(0, s.length - 4);
+  while (i < s.length) {
+    const size = byteCharSize(s, i);
+    if (i + size > s.length) return i;
+    i += size;
+  }
+  return s.length;
 }
 
-/** ESC [ params final. Cut off before the final byte, it reads as Esc. */
-function csiAt(input: string, i: number): Step {
+/** Classic X10: ESC [ M followed by exactly three bytes (button+32,x+32,y+32).
+ * We request SGR, but consume this fallback too; never decode its payload as text. */
+function x10At(input: string, i: number, streaming: boolean): Step | null {
+  const end = Math.min(input.length, i + 6);
+  const interrupt = input.indexOf("\x03", i + 3);
+  if (interrupt >= 0 && interrupt < end) return [null, interrupt];
+  if (end < i + 6) return streaming ? null : [null, end];
+  const button = input.charCodeAt(i + 3) - 32;
+  const coords = [input.charCodeAt(i + 4), input.charCodeAt(i + 5)];
+  return [coords.every(n => n > 32 && n <= 255) ? wheel(button) : null, end];
+}
+
+/** CSI parameters/intermediates then a final. A control byte interrupts a bad
+ * sequence instead of being swallowed (especially Ctrl+C and another ESC). */
+function csiAt(input: string, i: number, streaming = false): Step | null {
+  if (input.startsWith("\x1b[M", i)) return x10At(input, i, streaming);
   let j = i + 2;
-  while (j < input.length && !CSI_FINAL.test(input[j]!)) j++;
-  if (j >= input.length) return [{ name: "escape" }, input.length];
+  while (j < input.length && /[\x20-\x3f]/.test(input[j]!)) j++;
+  if (j >= input.length) return streaming ? null : [{ name: "escape" }, input.length];
+  if (!CSI_FINAL.test(input[j]!)) return [null, j];
   return [fromCsi(input.slice(i + 2, j), input[j]!), j + 1];
 }
 
-/** ESC ] digits ; body, ended by BEL or ST (or by the input when cut off): an OSC reply from the terminal; null for anything else (Alt+]). */
-function oscAt(input: string, i: number): Step | null {
-  const m = /^\x1b\](\d+;[^\x07\x1b]*)(?:\x07|\x1b\\)?/.exec(input.slice(i));
-  return m ? [{ name: "osc", text: m[1]! }, i + m[0].length] : null;
+/** OSC replies are buffered during the query window; outside it Alt+] is still
+ * immediate, and a recognizable late OSC is consumed rather than typed. */
+function oscAt(input: string, i: number, streaming: boolean, reply: boolean, bytes: boolean): Step | null {
+  const tail = input.slice(i);
+  const interrupt = tail.indexOf("\x03");
+  if (interrupt >= 0 && !/[\x07\x1b]/.test(tail.slice(2, interrupt))) return [null, i + interrupt];
+  if (streaming && reply && /^\x1b\][0-9]*(?:;[^\x07\x1b]*)?\x1b?$/.test(tail)) return null;
+  const m = /^\x1b\](\d+;[^\x07\x1b]*)(?:\x07|\x1b\\)?/.exec(tail);
+  return m ? [{ name: "osc", text: textOf(m[1]!, bytes) }, i + m[0].length] : altAt(input, i, streaming, bytes);
 }
 
-/** SS3 arrows and Home/End (ESC O A); null for anything else (Alt+O). */
-const ss3At = (input: string, i: number): Step | null => {
-  const name = LETTER_KEYS[input[i + 2] ?? ""];
-  return name ? [{ name }, i + 3] : null;
-};
-
-/** ESC ESC: Alt+Left / Alt+Right (ESC ESC [ C / D), else Esc, then the rest. */
-const escEscAt = (input: string, i: number): Step => (input[i + 2] === "[" ? altCsiAt(input, i) : null) ?? [{ name: "escape" }, i + 1];
-
-/** ESC [ …: a paste, or a CSI key. */
-const bracketAt = (input: string, i: number): Step => (input.startsWith(PASTE_START, i) ? pasteAt(input, i) : csiAt(input, i));
-
-/** What follows ESC, for those that start a sequence; null hands it on to `altAt`. */
-const ESCAPES: Record<string, (input: string, i: number) => Step | null> = { "[": bracketAt, "]": oscAt, O: ss3At, "\x1b": escEscAt };
-
-/**
- * ESC-prefixed byte: Alt plus that key. This is how macOS sends Option+Backspace
- * (ESC DEL) and Alt+Enter (ESC CR), so Esc then Backspace / Enter arriving in one
- * read reads as the Alt chord too; separate reads stay Esc and the key.
- */
-function altAt(input: string, i: number): Step {
-  const [inner] = parseKeys(input[i + 1]!);
-  return [inner ? { ...inner, name: inner.name === "char" ? inner.text!.toLowerCase() : inner.name, text: undefined, alt: true } : null, i + 2];
+/** ESC-prefixed key: an Alt chord if its rest arrives within the Escape window. */
+function altAt(input: string, i: number, streaming: boolean, bytes: boolean): Step | null {
+  const size = bytes ? byteCharSize(input, i + 1) : String.fromCodePoint(input.codePointAt(i + 1)!).length;
+  if (streaming && i + 1 + size > input.length) return null;
+  const [inner] = parseKeys(textOf(input.slice(i + 1, i + 1 + size), bytes));
+  return [inner ? { ...inner, name: inner.name === "char" ? inner.text!.toLowerCase() : inner.name, text: undefined, alt: true } : null, Math.min(input.length, i + 1 + size)];
 }
 
-/** Everything starting with ESC. */
-function escapeAt(input: string, i: number): Step {
+/** Everything starting with ESC; null means a fragmented token needs more input. */
+function escapeAt(input: string, i: number, streaming: boolean, bytes: boolean, reply: boolean): Step | null {
   const next = input[i + 1];
-  if (next === undefined) return [{ name: "escape" }, i + 1];
-  return ESCAPES[next]?.(input, i) ?? altAt(input, i);
+  if (next === undefined) return streaming ? null : [{ name: "escape" }, i + 1];
+  if (next === "[") return input.startsWith(PASTE_START, i) ? pasteAt(input, i) : csiAt(input, i, streaming);
+  if (next === "]") return oscAt(input, i, streaming, reply, bytes);
+  if (next === "O") {
+    if (streaming && i + 2 === input.length) return null;
+    const name = LETTER_KEYS[input[i + 2] ?? ""];
+    if (name) return [{ name }, i + 3];
+  }
+  if (next === "\x1b") {
+    if (streaming && i + 2 === input.length) return null;
+    if (input[i + 2] === "[") {
+      const step = csiAt(input, i + 1, streaming);
+      if (!step) return null;
+      const [key, end] = step;
+      if (key?.name === "left" || key?.name === "right") return [{ ...key, alt: true }, end];
+    }
+    return [{ name: "escape" }, i + 1];
+  }
+  return altAt(input, i, streaming, bytes);
 }
 
 const CONTROL: Record<number, string> = { 13: "enter", 10: "enter", 127: "backspace", 8: "backspace", 9: "tab" };
 
 /** A control byte, or a run of printable text batched into one key so pastes stay cheap. */
-function plainAt(input: string, i: number): Step {
+function plainAt(input: string, i: number, streaming: boolean, bytes: boolean): Step | null {
   const code = input.charCodeAt(i);
   if (CONTROL[code]) return [{ name: CONTROL[code]! }, i + 1];
   if (code < 32) return [{ name: String.fromCharCode(code + 96), ctrl: true }, i + 1];
   let j = i;
-  while (j < input.length && input.charCodeAt(j) >= 32 && input[j] !== "\x7f" && input[j] !== "\x1b") j++;
-  return [{ name: "char", text: input.slice(i, j) }, j];
+  while (j < input.length && input.charCodeAt(j) >= 32 && input[j] !== "\x7f" && input[j] !== "\x1b") {
+    const size = bytes ? byteCharSize(input, j) : 1;
+    if (streaming && j + size > input.length) break;
+    j += Math.min(size, input.length - j);
+  }
+  return j === i ? null : [{ name: "char", text: textOf(input.slice(i, j), bytes) }, j];
 }
 
-/** Parse everything in `input`. Unknown sequences are dropped. */
-export function parseKeys(input: string): Key[] {
+function keyAt(input: string, i: number, streaming: boolean, bytes: boolean, reply = false): Step | null {
+  return input[i] === "\x1b" ? escapeAt(input, i, streaming, bytes, reply) : plainAt(input, i, streaming, bytes);
+}
+
+function parse(input: string, bytes: boolean): Key[] {
   const keys: Key[] = [];
   let i = 0;
   while (i < input.length) {
-    const [key, next] = input[i] === "\x1b" ? escapeAt(input, i) : plainAt(input, i);
-    if (key) keys.push(key);
+    const [key, next] = keyAt(input, i, false, bytes)!;
+    if (key) keys.push(key.name === "paste" && bytes ? { ...key, text: unwire(key.text!) } : key);
     i = next;
   }
   return keys;
 }
+
+/** Parse one complete, decoded input string. Use keyReader for fragmented/raw stdin. */
+export function parseKeys(input: string): Key[] { return parse(input, false); }

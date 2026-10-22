@@ -83,7 +83,7 @@ class RealTerminal implements Terminal {
   /** Resolves once the background reply came or its window ended; resolved until open() asks. */
   background: Promise<void> = Promise.resolve();
   private readonly reader = keyReader((key) => this.key(key), 300, undefined, () => this.awaiting());
-  private readonly onData = (chunk: string) => this.reader.feed(chunk);
+  private readonly onData = (chunk: string | Uint8Array) => this.reader.feed(chunk);
   private readonly handlers: [string, Handler][];
 
   constructor(private readonly stdin: typeof process.stdin, private readonly stdout: typeof process.stdout, private readonly proc: Proc, private readonly clock: TermClock) {
@@ -145,8 +145,7 @@ class RealTerminal implements Terminal {
     if (!this.opened) return;
     this.opened = false;
     attempt(() => this.stdout.write(RESCUE + this.eraser));
-    attempt(() => this.stdin.setRawMode(false));
-    this.install(false);
+    this.release();
   }
 
   open(): void {
@@ -154,7 +153,7 @@ class RealTerminal implements Terminal {
     this.opened = true;
     this.install(true);
     this.stdin.setRawMode(true);
-    this.stdin.setEncoding("utf8");
+    // Keep raw bytes: legacy X10 payloads are not UTF-8; the reader decodes text.
     this.stdin.on("data", this.onData);
     this.stdin.resume();
     this.stdout.write(ENTER);

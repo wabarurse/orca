@@ -1,6 +1,102 @@
 # Wheel scrolling: screen-isolation investigation
 
-## Current finding from `da5cc7405944ef253dbe6c95f8a3e564cf6e5a71`
+## Parser compatibility follow-up from `001954519bea7a16665c99a3cfa71cddc988a028`
+
+**This fixes reproduced input-parser faults, not a verified cause of Apple
+Terminal exposing prelaunch shell output.** The user confirmed ordinary
+wheel/trackpad input with **no modifier** in a fresh `bun run dev start` launch,
+and chose pinned header/footer with application-owned wheel scrolling and
+terminal-modifier selection. Physical behavior is still unverified here.
+
+### Reproduced faults and code changes
+
+The same small characterization was run against this worktree's base `keys.ts`
+and the changed implementation, with no live app, model, credentials or native
+terminal interaction:
+
+| Input | Base behavior | New behavior |
+| --- | --- | --- |
+| `ESC` in one read, `[<64;10;10M` in the next | `escape`, then printable report remainder | one `wheelup` |
+| Legacy X10 `ESC[M` + bytes `96,42,42` | printable `` `** `` | one `wheelup` |
+| SGR `<66;10;10M` (horizontal) | `wheelup` | consumed, no event |
+| SGR `<64M` (missing coordinates) | `wheelup` | consumed, no event |
+| SGR `<96;10;10M` (motion bit) | `wheelup` | consumed, no event |
+
+- `keys.ts` now frames tokens incrementally, rather than detecting only some
+  incomplete escape suffixes. An isolated ESC waits **25ms** outside the OSC
+  query window (not the full 300ms sequence timeout). A complete key/report
+  cancels that timer. This retains responsive Escape and allows an ESC-prefixed
+  Alt chord or report split immediately after ESC to complete. Esc followed by
+  a character within that window is inherently indistinguishable from Alt;
+  after the deadline they are separate keys. No finite timeout can guarantee
+  joining fragments delayed arbitrarily long. Recognized incomplete mouse
+  reports are dropped at the 300ms idle timeout, not emitted as Escape; bytes
+  arriving after that timeout are new input, not an indefinite mouse drain.
+- Both SGR and **classic three-byte X10** packets are consumed as whole packets,
+  including unknown buttons. Only vertical wheel press codes 64/65 with optional
+  Shift/Alt/Ctrl bits scroll. Horizontal/release/motion/extended buttons and
+  malformed SGR fields inside a CSI envelope are ignored. Coordinates must be
+  positive safe integers. This does not enable another mouse mode or claim to
+  support every protocol (e.g. UTF-8-extended X10/1005 or urxvt/1015).
+- `term.ts` leaves stdin as bytes so X10's binary coordinates cannot be merged or
+  replaced by a UTF-8 decoder. Text is decoded after framing, retaining split
+  Unicode characters (even across idle periods), Alt chords and bracketed paste.
+  Ctrl+C still interrupts input, including an incomplete mouse/CSI/OSC reply;
+  OSC buffering/draining remains bounded. Crash/signal cleanup now also removes
+  the reader/listener, so a pending Escape timer cannot survive cleanup.
+- **Draft-safe `/keys`: press Ctrl+G.** This opens the existing diagnostic without
+  replacing chat, answer or no-page text/cursor, or changing input history. The
+  shortcut is listed with `/keys` in `/help`. Ordinary `/keys` submission still
+  works from an empty composer. Keys are echoed rather than acted on, Esc exits
+  the diagnostic without clearing the draft, and Ctrl+C keeps its normal cancel/
+  second-press exit semantics. No draft-saving state machine or shared command/
+  submission handling changed; the app change is one chord and help text.
+
+No alternate-screen, mouse-enable/disable, selection binding, scroll clamp,
+full-history restoration, queue layout, terminal preference or shell history
+policy was changed. Those existing features are not new fixes in this follow-up.
+No native permissions were toggled, real sessions restarted, desktop automated,
+other worktree inspected, live model/web request made, or credentials accessed.
+
+### Deterministic evidence and remaining boundary
+
+- Parser regressions exercise SGR and raw X10 split at **every byte boundary**,
+  including byte-by-byte delivery, high binary coordinates, modified wheels,
+  coalesced text/reports, ignored/malformed packets and cleanup. They also cover
+  fragmented Unicode/Alt/keyboard protocols, bracketed paste, OSC terminators,
+  Ctrl+C and the bounded Escape timer with a manual clock.
+- `realTerminal` tests cover raw bytes after the background-query window,
+  fragmented Unicode and reader teardown on close/crash. App integration sends
+  bytes through `realTerminal -> keyReader -> App`, checking unchanged multiline
+  Unicode draft/cursor, queued previews, pinned header/footer, top/bottom clamps,
+  ignored packets, `/keys` output and no live mode leave or scrollback clear.
+- Existing tiny-layout, resize, full-history, queue, modal and owned-PTY tests
+  remain regression coverage. The PTY still injects bytes; it does **not** generate
+  a physical Apple Terminal trackpad/wheel gesture. FakeScreen likewise does not
+  model Terminal's native history viewport. None of these tests establishes the
+  cause or resolution of the reported shell reveal.
+
+The outstanding user observation, after **they** choose to restart with this
+change, is to press **Ctrl+G** with their draft intact, then scroll normally over
+content with no modifier: do `wheelup` / `wheeldown` JSON appear, or does Terminal
+move to shell content? Esc ends the diagnostic. No need to replace/save the draft
+elsewhere. Until then the physical report stays open, but this does not block
+independent `/clear` implementation or justify a mode/history workaround.
+
+### Local validation of this parser follow-up
+
+Bun 1.4.2, isolated test fixtures (no live PARALLELS_HOME changes):
+
+- Targeted keys/terminal/app/sticky/restore/continuity/layout/FakeScreen/owned-PTY/
+  help suites: **201 pass, 0 fail**, five snapshots, 9,207 assertions in ten files.
+- Full `bun test`: **754 pass, 0 fail**, five snapshots, 12,113 assertions in 57 files.
+- `bun run check`, `bun run build`, and `git diff --check`: passed.
+- The first full run correctly flagged three help snapshots after the new
+  diagnostic hint; only those expected text changes were updated and inspected,
+  then targeted/full checks rerun green. No hosted CI or native gesture result
+  is implied by these local checks.
+
+## Earlier full-history follow-up from `da5cc7405944ef253dbe6c95f8a3e564cf6e5a71`
 
 Two separate issues must not be conflated:
 
@@ -62,12 +158,13 @@ application code cannot intercept it. A reporting-permission change or another
 terminal would require an explicit user choice, not automatic preference writes
 or redesign into an inline CLI/browser. No search fallback service was used:
 subscription search returned no results; the cited public pages were read via
-ordinary HTTP. Fragmentation, legacy X10 and horizontal-wheel parser limitations
-remain hypotheses unrelated to the shell reveal until real input is observed.
+ordinary HTTP. At that stage the parser limitations were deferred. The parser
+follow-up above fixes those reproducible faults, but their relationship to the
+physical shell reveal remains a hypothesis until real input is observed.
 
-The minimal next observation is **draft-safe `/keys` in the user's current app**:
-use an empty composer, or save a nonempty draft elsewhere first because entering
-the slash command replaces it; make one normal gesture over the conversation and
+The minimal next observation is **draft-safe `/keys`** (Ctrl+G after the user
+chooses to run this follow-up; the earlier build required an empty composer):
+make one normal gesture over the conversation and
 report whether wheel JSON appears or the whole screen instead moves to shell
 history. `/keys` echoes rather than scrolling; Esc exits it. This does not require
 restarting the app or changing preferences. If no report arrives, the next step
@@ -245,7 +342,7 @@ FakeScreen-only check cannot prove that a terminal's own history UI is
 inaccessible. This observation is about the private tmux instance, not the
 user's unidentified execution context or Apple Terminal's physical gestures.
 
-## Parser limitations distinguished from screen isolation
+## Earlier parser limitations distinguished from screen isolation
 
 Small direct `keyReader` / `parseKeys` characterizations also found:
 
@@ -265,8 +362,10 @@ arrive. None of the characterized inputs caused an alternate-screen leave or
 made the app scroll the primary buffer. No evidence connects them to the user's
 reported shell reveal, and actual Apple Terminal bytes were not captured.
 Changing immediate-Esc semantics, adding mouse protocols, or changing gesture
-handling speculatively was therefore deferred, not presented as a fix for this
-report. A raw-byte capture would be needed if `/keys` exposes malformed reports.
+handling speculatively was therefore deferred at that time. The authorized
+follow-up above now fixes the independently reproduced parser faults, still not
+presented as a verified fix for the physical shell reveal. A raw-byte capture
+would be needed if `/keys` exposes malformed reports.
 
 ## What still needs native/user verification
 
@@ -279,9 +378,8 @@ Apple Terminal's actual text-selection modifier.
 Before further action, ask the user to perform a small native check; do not drive
 or restart their existing session automatically:
 
-1. Use an empty composer or save its draft elsewhere first: entering `/keys`
-   replaces composer text and does not automatically preserve a nonempty draft.
-   In a suitable idle app, enter `/keys`, then make an
+1. In a suitable idle app running this follow-up, press **Ctrl+G** to open `/keys`
+   without replacing the draft. (On the older build, use an empty composer.) Make an
    ordinary wheel/trackpad gesture **over the content area, with no modifier**.
    The expected evidence is `wheelup` / `wheeldown` JSON. `/keys` intentionally
    echoes rather than scrolling the application history; Esc ends it. Report

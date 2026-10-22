@@ -3292,3 +3292,106 @@ test("a failed write removes that submission, not a later identical pending prom
     expect(app.page!.lines.some(line => typeof line === "object" && "user" in line)).toBe(false);
   } finally { fail?.(new Error("cleanup")); app.quit(); await running; }
 });
+
+test("raw SGR/X10 input through realTerminal only scrolls the body: draft, queue and pinned bars survive", async () => {
+  const display = new FakeScreen(80, 24), writes: string[] = [];
+  let input: ((chunk: Uint8Array) => void) | undefined;
+  const stdin = { isTTY: true, setRawMode() {}, on(_e: string, fn: typeof input) { input = fn; }, off() { input = undefined; }, resume() {}, pause() {} };
+  const stdout = { isTTY: true, columns: 80, rows: 24, on() {}, write(s: string) { writes.push(s); display.write(s); return true; } };
+  const proc = { on() {}, off() {}, exit() {}, stderr: { write() {} } };
+  const term = realTerminal(stdin as never, stdout as never, proc, NO_REPLY_WINDOW);
+  const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {}, projectModel: async () => "synthetic",
+    openOrchestrator: async () => ({ async say() { throw new Error("input must not submit"); }, async pending() { return false; }, async turn() { return []; } }),
+  });
+  const running = app.run("raw-wheel");
+  try {
+    await until(() => !!app.page);
+    const page = app.page!;
+    page.lines.push(...Array.from({ length: 100 }, (_, i) => `RAW-RECORD-${i}`));
+    page.sent.push({ inputId: "synthetic-1", text: "queued first" }, { inputId: "synthetic-2", text: "queued second\nline" });
+    app.reprint();
+    const text = Buffer.from("\x1b[200~draft 界é👩‍💻\nsecond line\x1b[201~\x1b[D");
+    for (const byte of text) input!(Uint8Array.of(byte));
+    const draft = { ...app.input }, queue = JSON.stringify(page.sent);
+    expect(draft.text).toBe("draft 界é👩‍💻\nsecond line");
+    await until(() => display.text().includes("Queued 2/2"));
+    const initial = display.screen(), start = initial.findIndex(row => /^─+$/.test(row)) + 1;
+    const footerAt = initial.findIndex(row => row.startsWith("Queued"));
+    const pinned = () => {
+      expect(display.screen().slice(0, start)).toEqual(initial.slice(0, start));
+      expect(display.screen().slice(footerAt)).toEqual(initial.slice(footerAt));
+      expect(app.input).toEqual(draft);
+      expect(JSON.stringify(page.sent)).toBe(queue);
+    };
+    const up = Buffer.from("\x1b[<64;10;10M"), down = Buffer.from([27, 91, 77, 97, 194, 160]);
+    // Every split traverses realTerminal -> keyReader -> App, not just parseKeys.
+    for (const packet of [up, down]) for (let cut = 1; cut < packet.length; cut++) {
+      input!(packet.subarray(0, cut)); input!(packet.subarray(cut));
+      expect(app.input).toEqual(draft);
+    }
+    input!(Buffer.from("\x1b[<64;10;10M".repeat(100)));
+    await until(() => display.screen()[start] === "RAW-RECORD-0");
+    pinned();
+    input!(Buffer.from("\x1b[<64;10;10M".repeat(20)));
+    await Bun.sleep(25);
+    expect(display.screen()[start]).toBe("RAW-RECORD-0"); pinned();
+    const top = display.screen();
+    input!(Buffer.from("\x1b[<66;10;10M\x1b[<67;10;10M\x1b[<65;10;10m\x1b[<65M\x1b[M !!"));
+    await Bun.sleep(25);
+    expect(display.screen()).toEqual(top); pinned();
+    input!(Buffer.concat(Array.from({ length: 100 }, () => down)));
+    await until(() => display.screen().includes("RAW-RECORD-99")); pinned();
+    const bottom = display.screen();
+    input!(down); await Bun.sleep(25);
+    expect(display.screen()).toEqual(bottom); pinned();
+    expect(app.frame().queued?.texts).toEqual(["queued first", "queued second\nline"]);
+    const output = writes.join("");
+    for (const mode of [1049, 1000, 1006, 2004]) {
+      expect(output.split(`\x1b[?${mode}h`)).toHaveLength(2);
+      expect(output).not.toContain(`\x1b[?${mode}l`);
+    }
+    expect(output).not.toContain("\x1b[3J");
+    // Draft-safe /keys entry uses a real control byte, not a direct command call.
+    input!(Buffer.from("\x07"));
+    expect(app.keyEcho).toBe(true);
+    input!(up); input!(down);
+    expect(page.lines.map(raw).join("\n")).toContain('{"name":"wheelup"}');
+    expect(page.lines.map(raw).join("\n")).toContain('{"name":"wheeldown"}');
+    input!(Buffer.from("\x1b"));
+    await until(() => !app.keyEcho);
+    expect(app.input).toEqual(draft);
+    expect(JSON.stringify(page.sent)).toBe(queue);
+  } finally { app.quit(); await running; }
+});
+
+test("Ctrl+G enters /keys without replacing chat, answer, or no-page drafts and input history", async () => {
+  const term = fakeTerm(100, 24), orchs = fakeOrchestrators();
+  const app = new App({ term, pollMs: 100_000, questionDelayMs: 0, openOrchestrator: orchs.openOrchestrator });
+  const running = app.run("keys-drafts");
+  const check = async () => {
+    const draft = { ...app.input }, history = [...(app.page?.inputHistory ?? [])];
+    term.type("\x07");
+    expect(app.keyEcho).toBe(true);
+    term.type("\x1b[<64;1;1M\x1b[<65;1;1M\x1b[200~ignored\x1b[201~\r");
+    term.press({ name: "escape" });
+    expect(app.keyEcho).toBe(false);
+    expect(app.input).toEqual(draft);
+    expect(app.page?.inputHistory ?? []).toEqual(history);
+  };
+  try {
+    await until(() => !!app.page);
+    app.input = { text: "chat\n界 draft", cursor: 6 };
+    await check();
+    await askQuestions("keys-drafts", [{ text: "Answer?" }]);
+    await app.questions.command(app.page);
+    app.input = { text: "answer 👩‍💻", cursor: 4 };
+    await check();
+    expect(app.questions.answering()).toBe(true);
+    await app.onKey({ name: "q", ctrl: true });
+    expect(app.input).toEqual({ text: "chat\n界 draft", cursor: 6 });
+    expect(orchs.said["keys-drafts"]).toEqual([]);
+    await app.closePage();
+    app.input = { text: "no-page draft", cursor: 2 };
+    await check();
+  } finally { app.quit(); await running; }
+});

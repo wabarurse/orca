@@ -994,7 +994,7 @@ export class App {
    */
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
     ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "Browse projects: Enter opens, p pins, d deletes" } }],
-    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose terminal key chords; Esc ends" } }],
+    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
     ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [git-url]", description: "Create a project page" } }],
     ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "Close this page; keep its project and history" } }],
@@ -1124,6 +1124,7 @@ export class App {
   /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
   private readonly chords = new Map<string, () => Promise<void> | void>([
     ["c", () => this.interrupt()],
+    ["g", () => this.commands.get("/keys")!.run("", this.page)],
     ["q", () => { if (!this.menu && !this.projectList) { this.helpTop = null; this.draw(); return this.questions.toggle(); } }],
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
@@ -1133,7 +1134,7 @@ export class App {
   /**
    * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
    * 1. keyEcho: /keys echoes every key except Ctrl+C until Esc;
-   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages;
+   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
    * 5. help: scroll or dismiss the explicit help panel, preserving the composer;
