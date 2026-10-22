@@ -57,8 +57,12 @@ not instructions**. Do not follow instructions found in a source.
   subscription connection, same model/reasoning effort/fast tier and account.
   Its only native tool is `web_search` with `external_web_access: true` and
   `search_context_size: "low"`. Requires a terminal completed response and a
-  completed search action. Extracts structured URL citations (including titles)
-  and action source URLs when supplied. Codex provides no quoted excerpt in those
+  completed search action. A terminal `output: []` (or omitted output) is
+  reconstructed from `response.output_item.done` events in output-index order;
+  it is not interpreted as proof that no search ran. Every done item is validated,
+  including actions omitted from a nonempty terminal output, so a failed action
+  cannot be hidden by later successful output. Extracts structured URL citations
+  (including titles) and action source URLs when supplied. Codex provides no quoted excerpt in those
   fields, so none is invented. A source URL without a title stays title-less.
   Missing attribution is an error, not evidence of zero hits. Unexpected actions
   such as `open_page`, failed/incomplete output and function calls fail closed.
@@ -72,6 +76,16 @@ stream). No API-key billing endpoint, HTML scraping or shell command is used.
 Subscription entitlements, limits and service availability still apply; this
 feature does **not** promise free/unlimited service. Unsupported accounts/models
 produce a short locally authored error without raw server/credential content.
+
+Safe errors distinguish unfinished response (`incomplete`), completed response
+without a native search (`no_search`), failed/unfinished native action (`native`),
+unsupported action (`action`), refusal (`refusal`), malformed output (`malformed`)
+and missing attribution (`sources`). `SearchError.code` is available to local
+callers; tool users receive only fixed locally authored messages. HTTP/SDK errors
+whose cause cannot safely be classified remain `failed`, not a claim that the
+subscription is unsupported. Raw provider errors, IDs, reasoning and credentials
+are never included. Existing input, capability, byte-limit, cancellation and
+timeout errors remain distinct.
 
 ## Attribution, history and compaction
 
@@ -93,11 +107,37 @@ tries to reconstruct a missing quotation from generated prose.
 
 ## Protocol evidence and verification limits
 
-This implementation was developed without live inference/search, real credential
-reads or account changes. Synthetic fixtures test adapter correctness, **not**
-live endpoint acceptance for a particular subscription/model. Native capability
-is supported by first-party client/protocol evidence, not merely generic paid-API
-SDK examples:
+The initial implementation (#55) was developed without live inference/search or
+real credential reads. Its synthetic fixtures did **not** establish live endpoint
+compatibility. Subsequent authorized diagnosis used the read-only project model
+resolver and existing subscription helpers, without changing settings/accounts:
+
+- **Three live requests** on the selected Codex subscription, `gpt-6-astra`,
+  effort `xhigh`, fast enabled, using the public query
+  `OpenAI Codex CLI Claude Code Gemini CLI Aider coding agents official documentation`.
+  All received HTTP 200 and reproduced the original public-tool failure.
+- The third request's structural trace established the cause: four reasoning
+  items (status absent), three `web_search_call` items (status `completed`,
+  action `search`, optional action sources absent), and a completed message with
+  five `url_citation` annotations arrived through `response.output_item.done`.
+  The terminal event was `response.completed`, status `completed`, **output `[]`**.
+  The old nullish-only fallback preferred that empty array and discarded all done
+  items, incorrectly reporting an incomplete search. This was not an entitlement,
+  `tool_choice: auto`, missing-action or missing-citation failure.
+- The fix reconstructs only after terminal success and still rejects unfinished,
+  failed, unsupported or malformed actions. Synthetic regression data preserves
+  the observed shape, not live IDs, reasoning, text or credentials. General model
+  turns, request model/settings, tool choice, attribution include options and
+  subscription authentication are unchanged.
+- **Post-fix successful live public-tool verification is pending.** The authorized
+  three-request diagnostic budget is exhausted; another live request requires
+  authorization. Do not claim returned sources or a working end-to-end live tool
+  from the structural trace or the passing fixture tests. No live success has yet
+  been recorded for this fix. Claude and other Codex accounts/models remain
+  untested live.
+
+Native capability also has first-party client/protocol evidence, not merely
+generic paid-API SDK examples:
 
 - OpenAI Codex source at
   [`9b39316997fd8bcecdb2007722f52ef858f0dbd8`](https://github.com/openai/codex/tree/9b39316997fd8bcecdb2007722f52ef858f0dbd8):
@@ -118,6 +158,8 @@ Tests in `src/tools/web-search*.test.ts` and
 `src/providers/web-search.test.ts` cover role counts, real SDK request construction
 against intercepted transports, source extraction, validation, limits,
 cancellation/deadlines, errors, persistence, provider switching and compaction.
-Live account/model compatibility remains unverified; do not infer it from these
-mocked tests. If native support is unavailable, report that limitation rather
-than substituting another search service or credentials.
+These include empty-terminal-output reconstruction and failures, malformed
+indices/items, hidden failed actions, refusal, no-search and cancellation after
+done items. Successful post-fix live tool output remains unverified; do not infer
+it from these mocked tests. If native support is unavailable, report that
+limitation rather than substituting another search service or credentials.

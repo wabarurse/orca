@@ -29,3 +29,25 @@ export function codexSearchFixture(): ResponseOutputItem[] {
     ] },
   ];
 }
+
+/** Synthetic IDs/data with the shape observed on the live Codex subscription:
+ * three searches, four reasoning items, five citations; terminal output is [].
+ * The action's optional query/sources metadata is not needed for attribution. */
+export function codexStreamSearchFixture() {
+  const output: ResponseOutputItem[] = [];
+  for (let i = 0; i < 4; i++) {
+    output.push({ type: "reasoning", id: `rs_synthetic_${i}`, summary: [] });
+    if (i < 3) output.push({ type: "web_search_call", id: `ws_synthetic_${i}`, status: "completed", action: { type: "search" } });
+  }
+  output.push({ type: "message", id: "msg_synthetic", role: "assistant", status: "completed", content: [
+    { type: "output_text", text: "Generated answer, not an excerpt.", annotations: Array.from({ length: 5 }, (_, i) => (
+      { type: "url_citation" as const, url: `https://example.org/docs/${i}`, title: `Public docs ${i}`, start_index: i, end_index: i + 1 }
+    )) },
+  ] });
+  const events = output.flatMap((item, output_index) => [
+    { type: "response.output_item.added", output_index, item: item.type === "reasoning" ? item : { ...item, status: "in_progress" } },
+    ...(item.type === "web_search_call" ? ["in_progress", "searching", "completed"].map(status => ({ type: `response.web_search_call.${status}`, output_index })) : []),
+    { type: "response.output_item.done", output_index, item },
+  ]);
+  return { output, events, terminal: { type: "response.completed", response: { status: "completed", output: [] } } };
+}

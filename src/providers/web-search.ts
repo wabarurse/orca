@@ -20,13 +20,18 @@ const errors = {
   unsupported: "web_search: native search is unavailable for the selected provider. No fallback was attempted.",
   failed: "web_search: native search failed or is unsupported by this model/account. No fallback was attempted.",
   incomplete: "web_search: the provider did not finish a successful native search; no results returned.",
+  no_search: "web_search: the provider completed without a native search call; no results returned.",
+  native: "web_search: a native search action failed or did not complete; no results returned.",
+  action: "web_search: the provider used an unsupported native action; no results returned.",
+  refusal: "web_search: the provider refused the search; no results returned.",
+  malformed: "web_search: the provider returned malformed native search output; no results returned.",
   sources: "web_search: the provider returned no usable source attribution; no results returned.",
   large: "web_search: provider response exceeded the 2 MiB limit; no results returned.",
   cancelled: "web_search: cancelled.",
   timeout: "web_search: timed out after 60 seconds.",
 };
 export class SearchError extends Error {
-  constructor(code: keyof typeof errors) { super(errors[code]); }
+  constructor(readonly code: keyof typeof errors) { super(errors[code]); }
 }
 function searchQuery(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > 512 || /[\x00-\x1f\x7f-\x9f]/.test(value)
