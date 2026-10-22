@@ -32,7 +32,12 @@ export interface Runner {
   running(project: string, ids: string[], signal?: AbortSignal): Promise<string[] | null>;
 }
 
-const CLI = resolve(import.meta.dir, "cli.ts");
+/** Re-enter this exact executable, not a build-machine path or a Bun found on PATH.
+ * Development still runs cli.ts using the current (absolute) Bun executable.
+ */
+export function cliCommand(): string[] {
+  return Bun.isStandaloneExecutable ? [process.execPath] : [process.execPath, resolve(import.meta.dir, "cli.ts")];
+}
 
 function need(bin: string): string {
   const found = Bun.which(bin);
@@ -144,14 +149,17 @@ export const SETTLED_EXIT = 70;
 
 /**
  * The follow-up script run by `sh -c` around a worker or reviewer. Values
- * arrive as positional parameters ($1 PARALLELS_HOME, $2 cli.ts, $3 project,
- * $4 role, $5 branch, $6 run id), never spliced into the script, so nothing
- * is quoted at all.
+ * arrive as positional parameters (home, project, role, branch, run, then
+ * the CLI argv). After shifting the metadata, "$@" preserves either a single
+ * compiled executable or Bun + source, including spaces/quotes in every path.
  */
 const WRAPPER = [
-  `PARALLELS_HOME="$1" bun "$2" agent --project "$3" --role "$4" --branch "$5" --run "$6"`,
+  `export PARALLELS_HOME="$1"`,
+  `project="$2" role="$3" branch="$4" run="$5"`,
+  `shift 5`,
+  `"$@" agent --project "$project" --role "$role" --branch "$branch" --run "$run"`,
   `code=$?`,
-  `case "$code" in 0|${SETTLED_EXIT}) ;; *) PARALLELS_HOME="$1" bun "$2" agent-exit --project "$3" --role "$4" --branch "$5" --run "$6" --code "$code" ;; esac`,
+  `case "$code" in 0|${SETTLED_EXIT}) ;; *) "$@" agent-exit --project "$project" --role "$role" --branch "$branch" --run "$run" --code "$code" ;; esac`,
   `exit "$code"`,
 ].join("\n");
 
@@ -163,11 +171,11 @@ const WRAPPER = [
  * orchestrator an `[agent-exit]` notice unless the run is already closed
  * (src/exits.ts). Both share one run id.
  */
-export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID().slice(0, 8)): string[] {
+export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID().slice(0, 8), cli: string[] = cliCommand()): string[] {
   if (opts.role === "orchestrator" || !opts.branch) {
-    return ["env", `PARALLELS_HOME=${paths.root}`, "bun", CLI, "agent", "--project", opts.project, "--role", opts.role];
+    return ["env", `PARALLELS_HOME=${paths.root}`, ...cli, "agent", "--project", opts.project, "--role", opts.role];
   }
-  return ["sh", "-c", WRAPPER, "sh", paths.root, CLI, opts.project, opts.role, opts.branch, run];
+  return ["sh", "-c", WRAPPER, "sh", paths.root, opts.project, opts.role, opts.branch, run, ...cli];
 }
 
 export const local: Runner = {

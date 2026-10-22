@@ -4,6 +4,8 @@ node_modules
 # output
 out
 dist
+# Bun compile may leave an old executable here when replacing its output.
+.*.bun-build
 *.tgz
 
 # code coverage

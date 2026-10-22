@@ -2,10 +2,142 @@
 
 A simple, light-context agent harness with an orchestrator → worker → reviewer loop.
 
-```bash
-bun install
-bun src/cli.ts start [project] [git-url]
+## Install once, run from any repository
+
+Supported hosts: **macOS or Linux** with **git** and **tmux** on `PATH`. Building
+and updating also require **Bun 1.4.2 or newer** (TypeScript and the other build
+dependencies are installed by `bun install`). The compiled executable includes
+its runtime: **Bun and the harness source are not needed on runtime PATH**, even
+for background workers/reviewers and their crash-reporting follow-up. Install a
+native build on each OS/architecture; this is not a cross-platform binary.
+Standard system tools (`sh` and `env`) must also remain on PATH.
+`gh` and project-specific tools may additionally be needed for the work you ask
+agents to do (for example PR publication/review).
+
+Keep the harness checkout separate from the repositories you work on. This
+local-only workflow installs the app at `~/.parallels/app` and the executable at
+`~/.local/bin/parallels`; it does not download or run a remote bootstrap script:
+
+```sh
+(
+  set -eu
+  # Never replace an existing app or follow a symlink into unrelated content.
+  if [ -L "$HOME/.parallels" ] || [ -e "$HOME/.parallels/app" ] || [ -L "$HOME/.parallels/app" ]; then
+    echo "Existing app or symlink: inspect it first; use the update steps for your own clone." >&2
+    exit 1
+  fi
+  mkdir -p "$HOME/.parallels"
+  git clone https://github.com/wabarurse/parallels.git "$HOME/.parallels/app"
+  cd "$HOME/.parallels/app"
+  # To install an exact reviewed revision, first: git switch --detach <reviewed-commit>
+  bun install --frozen-lockfile
+  bun run install:local
+)
 ```
+
+`install:local` builds `dist/parallels` from that checkout, then copies it to
+`$HOME/.local/bin/parallels` with executable permissions. It works even when
+invoked by an absolute script path from another directory. It never replaces
+`~/.parallels` itself, changes auth/config/projects, moves your repositories, or
+edits shell startup files. `PARALLELS_HOME` still relocates **runtime state**;
+it does not change the app checkout or executable installation destination.
+
+If `~/.local/bin` is not on your PATH, for the current sh/bash/zsh session use:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+command -v parallels
+parallels version
+```
+
+For future sessions, add that export to the appropriate shell startup file
+**yourself**, or use your shell's equivalent (e.g. `fish_add_path ~/.local/bin`
+in fish). Check `command -v parallels` for another executable shadowing this
+one. You can always invoke `"$HOME/.local/bin/parallels"` directly.
+
+```sh
+cd /path/to/any/repository
+parallels
+# Equivalent explicit form; optional project and git URL still work:
+parallels start [project] [git-url]
+parallels msg <project> <text>
+parallels version
+parallels --help
+```
+
+Bare invocation and `start` need an interactive terminal. Launching does **not**
+`cd` into the installation directory: repository detection uses the invoking
+working directory, including repository subdirectories. **This is not in-place
+access to that checkout.** Existing behavior is unchanged: with an origin, the
+harness creates/reuses an `orch-xxxx` managed project cloned **from the origin**
+under `$PARALLELS_HOME/projects` (default `~/.parallels/projects`). Uncommitted
+local edits, untracked files, and local-only commits not available from that
+origin are **not included**; the invoking checkout's current branch is not
+selected automatically. With no origin, the local repository path is the
+clone source (committed history, not uncommitted changes). Workers/reviewers use
+worktrees of the managed clone. Choosing in-place checkout access is a separate,
+not-yet-implemented feature. Normal no-project startup also reopens saved projects.
+
+### Safe updates and installer refusals
+
+Finish active work and let background agents exit before upgrading; do not
+replace a running session's CLI with different agent/protocol code. The installer
+does not stop/restart sessions. Review the desired revision first, keep your app
+checkout clean, and update only that dedicated clone, never your working project:
+
+```sh
+(
+  set -eu
+  test ! -L "$HOME/.parallels"
+  test ! -L "$HOME/.parallels/app"
+  cd "$HOME/.parallels/app"
+  test "$(git remote get-url origin)" = "https://github.com/wabarurse/parallels.git"
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "App checkout has local changes; preserve/review them before updating." >&2
+    exit 1
+  fi
+  git fetch origin
+  # Replace the placeholder with the exact reviewed commit (also works after a detached install):
+  git switch --detach <reviewed-commit>
+  bun install --frozen-lockfile
+  bun run check
+  bun test
+  bun run install:local
+)
+```
+
+There is no automatic pull/reset/clean, shell modification, or force-overwrite
+option. The installer refuses unrelated existing `parallels` files, symlinks
+(including dangling links and symlinked `.local` / `bin` directories), directories
+at file destinations, and files not owned by you or writable by other users.
+It records the installed binary's SHA-256 in
+`~/.local/bin/.parallels-install.json`; keep this receipt alongside the executable.
+An upgrade is permitted only when the current executable matches that receipt.
+The binary is staged on the same filesystem and replaced with one atomic rename,
+so build/copy failure leaves the previous executable intact and an already-open
+executable is not truncated. The receipt is replaced separately; interruption
+between those renames fails closed on the next install rather than guessing
+ownership. An exclusive `.parallels-install.lock` prevents concurrent replacements.
+
+If installation refuses, inspect the named paths; do not blindly delete or
+replace them. A stale lock, missing/mismatched receipt, or interrupted upgrade
+needs manual inspection (including confirmation no installer is running).
+Preserve/move aside only the verified installation files or stale lock before a
+fresh install; never remove `~/.parallels`, auth, config, or projects to resolve
+an installation problem. A different existing executable must be preserved or
+explicitly moved by you. The receipt is an accidental-overwrite guard, not a
+security boundary against another process running as your user.
+
+### Development
+
+From a development checkout, `bun install --frozen-lockfile` followed by
+`bun src/cli.ts` (or `bun src/cli.ts start [project] [git-url]`) still works.
+`bun run check`, `bun test`, `bun run build`, and `git diff --check` are the local
+validation commands. The compiled/installation tests use temporary HOME/state,
+relocated executables, fake provider/tmux boundaries and an owned PTY; they make
+no live model calls and do not install into your real home.
+
+## Using the TUI
 
 `start` opens a TUI with one page per orchestrator (one per project). Orchestrator
 tabs and project details stay at the top; the input, counts and panels stay at
