@@ -78,55 +78,98 @@ clone source (committed history, not uncommitted changes). Workers/reviewers use
 worktrees of the managed clone. Choosing in-place checkout access is a separate,
 not-yet-implemented feature. Normal no-project startup also reopens saved projects.
 
-### Safe updates and installer refusals
+### Explicit updates: `parallels pull`
 
-Finish active work and let background agents exit before upgrading; do not
-replace a running session's CLI with different agent/protocol code. The installer
-does not stop/restart sessions. Review the desired revision first, keep your app
-checkout clean, and update only that dedicated clone, never your working project:
+Finish active work and let background agents exit before upgrading. From **any**
+directory (including an unrelated repository), run:
 
 ```sh
-(
-  set -eu
-  test ! -L "$HOME/.parallels"
-  test ! -L "$HOME/.parallels/app"
-  cd "$HOME/.parallels/app"
-  test "$(git remote get-url origin)" = "https://github.com/wabarurse/parallels.git"
-  if [ -n "$(git status --porcelain)" ]; then
-    echo "App checkout has local changes; preserve/review them before updating." >&2
-    exit 1
-  fi
-  git fetch origin
-  # Replace the placeholder with the exact reviewed commit (also works after a detached install):
-  git switch --detach <reviewed-commit>
-  bun install --frozen-lockfile
-  bun run check
-  bun test
-  bun run install:local
-)
+parallels pull
+# Or, if another command shadows it:
+"$HOME/.local/bin/parallels" pull
 ```
 
-There is no automatic pull/reset/clean, shell modification, or force-overwrite
-option. The installer refuses unrelated existing `parallels` files, symlinks
-(including dangling links and symlinked `.local` / `bin` directories), directories
-at file destinations, and files not owned by you or writable by other users.
-It records the installed binary's SHA-256 in
+This command accepts no arguments. It updates **only the dedicated harness
+installation** at `$HOME/.parallels/app`, never the invoking repository or a
+managed project. `PARALLELS_HOME` still relocates runtime state, not the updater's
+checkout or executable. Git and **Bun >= 1.4.2 on PATH** are required for updates;
+Bun is not required for normal compiled runtime. An initial clone and successful
+`bun run install:local` are required first; `pull` does not create or guess a
+missing installation.
+
+The updater validates the app's path/ownership, requires its own `.git` directory
+(not a symlink, shared-object clone or linked worktree), and checks that both the
+raw and effective origin URL are exactly
+`https://github.com/wabarurse/parallels.git`. SSH URLs, forks, local replacements,
+and local URL rewrites are refused. Inherited Git repository/config overrides
+and global/system Git config are ignored, and Git hooks are disabled for this
+operation. It fetches only main from that verified URL, **fast-forwards only**,
+runs `bun install --frozen-lockfile` and `bun run build` in the app checkout, then
+uses the same ownership-checked atomic installer as `install:local`. This runs
+build/dependency code from origin/main; review/trust that upstream before pulling.
+It does not run the full test suite for you. Even an up-to-date checkout is rebuilt
+and reinstalled, so a failed dependency/build step can be retried.
+
+Checkout behavior is deliberately conservative:
+
+- **main:** advance only when current HEAD is an ancestor of fetched origin/main.
+  Local-only/ahead/divergent commits are not reset or discarded.
+- **Detached exact-reviewed installation:** advance only when that reviewed HEAD
+  is an ancestor of origin/main, and remain detached. This works after an
+  ancestry-preserving merge. An unmerged PR head or a squash/rebased merge can
+  fail this check; preserve the reviewed head in a named branch, inspect the
+  history, and manually choose the desired checkout before retrying. The updater
+  does not guess that different commit IDs contain equivalent changes.
+- **Any other branch:** refuse. Preserve its work, then explicitly select main or
+  a suitable detached revision yourself. No branch is silently switched/deleted.
+- Dirty/untracked source, Git operations in progress, unsafe paths (including
+  symlinked `dist` or `node_modules`), conflicting installs, and concurrent
+  installer/updater operations are refused. There is no automatic stash, reset,
+  clean, force-overwrite, or session restart.
+
+Fetch/dependency/build/installation failure leaves the previously installed
+executable intact. The app's fetched refs, checkout or dependencies **may already
+have advanced** before a later failure; they are not rolled back. Inspect the
+error, preserve any local work, resolve it, then rerun `parallels pull`. Do not
+blindly delete files to make the check pass. A failed build does not require
+resetting the checkout.
+
+**Existing processes keep the code they already loaded.** Nothing is stopped,
+killed or restarted. New launches use the replacement executable; an old
+worker/reviewer shell wrapper can also re-enter that new executable for its
+`agent-exit` follow-up. Mixed protocol/code versions are therefore possible if
+you update during a run: update **between active runs**, then start a new session
+when ready. Source-development processes are not upgraded in place either.
+
+### Installer ownership and recovery
+
+Both `install:local` and `pull` refuse unrelated existing `parallels` files,
+symlinks (including dangling links and symlinked `.local` / `bin` directories),
+directories at file destinations, and files not owned by you or writable by
+other users. Neither modifies shell startup files or auth/config/projects.
+The installer records the binary's SHA-256 in
 `~/.local/bin/.parallels-install.json`; keep this receipt alongside the executable.
 An upgrade is permitted only when the current executable matches that receipt.
 The binary is staged on the same filesystem and replaced with one atomic rename,
 so build/copy failure leaves the previous executable intact and an already-open
-executable is not truncated. The receipt is replaced separately; interruption
+executable is not truncated. The receipt is published separately **before** the
+final binary rename (and restored if that rename fails). Abrupt interruption
 between those renames fails closed on the next install rather than guessing
-ownership. An exclusive `.parallels-install.lock` prevents concurrent replacements.
+ownership. An exclusive `~/.local/bin/.parallels-install.lock` covers the entire
+fetch/dependencies/build/install operation, and also manual `install:local` builds.
 
 If installation refuses, inspect the named paths; do not blindly delete or
 replace them. A stale lock, missing/mismatched receipt, or interrupted upgrade
-needs manual inspection (including confirmation no installer is running).
+needs manual inspection (including confirmation no installer/updater is running).
 Preserve/move aside only the verified installation files or stale lock before a
 fresh install; never remove `~/.parallels`, auth, config, or projects to resolve
 an installation problem. A different existing executable must be preserved or
-explicitly moved by you. The receipt is an accidental-overwrite guard, not a
-security boundary against another process running as your user.
+explicitly moved by you. The receipt and path checks are accidental-overwrite
+guards, not a security boundary against another process running as your user.
+For a manually chosen reviewed revision, preserve any existing commits first,
+select that exact revision in the dedicated app clone, then run
+`bun install --frozen-lockfile` and `bun run install:local`; do not build from the
+unrelated project you happened to invoke `parallels` in.
 
 ### Development
 
@@ -134,8 +177,10 @@ From a development checkout, `bun install --frozen-lockfile` followed by
 `bun src/cli.ts` (or `bun src/cli.ts start [project] [git-url]`) still works.
 `bun run check`, `bun test`, `bun run build`, and `git diff --check` are the local
 validation commands. The compiled/installation tests use temporary HOME/state,
-relocated executables, fake provider/tmux boundaries and an owned PTY; they make
-no live model calls and do not install into your real home.
+relocated executables, fake provider/tmux boundaries and an owned PTY. Updater
+tests use temporary local Git remotes and offline dependency/build boundaries,
+including an installed standalone invocation from another dirty repository. They
+make no live model calls and do not install/update anything in your real home.
 
 ## Using the TUI
 

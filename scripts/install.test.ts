@@ -103,6 +103,8 @@ test("script build failure leaves a previous installation untouched", async () =
   const { root, home, source, target } = await fixture();
   await installBinary(source, home);
   const app = join(root, "app"); await mkdir(join(app, "scripts"), { recursive: true });
+  await mkdir(join(app, "src"));
+  await writeFile(join(app, "src", "installation.ts"), await readFile(join(import.meta.dir, "../src/installation.ts")));
   await writeFile(join(app, "scripts", "install.ts"), await readFile(join(import.meta.dir, "install.ts")));
   await writeFile(join(app, "package.json"), JSON.stringify({ scripts: { build: "exit 18" } }));
   const child = Bun.spawn([process.execPath, join(app, "scripts", "install.ts")], {
@@ -112,4 +114,24 @@ test("script build failure leaves a previous installation untouched", async () =
   expect(await child.exited).toBe(1);
   expect(err).toContain("build failed; installed executable was not changed");
   expect(await readFile(target, "utf8")).toBe("fixture executable");
+});
+
+test("failure of the final executable rename restores its receipt and preserves the old binary", async () => {
+  const { home, source, bin, target } = await fixture();
+  await installBinary(source, home);
+  const receipt = await readFile(join(bin, ".parallels-install.json"), "utf8");
+  await writeFile(source, "new executable");
+  const fs = await import("node:fs/promises");
+  const { spyOn } = await import("bun:test");
+  const original = fs.rename;
+  const rename = spyOn(fs, "rename").mockImplementation(async (from, to) => {
+    if (to === target) throw new Error("fixture final rename failure");
+    return original(from, to);
+  });
+  try { await expect(installBinary(source, home)).rejects.toThrow("final rename failure"); }
+  finally { rename.mockRestore(); }
+  expect(await readFile(target, "utf8")).toBe("fixture executable");
+  expect(await readFile(join(bin, ".parallels-install.json"), "utf8")).toBe(receipt);
+  await installBinary(source, home);
+  expect(await readFile(target, "utf8")).toBe("new executable");
 });

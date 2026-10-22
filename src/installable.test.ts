@@ -6,6 +6,7 @@ import { installBinary } from "../scripts/install";
 import { open } from "./transcript";
 import { agentCommand, slug } from "./runner";
 import pkg from "../package.json";
+import { pullFixture } from "./test/pull-fixture";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "parallels-relocated-")));
 const home = join(root, "home ' $space"), state = join(root, "state ' $space"), bin = join(root, "fake-bin");
@@ -47,11 +48,11 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 test("relocated installed CLI preserves help, errors, version, msg and state relocation without runtime Bun", async () => {
   expect(await exec([installed, "version"])).toEqual({ code: 0, out: `${pkg.version}\n`, err: "" });
-  for (const args of [["help"], ["--help"], ["-h"], ["start", "--help"]]) {
+  for (const args of [["help"], ["--help"], ["-h"], ["start", "--help"], ["pull", "--help"]]) {
     const result = await exec([installed, ...args]);
     expect(result.code).toBe(0); expect(result.out).toContain("parallels start");
   }
-  for (const args of [["not-a-command"], ["msg"], ["agent"], ["agent-exit"], ["version", "extra"], ["start", "--bad"], ["agent", "--project", "p", "--role", "invalid"], ["agent-exit", "--project", "p", "--role", "worker", "--branch", "b", "--run", "r", "--code", "NaN"]]) {
+  for (const args of [["pull", "extra"], ["not-a-command"], ["msg"], ["agent"], ["agent-exit"], ["version", "extra"], ["start", "--bad"], ["agent", "--project", "p", "--role", "invalid"], ["agent-exit", "--project", "p", "--role", "worker", "--branch", "b", "--run", "r", "--code", "NaN"]]) {
     const result = await exec([installed, ...args]);
     expect(result.code).toBe(1); expect(result.err).toContain("usage:");
   }
@@ -198,3 +199,64 @@ test("local install script builds from its checkout, upgrades fixture HOME, and 
   expect(existsSync(join(home, ".parallels"))).toBe(false);
   expect(existsSync(join(home, ".zshrc"))).toBe(false);
 }, 30_000);
+
+
+test("installed standalone pull from an unrelated dirty repo updates only the dedicated clone via offline process boundaries", async () => {
+  const f = await pullFixture();
+  try {
+    await installBinary(installed, f.home);
+    const oldHash = new Bun.CryptoHasher("sha256").update(readFileSync(f.target)).digest("hex");
+    const callerHead = await f.g(f.caller, "rev-parse", "HEAD"), callerStatus = await f.g(f.caller, "status", "--porcelain");
+    const tools = join(f.root, "offline tools"), trace = join(f.root, "commands.jsonl"), boundary = join(f.root, "boundary.ts");
+    mkdirSync(tools);
+    const realGit = Bun.which("git")!;
+    writeFileSync(boundary, `
+      import { appendFileSync } from "node:fs";
+      const [kind, ...args] = process.argv.slice(2);
+      appendFileSync(${JSON.stringify(trace)}, JSON.stringify({ kind, args, cwd: process.cwd(), gitDir: process.env.GIT_DIR }) + "\\n");
+      if (process.cwd() !== ${JSON.stringify(f.app)}) throw new Error("escaped app");
+      let command;
+      if (kind === "git") {
+        if (args.includes("fetch")) {
+          const i = args.indexOf("https://github.com/wabarurse/parallels.git");
+          if (i < 0) throw new Error("unexpected fetch target");
+          args[i] = ${JSON.stringify(f.remote)};
+        }
+        command = [${JSON.stringify(realGit)}, ...args];
+      } else if (args.join(" ") === "--version") {
+        console.log(Bun.version); process.exit(0);
+      } else if (args.join(" ") === "install --frozen-lockfile") {
+        process.exit(0); // offline fixture has no dependencies
+      } else if (args.join(" ") === "run build") {
+        command = [${JSON.stringify(process.execPath)}, "build", "fixture.ts", "--compile", "--outfile", "dist/parallels"];
+      } else throw new Error("unexpected build command");
+      const child = Bun.spawn(command, { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+      process.exit(await child.exited);
+    `);
+    const quote = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
+    for (const tool of ["git", "bun"]) writeFileSync(join(tools, tool), `#!/bin/sh
+exec ${quote(process.execPath)} ${quote(boundary)} ${tool} "$@"
+`, { mode: 0o755 });
+    const result = await exec([f.target, "pull"], f.caller, {
+      HOME: f.home, PARALLELS_HOME: f.state, PATH: `${tools}:/usr/bin:/bin`,
+      GIT_DIR: join(f.caller, ".git"), GIT_WORK_TREE: f.caller, GIT_CONFIG_COUNT: "invalid",
+    });
+    expect({ code: result.code, err: result.err, status: await f.g(f.app, "status", "--porcelain") }).toEqual({ code: 0, err: "", status: "" });
+    expect(result.out).toContain(`Installed ${f.target} from ${f.after}`);
+    expect(result.out).toContain("Existing processes were not restarted");
+    expect(await f.g(f.app, "rev-parse", "HEAD")).toBe(f.after);
+    expect(new Bun.CryptoHasher("sha256").update(readFileSync(f.target)).digest("hex")).not.toBe(oldHash);
+    expect(await exec([f.target, "version"], f.caller)).toEqual({ code: 0, out: "updated standalone fixture\n", err: "" });
+    expect(await f.g(f.caller, "rev-parse", "HEAD")).toBe(callerHead);
+    expect(await f.g(f.caller, "status", "--porcelain")).toBe(callerStatus);
+    expect(readFileSync(join(f.caller, "precious"), "utf8")).toBe("caller uncommitted\n");
+    expect(readFileSync(join(f.state, "keep"), "utf8")).toBe("state sentinel");
+    const calls = readFileSync(trace, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(calls.every(c => c.cwd === f.app && c.gitDir === undefined)).toBe(true);
+    expect(calls.filter(c => c.kind === "bun").map(c => c.args)).toEqual([["--version"], ["install", "--frozen-lockfile"], ["run", "build"]]);
+    const missingBun = await exec([installed, "pull"], f.caller, { HOME: f.home, PARALLELS_HOME: f.state, PATH: "/usr/bin:/bin" });
+    expect(missingBun.code).toBe(1);
+    expect(missingBun.err).toContain("requires bun on PATH");
+    expect(missingBun.err).toContain("installed executable was not replaced");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+}, 120_000);
