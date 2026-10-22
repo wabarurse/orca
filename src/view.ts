@@ -42,6 +42,7 @@ function joinedText(blocks: Block[]): Block[] {
 
 /** One entry as pieces to show, or null for entries with nothing to show. */
 export function parts(entry: Entry): Part[] | null {
+  if (entry.type === "context-boundary") return null;
   if (entry.type === "meta") return [dim(`— ${entry.role}${entry.branch ? ` on ${entry.branch}` : ""} (${entry.model || "default model"})`)];
   if (entry.type === "summary") return [dim(`— compacted: ${firstLine(entry.text)}`)];
   if (entry.type === "replies") return entry.messages.flatMap((m): Part[] => [dim(`${m.from} → user:`), { md: m.text }]);

@@ -1,4 +1,5 @@
-// Serialize model commits and managed project creation/deletion, across processes.
+// Serialize model/settings commits, context clears, orchestrator inbox publication
+// and managed project creation/deletion, across processes.
 // Locks live outside projects so deleting/recreating a directory cannot replace its lock.
 import { mkdir, rm } from "node:fs/promises";
 import { statSync } from "node:fs";

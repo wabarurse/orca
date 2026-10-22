@@ -27,12 +27,12 @@ function fixture(mode: string) {
   };
   return { path: join(dir, "t.jsonl"), io, warnings, fault: (value: boolean) => { fault = value; } };
 }
-for (const mode of ["short", "zero", "partial-error", "sync", "close", "rename", "directory", "directory-close", "warning-error"]) test(`publication ${mode}: durable visible record and head agree, next append/reopen safe`, async () => {
+for (const type of ["summary", "context-boundary"] as const) for (const mode of ["short", "zero", "partial-error", "sync", "close", "rename", "directory", "directory-close", "warning-error"]) test(`publication ${type} ${mode}: durable visible record and head agree, next append/reopen safe`, async () => {
   const f = fixture(mode), t = open(f.path, f.io);
   await t.append({ type: "message", message: { role: "user", content: "original" } });
   const before = await Bun.file(f.path).text(), head = t.head();
   f.fault(true);
-  const operation = t.append({ type: "summary", text: "summary", retained: [], boundary: head });
+  const operation = t.append(type === "summary" ? { type, text: "summary", retained: [], boundary: head } : { type });
   if (["short", "directory", "directory-close", "warning-error"].includes(mode)) {
     await operation;
     expect(t.head()).not.toBe(head);
@@ -50,7 +50,7 @@ for (const mode of ["short", "zero", "partial-error", "sync", "close", "rename",
   expect(open(f.path).history!()).toEqual(t.history!());
 });
 
-for (const boundary of ["write", "sync", "close", "renamed", "directory"]) test(`checkpoint cancellation at ${boundary}: precommit preserves bytes/head, postcommit remains published`, async () => {
+for (const type of ["summary", "context-boundary"] as const) for (const boundary of ["write", "sync", "close", "renamed", "directory"]) test(`${type} cancellation at ${boundary}: precommit preserves bytes/head, postcommit remains published`, async () => {
   const f = fixture("none");
   const controller = new AbortController();
   let armed = false;
@@ -70,7 +70,7 @@ for (const boundary of ["write", "sync", "close", "renamed", "directory"]) test(
   await t.append({ type: "message", message: { role: "user", content: "keep exact original bytes" } });
   const before = await Bun.file(f.path).text(), head = t.head();
   armed = true;
-  const op = t.append({ type: "summary", text: "summary", retained: [], boundary: head }, controller.signal);
+  const op = t.append(type === "summary" ? { type, text: "summary", retained: [], boundary: head } : { type }, controller.signal);
   if (["renamed", "directory"].includes(boundary)) {
     await op;
     expect(t.head()).not.toBe(head);
