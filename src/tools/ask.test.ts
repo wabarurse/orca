@@ -34,14 +34,15 @@ describe("ask policy", () => {
     expect(description).toMatch(/Returns ids at once; answers arrive later in your inbox/);
     expect(description).toMatch(/Batch genuinely related necessary decisions in one call/);
     expect(description).toContain("keep questions/options concise");
-    expect(description).toContain("include a safe default");
+    expect(description).toContain("optionally include a suggested default");
     expect(description).toContain("keep working on unaffected parts");
   });
 
-  test("explicit skip alone applies defaults, never granting destructive or plan approval", () => {
-    expect(description).toMatch(/default applies only when the user explicitly skips/);
-    expect(description).toMatch(/never because of silence or closing the panel/);
-    expect(description).toMatch(/Never use a default or silence to authorize destructive steps/);
+  test("Skip silently dismisses, never applying a default or granting approval", () => {
+    expect(description).toContain("Skip silently removes a question from Inbox without sending you a reply or resuming work");
+    expect(description).toContain("A default is only a suggestion the user may explicitly answer with");
+    expect(description).toMatch(/Skip, silence and closing the panel never apply it/);
+    expect(description).toMatch(/Never use a default, Skip or silence to authorize destructive steps/);
     expect(description).toContain("or bypass explicit execution authorization for the shown branch plan");
   });
 
@@ -60,7 +61,7 @@ describe("ask policy", () => {
               options: { type: "array", items: { type: "string" }, description: "Short choices, at most 8." },
               default: {
                 type: "string",
-                description: expect.stringMatching(/only if the user explicitly skips.*never permission.*destructive steps.*unapproved plan.*100 chars/),
+                description: expect.stringMatching(/Optional suggested answer.*never applied by Skip, silence or closing the panel.*never permission.*destructive steps.*unapproved plan.*100 chars/),
               },
             },
             required: ["text"],

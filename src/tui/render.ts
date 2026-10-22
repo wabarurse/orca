@@ -267,10 +267,10 @@ export const QUESTION_HINTS: Record<QuestionMode, string> = {
   answer: "Enter send · Esc/Tab close",
 };
 export const OWN_ANSWER = "type your own answer";
-export const skipRow = (def?: string) => (def ? `skip (use default: ${def})` : "skip");
+export const skipRow = () => "skip — remove from inbox";
 
 /** A question's rows: its options numbered (1–9 pick them), then "type your own answer" and "skip". */
-export const questionItems = (q: Pick<QuestionView, "options" | "default">): string[] => [...q.options.map((o, i) => `${i + 1}. ${o}`), OWN_ANSWER, skipRow(q.default)];
+export const questionItems = (q: Pick<QuestionView, "options" | "default">): string[] => [...q.options.map((o, i) => `${i + 1}. ${o}`), OWN_ANSWER, skipRow()];
 
 /**
  * A question's rows, at most `height`, `cols` wide: its text word-wrapped,

@@ -24,7 +24,7 @@ import { historyRows, type Line } from "./lines";
 import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { helpLines, type CommandHelp } from "./help";
-import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
+import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./questions";
 import { replyLine, reportLine, restore, userLines } from "./restore";
 import { bold, commit, dim, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
@@ -1402,7 +1402,7 @@ export class App {
         question: this.questions.view(),
         notice: page.view ? "Questions belong to the project orchestrator. Close Inbox, then /back to answer; /agents stays separate."
           : q.error ? `Questions unavailable: ${q.error}${q.loaded ? " · Last snapshot may be stale." : ""} Close and Ctrl+Q to retry.`
-          : q.closing ? "Sending answer/skip…" : undefined,
+          : q.closing ? QUESTION_PROGRESS[q.closing] : undefined,
         lines: q.error || page.view || q.open.length ? [] : [q.loaded ? "No open questions." : "Loading questions…"],
       };
     }

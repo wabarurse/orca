@@ -50,18 +50,15 @@ export function taskInboxLines(data: TaskInboxData, cols: number): { lines: stri
     // Add our own hyperlink only AFTER canonical PR validation and cell wrapping.
     // Each physical fragment closes its link, so styles/links cannot leak rows.
     const link = (text: string) => url.startsWith("https://github.com/") ? `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\` : text;
-    const fields = [inboxText(row.name), inboxText(row.summary), taskStatusLabels[row.status], url];
+    // Display precedence only: never change stored lifecycle, attention or reason.
+    const fields = [inboxText(row.name), inboxText(row.summary), row.attention ? inboxText(row.attention.kind) : taskStatusLabels[row.status], url];
     if (wide) {
       const cells = fields.map((text, i) => bounded(text, widths[i]!).map(part => i === 3 ? link(part) : part));
-      // Put attention beside the stage immediately, even if a long summary
-      // pushes its full reason far down the record.
-      if (row.attention) cells[2]!.push(...bounded(`! ${inboxText(row.attention.kind)}`, widths[2]!));
       const height = Math.max(...cells.map(cell => cell.length));
       for (let i = 0; i < height; i++) lines.push(tableRow(cells.map(cell => cell[i] ?? "")));
     } else {
       fields.forEach((text, i) => lines.push(...bounded(`${labels[i]}: ${text}`, cols).map(part => i === 3 ? link(part) : part)));
     }
-    if (row.attention) lines.push(...bounded(`! ${inboxText(row.attention.kind)}: ${inboxText(row.attention.reason)}`, cols));
     lines.push("");
   }
   lines.pop();

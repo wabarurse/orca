@@ -202,7 +202,7 @@ test("tags inside a report or a user message are not senders", () => {
   expect(restore(entries, 60)).toEqual([...[`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item"].map((user) => ({ user })), dim("From worker-a: Report…")]);
 });
 
-test("question answers and skips restore as the dim line the page showed live, not as '> …'", () => {
+test("question answers and legacy delivered skips restore as the dim line the page showed live, not as '> …'", () => {
   const entries = transcript(
     meta,
     user(inbox(
@@ -242,4 +242,12 @@ test("question replies: the question is looked up by id, so quotes, `\": ` and p
   // restore() takes the lookup.
   const entries = transcript(meta, user(inbox(["user", answered])));
   expect(restore(entries, 80, MAX_RESTORED_ROWS, (i) => asked.get(i)).map(raw)).toEqual([answeredLine(text, 'say "x": y')]);
+});
+
+
+test("a skipped record alone never synthesizes a delivered reply/default during restore", () => {
+  const id = "2026-01-02T03-04-05.678Z-000007-0123abcd";
+  const lookup = (key: string) => key === id ? { text: "Approval?", status: "skipped", default: "yes" } : undefined;
+  expect(restore(transcript(meta), 80, MAX_RESTORED_ROWS, lookup)).toEqual([]);
+  expect(questionReply("? Approval? → skipped, removed from inbox", lookup)).toBeNull();
 });
