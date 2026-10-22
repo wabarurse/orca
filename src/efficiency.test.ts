@@ -8,7 +8,7 @@ import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import { open } from "./transcript";
 let home: string;
 const before = process.env.PARALLELS_HOME;
-afterEach(async () => { process.env.PARALLELS_HOME = before; if (home) await rm(home, { recursive: true, force: true }); });
+afterEach(async () => { if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before; if (home) await rm(home, { recursive: true, force: true }); });
 
 test("production orchestrator overlaps independent tools, keeps barriers and ordered transcript results", async () => {
   home = await mkdtemp(join(tmpdir(), "efficiency-")); process.env.PARALLELS_HOME = home;

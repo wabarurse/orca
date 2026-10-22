@@ -21,6 +21,8 @@ let active = 0, maxParallel = 0, resultBytes = 0, streamed = "";
 const started = performance.now();
 const wrapped: Provider = { ...source, async complete(req) {
   if (requests.length >= 30) throw new Error("Evaluation request limit reached");
+  // Only the separately labelled direct-repair calibration overrides role policy.
+  if (spec.directSystem) req = { ...req, system: [req.system, spec.directSystem].filter(Boolean).join("\n\n") };
   const index = requests.length, row: any = { start: performance.now() - started };
   requests.push(row);
   await Bun.write(join(spec.dir, `request-${index}.json`), JSON.stringify(req));
