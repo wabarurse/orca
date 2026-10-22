@@ -1,3 +1,4 @@
+import { cancelSession } from "../cancellation";
 import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } from "../project-settings";
 // Sticky top and bottom bars around a scrollable conversation. Only changed
 // screen rows are redrawn; on exit the active transcript is printed back to
@@ -22,22 +23,24 @@ import { appendHistory, keepable, loadHistory, remember } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, type PageQuestions, type QuestionStore } from "./questions";
 import { MAX_RESTORED_ROWS, replyLine, reportLine, restore, userLines } from "./restore";
-import { bold, commit, dim, inputArea, visibleLength, type Frame, type Input, type InputArea, type Menu } from "./render";
+import { bold, commit, dim, inputArea, inputGeometry, statusRows, type Frame, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
+import { chapterRows, headerHeight } from "./chrome";
+import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./anchor";
 import { Calls } from "./tools";
 import type { ToolCall, ToolOutcome } from "../toolview";
-import { stickyRows, stickyUpdate, tabs, type StickyScreen } from "./sticky";
+import { stickyRows, stickyUpdate, type StickyScreen } from "./sticky";
 
 export { lineRows, type Line } from "./lines";
 
 export interface Page {
   /** The project id: its folder under ~/.parallels/projects. Never changes. */
   project: string;
-  /** What the status line shows; /rename sets it. */
+  /** What the header tab shows; /rename sets it. */
   name: string;
   orch: Orchestrator;
-  /** Where the clone came from, for the status line. */
+  /** Where the clone came from, for the pinned header. */
   remote: string;
   /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
@@ -84,6 +87,7 @@ export interface AppDeps {
   /** Clock and repeating timer for the busy spinner; tests inject fakes so they never sleep. */
   clock?: Clock;
   /** A project's agents and which are live: /agents lists these and live views poll them. Defaults to listAgents for the menu and to tmux alone (liveAgents) for the poll. */
+  cancelAgent?: typeof cancelSession;
   agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
   /** Sign-in; tests replace it. */
   login?: typeof login;
@@ -147,6 +151,7 @@ type HelpRow = "projects" | "keys" | "pages" | "settings" | "review" | "question
 
 /** /help, top to bottom: key help as written, and the rows of commands from the table (joined by three spaces). */
 const HELP_LAYOUT: readonly (HelpRow | { text: string })[] = [
+  { text: "^C cancels selected turn/agent; twice within 2s exits (conversation kept)" },
   { text: "^N new orchestrator   ^Z ^X switch pages   Esc clear   PgUp/PgDn or mouse wheel scroll" },
   "projects",
   { text: "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words" },
@@ -235,7 +240,7 @@ export class App {
   projectList: ProjectListState | null = null;
   loggingIn = false;
   /** Text typed while signing in, per page; sent when sign-in succeeds, dropped when it fails. */
-  private readonly queued = new Map<Page, string[]>();
+  private readonly queued = new Map<Page, { text: string; submission?: string }[]>();
   /** /keys: echo every key as parsed until Esc, to see what a terminal really sends. */
   keyEcho = false;
   /** Input history while no page is open; a page keeps its own. */
@@ -258,7 +263,7 @@ export class App {
   private needReprint = false;
   /**
    * Set once pages and terminal background are ready. Until then show only
-   * startup notes and the "opening…" status.
+   * startup notes and transient "opening…" activity at the conversation tail.
    */
   private started = false;
   private stopSpinner: (() => void) | null = null;
@@ -267,6 +272,7 @@ export class App {
   private screenHistory: string[] = [];
   private screenOwner: Page | Page["view"] | undefined;
   private scrollTop: number | null = null;
+  private scrollAnchor?: HistoryAnchor;
   private liveCheckedAt = 0;
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
   private readonly liveChecks = new Map<string, Promise<void>>();
@@ -284,7 +290,7 @@ export class App {
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
       say: (line, page) => app.say(line, page as Page),
       record: (line, page) => app.record(page as Page, line),
-      width: () => app.deps.term.cols - visibleLength(dim("answer> ")),
+      width: () => app.inputWidth("answer> "),
       now: () => app.clock.now(),
       isCommand: (text) => app.commands.has(text.split(" ")[0]!),
       run: (text) => { app.remember(text); return app.submit(text); },
@@ -313,7 +319,7 @@ export class App {
       this.draw(); // "opening…" at once
       const shaded = term.background?.then(() => this.draw()); // the input in the terminal's shade as soon as it is known
       await this.openStartPages(project, url);
-      await shaded; // the first page's user lines go into the scrollback in that shade
+      await shaded; // restored user rows first enter the viewport in the resolved shade
       this.started = true;
       this.needReprint = true;
       this.draw();
@@ -325,7 +331,7 @@ export class App {
       this.stopSpinner?.();
       this.stopSpinner = null;
       this.loginAbort.abort();
-      for (const p of this.pages) p.view?.leave();
+      for (const p of this.pages) { p.orch.cancel?.(); p.view?.leave(); }
       restoreConsole();
       term.close();
       this.leave();
@@ -347,9 +353,9 @@ export class App {
   }
 
   /**
-   * Route console output (e.g. the config loader's warning) into the scrollback
-   * while the TUI runs, as Ink does for Claude Code, so nothing writes to the
-   * terminal behind the live region's back. Returns the undo.
+   * Route console output (e.g. the config loader's warning) into conversation
+   * history while the TUI runs, so nothing writes behind the pinned renderer's
+   * back. Returns the undo.
    */
   private captureConsole(): () => void {
     const methods = ["log", "info", "warn", "error", "debug"] as const;
@@ -443,12 +449,13 @@ export class App {
 
   frame(): Frame {
     const page = this.page;
-    const status = !this.started ? dim("opening…") : page ? this.status(page) : null;
-    const { input, area } = this.inputFrame(status ? 1 : 0);
+    const status = this.started && page ? this.status(page) : null;
+    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length);
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
       running: page ? (page.view?.calls ?? page.calls).rows(this.clock.now(), this.deps.term.cols) : [],
+      activity: !this.started ? dim("opening…") : page ? this.activity(page) : undefined,
       status, input, inputArea: area,
       menu: this.menu,
       question: this.questions.view(),
@@ -462,9 +469,10 @@ export class App {
     };
   }
 
-  private header(page: Page): string {
+  private header(page: Page): string[] {
     const settings = page.settings;
-    return `${page.name} · ${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}\n${paths.repo(page.project)}\n${page.remote ? shortRemote(page.remote) : "no remote"}`;
+    const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Independent read generations for captured page objects. */
@@ -490,44 +498,29 @@ export class App {
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
 
-  /**
-   * The dimmed line below the input: what the page is doing (a spinner while
-   * its turn or the viewed agent runs), its name, remote and the open pages,
-   * e.g. "⠋ thinking… 3s · orch-ab12 · github.com/x/y · 2 pages · 1 busy".
-   */
+  /** Counts only: no shortcuts, repeated identities or transient animation in the footer. */
   status(page: Page): string {
-    const parts = this.counts(page);
-    // A live agent view wins over the page's own turn; otherwise a busy page shows its turn (its word shimmering), view or not.
-    if (page.view?.live) parts.push(`${this.spinner()} following ${page.view.name}`);
-    else if (page.busy) parts.push(this.turnStatus(page));
-    parts.push(page.view ? `${page.name} › ${page.view.name}` : page.name);
-    if (page.remote) parts.push(shortRemote(page.remote));
-    parts.push(`${this.pages.length} ${this.pages.length === 1 ? "page" : "pages"}`);
-    const busy = this.pages.filter((p) => p !== page && active(p)).length;
-    if (busy) parts.push(`${busy} busy`);
-
-
-    return dim(parts.join(" · "));
+    const agents = page.agentCount ?? 0;
+    const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
+    const questions = page.questions.open.length;
+    const elsewhere = this.pages.reduce((n, p) => n + (p === page ? 0 : p.questions.open.length), 0);
+    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, `${queued} ${queued === 1 ? "message" : "messages"} queued`, `${questions} ${questions === 1 ? "question" : "questions"}${elsewhere ? ` (+${elsewhere} elsewhere)` : ""}`].join(" │ ");
   }
 
-  private counts(page: Page): string[] {
-    const parts = [`${page.agentCount ?? 0} agents running`];
-    const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
-    if (queued) parts.push(`${queued} messages queued`);
-    parts.push(...this.questions.status(page, this.pages));
-    if (page.questions.open.length) parts.push("Ctrl+Q to view");
-    return parts;
+  /** Only the selected conversation can animate; tool rows already carry their own shimmer. */
+  activity(page: Page): string | undefined {
+    if ((page.view?.calls ?? page.calls).size) return undefined;
+    if (page.view) return page.view.live ? dim(`${this.spinner()} ${shimmer("working…", this.clock.now())}`) : undefined;
+    return page.busy ? dim(this.turnStatus(page)) : undefined;
   }
 
   /** Fast frames only for visible animation, never because a background page is busy. */
   private shimmering(): boolean {
     const page = this.page;
-    if (!page) return false;
-    if ((page.view?.calls ?? page.calls).size) return true;
-    return page.busy && !page.view?.live;
+    return !!page && (!!(page.view?.calls ?? page.calls).size || !!this.activity(page));
   }
 
-  /** "⠋ thinking… 3s" with the word shimmering; the dim the status line is drawn in resumes after it. */
+  /** "⠋ thinking… 3s" with the word shimmering; the surrounding dim resumes after it. */
   private turnStatus(page: Page): string {
     const now = this.clock.now();
     const word = shimmer(page.streamed ? "working…" : "thinking…", now);
@@ -572,9 +565,18 @@ export class App {
   /** The input and its laid-out area, keeping the window's top row between frames. */
   private inputFrame(reserved: number): { input: Input; area: InputArea } {
     const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, top: this.inputTop };
-    const area = inputArea(input, this.deps.term.cols, this.deps.term.rows, reserved);
+    const area = inputArea(input, this.deps.term.cols, this.composerRows(), reserved);
     input.top = this.inputTop = area.top;
     return { input, area };
+  }
+
+  /** Same available height as stickyRows: fixed header, plus at least one body row. */
+  private composerRows(): number {
+    return Math.max(1, this.deps.term.rows - (this.page ? this.header(this.page).length : 0) - 1);
+  }
+
+  private inputWidth(prompt: string): number {
+    return inputGeometry(prompt, this.deps.term.cols, this.composerRows()).width;
   }
 
   private prompt(): string {
@@ -583,7 +585,7 @@ export class App {
     return view ? dim(`${view.name} > `) : dim("> ");
   }
 
-  /** Redraw the live region soon, committing pending lines above it first. */
+  /** Coalesce changed pinned rows and the conversation viewport into the next frame. */
   draw(): void {
     if (this.closed) return;
     this.questions.sync(); // the input holds the chat draft or the shown question's answer, as the state now wants
@@ -635,28 +637,56 @@ export class App {
 
   private viewport(f: Frame): StickyScreen {
     const owner = this.page?.view ?? this.page;
-    if (owner !== this.screenOwner) this.scrollTop = null;
+    this.anchorScroll(owner, f.cols);
     if (this.needReprint || owner !== this.screenOwner) this.screenHistory = this.started ? this.screenLines() : [...this.looseLines];
     else this.screenHistory.push(...this.pending);
     this.screenOwner = owner;
     this.pending = [];
-    const chrome = this.page ? [tabs(this.pages, this.active, f.cols), ...this.header(this.page).split("\n")] : [];
-    return stickyRows(f, this.screenHistory, chrome, this.scrollTop);
+    const chrome = this.page ? this.header(this.page) : [];
+    const screen = stickyRows(f, this.screenHistory, chrome, this.scrollTop);
+    if (this.scrollTop !== null) this.scrollTop = screen.start;
+    return screen;
+  }
+
+  /** Only a resize of the same conversation can reuse its scroll anchor. */
+  private anchorScroll(owner: typeof this.screenOwner, cols: number): void {
+    if (owner !== this.screenOwner) this.scrollTop = null;
+    if (this.scrollTop === null) { this.scrollAnchor = undefined; return; }
+    if (!this.screen || this.screen.cols === cols) return;
+    const lines = this.page?.view?.lines ?? this.page?.lines ?? this.looseLines;
+    this.scrollAnchor ??= captureAnchor(lines, this.screen.cols, this.scrollTop);
+    this.scrollTop = resolveAnchor(lines, cols, this.scrollAnchor);
   }
 
   /** The last drawing error said, so a frame that keeps failing is reported once. */
   private drawError = "";
 
+  /** Expand only the initial capped restore on exit; live notes keep their exact order. */
+  private readonly exitHistory = new WeakMap<Page, () => Line[]>();
+
   /** After restoring the primary screen, print the active history and any partial reply. */
   private leave(): void {
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
-    const lines = [...(page ? this.header(page).split("\n") : []), ...this.screenLines(), ...(held ? held.split("\n") : [])];
+    const history = page && !page.view ? this.exitHistory.get(page)?.() ?? page.lines : page?.view?.lines ?? this.looseLines;
+    const lines = [...(page ? this.header(page) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
   }
 
   // --- pages ------------------------------------------------------------------
+
+  private restorePage(page: Page, asked: import("./restore").AskedLookup): void {
+    const entries = page.orch.entries?.() ?? [];
+    const shown = restore(entries, this.deps.term.cols, MAX_RESTORED_ROWS, asked);
+    page.lines = [...shown, ...page.lines];
+    if (!shown.length) return;
+    this.exitHistory.set(page, () => {
+      const start = page.lines.indexOf(shown[0]!);
+      if (start < 0) return page.lines;
+      return [...page.lines.slice(0, start), ...restore(entries, this.deps.term.cols, Infinity, asked), ...page.lines.slice(start + shown.length)];
+    });
+  }
 
   async openPage(project: string, url?: string): Promise<Page> {
     this.modelGeneration++;
@@ -670,7 +700,7 @@ export class App {
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     const asked = await this.questions.load(page);
-    page.lines = [...restore(page.orch.entries?.() ?? [], this.deps.term.cols, MAX_RESTORED_ROWS, asked), ...page.lines];
+    this.restorePage(page, asked);
     const saved = await loadHistory(project);
     page.inputHistory = saved.entries;
     page.historyLines = saved.lines;
@@ -968,11 +998,11 @@ export class App {
     for (const [page, texts] of [...this.queued]) await this.drainLoginPage(page, texts, ok);
   }
 
-  private async drainLoginPage(page: Page, texts: string[], ok: boolean): Promise<void> {
+  private async drainLoginPage(page: Page, texts: { text: string; submission?: string }[], ok: boolean): Promise<void> {
     if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
-    for (const text of [...texts]) {
+    for (const { text, submission } of [...texts]) {
       texts.shift(); // ownership transfers to send (Page.sent), or an explicit drop report
-      if (ok && this.pages.includes(page)) await this.send(page, text).catch(() => {});
+      if (ok && this.pages.includes(page)) await this.send(page, text, submission).catch(() => {});
       else this.say(dim(`not sent after sign-in (${page.name}): ${text}`), this.pages.includes(page) ? page : this.page);
     }
     if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
@@ -1086,16 +1116,33 @@ export class App {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
     if (this.loggingIn) {
-      this.queued.set(page, [...(this.queued.get(page) ?? []), text]);
+      this.queued.set(page, [...(this.queued.get(page) ?? []), { text, submission: page.orch.submission?.() }]);
       return this.say(dim("queued; runs after sign-in"), page);
     }
     await this.send(page, text);
     this.runTurn(page);
   }
 
+  private lastInterrupt = -Infinity;
+  private async interrupt(): Promise<void> {
+    const now = this.clock.now();
+    if (now - this.lastInterrupt <= 2000) return this.quit();
+    this.lastInterrupt = now;
+    const page = this.page;
+    if (page?.view) {
+      const view = page.view;
+      await (this.deps.cancelAgent ?? cancelSession)(page.project, view.name);
+      this.toView(page, view, [dim("Stopping selected agent. Press Ctrl+C again within 2 seconds to exit.")]);
+    } else {
+      page?.orch.cancel?.();
+      this.say(dim("Turn cancelled. Send a message to resume; press Ctrl+C again within 2 seconds to exit."), page);
+    }
+    this.draw();
+  }
+
   /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
   private readonly chords = new Map<string, () => Promise<void> | void>([
-    ["c", () => this.quit()],
+    ["c", () => this.interrupt()],
     ["q", () => { if (!this.menu && !this.projectList) return this.questions.toggle(); }],
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
@@ -1104,8 +1151,8 @@ export class App {
 
   /**
    * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
-   * 1. keyEcho: /keys echoes every key until Esc;
-   * 2. chords: Ctrl+C quits, Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages;
+   * 1. keyEcho: /keys echoes every key except Ctrl+C until Esc;
+   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
    * 5. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;
@@ -1114,7 +1161,7 @@ export class App {
    * 8. editor: the rest edits the input (EDITS, ↑↓ history).
    */
   readonly keyLayers: readonly KeyLayer[] = [
-    { name: "keyEcho", takes: () => this.keyEcho, handle: (k) => this.echoKey(k) },
+    { name: "keyEcho", takes: (k) => this.keyEcho && !(k.ctrl && k.name === "c"), handle: (k) => this.echoKey(k) },
     { name: "chords", takes: (k) => !!k.ctrl && this.chords.has(k.name), handle: (k) => this.chords.get(k.name)!() },
     { name: "projects", takes: (k) => this.projectsTake(k), handle: (k) => this.projectsKey(k) },
     { name: "menu", takes: () => !!this.menu, handle: (k) => this.menuKey(k) },
@@ -1141,6 +1188,7 @@ export class App {
     const start = this.scrollTop ?? screen.maxStart;
     const top = Math.max(0, Math.min(screen.maxStart, start + (k.name.endsWith("up") ? -delta : delta)));
     this.scrollTop = top === screen.maxStart ? null : top;
+    this.scrollAnchor = undefined;
     this.draw();
   }
 
@@ -1193,17 +1241,17 @@ export class App {
 
   /** Up / Down move between rows; on the first / last row they walk the history. */
   private upDown(dir: -1 | 1): void {
-    const moved = ed.vertical(this.input, this.deps.term.cols - visibleLength(this.prompt()), dir);
+    const moved = ed.vertical(this.input, this.inputWidth(this.prompt()), dir);
     if (moved) this.input = moved;
     else this.recall(dir);
   }
 
 
   /** Send what the user typed on a page to its orchestrator, remembering it was shown already. */
-  private async send(page: Page, text: string): Promise<void> {
+  private async send(page: Page, text: string, submission?: string): Promise<void> {
     page.sent.push(text);
     this.draw();
-    try { await page.orch.say(text); }
+    try { await page.orch.say(text, submission); }
     catch (err) {
       const at = page.sent.lastIndexOf(text);
       if (at !== -1) page.sent.splice(at, 1);

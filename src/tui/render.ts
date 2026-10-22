@@ -1,26 +1,12 @@
-// Draw the inline TUI as strings. Pure: state in, escape codes out.
-//
-// Nothing takes over the screen. Finished lines are written once into the
-// terminal's own scrollback (`commit`) and never redrawn; only the live region
-// at the bottom is (`live`), top to bottom:
-//
-//   the partial streaming line (until it ends and is committed)
-//   the tool calls running now, each one line with the shimmer
-//   the input area: wrapped rows, up to a third of the screen
-//   counts/status: agents, queued messages, questions, activity
-//   a menu or project list, else the explicitly opened question
-//
-// The input area and the user's messages (`userRows`) are drawn on the user
-// background from style.ts, full width, like Codex's composer and user cells;
-// there are no composer padding rows. Input, status and panels share its band.
-// On a one-row screen a panel may be hidden while owning keys; Esc closes it.
-//
-// `reprint` clears the screen and scrollback and writes a page from scratch
-// (page switches, resizes, agent views).
+// Pure, cell-correct row rendering shared by the pinned screen and terminal tests.
+// Production uses sticky.ts: history plus transient activity in the middle,
+// a ruled chapter header above, and the boxed composer/counts/panels below.
+// The legacy inline helpers remain useful for isolated renderer tests; they do
+// not drive the application's terminal lifecycle or conversation viewport.
 
 import { cells, layout, scrollWindow } from "./editor";
 import { wordWrap } from "./markdown";
-import { fillRow, userFill, chromeFill } from "./style";
+import { fillRow, userFill } from "./style";
 
 export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -66,15 +52,17 @@ export interface Frame {
   partial?: string;
   /** Rows of the tool calls running now (tools.ts, already styled), under the partial line. */
   running?: string[];
+  /** Transient selected-conversation activity; never persisted or part of the footer. */
+  activity?: string;
   input: Input;
   menu: Menu | null;
   /** The project list, below the input and status like a menu, when open. */
   projects?: ProjectList | null;
   /** The question shown below the input and status when no menu or project list is open. */
   question?: QuestionView | null;
-  /** The status line just below the input (e.g. "⠋ thinking… 3s · name · remote · 2 pages"), or none. */
+  /** Grouped counts below the composer, or none. */
   status?: string | null;
-  /** `inputArea(input, cols, rows, status ? 1 : 0)` when the caller already has it; computed otherwise. */
+  /** Precomputed using the bottom bar's height and packed status rows; computed otherwise. */
   inputArea?: InputArea;
 }
 
@@ -186,18 +174,41 @@ export function fit(raw: string, cols: number): string {
 /** The input area as laid out on screen: its rows (prompt on the first, indented after), the cursor within them, and the first text row shown. */
 export interface InputArea { lines: string[]; row: number; col: number; top: number }
 
-/** Lay out the input at the bottom of a `rows`-high screen, reserving `reserved` rows for the status below it. */
+/** The same geometry drives rendering AND vertical editing, including long/clipped prompts. */
+export function inputGeometry(prompt: string, cols: number, rows: number): { prompt: string; rail: number; width: number } {
+  const rail = cols >= 6 && rows >= 8 ? 1 : 0;
+  const inner = Math.max(1, cols - rail * 2);
+  const clipped = inner < 4 ? "" : fit(sanitize(prompt), inner - 2);
+  return { prompt: clipped, rail, width: inner - visibleLength(clipped) };
+}
+
+/** Lay out a boxed composer, dropping its border on tiny screens before sacrificing editable text. */
 export function inputArea(input: Input, cols: number, rows: number, reserved = 0): InputArea {
-  const prompt = cols < 4 ? "" : fit(input.prompt, Math.max(0, cols - 2));
+  const { prompt, rail, width } = inputGeometry(input.prompt, cols, rows);
   const indent = visibleLength(prompt);
-  const { rows: all, row, col } = layout(input, cols - indent);
-  // At most a third of the screen, less if the reserved rows and a row above would not fit;
-  // past that, scroll only when the cursor leaves the window.
-  const allowance = Math.max(1, Math.min(Math.floor(rows / 3), rows - 1 - reserved));
+  const { rows: all, row, col } = layout(input, width);
+  const allowance = Math.max(1, Math.min(Math.floor(rows / 3), rows - 1 - reserved - rail * 2));
   const shown = Math.min(all.length, allowance);
   const top = scrollWindow(input.top ?? all.length, row, all.length, shown);
-  const lines = all.slice(top, top + shown).map((r, i) => (top + i === 0 ? prompt : " ".repeat(indent)) + r.text).map((r) => fit(r, cols));
-  return { lines, row: row - top, col: Math.max(0, Math.min(cols - 1, indent + col)), top };
+  const lines = all.slice(top, top + shown).map((r, i) => {
+    const text = fit((top + i === 0 ? prompt : " ".repeat(indent)) + sanitize(r.text), cols - rail * 2);
+    return rail ? `${dim("│")}${text}${" ".repeat(Math.max(0, cols - 2 - visibleLength(text)))}${dim("│")}` : text;
+  });
+  if (rail) { lines.unshift(dim("┌" + "─".repeat(cols - 2) + "┐")); lines.push(dim("└" + "─".repeat(cols - 2) + "┘")); }
+  return { lines, row: row - top + rail, col: Math.max(0, Math.min(cols - rail - 1, rail + indent + col)), top };
+}
+
+/** Pack the three count groups, stacking at narrow widths; on tiny screens input and tail win. */
+export function statusRows(status: string | null | undefined, cols: number, rows: number): string[] {
+  if (!status || rows < 3) return [];
+  const groups = sanitize(status).split(" │ ");
+  const out: string[] = [];
+  for (const group of groups) {
+    const last = out.at(-1);
+    if (last && visibleLength(`${last} │ ${group}`) <= cols) out[out.length - 1] = `${last} │ ${group}`;
+    else out.push(fit(group, cols));
+  }
+  return out.slice(0, Math.max(0, rows - 2)).map(dim);
 }
 
 /** First item to show so the selected one stays in a window of `rows`. */
@@ -279,21 +290,14 @@ function overlayRows(f: Frame, height: number): string[] {
   return f.question ? questionRows(f.question, f.cols, height) : [];
 }
 
-/** Shaded project-header row, clipped to the terminal width. */
-export function headerRow(text: string, cols: number): string {
-  const row = fit(sanitize(text), cols);
-  const fill = chromeFill();
-  return fill ? fillRow(row, cols, fill) : row;
-}
-
 /** Input first; panels live BELOW it. On tiny screens the input wins, then the status, then the panel. */
 export function liveRows(f: Frame): { rows: string[]; cursor: number; col: number } {
-  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, f.status ? 1 : 0);
-  const status = f.status && f.rows > input.lines.length ? [fit(sanitize(f.status), f.cols)] : [];
+  const status = statusRows(f.status, f.cols, f.rows);
+  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, status.length);
   const free = Math.max(0, f.rows - input.lines.length - status.length);
   const panel = overlayRows(f, free).map((r) => fit(sanitize(r), f.cols));
   const streamed = f.partial ? f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)) : [];
-  const above = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols))], free - panel.length);
+  const above = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols)), ...(f.activity ? [fit(sanitize(f.activity), f.cols)] : [])], free - panel.length);
   const band = [...input.lines, ...status, ...panel];
   const fill = userFill();
   const rows = [...above, ...band.map((r) => fill ? fillRow(r, f.cols, fill) : r)];

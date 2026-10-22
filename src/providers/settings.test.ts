@@ -22,7 +22,7 @@ test("Claude payload uses output_config.effort and speed, adds beta only to prev
   expect(requests[0]!.body.output_config).toEqual({ effort: "high" });
   expect(requests[0]!.body.speed).toBe("fast");
   expect(requests[0]!.body.service_tier).toBeUndefined();
-  expect(requests[0]!.options).toBeUndefined();
+  expect(requests[0]!.options?.headers).toBeUndefined();
   expect(requests[1]!.options!.headers!["anthropic-beta"]).toContain("fast-mode-2026-02-01");
   expect(requests[2]!.options!.headers!["anthropic-beta"]).toContain("oauth");
   expect(claudeRequestSettings("claude-opus-5-5")).toEqual({});

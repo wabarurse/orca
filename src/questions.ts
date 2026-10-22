@@ -1,3 +1,4 @@
+import { inputEpoch } from "./user-input";
 // The orchestrator's questions for the user: a durable FIFO queue under
 // questions/, one file per question, named like inbox messages so a sorted
 // listing is ask order. Unlike the inbox, files stay after they are answered
@@ -115,6 +116,7 @@ async function claim(project: string, id: string): Promise<string> {
 /** Close an open question and tell the orchestrator. If either step fails the
  * question is put back to open and the claim released, so it can be retried. */
 async function close(project: string, id: string, status: Exclude<Status, "open">, tell: (q: Question) => string, answer?: string): Promise<Question> {
+  const userEpoch = inputEpoch(project);
   if (!/^[\w.-]+$/.test(id) || id.includes("..")) throw new Error(`bad question id ${id}`);
   const f = Bun.file(file(project, id));
   if (!(await f.exists())) throw new Error(`no question ${id}`);
@@ -126,7 +128,7 @@ async function close(project: string, id: string, status: Exclude<Status, "open"
   try {
     await write(project, next);
     written = true;
-    await put(project, "orchestrator", { from: "user", text: tell(next) });
+    await put(project, "orchestrator", { from: "user", text: tell(next), userEpoch });
   } catch (e) {
     if (written) await write(project, q);
     await unlink(lock).catch(() => {});

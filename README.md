@@ -12,23 +12,30 @@ tabs and project details stay at the top; the input, counts and panels stay at
 the bottom. The conversation scrolls between them with Page Up/Page Down or the
 mouse wheel. Hold Shift for native terminal text selection. Only changed screen
 rows are redrawn. Quitting restores your shell and prints the active conversation
-into its normal scrollback. The orchestrator's
+into its normal scrollback, including original history before compaction and
+messages omitted from the bounded startup viewport. The orchestrator's
 replies are rendered as markdown (headings, emphasis, lists, quotes, code
 blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that
 repository: an `orch-xxxx` project cloned from its origin (reused next time you
 start there). With no project named it also reopens every project under
-`~/.parallels/projects`. The shaded, pinned header shows the project, cached model,
-effort, fast mode, directory and remote, and refreshes when settings change.
+`~/.parallels/projects`. The ruled, pinned header shows bracketed project/display names (the active one
+marked `>`), cached model, effort, fast mode, directory and remote, and refreshes
+when settings change.
 Short terminals collapse header details to keep the input usable.
-The bottom band puts the input first, then running worker/reviewer counts,
-queued messages and `N questions · Ctrl+Q to view`; every menu and question
-panel opens below the input. A running turn's "thinking…/working…" shimmers. Like Codex, the input and your own messages sit on a
+The bottom band puts the boxed input first, then grouped running worker/reviewer,
+queued-message and question counts; these stack on narrow screens. Every menu
+and question panel opens below the input and retains its own key hints. There
+is no persistent shortcut row; Ctrl+B, Ctrl+Q and the other keys still work.
+A running turn's "thinking…/working…" shimmers at the selected conversation's
+current tail, not in the pinned footer. Scrolling back hides that activity with
+the tail; it never enters history. Like Codex, the input and your own messages sit on a
 subtle background the full width of the terminal, shaded from your terminal's
 own background colour (asked once at start; a neutral grey when the terminal
 does not say; none with `NO_COLOR`). Tool calls show like Claude Code's: while
-one runs, a shimmering `⏺ Bash(git status)` line sits above the input; when it
-ends that line goes into the scrollback with one summary line under it
+one runs, a shimmering `⏺ Bash(git status)` line sits at the conversation tail
+instead of a separate working indicator; when it ends, that line goes into the
+conversation history with one summary line under it
 (`⎿  12 lines`, `exit 2: <first error line>`, `sent to orchestrator`,
 `spawned worker-feat`), its marker red when it failed. A call whose run stops
 without a result is red with an `interrupted` summary. Truncated bash output
@@ -38,6 +45,30 @@ repository you started in (an empty repository otherwise; `/rename <name>`
 renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X move between pages,
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
 `/help` for the rest of the commands.
+
+Ctrl+C cancels the selected page's current turn (including its provider request
+and running tools), without closing the harness or clearing your draft/history.
+Other projects' turns and background workers/reviewers keep running. The cancelled
+orchestrator stays paused even if agent reports arrive; your next chat message
+resumes its saved conversation. While viewing a subagent, Ctrl+C instead stops
+only that worker/reviewer, preserving its transcript and worktree; the existing
+`spawn` continuation path can restart it with that conversation. Agent views remain
+read-only (`/back` to talk to the orchestrator). A hint appears on the first press;
+a second Ctrl+C within two seconds exits the harness (`/quit` also exits). Exiting
+cancels in-process orchestrator turns but leaves background agents alone.
+
+Cancellation notices use `[agent-cancelled]`, not crash recovery's `[agent-exit]`:
+the orchestrator must leave the agent stopped until the user explicitly authorizes
+continuation. Input submitted before cancellation (including messages held during
+login or still being persisted) stays queued but cannot resume a paused turn.
+Ordering uses submission epochs rather than millisecond timestamps; a later UI,
+CLI, or question reply resumes even in the same clock tick.
+
+Cancellation cannot undo side effects already completed by tools. Shell cancellation
+kills the shell's process group (including ordinary children); independently detached
+processes/services are not owned by that group. Incomplete provider output is not
+added to model history. Already-recorded tool calls receive matching error results
+for cancelled/skipped tools, so the next request has a valid transcript.
 
 Pressing Enter puts a chat message in the orchestrator's inbox; it appears in
 the conversation only when the orchestrator consumes it, between tool batches

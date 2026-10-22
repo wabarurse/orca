@@ -182,3 +182,35 @@ test("Codex terminal metadata distinguishes refusal and omitted nontext output f
   output = [message, call]; expect((await p.complete(request())).completion).toBe("nontext");
   output = [message]; expect((await p.complete(request())).completion).toBe("completed");
 });
+
+test("Codex cancellation aborts the HTTP request and never retries it", async () => {
+  let begun!: () => void;
+  const ready = new Promise<void>(resolve => { begun = resolve; });
+  let requests = 0, aborted = false;
+  intercept(async req => {
+    requests++;
+    begun();
+    return new Promise((_resolve, reject) => {
+      req.signal.addEventListener("abort", () => { aborted = true; reject(req.signal.reason); }, { once: true });
+    });
+  });
+  const controller = new AbortController();
+  const result = openai(async () => fakeCodexTokens()).complete({ ...request(), signal: controller.signal });
+  await ready;
+  controller.abort();
+  await expect(result).rejects.toThrow();
+  expect(aborted).toBe(true);
+  expect(requests).toBe(1);
+});
+
+test("Codex cancellation aborts a partially consumed stream", async () => {
+  let aborted = false;
+  intercept(async req => new Response(new ReadableStream({ start(controller) {
+    req.signal.addEventListener("abort", () => { aborted = true; controller.error(req.signal.reason); }, { once: true });
+    controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"partial"}\n\n'));
+  } }), { headers: { "content-type": "text/event-stream" } }));
+  const controller = new AbortController();
+  const result = openai(async () => fakeCodexTokens()).complete({ ...request(() => controller.abort()), signal: controller.signal });
+  await expect(result).rejects.toThrow();
+  expect(aborted).toBe(true);
+});

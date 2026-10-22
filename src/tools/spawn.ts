@@ -1,7 +1,8 @@
+import { delay, publishLaunch } from "../cancellation";
 import { paths } from "../config";
 import { local, sessionId, type Runner } from "../runner";
 import { open } from "../transcript";
-import type { Tool } from "./index";
+import type { Tool, ToolContext } from "./index";
 
 // Orchestrator-only. Seeds the agent's transcript with the prompt, then starts
 // it in a worktree on `branch`. Spawning again on the same branch and role
@@ -13,13 +14,14 @@ export interface SpawnWait { waitMs: number; pollMs: number }
 const WAIT: SpawnWait = { waitMs: 20_000, pollMs: 250 };
 
 /** The branch's agents still live after waiting up to `waitMs`; [] when none, or when tmux could not be asked. */
-async function stillLive(runner: Runner, project: string, branch: string, wait: SpawnWait): Promise<string[]> {
+async function stillLive(runner: Runner, project: string, branch: string, wait: SpawnWait, signal?: AbortSignal): Promise<string[]> {
   const ids = [sessionId("worker", branch), sessionId("reviewer", branch)];
   const deadline = Date.now() + wait.waitMs;
   for (;;) {
-    const live = await runner.running(project, ids).catch(() => null);
+    signal?.throwIfAborted();
+    const live = await runner.running(project, ids, signal).catch(() => null);
     if (!live?.length || Date.now() >= deadline) return live ?? [];
-    await Bun.sleep(wait.pollMs);
+    await delay(wait.pollMs, signal);
   }
 }
 
@@ -59,18 +61,26 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (!prompt || !branch) return "refused: prompt and branch are required";
 
       // One agent per branch: a reported agent may still be finishing, so wait briefly for it.
-      const busy = await stillLive(runner, ctx.project, branch, wait);
+      const busy = await stillLive(runner, ctx.project, branch, wait, ctx.signal);
+      ctx.signal?.throwIfAborted();
       if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
-      const id = sessionId(role, branch);
-      const t = open(paths.transcript(ctx.project, id));
-      if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
-      await t.append({ type: "message", message: { role: "user", content: `Branch: ${branch}\n\n${prompt}` } });
-
-      await runner.start({ project: ctx.project, role, branch });
-      return id;
+      return launch(runner, prompt, branch, role, ctx);
     },
   };
+}
+
+/** Publish identity before the first transcript entry (the TUI lists transcripts). */
+async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", ctx: ToolContext): Promise<string> {
+  const id = sessionId(role, branch);
+  const run = crypto.randomUUID();
+  publishLaunch(ctx.project, id, run);
+  const t = open(paths.transcript(ctx.project, id));
+  if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
+  await t.append({ type: "message", message: { role: "user", content: `Branch: ${branch}\n\n${prompt}` } });
+  ctx.signal?.throwIfAborted();
+  await runner.start({ project: ctx.project, role, branch, run, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+  return id;
 }
 
 export const spawn: Tool = makeSpawn(local);

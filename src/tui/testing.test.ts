@@ -107,3 +107,9 @@ test("SGR dim, bold and foreground survive soft wraps but not the block reset", 
   expect(attrs[3]![0]).toEqual({ dim: true, bold: true, foreground: "31" });
   expect(attrs[4]!.every((c) => !c.dim && !c.bold && c.foreground === "")).toBe(true);
 });
+
+test("complete combining and ZWJ graphemes occupy cells, not codepoints", () => {
+  const s = screen(4, 3, "é👩‍💻xY");
+  expect(s.text()).toBe("é👩‍💻x\nY");
+  expect([s.row, s.col]).toEqual([1, 1]);
+});

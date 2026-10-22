@@ -1,4 +1,4 @@
-import { $ } from "bun";
+import { command } from "../proc";
 import { formatScores, SCORED_EXTENSIONS, scoreSource, type FunctionScore } from "../complexity";
 import { loadConfig } from "../config";
 import type { Tool } from "./index";
@@ -23,17 +23,18 @@ export const complexity: Tool = {
     const config = await loadConfig();
     let files = Array.isArray(input.files) ? input.files.map(String) : [];
     if (!files.length) {
-      const base = typeof input.base === "string" && input.base ? input.base : await defaultBranch(ctx.cwd);
-      const diff = await $`git -C ${ctx.cwd} diff --name-only ${base}...HEAD`.quiet().nothrow();
-      const dirty = await $`git -C ${ctx.cwd} diff --name-only HEAD`.quiet().nothrow();
-      if (diff.exitCode !== 0) return `error: git diff against ${base} failed: ${diff.stderr.toString().trim()}`;
-      files = [...new Set([...diff.stdout.toString().split("\n"), ...dirty.stdout.toString().split("\n")])].filter(Boolean);
+      const base = typeof input.base === "string" && input.base ? input.base : await defaultBranch(ctx.cwd, ctx.signal);
+      const diff = await command(["git", "diff", "--name-only", `${base}...HEAD`], ctx.cwd, ctx.signal);
+      const dirty = await command(["git", "diff", "--name-only", "HEAD"], ctx.cwd, ctx.signal);
+      if (diff.code !== 0) return `error: git diff against ${base} failed: ${diff.err.trim()}`;
+      files = [...new Set([...diff.out.split("\n"), ...dirty.out.split("\n")])].filter(Boolean);
     }
     files = files.filter((f) => SCORED_EXTENSIONS.test(f));
     if (!files.length) return "no JavaScript/TypeScript files to score";
     const rows: (FunctionScore & { file: string })[] = [];
     const errors: string[] = [];
     for (const file of files) {
+      ctx.signal?.throwIfAborted();
       const path = `${ctx.cwd}/${file}`;
       const blob = Bun.file(path);
       if (!(await blob.exists())) continue; // deleted on this branch
@@ -45,11 +46,11 @@ export const complexity: Tool = {
   },
 };
 
-async function defaultBranch(cwd: string): Promise<string> {
-  const head = await $`git -C ${cwd} symbolic-ref --short refs/remotes/origin/HEAD`.quiet().nothrow();
-  if (head.exitCode === 0) return head.stdout.toString().trim();
+async function defaultBranch(cwd: string, signal?: AbortSignal): Promise<string> {
+  const head = await command(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd, signal);
+  if (head.code === 0) return head.out.trim();
   for (const name of ["main", "master"]) {
-    if ((await $`git -C ${cwd} rev-parse --verify --quiet ${name}`.quiet().nothrow()).exitCode === 0) return name;
+    if ((await command(["git", "rev-parse", "--verify", "--quiet", name], cwd, signal)).code === 0) return name;
   }
   return "HEAD~1";
 }

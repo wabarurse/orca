@@ -129,12 +129,3 @@ export function fillRow(row: string, cols: number, fill: string): string {
   const body = row.replace(SGR, (m, p: string) => (resetsFill(p) ? m + fill : m));
   return `${fill}${body}${" ".repeat(Math.max(0, cols - Bun.stringWidth(row)))}\x1b[0m`;
 }
-
-/** Header shade, stronger than the composer; safe fallback includes its foreground. */
-export function chromeFill(env: Env = process.env): string | null {
-  if (noColour(env)) return null;
-  const bg = terminal ?? fromColorFgBg(env.COLORFGBG);
-  if (!bg) return "\x1b[48;5;238;38;5;252m";
-  const c = shade(bg, 0.18);
-  return truecolor(env) ? `\x1b[48;2;${c.r};${c.g};${c.b}m` : `\x1b[48;5;${nearest256(c)}m`;
-}

@@ -143,3 +143,48 @@ describe("agent loop", () => {
     expect(order).toEqual(["tool finished"]);
   });
 });
+
+test("cancelled tool batch pairs every call, skips later tools, and is resumable", async () => {
+  const controller = new AbortController();
+  const transcript = fakeTranscript();
+  await transcript.append(user("original task"));
+  let executions = 0;
+  const cancel: Tool = { ...echo, async run(_input, ctx) {
+    executions++;
+    expect(ctx.signal).toBe(controller.signal);
+    controller.abort(new Error("Cancelled by user"));
+    ctx.signal!.throwIfAborted();
+    return "unreachable";
+  } };
+  const provider = fakeProvider([[toolUse("a", "cancel", {}), toolUse("b", "echo", {})]]);
+  await expect(createAgent({ provider, transcript, tools: { cancel, echo }, model: "m", ctx, signal: controller.signal, write() {} }).run()).rejects.toThrow("Cancelled by user");
+  expect(executions).toBe(1);
+  expect(provider.calls).toHaveLength(1);
+  const messages = await transcript.chain();
+  const results = messages.at(-1)!.content;
+  expect(results).toEqual([
+    { type: "tool_result", tool_use_id: "a", content: "Cancelled by user", is_error: true },
+    { type: "tool_result", tool_use_id: "b", content: "Cancelled by user", is_error: true },
+  ]);
+  const { paired } = await import("./tool-pairs");
+  expect(paired(messages)).toBe(true);
+  await transcript.append(user("continue"));
+  const next = fakeProvider([[text("resumed")]]);
+  await createAgent({ provider: next, transcript, tools: {}, model: "m", ctx, write() {} }).run();
+  expect(next.calls[0]!.messages).toEqual([...messages, { role: "user", content: "continue" }]);
+});
+
+test("cancelled provider request retains input but never appends incomplete tool calls", async () => {
+  const controller = new AbortController();
+  const transcript = fakeTranscript();
+  await transcript.append(user("keep this"));
+  const provider: Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
+    expect(req.signal).toBe(controller.signal);
+    req.onText("partial answer");
+    controller.abort(new Error("cancelled"));
+    // Even a provider that races a completed result with cancellation cannot run tools.
+    return { stop: "tool_use", content: [toolUse("partial", "echo", {})] };
+  } };
+  await expect(createAgent({ provider, transcript, tools: { echo }, model: "m", ctx, signal: controller.signal, write() {} }).run()).rejects.toThrow("cancelled");
+  expect(await transcript.chain()).toEqual([{ role: "user", content: "keep this" }]);
+});

@@ -1,3 +1,4 @@
+import { killGroup } from "../cancellation";
 import { loadConfig } from "../config";
 import type { Tool } from "./index";
 
@@ -32,13 +33,22 @@ export const bash: Tool = {
     const command = String(input.command ?? "");
     if (SUDO.test(command)) return "refused: sudo is not allowed";
 
+    ctx.signal?.throwIfAborted();
     const proc = Bun.spawn(["sh", "-c", `exec 2>&1\n${command}`], {
       cwd: ctx.cwd,
+      detached: true,
       stdout: "pipe",
       stdin: "ignore",
       timeout: TIMEOUT_MS,
     });
-    const [output, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    const kill = () => killGroup(proc);
+    process.once("exit", kill); // detached tools must not outlive a normal harness/agent exit
+    ctx.signal?.addEventListener("abort", kill, { once: true });
+    if (ctx.signal?.aborted) kill();
+    let output: string, code: number;
+    try { [output, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]); }
+    finally { ctx.signal?.removeEventListener("abort", kill); process.off("exit", kill); }
+    ctx.signal?.throwIfAborted();
 
     let result = output;
     if (proc.signalCode === "SIGTERM" && proc.killed) result += `\n[timed out after ${TIMEOUT_MS / 1000}s]`;

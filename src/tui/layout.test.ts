@@ -1,5 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
-import { append, commit, headerRow, live, liveRows, type Frame } from "./render";
+import { append, commit, live, liveRows, type Frame } from "./render";
+import { stickyRows, stickyUpdate } from "./sticky";
+import { chapterRows } from "./chrome";
 import { historyRows, type Line } from "./lines";
 import { userLines } from "./restore";
 import { MarkdownStream } from "./mdstream";
@@ -8,23 +10,23 @@ import { pickFill, setUserFill } from "./style";
 
 const bg = "\x1b[48;5;236m";
 afterEach(() => setUserFill(null));
-const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, status: "2 agents running · 1 question · Ctrl+Q to view", input: { prompt: "> ", text: "hello\n你好", cursor: 8 }, menu: { title: "models", items: ["one", "two"], index: 0 } });
+const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, status: "2 agents running │ 0 messages queued │ 1 question", input: { prompt: "> ", text: "hello\n你好", cursor: 8 }, menu: { title: "models", items: ["one", "two"], index: 0 } });
 
 test("bottom bar input precedes counts and modal; cursor and backgrounds survive append and resize", () => {
   setUserFill(bg);
   const f = frame();
   const r = liveRows(f);
-  expect(r.rows.map(Bun.stripANSI).map((s) => s.trimEnd())).toEqual(["> hello", "  你好", "2 agents running · 1 question · Ctrl+Q …", "models", "❯ one", "  two"]);
-  expect([r.cursor, r.col]).toEqual([1, 6]);
+  expect(r.rows.map(Bun.stripANSI).map((s) => s.trimEnd())).toEqual(["┌──────────────────────────────────────┐", "│> hello                               │", "│  你好                                │", "└──────────────────────────────────────┘", "2 agents running │ 0 messages queued", "1 question", "models", "❯ one", "  two"]);
+  expect([r.cursor, r.col]).toEqual([2, 7]);
   const screen = new FakeScreen(f.cols, f.rows);
   const first = live(f);
   screen.write(first.text);
-  expect([screen.row, screen.col]).toEqual([1, 6]);
+  expect([screen.row, screen.col]).toEqual([2, 7]);
   expect(screen.backgrounds().slice(0, 6).every((row) => row.length === 40 && row.every((b) => b === "48;5;236"))).toBe(true);
   const next = append(["reply"], f, first.shown);
   screen.write(next.text);
-  expect(screen.text().startsWith("reply\n> hello")).toBe(true);
-  expect([screen.row, screen.col]).toEqual([2, 6]);
+  expect(screen.text().startsWith("reply\n┌")).toBe(true);
+  expect([screen.row, screen.col]).toEqual([3, 7]);
   screen.resize(12, 4);
   screen.write("\x1b[2J\x1b[H" + live(frame(12, 4)).text);
   expect(screen.row).toBeLessThan(4);
@@ -46,15 +48,20 @@ test("short and narrow composers never spill or lose cursor; NO_COLOR gives no b
   expect(liveRows(frame()).rows.join("")).not.toContain("48;");
 });
 
-test("header is committed once above chat, not pinned in the live region", () => {
-  const f = frame();
-  const s = new FakeScreen(40, 12);
-  s.write(commit([headerRow("project · model · directory · remote", 40)], 40));
-  const a = live(f);
-  s.write(a.text);
-  s.write(append(["response"], f, a.shown).text);
-  expect(s.text().split("project · model")).toHaveLength(2);
-  expect(s.backgrounds()[0]!.every(Boolean)).toBe(true);
+test("chapter header stays pinned and unshaded while the conversation scrolls", () => {
+  const f = frame(80, 24);
+  const s = new FakeScreen(f.cols, f.rows);
+  const header = chapterRows({ tabs: [{ name: "project" }], active: 0, model: "model", directory: "/directory", remote: "host/remote" }, f.cols);
+  const first = stickyRows(f, [], header);
+  s.write(stickyUpdate(first));
+  const next = stickyRows(f, Array.from({ length: 80 }, (_, i) => `response ${i}`), header);
+  const update = stickyUpdate(next, first);
+  s.write(update);
+  expect(update).not.toContain(">[project]");
+  expect(s.screen()[0]).toContain(">[project]");
+  expect(s.text()).toContain("response 79");
+  expect(s.backgrounds()[0]!.some(Boolean)).toBe(false);
+  expect(s.top).toBe(0);
 });
 
 test("logical block separators are neutral, tools stay paired, lists and wrapped rows stay together", () => {

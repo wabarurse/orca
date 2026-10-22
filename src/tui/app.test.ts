@@ -10,7 +10,8 @@ import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
 import { fileStore, type QuestionStore } from "./questions";
-import { answeredLine } from "./restore";
+import { answeredLine, userLines } from "./restore";
+import { historyRows, lineRows } from "./lines";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../tools/message";
 import { makeSpawn } from "../tools/spawn";
@@ -62,6 +63,10 @@ function fakeTerm(cols = 40, rows = 24) {
   };
   return term;
 }
+
+/** The chapter's closing rule separates pinned metadata from the body. */
+const bodyStart = (term: ReturnType<typeof fakeTerm>) => term.display.screen().findIndex(row => /^─+$/.test(row)) + 1;
+const bodyRows = (term: ReturnType<typeof fakeTerm>) => term.display.screen().slice(bodyStart(term));
 
 function fakeOrchestrators() {
   const opened: { project: string; url?: string }[] = [];
@@ -145,6 +150,8 @@ describe("tui app", () => {
     await until(() => app.pages.length === 2);
     expect(app.pages.map((p) => p.project)).toEqual(["alpha", orchs.opened[1]!.project]);
     term.press({ name: "c", ctrl: true });
+    expect(term.closed).toBe(false);
+    term.press({ name: "c", ctrl: true });
     await running;
   });
 
@@ -167,7 +174,7 @@ describe("tui app", () => {
     expect(orchs.opened.map((o) => o.project)).toEqual(["named"]);
     expect(existsSync(join(home, "projects", "named", "repo"))).toBe(true);
     expect(await Bun.file(join(home, "projects", "named", "name")).text()).toBe("login page\n");
-    await until(() => term.screen().includes("· login page · no remote · 1 page")); // the status line
+    await until(() => term.screen().includes(">[login page]")); // the selected tab
     expect(await displayName("named")).toBe("login page");
 
     term.type("/rename taken\r");
@@ -476,7 +483,7 @@ describe("tui app", () => {
     await running;
   });
 
-  test("a busy page shows a spinner status line driven by an injected clock; agent views show it while live", async () => {
+  test("a busy selected conversation animates its transient tail; finished agent views borrow no activity", async () => {
     let now = 0;
     const ticks: (() => void)[] = [];
     let started = 0, stopped = 0;
@@ -513,7 +520,8 @@ describe("tui app", () => {
     expect(started).toBe(0); // idle: no timer
     term.type("go\r");
     await until(() => started === 1 && term.screen().includes("⠋ thinking… 0s"));
-    expect(term.screen()).toContain("⠋ thinking… 0s · alpha") // cut to the width;
+    expect(term.screen()).toContain("⠋ thinking… 0s");
+    expect(app.frame().status).not.toContain("thinking");
     now = 2_150;
     ticks[0]!();
     await until(() => term.screen().includes("⠙ thinking… 2s"));
@@ -528,7 +536,7 @@ describe("tui app", () => {
     term.type("/agents\r");
     await until(() => !!app.menu);
     term.press({ name: "enter" });
-    await until(() => app.page!.view?.name === "worker-x" && started === 2 && term.screen().includes("following worker-x"));
+    await until(() => app.page!.view?.name === "worker-x" && started === 2 && term.screen().includes("working…"));
     const calls = agentCalls;
     hold = true;
     now = 5_000;
@@ -540,9 +548,9 @@ describe("tui app", () => {
     live = false;
     release!();
     hold = false;
-    await until(() => !term.screen().includes("following") && ticks.length === 0);
+    await until(() => !term.screen().includes("working…") && ticks.length === 0);
 
-    // Busy while viewing a finished agent: the page's own turn shows.
+    // Busy while viewing a finished agent: unrelated orchestrator activity is hidden.
     term.press({ name: "escape" }); // leave the view
     await until(() => !app.page!.view);
     term.type("again\r");
@@ -550,7 +558,7 @@ describe("tui app", () => {
     term.type("/agents\r");
     await until(() => !!app.menu);
     term.press({ name: "enter" });
-    await until(() => app.page!.view?.live === false && term.screen().includes("thinking… "));
+    await until(() => app.page!.view?.live === false && !term.screen().includes("thinking… "));
 
     // Quitting mid-turn clears the timer, and nothing restarts it or writes afterwards.
     expect(ticks.length).toBe(1);
@@ -855,8 +863,8 @@ describe("sticky screen", () => {
     term.type("\r");
     await until(() => term.screen().includes("worker-x done"));
     const lines = term.screen().split("\n");
-    expect(lines[0]).toBe("[alpha]");
-    expect(lines.slice(4).filter(Boolean).slice(0, 3)).toEqual(["> build it", "alpha says hi", "worker-x done"]);
+    expect(lines[0]).toContain(">[alpha]");
+    expect(bodyRows(term).filter(Boolean).slice(0, 3)).toEqual(["> build it", "alpha says hi", "worker-x done"]);
     expect(lines.filter((l) => l === "> build it").length).toBe(1);
     expect(term.display.clears).toBe(0);
     expect(term.raw()).not.toContain("\x1b[2J");
@@ -879,7 +887,7 @@ describe("sticky screen", () => {
     await app.openPage("beta");
     await until(() => !!term.display.screen()[0]?.includes("[beta]"));
     expect(term.raw()).not.toContain(CLEAR);
-    await until(() => term.screen().includes("beta · no remote · 2 pages"));
+    await until(() => term.screen().includes(">[beta]"));
     expect(term.screen()).not.toContain("alpha says hi");
     term.type("two\r");
     await until(() => term.screen().includes("beta says hi"));
@@ -907,12 +915,12 @@ describe("sticky screen", () => {
     await until(() => !!app.page);
     const alpha = app.page!;
     await app.openPage("beta");
-    await until(() => term.screen().includes("beta · no remote · 2 pages"));
+    await until(() => term.screen().includes(">[beta]"));
     orchs.writers.alpha!("background line\nhalf");
     alpha.busy = true;
     alpha.busySince = Date.now();
     app.draw();
-    await until(() => term.screen().includes("2 pages · 1 busy"));
+    await until(() => term.screen().includes("[alpha] •"));
     expect(alpha.lines.map(raw)).toContain("background line");
     expect(alpha.md.pending).toBe("half");
     expect(strip(term.raw())).not.toContain("background line");
@@ -941,7 +949,7 @@ describe("sticky screen", () => {
     term.press({ name: "enter" });
     await until(() => term.screen().includes("worker line one"));
     expect(term.screen()).not.toContain("viewed says hi");
-    expect(term.screen()).toContain("viewed › worker-v");
+    expect(term.screen()).toContain("view worker-v");
     const { appendFileSync } = await import("node:fs");
     appendFileSync(transcript, entry("worker line two"));
     await until(() => term.screen().includes("worker line one\n\nworker line two"));
@@ -1000,7 +1008,7 @@ describe("frames, resizes, startup and crashes", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await until(() => term.screen().includes("alpha ·"));
+    await until(() => term.screen().includes(">[alpha]"));
     const before = term.writes.length;
     const started = Date.now();
     for (let i = 0; i < 40; i++) { orchs.writers.alpha!("x"); await Bun.sleep(1); }
@@ -1059,8 +1067,8 @@ describe("frames, resizes, startup and crashes", () => {
     console.warn("logged %s", "early");
     await until(() => term.screen().includes("logged early"));
     gate();
-    await until(() => term.screen().includes("alpha · no remote"));
-    expect(term.screen().split("\n").slice(4, 6)).toEqual(["early note", "logged early"]);
+    await until(() => term.screen().includes(">[alpha]") && term.screen().includes("no remote"));
+    expect(bodyRows(term).slice(0, 2)).toEqual(["early note", "logged early"]);
     expect(term.display.clears).toBe(0);
     expect(term.screen()).not.toContain("opening…");
     app.quit();
@@ -1099,7 +1107,7 @@ describe("frames, resizes, startup and crashes", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await until(() => term.screen().includes("alpha ·"));
+    await until(() => term.screen().includes(">[alpha]"));
     let boom = true;
     app.menu = { title: "bad", index: 0, pick: () => {}, get items(): string[] { if (boom) throw new Error("boom"); return ["ok"]; } };
     app.draw();
@@ -1125,7 +1133,7 @@ describe("frames, resizes, startup and crashes", () => {
     await until(() => term.screen().includes("half"));
     app.say("said \x1b[H\x1b[2Jline\b");
     await until(() => term.screen().includes("said line"));
-    expect(term.screen().split("\n").slice(4).filter(Boolean).slice(0, 3)).toEqual(["tool output", "said line", "half"]);
+    expect(bodyRows(term).filter(Boolean).slice(0, 3)).toEqual(["tool output", "said line", "half"]);
     app.quit();
     await running;
   });
@@ -1189,9 +1197,9 @@ describe("markdown replies", () => {
     await until(() => term.display.screen().some((r) => r === "| Branch | What")); // held, raw, in the live region
     write(TABLE.slice("| Branch | What".length));
     await settle();
-    expect(term.screen()).not.toContain("┌");
+    expect(term.screen()).not.toContain("┬");
     write("\x1b[2m▸ bash {\"command\":\"**ls**\"}\x1b[0m\n", true); // a tool line ends the table and stays plain
-    await until(() => term.screen().includes("┌"));
+    await until(() => term.screen().includes("┬"));
     expect(term.screen()).toContain('▸ bash {"command":"**ls**"}');
     expect(term.screen()).toContain("│ tui-markdown │ Render markdown in the chat area │");
     expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : "md" in l ? l.md : "user" in l ? l.user : l.tool))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
@@ -1245,8 +1253,9 @@ describe("restored pages", () => {
     await until(() => term.screen().includes("Worker done."));
     const restored = ["[resumed]", "> what changed?", "Two things:", "- a", "- b", "⏺ Bash(ls)", "  ⎿  1 line", "From worker-feat: all done", "Worker done."];
     const rows = term.screen().split("\n");
-    expect([rows[0], ...rows.slice(4).filter(Boolean).slice(0, restored.length - 1)]).toEqual(restored);
-    expect(term.display.buf[term.display.top + term.display.row]!.join("").trimEnd()).toBe(">"); // input before the status
+    expect(rows[0]).toContain(">[resumed]");
+    expect(bodyRows(term).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
+    expect(term.display.buf[term.display.top + term.display.row]!.join("").trimEnd()).toMatch(/^│> +│$/); // boxed input before the counts
     expect(term.screen()).not.toContain("SECRET-RESULT");
     expect(term.display.clears).toBe(0); // printed under the shell's output, nothing cleared
 
@@ -1261,7 +1270,7 @@ describe("restored pages", () => {
     await until(() => !term.screen().includes("Worker done."));
     term.type("\x1a"); // Ctrl+Z
     await until(() => term.screen().includes("Worker done.") && term.screen().includes("resumed says hi"));
-    expect(term.screen().split("\n").slice(4).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
+    expect(bodyRows(term).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
     app.quit();
     await running;
   });
@@ -1424,7 +1433,7 @@ describe("orchestrator questions", () => {
     await until(() => term.screen().includes("? Which db? → sqlite"));
     expect(await statusOf("qa-opt")).toEqual([["Which db?", "answered", "sqlite"]]);
     await until(() => !live(term).includes(PICK));
-    expect(live(term)).not.toContain("question");
+    expect(live(term)).toContain("0 questions");
     expect(orchs.said["qa-opt"]).toEqual([]); // not sent as a chat message
     const inbox = await drain("qa-opt", "orchestrator");
     expect(inbox.map((m) => [m.from, m.text])).toEqual([["user", `[${q!.id}] answer to "Which db?": sqlite`]]);
@@ -1718,7 +1727,7 @@ describe("orchestrator questions", () => {
     term.type("\x1a"); // back to qa-fg
     await until(() => app.page?.project === "qa-fg");
     await askQuestions("qa-bg", [{ text: "One?" }, { text: "Two?" }]);
-    await until(() => live(term).includes("qa-bg: 2 questions"));
+    await until(() => live(term).includes("(+2 elsewhere)"));
     expect(live(term)).not.toContain("One?");
     term.type("\x18");
     await until(() => app.page?.project === "qa-bg");
@@ -1729,7 +1738,7 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("modifier chords never pick, put off or clear a question; Ctrl+C still quits", async () => {
+  test("modifier chords never pick, put off or clear a question; Ctrl+C cancels, twice quits", async () => {
     await ask1("qa-chord", "Which db?", ["postgres", "sqlite"], "sqlite");
     const { term, app, running } = await start("qa-chord");
     await until(() => live(term).includes("❯ 1. postgres"));
@@ -1739,6 +1748,8 @@ describe("orchestrator questions", () => {
     expect(app.page!.questions.open).toHaveLength(1);
     expect(app.page!.questions.hidden).toBeNull();
     expect(await statusOf("qa-chord")).toEqual([["Which db?", "open", null]]);
+    term.press({ name: "c", ctrl: true });
+    expect(term.closed).toBe(false);
     term.press({ name: "c", ctrl: true });
     await running;
   });
@@ -1835,6 +1846,7 @@ describe("orchestrator questions", () => {
 describe("command and key tables", () => {
   /** /help as it was written before the command table, line for line. */
   const OLD_HELP = [
+    "^C cancels selected turn/agent; twice within 2s exits (conversation kept)",
     "^N new orchestrator   ^Z ^X switch pages   Esc clear   PgUp/PgDn or mouse wheel scroll",
     "^B or /projects: every project; ↑↓ jk move, Enter opens, p pins, d deletes, Esc closes",
     "Shift+Enter or Alt+Enter new line   Alt+←→ / Alt+B F words   Alt+⌫ ^W Alt+D delete words",
@@ -1901,7 +1913,7 @@ describe("command and key tables", () => {
     for (const t of ["/agents", "/nope", "hello"]) {
       term.type("/close\r");
       await until(() => app.pages.length === 0);
-      await until(() => term.screen().trim() === ">"); // let the close's reprint land first (a reprint with no page drops lines said before it)
+      await until(() => app.frame().status === null && term.screen().includes("│>")); // let the close's reprint land first (a reprint with no page drops lines said before it)
       term.type("/help\r"); // needs no page: runs with none
       await until(() => term.screen().includes("/review-rounds [n]"));
       expect(app.pages.length).toBe(0);
@@ -2039,9 +2051,9 @@ describe("user background", () => {
       const at = (s: string) => text.findIndex((l) => l.startsWith(s));
       expect([bg[at("> a message")], bg[at("> a message") + 1], bg[at("alpha says hi")]]).toEqual([true, true, false]);
       const row = term.display.top + term.display.row;
-      expect(term.display.buf[row]!.join("").trimEnd()).toBe("> draft");
+      expect(term.display.buf[row]!.join("").trimEnd()).toBe("│> draft" + " ".repeat(cols - 9) + "│");
       expect([bg[row], bg[row + 1]]).toEqual([true, true]); // input, bottom status
-      expect(term.display.col).toBe(7);
+      expect(term.display.col).toBe(8);
     };
     check(30);
     term.resize(24, 20);
@@ -2101,7 +2113,7 @@ describe("tool calls", () => {
     state.events!.onTool({ id: "c1", name: "bash", input: { command: "git status" } });
     await until(() => term.screen().includes("⏺ Bash(git status)"));
     expect(app.page!.lines.some((l) => typeof l !== "string" && "tool" in l)).toBe(false); // live only, not committed
-    expect(term.screen()).toContain("working…"); // the status line's word, shimmering too
+    expect(term.screen()).not.toContain("working…"); // the tool itself owns the tail animation
     const frame = () => app.frame().running!.join("");
     const first = frame();
     expect(frame()).toBe(first); // same instant, same frame
@@ -2205,25 +2217,26 @@ test("scrolling and new output keep both bars fixed, preserve the draft, and fol
     for (let i = 0; i < 60; i++) app.say(`history row ${i}`);
     term.type("my draft");
     await until(() => term.screen().includes("history row 59"));
-    const header = term.display.screen().slice(0, 4);
-    const footer = term.display.screen().slice(-2);
+    const top = bodyStart(term);
+    const header = term.display.screen().slice(0, top);
+    const footer = term.display.screen().slice(-4);
     term.press({ name: "pageup" });
     await until(() => !term.screen().includes("history row 59"));
-    const body = term.display.screen().slice(4, -2);
+    const body = term.display.screen().slice(top, -4);
     app.say("new output while reading");
     await Bun.sleep(30);
-    expect(term.display.screen().slice(4, -2)).toEqual(body);
-    expect(term.display.screen().slice(0, 4)).toEqual(header);
-    expect(term.display.screen().slice(-2)).toEqual(footer);
+    expect(term.display.screen().slice(top, -4)).toEqual(body);
+    expect(term.display.screen().slice(0, top)).toEqual(header);
+    expect(term.display.screen().slice(-4)).toEqual(footer);
     expect(app.input.text).toBe("my draft");
     const firstRow = Number(body[0]!.match(/\d+/)![0]);
     term.type("\x1b[<64;10;8M".repeat(3));
-    await until(() => term.display.screen()[4] === `history row ${firstRow - 9}`);
+    await until(() => term.display.screen()[top] === `history row ${firstRow - 9}`);
     for (let i = 0; i < 3; i++) { term.press({ name: "pagedown" }); await Bun.sleep(20); }
     await until(() => term.screen().includes("new output while reading"));
     app.say("following again");
     await until(() => term.screen().includes("following again"));
-    expect(term.display.row).toBe(14);
+    expect(term.display.row).toBe(13);
   } finally { app.quit(); await running; }
 });
 
@@ -2339,9 +2352,9 @@ test("sign-in queue attempts every owned message after failures across pages wit
     await app.openPage(`login-other-${failed}`);
     const secondPage = app.page!;
     term.type("three\r");
-    await until(() => app.status(secondPage).includes("1 messages queued"));
+    await until(() => app.status(secondPage).includes("1 message queued"));
     finish();
-    await until(() => attempted.length === 3 && !app.status(secondPage).includes("queued"));
+    await until(() => attempted.length === 3 && app.status(secondPage).includes("0 messages queued"));
     expect(attempted).toEqual(["one", "two", "three"]);
     const displayed = [...firstPage.lines, ...secondPage.lines].map(raw).map(strip);
     for (const text of ["one", "two", "three"]) expect(displayed.filter((l) => l === `> ${text}`).length).toBe(text === failed ? 0 : 1);
@@ -2350,4 +2363,351 @@ test("sign-in queue attempts every owned message after failures across pages wit
     expect(secondPage.sent).toEqual([]);
     app.quit(); await running;
   }
+});
+
+describe("Ctrl+C cancellation", () => {
+  test("first cancels only selected page, preserves draft, expires after 2s; second exits", async () => {
+    const term = fakeTerm(100, 20);
+    const cancelled: string[] = [];
+    const fakes = fakeOrchestrators();
+    let now = 100;
+    const app = new App({ term, pollMs: 100_000, clock: { now: () => now, every: () => () => {} },
+      async openOrchestrator(...args) { return { ...await fakes.openOrchestrator(args[0], args[1], args[2], args[3]), cancel: () => { cancelled.push(args[0]); } }; },
+    });
+    const running = app.run("cancel-a");
+    await until(() => !!app.page);
+    term.type("/new cancel-b\r");
+    await until(() => app.page?.project === "cancel-b");
+    app.input = { text: "unsent draft", cursor: 12 };
+    app.keyEcho = true; // diagnostic/menu layers must not swallow the interrupt
+    await app.onKey({ name: "c", ctrl: true });
+    expect(cancelled).toEqual(["cancel-b"]);
+    expect(app.input.text).toBe("unsent draft");
+    expect(term.closed).toBe(false);
+    await until(() => term.screen().includes("within 2 seconds to exit"));
+    now += 2001;
+    await app.onKey({ name: "c", ctrl: true });
+    expect(cancelled).toEqual(["cancel-b", "cancel-b"]);
+    expect(term.closed).toBe(false);
+    now += 1999;
+    await app.onKey({ name: "c", ctrl: true });
+    await running;
+    expect(term.closed).toBe(true);
+  });
+
+  test("agent view cancels only selected session, leaving orchestrator and other roles alone", async () => {
+    const term = fakeTerm(100, 20);
+    const cancelled: string[] = [];
+    const fakes = fakeOrchestrators();
+    const app = new App({ term, pollMs: 100_000,
+      async openOrchestrator(...args) { return { ...await fakes.openOrchestrator(args[0], args[1], args[2], args[3]), cancel: () => { cancelled.push("orchestrator"); } }; },
+      async cancelAgent(project, id) { cancelled.push(`${project}/${id}`); },
+    });
+    const running = app.run("selected-agent");
+    await until(() => !!app.page);
+    app.page!.view = { name: "reviewer-x", lines: [], live: true, calls: new Calls(), leave() {} };
+    await app.onKey({ name: "c", ctrl: true });
+    expect(cancelled).toEqual(["selected-agent/reviewer-x"]);
+    expect(app.page!.view!.name).toBe("reviewer-x");
+    expect(term.closed).toBe(false);
+    await until(() => term.screen().includes("Stopping selected agent"));
+    app.quit();
+    await running;
+  });
+});
+
+test("real App login-held pre-cancel input stays paused, retains FIFO, and does not block other pages", async () => {
+  const term = fakeTerm(90, 20);
+  const providers = new Map<string, ReturnType<typeof fakeProvider>>();
+  let finish!: () => void;
+  const app = new App({ term, pollMs: 100_000,
+    login: async () => { await new Promise<void>(resolve => { finish = resolve; }); return "signed in"; },
+    openOrchestrator: async (project, _url, write, onInbox, events) => {
+      const provider = fakeProvider([[said("received")]]);
+      providers.set(project, provider);
+      return createOrchestrator({ project, provider, tools: {}, write, onInbox, ...events });
+    },
+  });
+  const running = app.run("login-cancel-real");
+  try {
+    await until(() => !!app.page);
+    const cancelled = app.page!;
+    term.type("/login claude\r");
+    await until(() => app.loggingIn);
+    term.type("held one\rheld two\r");
+    await until(() => cancelled.lines.filter(l => raw(l).includes("queued; runs after sign-in")).length === 2);
+    term.type("\x03");
+    await until(() => cancelled.lines.some(l => raw(l).includes("Turn cancelled")));
+    await app.openPage("login-cancel-other");
+    term.type("unrelated input\r");
+    await until(() => app.page!.lines.some(l => raw(l).includes("queued; runs after sign-in")));
+    finish();
+    await until(() => providers.get("login-cancel-other")!.calls.length === 1);
+    expect(providers.get("login-cancel-real")!.calls).toHaveLength(0);
+    expect(await cancelled.orch.pending()).toBe(false);
+    term.type("\x1a"); // selected cancelled page
+    expect(app.page).toBe(cancelled);
+    term.type("continue now\r");
+    await until(() => providers.get("login-cancel-real")!.calls.length === 1);
+    const messages = providers.get("login-cancel-real")!.calls[0]!.messages;
+    expect(messages.at(-1)?.content).toBe("[user] held one\n\n[user] held two\n\n[user] continue now");
+  } finally { app.quit(); await running; }
+});
+
+test("current-view resize anchoring ignores unrelated sessions, and tail activity never enters restored or exit history", async () => {
+  const term = fakeTerm(80, 24);
+  const orchs = fakeOrchestrators();
+  const clock: Clock = { now: () => 5000, every: () => () => {} };
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clock, pollMs: 100_000 });
+  const running = app.run("anchored-e");
+  try {
+    await until(() => !!app.page);
+    const page = app.page!;
+    await app.openPage("unrelated-e");
+    app.page!.busy = true;
+    app.switchPage(-1);
+    const records: Line[] = Array.from({ length: 50 }, (_, i) => {
+      const text = `record ${i}: ` + "words ".repeat(25);
+      return i % 2 ? userLines(text)[0]! : { md: text };
+    });
+    page.lines.push(...records);
+    expect(historyRows(page.lines, 80).length).toBeGreaterThan(records.length);
+    expect(historyRows(page.lines, 23).length).toBeGreaterThan(historyRows(page.lines, 80).length);
+    app.reprint();
+    term.type("reading draft");
+    page.busy = true;
+    page.busySince = 0;
+    app.draw();
+    await until(() => term.screen().includes("thinking… 5s"));
+    for (let i = 0; i < 30; i++) term.press({ name: "pageup" });
+    await until(() => bodyRows(term)[0]!.startsWith("record 0:"));
+    const top = historyRows(records, 80).findIndex(row => Bun.stripANSI(row).startsWith("> record 21:"));
+    expect(top % 3).toBe(0);
+    for (let i = 0; i < top / 3; i++) term.press({ name: "wheeldown" });
+    await until(() => bodyRows(term)[0]!.startsWith("> record 21:"));
+    const reading = "> record 21:";
+    const visible = bodyRows(term);
+    orchs.writers[page.project]!("appended structured paragraph " + "new words ".repeat(30) + "\n");
+    orchs.writers["unrelated-e"]!("background owner paragraph " + "elsewhere ".repeat(20) + "\n");
+    await Bun.sleep(30);
+    expect(bodyRows(term)).toEqual(visible);
+    expect(app.input.text).toBe("reading draft");
+    const durable = JSON.stringify(page.lines);
+    for (const cols of [23, 80, 10, 53, 23, 80]) {
+      term.resize(cols, 24);
+      await Bun.sleep(170);
+      expect(bodyRows(term)[0]).toBe(Bun.stripANSI(lineRows(records[21]!, cols)[0]!).trimEnd());
+      expect(term.screen()).not.toContain("thinking…");
+      expect(app.input.text).toBe("reading draft");
+      expect(term.display.col).toBe(app.frame().inputArea!.col);
+      expect(JSON.stringify(page.lines)).toBe(durable);
+    }
+    app.switchPage(1);
+    await until(() => term.screen().includes("working…"));
+    expect(term.screen()).not.toContain("record ");
+    app.switchPage(-1);
+    await until(() => term.screen().includes("working… 5s"));
+    // A different conversation owns a different viewport: switching back follows its tail.
+    expect(term.screen()).not.toContain(reading);
+    page.busy = false;
+    app.draw();
+    await until(() => !term.screen().includes("working…"));
+    expect(app.frame().activity).toBeUndefined(); // background session remains busy
+    expect(JSON.stringify(page.lines)).toBe(durable);
+  } finally { app.quit(); await running; }
+  expect(term.screen()).not.toMatch(/thinking|working|opening|agents running|messages queued/);
+});
+
+test("boxed input and question vertical editing share rendered geometry across resize, retaining the chat draft", async () => {
+  const { inputGeometry } = await import("./render");
+  const { vertical } = await import("./editor");
+  const term = fakeTerm(40, 24);
+  const orchs = fakeOrchestrators();
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 20, questionDelayMs: 0, watchdog: async () => {}, merges: async () => {} });
+  const running = app.run("boxed-question-e");
+  const width = () => inputGeometry(app.frame().input.prompt, term.cols, Math.max(1, term.rows - bodyStart(term) - 1)).width;
+  try {
+    await until(() => term.screen().includes(">[boxed-question-e]"));
+    term.type("界".repeat(40) + "é👩‍💻");
+    const draft = app.input.text;
+    const expected = vertical(app.input, width(), -1)!;
+    term.press({ name: "up" });
+    expect(app.input).toEqual(expected);
+    await askQuestions("boxed-question-e", [{ text: "Destination?" }]);
+    await until(() => app.page!.questions.open.length === 1);
+    expect(app.input.text).toBe(draft);
+    term.press({ name: "q", ctrl: true });
+    await until(() => app.questions.answering());
+    term.type("界".repeat(40) + " answer");
+    const answer = app.input.text;
+    const before = vertical(app.input, width(), -1)!;
+    term.press({ name: "up" });
+    expect(app.input).toEqual(before);
+    term.resize(17, 18);
+    await Bun.sleep(160);
+    const after = vertical(app.input, width(), -1)!;
+    term.press({ name: "up" });
+    expect(app.input).toEqual(after);
+    expect(term.display.col).toBeLessThan(term.cols);
+    term.press({ name: "escape" });
+    expect(app.input.text).toBe(draft);
+    term.press({ name: "q", ctrl: true });
+    await until(() => app.questions.answering());
+    expect(app.input.text).toBe(answer);
+    expect(app.page!.sent).toEqual([]);
+  } finally { app.quit(); await running; }
+});
+
+test("App retains an interior source offset across widening/narrowing and resets it on new wheel intent", async () => {
+  const term = fakeTerm(23, 24);
+  const orchs = fakeOrchestrators();
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+  const running = app.run("source-anchor-e");
+  try {
+    await until(() => !!app.page);
+    const code = "code-" + "0123456789".repeat(40);
+    const lines: Line[] = [
+      { md: ["long first line ".repeat(30), "short", "```ts", "tiny", code, "last", "```"].join("\n") },
+      ...Array.from({ length: 30 }, (_, i) => ({ md: `later ${i} ` + "wrapped content ".repeat(20) })),
+    ];
+    const codeStart = () => historyRows(lines, 23).findIndex(row => Bun.stripANSI(row).startsWith("│ code-"));
+    while ((codeStart() + 3) % 3) lines.unshift("fixed preface");
+    const top = codeStart() + 3; // offset 63 within this source line
+    const reading = "│ " + code.slice(63, 84);
+    expect(Bun.stripANSI(historyRows(lines, 23)[top]!)).toBe(reading);
+    app.page!.lines.push(...lines);
+    app.reprint();
+    await until(() => term.screen().includes("wrapped content"));
+    for (let i = 0; i < 300; i++) term.press({ name: "pageup" });
+    await until(() => bodyRows(term)[0] === Bun.stripANSI(historyRows(lines, 23)[0]!));
+    for (let i = 0; i < top / 3; i++) term.press({ name: "wheeldown" });
+    await until(() => bodyRows(term)[0] === reading);
+    for (const cols of [80, 40, 23, 10, 80, 23]) {
+      term.resize(cols, 24);
+      await Bun.sleep(170);
+      const offset = Math.floor(63 / (cols - 2)) * (cols - 2);
+      expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
+      const visible = bodyRows(term);
+      orchs.writers[app.page!.project]!("new structured background output " + "words ".repeat(20) + "\n");
+      await Bun.sleep(25);
+      expect(bodyRows(term)).toEqual(visible);
+    }
+    term.press({ name: "wheeldown" }); // a new reading intent: offset 126, not 63
+    await until(() => bodyRows(term)[0] === "│ " + code.slice(126, 147));
+    for (const cols of [80, 23]) {
+      term.resize(cols, 24);
+      await Bun.sleep(170);
+      const offset = Math.floor(126 / (cols - 2)) * (cols - 2);
+      expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
+    }
+  } finally { app.quit(); await running; }
+});
+
+test("combined E viewport cancels actual tools, keeps full pre-checkpoint exit history and no revived activity", async () => {
+  const project = "combined-cancel-e", path = paths.transcript(project, "orchestrator");
+  mkdirSync(paths.repo(project), { recursive: true });
+  const t = openTranscript(path);
+  await t.append({ type: "meta", role: "orchestrator", model: "m" });
+  await t.append({ type: "message", message: { role: "user", content: "FULL-HISTORY-SENTINEL" } });
+  for (let i = 0; i < 105; i++) await t.append({ type: "message", message: { role: "assistant", content: `durable record ${i}: ` + "wrapping words ".repeat(5) } });
+  await t.append({ type: "summary", text: "compressed model-only summary", retained: [], boundary: t.head() });
+  const marker = join(home, "combined-bash-ready");
+  const provider = fakeProvider([
+    [toolUse("cancel-real", "bash", { command: `echo started > '${marker}'; sleep 60` }), toolUse("never", "bash", { command: "echo NEVER-EXECUTED" })],
+    [said("authorized continuation")],
+  ]);
+  const { bash } = await import("../tools/bash");
+  const { paired } = await import("../tool-pairs");
+  const term = fakeTerm(100, 24);
+  const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {},
+    openOrchestrator: async (project, _url, write, onInbox, events) => createOrchestrator({ project, transcript: t, provider, tools: { bash }, write, onInbox, ...events }),
+  });
+  const running = app.run(project);
+  try {
+    await until(() => !!app.page);
+    expect(app.page!.lines.map(raw).join("\n")).not.toContain("FULL-HISTORY-SENTINEL"); // viewport remains bounded
+    term.type("start cancellable tool\r");
+    await until(() => existsSync(marker));
+    expect(app.page!.calls.size).toBe(1);
+    term.type("draft 界é👩‍💻");
+    const draft = { ...app.input };
+    const header = term.display.buf.slice(term.display.top, term.display.top + 4).map(row => row.join(""));
+    term.press({ name: "pageup" });
+    term.resize(23, 24);
+    await Bun.sleep(160);
+    term.resize(100, 24);
+    await Bun.sleep(160);
+    expect(app.input).toEqual(draft);
+    term.type("\x03");
+    await until(() => !app.page!.busy);
+    expect(app.page!.calls.size).toBe(0);
+    expect(app.frame().activity).toBeUndefined();
+    expect(app.frame().running).toEqual([]);
+    expect(app.input).toEqual(draft);
+    expect(paired(await t.chain())).toBe(true);
+    expect(provider.calls).toHaveLength(1);
+    expect(await app.page!.orch.pending()).toBe(false);
+    expect(term.display.buf.slice(term.display.top, term.display.top + 4).map(row => row.join(""))).toEqual(header);
+    term.press({ name: "escape" }); // only intentional draft clearing for this continuation
+    term.type("resume saved turn\r");
+    await until(() => provider.calls.length === 2 && !app.page!.busy);
+    expect(JSON.stringify(provider.calls[1]!.messages)).toContain("Cancelled by user");
+    expect(JSON.stringify(provider.calls[1]!.messages)).toContain("resume saved turn");
+    expect(app.page!.calls.size).toBe(0);
+  } finally { app.quit(); await running; }
+  const exit = term.screen();
+  expect(exit).toContain("FULL-HISTORY-SENTINEL");
+  expect(exit).toContain("durable record 104");
+  expect(exit).toContain("authorized continuation");
+  expect(exit).not.toContain("compressed model-only summary");
+  expect(exit).not.toMatch(/thinking…|working…|messages queued|agents running/);
+  expect(term.display.modes.get(1049)).toBe(false);
+});
+
+test("Ctrl+C through pinned question/modal layers preserves owners and drafts without resuming the cancelled request", async () => {
+  const project = "cancel-question-e";
+  let requested = false, aborted = false;
+  const provider: import("../providers").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
+    requested = true;
+    return new Promise((_resolve, reject) => req.signal!.addEventListener("abort", () => { aborted = true; reject(req.signal!.reason); }, { once: true }));
+  } };
+  const term = fakeTerm(80, 24);
+  const app = new App({ term, pollMs: 20, questionDelayMs: 0, watchdog: async () => {}, merges: async () => {},
+    openOrchestrator: async (project, _url, write, onInbox, events) => createOrchestrator({ project, provider, tools: {}, write, onInbox, ...events }),
+  });
+  const running = app.run(project);
+  try {
+    await until(() => !!app.page);
+    const owner = app.page!;
+    term.type("start request\r");
+    await until(() => requested);
+    term.type("chat draft 界");
+    const chat = { ...app.input };
+    await askQuestions(project, [{ text: "Keep this question?" }]);
+    await until(() => owner.questions.open.length === 1);
+    term.press({ name: "q", ctrl: true });
+    await until(() => app.questions.answering());
+    term.type("answer draft 👩‍💻");
+    const answer = { ...app.input };
+    term.press({ name: "c", ctrl: true });
+    await until(() => aborted && !owner.busy);
+    expect(app.page).toBe(owner);
+    expect(app.questions.answering()).toBe(true);
+    expect(app.input).toEqual(answer);
+    expect(owner.questions.open).toHaveLength(1);
+    expect(await owner.orch.pending()).toBe(false);
+    term.press({ name: "escape" });
+    expect(app.input).toEqual(chat);
+    term.press({ name: "q", ctrl: true });
+    await until(() => app.questions.answering());
+    expect(app.input).toEqual(answer);
+    // A project modal hides, but must not steal, the question's answer buffer.
+    term.press({ name: "b", ctrl: true });
+    await until(() => !!app.projectList);
+    expect(app.input).toEqual(answer);
+    term.press({ name: "escape" });
+    expect(app.input).toEqual(answer);
+    expect(app.questions.answering()).toBe(true);
+    expect(app.frame().activity).toBeUndefined();
+  } finally { app.quit(); await running; }
 });

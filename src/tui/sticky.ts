@@ -1,4 +1,7 @@
-import { bold, dim, fit, headerRow, liveRows, sanitize, wrap, type Frame } from "./render";
+import { headerHeight } from "./chrome";
+import type { Line } from "./lines";
+import { captureAnchor, resolveAnchor } from "./anchor";
+import { fit, liveRows, sanitize, wrap, type Frame } from "./render";
 
 export interface StickyScreen {
   rows: string[];
@@ -10,22 +13,19 @@ export interface StickyScreen {
   maxStart: number;
 }
 
-/** Keep the selected orchestrator visible even when all tabs cannot fit. */
-export function tabs(pages: { name: string; busy: boolean }[], active: number, cols: number): string {
-  const labels = pages.map((p, i) => i === active ? bold(`[${p.name}]`) : dim(` ${p.name}${p.busy ? " •" : ""} `));
-  let start = 0;
-  while (start < active && Bun.stringWidth((start ? "‹ " : "") + labels.slice(start, active + 1).join(" ")) > cols) start++;
-  return fit(`${start ? "‹ " : ""}${labels.slice(start).join(" ")}`, cols);
+/** One-shot reflow; App retains the captured content anchor across repeated resizes. */
+export function reflowAnchor(lines: Line[], oldCols: number, cols: number, top: number): number {
+  return resolveAnchor(lines, cols, captureAnchor(lines, oldCols, top));
 }
 
 /** The bars occupy fixed screen rows; only the middle viewport scrolls. */
 export function stickyRows(f: Frame, history: string[], chrome: string[], scrollTop: number | null = null): StickyScreen {
   const height = Math.max(1, f.rows);
-  const top = chrome.slice(0, Math.min(chrome.length, Math.floor(height / 3), Math.max(0, height - 3))).map(row => headerRow(row, f.cols));
-  const bottom = liveRows({ ...f, rows: Math.max(1, height - top.length - 1), partial: "", running: [] });
+  const top = chrome.slice(0, headerHeight(height)).map(row => fit(sanitize(row), f.cols));
+  const bottom = liveRows({ ...f, rows: Math.max(1, height - top.length - 1), partial: "", running: [], activity: undefined });
   const bodyHeight = Math.max(0, height - top.length - bottom.rows.length);
   const partial = f.partial ? f.partial.split("\n").flatMap(line => wrap(sanitize(line), f.cols)) : [];
-  const body = [...history, ...partial, ...(f.running ?? [])];
+  const body = [...history, ...partial, ...(f.running ?? []), ...(f.activity ? [f.activity] : [])];
   const maxStart = Math.max(0, body.length - bodyHeight);
   const start = scrollTop === null ? maxStart : Math.max(0, Math.min(scrollTop, maxStart));
   const visible = body.slice(start, start + bodyHeight).map(line => fit(sanitize(line), f.cols));

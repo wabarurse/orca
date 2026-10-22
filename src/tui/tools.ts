@@ -9,7 +9,7 @@
 import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../toolview";
 import type { Part } from "../view";
 import type { Line } from "./lines";
-import { dim, fit, sanitize, visibleLength, wrap } from "./render";
+import { dim, fit, sanitize } from "./render";
 import { shimmer } from "./shimmer";
 import { noColour } from "./style";
 
@@ -27,23 +27,17 @@ function label(text: string): string {
   return open > 0 ? `${bold(text.slice(0, open))}${text.slice(open)}` : text;
 }
 
-/** Plain text cut to `cols` columns with … (one wider character may overflow a tiny width). */
-function cut(text: string, cols: number): string {
-  if (visibleLength(text) <= cols) return text;
-  return `${wrap(text, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "")}…`;
-}
-
 /** A finished call as screen rows at `cols`, each cut to fit: the call, then its summary. */
 export function toolRows(v: ToolView, cols: number): string[] {
   const head = fit(`${mark(v.failed)} ${label(sanitize(v.tool))}`, cols);
-  const tail = dim(cut(`${RESULT_MARK}${sanitize(v.summary)}`, cols));
+  const tail = dim(fit(`${RESULT_MARK}${sanitize(v.summary)}`, cols));
   return [head, tail];
 }
 
 /** A running call's row at `now`: the dim marker and its label with the shimmer. */
 export function runningRow(call: Pick<ToolCall, "name" | "input">, now: number, cols: number): string {
-  const text = cut(sanitize(toolView(call.name, call.input, { ok: true, text: "" }).tool), Math.max(1, cols - 2));
-  return `${dim(TOOL_MARK)} ${shimmer(text, now)}`;
+  const text = fit(sanitize(toolView(call.name, call.input, { ok: true, text: "" }).tool), Math.max(1, cols - 2));
+  return fit(`${dim(TOOL_MARK)} ${shimmer(Bun.stripANSI(text), now)}`, cols);
 }
 
 /** The calls running on a page or in an agent view, oldest first. */

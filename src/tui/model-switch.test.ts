@@ -270,7 +270,7 @@ test("header uses the project's startup override and global fallback through the
     await until(() => ui.writes.some((s) => s.includes("claude-startup")));
     await ui.app.openPage("header-global-fallback");
     expect(ui.app.page!.model).toBe("gpt-6-astra");
-    await until(() => ui.writes.some((s) => s.includes("header-global-fallback · gpt-6-astra")));
+    await until(() => ui.writes.some((s) => s.includes("model gpt-6-astra")));
   } finally { await ui.close(); }
 });
 
@@ -289,7 +289,7 @@ for (const picker of [false, true]) test(`header changes only after confirmed ${
     await request();
     ui.key({ name: "down" }); ui.type("\r");
     await until(() => ui.app.page!.model === "claude-header");
-    await until(() => ui.writes.some((s) => s.includes(`${ui.project} · claude-header`)));
+    await until(() => ui.writes.some((s) => s.includes(`model claude-header`)));
   } finally { await ui.close(); }
 });
 
@@ -312,6 +312,6 @@ test("confirmed save refreshes captured page, not the selection changed while pe
     expect(await effectiveModel(captured.project)).toBe("claude-captured");
     expect(await effectiveModel(other.project)).toBe("gpt-6-astra");
     ui.app.switchPage(-1);
-    await until(() => ui.writes.some((s) => s.includes(`${captured.project} · claude-captured`)));
+    await until(() => ui.writes.some((s) => s.includes(`model claude-captured`)));
   } finally { release.resolve(); await ui.close(); }
 });

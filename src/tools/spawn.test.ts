@@ -28,7 +28,7 @@ const ctx = (role: ToolContext["role"], branch?: string): ToolContext => ({ proj
 test("spawn seeds the worker transcript with the prompt and starts it on the branch", async () => {
   const id = await spawn.run({ prompt: "Add a login page", branch: "feat/login" }, ctx("orchestrator"));
   expect(id).toBe("worker-feat-login");
-  expect(started).toEqual([{ project: "p", role: "worker", branch: "feat/login" }]);
+  expect(started).toEqual([{ project: "p", role: "worker", branch: "feat/login", run: expect.any(String) }]);
   const chain = await open(paths.transcript("p", "worker-feat-login")).chain();
   expect(chain).toEqual([{ role: "user", content: "Branch: feat/login\n\nAdd a login page" }]);
 });
@@ -36,7 +36,7 @@ test("spawn seeds the worker transcript with the prompt and starts it on the bra
 test("spawn with role reviewer uses the same branch and its own transcript", async () => {
   const id = await spawn.run({ prompt: "Review it", branch: "feat/login", role: "reviewer" }, ctx("orchestrator"));
   expect(id).toBe("reviewer-feat-login");
-  expect(started.at(-1)).toEqual({ project: "p", role: "reviewer", branch: "feat/login" });
+  expect(started.at(-1)).toEqual({ project: "p", role: "reviewer", branch: "feat/login", run: expect.any(String) });
 });
 
 test("spawning again on the same branch appends to the existing transcript", async () => {
@@ -83,7 +83,7 @@ describe("one agent per branch", () => {
   test("a live agent that finishes while spawn waits: spawn goes ahead", async () => {
     const { r, starts } = runner([["worker-soon"], ["worker-soon"], []]);
     expect(await makeSpawn(r, wait).run({ prompt: "next task", branch: "soon" }, qctx)).toBe("worker-soon");
-    expect(starts).toEqual([{ project: "q", role: "worker", branch: "soon" }]);
+    expect(starts).toEqual([{ project: "q", role: "worker", branch: "soon", run: expect.any(String) }]);
     expect((await chain("worker-soon")).map((m) => m.content)).toEqual(["Branch: soon\n\nnext task"]);
   });
 
@@ -105,4 +105,55 @@ test("message delivers to the named inbox and refuses self or empty", async () =
   expect((await drain("p", "orchestrator")).map((m) => [m.from, m.text])).toEqual([["worker-feat-login", "done, PR #4"]]);
   expect((await drain("p", "user")).map((m) => m.from)).toEqual(["orchestrator"]);
   expect((await drain("p", "worker-feat-login")).map((m) => m.text)).toEqual(["also fix the test"]);
+});
+
+test("cancelling spawn during its live-agent wait never starts a replacement", async () => {
+  const controller = new AbortController();
+  let checked!: () => void;
+  const ready = new Promise<void>(resolve => { checked = resolve; });
+  let starts = 0;
+  const tool = makeSpawn({ async start() { starts++; }, async stop() {}, async running() { checked(); return ["worker-busy"]; } });
+  const running = tool.run({ prompt: "work", branch: "busy" }, { project: "cancel-spawn", role: "orchestrator", cwd: home, signal: controller.signal });
+  await ready;
+  controller.abort(new Error("cancelled"));
+  await expect(running).rejects.toThrow("cancelled");
+  expect(starts).toBe(0);
+});
+
+for (const previous of [false, true]) test(`cancel before supervisor publication targets exact ${previous ? "respawn with old state" : "initial launch"}, not replacement`, async () => {
+  const { cancelSession, launchIdentity, publishLaunch, watchCancellation } = await import("../cancellation");
+  const { disk } = await import("../transcript-storage");
+  const { spyOn } = await import("bun:test");
+  const project = `early-${previous}`, id = "worker-early";
+  if (previous) {
+    publishLaunch(project, id, "old");
+    await Bun.write(`${paths.runs(project)}/${id}.json`, JSON.stringify({ run: "old" }));
+  }
+  const controller = new AbortController();
+  let identity: string | undefined;
+  let off = () => {};
+  const diskOpen = disk.open;
+  // Pause at the first staging write, before the transcript becomes visible.
+  const hook = spyOn(disk, "open").mockImplementation(async (path, flags) => {
+    if (path.includes(id) && flags === "wx") {
+      identity = launchIdentity(project, id);
+      expect(identity).toBeTruthy();
+      expect(identity).not.toBe("old");
+      await cancelSession(project, id);
+    }
+    return diskOpen(path, flags);
+  });
+  try {
+    const tool = makeSpawn({ async running() { return []; }, async stop() {}, async start(opts) {
+      expect(opts.run).toBe(identity);
+      off = watchCancellation(project, id, controller, opts.run!);
+    } });
+    await tool.run({ prompt: "start", branch: "early" }, { project, role: "orchestrator", cwd: home });
+    expect(controller.signal.aborted).toBe(true);
+    publishLaunch(project, id, "replacement");
+    const replacement = new AbortController();
+    const stop = watchCancellation(project, id, replacement, "replacement");
+    try { await Bun.sleep(110); expect(replacement.signal.aborted).toBe(false); }
+    finally { stop(); }
+  } finally { off(); hook.mockRestore(); }
 });

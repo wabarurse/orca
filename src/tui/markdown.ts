@@ -343,21 +343,33 @@ export function sourceLines(text: string): string[] {
   return first === -1 ? [] : lines.slice(first);
 }
 
+/** Optional reflow metadata: one call per stable source part, before gutters/padding.
+ * Text offsets ignore wrap-discarded spaces; literal parts retain every grapheme.
+ * Tables are atomic until their grid/stacked cells expose source positions.
+ */
+export type RowTrace = (rows: string[], mode?: "literal" | "block") => void;
+
+function traced(rows: string[], trace?: RowTrace, mode?: "literal" | "block"): string[] {
+  trace?.(rows, mode);
+  return rows;
+}
+
 /** Render markdown text as styled lines at most `width` columns wide (a code line wider than that is cut onto more). */
-export function renderMarkdown(text: string, width: number): string[] {
-  return takeBlocks(sourceLines(text), true).blocks.flatMap((b) => renderBlock(b, width));
+export function renderMarkdown(text: string, width: number, trace?: RowTrace): string[] {
+  return takeBlocks(sourceLines(text), true).blocks.flatMap((b) => renderBlock(b, width, trace));
 }
 
 /**
  * Markdown led by a styled label, e.g. who a reply is from: on the first line
  * when the text starts with a plain paragraph, else on a line of its own.
  */
-export function renderLabelled(label: string, text: string, width: number): string[] {
+export function renderLabelled(label: string, text: string, width: number, trace?: RowTrace): string[] {
   const blocks = takeBlocks(sourceLines(text), true).blocks;
   const first = blocks[0] ?? "";
-  const rest = blocks.slice(1).flatMap((b) => renderBlock(b, width));
-  if (!isParagraph(first)) return [label, ...renderBlock(first, width).filter((_, i) => first || i), ...rest];
-  return [...wordWrap(`${label} ${inline(clean(first))}`, width), ...rest];
+  const head = !isParagraph(first)
+    ? [...traced([label], trace), ...(first ? renderBlock(first, width, trace) : [])]
+    : traced(wordWrap(`${label} ${inline(clean(first))}`, width), trace);
+  return [...head, ...blocks.slice(1).flatMap((b) => renderBlock(b, width, trace))];
 }
 
 /** A block that is one plain unindented paragraph line. */
@@ -379,52 +391,52 @@ function expandTabs(line: string): string {
 }
 
 /** One block from `takeBlocks` as styled lines. */
-export function renderBlock(block: string, cols: number): string[] {
+export function renderBlock(block: string, cols: number, trace?: RowTrace): string[] {
   const w = Math.max(1, cols);
   const lines = clean(block).split("\n");
-  if (block === "") return [""];
-  if (FENCE.test(lines[0]!)) return codeBlock(lines, w);
-  if (lines.length > 1) return table(lines, w);
-  return renderLine(lines[0]!, w);
+  if (block === "") return traced([""], trace);
+  if (FENCE.test(lines[0]!)) return codeBlock(lines, w, trace);
+  if (lines.length > 1) return traced(table(lines, w), trace, "block");
+  return renderLine(lines[0]!, w, trace);
 }
 
 // --- one-line blocks --------------------------------------------------------
 
-type LineRule = [RegExp, (m: RegExpExecArray, w: number) => string[]];
+type LineRule = [RegExp, (m: RegExpExecArray, w: number, trace?: RowTrace) => string[]];
 
 const HEADING_STYLE = [SGR.bold + SGR.underline, SGR.bold, SGR.bold + SGR.italic];
 
 const LINE_RULES: LineRule[] = [
-  [/^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/, (m, w) => {
+  [/^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/, (m, w, trace) => {
     const style = HEADING_STYLE[Math.min(m[1]!.length, 3) - 1]!;
-    return wordWrap(`${style}${inline(m[2]!, style)}${RESET}`, w);
+    return traced(wordWrap(`${style}${inline(m[2]!, style)}${RESET}`, w), trace);
   }],
-  [/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/, (_m, w) => [dim("─".repeat(w))]],
-  [/^\s*>\s?(.*)$/, (m, w) => renderLine(m[1]!, w - 2).map((l) => `${dim("│")} ${l}`)],
-  [/^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/, (m, w) => listItem(m[1]!.length, m[2]!, m[3]!, w)],
-  [/^(\s*)(.*)$/, (m, w) => hanging(Math.min(m[1]!.length, Math.floor(w / 2)), "", m[2]!, w)],
+  [/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/, (_m, w, trace) => traced([dim("─".repeat(w))], trace, "block")],
+  [/^\s*>\s?(.*)$/, (m, w, trace) => renderLine(m[1]!, w - 2, trace).map((l) => `${dim("│")} ${l}`)],
+  [/^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/, (m, w, trace) => listItem(m[1]!.length, m[2]!, m[3]!, w, trace)],
+  [/^(\s*)(.*)$/, (m, w, trace) => hanging(Math.min(m[1]!.length, Math.floor(w / 2)), "", m[2]!, w, trace)],
 ];
 
 /** A heading, rule, quote, list item or paragraph line. */
-function renderLine(line: string, w: number): string[] {
+function renderLine(line: string, w: number, trace?: RowTrace): string[] {
   for (const [re, render] of LINE_RULES) {
     const m = re.exec(line);
-    if (m) return render(m, Math.max(1, w));
+    if (m) return render(m, Math.max(1, w), trace);
   }
-  return [line];
+  return traced([line], trace);
 }
 
 /** `marker` then the text, wrapped with continuation lines indented under the text. */
-function hanging(indent: number, marker: string, text: string, w: number): string[] {
+function hanging(indent: number, marker: string, text: string, w: number, trace?: RowTrace): string[] {
   const lead = " ".repeat(indent) + marker;
   const pad = " ".repeat(width(lead));
-  return wordWrap(inline(text), w - width(lead)).map((l, i) => (i ? pad : lead) + l);
+  return traced(wordWrap(inline(text), w - width(lead)), trace).map((l, i) => (i ? pad : lead) + l);
 }
 
 /** Bullets show as "-" as in Codex; numbers stay as written. Nesting keeps the source indent. */
-function listItem(indent: number, mark: string, text: string, w: number): string[] {
+function listItem(indent: number, mark: string, text: string, w: number, trace?: RowTrace): string[] {
   const marker = /\d/.test(mark) ? `${mark} ` : "- ";
-  return hanging(Math.min(indent, Math.floor(w / 2)), marker, text, w);
+  return hanging(Math.min(indent, Math.floor(w / 2)), marker, text, w, trace);
 }
 
 // --- code blocks ------------------------------------------------------------
@@ -432,12 +444,12 @@ function listItem(indent: number, mark: string, text: string, w: number): string
 const GUTTER = dim("│") + " ";
 
 /** A dim gutter and, when given, the language as a dim label; lines are cut only when wider than the screen. */
-function codeBlock(lines: string[], w: number): string[] {
+function codeBlock(lines: string[], w: number, trace?: RowTrace): string[] {
   const [, indent, , lang] = FENCE.exec(lines[0]!)!;
   const closed = lines.length > 1 && /^\s*(`{3,}|~{3,})\s*$/.test(lines.at(-1)!);
   const body = lines.slice(1, closed ? -1 : undefined).map((l) => stripIndent(l, indent!.length));
-  const label = lang ? [GUTTER + dim(lang)] : [];
-  return [...label, ...body.flatMap((l) => cut(l, w - 2).map((r) => GUTTER + r))];
+  const label = lang ? traced([GUTTER + dim(lang)], trace, "block") : [];
+  return [...label, ...body.flatMap((l) => traced(cut(l, w - 2), trace, "literal").map((r) => GUTTER + r))];
 }
 
 const stripIndent = (l: string, n: number) => l.replace(new RegExp(`^ {0,${n}}`), "");

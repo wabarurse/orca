@@ -12,6 +12,8 @@ const rows = (f: Frame) => liveRows(f).rows.map(strip);
 /** Write escape codes to a fake terminal of the given size and read it back. */
 const show = (size: { cols: number; rows: number }, ...writes: string[]) => { const s = new FakeScreen(size.cols, size.rows); for (const w of writes) s.write(w); return s; };
 
+const box = (lines: string[], cols = 20) => ["┌" + "─".repeat(cols - 2) + "┐", ...lines.map((s) => "│" + s + " ".repeat(cols - 2 - Bun.stringWidth(s)) + "│"), "└" + "─".repeat(cols - 2) + "┘"];
+
 function frame(over: Partial<Frame> = {}): Frame {
   return { cols: 20, rows: 7, input: { prompt: "> ", text: "hi", cursor: 2 }, menu: null, ...over };
 }
@@ -64,21 +66,21 @@ describe("commit", () => {
 
 describe("live", () => {
   test("rows top to bottom: partial, input, status, menu; cursor in the input", () => {
-    const f = frame({ partial: "streaming", status: "⠋ thinking… 3s · one", menu: { title: "pick", items: ["x", "y"], index: 1 } });
-    expect(rows(f)).toEqual(["streaming", "> hi", "⠋ thinking… 3s · one", "pick", "  x", "❯ y"]);
+    const f = frame({ partial: "streaming", status: "1 agent running", menu: { title: "pick", items: ["x", "y"], index: 1 } });
+    expect(rows(f)).toEqual(["streaming", "> hi", "1 agent running", "pick", "  x", "❯ y"]);
     const { text, shown } = live(f);
     expect(shown).toEqual({ height: 6, cursor: 1 });
     const s = show(f, text);
-    expect(s.text()).toBe("streaming\n> hi\n⠋ thinking… 3s · one\npick\n  x\n❯ y");
+    expect(s.text()).toBe("streaming\n> hi\n1 agent running\npick\n  x\n❯ y");
     expect([s.row, s.col]).toEqual([1, 4]); // after "> hi"
   });
 
-  test("redraws by moving up exactly to the previous first row and clearing to the end", () => {
+  test("inline helper redraws by moving up exactly to the previous first row and clearing to the end", () => {
     const first = live(frame({ rows: 12, status: "s", input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 3 } }));
-    expect(first.shown).toEqual({ height: 4, cursor: 0 }); // input first, cursor on "> one"
+    expect(first.shown).toEqual({ height: 6, cursor: 1 }); // input first, cursor on "> one"
     const next = live(frame({ status: "s2" }), first.shown);
-    expect(next.text).toContain("\r\x1b[J"); // cursor is already on the first input row; clear down
-    expect(erase(first.shown)).toBe("\r\x1b[J");
+    expect(next.text).toContain(erase(first.shown)); // move above the top border before erasing
+    expect(erase(first.shown)).toBe("\r\x1b[1A\x1b[J");
     expect(erase({ height: 3, cursor: 2 })).toBe("\r\x1b[2A\x1b[J");
     expect(erase(NOTHING)).toBe("");
     const s = show({ cols: 20, rows: 12 }, "above\r\n", first.text, next.text);
@@ -111,21 +113,21 @@ describe("live", () => {
 
   test("wrapped input grows, and multi-line input indents rows under the prompt", () => {
     const f = frame({ rows: 9, input: { prompt: "> ", text: "0123456789abcdefghij", cursor: 12 } });
-    expect(rows(f)).toEqual(["> 0123456789abcdefgh", "  ij"]);
-    expect(liveRows(f)).toMatchObject({ cursor: 0, col: 14 });
+    expect(rows(f)).toEqual(box(["> 0123456789abcdef", "  ghij"]));
+    expect(liveRows(f)).toMatchObject({ cursor: 1, col: 15 });
     const m = frame({ rows: 9, input: { prompt: "> ", text: "one\ntwo", cursor: 5 } });
-    expect(rows(m)).toEqual(["> one", "  two"]);
-    expect(liveRows(m)).toMatchObject({ cursor: 1, col: 3 });
+    expect(rows(m)).toEqual(box(["> one", "  two"]));
+    expect(liveRows(m)).toMatchObject({ cursor: 2, col: 4 });
   });
 
   test("the input is capped at a third of the screen and scrolls to the cursor", () => {
     const text = "1\n2\n3\n4\n5";
     const end = frame({ rows: 9, input: { prompt: "> ", text, cursor: text.length } });
-    expect(rows(end)).toEqual(["  3", "  4", "  5"]);
-    expect(liveRows(end)).toMatchObject({ cursor: 2, col: 3 });
+    expect(rows(end)).toEqual(box(["  3", "  4", "  5"]));
+    expect(liveRows(end)).toMatchObject({ cursor: 3, col: 4 });
     const start = frame({ rows: 9, status: "s", input: { prompt: "> ", text, cursor: 0 } });
-    expect(rows(start)).toEqual(["> 1", "  2", "  3", "s"]);
-    expect(liveRows(start)).toMatchObject({ cursor: 0, col: 2 });
+    expect(rows(start)).toEqual([...box(["> 1", "  2", "  3"]), "s"]);
+    expect(liveRows(start)).toMatchObject({ cursor: 1, col: 3 });
   });
 
   test("the input window keeps its top until the cursor leaves it", () => {
@@ -142,8 +144,8 @@ describe("live", () => {
 
   test("wide characters in the input place the cursor by display width", () => {
     const f = frame({ rows: 9, cols: 8, input: { prompt: "> ", text: "你好世界ab", cursor: 6 } });
-    expect(rows(f)).toEqual(["> 你好世", "  界ab"]);
-    expect(liveRows(f)).toMatchObject({ cursor: 1, col: 6 });
+    expect(rows(f)).toEqual(box(["> 你好", "  世界", "  ab"], 8));
+    expect(liveRows(f)).toMatchObject({ cursor: 3, col: 5 });
   });
 
   test("a long menu keeps the selection in view and fits the screen", () => {
@@ -154,18 +156,18 @@ describe("live", () => {
     expect(r.slice(0, 2)).toEqual(["> hi", "s"]);
   });
 
-  test("the full-width band puts a whole seven-item menu below the input without padding", () => {
+  test("the boxed composer leaves room for the menu selection without padding", () => {
     setUserFill("\x1b[48;5;236m");
     const items = Array.from({ length: 7 }, (_, i) => `m${i}`);
-    expect(rows(frame({ rows: 10, menu: { title: "pick", items, index: 0 } })).map((s) => s.trimEnd())).toEqual(["> hi", "pick", "❯ m0", ...items.slice(1).map((m) => `  ${m}`)]);
+    expect(rows(frame({ rows: 10, menu: { title: "pick", items, index: 0 } })).map((s) => s.trimEnd())).toEqual([...box(["> hi"]), "pick", "❯ m0", ...items.slice(1, 6).map((m) => `  ${m}`)]);
   });
 
   test("a long menu or status row is cut to the width with … and its style closed", () => {
     const f = frame({ cols: 40, rows: 9, status: "z".repeat(50), menu: { title: "pick", items: [`\x1b[2m${"y".repeat(60)}`], index: 0 } });
     const r = liveRows(f).rows;
-    expect(visibleLength(r[1]!)).toBe(40);
-    expect(r[1]!.endsWith("…\x1b[0m")).toBe(true);
-    expect(strip(r[1]!)).toBe("z".repeat(39) + "…");
+    expect(visibleLength(r[3]!)).toBe(40);
+    expect(strip(r[3]!).endsWith("…")).toBe(true);
+    expect(strip(r[3]!)).toBe("z".repeat(39) + "…");
   });
 
   const projects = (over: Partial<ProjectList> = {}): ProjectList => ({
@@ -178,9 +180,9 @@ describe("live", () => {
   });
 
   test("the project list sits below the multi-row input and status", () => {
-    const f = frame({ cols: 60, rows: 12, partial: "half", status: "⠋ thinking… 1s", projects: projects(), input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 13 } });
-    expect(rows(f)).toEqual(["half", "> one", "  two", "  three", "⠋ thinking… 1s", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
-    expect(liveRows(f)).toMatchObject({ cursor: 3, col: 7 });
+    const f = frame({ cols: 60, rows: 12, partial: "half", status: "1 agent running", projects: projects(), input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 13 } });
+    expect(rows(f)).toEqual(["half", ...box(["> one", "  two", "  three"], 60), "1 agent running", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(liveRows(f)).toMatchObject({ cursor: 4, col: 8 });
   });
 
   test("project rows scroll to keep the selection in view, with the status under the list", () => {
@@ -222,8 +224,8 @@ describe("on a faithful terminal", () => {
     s.write("above\r\n");
     const a = live(f);
     s.write(a.text);
-    expect(s.screen().slice(0, 5)).toEqual(["above", "> 01234567", "  89abcdef", "  ghij", "s"]);
-    expect([s.row, s.col]).toEqual([2, 4]); // after "89"
+    expect(s.screen().slice(0, 8)).toEqual(["above", ...box(["> 012345", "  6789ab", "  cdefgh", "  ij"], 10), "s"]);
+    expect([s.row, s.col]).toEqual([3, 7]); // after "6789"
     s.write(erase(a.shown) + "\x1b[?25h");
     expect(s.text()).toBe("above");
     expect([s.row, s.col]).toEqual([1, 0]);
@@ -250,16 +252,16 @@ describe("on a faithful terminal", () => {
     const s = term(10, 8);
     const a = live(frame({ cols: 10, rows: 8, partial: "0123456789abc" }));
     s.write(a.text);
-    expect(s.text()).toBe("0123456789\nabc\n> hi");
+    expect(s.text()).toBe(["0123456789", "abc", ...box(["> hi"], 10)].join("\n"));
     s.write(append(["0123456789abcdef"], frame({ cols: 10, rows: 8 }), a.shown).text);
-    expect(s.text()).toBe("0123456789\nabcdef\n> hi");
-    expect([s.row, s.col]).toEqual([2, 4]);
+    expect(s.text()).toBe(["0123456789", "abcdef", ...box(["> hi"], 10)].join("\n"));
+    expect([s.row, s.col]).toEqual([3, 5]);
   });
 
   test("a held multi-line partial (a code block or table still streaming) keeps its line breaks", () => {
     const s = term(10, 8);
     s.write(live(frame({ cols: 10, rows: 8, partial: "```sh\nls -la /tmp" })).text);
-    expect(s.text()).toBe("```sh\nls -la /tm\np\n> hi");
+    expect(s.text()).toBe(["```sh", "ls -la /tm", "p", ...box(["> hi"], 10)].join("\n"));
   });
 });
 

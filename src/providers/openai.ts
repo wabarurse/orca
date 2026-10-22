@@ -98,7 +98,7 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
         ...codexRequestSettings(req.model, req.settings), include: ["reasoning.encrypted_content"],
         ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
         // Codex manages its output budget; the backend rejects max_output_tokens.
-      }));
+      }, { signal: req.signal }));
       const output = await completedOutput(stream as AsyncIterable<CodexStreamEvent>, req.onText);
       const content = fromResponses(output);
       return { completion: summaryCompletion(output), content, stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };

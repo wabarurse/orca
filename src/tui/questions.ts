@@ -111,7 +111,6 @@ const visible = (q: PageQuestions) => q.expanded && q.open.length > 0 && (!q.hid
 const optionCount = (q: PageQuestions) => head(q)?.options?.length ?? 0;
 /** The "type your own answer" row; "skip" is the one after it. */
 const ownRow = (q: PageQuestions) => optionCount(q);
-const plural = (n: number) => `${n} ${n === 1 ? "question" : "questions"}`;
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 /** questions.ts refuses a second close with "already …", and a removed question with "no question …". */
 const closedElsewhere = (err: unknown) => /already|no question/.test(message(err));
@@ -238,13 +237,6 @@ export class Questions {
   /** Whether the input is the shown question's answer ("answer>"). */
   answering(): boolean {
     return this.want() === "answer";
-  }
-
-  /** "N questions" for the active page, "<name>: N questions" for each other page with open ones. */
-  status(active: QuestionPage, pages: QuestionPage[]): string[] {
-    const n = active.questions.open.length;
-    const others = pages.filter((p) => p !== active && p.questions.open.length > 0).map((p) => `${p.name}: ${plural(p.questions.open.length)}`);
-    return [...(n ? [plural(n)] : []), ...others];
   }
 
   /** A "user" message the orchestrator read: a question's answer as its dim line, or nothing when it was answered here (already shown). Null for anything else. */
