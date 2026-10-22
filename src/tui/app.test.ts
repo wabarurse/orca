@@ -1207,9 +1207,12 @@ describe("markdown replies", () => {
     await settle();
     expect(term.screen()).not.toContain("┬");
     write("\x1b[2m▸ bash {\"command\":\"**ls**\"}\x1b[0m\n", true); // a tool line ends the table and stays plain
-    await until(() => term.screen().includes("┬"));
-    expect(term.screen()).toContain('▸ bash {"command":"**ls**"}');
+    await until(() => term.screen().includes('▸ bash {"command":"**ls**"}'));
     expect(term.screen()).toContain("│ tui-markdown │ Render markdown in the chat area │");
+    // The footer gap costs one body row: the table's top is reachable by scrolling,
+    // rather than requiring the whole table AND the trailing tool to fit at once.
+    term.press({ name: "pageup" });
+    await until(() => term.screen().includes("┬"));
     expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : "md" in l ? l.md : "user" in l ? l.user : l.tool))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
     app.quit();
     await running;
@@ -3047,6 +3050,8 @@ describe("queued input footer", () => {
       await until(() => term.screen().includes("Queued 3/3"));
       const rows = term.display.screen();
       const heading = rows.findIndex(row => row.startsWith("Queued"));
+      expect(rows[heading - 1]).toBe("");
+      expect(term.display.backgrounds()[heading - 1]!.some(Boolean)).toBe(false);
       expect(rows.slice(heading, heading + 5)).toEqual([
         "Queued 3/3 · orchestrator · queued-order", "  1. first", "  2. second ↵ line 界é👩‍💻", "  3. first", "┌" + "─".repeat(98) + "┐",
       ]);
@@ -3155,7 +3160,9 @@ describe("queued input footer", () => {
       term.type("start\r");
       await until(() => started);
       await put(project, "orchestrator", { from: "user", text: "next one" }); // external, identical to a local prompt
-      term.type("next one\rnext two\r");
+      // Preview visibility means submitted, not persisted. Await both sends before
+      // releasing the tool so this boundary is guaranteed to consume both inputs.
+      for (const key of parseKeys("next one\rnext two\r")) await app.onKey(key);
       await until(() => app.frame().queued?.texts.length === 2);
       await until(() => term.screen().includes("  2. next two"));
       expect(app.page!.lines.filter((line): boolean => typeof line === "object" && "user" in line)).toEqual(userLines("start"));
@@ -3255,16 +3262,30 @@ test("queued footer removal preserves a scrolled source anchor and Enter still f
     return { async say() {}, async pending() { return false; }, async turn() { return []; } };
   } });
   const running = app.run("queued-scroll");
+  const conversation = () => {
+    const rows = term.display.screen();
+    const at = rows.findIndex(row => row.startsWith("Queued") || row.startsWith("┌"));
+    expect(at).toBeGreaterThan(bodyStart(term));
+    expect(rows[at - 1]).toBe("");
+    expect(term.display.backgrounds()[term.display.top + at - 1]!.some(Boolean)).toBe(false);
+    return rows.slice(bodyStart(term), at - 1);
+  };
   try {
     await until(() => !!app.page);
     for (let i = 0; i < 80; i++) app.say(`history ${i}`);
     await until(() => term.screen().includes("history 79"));
+    const bodyHeight = conversation().length;
+    const saved = historyRows(app.page!.lines, term.cols).map(row => Bun.stripANSI(row).trimEnd());
+    expect(conversation()).toEqual(saved.slice(-bodyHeight));
     term.press({ name: "pageup" });
     await until(() => !term.screen().includes("history 79"));
+    // Page Up overlaps exactly one CONTENT row; the fixed gap is not scrollable.
+    const start = saved.length - bodyHeight - (bodyHeight - 1);
+    expect(conversation()).toEqual(saved.slice(start, start + bodyHeight));
     const top = bodyStart(term), before = term.writes.length;
     term.type("queue one\rqueue two\r");
     await until(() => term.screen().includes("Queued 2/2"));
-    expect(term.screen()).toContain("history 79"); // existing Enter contract: follow the tail
+    expect(conversation().at(-1)).toBe("history 79"); // existing Enter contract: follow the tail
     term.press({ name: "pageup" });
     await until(() => !term.screen().includes("history 79"));
     const anchor = term.display.screen()[top];
@@ -3273,10 +3294,12 @@ test("queued footer removal preserves a scrolled source anchor and Enter still f
     read([{ from: "user", ...app.page!.sent[0]!, ts: "synthetic" }]);
     await until(() => term.screen().includes("Queued 1/1"));
     expect(term.display.screen()[top]).toBe(anchor);
+    conversation(); // Shrinking the queue keeps the gap above the entire footer.
     term.type("\x1b[<65;10;8M".repeat(100)); // injected SGR, not a physical gesture
     await until(() => term.screen().includes("> queue one"));
     read([{ from: "user", ...app.page!.sent[0]!, ts: "synthetic" }]);
     await until(() => term.screen().includes("> queue two") && !term.screen().includes("Queued"));
+    expect(conversation().at(-1)).toBe("> queue two");
     expect(app.input).toEqual(draft);
     expect(term.display.top).toBe(0);
     expect(term.writes.slice(before).join("")).not.toMatch(/\x1b\[\?(1049|1000|1006|2004)[hl]/);

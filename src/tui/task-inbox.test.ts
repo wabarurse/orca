@@ -134,7 +134,10 @@ for (const cols of [100, 80, 40]) test(`${cols}x24 task inbox footer appearance`
   expect(plain(rendered.rows)).toMatchSnapshot();
   const content = rendered.rows.map(Bun.stripANSI);
   expect(content.findIndex(s => s.includes("Inbox ·"))).toBeGreaterThan(content.findIndex(s => s.includes("Inbox 1")));
-  expect(rendered.bodyHeight).toBeGreaterThanOrEqual(3);
+  const footerAt = content.findIndex(s => s.startsWith("Queued"));
+  expect(content.slice(footerAt - 2, footerAt)).toEqual(["Conversation 29", ""]);
+  expect(rendered.bodyHeight).toBe(footerAt - chrome(f).length - 1);
+  expect(rendered.bodyHeight).toBeGreaterThanOrEqual(2);
   expect(content[rendered.cursor]).toContain("draft");
 });
 

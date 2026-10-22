@@ -23,7 +23,11 @@ export function stickyRows(f: Frame, history: string[], chrome: string[], scroll
   const height = Math.max(1, f.rows);
   const top = chrome.slice(0, headerHeight(height)).map(row => fit(sanitize(row), f.cols));
   const bottom = liveRows({ ...f, rows: Math.max(1, height - top.length - 1), partial: "", running: [], activity: undefined });
-  const bodyHeight = Math.max(0, height - top.length - bottom.rows.length);
+  const available = Math.max(0, height - top.length - bottom.rows.length);
+  // Reserve a neutral row above the ENTIRE footer, not in history or its tail.
+  // Keep footer/editor geometry unchanged; tiny screens and the last body row win.
+  const gap = height >= 8 && available >= 2 ? 1 : 0;
+  const bodyHeight = available - gap;
   const partial = f.partial ? f.partial.split("\n").flatMap(line => wrap(sanitize(line), f.cols)) : [];
   const tail = [...partial, ...(f.running ?? []), ...(f.activity ? [f.activity] : [])];
   const maxStart = Math.max(0, history.length + tail.length - bodyHeight);
@@ -34,7 +38,7 @@ export function stickyRows(f: Frame, history: string[], chrome: string[], scroll
   const visible = [...history.slice(start, end), ...tail.slice(Math.max(0, start - history.length), Math.max(0, end - history.length))]
     .map(line => fit(sanitize(line), f.cols));
   const padding = Array.from({ length: bodyHeight - visible.length }, () => "");
-  return { rows: [...top, ...visible, ...padding, ...bottom.rows], cols: f.cols, cursor: height - bottom.rows.length + bottom.cursor, col: bottom.col, bodyHeight, start, maxStart };
+  return { rows: [...top, ...visible, ...padding, ...(gap ? [""] : []), ...bottom.rows], cols: f.cols, cursor: height - bottom.rows.length + bottom.cursor, col: bottom.col, bodyHeight, start, maxStart };
 }
 
 /** Repaint changed rows only, without scrolling either bar or flashing the screen. */

@@ -6,10 +6,10 @@ model example-model · effort default · fast off
 /isolated/demo
 example/repo
 ────────────────────────────────────────────────────────────────────────────────
-Conversation record 27
 Conversation record 28
 Conversation record 29
 Conversation record 30
+
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -85,9 +85,9 @@ ast off
 /isolated/demo
 example/repo
 ────────────────────────────────────────
-Conversation record 28
 Conversation record 29
 Conversation record 30
+
 ┌──────────────────────────────────────┐
 │> draft 界                            │
 └──────────────────────────────────────┘
@@ -211,10 +211,10 @@ model example-model · effort default · fast off
 /isolated/demo
 example/repo
 ────────────────────────────────────────────────────────────────────────────────
-Conversation record 27
 Conversation record 28
 Conversation record 29
 Conversation record 30
+
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘

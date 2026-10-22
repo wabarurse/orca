@@ -110,7 +110,12 @@ test("queued layout is bounded at every small size without changing composer geo
     expect(drawn.cursor).toBe(plain.cursor); // no editor space stolen by pending input
     expect(drawn.col).toBe(plain.col);
     expect(drawn.rows[drawn.cursor]).toBe(plain.rows[plain.cursor]);
-    expect(drawn.bodyHeight).toBeGreaterThanOrEqual(Math.min(3, plain.bodyHeight));
+    // The three-row reserve includes the new separator except on tiny screens.
+    expect(drawn.bodyHeight).toBeGreaterThanOrEqual(Math.min(rows < 8 ? 3 : 2, plain.bodyHeight));
+    const bottom = liveRows({ ...f, rows: Math.max(1, rows - 1) });
+    const footerAt = rows - bottom.rows.length;
+    expect(drawn.rows.slice(footerAt)).toEqual(bottom.rows);
+    if (rows >= 8 && footerAt >= 2) expect(drawn.rows[footerAt - 1]).toBe("");
     expect(plain.bodyHeight - drawn.bodyHeight).toBeLessThanOrEqual(6);
     const screen = new FakeScreen(cols, rows);
     screen.write(stickyUpdate(drawn));

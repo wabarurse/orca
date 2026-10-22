@@ -4,8 +4,9 @@ import { tabRow, chapterRows, headerHeight } from "./chrome";
 import { historyRows, lineRows, type Line } from "./lines";
 import { captureAnchor, resolveAnchor } from "./anchor";
 import { userLines } from "./restore";
-import { type Frame } from "./render";
+import { fit, liveRows, type Frame } from "./render";
 import { FakeScreen } from "./testing";
+import { setUserFill, userFill } from "./style";
 import { parseKeys } from "./keys";
 
 const frame = (cols = 80, rows = 24): Frame => ({ cols, rows, input: { prompt: "> ", text: "draft", cursor: 5 }, status: "2 agents running", menu: null });
@@ -29,6 +30,140 @@ test("both bars stay at screen edges while streaming and scrolling; only changed
   expect(stickyUpdate(appended, scrolled)).toBe("");
   expect(terminal.screen().slice(0, 4)).toEqual(chrome);
   expect(terminal.screen().slice(-4)).toEqual(["┌" + "─".repeat(78) + "┐", "│> draft" + " ".repeat(71) + "│", "└" + "─".repeat(78) + "┘", "2 agents running"]);
+});
+
+test("the footer gap is one viewport row, not history, even when the conversation fills the screen", () => {
+  for (const saved of [[], ["short reply"], history.slice(0, 15), history.slice(0, 16), [...history]]) {
+    const before = [...saved];
+    const next = stickyRows(frame(), saved, chrome);
+    expect(next.rows).toHaveLength(24);
+    expect(next.bodyHeight).toBe(15); // 4 header + 15 content + 1 gap + 4 footer
+    expect(next.maxStart).toBe(Math.max(0, saved.length - 15));
+    expect(next.start).toBe(next.maxStart);
+    const visible = saved.slice(next.start, next.start + 15);
+    expect(next.rows.slice(4, 19)).toEqual([...visible, ...Array(15 - visible.length).fill("")]);
+    expect(next.rows[19]).toBe("");
+    expect(Bun.stripANSI(next.rows[20]!)).toStartWith("┌");
+    expect([next.cursor, next.col]).toEqual([21, 8]);
+    expect(saved).toEqual(before);
+  }
+  for (const [requested, start] of [[-1, 0], [0, 0], [10, 10], [84, 84], [85, 85], [100, 85]]) {
+    const next = stickyRows(frame(), history, chrome, requested!);
+    expect(next.start).toBe(start!);
+    expect(next.rows.slice(4, 19)).toEqual(history.slice(start!, start! + 15));
+    expect(next.rows[19]).toBe("");
+  }
+});
+
+test("every streaming tail ends above the blank gap, which never borrows user or footer shading", () => {
+  const fill = userFill();
+  setUserFill("\x1b[48;5;236m");
+  try {
+    const saved = [...history, "\x1b[48;5;236mshaded user row\x1b[0m"];
+    const before = [...saved];
+    const terminal = new FakeScreen(80, 24);
+    let previous: ReturnType<typeof stickyRows> | undefined;
+    const tails: [Partial<Frame>, string][] = [
+      [{}, "shaded user row"],
+      [{ partial: "held line\n" + "x".repeat(85) }, "xxxxx"],
+      [{ running: ["⏺ Bash(wait)"] }, "⏺ Bash(wait)"],
+      [{ activity: "⠋ working…" }, "⠋ working…"],
+      [{ partial: "partial reply", running: ["⏺ Bash(wait)"], activity: "⠙ working…" }, "⠙ working…"],
+      [{}, "shaded user row"],
+    ];
+    for (const [tail, last] of tails) {
+      const next = stickyRows({ ...frame(), ...tail }, saved, chrome);
+      terminal.write(stickyUpdate(next, previous));
+      expect(terminal.screen().slice(18, 21)).toEqual([last, "", "┌" + "─".repeat(78) + "┐"]);
+      expect(terminal.backgrounds()[19]!.some(Boolean)).toBe(false);
+      expect(terminal.backgrounds()[20]!.every(Boolean)).toBe(true);
+      expect([terminal.row, terminal.col]).toEqual([21, 8]);
+      expect(terminal.top).toBe(0);
+      expect(saved).toEqual(before);
+      previous = next;
+    }
+  } finally { setUserFill(fill); }
+});
+
+// This is the existing footer budget, independent of the new viewport-only gap.
+const footer = (f: Frame, header: string[]) => liveRows({
+  ...f, rows: Math.max(1, f.rows - header.length - 1), partial: "", running: [], activity: undefined,
+});
+
+test("gap stays above queued previews and all footer panels; tiny resizes preserve input, counts and the last body row", () => {
+  const question = { text: "Which option?", options: ["one", "two"], index: 0, count: 1, mode: "pick" as const };
+  const items = Array.from({ length: 40 }, (_, i) => `item ${i}`);
+  const panels: Partial<Frame>[] = [
+    {}, { menu: { title: "choose", items: ["one", "two"], index: 1 } },
+    { menu: { title: "full menu", items, index: 20 } },
+    { projects: { items: [], index: 0, status: "no projects" } },
+    { help: { lines: items, top: 4 } },
+    { inbox: { state: "ready", lines: items, top: 3 } },
+    { inbox: { state: "ready", section: "questions", lines: [], top: 0, question } },
+    { question },
+  ];
+  for (const panel of panels) for (const queued of [undefined, { project: "alpha", texts: ["pending one", "pending two\nline"] }]) {
+    const terminal = new FakeScreen(80, 24);
+    let previous: ReturnType<typeof stickyRows> | undefined;
+    for (const [cols, rows] of [[80, 24], [23, 24], [6, 12], [80, 8], [80, 7], [1, 4], [1, 3], [1, 2], [1, 1], [80, 24], [80, 40]]) {
+      terminal.resize(cols!, rows!);
+      const scrollback = terminal.top; // FakeScreen's resize itself may move rows into scrollback.
+      const header = chrome.slice(0, headerHeight(rows!));
+      const f: Frame = { ...frame(cols, rows), ...panel, queued, input: { prompt: "> ", text: "a界é\nhello 👩‍💻\nlast line", cursor: 7 } };
+      const original = JSON.stringify(f);
+      const bottom = footer(f, header), at = rows! - bottom.rows.length;
+      const room = at - header.length;
+      const gap = rows! < 8 || room < 2 ? 0 : 1;
+      const next = stickyRows(f, history, header);
+      expect(next.rows).toHaveLength(rows!);
+      expect(next.rows.every(row => Bun.stringWidth(row) <= cols!)).toBe(true);
+      expect(next.rows.slice(at)).toEqual(bottom.rows); // no displaced preview, input, status or panel row
+      expect(next.bodyHeight).toBe(room - gap);
+      expect(next.bodyHeight).toBeGreaterThanOrEqual(Math.min(1, room));
+      expect(next.start).toBe(history.length - next.bodyHeight);
+      if (gap) expect(next.rows[at - 1]).toBe("");
+      if (next.bodyHeight) expect(next.rows[at - gap - 1]).toBe(fit("message 99", cols!));
+      expect([next.cursor, next.col]).toEqual([at + bottom.cursor, bottom.col]);
+      expect(next.cursor).toBeGreaterThanOrEqual(0);
+      expect(next.cursor).toBeLessThan(rows!);
+      expect(next.col).toBeGreaterThanOrEqual(0);
+      expect(next.col).toBeLessThan(cols!);
+      terminal.write(stickyUpdate(next, previous));
+      expect([terminal.row, terminal.col]).toEqual([next.cursor, next.col]);
+      expect(terminal.screen()).toEqual(next.rows.map(row => Bun.stripANSI(row).trimEnd()));
+      expect(terminal.top).toBe(scrollback);
+      if (gap) expect(terminal.backgrounds()[terminal.top + at - 1]!.some(Boolean)).toBe(false);
+      expect(JSON.stringify(f)).toBe(original);
+      previous = next;
+    }
+  }
+  // A full menu leaves only the reserved conversation row even on a normal terminal.
+  const full = stickyRows({ ...frame(), menu: { title: "full", items, index: 20 } }, history, chrome);
+  expect(full.bodyHeight).toBe(1);
+  expect(full.rows[4]).toBe("message 99");
+  const tiny = stickyRows(frame(80, 1), history, []);
+  expect(tiny.bodyHeight).toBe(0);
+  expect(tiny.rows.map(row => Bun.stripANSI(row).trimEnd())).toEqual(["> draft"]);
+});
+
+test("height changes and width reflow anchor real content, not the gap; returning to tail shows the last row", () => {
+  const lines: Line[] = Array.from({ length: 40 }, (_, i) => ({ md: `record ${i}: ` + "words ".repeat(25) }));
+  const original = JSON.stringify(lines);
+  const saved = historyRows(lines, 80);
+  const top = saved.findIndex(row => row.startsWith("record 20:")) + 1;
+  const anchor = captureAnchor(lines, 80, top);
+  for (const [cols, rows] of [[80, 24], [23, 24], [23, 7], [23, 8], [10, 12], [80, 40], [80, 24]]) {
+    const header = chrome.slice(0, headerHeight(rows!));
+    const f = frame(cols, rows), history = historyRows(lines, cols!);
+    const start = resolveAnchor(lines, cols!, anchor);
+    const next = stickyRows(f, history, header, start);
+    expect(next.start).toBe(start);
+    expect(next.rows.slice(header.length, header.length + next.bodyHeight)).toEqual(history.slice(start, start + next.bodyHeight));
+    const following = stickyRows(f, history, header);
+    expect(following.start).toBe(history.length - following.bodyHeight);
+    expect(following.rows[header.length + following.bodyHeight - 1]).toBe(history.at(-1)!);
+    expect(JSON.stringify(lines)).toBe(original);
+  }
 });
 
 test("resize, wrapped input and menus keep the cursor in the bottom bar without stale rows", () => {
@@ -66,7 +201,7 @@ test("selected activity and tools live only at the conversation tail, never in e
   const first = stickyRows(f, history, header);
   s.write(stickyUpdate(first));
   const at = s.screen().indexOf("⠋ working…");
-  expect(s.screen().slice(at - 2, at + 2)).toEqual(["partial reply", "⏺ Bash(wait)", "⠋ working…", "┌" + "─".repeat(78) + "┐"]);
+  expect(s.screen().slice(at - 2, at + 3)).toEqual(["partial reply", "⏺ Bash(wait)", "⠋ working…", "", "┌" + "─".repeat(78) + "┐"]);
   expect(s.backgrounds()[at]!.some(Boolean)).toBe(false);
   const read = stickyRows(f, history, header, 3);
   s.write(stickyUpdate(read, first));

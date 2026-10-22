@@ -332,8 +332,8 @@ function footerBase(f: Frame): { status: string[]; input: InputArea; queued: str
   const status = statusRows(f.status, f.cols, f.rows);
   const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, status.length);
   const available = Math.max(0, f.rows - input.lines.length - status.length);
-  // stickyRows already reserves one conversation row. Leave two more when
-  // possible, cap previews at six rows / a third of the remaining terminal.
+  // stickyRows already reserves one conversation row. Leave two more for content
+  // and its separator when possible; cap previews at six rows / a third of the footer.
   const height = Math.min(6, Math.floor(f.rows / 3), Math.max(0, available - 2));
   const queued = queuedRows(f.queued, f.cols, height);
   return { status, input, queued, free: available - queued.length };
@@ -371,7 +371,7 @@ export function taskInboxPanel(f: Frame): ReturnType<typeof helpPanel> {
 
 function scrollPanel(f: Frame, view: Help | null | undefined, title: string, shortTitle: string, inbox = false): ReturnType<typeof helpPanel> {
   const { free } = footerBase(f);
-  // stickyRows already reserves one body row; leave two more where possible.
+  // stickyRows already reserves one body row; leave two more for content and its separator.
   const height = Math.min(free, 18, Math.max(1, Math.floor(f.rows * 0.65)), Math.max(1, free - 2));
   const lines = view?.lines ?? [];
   const headingRows = view?.heading && height >= 4 ? [view.heading] : [];
