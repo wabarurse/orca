@@ -1,3 +1,5 @@
+import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./web-search";
+import { claudeSearchResults } from "./search-results";
 import { CLAUDE_BETAS } from "../claude-auth";
 import { validateSettings, type RequestSettings } from "../project-settings";
 import Anthropic from "@anthropic-ai/sdk";
@@ -26,6 +28,29 @@ export function anthropic(client: Anthropic): Provider {
       stream.on("text", req.onText);
       const message = await stream.finalMessage();
       return completedTurn(message);
+    },
+    async search(req) {
+      req.signal.throwIfAborted();
+      const settings = claudeRequestSettings(req.model, req.settings);
+      // Clone shares the configured subscription auth; no alternate model/client.
+      const message = await client.withOptions({ maxRetries: 0, logLevel: "off" }).messages.create({
+        ...settings, model: req.model, max_tokens: 2048,
+        system: [
+          { type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." },
+          { type: "text", text: SEARCH_INSTRUCTIONS },
+        ],
+        messages: [{ role: "user", content: searchPrompt(req) }],
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }],
+      }, { signal: req.signal, maxRetries: 0,
+        ...(req.settings?.fast && req.model !== "claude-opus-5-5"
+          ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}),
+        middleware: [async (request, next) => {
+          req.signal.throwIfAborted();
+          return boundedSearchResponse(await next(request), req.signal);
+        }],
+      });
+      req.signal.throwIfAborted();
+      return claudeSearchResults(message);
     },
     async models() {
       const all: { id: string; created_at: string }[] = [];

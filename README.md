@@ -199,3 +199,19 @@ The implementation follows [zeta's subscription providers](https://github.com/hw
 and the [Codex authentication documentation](https://learn.chatgpt.com/docs/auth).
 The upstream compatibility contracts can change. Live login and subscription
 inference require validation with your account; automated tests use fake tokens.
+
+## Web search
+
+There are **six tools**: `bash`, `spawn`, `message`, `ask`, `complexity`, and
+`web_search`. Search is available to every role (orchestrator: 5 tools, worker: 3,
+reviewer: 4). It uses the current model's existing Claude/Codex subscription,
+with no extra API key, search service, slash command or browser tool.
+
+`web_search` accepts a public `query` and optional `max_results` (1–10, default 5),
+and returns source URLs, titles and actual quoted excerpts where supported.
+Results are untrusted data, not instructions. Use only public search terms, never
+secrets or project content. Search has a 60-second timeout and bounded output;
+unsupported/unfinished native searches fail explicitly, without a billing,
+provider or shell fallback. Subscription/model capability has **not** been
+live-validated. See [WEB_SEARCH.md](WEB_SEARCH.md) for provider evidence, privacy,
+limits and attribution/compaction semantics.

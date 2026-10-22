@@ -1,4 +1,7 @@
 import type { Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
+import type { Provider } from "../providers";
+import type { RequestSettings } from "../project-settings";
+import { web_search } from "./web-search";
 import type { Role } from "../transcript";
 import { ask } from "./ask";
 import { bash } from "./bash";
@@ -8,6 +11,8 @@ import { spawn } from "./spawn";
 
 export interface ToolContext {
   signal?: AbortSignal;
+  /** Snapshot that produced this tool call; never re-resolve mid-batch. */
+  selected?: { model: string; provider: Provider; settings?: RequestSettings };
   project: string;
   role: Role;
   branch?: string;
@@ -21,9 +26,9 @@ export interface Tool {
 
 // Which tools each role gets. The set is deliberately small.
 export const toolsFor: Record<Role, string[]> = {
-  orchestrator: ["bash", "spawn", "message", "ask"],
-  worker: ["bash", "message"],
-  reviewer: ["bash", "message", "complexity"],
+  orchestrator: ["bash", "spawn", "message", "ask", "web_search"],
+  worker: ["bash", "message", "web_search"],
+  reviewer: ["bash", "message", "complexity", "web_search"],
 };
 
-export const registry: Record<string, Tool> = { bash, spawn, message, ask, complexity };
+export const registry: Record<string, Tool> = { bash, spawn, message, ask, complexity, web_search };

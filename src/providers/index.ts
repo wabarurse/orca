@@ -1,3 +1,4 @@
+import type { SearchRequest, SearchResult } from "./web-search";
 import type { RequestSettings } from "../project-settings";
 // A provider turns the transcript into one model turn. The transcript stays
 // Anthropic-shaped (text / tool_use / tool_result blocks) whatever the
@@ -32,6 +33,8 @@ export interface CompleteRequest {
 export interface Provider {
   name: ProviderName;
   complete(req: CompleteRequest): Promise<Turn>;
+  /** Isolated native search on this same subscription connection. No history is sent. */
+  search?(req: SearchRequest): Promise<SearchResult>;
   /** Model ids this account can use, most useful first. */
   models(): Promise<string[]>;
 }

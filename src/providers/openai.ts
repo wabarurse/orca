@@ -1,3 +1,5 @@
+import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./web-search";
+import { codexSearchResults } from "./search-results";
 import { validateSettings, type RequestSettings } from "../project-settings";
 import OpenAI from "openai";
 import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
@@ -103,6 +105,27 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
       const content = fromResponses(output);
       return { completion: summaryCompletion(output), content, stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
     },
+    async search(req) {
+      req.signal.throwIfAborted();
+      const settings = codexRequestSettings(req.model, req.settings);
+      const stream = await authorizedRequest(credentials, client => client.withOptions({
+        maxRetries: 0, logLevel: "off",
+        fetch: async (url, init) => {
+          req.signal.throwIfAborted();
+          return boundedSearchResponse(await fetch(url, init), req.signal);
+        },
+      }).responses.create({
+        model: req.model, store: false, stream: true,
+        instructions: `You are Codex, an AI coding agent.\n\n${SEARCH_INSTRUCTIONS}`,
+        input: [{ role: "user", content: searchPrompt(req) }],
+        ...settings, include: ["reasoning.encrypted_content"],
+        tools: [{ type: "web_search", external_web_access: true, search_context_size: "low" }],
+        tool_choice: "auto",
+      }, { signal: req.signal, maxRetries: 0 }), req.signal);
+      const output = await completedOutput(stream as AsyncIterable<CodexStreamEvent>, () => {}, true);
+      req.signal.throwIfAborted();
+      return codexSearchResults(output);
+    },
     async models() {
       const catalog = await request((client) => client.get<{ models: { slug: string; visibility?: string; priority?: number }[] }>("/models", {
         query: { client_version: CODEX_CLIENT_VERSION },
@@ -123,27 +146,33 @@ export function codexRequestSettings(model: string, settings: RequestSettings = 
 }
 
 const FAILED_EVENTS = new Set(["response.failed", "response.incomplete", "error"]);
-async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: (text: string) => void): Promise<ResponseOutputItem[]> {
+async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: (text: string) => void, strict = false): Promise<ResponseOutputItem[]> {
   const doneItems = new Map<number, ResponseOutputItem>();
   for await (const event of stream) {
     if (event.type === "response.output_text.delta") onText(event.delta);
     else if (event.type === "response.output_item.done") doneItems.set(event.output_index, event.item);
-    else if (event.type === "response.completed" || event.type === "response.done") return finalOutput(event, doneItems);
+    else if (event.type === "response.completed" || event.type === "response.done") return finalOutput(event, doneItems, strict);
     else if (FAILED_EVENTS.has(event.type)) throw new Error("Codex response failed or was incomplete; no tool calls were executed.");
   }
   throw new Error("Codex stream ended before the response completed.");
 }
-function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEvent, "type"> & { type: "response.done" }), items: Map<number, ResponseOutputItem>): ResponseOutputItem[] {
+function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEvent, "type"> & { type: "response.done" }), items: Map<number, ResponseOutputItem>, strict = false): ResponseOutputItem[] {
+  if (strict && event.response.status !== "completed") throw new Error("Codex search did not complete successfully.");
   if (event.response.status && event.response.status !== "completed") throw new Error("Codex response did not complete successfully.");
   return event.response.output ?? [...items].sort(([a], [b]) => a - b).map(([, item]) => item);
 }
 
-async function authorizedRequest<T>(credentials: ReturnType<typeof codexCredentials>, run: (client: OpenAI) => Promise<T>): Promise<T> {
+async function authorizedRequest<T>(credentials: ReturnType<typeof codexCredentials>, run: (client: OpenAI) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
   const tokens = await credentials();
+  signal?.throwIfAborted();
   try { return await run(clientFor(tokens)); }
   catch (error) {
     if (!(error instanceof OpenAI.APIError) || error.status !== 401) throw error;
     // Retry only the initial HTTP request, never a partially consumed stream.
-    return run(clientFor(await credentials({ forceRefresh: true })));
+    signal?.throwIfAborted();
+    const refreshed = await credentials({ forceRefresh: true });
+    signal?.throwIfAborted();
+    return run(clientFor(refreshed));
   }
 }
