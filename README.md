@@ -26,7 +26,10 @@ start there). With no project named it also reopens every project under
 `~/.parallels/projects`. The ruled, pinned header shows bracketed project/display names (the active one
 marked `>`), cached model, effort, fast mode, directory and remote, and refreshes
 when settings change.
-Short terminals collapse header details to keep the input usable.
+Short terminals collapse header details to keep the input usable. A blank row
+separates the conversation (including streaming output) from the entire footer,
+above any queued previews. It is omitted below eight terminal rows or when it
+would take the last conversation row; input and footer panels keep their space.
 The bottom band puts queued prompt previews immediately above the boxed input,
 then grouped running worker/reviewer, queued-message and **Inbox** counts (unanswered questions only); these
 stack on narrow screens. Every menu

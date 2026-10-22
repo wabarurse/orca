@@ -33,7 +33,10 @@ describe("help appearance fixtures", () => {
       expect(plain(screen.rows)).toMatchSnapshot();
       const rows = screen.rows.map(Bun.stripANSI);
       expect(rows.findIndex(row => row.startsWith("Help"))).toBeGreaterThan(rows.findIndex(row => row.startsWith("└")));
-      expect(screen.bodyHeight).toBeGreaterThanOrEqual(3);
+      const footerAt = rows.findIndex(row => row.startsWith("┌"));
+      expect(rows.slice(footerAt - 2, footerAt)).toEqual(["Conversation record 30", ""]);
+      expect(screen.bodyHeight).toBe(footerAt - chrome(f).length - 1);
+      expect(screen.bodyHeight).toBeGreaterThanOrEqual(2);
       expect(rows[screen.cursor]).toContain("draft 界");
     });
     test(`${cols} columns: full grouped content, including less prominent diagnostics`, () => {

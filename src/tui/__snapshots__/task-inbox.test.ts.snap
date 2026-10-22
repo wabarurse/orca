@@ -6,13 +6,13 @@ model fake-model
 /isolated/repo
 owner/repo
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Conversation 23
 Conversation 24
 Conversation 25
 Conversation 26
 Conversation 27
 Conversation 28
 Conversation 29
+
 Queued 1/1 · orchestrator · isolated
   1. pending input
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -33,13 +33,13 @@ model fake-model
 /isolated/repo
 owner/repo
 ────────────────────────────────────────────────────────────────────────────────
-Conversation 23
 Conversation 24
 Conversation 25
 Conversation 26
 Conversation 27
 Conversation 28
 Conversation 29
+
 Queued 1/1 · orchestrator · isolated
   1. pending input
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -60,10 +60,10 @@ model fake-model
 /isolated/repo
 owner/repo
 ────────────────────────────────────────
-Conversation 26
 Conversation 27
 Conversation 28
 Conversation 29
+
 Queued 1/1 · orch · isolated
   1. pending input
 ┌──────────────────────────────────────┐
