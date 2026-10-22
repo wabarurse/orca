@@ -7,7 +7,7 @@ import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sd
 import type { Provider, Turn } from "./index";
 
 // accounts.ts supplies Claude Code subscription credentials. There is no API-key mode.
-export function anthropic(client: Anthropic): Provider {
+export function anthropic(client: Anthropic, options: { promptCache?: boolean } = {}): Provider {
   return {
     name: "anthropic",
     async complete(req) {
@@ -16,6 +16,8 @@ export function anthropic(client: Anthropic): Provider {
         ...settings,
         model: req.model,
         max_tokens: req.maxTokens,
+        // Cache the growing conversation prefix without changing transcript blocks.
+        ...(options.promptCache ? { cache_control: { type: "ephemeral" as const } } : {}),
         messages: claudeMessages(req.messages),
         // The identity line is required by the Claude Code OAuth path; the role prompt follows it.
         system: [
@@ -64,7 +66,9 @@ export function anthropic(client: Anthropic): Provider {
 function completedTurn(message: Message): Turn {
   const usage = message.usage;
   const inputTokens = usage ? usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) : undefined;
-  return { completion: message.stop_reason ?? "unknown", inputTokens, content: message.content,
+  return { completion: message.stop_reason ?? "unknown", inputTokens,
+    ...(usage ? { usage: { input: inputTokens!, cachedInput: usage.cache_read_input_tokens ?? 0,
+      cacheWriteInput: usage.cache_creation_input_tokens ?? 0, output: usage.output_tokens } } : {}), content: message.content,
     stop: message.stop_reason === "tool_use" ? "tool_use" : "end" };
 }
 

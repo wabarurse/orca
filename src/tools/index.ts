@@ -24,6 +24,8 @@ export interface ToolContext {
 
 export interface Tool {
   spec: ApiTool;
+  /** Explicit independence contract; omitted tools are ordering barriers. */
+  parallel?: (input: Record<string, unknown>) => boolean;
   run(input: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }
 

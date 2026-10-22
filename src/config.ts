@@ -43,6 +43,12 @@ export interface Config {
   account: string;
   /** Codex/ChatGPT subscription profile saved by /login openai. Empty = default. */
   openaiAccount: string;
+  /** Reuse Claude request prefixes; cache reads still count toward context. */
+  anthropicPromptCache: boolean;
+  /** Maximum overlap for calls explicitly marked independent; 1 is sequential. */
+  toolConcurrency: number;
+  /** Maximum bytes saved per shell command before terminating its process group. */
+  maxToolOutputBytes: number;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
   /** Max review rounds before the orchestrator reports what is still open; 0 skips review and goes straight to CI. */
@@ -60,6 +66,9 @@ export const defaults: Config = {
   contextLimitFallback: 128000,
   account: "",
   openaiAccount: "",
+  anthropicPromptCache: true,
+  toolConcurrency: 4,
+  maxToolOutputBytes: 64 * 1024 * 1024,
   maxToolResultBytes: 16 * 1024,
   maxReviewRounds: 1,
   cyclomatic: 10,
@@ -87,6 +96,10 @@ export async function loadConfig(): Promise<Config> {
     return defaults;
   }
   const config = { ...defaults, ...parsed };
+  if (typeof config.anthropicPromptCache !== "boolean") config.anthropicPromptCache = defaults.anthropicPromptCache;
+  if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
+  if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;
+  if (!integerWithin(config.maxToolOutputBytes, 1024, 256 * 1024 * 1024)) config.maxToolOutputBytes = defaults.maxToolOutputBytes;
   if (!validRounds(config.maxReviewRounds)) config.maxReviewRounds = defaults.maxReviewRounds;
   return config;
 }
@@ -102,4 +115,8 @@ export async function saveConfig(patch: Partial<Config>): Promise<Config> {
   const lines = Object.entries(next).map(([k, v]) => `${k} = ${JSON.stringify(v)}`);
   await Bun.write(paths.config, lines.join("\n") + "\n");
   return next;
+}
+
+function integerWithin(value: number, min: number, max: number): boolean {
+  return Number.isSafeInteger(value) && value >= min && value <= max;
 }

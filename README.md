@@ -245,6 +245,31 @@ and the [Codex authentication documentation](https://learn.chatgpt.com/docs/auth
 The upstream compatibility contracts can change. Live login and subscription
 inference require validation with your account; automated tests use fake tokens.
 
+## Tool efficiency
+
+Claude prompt-prefix caching is enabled by default (`anthropicPromptCache = true`
+in `~/.parallels/config.toml`). It reuses eligible prefixes without rewriting
+instructions or history. Cached tokens still occupy context; caching does not
+replace compaction or guarantee faster responses.
+
+Bash streams full output into private files under
+`~/.parallels/projects/<project>/tool-outputs/`, outside the repository.
+Normal output up to `maxToolResultBytes` (16 KiB by default) stays intact.
+Larger output returns a head/tail preview of at most 4 KiB and the saved file path,
+which the model can inspect with bounded shell reads. `max_output_bytes` adjusts a
+call's preview from 512 bytes up to the configured cap (at most 64 KiB).
+A command exceeding `maxToolOutputBytes` (64 MiB by default) is terminated;
+its saved output is explicitly partial, as are timeouts and cancelled commands.
+Before the next command, completed outputs are pruned to seven days and a
+256 MiB project budget. Active files are excluded until stale, and newly completed
+files can temporarily exceed the budget. Saved output is temporary, not an archive.
+
+The model can mark independent read-only Bash calls with `independent = true`.
+Up to `toolConcurrency` calls (default 4, configurable 1–32) overlap within a
+batch; all other calls are ordering barriers. Tool results retain request order.
+Edits and calls depending on earlier results must stay ordered. This flag is a
+model contract, not a shell sandbox. Set concurrency to 1 for sequential execution.
+
 ## Web search
 
 There are **seven tools**: `bash`, `spawn`, `message`, `ask`, `complexity`,

@@ -36,7 +36,7 @@ export async function accounts(): Promise<Account[]> {
   return out;
 }
 
-export async function provider(name: ProviderName): Promise<Provider> {
+export async function provider(name: ProviderName, options: { promptCache?: boolean } = {}): Promise<Provider> {
   const config = await loadConfig();
   const profile = activeProfile(name === "anthropic" ? config.account : config.openaiAccount);
   if (name === "anthropic") {
@@ -50,7 +50,7 @@ export async function provider(name: ProviderName): Promise<Provider> {
       credentials: claudeCredentials(profile),
       defaultHeaders: { "anthropic-beta": CLAUDE_BETAS, "x-api-key": null },
       fetchOptions: { redirect: "error" },
-    }));
+    }), { promptCache: options.promptCache ?? (config.anthropicPromptCache === true) });
   }
   if (!(await readCodexTokens(profile))) throw new Error(`Codex profile '${profile}' is not signed in; run /login openai ${profile}.`);
   return openai(codexCredentials(profile));
