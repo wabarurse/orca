@@ -86,6 +86,10 @@ interrupts a running tool. Assistant message identity is retained across streame
 source lines and transcript entries. Logical conversation blocks have a neutral blank
 row between them, not between a tool's label and result or wrapped rows.
 
+The orchestrator should reserve questions for necessary unresolved decisions, not
+routine approved work. Clear answers and authorization in chat count, but do not
+close existing queued questions.
+
 Questions never open automatically or take your draft. Ctrl+Q or `/questions`
 opens the oldest pending question below the input, with numbered options,
 "type your own answer" and "skip (use default: …)". ↑↓ or 1–9 choose and Enter
