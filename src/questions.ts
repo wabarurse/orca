@@ -3,7 +3,8 @@ import { inputEpoch } from "./user-input";
 // questions/, one file per question, named like inbox messages so a sorted
 // listing is ask order. Unlike the inbox, files stay after they are answered
 // or skipped; the status field records it. The answer travels back to the
-// orchestrator as an ordinary inbox message from "user".
+// orchestrator as an ordinary inbox message from "user". Skips are local
+// durable dismissals only: no reply, default application or agent wakeup.
 
 import { mkdirSync } from "node:fs";
 import { open, readdir, rename, unlink } from "node:fs/promises";
@@ -60,8 +61,12 @@ async function write(project: string, q: Question): Promise<void> {
   const d = paths.questions(project);
   mkdirSync(d, { recursive: true });
   const tmp = join(d, `.${q.id}.${crypto.randomUUID().slice(0, 8)}.tmp`);
-  await Bun.write(tmp, JSON.stringify(q) + "\n");
-  await rename(tmp, file(project, q.id));
+  try {
+    await Bun.write(tmp, JSON.stringify(q) + "\n");
+    await rename(tmp, file(project, q.id));
+  } finally {
+    await unlink(tmp).catch(() => {});
+  }
 }
 
 let seq = 0;
@@ -81,6 +86,17 @@ export async function ask(project: string, items: NewQuestion[]): Promise<Questi
   return out;
 }
 
+/** Validate both listing and closing; malformed records must never be rewritten. */
+function checkedQuestion(raw: unknown, name: string): Question {
+  const q = raw as Question;
+  if (!q || typeof q.id !== "string" || `${q.id}.json` !== name || typeof q.text !== "string" || typeof q.ts !== "string"
+    || !["open", "answered", "skipped"].includes(q.status)
+    || (q.options !== undefined && (!Array.isArray(q.options) || q.options.some(o => typeof o !== "string")))
+    || (q.default !== undefined && typeof q.default !== "string")
+    || (q.answer !== undefined && typeof q.answer !== "string")) throw new Error(`invalid question record: ${name}`);
+  return q;
+}
+
 /** Every question, oldest first. Reads every file on each call: answered and
  * skipped files are kept as history, so this grows with the project. */
 export async function all(project: string): Promise<Question[]> {
@@ -88,12 +104,7 @@ export async function all(project: string): Promise<Question[]> {
   const out: Question[] = [];
   for (const name of names) {
     try {
-      const q = await Bun.file(join(paths.questions(project), name)).json() as Question;
-      if (!q || typeof q.id !== "string" || typeof q.text !== "string" || typeof q.ts !== "string"
-        || !["open", "answered", "skipped"].includes(q.status)
-        || (q.options !== undefined && (!Array.isArray(q.options) || q.options.some(o => typeof o !== "string")))
-        || (q.default !== undefined && typeof q.default !== "string")
-        || (q.answer !== undefined && typeof q.answer !== "string")) throw new Error(`invalid question record: ${name}`);
+      const q = checkedQuestion(await Bun.file(join(paths.questions(project), name)).json(), name);
       out.push(q);
     } catch (err) {
       // A disappearing file may have been removed with the project. Other
@@ -121,25 +132,29 @@ async function claim(project: string, id: string): Promise<string> {
   return path;
 }
 
-/** Close an open question and tell the orchestrator. If either step fails the
- * question is put back to open and the claim released, so it can be retried. */
-async function close(project: string, id: string, status: Exclude<Status, "open">, tell: (q: Question) => string, answer?: string): Promise<Question> {
-  const userEpoch = inputEpoch(project);
+/** Persist one close under the exclusive claim. Only an explicit answer has a
+ * delivery payload; dismissal must not touch inboxes or input epochs. On write
+ * or delivery failure restore the open record before releasing the claim. If
+ * rollback itself fails, retain the claim rather than allow duplicate delivery. */
+async function close(project: string, id: string, reply?: { answer: string; userEpoch: string }): Promise<Question> {
   if (!/^[\w.-]+$/.test(id) || id.includes("..")) throw new Error(`bad question id ${id}`);
   const f = Bun.file(file(project, id));
   if (!(await f.exists())) throw new Error(`no question ${id}`);
-  const q = (await f.json()) as Question;
+  const q = checkedQuestion(await f.json(), `${id}.json`);
   if (q.status !== "open") throw new Error(`question ${id} is already ${q.status}`);
   const lock = await claim(project, id);
-  const next: Question = { ...q, status, ...(answer === undefined ? {} : { answer }) };
+  const next: Question = { ...q, status: reply ? "answered" : "skipped" };
+  if (reply) next.answer = reply.answer;
   let written = false;
   try {
     await write(project, next);
     written = true;
-    await put(project, "orchestrator", { from: "user", text: tell(next), userEpoch });
+    if (reply) await put(project, "orchestrator", {
+      from: "user", text: `[${q.id}] answer to "${q.text}": ${reply.answer}`, userEpoch: reply.userEpoch,
+    });
   } catch (e) {
     if (written) await write(project, q);
-    await unlink(lock).catch(() => {});
+    await unlink(lock);
     throw e;
   }
   return next;
@@ -149,13 +164,11 @@ async function close(project: string, id: string, status: Exclude<Status, "open"
 export async function answer(project: string, id: string, text: string): Promise<Question> {
   const a = clean(text, limits.answer, "answer");
   if (!a) throw new Error("empty answer");
-  return close(project, id, "answered", (q) => `[${q.id}] answer to "${q.text}": ${a}`, a);
+  return close(project, id, { answer: a, userEpoch: inputEpoch(project) });
 }
 
-/** Skip an open question; the orchestrator falls back to its default. */
+/** Silently remove an open question from Inbox, retaining its skipped history.
+ * A stored default is only a suggestion, never an implicit answer or approval. */
 export async function skip(project: string, id: string): Promise<Question> {
-  return close(project, id, "skipped", (q) => {
-    const tail = q.default ? `; use your default (${q.default})` : " (no default given); decide yourself";
-    return `[${q.id}] skipped "${q.text}"${tail}`;
-  });
+  return close(project, id);
 }

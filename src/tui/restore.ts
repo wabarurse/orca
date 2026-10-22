@@ -22,14 +22,15 @@
 //   reviewer messages to "user" (not in the orchestrator's transcript) are lost.
 // - "user" messages that did not come from the TUI (`parallels msg`) show as
 //   "> …" both live and restored.
-// - A question answered or skipped in this TUI showed live as its dim
+// - An explicit answer (or a legacy delivered skip) showed live as its dim
 //   "? <question> → <answer>" line when it was answered; restored, the same
 //   line sits where the orchestrator read the answer from its inbox (answers
 //   from another TUI show there live too). Questions still open are not in the
 //   transcript: the queue shows them again from questions/. A reply is read
 //   by its question's id against questions/ (answered and skipped files are
 //   kept), so quotes or `": ` in the question cannot confuse it; only a
-//   missing file falls back to parsing the message text.
+//   missing file falls back to parsing the message text. New silent skips only
+//   update questions/; their local dismissal notes are not transcript entries.
 // - Errors, command output (/help, /models, …), status notes ("queued; runs
 //   after sign-in") and anything else the app itself said are not in the
 //   transcript and are not restored.
@@ -56,7 +57,8 @@ export function userLines(text: string): Line[] {
   return [`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`)].map((user) => ({ user }));
 }
 
-/** A question closed by the user, as the page shows it: one dim line, the answer or "skipped" (with the default) after an arrow. */
+/** An explicit answer or historical delivered skip. The default tail is legacy
+ * transcript compatibility only; new silent dismissals never use this path. */
 export function answeredLine(question: string, answer: string | null, def?: string): string {
   const tail = answer ?? (def ? `skipped, default: ${def}` : "skipped");
   return dim(`? ${plainText(question)} → ${plainText(tail)}`);
@@ -64,7 +66,7 @@ export function answeredLine(question: string, answer: string | null, def?: stri
 
 /** A question id as questions.ts makes them: its ask time, a sequence number and a random suffix. */
 const QUESTION_ID = String.raw`\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{3}Z-\d{6}-[0-9a-f]{8}`;
-/** The start of the inbox message questions.ts sends for an answer or a skip. */
+/** The start of a delivered answer or legacy skip message. */
 const REPLY_HEAD = new RegExp(`^\\[(${QUESTION_ID})\\] (answer to|skipped) "`);
 /** Fallbacks for a question whose file is gone: the text is cut at the last `": ` (answers) or matched against the skip's tail. */
 const ANSWERED = new RegExp(`^\\[${QUESTION_ID}\\] answer to "([^\\n]*?)": ([^\\n]*)$`);

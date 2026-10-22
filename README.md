@@ -121,20 +121,26 @@ with **?** for unknown background data. Task and question stores remain distinct
 
 Questions never open automatically or take your draft. Ctrl+Q or `/questions`
 opens the Questions section with the oldest pending question below the input, with numbered options,
-"type your own answer" and "skip (use default: …)". ↑↓ or 1–9 choose and Enter
+"type your own answer" and "skip — remove from inbox". ↑↓ or 1–9 choose and Enter
 picks. Typing switches to `answer>`; an optionless question starts there.
 Esc, Tab or Ctrl+Q closes the panel without answering or skipping, and restores
 your chat draft. The answer draft and cursor are retained across sections, closing and project switches.
 Project switches close Inbox; explicitly reopen to resume the answer. Only selecting
-"skip" and pressing Enter skips. New arrivals update the count, not the input.
-Answering the last question closes the panel; a later question needs explicit
+"skip" and pressing Enter durably removes that question from Inbox and decrements
+the count, keeping its skipped history. Skip sends no message, applies no default
+and never wakes/resumes an agent, including paused or cancelled work. Silence and
+panel dismissal also never apply a default or grant approval; an optional stored
+default is only a suggestion for an explicit answer. New arrivals update the count, not the input.
+Answering or skipping the last question closes the panel; a later question needs explicit
 opening again. Explicitly opening an empty queue shows No open questions. A half-second guard after opening prevents accidental answers.
 Menus take precedence over questions; Ctrl+Q does nothing while a menu/project
 list is open. On a one-row terminal the input takes the whole live region: a modal panel
 can be hidden while still owning keys; Esc closes it. In an agent view Questions
 shows a guard, never an answer field: close Inbox, then Esc or `/back` to the
 project orchestrator before answering. Each answer leaves a
-dim `? question → answer` line; background projects' question counts are shown too.
+dim `? question → answer` line; a skip leaves only a local removed-from-inbox note,
+not a delivered reply or model input. Historical delivered skip/default messages
+still render as before. Background projects' question counts are shown too.
 
 Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
 
@@ -274,7 +280,11 @@ message/question/prompt queues.
 **`/inbox`** opens the USER inbox’s **Tasks** section: a read-only
 **Name | Summary | Status | PR link** table below
 the composer/counts, showing only the selected project's active registered tasks.
-Waiting/blocked/cancelled/closed/unknown attention and query errors stay explicit;
+Small Tasks/Questions tabs show one compact section at a time. Status is exactly
+one plain label: stored attention (waiting/blocked/cancelled/closed/unknown) takes
+precedence over lifecycle (queued/working/reviewing/ready to merge). No extra
+status detail or reason appears under a task; stored lifecycle, attention and
+reason remain unchanged. Global loading/query-error/stale warnings stay explicit;
 empty means no active registered tasks, not that unregistered work completed.
 Scroll with ↑/↓, Page Up/Down, wheel or Home/End; **r** refreshes the local snapshot;
 **Esc/Tab** closes without submitting or changing drafts. **Shift+Tab** switches

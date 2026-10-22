@@ -1531,7 +1531,7 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("Esc never sends: it clears a typed answer, then puts the queue off; skip is a row", async () => {
+  test("Esc preserves the answer without sending; only explicit skip silently removes each question", async () => {
     await askQuestions("qa-esc", [{ text: "Port?", options: ["80", "8080"], default: "8080" }, { text: "Host?" }]);
     const { term, app, stop } = await start("qa-esc");
     await until(() => live(term).includes("? Port? (1 of 2)"));
@@ -1548,14 +1548,18 @@ describe("orchestrator questions", () => {
     term.type("/questions\r");
     await until(() => live(term).includes("answer> 90")); // preserved
     term.press({ name: "down" }); // to the skip row
-    await until(() => live(term).includes("❯ skip (use default: 8080)"));
+    await until(() => live(term).includes("❯ skip — remove from inbox"));
     term.press({ name: "enter" });
-    await until(() => term.screen().includes("? Port? → skipped, default: 8080"));
-    await until(() => live(term).includes("? Host?") && live(term).includes("  skip"));
+    await until(() => term.screen().includes("? Port? → skipped, removed from inbox"));
+    await until(() => live(term).includes("? Host?") && live(term).includes("  skip — remove from inbox"));
     term.press({ name: "down" }); // a question without options: own answer, then skip
     term.press({ name: "enter" });
-    await until(() => term.screen().includes("? Host? → skipped"));
+    await until(() => term.screen().includes("? Host? → skipped, removed from inbox"));
     expect(await statusOf("qa-esc")).toEqual([["Port?", "skipped", null], ["Host?", "skipped", null]]);
+    expect(await drain("qa-esc", "orchestrator")).toEqual([]);
+    expect(app.page!.sent).toEqual([]);
+    expect(app.status(app.page!)).toEndWith("Inbox 0");
+    expect(app.page!.lines.map(raw).join("\n")).not.toContain("default:");
     expect(app.input.text).toBe("");
     await stop();
   });
@@ -1645,7 +1649,7 @@ describe("orchestrator questions", () => {
     term.type("my answer");
     await until(() => live(term).includes("answer> my answer"));
     await answerQuestion("qa-moved", first!.id, "sqlite"); // another TUI
-    await until(() => term.screen().includes('"Which db?" was answered elsewhere'));
+    await until(() => term.screen().includes('"Which db?" was closed elsewhere'));
     await until(() => !app.questions.view());
     expect(app.input.text).toBe("");
     expect(term.screen()).toContain("unsent answer: my answer");
@@ -1667,7 +1671,7 @@ describe("orchestrator questions", () => {
     term.type("mine");
     await answerQuestion("qa-race", first!.id, "sqlite"); // another TUI; no poll sees it
     term.press({ name: "enter" });
-    await until(() => term.screen().includes("already answered elsewhere; your answer was not sent"));
+    await until(() => term.screen().includes("already closed elsewhere; your answer was not sent"));
     expect(app.input.text).toBe("");
     expect(app.page!.lines.map(raw).join(" ")).toContain("unsent answer: mine");
     await until(() => !app.questions.view());
@@ -1680,7 +1684,7 @@ describe("orchestrator questions", () => {
     await answerQuestion("qa-race", second!.id, "81");
     await until(() => live(term).includes(PICK));
     term.press({ name: "enter" });
-    await until(() => term.screen().split("already answered elsewhere").length === 3);
+    await until(() => term.screen().split("already closed elsewhere").length === 3);
     inbox(await drain("qa-race", "orchestrator"));
     await until(() => term.screen().includes('? Use "a": or (b)? → 81'));
     // Answered here: not shown twice when read.

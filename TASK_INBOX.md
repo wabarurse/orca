@@ -9,6 +9,8 @@ consumption. **`/agents` remains a separate agent list/transcript view.**
 ## TUI (`/inbox`, Ctrl+Q, `/questions`)
 
 `/inbox` opens **Tasks**, below the multiline composer and counts, like `/help`.
+Small **Tasks / Questions** tabs show one compact scrolling section at a time;
+there are no cards or dashboard containers.
 **Shift+Tab** switches **Tasks / Questions** without selecting an answer; **Esc**
 or plain **Tab** closes. Ctrl+Q opens **Questions** from chat, Tasks or help, and
 closes it when already shown. `/questions` remains a compatible direct shortcut.
@@ -32,16 +34,27 @@ last snapshot with a visible stale/error warning, never a fabricated zero.
   prompts, calls a provider, mutates task records or answers/skips questions.
   Background turns and existing polling continue independently.
 * Questions reuse the existing controller/store. The oldest pending question
-  shows numbered options, **type your own answer**, and **skip (use default: …)**.
+  shows numbered options, **type your own answer**, and **skip — remove from inbox**.
   ↑↓ moves among rows (and within multiline answers); 1–9 picks an option on an
   option row; typing enters `answer>`. Enter explicitly sends the selected option
-  or typed answer. **Only selecting skip and pressing Enter invokes the default**.
+  or typed answer. **Only selecting skip and pressing Enter dismisses a question**:
+  it durably leaves the unanswered queue and decrements counts, retaining its
+  skipped record/history. It sends no user/orchestrator message, queues no answer
+  delivery, applies no default and never calls a provider or wakes/resumes an
+  agent (including paused/cancelled work). Silence and panel dismissal are not
+  Skip, and neither applies a default or grants approval. The optional stored
+  default is only a suggestion the user may explicitly answer with.
   A half-second guard applies on opening/reopening and each new question. During
-  answer/skip delivery input is frozen, but dismissal/section/page navigation
-  still works; failures retain the answer. The existing durable reply format and
-  orchestrator delivery path are unchanged. Successful final answers close the
-  panel; explicitly opening an empty queue shows **No open questions**.
-* An externally answered row disappears. If it had an unfinished answer, that
+  answer delivery or skip persistence input is frozen, but dismissal/section/page
+  navigation still works; failures retain the question and drafts for retry. Explicit answers
+  retain the existing durable reply format and delivery path. Skip has only a
+  local removed-from-inbox history note, never durable model input; historical
+  delivered skip/default messages still restore unchanged. Exclusive `.closed`
+  claims prevent double closes; failed persistence/delivery rolls back before
+  releasing the claim. If rollback itself cannot persist, the claim stays held
+  rather than risk duplicate delivery; no automatic claim stealing is added.
+  Successful final answers or skips close the panel; explicitly opening an empty queue shows **No open questions**.
+* An externally closed row disappears. If it had an unfinished answer, that
   orphan text is reported separately, never silently assigned to the next question
   or substituted for the original chat draft. Menus/help retain precedence. Ctrl+B
   projects, model/settings menus, `/help`, cancellation and Cancel-default `/clear`
@@ -59,9 +72,13 @@ last snapshot with a visible stale/error warning, never a fabricated zero.
 
 ### Tasks section (read-only)
 
-The existing table remains **Name | Summary | Status | PR link**, with stage
-labels **queued**, **working**, **reviewing**, **ready to merge** and explicit
-**waiting**, **blocked**, **cancelled**, **closed**, **unknown** attention/reasons.
+The table remains **Name | Summary | Status | PR link**. Status is **exactly one
+plain human label**: stored attention kind (**waiting**, **blocked**, **cancelled**,
+**closed**, **unknown**) if present, otherwise lifecycle (**queued**, **working**,
+**reviewing**, **ready to merge**). No `!` prefix, second lifecycle line, reason,
+metadata or per-task detail appears underneath. This is display precedence only;
+stored lifecycle, attention and reason remain untouched, and readiness is never
+inferred.
 A stage is not a claim that a process is running. Exit/report prose never
 establishes readiness/completion.
 
@@ -187,8 +204,9 @@ Import from `src/tasks.ts`:
 * `listTasks(project): Promise<TaskRow[]>` — active rows, registration order.
   `TaskRow` contains only `id`, `name`, `summary`, `branch`, `status`, optional
   structured `pr` / `attention`, `createdAt` and `updatedAt`. Render table columns
-  **name | summary | status | PR link**; expose attention so “working” with a
-  cancelled/unknown reason is not mistaken for an active process.
+  **name | summary | status | PR link**; show attention kind instead of the
+  lifecycle label when present, with no reason or other per-task status detail.
+  This does not change the registry or turn attention into a lifecycle event.
 * `TaskStatus` / `taskStatuses`: `queued | working | reviewing | ready_to_merge`.
   `taskStatusLabels[status]` gives the human label, including **ready to merge**.
 * `TaskPR`: canonical HTTPS GitHub `url`, `repository` (`owner/repo`, lower case),

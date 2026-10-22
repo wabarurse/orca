@@ -1,9 +1,10 @@
-import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, expect, spyOn, test } from "bun:test";
+import { mkdirSync, mkdtempSync, existsSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "./config";
-import { drain } from "./inbox";
+import { drain, pending, pendingInput, userInEpoch } from "./inbox";
+import { advanceInputEpoch } from "./user-input";
 import { all, answer, ask, cleanQuestions, list, skip } from "./questions";
 import { ask as askTool } from "./tools/ask";
 import { registry, toolsFor } from "./tools/index";
@@ -21,7 +22,7 @@ test("questions list in ask order, a file each, no temp files", async () => {
   expect(files.some((f) => f.endsWith(".tmp"))).toBe(false);
 });
 
-test("answer and skip close the question and message the orchestrator", async () => {
+test("answers deliver normally; skip durably closes without a reply or applying the default", async () => {
   const [a, b] = await ask("q2", [
     { text: "Which DB?", options: ["sqlite", "postgres"], default: "sqlite" },
     { text: "Dark mode?", default: "no" },
@@ -31,10 +32,9 @@ test("answer and skip close the question and message the orchestrator", async ()
   expect(await list("q2")).toEqual([]);
   expect((await all("q2")).map((q) => [q.status, q.answer])).toEqual([["answered", "postgres"], ["skipped", undefined]]);
   const msgs = await drain("q2", "orchestrator");
-  expect(msgs.map((m) => m.from)).toEqual(["user", "user"]);
+  expect(msgs.map((m) => m.from)).toEqual(["user"]);
   expect(msgs.map((m) => m.text)).toEqual([
     `[${a!.id}] answer to "Which DB?": postgres`,
-    `[${b!.id}] skipped "Dark mode?"; use your default (no)`,
   ]);
 });
 
@@ -66,16 +66,104 @@ test("the ask tool queues and returns ids at once; only the orchestrator has it"
 
 test("concurrent answers: exactly one wins and one message is sent", async () => {
   const [q] = await ask("q5", [{ text: "Race?", default: "no" }]);
-  const results = await Promise.allSettled([answer("q5", q!.id, "a"), answer("q5", q!.id, "b"), skip("q5", q!.id)]);
+  const results = await Promise.allSettled([answer("q5", q!.id, "a"), answer("q5", q!.id, "b")]);
   expect(results.filter((r) => r.status === "fulfilled").length).toBe(1);
   expect((await drain("q5", "orchestrator")).length).toBe(1);
   expect(await list("q5")).toEqual([]);
 });
 
-test("a skip without a default says to decide", async () => {
-  const [q] = await ask("q6", [{ text: "Name?" }]);
-  await skip("q6", q!.id);
-  expect((await drain("q6", "orchestrator")).map((m) => m.text)).toEqual([`[${q!.id}] skipped "Name?" (no default given); decide yourself`]);
+for (const def of [undefined, "yes, ship it"]) {
+  test(`skip is durable, silent and keeps FIFO/history with default ${def}`, async () => {
+    const project = def ? "skip-default" : "skip-no-default";
+    const epoch = advanceInputEpoch(project);
+    const qs = await ask(project, [{ text: "Approval?", default: def }, { text: "Second?" }, { text: "Third?" }]);
+    const original = (await all(project))[0]!;
+    expect(await skip(project, qs[0]!.id)).toEqual({ ...original, status: "skipped" });
+    // Fresh disk reads (no in-memory cache), including a new process/restart.
+    expect((await list(project)).map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
+    const child = Bun.spawn([process.execPath, "-e", 'import { list } from "./src/questions.ts"; console.log(JSON.stringify(await list(process.argv[1])));', project], { stdout: "pipe", stderr: "pipe", env: { ...process.env, PARALLELS_HOME: paths.root } });
+    expect(await child.exited).toBe(0);
+    expect(JSON.parse(await new Response(child.stdout).text())).toEqual(qs.slice(1));
+    expect((await all(project))[0]).toEqual({ ...original, status: "skipped" });
+    expect(await pending(project, "orchestrator")).toBe(false);
+    expect(await pendingInput(project, "orchestrator")).toBe(false);
+    expect(await userInEpoch(project, "orchestrator", epoch)).toBe(false);
+    expect(existsSync(paths.inbox(project))).toBe(false);
+    for (const to of ["orchestrator", "user", "worker-test"]) expect(await drain(project, to)).toEqual([]);
+    await expect(skip(project, qs[0]!.id)).rejects.toThrow("already skipped");
+    await expect(answer(project, qs[0]!.id, "yes")).rejects.toThrow("already skipped");
+  });
+}
+
+test("simultaneous skips and answer-vs-skip races close once; only a winning answer delivers", async () => {
+  for (let i = 0; i < 20; i++) {
+    const project = `close-race-${i}`;
+    const [q] = await ask(project, [{ text: "Race?", default: "suggested" }]);
+    const actions = i < 10
+      ? [() => skip(project, q!.id), () => skip(project, q!.id)]
+      : [() => answer(project, q!.id, "explicit"), () => skip(project, q!.id)];
+    if (i % 2) actions.reverse();
+    const results = await Promise.allSettled(actions.map(action => action()));
+    expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
+    const saved = (await all(project))[0]!;
+    const messages = await drain(project, "orchestrator");
+    expect(messages.map(m => m.text)).toEqual(saved.status === "answered" ? [`[${q!.id}] answer to "Race?": explicit`] : []);
+    expect(await list(project)).toEqual([]);
+    expect(readdirSync(paths.questions(project)).filter(n => n.endsWith(".closed"))).toEqual([`${q!.id}.closed`]);
+  }
+});
+
+test("skip does not depend on a writable delivery inbox", async () => {
+  const [q] = await ask("skip-broken-inbox", [{ text: "Dismiss?", default: "yes" }]);
+  mkdirSync(paths.inbox("skip-broken-inbox"), { recursive: true });
+  const box = join(paths.inbox("skip-broken-inbox"), "orchestrator");
+  writeFileSync(box, "not a directory");
+  await skip("skip-broken-inbox", q!.id);
+  expect(await list("skip-broken-inbox")).toEqual([]);
+  expect(await Bun.file(box).text()).toBe("not a directory");
+});
+
+for (const action of [answer, skip]) {
+  test(`${action.name}: real persistence failure releases claim, retains open record and can retry`, async () => {
+    const project = `write-failure-${action.name}`;
+    const [q] = await ask(project, [{ text: "Retry?", default: "yes" }]);
+    const write = Bun.write;
+    let blocked = "";
+    // Force an actual filesystem write error AFTER the exclusive claim: the
+    // atomic temp destination is a directory, not a mocked thrown exception.
+    const spy = spyOn(Bun, "write").mockImplementation((async (destination: string, data: string) => {
+      if (destination.startsWith(paths.questions(project))) {
+        expect(existsSync(join(paths.questions(project), `${q!.id}.closed`))).toBe(true);
+        blocked = destination;
+        mkdirSync(destination);
+      }
+      return write(destination, data);
+    }) as typeof Bun.write);
+    try { await expect(action(project, q!.id, "explicit")).rejects.toThrow(); }
+    finally { spy.mockRestore(); if (blocked) rmSync(blocked, { recursive: true, force: true }); }
+    expect(await list(project)).toEqual([q!]);
+    expect(existsSync(join(paths.questions(project), `${q!.id}.closed`))).toBe(false);
+    expect(await pendingInput(project, "orchestrator")).toBe(false);
+    await action(project, q!.id, "explicit");
+    expect(await list(project)).toEqual([]);
+    expect((await drain(project, "orchestrator")).length).toBe(action === answer ? 1 : 0);
+  });
+}
+
+test("malformed ids/records refuse closing without a claim, rewrite or message", async () => {
+  for (const id of ["", "..", "../q", "a/b", "a\\b", "bad\n", "q\u202e"]) {
+    await expect(skip("bad-ids", id)).rejects.toThrow("bad question id");
+  }
+  await expect(skip("bad-ids", "missing")).rejects.toThrow("no question");
+  const [q] = await ask("invalid-close", [{ text: "Q?" }]);
+  const file = join(paths.questions("invalid-close"), `${q!.id}.json`);
+  for (const record of ["{", JSON.stringify({ ...q, id: "other" }), JSON.stringify({ ...q, options: 3 })]) {
+    writeFileSync(file, record);
+    await expect(skip("invalid-close", q!.id)).rejects.toThrow();
+    expect(await Bun.file(file).text()).toBe(record);
+    expect(existsSync(join(paths.questions("invalid-close"), `${q!.id}.closed`))).toBe(false);
+  }
+  expect(await drain("invalid-close", "orchestrator")).toEqual([]);
 });
 
 test("input is cleaned and capped", async () => {

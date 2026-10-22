@@ -107,7 +107,10 @@ test("busy, durable cancelled input, queued previews, and pending question answe
   await ui.command(); expect(app.menu).toBeNull();
   expect(app.frame().queued?.texts).toEqual(["not durable yet"]);
   page.sent.pop();
-  page.questions.closing = true; await ui.command(); expect(app.menu).toBeNull(); page.questions.closing = false;
+  for (const action of ["answer", "skip"] as const) {
+    page.questions.closing = action; await ui.command(); expect(app.menu).toBeNull();
+  }
+  page.questions.closing = false;
   page.orch.cancel!();
   await put(ui.project, "orchestrator", { from: "worker-a", text: "paused report" });
   expect(await page.orch.pending()).toBe(false);

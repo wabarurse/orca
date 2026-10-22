@@ -11,7 +11,7 @@ import { FakeScreen } from "./testing";
 import { Calls } from "./tools";
 import type { Terminal } from "./term";
 import type { Orchestrator } from "../orchestrator";
-import { drain, type Message } from "../inbox";
+import { drain, pendingInput, type Message } from "../inbox";
 import { fileStore, type QuestionStore } from "./questions";
 import { paths, saveConfig } from "../config";
 import { ask, all as allQuestions, type Question } from "../questions";
@@ -68,14 +68,37 @@ test("normal-width table has four columns and exact stage labels; all attention 
   const contents = plain(rendered.lines);
   for (const label of ["queued", "working", "reviewing", "ready to merge"]) expect(contents).toContain(label);
   expect(contents).not.toContain("ready_to_merge");
-  for (const kind of ["waiting", "blocked", "cancelled", "closed", "unknown"]) expect(contents).toContain(`! ${kind}: Needs ${kind} handling`);
+  for (const kind of ["waiting", "blocked", "cancelled", "closed", "unknown"]) expect(contents).toContain(kind);
+  expect(contents).not.toContain("!"); expect(contents).not.toContain("Needs");
   expect(rendered.lines.join("\n")).toContain(`\x1b]8;;${pr.url}\x1b\\`);
 });
 
 test("long summaries cannot hide attention beside the status at normal widths", () => {
   const task = { ...row("Long task", "working"), summary: "summary ".repeat(60), attention: { kind: "cancelled" as const, reason: "Stopped; not ready" } };
   const rendered = taskInboxLines({ rows: [task], loading: false }, 80);
-  expect(plain(rendered.lines.slice(0, 2))).toContain("! cancelled");
+  expect(plain(rendered.lines.slice(0, 2))).toContain("cancelled");
+});
+
+test("exactly one status keyword at wide/narrow/tiny widths, with attention precedence and no mutation", () => {
+  for (const width of [120, 80, 72, 71, 40, 12, 3, 1]) {
+    for (const status of taskStatuses) {
+      for (const kind of [undefined, "waiting", "blocked", "cancelled", "closed", "unknown"] as const) {
+        const task = { ...row("Full name", status), summary: "Full summary", ...(kind ? { attention: { kind, reason: "SECRET REASON" } } : {}) };
+        const before = structuredClone(task);
+        const rendered = taskInboxLines({ rows: [task], loading: false }, width);
+        const label = kind ?? (status === "ready_to_merge" ? "ready to merge" : status);
+        if (width >= 72) {
+          const statuses = rendered.lines.map(line => Bun.stripANSI(line).split(" | ")[2]!.trim()).filter(Boolean);
+          expect(statuses).toEqual([label]);
+        } else {
+          expect(plain(rendered.lines).replace(/\s/g, "")).toBe(`Name:FullnameSummary:FullsummaryStatus:${label.replaceAll(" ", "")}PRlink:${pr.url}`);
+        }
+        expect(plain(rendered.lines)).not.toContain("!");
+        expect(plain(rendered.lines)).not.toContain("SECRET");
+        expect(task).toEqual(before);
+      }
+    }
+  }
 });
 
 test("loading, empty, query failure and stale snapshot are distinct; no historical completion claim", () => {
@@ -122,7 +145,7 @@ test("large long records and CJK/emoji wrap fully; narrow/tiny screens stay boun
     const f = frame(cols!, rows!, tasks);
     expect(f.inbox!.lines.every(line => Bun.stringWidth(line) <= cols!)).toBe(true);
     expect(plain(f.inbox!.lines).replace(/\s/g, "")).toContain("SUMMARY-END");
-    expect(plain(f.inbox!.lines).replace(/\s/g, "")).toContain("REASON-END");
+    expect(plain(f.inbox!.lines).replace(/\s/g, "")).not.toContain("REASON-END");
     f.inbox!.top = Number.MAX_SAFE_INTEGER;
     const panel = taskInboxPanel(f);
     expect(panel.top).toBe(panel.maxTop);
@@ -295,7 +318,7 @@ test("existing watcher refresh removes only explicitly associated confirmed merg
   await observeTaskPR("a", task.id, { pr, branch: task.branch, state: "OPEN", ready: false, checks: "unknown" });
   const before = await Bun.file(join(paths.project("a"), "tasks.json")).text();
   await ui.command(); await until(() => text(app).includes("Explicit PR"));
-  expect(text(app)).toContain("working"); expect(text(app)).toContain("! waiting"); expect(text(app)).not.toContain("ready to merge");
+  expect(text(app)).not.toContain("working"); expect(text(app)).toContain("waiting"); expect(text(app)).not.toContain("ready to merge");
   await app.onKey({ name: "char", text: "r" }); await until(() => app.frame().inbox?.state === "ready");
   expect(await Bun.file(join(paths.project("a"), "tasks.json")).text()).toBe(before);
   merged = true; ui.poll();
@@ -387,7 +410,7 @@ test("Shift+Tab safely navigates Tasks / Questions; Ctrl+Q and /questions share 
   expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
 });
 
-test("opening/new-head guard survives section changes; only explicit answer/skip uses the existing durable reply/default path", async () => {
+test("opening/new-head guard survives section changes; explicit answers deliver but skips silently dismiss", async () => {
   let now = 0;
   const ui = await setup({ tasks: async () => [], questionDelayMs: 500, clock: { now: () => now, every: () => () => {} } }), { app } = ui;
   const qs = await ask("a", [{ text: "First?", options: ["yes", "no"] }, { text: "Next?", options: ["go"], default: "wait" }]);
@@ -404,7 +427,7 @@ test("opening/new-head guard survives section changes; only explicit answer/skip
   await app.onKey({ name: "q", ctrl: true }); now = 1503;
   await app.onKey({ name: "enter" });
   expect((await allQuestions("a"))[1]!.status).toBe("skipped");
-  expect((await drain("a", "orchestrator")).map(m => m.text)).toEqual([`[${qs[1]!.id}] skipped "Next?"; use your default (wait)`]);
+  expect(await drain("a", "orchestrator")).toEqual([]);
   expect(app.status(app.page!)).toEndWith("Inbox 0"); expect(app.frame().inbox).toBeNull();
   expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
 });
@@ -441,7 +464,7 @@ test("in-flight answer stays single-flight across polls/sections; errors retain 
   app.input = { ...chat }; await app.commands.get("/questions")!.run("", app.page);
   app.input = { ...answer }; app.draw(); app.page!.sent.push({ inputId: "exact", text: "pending prompt" });
   const closing = app.onKey({ name: "enter" });
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("Sending answer/skip");
+  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("Sending answer");
   await app.onKey({ name: "enter" }); await app.onKey({ name: "char", text: "not inserted" });
   expect(attempts).toBe(1); expect(app.input).toEqual(answer);
   await app.onKey(sectionKey); expect(app.input).toEqual(chat);
@@ -587,4 +610,97 @@ test("compact Tasks hints retain refresh/navigation and short Questions panels e
   f.inbox = { section: "questions", state: "error", top: 0, lines: [], notice: "Last snapshot may be stale.",
     question: { text: "Q?", options: ["yes"], index: 0, count: 1, mode: "pick" } };
   expect(plain(taskInboxPanel(f).rows)).toContain("Questions · Error");
+});
+
+
+test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejects stale resurrection", async () => {
+  const gate = deferred<void>(); let attempts = 0, stale: Question[] | undefined;
+  const ui = await setup({ tasks: async () => [], questions: { ...fileStore,
+    list: async project => stale ?? fileStore.list(project),
+    skip: async (project, id) => { attempts++; if (attempts === 1) await gate.promise; return fileStore.skip(project, id); },
+  } }), { app } = ui;
+  const qs = await ask("a", [{ text: "Remove?", default: "dangerous suggestion" }, { text: "Remaining?" }, { text: "Last?" }]);
+  const chat = { text: "original chat", cursor: 3 }, answer = { text: "unsent custom", cursor: 5 };
+  app.input = { ...chat }; await app.commands.get("/questions")!.run("", app.page);
+  app.input = { ...answer }; app.draw(); await app.onKey({ name: "down" });
+  app.page!.sent.push({ inputId: "untouched", text: "queued before skip" });
+  const closing = app.onKey({ name: "enter" });
+  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("Removing from inbox");
+  expect(plain(taskInboxPanel(app.frame()).rows)).not.toContain("Sending");
+  await app.onKey({ name: "enter" }); await app.onKey({ name: "char", text: "1" });
+  expect(attempts).toBe(1);
+  // A read during persistence must not treat our close as external or lose its draft.
+  stale = qs.slice(1); app.questions.poll(app.pages); await app.page!.questions.polling;
+  expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.map(q => q.id));
+  await app.onKey(sectionKey); expect(app.input).toEqual(chat);
+  gate.reject(new Error("persistence failed")); await closing;
+  expect(app.frame().inbox?.section).toBe("tasks");
+  expect(app.page!.questions.answer).toEqual(answer);
+  expect(app.status(app.page!)).toEndWith("Inbox 3");
+  expect(JSON.stringify(app.page!.lines)).toContain("could not skip: persistence failed");
+  expect(await allQuestions("a")).toEqual(qs);
+  stale = undefined;
+  await app.onKey(sectionKey); await app.onKey({ name: "enter" });
+  expect(attempts).toBe(2);
+  expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
+  expect(app.page!.questions.answer.text).toBe(""); // never reassigned to next head
+  expect(app.input.text).toBe("");
+  expect(app.status(app.page!)).toEndWith("Inbox 2");
+  expect(await pendingInput("a", "orchestrator")).toBe(false);
+  expect(await drain("a", "orchestrator")).toEqual([]);
+  expect(app.page!.sent).toEqual([{ inputId: "untouched", text: "queued before skip" }]);
+  expect(JSON.stringify(app.page!.lines)).not.toContain("dangerous suggestion");
+  await app.onKey({ name: "escape" }); expect(app.input).toEqual(chat);
+  stale = qs; app.questions.poll(app.pages); await app.page!.questions.polling;
+  expect(app.frame().inbox).toBeNull(); expect(app.input).toEqual(chat);
+  await app.commands.get("/questions")!.run("", app.page);
+  expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
+  expect(app.input.text).toBe("");
+  expect(ui.calls().turns).toBe(0); expect(ui.sent).toEqual([]);
+});
+
+for (const transition of ["close", "section", "project", "recreate"] as const) {
+  test(`late silent skip completion cannot reopen/change input after ${transition}`, async () => {
+    const gate = deferred<void>();
+    const ui = await setup({ tasks: async () => [], questions: { ...fileStore, skip: async (project, id) => { await gate.promise; return fileStore.skip(project, id); } } }), { app } = ui;
+    const qs = await ask("a", [{ text: "Dismiss?", default: "yes" }, { text: "Next?" }]);
+    const page = app.page!, chat = { text: "saved chat", cursor: 4 };
+    app.input = { ...chat }; await app.commands.get("/questions")!.run("", page);
+    app.input = { text: "old answer", cursor: 3 }; app.draw(); await app.onKey({ name: "down" });
+    const closing = app.onKey({ name: "enter" });
+    if (transition === "close") await app.onKey({ name: "escape" });
+    if (transition === "section") await app.onKey(sectionKey);
+    if (transition === "project") { await app.openPage("b"); app.input = { text: "B", cursor: 1 }; }
+    if (transition === "recreate") { app.closePage(); await app.openPage("a"); app.input = { text: "new A", cursor: 2 }; }
+    const input = { ...app.input }, section = app.frame().inbox?.section;
+    gate.resolve(); await closing;
+    expect(app.input).toEqual(input); expect(app.frame().inbox?.section).toBe(section);
+    expect((await allQuestions("a")).map(q => q.status)).toEqual(["skipped", "open"]);
+    expect(await pendingInput("a", "orchestrator")).toBe(false);
+    expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
+    if (transition === "close" || transition === "section") {
+      expect(page.questions.open.map(q => q.id)).toEqual([qs[1]!.id]);
+      expect(page.questions.answer.text).toBe("");
+    }
+  });
+}
+
+test("external silent skip reports an orphan draft as closed, restores chat and never reassigns the answer", async () => {
+  const ui = await setup(), { app } = ui;
+  const qs = await ask("a", [{ text: "Closed elsewhere?", default: "yes" }, { text: "Next?" }]);
+  const chat = { text: "keep chat", cursor: 3 };
+  app.input = { ...chat }; await app.commands.get("/questions")!.run("", app.page);
+  app.input = { text: "orphan answer", cursor: 4 }; app.draw();
+  await fileStore.skip("a", qs[0]!.id);
+  app.questions.poll(app.pages); await app.page!.questions.polling;
+  expect(app.input).toEqual(chat); expect(app.frame().inbox).toBeNull();
+  expect(JSON.stringify(app.page!.lines)).toContain("was closed elsewhere");
+  expect(JSON.stringify(app.page!.lines)).toContain("unsent answer: orphan answer");
+  expect(JSON.stringify(app.page!.lines)).not.toContain("default");
+  expect(app.page!.questions.answer.text).toBe("");
+  expect(app.status(app.page!)).toEndWith("Inbox 1");
+  await app.commands.get("/questions")!.run("", app.page);
+  expect(app.input.text).toBe(""); expect(app.questions.view()?.text).toBe("Next?");
+  expect(await drain("a", "orchestrator")).toEqual([]);
+  expect(ui.calls().turns).toBe(0); expect(ui.sent).toEqual([]);
 });

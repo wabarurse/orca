@@ -74,7 +74,7 @@ export interface PageQuestions {
   shownHead: string | undefined;
   readyAt: number;
   /** An answer or skip in flight. */
-  closing: boolean;
+  closing: false | "answer" | "skip";
   /** Ids answered or skipped here: already on screen when the orchestrator reads them, and never shown again by a stale read. */
   mine: Set<string>;
 }
@@ -106,6 +106,14 @@ export interface QuestionHost {
 const EMPTY: EditState = { text: "", cursor: 0 };
 /** How long Enter, digits and typing are ignored after a question first shows. */
 export const QUESTION_DELAY_MS = 500;
+export const QUESTION_PROGRESS = { answer: "Sending answer…", skip: "Removing from inbox…" };
+
+/** UI-only feedback: dismissal never uses the legacy delivered skip/default formatter. */
+function closeFeedback(question: string, answer: string | null): { kind: "answer" | "skip"; line: string } {
+  return answer === null
+    ? { kind: "skip", line: dim(`? ${plainText(question)} → skipped, removed from inbox`) }
+    : { kind: "answer", line: answeredLine(question, answer) };
+}
 
 export const pageQuestions = (): PageQuestions => ({ open: [], loaded: false, seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, expanded: false, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
 
@@ -212,10 +220,10 @@ export class Questions {
     if (this.shown.page === page && this.shown.mode === "answer") this.host.input = EMPTY;
   }
 
-  /** The head was answered elsewhere (seen by a read): quietly gone, unless an answer to it was typed. */
+  /** The head was closed elsewhere (seen by a read): quietly gone, unless an answer to it was typed. */
   private headGone(page: QuestionPage, h: Question): void {
     if (!this.typed(page).text.trim()) return this.reset(page);
-    this.keepTyped(page, `"${h.text}" was answered elsewhere`);
+    this.keepTyped(page, `"${h.text}" was closed elsewhere`);
   }
 
   /** The answer typed for the page's head: in the input while it shows, else put aside. */
@@ -395,19 +403,20 @@ export class Questions {
     const q = page.questions;
     const h = head(q);
     if (!h || q.closing || !this.valid(page)) return;
-    q.closing = true;
+    const feedback = closeFeedback(h.text, answer);
+    q.closing = feedback.kind;
     this.host.draw();
     try {
       if (answer === null) await this.store.skip(page.project, h.id);
       else await this.store.answer(page.project, h.id, answer);
       if (!this.valid(page)) return;
       q.mine.add(h.id);
-      this.host.record(answeredLine(h.text, answer, h.default), page);
+      this.host.record(feedback.line, page);
       this.reset(page);
     } catch (err) {
       if (!this.valid(page)) return;
       if (!closedElsewhere(err)) return this.host.say(dim(`could not ${answer === null ? "skip" : "answer"}: ${plainText(message(err))}`), page);
-      this.keepTyped(page, "already answered elsewhere; your answer was not sent");
+      this.keepTyped(page, "already closed elsewhere; your answer was not sent");
     } finally {
       q.closing = false;
       if (this.valid(page)) this.host.draw();
