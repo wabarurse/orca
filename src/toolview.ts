@@ -45,7 +45,7 @@ const words = (s: string, n: number) => {
 /** The first line of `s` with something on it. */
 export const firstLine = (s: string) => (s.split("\n").find((l) => l.trim()) ?? "").trim();
 
-const display = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+const display = (name: string) => name === "web_search" ? "WebSearch" : name.charAt(0).toUpperCase() + name.slice(1);
 
 /** The first string value in an input, for tools without their own formatter. */
 const firstString = (input: Input) => oneLine(str(Object.values(input).find((v) => typeof v === "string")));
@@ -68,6 +68,7 @@ const ARGS: Record<string, (input: Input) => string> = {
   spawn: (i) => `${oneLine(str(i.branch))}, ${i.role === "reviewer" ? "reviewer" : "worker"}`,
   complexity: complexityArgs,
   ask: askArgs,
+  web_search: (i) => oneLine(str(i.query)),
 };
 
 const asInput = (input: unknown): Input => (input && typeof input === "object" && !Array.isArray(input) ? (input as Input) : {});

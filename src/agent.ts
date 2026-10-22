@@ -63,7 +63,8 @@ async function runTool(deps: AgentDeps, name: string, input: Record<string, unkn
   const tool = deps.tools[name];
   if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
   try {
-    return { type: "tool_result", tool_use_id: "", content: await tool.run(input, { ...deps.ctx, signal: deps.signal }) };
+    return { type: "tool_result", tool_use_id: "", content: await tool.run(input, { ...deps.ctx, signal: deps.signal,
+      selected: deps.provider ? { model: deps.model, provider: deps.provider, settings: deps.settings } : undefined }) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { type: "tool_result", tool_use_id: "", content: msg, is_error: true };
@@ -190,7 +191,7 @@ async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>)
     const current = await boundary(deps.compactRequested?.() ?? false);
     deps.signal?.throwIfAborted();
     const message = await ask(current, deps.write!);
-    if (message.stop === "tool_use") { await toolBatch(deps, message.content); continue; }
+    if (message.stop === "tool_use") { await toolBatch(current, message.content); continue; }
     deps.signal?.throwIfAborted();
     if (await readInbox(deps)) continue;
     if (deps.compactRequested?.()) await boundary(true);
