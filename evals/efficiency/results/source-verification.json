@@ -1,0 +1,10 @@
+{
+  "baselineCommit": "50a5ef9",
+  "updatedProductionCommit": "4bc0b6f",
+  "baselineFiles": 146,
+  "baselineMismatches": [],
+  "sourceChangesSinceMeasuredCommit": [
+    "src/efficiency.test.ts"
+  ],
+  "updatedProductionUnchanged": true
+}

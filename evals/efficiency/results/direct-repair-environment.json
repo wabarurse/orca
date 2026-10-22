@@ -1,0 +1,60 @@
+{
+  "root": "/Users/wabarurse/.parallels/evals/efficiency-yQ44OO",
+  "baseline": "/Users/wabarurse/.parallels/evals/efficiency-yQ44OO/baseline",
+  "baselineCommit": "50a5ef9",
+  "after": "/Users/wabarurse/.codex/worktrees/harness-efficiency/parallels-harness",
+  "runRoot": "/Users/wabarurse/.parallels/evals/efficiency-yQ44OO/run-2inhV0",
+  "system": "This is explicitly authorized local work: execute directly in this working directory. Do not delegate, spawn agents, register tasks, ask questions, create scheduled tasks, access the network, install dependencies, or make commits. Read only workspace files and tool-output artifacts explicitly returned by your tools. Use Bun for JavaScript/TypeScript. Inspect evidence and verify changes. Use concise results. Issue independent read-only tool calls together when possible; keep dependent work ordered. Return the requested final answer; if your harness delivers answers through a message tool, address it to the user.",
+  "directSystem": "Benchmark-specific workflow: execute the authorized local task directly. This overrides the usual plan, task-registration, delegation, branch, commit, reviewer and approval workflow. The fixture intentionally has no Git repository; no branch setup is needed. Do not ask for approval or invoke agents. Inspect files, make the requested local changes, run tests and return the requested answer.",
+  "arms": [
+    {
+      "name": "before-gpt",
+      "engine": "parallels",
+      "model": "gpt-6-astra",
+      "after": false
+    },
+    {
+      "name": "after-gpt",
+      "engine": "parallels",
+      "model": "gpt-6-astra",
+      "after": true
+    },
+    {
+      "name": "codex-gpt",
+      "engine": "codex",
+      "model": "gpt-6-astra"
+    },
+    {
+      "name": "before-opus",
+      "engine": "parallels",
+      "model": "claude-opus-5-5",
+      "after": false
+    },
+    {
+      "name": "after-opus",
+      "engine": "parallels",
+      "model": "claude-opus-5-5",
+      "after": true
+    },
+    {
+      "name": "claude-opus",
+      "engine": "claude",
+      "model": "claude-opus-5-5"
+    }
+  ],
+  "tasks": [
+    "repair"
+  ],
+  "repeats": 3,
+  "date": "2026-10-22T17:12:29.885Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "cpu": "Apple M5 Pro",
+  "bun": "1.4.2",
+  "claude": "2.1.308 (Claude Code)",
+  "codex": "codex-cli 0.154.0",
+  "commit": "8e011804b8214216979d22cf1d18ccb5eb5626e8",
+  "diff": "evals/efficiency/summarize.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)",
+  "effort": "medium",
+  "fast": false
+}

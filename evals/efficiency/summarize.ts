@@ -36,5 +36,5 @@ const comparisons = Object.fromEntries(["gpt", "opus"].map(model => {
 }));
 const result = { comparisons, all: summarize(rows), coding: summarize(rows.filter(r=>r.task!=="parallel")),
   tasks: Object.fromEntries([...new Set(rows.map(r=>r.task))].map(task => [task, summarize(rows.filter(r=>r.task===task))])) };
-await Bun.write(join(import.meta.dir, "results/summary.json"), JSON.stringify(result, null, 2)+"\n");
+await Bun.write(process.argv[3] ?? join(import.meta.dir, "results/summary.json"), JSON.stringify(result, null, 2)+"\n");
 console.log(JSON.stringify(result, null, 2));

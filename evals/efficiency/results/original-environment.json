@@ -1,0 +1,63 @@
+{
+  "root": "/Users/wabarurse/.parallels/evals/efficiency-yQ44OO",
+  "baseline": "/Users/wabarurse/.parallels/evals/efficiency-yQ44OO/baseline",
+  "baselineCommit": "50a5ef9",
+  "after": "/Users/wabarurse/.codex/worktrees/harness-efficiency/parallels-harness",
+  "runRoot": "/Users/wabarurse/.parallels/evals/efficiency-yQ44OO/run-EJCPyB",
+  "system": "This is explicitly authorized local work: execute directly in this working directory. Do not delegate, spawn agents, register tasks, ask questions, create scheduled tasks, access the network, install dependencies, or make commits. Read only workspace files and tool-output artifacts explicitly returned by your tools. Use Bun for JavaScript/TypeScript. Inspect evidence and verify changes. Use concise results. Issue independent read-only tool calls together when possible; keep dependent work ordered. Return the requested final answer; if your harness delivers answers through a message tool, address it to the user.",
+  "arms": [
+    {
+      "name": "before-gpt",
+      "engine": "parallels",
+      "model": "gpt-6-astra",
+      "after": false
+    },
+    {
+      "name": "after-gpt",
+      "engine": "parallels",
+      "model": "gpt-6-astra",
+      "after": true
+    },
+    {
+      "name": "codex-gpt",
+      "engine": "codex",
+      "model": "gpt-6-astra"
+    },
+    {
+      "name": "before-opus",
+      "engine": "parallels",
+      "model": "claude-opus-5-5",
+      "after": false
+    },
+    {
+      "name": "after-opus",
+      "engine": "parallels",
+      "model": "claude-opus-5-5",
+      "after": true
+    },
+    {
+      "name": "claude-opus",
+      "engine": "claude",
+      "model": "claude-opus-5-5"
+    }
+  ],
+  "tasks": [
+    "lookup",
+    "repair",
+    "repository",
+    "output",
+    "parallel"
+  ],
+  "repeats": 3,
+  "date": "2026-10-22T16:52:30.100Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "cpu": "Apple M5 Pro",
+  "bun": "1.4.2",
+  "claude": "2.1.307 (Claude Code)",
+  "codex": "codex-cli 0.154.0",
+  "commit": "4bc0b6f17905c38e9d945237d850b1a333a2a2d8",
+  "diff": "",
+  "effort": "medium",
+  "fast": false
+}
