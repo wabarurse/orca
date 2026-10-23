@@ -58,6 +58,64 @@ describe("inline", () => {
 
   });
 
+  test("bare web URLs and displayed destinations are explicit safe links, including wrapped targets", () => {
+    const url = "https://example.com/path_(item)";
+    const out = inline(`See ${url}.`);
+    expect(out).toBe(`See \x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\.`);
+    expect(inline(`[docs](${url})`)).toContain(`\x1b]8;;${url}\x1b\\(${url})`);
+    const rows = wordWrap(out, 12);
+    expect(rows.filter(row => row.includes("\x1b]8;;https://")).length).toBeGreaterThan(1);
+    expect(inline("`https://example.com`")).not.toContain("\x1b]8");
+    for (const bad of ["https://", "https://user:pass@example.com", "javascript:alert(1)", "file:///tmp/a", "https://example.com/\x07", "https://example.com/\u202eabc"]) {
+      expect(inline(`[label](${bad})`)).not.toContain("\x1b]8");
+    }
+  });
+
+  test("styled link labels never nest OSC 8 or lose their enclosing target", () => {
+    const outer = "https://outer.example";
+    const open = `\x1b]8;;${outer}\x1b\\`;
+    const close = "\x1b]8;;\x1b\\";
+    for (const label of [
+      "**https://inner.example** tail",
+      "*before **https://inner.example** after* tail",
+      "~~https://inner.example~~ tail",
+      "**<https://inner.example>** tail",
+      "**[inner](https://inner.example)** tail",
+    ]) {
+      const out = inline(`[${label}](${outer})`);
+      // One open/close for the whole label, then one for the shown destination.
+      expect(out.match(/\x1b\]8;;[^\x1b]*\x1b\\/g)).toEqual([open, close, open, close]);
+      const labelOutput = out.slice(open.length, out.indexOf(close));
+      expect(plain(labelOutput)).toContain("https://inner.example");
+      expect(plain(labelOutput)).toEndWith(" tail");
+      expect(labelOutput).toContain("\x1b["); // emphasis is still rendered
+      for (const row of wordWrap(out, 12)) {
+        const targets = [...row.matchAll(/\x1b\]8;;([^\x1b]+)\x1b\\/g)].map(hit => hit[1]);
+        expect(targets.every(target => target === outer)).toBe(true);
+      }
+    }
+    // Outside labels, recursive spans should still linkify normally.
+    expect(inline("**https://inner.example**")).toContain("\x1b]8;;https://inner.example\x1b\\");
+  });
+
+  test("bare URLs exclude unmatched prose closers but retain balanced brackets and IPv6", () => {
+    for (const [text, url] of [
+      ["[https://example.com/path]", "https://example.com/path"],
+      ["{https://example.com/path}", "https://example.com/path"],
+      ["([https://example.com/path]).", "https://example.com/path"],
+      ["‘https://example.com/path’", "https://example.com/path"],
+      ["'https://example.com/path'", "https://example.com/path"],
+      ["https://example.com/a[b]", "https://example.com/a[b]"],
+      ["https://example.com/a{b}", "https://example.com/a{b}"],
+      ["[https://[::1]]", "https://[::1]"],
+      ["[https://[2001:db8::1]:8443/a[b]].", "https://[2001:db8::1]:8443/a[b]"],
+    ]) {
+      const out = inline(text!);
+      expect(plain(out)).toBe(text!);
+      expect([...out.matchAll(/\x1b\]8;;([^\x1b]+)\x1b\\/g)].map(hit => hit[1])).toEqual([url!]);
+    }
+  });
+
   test("URLs may hold balanced parentheses; empty text shows the URL; only http(s) and mailto become links", () => {
     const paren = inline("[x](https://e.com/a_(b)_c) after");
     expect(paren).toContain("\x1b]8;;https://e.com/a_(b)_c\x1b\\x\x1b]8;;\x1b\\");

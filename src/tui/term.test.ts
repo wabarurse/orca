@@ -44,7 +44,14 @@ test("sticky screen and mouse modes restore the primary screen on close and cras
     t.term.open();
     t.advance(BG_REPLY_MS);
     expect(t.screen.modes.get(1049)).toBe(true);
+    expect(t.screen.modes.get(1000)).toBe(false);
+    expect(t.screen.modes.get(1006)).toBe(false);
+    t.term.setMouse!(true);
     expect(t.screen.modes.get(1000)).toBe(true);
+    expect(t.screen.modes.get(1006)).toBe(true);
+    t.term.setMouse!(false);
+    expect(t.screen.modes.get(1000)).toBe(false);
+    t.term.setMouse!(true);
     t.screen.write("agent screen");
     expect(t.screen.text()).not.toContain("shell prompt");
     if (crash) t.procHandlers.get("SIGTERM")!();

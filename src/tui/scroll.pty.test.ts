@@ -62,7 +62,8 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
     expect(screen().slice(-5)).toEqual(footer);
     expect(screen().join("\n")).not.toContain("PRELAUNCH_SENTINEL");
     expect(output.split("\x1b[?1049h")).toHaveLength(2);
-    for (const mode of [1000, 1006, 2004]) expect(output.split(`\x1b[?${mode}h`)).toHaveLength(2);
+    expect(output.split("\x1b[?2004h")).toHaveLength(2);
+    for (const mode of [1000, 1006]) expect(output).not.toContain(`\x1b[?${mode}h`);
     expect(output).not.toContain("\x1b[?1049l");
     expect(output).not.toContain("\x1b[3J");
     child.terminal!.write("\x1b[<65;10;8M".repeat(120));

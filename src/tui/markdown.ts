@@ -18,13 +18,13 @@ const LINK_CLOSE = "\x1b]8;;\x1b\\";
 // --- inline -----------------------------------------------------------------
 
 interface Hit { out: string; next: number }
-type Rule = (s: string, i: number, outer: string) => Hit | null;
+type Rule = (s: string, i: number, outer: string, links: boolean) => Hit | null;
 
 const isAlnum = (c: string | undefined) => !!c && /[A-Za-z0-9]/.test(c);
 const isSpace = (c: string | undefined) => !c || /\s/.test(c);
 
 /** A styled span: open, content (nested styles keep the outer ones), then back to exactly the outer style. */
-const span = (open: string, content: string, outer: string) => `${open}${inline(content, outer + open)}${RESET}${outer}`;
+const span = (open: string, content: string, outer: string, links: boolean) => `${open}${inline(content, outer + open, links)}${RESET}${outer}`;
 
 const runAt = (s: string, i: number) => {
   let k = i;
@@ -97,7 +97,7 @@ const EMPHASIS: Record<string, Record<number, string>> = {
  * snake_case stay literal. An unmatched run is literal as a whole (a run is
  * never split between an opener and a closer as CommonMark may).
  */
-const emphasis: Rule = (s, i, outer) => {
+const emphasis: Rule = (s, i, outer, links) => {
   const c = s[i]!;
   const r = runAt(s, i);
   const n = Math.min(r, 3);
@@ -106,7 +106,7 @@ const emphasis: Rule = (s, i, outer) => {
   if (!style || !canOpen(s, i, n)) return literal;
   const end = closer(s, i + n, c, n);
   if (!end) return literal;
-  return { out: span(style, s.slice(i + n, end[0]), outer), next: end[1] };
+  return { out: span(style, s.slice(i + n, end[0]), outer, links), next: end[1] };
 };
 
 const codeSpan: Rule = (s, i, outer) => {
@@ -128,39 +128,72 @@ const escape: Rule = (s, i) => {
 const cleanUrl = (u: string) => u.replace(/[\x00-\x20\x7f-\x9f]/g, "");
 
 /** Only these schemes become OSC 8 links; anything else (javascript:, file:, relative paths) is plain text. */
-const LINKABLE = /^(?:https?:|mailto:)/i;
+function linkable(url: string): boolean {
+  if (/[\x00-\x20\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u.test(url)) return false;
+  try {
+    const parsed = new URL(url);
+    return ((parsed.protocol === "https:" || parsed.protocol === "http:") && !!parsed.hostname && !parsed.username && !parsed.password)
+      || (parsed.protocol === "mailto:" && !!parsed.pathname);
+  } catch { return false; }
+}
 
 /**
  * Link text as an OSC 8 hyperlink; like Codex, the URL follows in brackets
  * when the text is something else. Empty text shows the URL.
  */
-function link(rawText: string, url: string, outer: string): string {
+function link(rawText: string, rawUrl: string, outer: string): string {
+  const url = cleanUrl(rawUrl);
   const text = rawText.trim() ? rawText : url;
-  const label = inline(text, outer);
-  const shown = LINKABLE.test(url) ? `${linkOpen(url)}${label}${LINK_CLOSE}` : label;
-  return text === url ? shown : `${shown} ${SGR.dim}(${url})${RESET}${outer}`;
+  const label = inline(text, outer, false);
+  const clickable = linkable(rawUrl);
+  const shown = clickable ? `${linkOpen(url)}${label}${LINK_CLOSE}` : label;
+  const destination = clickable ? `${linkOpen(url)}(${url})${LINK_CLOSE}` : `(${url})`;
+  return text === url ? shown : `${shown} ${SGR.dim}${destination}${RESET}${outer}`;
 }
 
 /** [text](url "title"): the URL may hold balanced (...) groups anywhere, as in Wikipedia links. */
 const LINK = /^\[((?:[^[\]]|\[[^\]]*\])*)\]\(\s*<?((?:[^\s<>()]|\([^\s<>()]*\))+)>?(?:\s+"[^"]*")?\s*\)/;
 const markdownLink: Rule = (s, i, outer) => {
   const m = LINK.exec(s.slice(i));
-  return m ? { out: link(m[1]!, cleanUrl(m[2]!), outer), next: i + m[0].length } : null;
+  return m ? { out: link(m[1]!, m[2]!, outer), next: i + m[0].length } : null;
 };
 
 const autolink: Rule = (s, i, outer) => {
   const m = /^<((?:https?|mailto):[^\s<>]+)>/.exec(s.slice(i));
-  return m ? { out: link(m[1]!, cleanUrl(m[1]!), outer), next: i + m[0].length } : null;
+  return m ? { out: link(m[1]!, m[1]!, outer), next: i + m[0].length } : null;
 };
 
 const RULES: Record<string, Rule> = { "\\": escape, "`": codeSpan, "[": markdownLink, "<": autolink, "*": emphasis, _: emphasis, "~": emphasis };
 
-/** Inline markdown → styled text. `outer` is the SGR already in force around it, restored after every span. */
-export function inline(s: string, outer = ""): string {
+/** Bare web URLs get explicit OSC 8 targets too: do not depend on terminal URL heuristics. */
+const bareLink: Rule = (s, i) => {
+  if (i > 0 && /[\w@/]/u.test(s[i - 1]!)) return null;
+  const match = /^https?:\/\/[^\s<>`"\x00-\x1f\x7f-\x9f]+/i.exec(s.slice(i));
+  if (!match) return null;
+  let url = match[0];
+  // Peel prose punctuation repeatedly: e.g. `url]).` has several different
+  // closers. Keep balanced URL syntax, notably brackets around IPv6 hosts.
+  const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  while (url) {
+    const last = url.at(-1)!;
+    const open = pairs[last];
+    if (/[.,;:!?'“”‘’«»]/u.test(last)
+      || (open && url.split(last).length > url.split(open).length)) url = url.slice(0, -1);
+    else break;
+  }
+  if (!linkable(url)) return null;
+  return { out: `${linkOpen(url)}${url}${LINK_CLOSE}`, next: i + url.length };
+};
+
+/** Inline markdown → styled text. `outer` is restored after every styled span.
+ * `links` is false throughout a link label, including recursively styled spans:
+ * OSC 8 cannot nest, so only the enclosing destination may own those cells. */
+export function inline(s: string, outer = "", links = true): string {
   let out = "";
   let i = 0;
   while (i < s.length) {
-    const hit = RULES[s[i]!]?.(s, i, outer);
+    const rule = !links && (s[i] === "[" || s[i] === "<") ? undefined : RULES[s[i]!];
+    const hit = rule?.(s, i, outer, links) ?? (links && /[hH]/.test(s[i]!) ? bareLink(s, i, outer, links) : null);
     if (hit) { out += hit.out; i = hit.next; }
     else { out += s[i]; i++; }
   }

@@ -14,16 +14,16 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                  1–9/54
+Help · commands & keys                                                  1–9/57
   Conversation
   /refresh       Reload shared local state; active context waits until idle;
                  never runs work
+  /mouse on|off  Opt into wheel reporting; off (default) preserves selection
+                 and Cmd-click links
   /retry-images  Retry unconfirmed image prompts by original ID; never replay
                  consumed input
   /inbox         User inbox: Tasks / Questions; Shift+Tab switches sections,
                  Esc/Tab closes
-  /agents        Browse and follow agent conversations
-  /clear         Clear model context after confirmation; keep full history
 ↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
 `;
 
@@ -31,6 +31,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
 "  Conversation
   /refresh       Reload shared local state; active context waits until idle;
                  never runs work
+  /mouse on|off  Opt into wheel reporting; off (default) preserves selection
+                 and Cmd-click links
   /retry-images  Retry unconfirmed image prompts by original ID; never replay
                  consumed input
   /inbox         User inbox: Tasks / Questions; Shift+Tab switches sections,
@@ -62,7 +64,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   Ctrl+Q             Inbox Questions toggle; arrivals never open Inbox
   Shift+Tab (Inbox)  Switch Tasks / Questions; Esc or Tab closes without
                      answering
-  PgUp/PgDn / wheel  Scroll conversation, help or Inbox Tasks
+  PgUp/PgDn / wheel  Scroll conversation, help or Inbox Tasks (wheel: /mouse
+                     on)
   Ctrl+C             Cancel selected turn/agent; twice within 2s exits,
                      keeping history
   Esc                Close panel, else leave agent view, else clear input
@@ -99,15 +102,15 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 Inbox 1
-Help                           1–8/111
+Help                           1–8/115
   Conversation
   /refresh
     Reload shared local state; active
     context waits until idle; never
     runs work
-  /retry-images
-    Retry unconfirmed image prompts by
-    original ID; never replay consumed
+  /mouse on|off
+    Opt into wheel reporting; off
+    (default) preserves selection and
 ↑↓ scroll · Esc close"
 `;
 
@@ -117,6 +120,10 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     Reload shared local state; active
     context waits until idle; never
     runs work
+  /mouse on|off
+    Opt into wheel reporting; off
+    (default) preserves selection and
+    Cmd-click links
   /retry-images
     Retry unconfirmed image prompts by
     original ID; never replay consumed
@@ -183,7 +190,7 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     Tab closes without answering
   PgUp/PgDn / wheel
     Scroll conversation, help or Inbox
-    Tasks
+    Tasks (wheel: /mouse on)
   Ctrl+C
     Cancel selected turn/agent; twice
     within 2s exits, keeping history
@@ -239,7 +246,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                46–54/54
+Help · commands & keys                                                49–57/57
   Alt+D                Delete next word
   Home/End / Ctrl+A/E  Start / end of current line
   Ctrl+U / Ctrl+K      Delete to start / end of current line
