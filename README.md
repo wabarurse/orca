@@ -1,22 +1,34 @@
 # parallels
 
-A simple, light-context agent harness with an orchestrator → worker → reviewer loop.
+Parallels is a terminal app that helps you work on a Git repository with AI agents.
+Discuss a task with an **orchestrator**, approve a plan, then let a **worker** make
+changes on a separate branch and a **reviewer** check the result.
 
-## Install once, run from any repository
+## Quick start
 
-Supported hosts: **macOS or Linux** with **git** and **tmux** on `PATH`. Building
-and updating also require **Bun 1.4.2 or newer** (TypeScript and the other build
-dependencies are installed by `bun install`). The compiled executable includes
-its runtime: **Bun and the harness source are not needed on runtime PATH**, even
-for background workers/reviewers and their crash-reporting follow-up. Install a
-native build on each OS/architecture; this is not a cross-platform binary.
-Standard system tools (`sh` and `env`) must also remain on PATH.
-`gh` and project-specific tools may additionally be needed for the work you ask
-agents to do (for example PR publication/review).
+### 1. Check prerequisites
 
-Keep the harness checkout separate from the repositories you work on. This
-local-only workflow installs the app at `~/.parallels/app` and the executable at
-`~/.local/bin/parallels`; it does not download or run a remote bootstrap script:
+- **macOS or Linux**, with **git** and **tmux** on your `PATH`.
+- [Bun](https://bun.sh/docs/installation) **1.4.2 or newer** to build and update.
+  The installed executable does not need Bun on its runtime PATH.
+- Read access to this repository to clone the app. Authenticate Git first if
+  repository access requires it.
+- A **Claude or ChatGPT/Codex subscription account** with access to your chosen
+  model, and a browser on the same machine for sign-in. API keys are not supported.
+- Optional: [GitHub CLI (`gh`)](https://cli.github.com/), authenticated with
+  `gh auth login`, for GitHub PRs and CI. Publishing also needs Git push access.
+  Have your project's own build/test tools installed too.
+
+Agents can run shell commands and edit files. Use a repository you trust and
+review their work; this is not a shell sandbox.
+
+### 2. Install once
+
+Keep the app separate from your work repositories. Run this in your shell to
+build from source in `~/.parallels/app` and install `~/.local/bin/parallels`.
+The checks refuse existing paths and symlinks instead of overwriting them; if
+installation refuses, inspect the paths and read
+[ownership and recovery](#installer-ownership-and-recovery).
 
 ```sh
 (
@@ -34,6 +46,103 @@ local-only workflow installs the app at `~/.parallels/app` and the executable at
   bun run install:local
 )
 ```
+
+For this shell session, make the executable available and check which one runs:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+command -v parallels
+parallels version
+```
+
+For a permanent PATH change, see [installation details](#install-once-run-from-any-repository).
+You can also use `"$HOME/.local/bin/parallels"` directly.
+
+### 3. Open your repository and sign in
+
+In your shell, go to an existing local repository. Check `git status` and resolve
+local work before switching to its default branch (`main` below; substitute your
+repository's default branch if different). Parallels will not switch or stash for you.
+
+```sh
+cd /path/to/your/repository
+git status --short
+git switch main
+parallels
+```
+
+The terminal UI opens with an orchestrator working in your **original checkout**
+on its default branch, not a new clone. Workers use separate worktrees beside
+that checkout; reviewers reuse the worker's worktree. Uncommitted changes and
+untracked/ignored files such as `.env` are not copied into those worktrees.
+Start from the local checkout, not a remote URL. Saved projects also reopen.
+
+Inside the TUI, sign in to the provider you want to use:
+
+```text
+/login claude
+```
+
+Or, for ChatGPT/Codex:
+
+```text
+/login codex
+```
+
+Complete browser sign-in, then use `/accounts` to check the account and `/models`
+to select a model from that provider (↑/↓, Enter; Esc cancels). Login selects an
+account, not a model; catalog entries may require an entitlement you do not have.
+See [subscription login](#subscription-login) for profiles and
+[existing CLI logins](#existing-cli-logins) for importing a session instead.
+Long conversations use OpenAI for [rolling memory](#orchestrator-rolling-memory),
+so that feature needs `/login codex` even when your foreground model is Claude.
+
+### 4. Try a small task
+
+For example, type this into the TUI:
+
+```text
+Plan a small README improvement explaining how to run this project's tests.
+Do not execute yet. Keep the work local: do not push or open a PR.
+```
+
+Review the plan, then reply `execute` when you are happy with it. Expect a worker
+branch, a commit and report, then review. The normal full workflow proceeds to
+publishing a PR and watching CI; the explicit local-only request above avoids
+that for your first task. Set up `gh` and Git push access before requesting the
+full workflow. See [the cycle](#the-cycle) for review limits and post-merge
+branch/worktree cleanup, including removal of ignored files.
+
+### Help and updates
+
+- `/help` shows commands and shortcuts; Esc closes it. `parallels --help` shows
+  shell commands outside the TUI.
+- `/agents` shows agents; `/back` returns to the orchestrator. `/inbox` shows
+  registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
+- Ctrl+C cancels the current turn; `/quit` exits. Background workers/reviewers
+  can keep running; see [Using the TUI](#using-the-tui) for cancellation details.
+- Finish active work and let background agents exit, then run `parallels pull`
+  from any directory to update **only the dedicated app installation**. Git and
+  Bun 1.4.2+ are required. Restart afterward; existing processes are not upgraded.
+  Read [update safety and recovery](#explicit-updates-parallels-pull) before updating.
+
+## Install once, run from any repository
+
+Supported hosts: **macOS or Linux** with **git** and **tmux** on `PATH`. Building
+and updating also require **Bun 1.4.2 or newer** (TypeScript and the other build
+dependencies are installed by `bun install`). The compiled executable includes
+its runtime: **Bun and the harness source are not needed on runtime PATH**, even
+for background workers/reviewers and their crash-reporting follow-up. Install a
+native build on each OS/architecture; this is not a cross-platform binary.
+Standard system tools (`sh` and `env`) must also remain on PATH.
+`gh` and project-specific tools may additionally be needed for the work you ask
+agents to do (for example PR publication/review).
+
+Keep the harness checkout separate from the repositories you work on. This
+local-only workflow installs the app at `~/.parallels/app` and the executable at
+`~/.local/bin/parallels`; it does not download or run a remote bootstrap script.
+
+Follow the [quick-start installation steps](#2-install-once) above.
 
 `install:local` builds `dist/parallels` from that checkout, then copies it to
 `$HOME/.local/bin/parallels` with executable permissions. It works even when
@@ -58,7 +167,7 @@ one. You can always invoke `"$HOME/.local/bin/parallels"` directly.
 ```sh
 cd /path/to/any/repository
 parallels
-# Equivalent explicit form; optional project and git URL still work:
+# Equivalent explicit form; optional project and local directory:
 parallels start [project] [directory]
 parallels msg <project> <text>
 parallels version
@@ -409,7 +518,8 @@ dim `? question → answer` line; a skip leaves only a local removed-from-inbox 
 not a delivered reply or model input. Historical delivered skip/default messages
 still render as before. Background projects' question counts are shown too.
 
-Everything lives under `~/.parallels`. Design notes are in [PLAN.md](PLAN.md).
+Harness state lives under `~/.parallels` by default; your checkout and worker
+worktrees stay outside it. Design notes are in [PLAN.md](PLAN.md).
 
 ## The cycle
 
@@ -441,10 +551,12 @@ When a branch's PR is merged, the TUI notices within about 30 seconds (it asks
 `gh pr list --repo <origin> --state merged` for each open project whose origin
 is on GitHub; without `gh` nothing happens): it stops that branch's worker and
 reviewer, removes the worktree and the local and remote branch, deletes their
-transcripts, fast-forwards the project's checkout of main, and tells the
-orchestrator, which tells you and starts whatever was waiting on that branch.
-The worktree is removed with `git worktree remove --force`, so ignored files in
-it, such as `.env`, are deleted too. Everything is kept, and the message says
+transcripts, and tells the orchestrator, which tells you and starts whatever was
+waiting on that branch.
+For original-checkout projects, cleanup never pulls or changes that checkout;
+update its default branch yourself. Legacy clone-based projects still fast-forward
+their managed checkout. The worktree is removed with `git worktree remove --force`,
+so ignored files in it, such as `.env`, are deleted too. Everything is kept, and the message says
 why, when the worktree has uncommitted changes, is on another branch, or the
 branch has commits that are not in the merged PR, or when an agent does not
 stop. PRs from forks, closed-unmerged PRs, branches without a PR, main and
