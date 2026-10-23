@@ -1,0 +1,26 @@
+{
+  "kind": "capability",
+  "model": "gpt-6-luna",
+  "at": "2026-10-23T18:49:16.803Z",
+  "budget": {
+    "calls": 1,
+    "timeoutMs": 30000,
+    "maxTokens": 32
+  },
+  "ok": true,
+  "usage": {
+    "input": 31,
+    "cachedInput": 0,
+    "output": 5,
+    "reasoning": 0
+  },
+  "completion": "completed",
+  "content": [
+    {
+      "type": "text",
+      "text": "OK",
+      "citations": null
+    }
+  ],
+  "latencyMs": 1120
+}

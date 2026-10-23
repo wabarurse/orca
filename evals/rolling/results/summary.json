@@ -1,0 +1,680 @@
+[
+  {
+    "arm": "migration-100000",
+    "calls": 8,
+    "compactions": 4,
+    "input": 246399,
+    "output": 766,
+    "cachedInput": 0,
+    "latencyMs": 20289,
+    "exposure": 2243438,
+    "finalSummary": {
+      "hits": [
+        "concise",
+        "eu-north-1",
+        "30 days",
+        "legal approval",
+        "not authorized",
+        "rollback window",
+        "https://example.org/"
+      ],
+      "missing": [],
+      "total": 7,
+      "obsoleteMentions": [
+        "eu-west-1"
+      ],
+      "completedDetailMention": false,
+      "unsafeImperatives": []
+    },
+    "finalRetained": {
+      "hits": [
+        "concise",
+        "eu-north-1",
+        "30 days",
+        "legal approval",
+        "not authorized",
+        "rollback window",
+        "https://example.org/"
+      ],
+      "missing": [],
+      "total": 7,
+      "obsoleteMentions": [
+        "eu-west-1"
+      ],
+      "completedDetailMention": false,
+      "unsafeImperatives": []
+    },
+    "matchingCheckpoints": [
+      {
+        "turn": 12,
+        "retained": 48301,
+        "summary": {
+          "hits": [
+            "concise",
+            "eu-west-1",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [
+            "30 days"
+          ],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-west-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days"
+          ],
+          "completedDetailMention": true,
+          "unsafeImperatives": []
+        }
+      },
+      {
+        "turn": 24,
+        "retained": 96601,
+        "summary": {
+          "hits": [
+            "concise",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [
+            "eu-north-1"
+          ],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        }
+      },
+      {
+        "turn": 36,
+        "retained": 48432,
+        "summary": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "rollback window",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "rollback window",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        }
+      }
+    ]
+  },
+  {
+    "arm": "migration-50000",
+    "calls": 8,
+    "compactions": 8,
+    "input": 246801,
+    "output": 909,
+    "cachedInput": 0,
+    "latencyMs": 22071,
+    "exposure": 1475481,
+    "finalSummary": {
+      "hits": [
+        "concise",
+        "eu-north-1",
+        "30 days",
+        "legal approval",
+        "not authorized",
+        "rollback window",
+        "https://example.org/"
+      ],
+      "missing": [],
+      "total": 7,
+      "obsoleteMentions": [
+        "14 days",
+        "eu-west-1"
+      ],
+      "completedDetailMention": false,
+      "unsafeImperatives": []
+    },
+    "finalRetained": {
+      "hits": [
+        "concise",
+        "eu-north-1",
+        "30 days",
+        "legal approval",
+        "not authorized",
+        "rollback window",
+        "https://example.org/"
+      ],
+      "missing": [],
+      "total": 7,
+      "obsoleteMentions": [
+        "14 days",
+        "eu-west-1"
+      ],
+      "completedDetailMention": false,
+      "unsafeImperatives": []
+    },
+    "matchingCheckpoints": [
+      {
+        "turn": 12,
+        "retained": 48300,
+        "summary": {
+          "hits": [
+            "concise",
+            "eu-west-1",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [
+            "30 days"
+          ],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-west-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days"
+          ],
+          "completedDetailMention": true,
+          "unsafeImperatives": []
+        }
+      },
+      {
+        "turn": 24,
+        "retained": 48467,
+        "summary": {
+          "hits": [
+            "concise",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [
+            "eu-north-1"
+          ],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days",
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days",
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        }
+      },
+      {
+        "turn": 36,
+        "retained": 48443,
+        "summary": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "rollback window",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days",
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "rollback window",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days",
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        }
+      }
+    ]
+  },
+  {
+    "arm": "incident-50000",
+    "calls": 8,
+    "compactions": 8,
+    "input": 246812,
+    "output": 855,
+    "cachedInput": 0,
+    "latencyMs": 18862,
+    "exposure": 1466624,
+    "finalSummary": {
+      "hits": [
+        "concise",
+        "eu-north-1",
+        "30 days",
+        "legal approval",
+        "not authorized",
+        "rollback window",
+        "https://example.org/"
+      ],
+      "missing": [],
+      "total": 7,
+      "obsoleteMentions": [
+        "eu-west-1"
+      ],
+      "completedDetailMention": false,
+      "unsafeImperatives": []
+    },
+    "finalRetained": {
+      "hits": [
+        "concise",
+        "eu-north-1",
+        "30 days",
+        "legal approval",
+        "not authorized",
+        "rollback window",
+        "https://example.org/"
+      ],
+      "missing": [],
+      "total": 7,
+      "obsoleteMentions": [
+        "eu-west-1"
+      ],
+      "completedDetailMention": false,
+      "unsafeImperatives": []
+    },
+    "matchingCheckpoints": [
+      {
+        "turn": 12,
+        "retained": 48018,
+        "summary": {
+          "hits": [
+            "concise",
+            "eu-west-1",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [
+            "30 days"
+          ],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-west-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days"
+          ],
+          "completedDetailMention": true,
+          "unsafeImperatives": []
+        }
+      },
+      {
+        "turn": 24,
+        "retained": 48172,
+        "summary": {
+          "hits": [
+            "concise",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [
+            "eu-north-1"
+          ],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        }
+      },
+      {
+        "turn": 36,
+        "retained": 48153,
+        "summary": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "rollback window",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "rollback window",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        }
+      }
+    ]
+  },
+  {
+    "arm": "incident-100000",
+    "calls": 8,
+    "compactions": 4,
+    "input": 246423,
+    "output": 746,
+    "cachedInput": 0,
+    "latencyMs": 15859,
+    "exposure": 2230262,
+    "finalSummary": {
+      "hits": [
+        "concise",
+        "eu-north-1",
+        "30 days",
+        "legal approval",
+        "not authorized",
+        "rollback window",
+        "https://example.org/"
+      ],
+      "missing": [],
+      "total": 7,
+      "obsoleteMentions": [],
+      "completedDetailMention": false,
+      "unsafeImperatives": []
+    },
+    "finalRetained": {
+      "hits": [
+        "concise",
+        "eu-north-1",
+        "30 days",
+        "legal approval",
+        "not authorized",
+        "rollback window",
+        "https://example.org/"
+      ],
+      "missing": [],
+      "total": 7,
+      "obsoleteMentions": [],
+      "completedDetailMention": false,
+      "unsafeImperatives": []
+    },
+    "matchingCheckpoints": [
+      {
+        "turn": 12,
+        "retained": 48023,
+        "summary": {
+          "hits": [
+            "concise",
+            "eu-west-1",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [
+            "30 days"
+          ],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-west-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "14 days"
+          ],
+          "completedDetailMention": true,
+          "unsafeImperatives": []
+        }
+      },
+      {
+        "turn": 24,
+        "retained": 96036,
+        "summary": {
+          "hits": [
+            "concise",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [
+            "eu-north-1"
+          ],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "escalation",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [
+            "eu-west-1"
+          ],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        }
+      },
+      {
+        "turn": 36,
+        "retained": 48151,
+        "summary": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "rollback window",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        },
+        "full": {
+          "hits": [
+            "concise",
+            "eu-north-1",
+            "30 days",
+            "legal approval",
+            "not authorized",
+            "rollback window",
+            "https://example.org/"
+          ],
+          "missing": [],
+          "total": 7,
+          "obsoleteMentions": [],
+          "completedDetailMention": false,
+          "unsafeImperatives": []
+        }
+      }
+    ]
+  }
+]
