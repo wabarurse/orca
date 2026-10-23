@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { paths } from "./config";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { budget, compact, contextLimit, splitHistory } from "./compaction";
@@ -76,13 +77,14 @@ test("model change to smaller context rechecks and compact off can be overridden
 });
 test("manual idle queues without user messages; busy request and arriving inbox use safe boundaries", async () => {
   const { deps, transcript, dir } = await fixture(); process.env.PARALLELS_HOME = dir;
+  mkdirSync(paths.project("p"), { recursive: true });
   let release!: () => void;
   let started!: () => void;
   const entered = new Promise<void>(r => started = r);
   const gate = new Promise<void>(r => release = r);
   let calls = 0;
-  const provider = { ...deps.provider!, complete: async () => { calls++; started(); await gate; return { content: [text("short summary")], completion: "end_turn", stop: "end" as const }; } };
-  const orch = await createOrchestrator({ project: "p", provider, transcript, tools: {} });
+  const provider = { ...deps.provider!, complete: async () => { calls++; started(); await gate; return { content: [text(JSON.stringify({ user: [], project: [], pending: ["original requirements"], tasks: [] }))], completion: "end_turn", stop: "end" as const }; } };
+  const orch = await createOrchestrator({ project: "p", provider: fakeProvider([]), transcript, tools: {}, rolling: { tailTokens: 100, loadProvider: async () => provider } });
   await orch.compact!(); expect(await orch.pending()).toBe(true);
   const turn = orch.turn(); await entered;
   await put("p", "orchestrator", { from: "user", text: "arrived during summary" });
@@ -141,9 +143,9 @@ test("restart ignores truncated checkpoint and subsequent append remains readabl
 test("scheduled compaction retains full UI replay and forwards subsequent tool events", async () => {
   const { transcript, dir } = await fixture();
   process.env.PARALLELS_HOME = dir;
+  mkdirSync(paths.project("compaction-ui"), { recursive: true });
   const originals = transcript.history!();
   const provider = fakeProvider([
-    [text("Goal: original requirements. Progress: old answer. Next: recent task.")],
     [text("Running a check."), toolUse("check-1", "check", {})],
     [text("Finished.")],
   ]);
@@ -151,6 +153,7 @@ test("scheduled compaction retains full UI replay and forwards subsequent tool e
   const plain: string[] = [];
   const orch = await createOrchestrator({
     project: "compaction-ui", transcript, provider,
+    rolling: { tailTokens: 100, loadProvider: async () => fakeProvider([[text(JSON.stringify({ user: [], project: [], pending: ["original requirements"], tasks: [] }))]]) },
     tools: { check: { spec: { name: "check", description: "Check", input_schema: { type: "object" } }, run: async () => "checked" } },
     write: (value, isPlain) => { if (isPlain) plain.push(value); },
     onInbox: messages => { events.push(...messages.map(m => `inbox:${m.text}`)); },

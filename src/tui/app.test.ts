@@ -106,6 +106,22 @@ async function until(cond: () => boolean): Promise<void> {
 }
 
 describe("tui app", () => {
+  test("closing pages and quitting dispose idle background memory without cancelling idle projects", async () => {
+    const term = fakeTerm(), fake = fakeOrchestrators(), disposed: string[] = [], cancelled: string[] = [];
+    const app = new App({ term, pollMs: 100_000, openOrchestrator: async (...args) => ({
+      ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]), dispose: () => { disposed.push(args[0]); }, cancel: () => { cancelled.push(args[0]); },
+    }) });
+    const running = app.run("memory-first");
+    try {
+      await until(() => !!app.page);
+      await app.openPage("memory-second");
+      app.closePage();
+      expect(disposed).toEqual(["memory-second"]);
+    } finally { app.quit(); await running; }
+    expect(disposed).toEqual(["memory-second", "memory-first"]);
+    expect(cancelled).toEqual([]);
+  });
+
   test("opens a page per project, types to its orchestrator and shows replies", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();

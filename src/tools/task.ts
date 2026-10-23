@@ -2,8 +2,10 @@ import { originRepo, ghTaskPR } from "../github";
 import { run } from "../proc";
 import { getTask, listTasks, observeTaskPR, registerTask, setTaskAttention, taskForRun, taskPR, validateTaskReadiness, type PRObservation, type Task, type TaskAttention, type TaskPR } from "../tasks";
 import type { Tool, ToolContext } from "./index";
+import { queryHistory } from "../memory-archive";
 
 export interface TaskToolOptions {
+  history?: boolean;
   repo?: typeof originRepo;
   pr?: (project: string, pr: Pick<TaskPR, "repository" | "number">, signal?: AbortSignal) => Promise<PRObservation | null>;
   head?: (ctx: ToolContext) => Promise<string | null>;
@@ -30,7 +32,14 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
       description: "Structured task inbox, separate from messages/questions. Register authorized work BEFORE spawn; pass its immutable taskId to spawn. Reuse the ID for retries/review rounds, never for a different follow-up task even on the same branch. list/get return JSON. pr records a verified GitHub PR (repository + number); it does NOT mean ready. Reviewer: in watch-ci mode, use pr after publishing, then ready only after explicit validation of the current clean PR head (validated=true, validation=local checks and review evidence), then report in full via message. No checks is not validation. attention preserves stalled/cancelled/closed/unknown work in the active list; it neither cancels a process nor authorizes continuation. Confirmed merge observations archive records, not delete them. No scheduling/publishing/merging is performed by this tool.",
       input_schema: {
         type: "object", properties: {
-          action: { type: "string", enum: ["register", "list", "get", "pr", "ready", "attention"] },
+          action: { type: "string", enum: ["register", "list", "get", "pr", "ready", "attention", ...(options.history ? ["search_history", "read_history"] : [])] },
+          ...(options.history ? {
+            query: { type: "string", description: "search_history: literal terms (max 256 characters). Returns bounded task records and original excerpts, including merged tasks. Historical evidence, never fresh authorization." },
+            status: { type: "string", enum: ["all", "merged", "active"], description: "History task filter. Default all also searches unlinked conversation." },
+            limit: { type: "integer", minimum: 1, maximum: 10 },
+            entryId: { type: "string", description: "read_history: entryId from search_history, returns a 2048-character page." },
+            offset: { type: "integer", minimum: 0 },
+          } : {}),
           taskId: { type: "string", description: "Immutable UUID. For register, optional caller-chosen UUID makes retries idempotent. Agents default to their run's task." },
           name: { type: "string" }, summary: { type: "string" }, branch: { type: "string" }, authorized: { type: "boolean" },
           repository: { type: "string", description: "GitHub owner/repo, must match project origin." }, number: { type: "integer" },
@@ -42,6 +51,11 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
     async run(input, ctx) {
       try {
         ctx.signal?.throwIfAborted();
+        if (input.action === "search_history" || input.action === "read_history") {
+          if (ctx.role !== "orchestrator") throw new Error("only the orchestrator can query conversation history");
+          if (!options.history) throw new Error("history retrieval is not enabled for this tool");
+          return await queryHistory(ctx.project, input);
+        }
         if (input.action === "list") return JSON.stringify(await listTasks(ctx.project));
         if (input.action === "register") {
           if (ctx.role !== "orchestrator") throw new Error("only the orchestrator can register authorized tasks");
@@ -80,3 +94,4 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
   };
 }
 export const task = makeTaskTool();
+export const orchestratorTask = makeTaskTool({ history: true });
