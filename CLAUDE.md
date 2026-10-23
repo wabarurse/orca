@@ -39,6 +39,7 @@ Workspace ownership:
 - `paths.repo` resolves the binding, falling back to `projects/<id>/repo` only for legacy projects. `paths.worktree` resolves beside the original checkout (`<checkout>.parallels-worktrees/<uuid>/<slug>`), falling back to legacy paths. New projects cannot overlap their state directory. Checkouts sharing a path share a turn lock across conversations.
 - Workers branch from the original default branch; reviewers reuse the same task worktree. Validate common Git storage and branch before reusing/removing a worktree. Shared repo-local Git settings include login updates; untracked/ignored files are not automatically copied.
 - `src/launch-environment.ts` passes the current launch environment through a private, self-deleting shell file, clearing stale tmux environment while preserving its window identity. Never put credentials in argv or tmux options.
+- Updater authentication: `src/git-credentials.ts` filters normal system/global Git configuration to `credential.*` only for the verified fetch. Keep helper order, empty resets, scoped settings and local precedence. A private temporary config is removed on success/failure; never log config output or pass credential values in argv. Global URL rewrites/hooks and inherited repository/config overrides remain disabled. Tests use fixture config/helpers, never native credentials.
 
 Rules:
 

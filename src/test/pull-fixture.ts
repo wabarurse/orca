@@ -41,6 +41,10 @@ export async function pullFixture() {
   const command: UpdateCommand = async (argv, cwd, childEnv) => {
     if (cwd !== app) throw new Error(`command escaped app: ${cwd}`);
     calls.push(argv);
+    if (argv.includes("--show-scope")) {
+      // Read only fixture global/local config, never host system credentials.
+      return updateCommand(argv, cwd, { ...childEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null" });
+    }
     if (basename(argv[0]!) === "bun") {
       if (argv[1] === "--version") return { code: 0, out: "1.4.2\n", err: "" };
       if (argv.slice(1).join(" ") === "install --frozen-lockfile") return { code: 0, out: "", err: "" };
