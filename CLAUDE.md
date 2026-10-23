@@ -36,7 +36,7 @@ Each agent gets its task from the first user message (spawn's brief or the inbox
 Rules:
 
 - All state lives under `~/.parallels` (`src/config.ts` has the layout). A project's id is its folder name and never changes; the header tab shows its display name (`displayName` in `src/commands.ts`). `PARALLELS_HOME` overrides it in tests.
-- Structured task inbox: `src/tasks.ts` persists authorized tasks in per-project `tasks.json` (UUIDs, stages, PR identity/head, exact runs, attention, retained merge history). `task register` precedes `spawn(prompt, branch, taskId, role)`; retries/review rounds keep the ID, separate follow-ups get new IDs even on a reused branch. Transcripts/windows/worktrees remain branch-keyed. No prose-derived state or task scheduling. See `TASK_INBOX.md` for schema, query API and lifecycle producers.
+- Structured task inbox: `src/tasks.ts` persists authorized tasks in per-project `tasks.json` (UUIDs, stages, PR identity/head, exact runs, attention, retained merge history). Register new work before `spawn(prompt, branch, taskId, role)`. Retries, review/CI corrections and fixes to the same unmerged PR keep its ID and branch, including after a ready report; refresh PR state before resuming and revalidate readiness after changes. Separate follow-ups get new IDs and need new branches after PR publication. Transcripts/windows/worktrees remain branch-keyed. No prose-derived state or task scheduling. See `TASK_INBOX.md` for schema, query API and lifecycle producers.
 - Agents only know their cwd. Never read the host or another worker's worktree.
 - Tool results are byte-capped when appended to the transcript.
 - Prefer `Bun.file`, `Bun.$`, and `bun:test` over npm packages.

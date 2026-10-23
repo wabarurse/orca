@@ -368,8 +368,16 @@ you what was left open. When a review is clean the orchestrator tells the review
 "watch ci": it pushes, opens the PR, runs `gh pr checks --watch`, fixes what
 fails until green, and reports ready to merge. One agent codes on a branch at a
 time: spawn waits briefly and then refuses while the branch's worker or reviewer
-is still running. A small follow-up on a branch that has not gone to CI yet can
-reuse it (its worker keeps its context); other work gets a new branch.
+is still running. Corrections to an existing task or unmerged PR reuse its task ID
+and branch, including CI failures, review feedback and user-requested fixes after
+a ready report. The orchestrator finds the task with `task list/get` and refreshes
+its PR state with `task pr` before resuming. It messages a running agent or
+restarts the worker on the same branch, then runs the task flow again. The reviewer
+updates the same PR and validates its new head; previous readiness is invalidated.
+These corrections need no new task, temporary branch or cherry-pick workaround.
+A separate small follow-up before PR publication can reuse the branch with a new
+task ID. Independent work, separate work after publication, and work after a merge
+get a new branch.
 
 When a branch's PR is merged, the TUI notices within about 30 seconds (it asks
 `gh pr list --repo <origin> --state merged` for each open project whose origin

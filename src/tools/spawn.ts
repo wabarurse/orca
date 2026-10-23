@@ -40,17 +40,20 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
         "so spawn again only after it has reported or exited.\n" +
         "Never spawn on a branch whose PR is merged; the harness stops and cleans those up (within ~30s, when gh is available). Follow-up work goes on a new branch.\n\n" +
         "Reuse or new branch, decided per task when you plan:\n" +
-        "- Reuse an open branch (spawn its worker again with the new task) only before it has gone to CI or a PR: its worker has reported, and review has not started or is between rounds. " +
-        "It fits small work on the same files or feature. Its whole transcript is resent each call, so reuse a worker for small follow-ups, not a long series of tasks. " +
-        "The new task runs the whole task flow anew, with its own review rounds.\n" +
-        "- Start a new branch when the work is independent, needs its own merge order, or the existing branch has gone to CI or a PR.\n" +
+        "- Reuse the same taskId and branch for corrections to an existing task or unmerged PR, including review feedback, CI failures and user-requested fixes after a ready report. " +
+        "CI or PR publication does not require a fresh branch for these corrections. Use task list/get to find the existing task and refresh its PR state with task pr before resuming. " +
+        "If its agent is still running, message it; otherwise spawn the worker on that branch with the correction. " +
+        "Run the task flow again; the reviewer pushes to the same PR and validates its updated head. Do not register a new task or use a temporary branch/cherry-pick workaround for the correction.\n" +
+        "- A separate small follow-up on the same feature may reuse a branch before PR publication, with a new taskId and its own task flow. " +
+        "Its whole transcript is resent each call, so avoid a long series of tasks on one worker.\n" +
+        "- Start a new branch for independent work, a separate task after PR publication, work needing its own merge order, or work after the original PR has merged.\n" +
         "- If unsure, say so in the plan table and let the user choose.\n" +
         "In the plan table, mark a reused branch (existing): \"<branch> (existing)\".",
       input_schema: {
         type: "object",
         properties: {
           attachments: attachmentSchema,
-          taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries/review rounds; register a new ID for separate follow-up work." },
+          taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
           branch: { type: "string", description: "Branch to work on: an open branch to reuse it, or a new name, created from HEAD." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },

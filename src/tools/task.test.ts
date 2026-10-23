@@ -53,6 +53,22 @@ test("PR creation/no CI is not ready; active reviewer explicitly validates verif
   expect(await validate({ taskId: t.id }, ctx("orchestrator"))).toContain("only a reviewer");
 });
 
+test("duplicate registration on a PR branch guides corrections to the existing task without changing it", async () => {
+  const t = await reviewer(); await record();
+  const before = await getTask(project, t.id);
+  const result = await tool.run({ action: "register", name: "Fix the PR", summary: "Correct the existing change", branch: t.branch, authorized: true }, ctx());
+  expect(result).toStartWith("refused:");
+  expect(result).toContain("same unmerged PR");
+  expect(result).toContain("resume its existing taskId and branch without registering again");
+  expect(result).toContain("separate work needs a new branch");
+  expect(JSON.parse(await tool.run({ action: "list" }, ctx())).map((row: { id: string }) => row.id)).toEqual([t.id]);
+  expect(JSON.parse(await tool.run({ action: "get", taskId: t.id }, ctx()))).toEqual(before);
+  const separate = JSON.parse(await tool.run({ action: "register", name: "Separate work", summary: "Independent feature", branch: "feat/separate", authorized: true }, ctx()));
+  expect(separate.id).not.toBe(t.id);
+  expect(separate.branch).toBe("feat/separate");
+  expect(tool.spec.description).toContain("resume its taskId and branch without registering again, even after a ready report");
+});
+
 test("workers and unrelated/stale reviewer runs cannot write readiness or PR identities", async () => {
   const t = await reviewer();
   expect(await tool.run({ action: "pr", taskId: t.id, repository: "o/r", number: 2 }, ctx("worker", "unknown"))).toContain("active agent");

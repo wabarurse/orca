@@ -127,10 +127,17 @@ fields return the same record; conflicting fields are rejected. Display names an
 summaries are never identifiers. `spawn` now requires this registered `taskId` in
 addition to `prompt`, `branch` and optional `role`.
 
-* Use the **same ID** for a task's retries, review corrections and watch-CI run.
+* Use the **same ID and branch** for a task's retries, review/CI corrections,
+  watch-CI run and user-requested fixes to its unmerged PR, even after a ready
+  report. Find the record with `task list/get` and refresh its PR state with
+  `task pr` before resuming. Message its running agent or spawn its worker again;
+  then run the task flow and update the same PR. Do not register a new task or
+  create a temporary branch to transfer the fix back. New activity invalidates
+  readiness; the reviewer must validate the updated PR head again.
 * Register a **new ID** for a separate follow-up task, even on a reusable pre-PR
   branch. Prior records remain. Registration refuses a new task on a branch
-  already associated with a PR; the existing branch-reuse policy is unchanged.
+  already associated with a PR and points corrections back to the existing task.
+  Separate work after PR publication and work after a merge need a new branch.
 * Registration records authorization; it cannot independently prove a human
   authorized the work. It does not spawn anything.
 * Agent `task` calls default to the task bound to their exact supervised run.
