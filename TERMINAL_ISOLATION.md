@@ -1,3 +1,23 @@
+# Current fullscreen selection follow-up
+
+The historical investigations below are retained as evidence, not current UX.
+Fullscreen now always requests 1000 + 1002 (button-drag motion) + SGR 1006.
+Unmodified SGR left drag highlights committed conversation only; Ctrl+O explicitly
+copies through the local desktop clipboard writer. No auto-copy or Cmd-C assumption.
+Esc clears selection, and reflow/context replacement cancels it. Soft wraps copy as
+visible newlines; transient streaming/activity rows are excluded. Legacy X10 wheels
+remain supported, but selection requires SGR reports. See README for limitations.
+
+Apple documents [Allow Mouse Reporting](https://support.apple.com/guide/terminal/turn-on-mouse-reporting-trmlc69728a5/mac).
+A terminal that disables reporting can still scroll its own history; the app cannot
+force permission. Native selection/link modifiers are terminal-dependent, not a
+portable substitute for this in-app selection. OSC 8 targets remain available in
+unselected text. No physical Apple Terminal GUI validation was performed. Tests
+inject packets into an owned PTY and use fake clipboard adapters or the SSH guard;
+they do not touch the user's clipboard or prove native mouse gestures.
+
+---
+
 # Wheel scrolling: screen-isolation investigation
 
 ## Parser compatibility follow-up from `001954519bea7a16665c99a3cfa71cddc988a028`

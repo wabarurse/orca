@@ -191,7 +191,7 @@ test("selected tabs remain visible in a narrow terminal, with names treated as d
 
 test("SGR wheel events scroll without inserting terminal reports into the draft", () => {
   expect(parseKeys("\x1b[<64;12;8M\x1b[<65;12;8M")).toEqual([{ name: "wheelup" }, { name: "wheeldown" }]);
-  expect(parseKeys("\x1b[<0;12;8M\x1b[<0;12;8m")).toEqual([]);
+  expect(parseKeys("\x1b[<0;12;8M\x1b[<0;12;8m")).toEqual([{ name: "mousedown", x: 12, y: 8 }, { name: "mouseup", x: 12, y: 8 }]);
 });
 
 test("selected activity and tools live only at the conversation tail, never in either pinned bar", () => {

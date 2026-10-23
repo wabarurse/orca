@@ -80,7 +80,7 @@ function sgrStyle(params: string, style: CellStyle): CellStyle {
 }
 
 /** DEC private modes it models: cursor visibility, bracketed paste, synchronized output. */
-const MODES = new Set([25, 1000, 1006, 1049, 2004, 2026]);
+const MODES = new Set([25, 1000, 1002, 1006, 1049, 2004, 2026]);
 
 export class FakeScreen {
   /** Every row, scrollback first; a row is cells, "" marking the right half of a wide character. */

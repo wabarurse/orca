@@ -284,9 +284,9 @@ describe("mouse input framing (not native gestures)", () => {
     expect(parseKeys("\x1b[M`**")).toEqual([{ name: "wheelup" }]);
   });
 
-  test("horizontal, release, motion, clicks, extended and malformed reports are consumed, never vertical scroll or text", () => {
-    const ignored = [
-      ...[0, 1, 2, 3, 32, 66, 67, 96, 97, 128, 192, 193, 256, 320].flatMap(button => [Buffer.from(sgr(button)), ...(button <= 223 ? [x10(button)] : [])]),
+  test("horizontal, wheel releases, non-left buttons, extended and malformed reports are consumed, never text", () => {
+    const ignored = [x10(0), x10(32),
+      ...[1, 2, 3, 66, 67, 96, 97, 128, 192, 193, 256, 320].flatMap(button => [Buffer.from(sgr(button)), ...(button <= 223 ? [x10(button)] : [])]),
       Buffer.from(sgr(64, "m")), Buffer.from(sgr(65, "m")),
       ...["<64", "<64;10", "<64;1;2;3", "<64;;2", "<64;0;2", "<64;-1;2", "<64;1.5;2", "<64;1;0", "<64;9007199254740992;2", "<9007199254741056;1;2"].map(p => Buffer.from(`\x1b[${p}M`)),
       x10(64, 32), Buffer.from("\x1b[?9999h"), Buffer.from("\x1b[<64;1;2Z"),
@@ -392,4 +392,13 @@ test("a slow UTF-8 character is not replaced at the sequence timeout, including 
     r.feed(packet.subarray(1));
     expect(r.got).toEqual(prefix ? [{ name: "👩", alt: true, text: undefined }] : [{ name: "char", text: "👩" }]);
   }
+});
+
+test('SGR left drag and release survive every byte boundary; modified clicks ignored', () => {
+  const packet = Buffer.from('\x1b[<0;2;3M\x1b[<32;7;8M\x1b[<0;7;8m');
+  for (let cut = 1; cut < packet.length; cut++) {
+    const r = reader(); r.feed(packet.subarray(0, cut)); r.feed(packet.subarray(cut));
+    expect(r.got).toEqual([{ name: 'mousedown', x: 2, y: 3 }, { name: 'mousemove', x: 7, y: 8 }, { name: 'mouseup', x: 7, y: 8 }]);
+  }
+  expect(parseKeys('\x1b[<4;1;2M\x1b[<8;1;2M\x1b[<16;1;2M')).toEqual([]);
 });

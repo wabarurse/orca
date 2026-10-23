@@ -66,3 +66,32 @@ export async function readClipboardImage(adapter: ClipboardAdapter = native): Pr
   validateImage(bytes);
   return { bytes, mime: "image/png" };
 }
+
+/** Explicit text copy only. Fixed argv + stdin, never a shell, OSC 52, or an
+ * automatic clipboard write on selection. SSH cannot address the local desktop. */
+export interface ClipboardWriter {
+  platform: string;
+  env: Record<string, string | undefined>;
+  which(name: string): string | null;
+  run(argv: string[], text: string): Promise<void>;
+}
+export async function clipboardWriteCommand(argv: string[], text: string): Promise<void> {
+  const child = Bun.spawn(argv, { stdin: new Blob([text]), stdout: 'ignore', stderr: 'ignore' });
+  const timer = setTimeout(() => child.kill(), 5000);
+  try { if (await child.exited !== 0) throw new Error('Clipboard service failed or timed out.'); }
+  finally { clearTimeout(timer); child.kill(); }
+}
+export async function writeClipboardText(text: string, adapter: ClipboardWriter = { ...native, run: clipboardWriteCommand }): Promise<void> {
+  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error('Text copy requires a local desktop session; unavailable over SSH.');
+  if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('Selection exceeds the 4 MiB copy limit.');
+  let argv: string[];
+  if (adapter.platform === 'darwin') argv = ['/usr/bin/pbcopy'];
+  else if (adapter.platform === 'linux') {
+    const wl = adapter.env.WAYLAND_DISPLAY && adapter.which('wl-copy');
+    const xclip = adapter.env.DISPLAY && adapter.which('xclip');
+    if (wl) argv = [wl, '--type', 'text/plain;charset=utf-8'];
+    else if (xclip) argv = [xclip, '-selection', 'clipboard', '-in'];
+    else throw new Error('No local clipboard writer; use existing wl-copy or xclip. Nothing was installed.');
+  } else throw new Error('Text copy is supported only on local macOS or Linux desktops.');
+  await adapter.run(argv, text);
+}

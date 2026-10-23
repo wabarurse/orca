@@ -12,6 +12,9 @@ export interface Key {
    *  (text is its body, e.g. "11;rgb:0000/0000/0000"), or a single character for modifier
    *  chords such as Ctrl+N ({ name: "n", ctrl }). */
   name: string;
+  /** One-based terminal cell coordinates for left-button selection events. */
+  x?: number;
+  y?: number;
   ctrl?: boolean;
   alt?: boolean;
   shift?: boolean;
@@ -62,8 +65,13 @@ function wheel(button: number): Key | null {
 function fromCsi(params: string, final: string): Key | null {
   if (params.startsWith("<")) {
     const m = /^<(\d+);(\d+);(\d+)$/.exec(params);
-    if (final !== "M" || !m || !m.slice(2).every(n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) return null;
-    return wheel(Number(m[1]));
+    if (!["M", "m"].includes(final) || !m || !m.slice(2).every(n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) return null;
+    const button = Number(m[1]);
+    if (final === "M" && wheel(button)) return wheel(button);
+    // Modified clicks belong to the terminal (notably link gestures). Never
+    // interpret unknown/extended buttons as a left-button drag.
+    if (button !== 0 && button !== 32) return null;
+    return { name: final === "m" ? "mouseup" : button === 32 ? "mousemove" : "mousedown", x: Number(m[2]), y: Number(m[3]) };
   }
   const nums = params.split(";").map((p) => (p === "" ? NaN : Number(p)));
   if (final === "u") return fromKitty(nums);
