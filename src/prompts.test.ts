@@ -158,6 +158,14 @@ test("all production review flows require structured intent including zero-revie
   }
 });
 
+test("reviewer watch-ci opens the PR with title and body from the first commit", () => {
+  for (const dynamicDispatch of [false, true]) {
+    const prompt = rolePrompt("reviewer", { ...defaults, dynamicDispatch });
+    expect(prompt).toContain("open the PR with `gh pr create --fill-first` (title and body from the first commit) if there is none");
+    expect(prompt.length).toBeLessThan(2200);
+  }
+});
+
 describe("dynamic dispatch", () => {
   const rounds = [0, 1, 100];
   test("off leaves the orchestrator prompt exactly the base prompt; on appends one section after it", () => {
