@@ -115,9 +115,21 @@ contextLimitFallback = 128000
 ```
 
 The fallback is a configurable **operational budget, not a claimed model limit**.
-Verified Codex catalog standard `context_window` values live in `model-context.ts`,
-with a pinned source URL; unknown models (including Claude IDs) use the fallback.
-The larger opt-in `max_context_window` is not assumed. Embedders may supply verified
+`model-context.ts` holds a verified table of standard windows for Codex (catalog
+`context_window`, pinned source URL) and Claude (documented default windows); dated
+Claude snapshot IDs use their base model's entry. Opt-in long context (Codex
+`max_context_window`, Claude `[1m]` variants) is not assumed.
+
+The provider catalogs fetched for `/models` fill gaps: Anthropic `max_input_tokens`
+and Codex `context_window` (null, absent, 0, negative or non-finite values are
+ignored). Precedence: explicit `contextLimit` > model window > `contextLimitFallback`
+> 128000. The model window is the table entry, the catalog value, or the smaller of
+the two when both exist, so a catalog never raises a model above its standard window
+(Opus/Sonnet 4.6 stay 200k even if the catalog reports 1M). Table and catalog limits
+are not estimates (no trailing `?` in the header); only the fallback is. The catalog
+cache is in memory per process: each provider's catalog is fetched once in the
+background when a turn first resolves that provider (retried on a later turn after a
+failure) and is never awaited, so the first turn and header use the table or fallback. Embedders may supply verified
 `AgentDeps.compaction.contextLimit` and `maxOutputTokens`. Effort/fast groups do not
 establish context or output windows. No undocumented model limits are invented.
 

@@ -6,6 +6,7 @@ import { validateSettings, type RequestSettings } from "../project-settings";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider, Turn } from "./index";
+import { rememberCatalogLimits } from "../model-context";
 
 // accounts.ts supplies Claude Code subscription credentials. There is no API-key mode.
 export function anthropic(client: Anthropic, options: { promptCache?: boolean } = {}): Provider {
@@ -57,8 +58,9 @@ export function anthropic(client: Anthropic, options: { promptCache?: boolean } 
       return claudeSearchResults(message);
     },
     async models() {
-      const all: { id: string; created_at: string }[] = [];
+      const all: { id: string; created_at: string; max_input_tokens?: number | null }[] = [];
       for await (const m of client.models.list()) all.push(m);
+      rememberCatalogLimits(all.map((m) => [m.id, m.max_input_tokens]));
       // Newest first, so callers can take the head as "recent".
       return all.sort((a, b) => b.created_at.localeCompare(a.created_at)).map((m) => m.id);
     },

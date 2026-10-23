@@ -7,6 +7,7 @@ import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseO
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../codex-auth";
 import type { Provider, Turn } from "./index";
+import { rememberCatalogLimits } from "../model-context";
 
 // Protocol/catalog compatibility snapshot, matching Codex CLI 0.154.0.
 export const CODEX_CLIENT_VERSION = "0.154.0";
@@ -142,10 +143,11 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
       return codexSearchResults(output);
     },
     async models() {
-      const catalog = await request((client) => client.get<{ models: { slug: string; visibility?: string; priority?: number }[] }>("/models", {
+      const catalog = await request((client) => client.get<{ models: { slug: string; visibility?: string; priority?: number; context_window?: unknown }[] }>("/models", {
         query: { client_version: CODEX_CLIENT_VERSION },
       }));
       if (!Array.isArray(catalog.models)) throw new Error("codex returned an invalid model catalog.");
+      rememberCatalogLimits(catalog.models.filter((model) => typeof model?.slug === "string").map((model) => [model.slug, model.context_window]));
       return catalog.models.filter((model) => typeof model.slug === "string" && model.visibility !== "hide")
         .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)).map((model) => model.slug);
     },
