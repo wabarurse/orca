@@ -124,11 +124,23 @@ fail explicitly rather than disappearing in a text serializer.
 `requireVision` in `src/images.ts` contains explicit model-ID admission lists,
 **independent of effort/fast settings**. Unknown IDs fail closed with instructions
 to select a supported vision model. Known local defaults (`claude-sonnet-5-5`,
-`gpt-5.5`) and the enumerated Claude 3+/4+/5 and GPT-4o/4.1/5 IDs are admitted;
+`gpt-5.5`) and the enumerated Claude 3+/4+/5 and GPT-4o/4.1/5/6 IDs are admitted;
 this operational list is **not live service capability/entitlement verification**.
 The full exact list is the source of truth. Models outside it may support vision
 but need a reviewed admission change. A provider rejection is surfaced unchanged;
 there is no automatic provider/model fallback.
+
+The Codex admission update verified on **2026-10-23** includes `gpt-6-astra`,
+`gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-5.6-luna`, and `codex-auto-review`. Each explicitly advertises `image` in
+`input_modalities` in the same
+[Codex catalog snapshot](https://github.com/openai/codex/blob/9b39316997fd8bcecdb2007722f52ef858f0dbd8/codex-rs/models-manager/models.json)
+used for request settings. The
+[GPT-6 Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra)
+also documents image input. Provider model discovery alone does not grant image
+admission, and reasoning/fast support is not used to infer vision support. Future
+model additions need an explicit modality check as well as settings validation.
+Unknown IDs and unverified aliases/date variants remain refused.
 
 Agents receive a real image block plus `[Image N; attachment_id=<UUID>]`.
 Delegation must **explicitly** pass relevant IDs:

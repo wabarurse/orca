@@ -4,6 +4,7 @@ import type { ResponseOutputItem } from "openai/resources/responses/responses";
 import { fromResponses, openai, toResponses, toResponseTools } from "./openai";
 import { providerFor } from "./index";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
+import { png } from "../test/image-fixture";
 
 let mockFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
 afterEach(() => { mockFetch?.mockRestore(); mockFetch = undefined; });
@@ -74,6 +75,47 @@ test("Codex streams text and tool calls through its subscription endpoint", asyn
   expect(body).not.toHaveProperty("max_output_tokens");
   expect(body).not.toHaveProperty("messages");
 });
+
+test.each([
+  "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
+  "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review",
+])("%s sends image bytes to Codex with the selected model and settings", async model => {
+  const data = png().toString("base64");
+  let calls = 0;
+  intercept(async req => {
+    calls++;
+    expect(req.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    const body = await req.json() as Record<string, unknown>;
+    expect(body.model).toBe(model);
+    expect(body.reasoning).toEqual({ summary: "auto", effort: "high" });
+    expect(body.service_tier).toBe("priority");
+    expect(body.input).toEqual([{ role: "user", content: [
+      { type: "input_text", text: "Inspect this screenshot" },
+      { type: "input_image", image_url: `data:image/png;base64,${data}`, detail: "auto" },
+    ] }]);
+    return codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]);
+  });
+  const messages: MessageParam[] = [{ role: "user", content: [
+    { type: "text", text: "Inspect this screenshot" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data } },
+  ] }];
+  await openai(async () => fakeCodexTokens()).complete({ ...request(), model, messages, settings: { effort: "high", fast: true } });
+  expect(calls).toBe(1);
+});
+
+test.each(["gpt-unknown", "gpt-6-astra-unverified", "gpt-6-astra-2099-01-01", "gpt-3.5-turbo"])(
+  "%s still refuses images before accessing credentials or sending a request", async model => {
+    let credentials = 0, calls = 0;
+    intercept(async () => { calls++; return Response.json({}); });
+    const provider = openai(async () => { credentials++; return fakeCodexTokens(); });
+    const messages: MessageParam[] = [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: png().toString("base64") } },
+    ] }];
+    await expect(provider.complete({ ...request(), model, messages })).rejects.toThrow("attachments were preserved");
+    expect(credentials).toBe(0);
+    expect(calls).toBe(0);
+  },
+);
 
 test("Codex retries an initial 401 once using refreshed subscription credentials", async () => {
   const tokens = fakeCodexTokens();
