@@ -113,7 +113,7 @@ test("Codex refresh failures cannot change accounts or destroy the previous logi
       await codexCredentials("default", async () => response)();
       throw new Error("expected failure");
     } catch (error) {
-      expect(String(error)).toContain("Codex OAuth");
+      expect(String(error)).toContain("codex oauth");
       expect(String(error)).not.toContain("private-token");
     }
     expect(await readCodexTokens("default")).toEqual(previous);
@@ -129,7 +129,7 @@ test("Codex import accepts native ChatGPT tokens and rejects API-key-only auth",
   expect((await readCodexTokens("personal"))?.accessToken).toBe(tokens.accessToken);
   expect(await Bun.file(file).text()).toBe(data);
   await Bun.write(file, JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "unused-key" }));
-  await expect(importCodex("api", file)).rejects.toThrow("ChatGPT subscription login");
+  await expect(importCodex("api", file)).rejects.toThrow("chatgpt subscription login");
   expect(await readCodexTokens("api")).toBeNull();
 });
 

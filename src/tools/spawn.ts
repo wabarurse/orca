@@ -98,7 +98,7 @@ async function launch(runner: Runner, prompt: string, branch: string, role: "wor
     await runner.start({ project: ctx.project, role, branch, run, ...(ctx.signal ? { signal: ctx.signal } : {}) });
     return id;
   } catch (error) {
-    await stopTaskRun(ctx.project, run, ctx.signal?.aborted ? "cancelled" : "blocked", "Agent launch failed; no successful start confirmed", true);
+    await stopTaskRun(ctx.project, run, ctx.signal?.aborted ? "cancelled" : "blocked", "agent launch failed; no successful start confirmed", true);
     throw error;
   }
 }

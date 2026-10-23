@@ -35,7 +35,7 @@ test("threshold includes system/tools/reserve; unknown uses configured fallback"
   expect(budget(deps, [])).toBeGreaterThan(2000);
   deps.system = "s".repeat(300000);
   expect(budget(deps, [])).toBeGreaterThan(100000);
-  await expect(compact(deps)).rejects.toThrow("Context blocked");
+  await expect(compact(deps)).rejects.toThrow("context blocked");
 });
 test("atomic checkpoint, repeated compactions and restart keep original UI history without duplicated tail", async () => {
   const { deps, transcript } = await fixture();

@@ -15,19 +15,19 @@ function run() {
   var types = ObjC.deepUnwrap(p.types) || [];
   var chosen = ['public.png','public.tiff','public.jpeg'].filter(function(t) { return types.indexOf(t) >= 0; })[0];
   if (!chosen) {
-    if (!types.length) throw Error('Clipboard is empty.');
-    if (types.some(function(t) { return /image|png|tiff|jpeg|gif|webp/i.test(t); })) throw Error('Unsupported clipboard image; copy a PNG, TIFF or JPEG.');
-    throw Error('Clipboard has no image. Use your terminal text-paste shortcut for text.');
+    if (!types.length) throw Error('clipboard is empty.');
+    if (types.some(function(t) { return /image|png|tiff|jpeg|gif|webp/i.test(t); })) throw Error('unsupported clipboard image; copy a png, tiff or jpeg.');
+    throw Error('clipboard has no image. use your terminal text-paste shortcut for text.');
   }
   var data = p.dataForType(chosen);
-  if (!data || Number(data.length) > ${MAX_IMAGE_BYTES}) throw Error('Clipboard image exceeds 4 MiB or could not be read.');
+  if (!data || Number(data.length) > ${MAX_IMAGE_BYTES}) throw Error('clipboard image exceeds 4 mib or could not be read.');
   if (chosen !== 'public.png') {
     var rep = $.NSBitmapImageRep.imageRepWithData(data);
-    if (!rep || Number(rep.pixelsWide) > 4096 || Number(rep.pixelsHigh) > 4096) throw Error('Unsupported or oversized clipboard image.');
+    if (!rep || Number(rep.pixelsWide) > 4096 || Number(rep.pixelsHigh) > 4096) throw Error('unsupported or oversized clipboard image.');
     data = rep.representationUsingTypeProperties(4, $({}));
   }
-  if (!data || Number(data.length) > ${MAX_IMAGE_BYTES}) throw Error('Converted clipboard image exceeds 4 MiB.');
-  if (Number(p.changeCount) !== before) throw Error('Clipboard changed while reading; try Ctrl+V again.');
+  if (!data || Number(data.length) > ${MAX_IMAGE_BYTES}) throw Error('converted clipboard image exceeds 4 mib.');
+  if (Number(p.changeCount) !== before) throw Error('clipboard changed while reading; try ctrl+v again.');
   return ObjC.unwrap(data.base64EncodedStringWithOptions(0));
 }`;
 /** Bounded subprocess streams and lifetime; stderr is never image output. */
@@ -36,33 +36,33 @@ export async function clipboardCommand(argv: string[], limit: number): Promise<U
   const timer = setTimeout(() => child.kill(), 5000);
   const read = async (stream: ReadableStream<Uint8Array>, max: number) => {
     const reader = stream.getReader(); const chunks: Uint8Array[] = []; let size = 0;
-    try { for (;;) { const next = await reader.read(); if (next.done) break; size += next.value.length; if (size > max) { child.kill(); throw new Error("Clipboard output exceeded size limit."); } chunks.push(next.value); } }
+    try { for (;;) { const next = await reader.read(); if (next.done) break; size += next.value.length; if (size > max) { child.kill(); throw new Error("clipboard output exceeded size limit."); } chunks.push(next.value); } }
     finally { reader.releaseLock(); }
     return Buffer.concat(chunks);
   };
   try {
     const [out, err, code] = await Promise.all([read(child.stdout, limit), read(child.stderr, 8192), child.exited]);
-    if (code !== 0) throw new Error(`Clipboard read failed: ${err.toString().replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 1000) || "clipboard service unavailable or timed out"}`);
+    if (code !== 0) throw new Error(`clipboard read failed: ${err.toString().replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 1000) || "clipboard service unavailable or timed out"}`);
     return out;
   } finally { clearTimeout(timer); child.kill(); }
 }
 const native: ClipboardAdapter = { platform: process.platform, env: process.env, which: name => Bun.which(name), run: clipboardCommand };
 export async function readClipboardImage(adapter: ClipboardAdapter = native): Promise<ClipboardImage> {
-  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error("Image clipboard is unavailable over SSH. Run parallels in the local desktop session; terminal text paste still works.");
+  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error("image clipboard is unavailable over ssh. run parallels in the local desktop session; terminal text paste still works.");
   let bytes: Uint8Array;
   if (adapter.platform === "darwin") {
     const encoded = Buffer.from(await adapter.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_CLIPBOARD_SCRIPT], Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 16)).toString().trim();
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error("Native clipboard returned invalid image data.");
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error("native clipboard returned invalid image data.");
     bytes = Buffer.from(encoded, "base64");
   } else if (adapter.platform === "linux") {
     const wl = adapter.env.WAYLAND_DISPLAY && adapter.which("wl-paste");
     const xclip = adapter.env.DISPLAY && adapter.which("xclip");
-    if (!wl && !xclip) throw new Error("No local image clipboard available. Use an existing wl-paste (Wayland) or xclip (X11) in a desktop session; nothing was installed.");
+    if (!wl && !xclip) throw new Error("no local image clipboard available. use an existing wl-paste (wayland) or xclip (x11) in a desktop session; nothing was installed.");
     const command = wl ? [wl, "--list-types"] : [xclip as string, "-selection", "clipboard", "-t", "TARGETS", "-o"];
     const types = Buffer.from(await adapter.run(command, 16384)).toString().split(/\s+/).filter(Boolean);
-    if (!types.includes("image/png")) throw new Error(types.some(t => t.startsWith("image/")) ? "Unsupported clipboard image; Linux supports image/png. Copy a PNG." : "Clipboard is empty or has no image. Use terminal text paste for text.");
+    if (!types.includes("image/png")) throw new Error(types.some(t => t.startsWith("image/")) ? "unsupported clipboard image; linux supports image/png. copy a png." : "clipboard is empty or has no image. use terminal text paste for text.");
     bytes = await adapter.run(wl ? [wl, "--no-newline", "--type", "image/png"] : [xclip as string, "-selection", "clipboard", "-t", "image/png", "-o"], MAX_IMAGE_BYTES);
-  } else throw new Error("Image clipboard is supported only on local macOS or Linux desktops.");
+  } else throw new Error("image clipboard is supported only on local macos or linux desktops.");
   validateImage(bytes);
   return { bytes, mime: "image/png" };
 }
@@ -89,8 +89,8 @@ export async function clipboardWriteCommand(argv: string[], text: string, timeou
   }, timeoutMs);
   try {
     const code = await child.exited;
-    if (timedOut) throw new Error('Clipboard service timed out.');
-    if (code !== 0) throw new Error('Clipboard service failed.');
+    if (timedOut) throw new Error('clipboard service timed out.');
+    if (code !== 0) throw new Error('clipboard service failed.');
   } finally {
     clearTimeout(timer);
     clearTimeout(escalation);
@@ -99,8 +99,8 @@ export async function clipboardWriteCommand(argv: string[], text: string, timeou
   }
 }
 export async function writeClipboardText(text: string, adapter: ClipboardWriter = { ...native, run: clipboardWriteCommand }): Promise<void> {
-  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error('Text copy requires a local desktop session; unavailable over SSH.');
-  if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('Selection exceeds the 4 MiB copy limit.');
+  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error('text copy requires a local desktop session; unavailable over ssh.');
+  if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('selection exceeds the 4 mib copy limit.');
   let argv: string[];
   if (adapter.platform === 'darwin') argv = ['/usr/bin/pbcopy'];
   else if (adapter.platform === 'linux') {
@@ -108,7 +108,7 @@ export async function writeClipboardText(text: string, adapter: ClipboardWriter 
     const xclip = adapter.env.DISPLAY && adapter.which('xclip');
     if (wl) argv = [wl, '--type', 'text/plain;charset=utf-8'];
     else if (xclip) argv = [xclip, '-selection', 'clipboard', '-in'];
-    else throw new Error('No local clipboard writer; use existing wl-copy or xclip. Nothing was installed.');
-  } else throw new Error('Text copy is supported only on local macOS or Linux desktops.');
+    else throw new Error('no local clipboard writer; use existing wl-copy or xclip. nothing was installed.');
+  } else throw new Error('text copy is supported only on local macos or linux desktops.');
   await adapter.run(argv, text);
 }

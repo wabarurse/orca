@@ -207,7 +207,7 @@ export interface SuperviseOptions {
 async function closeRun(info: RunInfo, s: RunState, what: string, gitMs: number, log: (s: string) => void): Promise<boolean> {
   try {
     const kind = what === "cancelled by user" ? "cancelled" : what.startsWith("crashed") ? "blocked" : s.state === "reported" && what === "finished without reporting" ? "waiting" : "unknown";
-    await stopTaskRun(info.project, info.run, kind, kind === "waiting" ? "Agent reported; awaiting next explicit task step" : oneLine(what));
+    await stopTaskRun(info.project, info.run, kind, kind === "waiting" ? "agent reported; awaiting next explicit task step" : oneLine(what));
   } catch (err) { log(`agent: could not update task: ${String(err)}`); }
   if (s.state === "reported" && what !== "cancelled by user") {
     await claim(info.project, info.id, info.run);
@@ -277,7 +277,7 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
 export async function afterExit(info: RunInfo & { code: number }): Promise<boolean> {
   const s = await readRun(info.project, info.id);
   const mine = s?.run === info.run ? s : null;
-  try { await stopTaskRun(info.project, info.run, "unknown", `Agent exited with code ${info.code}; not a readiness signal`); }
+  try { await stopTaskRun(info.project, info.run, "unknown", `agent exited with code ${info.code}; not a readiness signal`); }
   catch (err) { console.error(`agent: could not update task: ${String(err)}`); }
   if (mine?.state === "reported") {
     await claim(info.project, info.id, info.run);
@@ -338,7 +338,7 @@ async function checkAgent(project: string, id: string, what: string, probe: Prob
 async function sweep(project: string, live: Set<string>, before: Set<string> | undefined, probe: Probe): Promise<{ sent: string[]; keep: Set<string> }> {
   const keep = new Set(live);
   const sent: string[] = [];
-  const what = before ? "'s window is gone" : "stopped while the TUI was not watching";
+  const what = before ? "'s window is gone" : "stopped while the tui was not watching";
   for (const id of before ?? (await runIds(project))) {
     if (live.has(id)) continue;
     const r = await checkAgent(project, id, what, probe);
@@ -388,6 +388,6 @@ export async function recoverTaskRuns(project: string, live: Set<string>, alive 
     if (r.state === "prepared" && now - Date.parse(r.preparedAt) < 30_000) continue;
     const state = await readRun(project, r.agent);
     if (state?.run === r.id && alive(state.pid)) continue;
-    await stopTaskRun(project, r.id, "unknown", "Agent is no longer observable; task needs explicit reconciliation");
+    await stopTaskRun(project, r.id, "unknown", "agent is no longer observable; task needs explicit reconciliation");
   }
 }

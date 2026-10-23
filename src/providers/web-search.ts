@@ -16,9 +16,9 @@ export const SEARCH_OUTPUT_BYTES = 16 * 1024;
 
 // Only these locally authored messages may cross the tool/error boundary.
 const errors = {
-  input: "web_search: expected a nonempty public query (at most 512 UTF-8 bytes) and optional max_results integer from 1 to 10; no other fields, controls or credentials.",
-  unsupported: "web_search: native search is unavailable for the selected provider. No fallback was attempted.",
-  failed: "web_search: native search failed or is unsupported by this model/account. No fallback was attempted.",
+  input: "web_search: expected a nonempty public query (at most 512 utf-8 bytes) and optional max_results integer from 1 to 10; no other fields, controls or credentials.",
+  unsupported: "web_search: native search is unavailable for the selected provider. no fallback was attempted.",
+  failed: "web_search: native search failed or is unsupported by this model/account. no fallback was attempted.",
   incomplete: "web_search: the provider did not finish a successful native search; no results returned.",
   no_search: "web_search: the provider completed without a native search call; no results returned.",
   native: "web_search: a native search action failed or did not complete; no results returned.",
@@ -26,7 +26,7 @@ const errors = {
   refusal: "web_search: the provider refused the search; no results returned.",
   malformed: "web_search: the provider returned malformed native search output; no results returned.",
   sources: "web_search: the provider returned no usable source attribution; no results returned.",
-  large: "web_search: provider response exceeded the 2 MiB limit; no results returned.",
+  large: "web_search: provider response exceeded the 2 mib limit; no results returned.",
   cancelled: "web_search: cancelled.",
   timeout: "web_search: timed out after 60 seconds.",
 };

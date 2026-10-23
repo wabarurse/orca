@@ -136,7 +136,7 @@ describe("a merged branch", () => {
     expect(await watchdog({ live: async () => [], alive: () => false })(project)).toEqual([]);
     const msgs = await inbox();
     expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.text).toBe(`[agent-exit] worker-feat, reviewer-feat stopped: PR #7 (feat) merged (${url(7)}); cleaned up`);
+    expect(msgs[0]!.text).toBe(`[agent-exit] worker-feat, reviewer-feat stopped: pr #7 (feat) merged (${url(7)}); cleaned up`);
     expect(claimOf(7)).toMatchObject({ outcome: "handled", running: ["worker-feat", "reviewer-feat"] });
   });
 
@@ -153,14 +153,14 @@ describe("a merged branch", () => {
     expect(await hasBranch(paths.repo(project), "dirty")).toBe(true);
     expect(await remoteHas("dirty")).toBe(true);
     expect(existsSync(paths.transcript(project, "worker-dirty"))).toBe(true);
-    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-dirty stopped: PR #8 (dirty) merged (${url(8)}); kept worktree: 2 uncommitted changes`]);
+    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-dirty stopped: pr #8 (dirty) merged (${url(8)}); kept worktree: 2 uncommitted changes`]);
     expect(await watchdog({ live: async () => [], alive: () => false })(project)).toEqual([]);
   });
 
   test("no agents running: cleaned up, and the notice says so", async () => {
     const { oid } = await branch("idle");
     expect(await watch([pr(9, "idle", oid)], { kill: async () => { throw new Error("nothing to kill"); } })(project)).toEqual([9]);
-    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] no agents running: PR #9 (idle) merged (${url(9)}); cleaned up`]);
+    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] no agents running: pr #9 (idle) merged (${url(9)}); cleaned up`]);
     expect(existsSync(paths.worktree(project, "idle"))).toBe(false);
   });
 
@@ -191,7 +191,7 @@ describe("a merged branch", () => {
       expect(await hasBranch(paths.repo(project), "stubborn")).toBe(true);
       expect(existsSync(paths.transcript(project, "worker-stubborn"))).toBe(true);
       expect(readdirSync(paths.runs(project))).toContain("worker-stubborn.json");
-      expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-stubborn stopped: PR #15 (stubborn) merged (${url(15)}); kept everything: an agent process is still running`]);
+      expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-stubborn stopped: pr #15 (stubborn) merged (${url(15)}); kept everything: an agent process is still running`]);
     } finally {
       proc.kill("SIGKILL");
     }
@@ -225,7 +225,7 @@ describe("not the PR's branch", () => {
     expect(existsSync(wt)).toBe(true);
     expect(await hasBranch(paths.repo(project), "feat-a")).toBe(true);
     expect(existsSync(paths.transcript(project, "worker-feat-a"))).toBe(true);
-    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-feat-a left running: PR #20 (feat/a) merged (${url(20)}); kept: worktree is on feat-a`]);
+    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-feat-a left running: pr #20 (feat/a) merged (${url(20)}); kept: worktree is on feat-a`]);
     expect(claimOf(20).outcome).toBe("kept: worktree is on feat-a");
     expect(await watch([pr(20, "feat/a", oid)])(project)).toEqual([]); // seen
   });
@@ -239,7 +239,7 @@ describe("not the PR's branch", () => {
     expect(killed).toEqual([]);
     expect(existsSync(wt)).toBe(true);
     expect(await hasBranch(paths.repo(project), "more")).toBe(true);
-    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-more left running: PR #21 (more) merged (${url(21)}); kept: branch has commits not in the PR`]);
+    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-more left running: pr #21 (more) merged (${url(21)}); kept: branch has commits not in the pr`]);
   });
 
   test("a PR head unknown locally is fetched from origin before comparing", async () => {
@@ -415,7 +415,7 @@ describe("once", () => {
     const [a, b] = [watch([pr(30, "crashed", oid)]), watch([pr(30, "crashed", oid)])];
     expect((await Promise.all([a(project), b(project)])).flat()).toEqual([30]);
     expect(existsSync(wt)).toBe(false);
-    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-crashed, reviewer-crashed stopped: PR #30 (crashed) merged (${url(30)}); cleaned up`]);
+    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-crashed, reviewer-crashed stopped: pr #30 (crashed) merged (${url(30)}); cleaned up`]);
     expect(claimOf(30).outcome).toBe("handled");
     expect(await watch([pr(30, "crashed", oid)])(project)).toEqual([]);
   });
@@ -436,7 +436,7 @@ describe("once", () => {
     const c = claimOf(31);
     writeFileSync(claimFile(31), JSON.stringify({ ...c, ts: new Date(Date.now() - STALE_CLAIM_MS - 1000).toISOString() }));
     expect(await watch([pr(31, "unsent", oid)], opts)(project)).toEqual([31]);
-    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-unsent stopped: PR #31 (unsent) merged (${url(31)}); cleaned up`]);
+    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] worker-unsent stopped: pr #31 (unsent) merged (${url(31)}); cleaned up`]);
   });
 
   test("polls don't overlap, and gh is asked about every MERGE_POLL_MS", async () => {
@@ -467,8 +467,8 @@ describe("once", () => {
 
 test("mergeNotice", () => {
   const p = pr(1, "b");
-  expect(mergeNotice(p, [], true, "cleaned up, except: git push --delete: denied")).toBe(`[agent-exit] no agents running: PR #1 (b) merged (${p.url}); cleaned up, except: git push --delete: denied`);
-  expect(mergeNotice(p, ["worker-b"], false, "kept: worktree is on c")).toBe(`[agent-exit] worker-b left running: PR #1 (b) merged (${p.url}); kept: worktree is on c`);
+  expect(mergeNotice(p, [], true, "cleaned up, except: git push --delete: denied")).toBe(`[agent-exit] no agents running: pr #1 (b) merged (${p.url}); cleaned up, except: git push --delete: denied`);
+  expect(mergeNotice(p, ["worker-b"], false, "kept: worktree is on c")).toBe(`[agent-exit] worker-b left running: pr #1 (b) merged (${p.url}); kept: worktree is on c`);
 });
 
 test("the TUI runs the merge watcher for each open page on every inbox poll", async () => {

@@ -46,13 +46,13 @@ async function setup(extra: Partial<AppDeps> = {}) {
 }
 const uiText = (app: App) => JSON.stringify(app.page?.lines);
 
-test("bare /clear is local, cancel-default and excluded from recall; Esc preserves drafts/history; explicit confirmation keeps exit transcript", async () => {
+test("bare /clear is local, cancel-default and excluded from recall; esc preserves drafts/history; explicit confirmation keeps exit transcript", async () => {
   const ui = await setup(), { app } = ui;
   const before = await Bun.file(ui.t.path).text();
   app.input = { text: "/clear", cursor: 6 };
   await app.onKey({ name: "enter" });
   expect(app.menu?.index).toBe(0);
-  expect(app.menu?.items).toEqual(["Cancel", "Clear context"]);
+  expect(app.menu?.items).toEqual(["cancel", "clear context"]);
   expect(app.page!.inputHistory).not.toContain("/clear");
   await app.onKey({ name: "enter" });
   expect(app.menu).toBeNull();
@@ -60,9 +60,9 @@ test("bare /clear is local, cancel-default and excluded from recall; Esc preserv
   app.input = { text: "draft 界", cursor: 5 };
   const lines = [...app.page!.lines];
   await ui.command();
-  await until(() => ui.screen.text().includes("Clear context"));
+  await until(() => ui.screen.text().includes("clear context"));
   const visible = ui.screen.screen().map(Bun.stripANSI);
-  expect(visible.findIndex(row => row.includes("Clear context"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 messages queued")));
+  expect(visible.findIndex(row => row.includes("clear context"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 messages queued")));
   for (const key of [{ name: "paste", text: "danger\n/quit" }, { name: "char", text: "y" }, { name: "q", ctrl: true }, { name: "g", ctrl: true }, { name: "enter", alt: true }]) await app.onKey(key);
   expect(app.input).toEqual({ text: "draft 界", cursor: 5 });
   await app.onKey({ name: "escape" });
@@ -72,7 +72,7 @@ test("bare /clear is local, cancel-default and excluded from recall; Esc preserv
   await ui.command(); await ui.confirm();
   expect(await ui.context()).toEqual([]);
   expect(uiText(app)).toContain("original UI history");
-  expect(uiText(app)).toContain("Model context cleared");
+  expect(uiText(app)).toContain("model context cleared");
   expect(ui.provider.calls).toHaveLength(0);
   expect(open(ui.t.path).history!().map(e => e.type)).toEqual(["message", "context-boundary"]);
   expect(app.input).toEqual({ text: "draft 界", cursor: 5 });
@@ -226,7 +226,7 @@ test("navigation cancels an authorized clear waiting on persistence, never retar
   expect(await open(paths.transcript("other", "orchestrator")).chain()).toEqual([]);
 });
 
-test("late eligibility results cannot open a confirmation after a page change; Ctrl+C only cancels the local modal", async () => {
+test("late eligibility results cannot open a confirmation after a page change; ctrl+c only cancels the local modal", async () => {
   const ui = await setup(), { app } = ui, page = app.page!;
   await app.openPage("other"); app.switchPage(-1);
   const release = Promise.withResolvers<void>();

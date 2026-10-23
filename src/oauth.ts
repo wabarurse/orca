@@ -11,7 +11,7 @@ export interface OAuthTokens {
 
 export function validateProfile(profile: string): string {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(profile) || profile === "env") {
-    throw new Error("Profile must be 1–64 letters, numbers, dots, underscores or hyphens, start with a letter or number, and not be 'env'.");
+    throw new Error("profile must be 1–64 letters, numbers, dots, underscores or hyphens, start with a letter or number, and not be 'env'.");
   }
   return profile;
 }
@@ -48,7 +48,7 @@ export async function withCredentialLock<T>(path: string, action: () => Promise<
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       // Never steal a lock on a timer: a paused worker can still own it.
-      if (Date.now() >= deadline) throw new Error(`Subscription credential lock timed out: ${lock}. If a process was killed, stop the agents and remove this lock directory before retrying.`);
+      if (Date.now() >= deadline) throw new Error(`subscription credential lock timed out: ${lock}. if a process was killed, stop the agents and remove this lock directory before retrying.`);
       await Bun.sleep(50);
     }
   }
@@ -98,22 +98,22 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
     idleTimeout: 60,
     async fetch(request) {
       const url = new URL(request.url);
-      if (request.method !== "GET" || url.pathname !== config.callbackPath) return new Response("Not found", { status: 404 });
-      if (url.searchParams.get("state") !== state) return new Response("Invalid OAuth state", { status: 400 });
-      if (received) return new Response("Login already received", { status: 409 });
+      if (request.method !== "GET" || url.pathname !== config.callbackPath) return new Response("not found", { status: 404 });
+      if (url.searchParams.get("state") !== state) return new Response("invalid oauth state", { status: 400 });
+      if (received) return new Response("login already received", { status: 409 });
       const code = url.searchParams.get("code");
       if (!code || url.searchParams.has("error")) {
         result.reject(new Error(`${config.label} login was cancelled or denied; try logging in again.`));
-        return new Response("Login was not completed.", { status: 400 });
+        return new Response("login was not completed.", { status: 400 });
       }
       received = true;
       try {
         await config.exchange({ grant_type: "authorization_code", code, state, code_verifier: verifier, redirect_uri: redirectUri }, options.fetcher ?? fetch, cancellation.signal);
         result.resolve();
-        return new Response("Signed in to parallels. You can close this tab.");
+        return new Response("signed in to parallels. you can close this tab.");
       } catch (err) {
         result.reject(err);
-        return new Response("Login failed. Return to parallels and try again.", { status: 400 });
+        return new Response("login failed. return to parallels and try again.", { status: 400 });
       }
     },
   });
@@ -134,7 +134,7 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
   try {
     if (options.signal?.aborted) cancel();
     else {
-      options.write(`Sign in with your ${config.label} subscription in your browser:\n${url}\nWaiting for login…`);
+      options.write(`sign in with your ${config.label} subscription in your browser:\n${url}\nwaiting for login…`);
       // Do not await browser completion before observing the login promise.
       Promise.resolve().then(() => (options.openBrowser ?? openBrowser)(url.toString())).catch(() => {});
     }

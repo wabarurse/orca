@@ -30,11 +30,11 @@ function imageCount(messages: MessageParam[]) { return messages.flatMap(m => typ
 
 test("PNG validation rejects invalid MIME, empty/truncated, wrong CRC, excessive bytes/dimensions, and compressed bombs", () => {
   expect(validateImage(png())).toEqual({ width: 1, height: 1 });
-  expect(() => validateImage(png(), "image/jpeg")).toThrow("Unsupported");
+  expect(() => validateImage(png(), "image/jpeg")).toThrow("unsupported");
   expect(() => validateImage(Buffer.alloc(0))).toThrow();
   expect(() => validateImage(png().subarray(0, 20))).toThrow();
-  expect(() => validateImage(Buffer.alloc(MAX_IMAGE_BYTES + 1))).toThrow("4 MiB");
-  const corrupt = png(); corrupt[45] = corrupt[45]! ^ 1; expect(() => validateImage(corrupt)).toThrow("CRC");
+  expect(() => validateImage(Buffer.alloc(MAX_IMAGE_BYTES + 1))).toThrow("4 mib");
+  const corrupt = png(); corrupt[45] = corrupt[45]! ^ 1; expect(() => validateImage(corrupt)).toThrow("crc");
   expect(() => validateImage(png(4097))).toThrow("dimensions");
   expect(() => validateImage(png(1, 1, 128, Buffer.alloc(10000)))).toThrow();
   expect(() => validateImage(png(1, 1, 128, Buffer.from([5, 0, 0, 0, 255])))).toThrow("filter");
@@ -47,8 +47,8 @@ test("atomic storage persists real bytes, rejects traversal/cross-project refere
   expect([...readFileSync(join(paths.project(a), "images", `${ref.id}.png`))]).toEqual([...png()]);
   await expect(loadImage(b, ref)).rejects.toThrow("another/deleted");
   await expect(loadImage(a, { ...ref, id: "../../secret" })).rejects.toThrow("reference");
-  await expect(validateRefs(a, [ref, ref])).rejects.toThrow("Duplicate");
-  await expect(validateRefs(a, Array(5).fill(ref))).rejects.toThrow("At most 4");
+  await expect(validateRefs(a, [ref, ref])).rejects.toThrow("duplicate");
+  await expect(validateRefs(a, Array(5).fill(ref))).rejects.toThrow("at most 4");
   const path = join(paths.project(a), "images", `${ref.id}.png`);
   writeFileSync(path, "corrupt"); await expect(loadImage(a, ref)).rejects.toThrow("corrupt");
   rmSync(path); const outside = join(home, "outside.png"); writeFileSync(outside, png()); symlinkSync(outside, path);
@@ -81,7 +81,7 @@ test.each(["", "implement this screen"])("image prompt %j: queue -> exact commit
   expect(loaded.history!().map(e => render(e)).join("\n")).toContain("Image 1");
   expect(loaded.history!().map(e => render(e)).join("\n")).not.toContain("base64");
   const restored = JSON.stringify(restore(loaded.history!(), 80));
-  expect(restored).toContain("[Image 1] [Image 2]");
+  expect(restored).toContain("[image 1] [image 2]");
   expect(restored).not.toContain("parallels-image:");
   expect(restored).not.toContain(png().toString("base64"));
   // Duplicate input ID after interrupted cleanup/retry cannot replay the prompt.
@@ -247,7 +247,7 @@ test("provider serializers refuse assistant and nested tool images rather than d
   const assistant: MessageParam[] = [{ role: "assistant", content: [block] }];
   const nested: MessageParam[] = [{ role: "user", content: [{ type: "tool_result", tool_use_id: "fixture", content: [block] }] }];
   for (const serialize of [claudeMessages, toResponses]) {
-    expect(() => serialize(assistant)).toThrow("Assistant image");
-    expect(() => serialize(nested)).toThrow("Nested tool images");
+    expect(() => serialize(assistant)).toThrow("assistant image");
+    expect(() => serialize(nested)).toThrow("nested tool images");
   }
 });

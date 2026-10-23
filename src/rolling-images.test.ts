@@ -190,11 +190,11 @@ test("retained image budget blocks requests rather than dropping pixels; unsuppo
   await commit(f.project, f.transcript, f.refs); await commit(f.project, f.transcript, f.refs); await tail(f.transcript);
   const { rolling, deps, foreground } = controller(f, worker);
   deps.compaction = { contextLimit: 30000, outputReserve: 2000 };
-  await expect(createAgent({ ...deps, compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle) }).run()).rejects.toThrow("Context blocked");
+  await expect(createAgent({ ...deps, compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle) }).run()).rejects.toThrow("context blocked");
   expect(worker.calls).toHaveLength(1); expect(foreground.calls).toHaveLength(0);
   expect(ids(await f.transcript.chain())).toEqual([...f.refs, ...f.refs].map(r => r.id));
   expect(estimate(await f.transcript.chain())).toBeGreaterThan(24000);
-  await expect(createAgent({ ...deps, model: "unknown-text-model", compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle) }).run()).rejects.toThrow("Image input is not enabled");
+  await expect(createAgent({ ...deps, model: "unknown-text-model", compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle) }).run()).rejects.toThrow("image input is not enabled");
   expect(worker.calls).toHaveLength(1); expect(foreground.calls).toHaveLength(0);
 });
 

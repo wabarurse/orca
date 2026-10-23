@@ -40,7 +40,7 @@ async function appDirectory(home: string): Promise<string> {
   // nested symlink/hardlink out of this dedicated clone, including ignored files.
   await safeGitTree(join(app, ".git"));
   for (const name of ["commondir", "objects/info/alternates", "objects/info/http-alternates"]) {
-    if (await owned(join(app, ".git", name))) throw new Error(`shared/alternate Git storage is not a dedicated clone: ${name}`);
+    if (await owned(join(app, ".git", name))) throw new Error(`shared/alternate git storage is not a dedicated clone: ${name}`);
   }
   return app;
 }
@@ -64,13 +64,13 @@ async function noOperationInProgress(app: string) {
   for (const name of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG", "sequencer", "index.lock", "HEAD.lock", "shallow.lock", "config.lock", "packed-refs.lock"]) {
     try { await lstat(join(app, ".git", name)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
-    throw new Error(`harness has an in-progress Git operation (${name}); resolve it manually before pull`);
+    throw new Error(`harness has an in-progress git operation (${name}); resolve it manually before pull`);
   }
 }
 
 function need(bin: string): string {
   const path = Bun.which(bin);
-  if (!path) throw new Error(`parallels pull requires ${bin} on PATH (Bun >= 1.4.2 is needed for updates, not normal runtime)`);
+  if (!path) throw new Error(`parallels pull requires ${bin} on PATH (bun >= 1.4.2 is needed for updates, not normal runtime)`);
   return path;
 }
 
@@ -124,12 +124,12 @@ export async function pullHarness(options: PullOptions = {}): Promise<void> {
     await clean();
     await safeBuildPaths(app);
     const beforeBranch = await branch(), before = await checkedGit("rev-parse", "HEAD");
-    const version = await checked([bun, "--version"], "Bun version check");
+    const version = await checked([bun, "--version"], "bun version check");
     const match = /^(\d+)\.(\d+)\.(\d+)(?:\D.*)?$/.exec(version);
     if (!match || Number(match[1]) < 1 || (Number(match[1]) === 1 && (Number(match[2]) < 4 || Number(match[2]) === 4 && Number(match[3]) < 2))) {
-      throw new Error("parallels pull requires Bun >= 1.4.2 on PATH");
+      throw new Error("parallels pull requires bun >= 1.4.2 on PATH");
     }
-    write(`Updating harness only: ${app}\nFetching verified origin/main…`);
+    write(`updating harness only: ${app}\nfetching verified origin/main…`);
     // Use the verified URL rather than remote-specific helper/refspec options.
     // No leading '+' (force), tags, pruning, submodules or auxiliary ref updates.
     await withGitCredentials(git, app, env, command, authenticated => checked([
@@ -141,21 +141,21 @@ export async function pullHarness(options: PullOptions = {}): Promise<void> {
     if (await branch() !== beforeBranch || await checkedGit("rev-parse", "HEAD") !== before) throw new Error("harness checkout changed during fetch; refusing update");
     const target = await checkedGit("rev-parse", "refs/remotes/origin/main");
     if ((await askGit("merge-base", "--is-ancestor", before, target)).code !== 0) {
-      throw new Error("harness HEAD is not an ancestor of origin/main; cannot fast-forward. Preserve local/review commits in a named branch and reconcile manually, or wait for an ancestry-preserving merge. No commits were discarded");
+      throw new Error("harness HEAD is not an ancestor of origin/main; cannot fast-forward. preserve local/review commits in a named branch and reconcile manually, or wait for an ancestry-preserving merge. no commits were discarded");
     }
-    write(before === target ? "Harness already at origin/main; rebuilding/reinstalling (also retries a previous failed build)…" : `Fast-forwarding ${beforeBranch} to ${target}…`);
+    write(before === target ? "harness already at origin/main; rebuilding/reinstalling (also retries a previous failed build)…" : `fast-forwarding ${beforeBranch} to ${target}…`);
     await checkedGit("merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", target);
     // Check build output paths before any dependency/build scripts can write there.
     await safeBuildPaths(app);
     const artifact = await prepareArtifact(app);
-    write("Installing frozen dependencies…");
+    write("installing frozen dependencies…");
     await checked([bun, "install", "--frozen-lockfile"], "dependency installation");
-    write("Building harness…");
+    write("building harness…");
     await checked([bun, "run", "build"], "harness build");
     await identity();
     await clean();
     if (await branch() !== beforeBranch || await checkedGit("rev-parse", "HEAD") !== target) throw new Error("harness checkout changed during build; refusing installation");
     await installation.replace(artifact);
-    write(`Installed ${installation.target} from ${target}. Existing processes were not restarted; update between active runs.`);
+    write(`installed ${installation.target} from ${target}. existing processes were not restarted; update between active runs.`);
   });
 }

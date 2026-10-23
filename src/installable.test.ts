@@ -211,7 +211,7 @@ test("local install script builds from its checkout, upgrades fixture HOME, and 
   writeFileSync(sentinel, "# fixture state, do not edit\n");
   const result = await exec([process.execPath, join(source, "scripts/install.ts")], root);
   expect(result.code).toBe(0);
-  expect(result.out).toContain("Installed");
+  expect(result.out).toContain("installed");
   expect((await exec([installed, "version"])).out).toBe(`${pkg.version}\n`);
   expect(readFileSync(sentinel, "utf8")).toBe("# fixture state, do not edit\n");
   expect(existsSync(join(home, ".parallels"))).toBe(false);
@@ -260,8 +260,8 @@ exec ${quote(process.execPath)} ${quote(boundary)} ${tool} "$@"
       GIT_DIR: join(f.caller, ".git"), GIT_WORK_TREE: f.caller, GIT_CONFIG_COUNT: "invalid",
     });
     expect({ code: result.code, err: result.err, status: await f.g(f.app, "status", "--porcelain") }).toEqual({ code: 0, err: "", status: "" });
-    expect(result.out).toContain(`Installed ${f.target} from ${f.after}`);
-    expect(result.out).toContain("Existing processes were not restarted");
+    expect(result.out).toContain(`installed ${f.target} from ${f.after}`);
+    expect(result.out).toContain("existing processes were not restarted");
     expect(await f.g(f.app, "rev-parse", "HEAD")).toBe(f.after);
     expect(new Bun.CryptoHasher("sha256").update(readFileSync(f.target)).digest("hex")).not.toBe(oldHash);
     expect(await exec([f.target, "version"], f.caller)).toEqual({ code: 0, out: "updated standalone fixture\n", err: "" });

@@ -45,7 +45,8 @@ const words = (s: string, n: number) => {
 /** The first line of `s` with something on it. */
 export const firstLine = (s: string) => (s.split("\n").find((l) => l.trim()) ?? "").trim();
 
-const display = (name: string) => name === "web_search" ? "WebSearch" : name.charAt(0).toUpperCase() + name.slice(1);
+// Known app-owned labels only; unknown tool identifiers and all payloads stay verbatim.
+const display = (name: string) => name === "web_search" ? "websearch" : name;
 
 /** The first string value in an input, for tools without their own formatter. */
 const firstString = (input: Input) => oneLine(str(Object.values(input).find((v) => typeof v === "string")));

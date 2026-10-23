@@ -65,24 +65,24 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
         if (input.action === "get") return JSON.stringify(t);
         if (input.action === "attention") return JSON.stringify(await setTaskAttention(ctx.project, t.id, { kind: input.kind, reason: input.reason } as TaskAttention));
         if (input.action !== "pr" && input.action !== "ready") throw new Error("unknown task action");
-        if (ctx.role === "worker") throw new Error("PR/readiness updates belong to the orchestrator/reviewer, not the worker");
+        if (ctx.role === "worker") throw new Error("pr/readiness updates belong to the orchestrator/reviewer, not the worker");
         if (input.action === "ready" && ctx.role !== "reviewer") throw new Error("only a reviewer can validate readiness");
         const identity = input.action === "ready" ? t.pr : { repository: input.repository, number: input.number };
-        if (!identity || typeof identity.repository !== "string" || !Number.isSafeInteger(identity.number)) throw new Error("repository and PR number are required");
+        if (!identity || typeof identity.repository !== "string" || !Number.isSafeInteger(identity.number)) throw new Error("repository and pr number are required");
         // Validate before executing gh; the URL is derived, never an arbitrary tool-provided link.
         const pr = taskPR({ ...identity, url: `https://github.com/${identity.repository}/pull/${identity.number}`, head: t.pr?.head ?? "0".repeat(40) });
-        if ((await repo(ctx.project))?.toLowerCase() !== pr.repository) throw new Error("PR repository must match project origin");
+        if ((await repo(ctx.project))?.toLowerCase() !== pr.repository) throw new Error("pr repository must match project origin");
         const observed = await lookup(ctx.project, pr, ctx.signal);
         ctx.signal?.throwIfAborted();
         if (!observed) {
-          if (t.readiness) await setTaskAttention(ctx.project, t.id, { kind: "unknown", reason: "PR lookup unavailable; revalidate readiness when GitHub is observable" }, t.revision);
-          throw new Error("PR lookup failed/unknown; task retained");
+          if (t.readiness) await setTaskAttention(ctx.project, t.id, { kind: "unknown", reason: "pr lookup unavailable; revalidate readiness when github is observable" }, t.revision);
+          throw new Error("pr lookup failed/unknown; task retained");
         }
         const updated = await observeTaskPR(ctx.project, t.id, observed, t.revision);
         if (input.action === "pr") return JSON.stringify(updated);
         if (await (options.head ?? cleanHead)(ctx) !== observed.pr.head) {
-          await setTaskAttention(ctx.project, t.id, { kind: "unknown", reason: "Local clean HEAD does not match the observed PR head" }, updated.revision);
-          throw new Error("local clean HEAD must match the observed PR head");
+          await setTaskAttention(ctx.project, t.id, { kind: "unknown", reason: "local clean HEAD does not match the observed pr head" }, updated.revision);
+          throw new Error("local clean HEAD must match the observed pr head");
         }
         ctx.signal?.throwIfAborted();
         return JSON.stringify(await validateTaskReadiness(ctx.project, t.id, { run: ctx.run!, revision: updated.revision, observation: observed, validated: input.validated as true, validation: input.validation as string }));

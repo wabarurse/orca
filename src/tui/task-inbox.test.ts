@@ -21,7 +21,7 @@ const pr: TaskPR = { repository: "owner/repo", number: 62, url: "https://github.
 const row = (name = "Task one", status: TaskRow["status"] = "queued"): TaskRow => ({ id: name, name, summary: "A brief structured summary", branch: "feat/one", status, pr, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" });
 const plain = (lines: string[]) => lines.map(line => Bun.stripANSI(line).trimEnd()).join("\n");
 const frame = (cols = 100, rows = 24, tasks = [row()]): Frame => ({ cols, rows, menu: null,
-  input: { prompt: "> ", text: "draft 界\nsecond line", cursor: 4 }, status: "0 agents running │ 1 message queued │ Inbox 1",
+  input: { prompt: "> ", text: "draft 界\nsecond line", cursor: 4 }, status: "0 agents running │ 1 message queued │ inbox 1",
   queued: { project: "isolated", texts: ["pending input"] },
   inbox: { ...taskInboxLines({ rows: tasks, loading: false }, cols), top: 0, state: "ready" } });
 const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "isolated" }], active: 0, model: "fake-model", directory: "/isolated/repo", remote: "owner/repo" }, f.cols, headerHeight(f.rows));
@@ -64,7 +64,7 @@ test("normal-width table has four columns and exact stage labels; all attention 
   const rows = taskStatuses.map((status, i) => row(`Stage ${i}`, status));
   for (const kind of ["waiting", "blocked", "cancelled", "closed", "unknown"] as const) rows.push({ ...row(kind, "working"), attention: { kind, reason: `Needs ${kind} handling` } });
   const rendered = taskInboxLines({ rows, loading: false }, 120);
-  expect(plain([rendered.heading!])).toMatch(/Name +\| Summary +\| Status +\| PR link/);
+  expect(plain([rendered.heading!])).toMatch(/name +\| summary +\| status +\| pr link/);
   const contents = plain(rendered.lines);
   for (const label of ["queued", "working", "reviewing", "ready to merge"]) expect(contents).toContain(label);
   expect(contents).not.toContain("ready_to_merge");
@@ -91,7 +91,7 @@ test("exactly one status keyword at wide/narrow/tiny widths, with attention prec
           const statuses = rendered.lines.map(line => Bun.stripANSI(line).split(" | ")[2]!.trim()).filter(Boolean);
           expect(statuses).toEqual([label]);
         } else {
-          expect(plain(rendered.lines).replace(/\s/g, "")).toBe(`Name:FullnameSummary:FullsummaryStatus:${label.replaceAll(" ", "")}PRlink:${pr.url}`);
+          expect(plain(rendered.lines).replace(/\s/g, "")).toBe(`name:Fullnamesummary:Fullsummarystatus:${label.replaceAll(" ", "")}prlink:${pr.url}`);
         }
         expect(plain(rendered.lines)).not.toContain("!");
         expect(plain(rendered.lines)).not.toContain("SECRET");
@@ -102,9 +102,9 @@ test("exactly one status keyword at wide/narrow/tiny widths, with attention prec
 });
 
 test("loading, empty, query failure and stale snapshot are distinct; no historical completion claim", () => {
-  expect(plain(taskInboxLines({ loading: true }, 80).lines)).toContain("Loading task inbox");
+  expect(plain(taskInboxLines({ loading: true }, 80).lines)).toContain("loading task inbox");
   const empty = plain(taskInboxLines({ loading: false, rows: [] }, 80).lines);
-  expect(empty).toContain("No active registered tasks");
+  expect(empty).toContain("no active registered tasks");
   expect(empty.replace(/\s+/g, " ")).toContain("not a completion claim");
   const failed = plain(taskInboxLines({ loading: false, error: "corrupt registry" }, 80).lines);
   expect(failed).toContain("query failed: corrupt registry");
@@ -120,22 +120,22 @@ test("unsafe fields, attention, errors and forged links cannot style, move or in
   const contents = rendered.lines.join("\n");
   expect(contents).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/);
   expect(contents).not.toContain("evil.test"); expect(contents).not.toContain("payload");
-  expect(contents).toContain("Invalid PR link");
+  expect(contents).toContain("invalid pr link");
   expect(inboxText(unsafe)).toContain("safeREDlabel");
   for (const url of ["javascript:alert(1)", "https://evil.test/owner/repo/pull/62", "https://github.com/owner/repo/pull/63"]) {
-    expect(plain(taskInboxLines({ rows: [{ ...row(), pr: { ...pr, url } }], loading: false }, 100).lines)).toContain("Invalid PR link");
+    expect(plain(taskInboxLines({ rows: [{ ...row(), pr: { ...pr, url } }], loading: false }, 100).lines)).toContain("invalid pr link");
   }
   const noPR = { ...row(), summary: pr.url, pr: undefined };
-  expect(plain(taskInboxLines({ rows: [noPR], loading: false }, 40).lines)).toContain("PR link: —");
+  expect(plain(taskInboxLines({ rows: [noPR], loading: false }, 40).lines)).toContain("pr link: —");
 });
 
 for (const cols of [100, 80, 40]) test(`${cols}x24 task inbox footer appearance`, () => {
-  const f = frame(cols), rendered = stickyRows(f, Array.from({ length: 30 }, (_, i) => `Conversation ${i}`), chrome(f));
+  const f = frame(cols), rendered = stickyRows(f, Array.from({ length: 30 }, (_, i) => `conversation ${i}`), chrome(f));
   expect(plain(rendered.rows)).toMatchSnapshot();
   const content = rendered.rows.map(Bun.stripANSI);
-  expect(content.findIndex(s => s.includes("Inbox ·"))).toBeGreaterThan(content.findIndex(s => s.includes("Inbox 1")));
-  const footerAt = content.findIndex(s => s.startsWith("Queued"));
-  expect(content.slice(footerAt - 2, footerAt)).toEqual(["Conversation 29", ""]);
+  expect(content.findIndex(s => s.includes("inbox ·"))).toBeGreaterThan(content.findIndex(s => s.includes("inbox 1")));
+  const footerAt = content.findIndex(s => s.startsWith("queued"));
+  expect(content.slice(footerAt - 2, footerAt)).toEqual(["conversation 29", ""]);
   expect(rendered.bodyHeight).toBe(footerAt - chrome(f).length - 1);
   expect(rendered.bodyHeight).toBeGreaterThanOrEqual(2);
   expect(content[rendered.cursor]).toContain("draft");
@@ -162,7 +162,7 @@ test("large long records and CJK/emoji wrap fully; narrow/tiny screens stay boun
   }
 });
 
-test("/inbox is a bare grouped command, never opens a project with none, and keyboard Enter is read-only", async () => {
+test("/inbox is a bare grouped command, never opens a project with none, and keyboard enter is read-only", async () => {
   let reads = 0;
   const ui = await setup({ tasks: async () => { reads++; return [row()]; } }), { app } = ui;
   expect(app.commands.get("/inbox")!.help.group).toBe("conversation");
@@ -199,7 +199,7 @@ test("draft/cursor/input window, conversation scroll, pending preview and agent 
   expect(app.frame().inbox!.top).toBe(3);
   await app.onKey({ name: "wheelup" }); expect(app.frame().inbox!.top).toBe(0);
   await app.onKey({ name: "escape" });
-  await until(() => !ui.screen.text().includes("Inbox · [Tasks]"));
+  await until(() => !ui.screen.text().includes("inbox · [tasks]"));
   expect(ui.screen.screen()[headerHeight(ui.term.rows)]).toBe(anchor);
   expect(app.input).toEqual(draft); expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
   let leaves = 0;
@@ -208,7 +208,7 @@ test("draft/cursor/input window, conversation scroll, pending preview and agent 
   expect(page.view.lines).toEqual([]);
 });
 
-test("question arrivals remain opt-in; panel cannot consume answers or pending input, and Ctrl+Q explicitly replaces it", async () => {
+test("question arrivals remain opt-in; panel cannot consume answers or pending input, and ctrl+q explicitly replaces it", async () => {
   const ui = await setup({ tasks: async () => [] }), { app } = ui, page = app.page!;
   const chat = { text: "chat draft", cursor: 4 }; app.input = { ...chat };
   await ui.command();
@@ -293,7 +293,7 @@ test("query errors are visible even scrolled, refresh is single-flight, and retr
   const reads: ReturnType<typeof deferred<TaskRow[]>>[] = [];
   const ui = await setup({ tasks: () => { const read = deferred<TaskRow[]>(); reads.push(read); return read.promise; } }), { app } = ui;
   await ui.command(); await until(() => reads.length === 1);
-  expect(text(app)).toContain("Loading");
+  expect(text(app)).toContain("loading");
   ui.poll(); await app.onKey({ name: "char", text: "r" }); await Bun.sleep(0); expect(reads).toHaveLength(1);
   reads[0]!.reject(new Error("corrupt registry")); await until(() => text(app).includes("corrupt registry"));
   expect(text(app)).not.toContain("No active registered tasks");
@@ -303,11 +303,11 @@ test("query errors are visible even scrolled, refresh is single-flight, and retr
   await app.onKey({ name: "end" });
   await app.onKey({ name: "char", text: "r" }); await until(() => reads.length === 3);
   reads[2]!.reject(new Error("permission denied")); await until(() => app.frame().inbox?.state === "error");
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("Inbox · [Tasks] / Questions · Error");
+  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("inbox · [tasks] / questions · error");
   expect(text(app)).toContain("may be stale"); expect(text(app)).toContain("retained 29");
   await app.onKey({ name: "char", text: "r" }); await until(() => reads.length === 4);
   reads[3]!.resolve([]); await until(() => app.frame().inbox?.state === "ready");
-  expect(text(app)).toContain("No active registered tasks"); expect(text(app)).not.toContain("retained");
+  expect(text(app)).toContain("no active registered tasks"); expect(text(app)).not.toContain("retained");
   expect(existsSync(join(paths.project("a"), "tasks.json"))).toBe(false);
 });
 
@@ -356,7 +356,7 @@ const fakeQuestions = (changes: Partial<QuestionStore> = {}): QuestionStore => (
   answer: async () => { throw new Error("unexpected answer"); }, skip: async () => { throw new Error("unexpected skip"); }, ...changes,
 });
 
-test("USER Inbox badge counts only unanswered questions: unknown, zero, multiple, background and narrow widths", async () => {
+test("USER inbox badge counts only unanswered questions: unknown, zero, multiple, background and narrow widths", async () => {
   const gate = deferred<Question[]>();
   let known = false;
   const ui = await setup({ tasks: async () => Array.from({ length: 15 }, (_, i) => row(`task ${i}`)),
@@ -364,32 +364,32 @@ test("USER Inbox badge counts only unanswered questions: unknown, zero, multiple
   }), { app } = ui;
   const a = app.page!;
   a.agentCount = 9; a.sent.push({ inputId: "unconsumed", text: "queued" });
-  expect(app.status(a)).toBe("9 agents running │ 1 message queued │ Inbox ?");
+  expect(app.status(a)).toBe("9 agents running │ 1 message queued │ inbox ?");
   await ui.command(); await until(() => app.frame().inbox?.state === "ready");
-  expect(app.status(a)).toEndWith("Inbox ?");
+  expect(app.status(a)).toEndWith("inbox ?");
   known = true; gate.resolve([]); await a.questions.polling;
-  expect(app.status(a)).toEndWith("Inbox 0");
+  expect(app.status(a)).toEndWith("inbox 0");
   await app.openPage("b"); await app.page!.questions.polling;
-  expect(app.status(app.page!)).toEndWith("Inbox 2");
+  expect(app.status(app.page!)).toEndWith("inbox 2");
   app.switchPage(-1);
-  expect(app.status(a)).toEndWith("Inbox 0 (+2 elsewhere)");
-  expect(plain(statusRows(app.status(a), 12, 24))).toContain("Inbox 0 +2");
+  expect(app.status(a)).toEndWith("inbox 0 (+2 elsewhere)");
+  expect(plain(statusRows(app.status(a), 12, 24))).toContain("inbox 0 +2");
   for (const width of [1, 2, 5, 8, 12, 20, 40, 80]) {
     const rows = statusRows(app.status(a), width, 24);
     expect(rows.every(line => visibleLength(line) <= width)).toBe(true);
     expect(plain(rows)).not.toMatch(/\bquestions?\b/);
   }
   const b = app.pages[1]!; b.questions.error = "offline";
-  expect(app.status(a)).toEndWith("Inbox 0 (+? elsewhere)");
+  expect(app.status(a)).toEndWith("inbox 0 (+? elsewhere)");
   await app.openPage("c"); await app.page!.questions.polling;
   const c = app.page!; c.questions.loaded = false; b.questions.error = undefined;
   await app.openPage("a");
-  expect(app.status(a)).toEndWith("Inbox 0 (+2+? elsewhere)");
-  expect(plain(statusRows(app.status(a), 13, 24))).toContain("Inbox 0 +2+?");
+  expect(app.status(a)).toEndWith("inbox 0 (+2+? elsewhere)");
+  expect(plain(statusRows(app.status(a), 13, 24))).toContain("inbox 0 +2+?");
   expect(a.sent).toHaveLength(1); expect(ui.calls().turns).toBe(0);
 });
 
-test("Shift+Tab safely navigates Tasks / Questions; Ctrl+Q and /questions share the section and retain both cursors", async () => {
+test("shift+tab safely navigates Tasks / Questions; ctrl+q and /questions share the section and retain both cursors", async () => {
   const ui = await setup({ tasks: async () => [row()] }), { app } = ui, a = app.page!;
   const chat = { text: "chat line\nsecond 界", cursor: 7 }, answer = { text: "unfinished\nanswer 界", cursor: 3 };
   app.input = { ...chat }; app.draw();
@@ -431,7 +431,7 @@ test("opening/new-head guard survives section changes; explicit answers deliver 
   await app.onKey({ name: "enter" });
   expect((await allQuestions("a"))[1]!.status).toBe("skipped");
   expect(await drain("a", "orchestrator")).toEqual([]);
-  expect(app.status(app.page!)).toEndWith("Inbox 0"); expect(app.frame().inbox).toBeNull();
+  expect(app.status(app.page!)).toEndWith("inbox 0"); expect(app.frame().inbox).toBeNull();
   expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
 });
 
@@ -441,22 +441,22 @@ test("question load/error states never fabricate zero; retry and external closur
   const ui = await setup({ questions: fakeQuestions({ list: async () => { if (fail) throw new Error(malicious); return open; } }) }), { app } = ui;
   const chat = { text: "keep chat", cursor: 2 }; app.input = { ...chat }; app.draw();
   await app.commands.get("/questions")!.run("", app.page);
-  expect(app.status(app.page!)).toEndWith("Inbox ?");
+  expect(app.status(app.page!)).toEndWith("inbox ?");
   const panel = plain(taskInboxPanel(app.frame()).rows);
-  expect(panel).toContain("Questions unavailable"); expect(panel).not.toContain("No open questions");
+  expect(panel).toContain("questions unavailable"); expect(panel).not.toContain("No open questions");
   expect(taskInboxPanel(app.frame()).rows.join("")).not.toMatch(/\x1b\]|\x1b\[31m|\u202e/);
   await app.onKey({ name: "enter" }); expect(app.input).toEqual(chat);
   fail = false; await app.commands.get("/questions")!.run("", app.page);
-  expect(app.status(app.page!)).toEndWith("Inbox 1");
+  expect(app.status(app.page!)).toEndWith("inbox 1");
   app.input = { text: "orphan\x1b]0;owned\x07\u202e", cursor: 4 }; app.draw();
   fail = true; app.questions.poll(app.pages); await app.page!.questions.polling;
-  expect(app.status(app.page!)).toEndWith("Inbox ?");
+  expect(app.status(app.page!)).toEndWith("inbox ?");
   expect(plain(taskInboxPanel(app.frame()).rows)).toContain("snapshot may be stale");
   fail = false; open = []; app.questions.poll(app.pages); await app.page!.questions.polling;
   expect(app.input).toEqual(chat); expect(app.frame().inbox).toBeNull();
   expect(JSON.stringify(app.page!.lines)).toContain("unsent answer: orphan");
   expect(JSON.stringify(app.page!.lines)).not.toContain("owned");
-  expect(app.status(app.page!)).toEndWith("Inbox 0");
+  expect(app.status(app.page!)).toEndWith("inbox 0");
 });
 
 test("in-flight answer stays single-flight across polls/sections; errors retain the answer and never consume queued prompts", async () => {
@@ -467,7 +467,7 @@ test("in-flight answer stays single-flight across polls/sections; errors retain 
   app.input = { ...chat }; await app.commands.get("/questions")!.run("", app.page);
   app.input = { ...answer }; app.draw(); app.page!.sent.push({ inputId: "exact", text: "pending prompt" });
   const closing = app.onKey({ name: "enter" });
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("Sending answer");
+  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("sending answer");
   await app.onKey({ name: "enter" }); await app.onKey({ name: "char", text: "not inserted" });
   expect(attempts).toBe(1); expect(app.input).toEqual(answer);
   await app.onKey(sectionKey); expect(app.input).toEqual(chat);
@@ -533,7 +533,7 @@ test("Questions panel sanitizes fields and stays bounded at narrow/tiny sizes; E
   expect(ui.sent).toEqual([]);
 });
 
-test("Inbox Questions coexists with help, projects, model menus and cancel-default /clear without losing either draft", async () => {
+test("inbox Questions coexists with help, projects, model menus and cancel-default /clear without losing either draft", async () => {
   const ui = await setup({ tasks: async () => [] }), { app } = ui;
   const page = app.page!, chat = { text: "chat draft", cursor: 2 }, answer = { text: "answer draft", cursor: 4 };
   let clears = 0; page.orch.checkClear = async () => {}; page.orch.clear = async () => { clears++; };
@@ -594,25 +594,25 @@ for (const outcome of ["answer", "error", "external"] as const) {
   });
 }
 
-test("even an empty or control-only question read error remains unknown, not Inbox 0", async () => {
+test("even an empty or control-only question read error remains unknown, not inbox 0", async () => {
   let fail = false;
   const { app } = await setup({ questions: fakeQuestions({ list: async () => { if (fail) throw new Error("\x1b[2J"); return []; } }) });
   await app.commands.get("/questions")!.run("", app.page);
-  expect(app.status(app.page!)).toEndWith("Inbox 0");
+  expect(app.status(app.page!)).toEndWith("inbox 0");
   fail = true; app.questions.poll(app.pages); await app.page!.questions.polling;
-  expect(app.status(app.page!)).toEndWith("Inbox ?");
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("Could not read questions");
+  expect(app.status(app.page!)).toEndWith("inbox ?");
+  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("could not read questions");
 });
 
 test("compact Tasks hints retain refresh/navigation and short Questions panels expose read errors", () => {
   for (const cols of [40, 64, 70, 80, 100]) {
     const panel = plain(taskInboxPanel(frame(cols)).rows);
-    expect(panel).toContain("Shift+Tab"); expect(panel).toContain("r refresh"); expect(panel).toContain("Esc");
+    expect(panel).toContain("shift+tab"); expect(panel).toContain("r refresh"); expect(panel).toContain("esc");
   }
   const f = frame(40); f.rows = 12; f.queued = undefined; f.input.text = "";
   f.inbox = { section: "questions", state: "error", top: 0, lines: [], notice: "Last snapshot may be stale.",
     question: { text: "Q?", options: ["yes"], index: 0, count: 1, mode: "pick" } };
-  expect(plain(taskInboxPanel(f).rows)).toContain("Questions · Error");
+  expect(plain(taskInboxPanel(f).rows)).toContain("questions · error");
 });
 
 
@@ -628,7 +628,7 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   app.input = { ...answer }; app.draw(); await app.onKey({ name: "down" });
   app.page!.sent.push({ inputId: "untouched", text: "queued before skip" });
   const closing = app.onKey({ name: "enter" });
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("Removing from inbox");
+  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("removing from inbox");
   expect(plain(taskInboxPanel(app.frame()).rows)).not.toContain("Sending");
   await app.onKey({ name: "enter" }); await app.onKey({ name: "char", text: "1" });
   expect(attempts).toBe(1);
@@ -639,7 +639,7 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   gate.reject(new Error("persistence failed")); await closing;
   expect(app.frame().inbox?.section).toBe("tasks");
   expect(app.page!.questions.answer).toEqual(answer);
-  expect(app.status(app.page!)).toEndWith("Inbox 3");
+  expect(app.status(app.page!)).toEndWith("inbox 3");
   expect(JSON.stringify(app.page!.lines)).toContain("could not skip: persistence failed");
   expect(await allQuestions("a")).toEqual(qs);
   stale = undefined;
@@ -648,7 +648,7 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
   expect(app.page!.questions.answer.text).toBe(""); // never reassigned to next head
   expect(app.input.text).toBe("");
-  expect(app.status(app.page!)).toEndWith("Inbox 2");
+  expect(app.status(app.page!)).toEndWith("inbox 2");
   expect(await pendingInput("a", "orchestrator")).toBe(false);
   expect(await drain("a", "orchestrator")).toEqual([]);
   expect(app.page!.sent).toEqual([{ inputId: "untouched", text: "queued before skip" }]);
@@ -701,7 +701,7 @@ test("external silent skip reports an orphan draft as closed, restores chat and 
   expect(JSON.stringify(app.page!.lines)).toContain("unsent answer: orphan answer");
   expect(JSON.stringify(app.page!.lines)).not.toContain("default");
   expect(app.page!.questions.answer.text).toBe("");
-  expect(app.status(app.page!)).toEndWith("Inbox 1");
+  expect(app.status(app.page!)).toEndWith("inbox 1");
   await app.commands.get("/questions")!.run("", app.page);
   expect(app.input.text).toBe(""); expect(app.questions.view()?.text).toBe("Next?");
   expect(await drain("a", "orchestrator")).toEqual([]);

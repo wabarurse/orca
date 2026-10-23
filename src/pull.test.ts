@@ -161,7 +161,7 @@ test("Git overrides/global rewrites are ignored and local hooks do not execute",
 test("old Bun is refused before fetch, with actionable prerequisite", async () => {
   const f = await fixture();
   await expect(pullHarness({ ...f.options, command: (argv, cwd, env) => argv[1] === "--version"
-    ? Promise.resolve({ code: 0, out: "1.3.99", err: "" }) : f.command(argv, cwd, env) })).rejects.toThrow("Bun >= 1.4.2");
+    ? Promise.resolve({ code: 0, out: "1.3.99", err: "" }) : f.command(argv, cwd, env) })).rejects.toThrow("bun >= 1.4.2");
   expect(fetched(f.calls)).toBe(false);
   expect(await f.binary()).toBe("old executable");
 });

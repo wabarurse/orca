@@ -119,7 +119,7 @@ export function reportLine(from: string, text: string): Line {
   const chars = [...first];
   const cut = chars.slice(0, REPORT_CHARS).join("");
   const more = chars.length > REPORT_CHARS || text.trim() !== first.trim();
-  return dim(`From ${from}: ${cut}${more ? "…" : ""}`);
+  return dim(`from ${from}: ${cut}${more ? "…" : ""}`);
 }
 
 /** A message to the user, led by its sender. */

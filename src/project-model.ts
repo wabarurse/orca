@@ -48,6 +48,6 @@ export function projectModelResolver(project: string, load: typeof provider = pr
   return async () => {
     const model = await effectiveModel(project);
     try { return { model, provider: await load(providerFor(model)), settings: await effectiveSettings(project, model) }; }
-    catch (error) { throw new Error(`Cannot load provider for project ${project} model ${model}: ${error instanceof Error ? error.message : error}`); }
+    catch (error) { throw new Error(`cannot load provider for project ${project} model ${model}: ${error instanceof Error ? error.message : error}`); }
   };
 }

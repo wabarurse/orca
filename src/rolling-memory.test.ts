@@ -162,7 +162,7 @@ test("a failed summary at the hard limit never calls the foreground model", asyn
   deps.compaction = { contextLimit: 20000, outputReserve: 2000 };
   deps.compactBoundary = (d, m) => rolling.boundary(d, m);
   const before = await Bun.file(transcript.path).text();
-  await expect(createAgent(deps).run()).rejects.toThrow("Context blocked");
+  await expect(createAgent(deps).run()).rejects.toThrow("context blocked");
   expect(foreground.calls).toHaveLength(0); expect(await Bun.file(transcript.path).text()).toBe(before);
 });
 

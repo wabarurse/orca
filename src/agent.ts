@@ -71,7 +71,7 @@ type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
 /** Run one tool; a thrown error becomes an is_error result, never a crash. */
 async function runTool(deps: AgentDeps, name: string, input: Record<string, unknown>): Promise<ToolResultBlockParam> {
-  if (deps.signal?.aborted) return { type: "tool_result", tool_use_id: "", content: "Cancelled by user", is_error: true };
+  if (deps.signal?.aborted) return { type: "tool_result", tool_use_id: "", content: "cancelled by user", is_error: true };
   const tool = deps.tools[name];
   if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
   try {

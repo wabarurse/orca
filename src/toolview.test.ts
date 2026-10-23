@@ -2,20 +2,20 @@ import { expect, test } from "bun:test";
 import { toolLabel, toolSummary, toolView, capped, callText, resultText } from "./toolview";
 
 test("labels: a short human summary of the input per tool, the first string argument otherwise", () => {
-  expect(toolLabel("bash", { command: "git status" })).toBe("Bash(git status)");
-  expect(toolLabel("bash", { command: "cd x &&\n  make   test" })).toBe("Bash(cd x && make test)");
-  expect(toolLabel("message", { to: "orchestrator", text: "Done: all tests pass and the PR is open now, see below" })).toBe("Message(orchestrator: Done: all tests pass and the PR is…)");
-  expect(toolLabel("message", { to: "user", text: "hi" })).toBe("Message(user: hi)");
-  expect(toolLabel("spawn", { prompt: "long brief", branch: "feat/login" })).toBe("Spawn(feat/login, worker)");
-  expect(toolLabel("spawn", { prompt: "p", branch: "feat/x", role: "reviewer" })).toBe("Spawn(feat/x, reviewer)");
-  expect(toolLabel("complexity", { files: ["src/a.ts", "src/b.ts"] })).toBe("Complexity(src/a.ts, src/b.ts)");
-  expect(toolLabel("complexity", {})).toBe("Complexity(changed files)");
-  expect(toolLabel("complexity", { base: "main" })).toBe("Complexity(changed files vs main)");
-  expect(toolLabel("ask", { questions: [{ text: "Which db?" }] })).toBe("Ask(Which db?)");
-  expect(toolLabel("ask", { questions: [{ text: "Which db?" }, { text: "Port?" }] })).toBe("Ask(2 questions: Which db?)");
-  expect(toolLabel("fetch", { n: 3, url: "https://x.y\n" })).toBe("Fetch(https://x.y)");
-  expect(toolLabel("odd", null)).toBe("Odd()");
-  expect(toolLabel("bash", "not an object")).toBe("Bash()");
+  expect(toolLabel("bash", { command: "git status" })).toBe("bash(git status)");
+  expect(toolLabel("bash", { command: "cd x &&\n  make   test" })).toBe("bash(cd x && make test)");
+  expect(toolLabel("message", { to: "orchestrator", text: "Done: all tests pass and the PR is open now, see below" })).toBe("message(orchestrator: Done: all tests pass and the PR is…)");
+  expect(toolLabel("message", { to: "user", text: "hi" })).toBe("message(user: hi)");
+  expect(toolLabel("spawn", { prompt: "long brief", branch: "feat/login" })).toBe("spawn(feat/login, worker)");
+  expect(toolLabel("spawn", { prompt: "p", branch: "feat/x", role: "reviewer" })).toBe("spawn(feat/x, reviewer)");
+  expect(toolLabel("complexity", { files: ["src/a.ts", "src/b.ts"] })).toBe("complexity(src/a.ts, src/b.ts)");
+  expect(toolLabel("complexity", {})).toBe("complexity(changed files)");
+  expect(toolLabel("complexity", { base: "main" })).toBe("complexity(changed files vs main)");
+  expect(toolLabel("ask", { questions: [{ text: "Which db?" }] })).toBe("ask(Which db?)");
+  expect(toolLabel("ask", { questions: [{ text: "Which db?" }, { text: "Port?" }] })).toBe("ask(2 questions: Which db?)");
+  expect(toolLabel("fetch", { n: 3, url: "https://x.y\n" })).toBe("fetch(https://x.y)");
+  expect(toolLabel("odd", null)).toBe("odd()");
+  expect(toolLabel("bash", "not an object")).toBe("bash()");
 });
 
 test("summaries: bash line counts, exit codes with the first error line, timeouts; message and spawn; else the first line", () => {
@@ -34,12 +34,12 @@ test("summaries: bash line counts, exit codes with the first error line, timeout
   expect(toolSummary("bash", { ok: false, text: "boom\nstack" })).toEqual({ summary: "boom", failed: true });
   expect(toolSummary("x", { ok: false, text: "" })).toEqual({ summary: "error", failed: true });
   expect(toolSummary("x", { ok: true, text: "" })).toEqual({ summary: "done", failed: false });
-  expect(toolView("bash", { command: "ls" }, { ok: true, text: "a\n" })).toEqual({ tool: "Bash(ls)", summary: "1 line", failed: false });
+  expect(toolView("bash", { command: "ls" }, { ok: true, text: "a\n" })).toEqual({ tool: "bash(ls)", summary: "1 line", failed: false });
 });
 
 test("untrusted tool inputs and results are plain, stdout is display-width capped", () => {
   const attack = "\x1b[31mred\x1b[0m \x1b]8;;https://x\x07link\x1b]8;;\x07\x1b]52;c;evil\x1b\\";
-  expect(toolLabel("bash", { command: attack })).toBe("Bash(red link)");
+  expect(toolLabel("bash", { command: attack })).toBe("bash(red link)");
   expect(toolSummary("message", { ok: true, text: attack }).summary).toBe("red link");
   expect(callText({ name: "bash", input: { command: attack.repeat(100) } })).not.toContain("\x1b");
   expect(Bun.stringWidth(capped("你好".repeat(200)))).toBeLessThanOrEqual(200);
@@ -59,4 +59,11 @@ test("saved output footers preserve timeout and exit failure summaries", () => {
   expect(toolSummary("bash", { ok: true, text: "error: connection closed\n[exit 2]\n[full output: /tmp/output.txt]" }))
     .toEqual({ summary: "exit 2: error: connection closed", failed: true });
   expect(toolSummary("bash", { ok: true, text: "[timed out after 1s; saved output is incomplete]\nstill here\n[full output: /tmp/output.txt]" }).failed).toBe(false);
+});
+
+test("lowercase owned tool labels do not normalize unknown identifiers, values or raw output", () => {
+  expect(toolLabel("web_search", { query: "HTTP API CamelCase" })).toBe("websearch(HTTP API CamelCase)");
+  expect(toolLabel("CustomTool", { path: "/Users/Ada/Repo/README.md" })).toBe("CustomTool(/Users/Ada/Repo/README.md)");
+  expect(toolSummary("CustomTool", { ok: true, text: "RAW ToolOutput https://Host/Path\nMore Text" }).summary).toBe("RAW ToolOutput https://Host/Path");
+  expect(toolLabel("message", { to: "Reviewer-MixedCase", text: "Please Keep THIS" })).toBe("message(Reviewer-MixedCase: Please Keep THIS)");
 });

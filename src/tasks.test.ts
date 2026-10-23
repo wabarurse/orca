@@ -293,7 +293,7 @@ test("one cancelled reviewer invalidates readiness for every explicitly included
     const associated = await observeTaskPR(project, t.id, observation());
     await validateTaskReadiness(project, t.id, { run: "reviewer", revision: associated.revision, observation: observation(), validated: true, validation: "Both tasks reviewed on this head" });
   }
-  await stopTaskRun(project, "reviewer", "cancelled", "Cancelled by user");
+  await stopTaskRun(project, "reviewer", "cancelled", "cancelled by user");
   for (const t of await allTasks(project)) {
     expect(t.status).toBe("reviewing"); expect(t.readiness).toBeUndefined(); expect(t.attention?.kind).toBe("cancelled");
   }
@@ -307,10 +307,10 @@ test("repeating the same explicit readiness evidence is idempotent", async () =>
 test("cancellation racing a normal ready report wins without changing a later run", async () => {
   const t = await ready();
   await stopTaskRun(project, "reviewer", "waiting", "Reported");
-  await stopTaskRun(project, "reviewer", "cancelled", "Cancelled by user");
+  await stopTaskRun(project, "reviewer", "cancelled", "cancelled by user");
   const cancelled = await getTask(project, t.id);
   expect(cancelled.readiness).toBeUndefined(); expect(cancelled.attention?.kind).toBe("cancelled");
-  await stopTaskRun(project, "reviewer", "cancelled", "Cancelled by user");
+  await stopTaskRun(project, "reviewer", "cancelled", "cancelled by user");
   expect(await getTask(project, t.id)).toEqual(cancelled);
   await prepare(t, "authorized-new-run");
   await stopTaskRun(project, "reviewer", "cancelled", "Late cancellation");

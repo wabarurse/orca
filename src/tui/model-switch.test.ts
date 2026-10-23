@@ -231,7 +231,7 @@ test("stopped turn UI explains explicit resume, model change does not rerun it",
   } });
   try {
     ui.type("task\r");
-    await until(() => ui.app.page!.lines.join("").includes("Send another message to resume with retained history"));
+    await until(() => ui.app.page!.lines.join("").includes("send another message to resume with retained history"));
     await modelCommand(ui, "claude-test");
     expect(turns).toBe(1);
     expect(ui.app.page!.lines.join("")).toContain("failed/stopped turns need another message to resume");
@@ -278,7 +278,7 @@ for (const picker of [false, true]) test(`header changes only after confirmed ${
   const ui = await setup([{ name: "worker-a", live: true }], async () => catalog("claude-header"));
   async function request() {
     await modelCommand(ui, picker ? "" : "claude-header");
-    if (picker) { ui.type("\r"); await until(() => !!ui.app.menu?.title.includes("Switch this project")); }
+    if (picker) { ui.type("\r"); await until(() => !!ui.app.menu?.title.includes("switch this project")); }
   }
   try {
     await request();

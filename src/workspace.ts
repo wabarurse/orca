@@ -63,7 +63,7 @@ export async function initializeWorkspace(project: string, source?: string): Pro
 
 async function originalCheckout(source: string): Promise<string> {
   const directory = await checkoutHere(source);
-  if (!directory) throw new Error("start from a local Git checkout or pass its directory; clone remote repositories yourself first");
+  if (!directory) throw new Error("start from a local git checkout or pass its directory; clone remote repositories yourself first");
   await mkdir(paths.root, { recursive: true });
   const state = realpathSync(paths.root);
   if (inside(state, directory) || inside(directory, state)) {

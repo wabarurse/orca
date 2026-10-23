@@ -167,8 +167,8 @@ test("missing checkout stays discoverable; invalid metadata never silently creat
 });
 
 test("new remote sources, nested state and worker checkouts are refused without cloning", async () => {
-  await expect(ensureProject("remote", "https://example.invalid/repo.git")).rejects.toThrow("local Git checkout");
-  await expect(ensureProject("empty", temp)).rejects.toThrow("local Git checkout");
+  await expect(ensureProject("remote", "https://example.invalid/repo.git")).rejects.toThrow("local git checkout");
+  await expect(ensureProject("empty", temp)).rejects.toThrow("local git checkout");
   await ensureProject("p", repo);
   const worker = await ensureWorktree("p", "task/fix");
   await expect(ensureProject("nested", worker)).rejects.toThrow("original checkout");

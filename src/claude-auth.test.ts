@@ -53,7 +53,7 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
         target.searchParams.set("state", authorization.searchParams.get("state")!);
         const response = await fetch(target);
         expect(response.status).toBe(200);
-        expect(await response.text()).toContain("Signed in");
+        expect(await response.text()).toContain("signed in");
       })();
     },
     async fetcher(url, init) {
@@ -200,7 +200,7 @@ test("failed refresh preserves saved tokens, releases the lock, and does not exp
   const original = { ...fresh(), expiresAt: Date.now() - 1000 };
   await saveClaudeTokens("default", original);
   const rejected = claudeCredentials("default", async () => new Response("test-refresh test-access", { status: 401 }));
-  await expect(rejected()).rejects.toThrow("HTTP 401");
+  await expect(rejected()).rejects.toThrow("http 401");
   try { await rejected(); } catch (err) {
     expect(String(err)).not.toContain("test-refresh");
     expect(String(err)).not.toContain("test-access");
@@ -232,9 +232,9 @@ test("Claude Code import copies credentials without changing the source or other
 
 test("missing, invalid and unsafe profiles fail without reading developer-platform credentials", async () => {
   await expect(claudeCredentials("missing")()).rejects.toThrow("not signed in");
-  await expect(importClaudeCode("missing")).rejects.toThrow("No Claude Code login");
+  await expect(importClaudeCode("missing")).rejects.toThrow("no claude code login");
   for (const name of ["../outside", "a/b", "", "env", "x".repeat(65)]) {
-    await expect(saveClaudeTokens(name, fresh())).rejects.toThrow("Profile must");
+    await expect(saveClaudeTokens(name, fresh())).rejects.toThrow("profile must");
   }
   await Bun.write(claudeCredentialsPath("invalid"), "not JSON");
   await expect(readClaudeTokens("invalid")).rejects.toThrow("invalid");
