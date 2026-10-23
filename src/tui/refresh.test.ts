@@ -427,7 +427,7 @@ test("dynamic dispatch starts off, commands keep pages and agent views in sync, 
   await app.openPage("b");
   for (const v of ["on", "off", "on"]) {
     await submit(`/dynamic-dispatch ${v}`);
-    expect(raw(app)).toContain(`dynamic dispatch set to ${v}`);
+    expect(raw(app)).toContain(`dynamic dispatch set to ${v} (takes effect from the orchestrator's next turn)`);
     expect((await loadConfig()).dynamicDispatch).toBe(v === "on");
     await until(() => header(screen).includes(`dispatch: ${v}`));
     await app.openPage("a");

@@ -86,13 +86,13 @@ describe("/dynamic-dispatch", () => {
     process.env.PARALLELS_HOME = home;
     try {
       expect(await dynamicDispatch("")).toBe("dynamic dispatch: off");
-      expect(await dynamicDispatch("on")).toBe("dynamic dispatch set to on");
+      expect(await dynamicDispatch("on")).toBe("dynamic dispatch set to on (takes effect from the orchestrator's next turn)");
       expect((await loadConfig()).dynamicDispatch).toBe(true);
       expect(await dynamicDispatch("")).toBe("dynamic dispatch: on");
       for (const bad of ["ON", "true", "1", "yes", "on off", "of"]) expect(await dynamicDispatch(bad)).toBe(DYNAMIC_DISPATCH_USAGE);
       expect(DYNAMIC_DISPATCH_USAGE).toBe(DYNAMIC_DISPATCH_USAGE.toLowerCase());
       expect((await loadConfig()).dynamicDispatch).toBe(true);
-      expect(await dynamicDispatch("off")).toBe("dynamic dispatch set to off");
+      expect(await dynamicDispatch("off")).toBe("dynamic dispatch set to off (takes effect from the orchestrator's next turn)");
       expect(await dynamicDispatch("")).toBe("dynamic dispatch: off");
     } finally {
       if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;

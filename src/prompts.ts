@@ -39,6 +39,27 @@ export const REVIEWER = `You are a review agent on one branch, sharing the worke
 - Watch CI (only when the orchestrator tells you): push the branch and open the PR with \`gh pr create\` if there is none, then run \`gh pr checks --watch\`. Fix what fails, commit, push, watch again, until every check passes. Report once: ready to merge, with the PR link. This is the only time you edit code.
 - No sudo, no touching other branches.`;
 
+// Appended to the orchestrator prompt only when /dynamic-dispatch is on, outside
+// the base prompt's budget. Adapted to this app: spawn branches only from the
+// default branch, workers don't push (reviewers publish), the UI is a terminal.
+export const DYNAMIC_DISPATCH = `## Splitting work into PRs
+The PR is the unit of work. Decide the PRs first, then assign one worker per PR. Split by what a reviewer can approve alone, never by layer. The plan table gets one row per PR.
+Pick the pattern:
+- Data change: expand/contract. Add and dual-write; flip reads; stop writing and tombstone; drop. Each body names its merge gate ("after PR N's deploy rolls out"). Codeowner-owned migrations get their own PR.
+- Planned feature: one PR per milestone, titled \`<feature> 2/5: <milestone>\`. Spawn only branches from the default branch, so dispatch the stack sequentially: each PR starts after the previous one merges. Bottom layers change no behavior. Every body lists the stack and marks the current PR.
+- Behavior switch: one PR adds it dormant with tests, a second small PR turns it on.
+- Anything else: one flag, one function, one fix, one endpoint. If the title needs "and", split.
+Each PR:
+- Verb-first title stating the behavior change, with the number when there is one. Never a branch name.
+- 2 to 5 files, under 300 lines. Over 600 lines needs a stated reason.
+- Merges alone, leaves main working, carries its own test or eval change.
+- Body: who is affected, what changes, what it deliberately does not do, production numbers when they motivated it, pasted terminal output for UI.
+Workers:
+- One per PR, own worktree and branch. Parallel only on disjoint files; shared prerequisites ship first as their own PR, dependents start when it merges.
+- Brief names the files, the exact change, the test, the pattern, and the PR title and body, and requires format, lint, typecheck and test before reporting so the bot review finds nothing. The worker writes the title and body into its commit message so the reviewer's PR uses them.
+- Follow each PR until it merges. Review fixes before approval stay on the same branch per the task flow, within the review-round limit.
+- Approved = the reviewer reported ready to merge. After that, new review findings, including bot or user review comments, become a follow-up PR, not another commit: register a new task and plan a new branch, started after this PR merges. CI failures stay with the watch-ci reviewer on the same branch. If the user explicitly asks for the fix on this PR, reuse the branch per spawn.`;
+
 /** The task-flow line: 0 rounds skips review and goes straight to CI. */
 const taskFlow = (rounds: number) => rounds === 0
   ? `A task runs as: spawn a worker → it reports → spawn the reviewer with only the instruction "watch ci" → it reports ready to merge → tell the user.`
@@ -49,5 +70,6 @@ const templates: Record<Role, string> = { orchestrator: ORCHESTRATOR, worker: WO
 /** The prompt for a role with its config values filled in. */
 export function rolePrompt(role: Role, config: Config): string {
   const values: Record<string, string | number> = { taskFlow: taskFlow(config.maxReviewRounds), cyclomatic: config.cyclomatic, cognitive: config.cognitive };
-  return templates[role].replace(/\{(\w+)\}/g, (m, key: string) => (key in values ? String(values[key]) : m));
+  const prompt = templates[role].replace(/\{(\w+)\}/g, (m, key: string) => (key in values ? String(values[key]) : m));
+  return role === "orchestrator" && config.dynamicDispatch ? `${prompt}\n\n${DYNAMIC_DISPATCH}` : prompt;
 }

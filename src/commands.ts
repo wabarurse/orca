@@ -249,7 +249,7 @@ export async function dynamicDispatch(arg: string): Promise<string> {
   if (!arg) return `dynamic dispatch: ${(await loadConfig()).dynamicDispatch ? "on" : "off"}`;
   if (arg !== "on" && arg !== "off") return DYNAMIC_DISPATCH_USAGE;
   await saveConfig({ dynamicDispatch: arg === "on" });
-  return `dynamic dispatch set to ${arg}`;
+  return `dynamic dispatch set to ${arg} (takes effect from the orchestrator's next turn)`;
 }
 
 export const LOGIN_USAGE = "usage: /login anthropic [profile] [--from-claude-code]  |  /login openai [profile] [--from-codex]";
