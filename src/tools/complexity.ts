@@ -34,7 +34,7 @@ export const complexity: Tool = {
       files = [...new Set([...diff.out.split("\n"), ...dirty.out.split("\n")])].filter(Boolean);
     }
     files = files.filter((f) => SCORED_EXTENSIONS.test(f));
-    if (!files.length) return "no JavaScript/TypeScript files to score";
+    if (!files.length) return "no javascript/typescript files to score";
     const rows: (FunctionScore & { file: string })[] = [];
     const errors: string[] = [];
     for (const file of files) {

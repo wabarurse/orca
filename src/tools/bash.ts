@@ -45,7 +45,7 @@ export const bash: Tool = {
     const artifact = await outputArtifact(ctx.project);
     let complete = false, path = "", limited = false, code = 0, timedOut = false;
     try {
-      if (Buffer.byteLength(artifact.partialPath) + 240 > cap) throw new Error("Tool output path exceeds preview budget; increase max_output_bytes and maxToolResultBytes");
+      if (Buffer.byteLength(artifact.partialPath) + 240 > cap) throw new Error("tool output path exceeds preview budget; increase max_output_bytes and maxToolResultBytes");
       ctx.signal?.throwIfAborted();
       const proc = Bun.spawn(["sh", "-c", `exec 2>&1\n${command}`], { cwd: ctx.cwd, detached: true, stdout: "pipe", stdin: "ignore" });
       const kill = () => killGroup(proc);

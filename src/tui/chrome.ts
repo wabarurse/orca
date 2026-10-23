@@ -68,8 +68,8 @@ export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   const head = inset ? `${dim("── ")}${tabs}${dim(" " + "─".repeat(Math.max(0, cols - 4 - visibleLength(tabs))))}` : tabs;
   if (budget === 1) return [head];
   const telemetry = [c.context, c.review].filter(Boolean).join(" · ");
-  // Narrow telemetry stacks without sacrificing the selected model to a long
-  // multi-task distribution. Agent identity precedes paths in constrained views.
+  // Narrow telemetry stacks without sacrificing the selected model to telemetry.
+  // Agent identity precedes paths in constrained views.
   const fields = telemetry && visibleLength(plain(telemetry)) > cols
     ? [c.context ?? "", `model ${c.model}`, c.review ?? "", ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote].filter(Boolean)
     : [...(telemetry ? [telemetry] : []), `model ${c.model}`, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote];

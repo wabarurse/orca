@@ -8,25 +8,25 @@ export interface HelpEntry { label: string; description: string }
 export interface CommandHelp extends HelpEntry { group: HelpGroup; viewOnly?: true }
 
 const NAVIGATION: HelpEntry[] = [
-  { label: "Ctrl+N", description: "New orchestrator" },
-  { label: "Ctrl+Z / Ctrl+X", description: "Previous / next project page" },
-  { label: "Ctrl+B", description: "Open or close projects" },
-  { label: "Ctrl+Q", description: "Inbox Questions toggle; arrivals never open Inbox" },
-  { label: "Shift+Tab (Inbox)", description: "Switch Tasks / Questions; Esc or Tab closes without answering" },
-  { label: "PgUp/PgDn / wheel", description: "Scroll conversation, help or Inbox Tasks (mouse reporting required)" },
-  { label: "Ctrl+C", description: "Cancel selected turn/agent; twice within 2s exits, keeping history" },
-  { label: "Esc", description: "Close panel, else leave agent view, else clear input" },
+  { label: "ctrl+n", description: "new orchestrator" },
+  { label: "ctrl+z / ctrl+x", description: "previous / next project page" },
+  { label: "ctrl+b", description: "open or close projects" },
+  { label: "ctrl+q", description: "inbox questions toggle; arrivals never open inbox" },
+  { label: "shift+tab (inbox)", description: "switch tasks / questions; esc or tab closes without answering" },
+  { label: "pgup/pgdn / wheel", description: "scroll conversation, help or inbox tasks (mouse reporting required)" },
+  { label: "ctrl+c", description: "cancel selected turn/agent; twice within 2s exits, keeping history" },
+  { label: "esc", description: "close panel, else leave agent view, else clear input" },
 ];
 const EDITING: HelpEntry[] = [
-  { label: "Drag / Ctrl+O / Esc", description: "Highlight + auto-copy on release / re-copy / clear highlight" },
-  { label: "Ctrl+V / Ctrl+Y", description: "Attach clipboard image / remove last image. Terminal text paste is unchanged" },
-  { label: "Shift/Alt+Enter", description: "New line" },
-  { label: "Alt+←/→ / Alt+B/F", description: "Move by word" },
-  { label: "Alt+⌫ / Ctrl+W", description: "Delete previous word" },
-  { label: "Alt+D", description: "Delete next word" },
-  { label: "Home/End / Ctrl+A/E", description: "Start / end of current line" },
-  { label: "Ctrl+U / Ctrl+K", description: "Delete to start / end of current line" },
-  { label: "↑ / ↓", description: "Move between input rows, then project input history" },
+  { label: "drag / ctrl+o / esc", description: "highlight + auto-copy on release / re-copy / clear highlight" },
+  { label: "ctrl+v / ctrl+y", description: "attach clipboard image / remove last image. terminal text paste is unchanged" },
+  { label: "shift/alt+enter", description: "new line" },
+  { label: "alt+←/→ / alt+b/f", description: "move by word" },
+  { label: "alt+⌫ / ctrl+w", description: "delete previous word" },
+  { label: "alt+d", description: "delete next word" },
+  { label: "home/end / ctrl+a/e", description: "start / end of current line" },
+  { label: "ctrl+u / ctrl+k", description: "delete to start / end of current line" },
+  { label: "↑ / ↓", description: "move between input rows, then project input history" },
 ];
 
 /** Word-wrap descriptions, with wrap's single-cell fallback for impossibly narrow glyphs. */
@@ -59,11 +59,11 @@ export function helpLines(commands: ReadonlyMap<string, { help: CommandHelp }>, 
   const entries = [...commands.values()].map(command => command.help).filter(entry => !entry.viewOnly || inView);
   const group = (id: HelpGroup, title: string) => groupRows(title, entries.filter(entry => entry.group === id), cols, id === "advanced");
   return [
-    group("conversation", "Conversation"),
-    group("projects", "Projects"),
-    group("settings", "Model & accounts"),
-    groupRows("Keyboard · navigation", NAVIGATION, cols),
-    groupRows("Keyboard · editing", EDITING, cols),
-    group("advanced", "Advanced & diagnostics"),
+    group("conversation", "conversation"),
+    group("projects", "projects"),
+    group("settings", "model & accounts"),
+    groupRows("keyboard · navigation", NAVIGATION, cols),
+    groupRows("keyboard · editing", EDITING, cols),
+    group("advanced", "advanced & diagnostics"),
   ].flatMap((rows, i) => i ? ["", ...rows] : rows);
 }

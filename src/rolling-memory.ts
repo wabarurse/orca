@@ -89,7 +89,7 @@ export class RollingCompactor {
     catch (error) {
       deps.signal?.throwIfAborted();
       this.retryAfter = Date.now() + 30000;
-      status(deps, `Background compaction failed; original history kept: ${error instanceof Error ? error.message : error}`);
+      status(deps, `background compaction failed; original history kept: ${error instanceof Error ? error.message : error}`);
     }
   }
 
@@ -145,7 +145,7 @@ export class RollingCompactor {
       .then(memory => { assertProjectIdentity(this.project, identity); job.memory = memory; })
       .catch(error => { job.error = error; })
       .finally(() => { clearTimeout(timer); job.settled = true; });
-    status(deps, "Compacting older conversation in the background…");
+    status(deps, "compacting older conversation in the background…");
   }
 
   private async apply(deps: AgentDeps, job: Job): Promise<void> {
@@ -155,7 +155,7 @@ export class RollingCompactor {
 
   private async publish(deps: AgentDeps, job: Job): Promise<void> {
     this.retryAfter = Date.now() + 30000;
-    if (job.error || !job.memory) { status(deps, `Background compaction failed; original history kept: ${job.error instanceof Error ? job.error.message : job.error}`); return; }
+    if (job.error || !job.memory) { status(deps, `background compaction failed; original history kept: ${job.error instanceof Error ? job.error.message : job.error}`); return; }
     const identity = job.identity;
     await withProjectStateLock(this.project, async () => {
       assertProjectIdentity(this.project, identity);
@@ -182,7 +182,7 @@ export class RollingCompactor {
       const retained = [...retainedImages(current.slice(0, job.cut)), ...current.slice(job.cut)];
       const proposed: MessageParam[] = [{ role: "user", content: text }, ...retained];
       const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
-      if (!paired(proposed) || estimate(proposed) >= estimate(current)) { status(deps, "Background summary did not reduce context; original history kept."); return; }
+      if (!paired(proposed) || estimate(proposed) >= estimate(current)) { status(deps, "background summary did not reduce context; original history kept."); return; }
       // New arrivals can outgrow even a valid summary. Commit the reduction; the loop
       // still refuses a model request until requireFits passes (possibly after another pass).
       await this.transcript.append({ type: "summary", text, memory, retained, boundary: job.head }, signal, { head, check: authorize });

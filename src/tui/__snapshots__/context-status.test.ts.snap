@@ -1,0 +1,22 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`lowercase telemetry snapshot preserves project, model, path, remote and agent identity 1`] = `
+"── >[MyProject] ────────────────────────
+ctx ?/? · review rounds: 100
+model Provider-Model-ID · effort default
+ · fast off
+view reviewer-MyTask
+/Users/Ada/Repo
+Host/Owner/Repo
+────────────────────────────────────────"
+`;
+
+exports[`lowercase telemetry snapshot preserves project, model, path, remote and agent identity 2`] = `
+"── >[MyProject] ────────────────────────────────────────────────────────────────────────────────────
+ctx ?/? · review rounds: 100
+model Provider-Model-ID · effort default · fast off
+view reviewer-MyTask
+/Users/Ada/Repo
+Host/Owner/Repo
+────────────────────────────────────────────────────────────────────────────────────────────────────"
+`;

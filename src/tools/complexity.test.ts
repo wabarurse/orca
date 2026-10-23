@@ -64,7 +64,7 @@ test("unsupported files and function-free sources are not reported as zero compl
   await write("guide.md", "Run `node example.js`.");
   await write("script.py", "def f(): pass");
   await write("prompt.ts", 'export const prompt = "Semantic agent instruction change";');
-  expect(await complexity.run({ files: ["guide.md", "script.py"] }, ctx)).toBe("no JavaScript/TypeScript files to score");
+  expect(await complexity.run({ files: ["guide.md", "script.py"] }, ctx)).toBe("no javascript/typescript files to score");
   expect(await complexity.run({ files: ["prompt.ts"] }, ctx)).toBe("no functions found");
 });
 

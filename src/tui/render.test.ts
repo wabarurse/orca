@@ -181,24 +181,24 @@ describe("live", () => {
 
   test("the project list sits below the multi-row input and status", () => {
     const f = frame({ cols: 60, rows: 12, partial: "half", status: "1 agent running", projects: projects(), input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 13 } });
-    expect(rows(f)).toEqual(["half", ...box(["> one", "  two", "  three"], 60), "1 agent running", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(rows(f)).toEqual(["half", ...box(["> one", "  two", "  three"], 60), "1 agent running", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ enter opens   p pins   d deletes   esc closes"]);
     expect(liveRows(f)).toMatchObject({ cursor: 4, col: 8 });
   });
 
   test("project rows scroll to keep the selection in view, with the status under the list", () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ name: `id${i}`, label: `p${i}`, pinned: false, open: false, active: false, busy: false }));
     const out = projectRows({ items: many, index: 8, status: "delete p8? y/n" }, 6).map(strip);
-    expect(out).toEqual(["projects", "     p6", "     p7", "❯    p8", "delete p8? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
-    expect(projectRows({ items: [], index: 0, status: "" }, 5).map(strip)).toEqual(["projects", "  none yet", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(out).toEqual(["projects", "     p6", "     p7", "❯    p8", "delete p8? y/n", "↑↓ enter opens   p pins   d deletes   esc closes"]);
+    expect(projectRows({ items: [], index: 0, status: "" }, 5).map(strip)).toEqual(["projects", "  none yet", "↑↓ enter opens   p pins   d deletes   esc closes"]);
     expect(windowStart(10, 0, 3)).toBe(0);
     expect(windowStart(10, 9, 3)).toBe(7);
     expect(windowStart(2, 1, 5)).toBe(0);
   });
 
   test("on a short terminal the status and hint stay ahead of the list", () => {
-    expect(projectRows(projects({ status: "delete one? y/n" }), 2).map(strip)).toEqual(["delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(projectRows(projects({ status: "delete one? y/n" }), 2).map(strip)).toEqual(["delete one? y/n", "↑↓ enter opens   p pins   d deletes   esc closes"]);
     expect(projectRows(projects({ status: "delete one? y/n" }), 1).map(strip)).toEqual(["delete one? y/n"]);
-    expect(rows(frame({ cols: 60, rows: 4, projects: projects({ status: "delete one? y/n" }) }))).toEqual(["> hi", "projects", "delete one? y/n", "↑↓ Enter opens   p pins   d deletes   Esc closes"]);
+    expect(rows(frame({ cols: 60, rows: 4, projects: projects({ status: "delete one? y/n" }) }))).toEqual(["> hi", "projects", "delete one? y/n", "↑↓ enter opens   p pins   d deletes   esc closes"]);
   });
 });
 
@@ -284,16 +284,16 @@ describe("sanitize", () => {
 });
 
 describe("questions", () => {
-  const PICK = "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later";
+  const PICK = "↑↓ or 1–9 choose · enter pick · type to answer · esc/tab later";
   const q = (over: Partial<QuestionView> = {}): QuestionView => ({ text: "Which db?", options: ["postgres", "sqlite"], index: 0, default: "sqlite", count: 1, mode: "pick", ...over });
 
   test("a question with options: text, numbered options, type your own, skip describing silent removal, the hint for the mode", () => {
     expect(questionRows(q(), 70, 10).map(strip)).toEqual(["? Which db?", "❯ 1. postgres", "  2. sqlite", "  type your own answer", "  skip — remove from inbox", PICK]);
-    expect(questionRows(q({ index: 2, count: 3, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "  skip — remove from inbox", "Enter send · Esc/Tab close"]);
+    expect(questionRows(q({ index: 2, count: 3, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "  skip — remove from inbox", "enter send · esc/tab close"]);
   });
 
   test("a question without options: type your own answer, then the same silent skip without a default", () => {
-    expect(questionRows(q({ options: [], default: undefined, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db?", "❯ type your own answer", "  skip — remove from inbox", "Enter send · Esc/Tab close"]);
+    expect(questionRows(q({ options: [], default: undefined, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db?", "❯ type your own answer", "  skip — remove from inbox", "enter send · esc/tab close"]);
   });
 
   test("long text word-wraps", () => {

@@ -296,7 +296,7 @@ describe("case 4: the watchdog", () => {
     expect(await check(project)).toEqual(["worker-dead"]);
     expect(await check(project)).toEqual([]);
     const msgs = await inbox();
-    expect(msgs.map((m) => m.text)).toEqual([`[agent-exit] worker-dead stopped while the TUI was not watching (role worker; branch feat; last step: starting; uncommitted changes: unknown)`]);
+    expect(msgs.map((m) => m.text)).toEqual([`[agent-exit] worker-dead stopped while the tui was not watching (role worker; branch feat; last step: starting; uncommitted changes: unknown)`]);
   });
 
   test("the first check never sweeps when tmux could not be asked", async () => {
@@ -500,5 +500,5 @@ test("corrupt task registry cannot suppress shell exit or watchdog notices", asy
   writeFileSync(join(paths.project(project), "tasks.json"), "corrupt");
   const watch = watchdog({ live: async () => [], alive: () => false, dirty: async () => 0 });
   expect(await watch(project)).toEqual(["worker-feat"]);
-  expect((await inbox())[0]?.text).toContain("stopped while the TUI was not watching");
+  expect((await inbox())[0]?.text).toContain("stopped while the tui was not watching");
 });

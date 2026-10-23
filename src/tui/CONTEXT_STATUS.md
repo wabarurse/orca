@@ -1,6 +1,6 @@
 # Header telemetry
 
-`Ctx ~12.3k/272k` is a conservative current-context **estimate**, not billing
+`ctx ~12.3k/272k` is a conservative current-context **estimate**, not billing
 usage or an exact tokenizer count. It uses the agent's actual safe-boundary
 system prompt and tool specs plus the current transcript chain, including
 checkpoint tails and context-clear boundaries, with the same UTF-8/image/framing
@@ -14,28 +14,23 @@ Limits come only from verified model metadata, never the compaction fallback.
 Unlisted models therefore show `?` for their limit. Agent views show both values as unknown rather than borrowing the project's
 selected model or orchestrator usage.
 
-`Review N` counts confirmed starts explicitly tagged `reviewMode: review` on
-the task. `watch-ci` starts do not increment it and show `CI`. Legacy/unspecified
-reviewer runs make the count unknown; prompt text is not heuristically classified.
-New reviewer dispatches require explicit reviewMode; missing or invalid mode is
-refused before launching. Production orchestrator instructions specify both modes,
-including zero-review CI. Worker dispatches must not supply reviewMode. Legacy
-persisted runs are retained unchanged and remain unknown.
-There is no denominator: the configurable maximum is a flow instruction, not
-an immutable task maximum, and corrections can reuse an existing task.
+`review rounds: n` is the saved global `maxReviewRounds`, the same value
+shown and set by `/review-rounds [n]` (default 1, integer range 0–100). It is
+not task progress or a distribution. Every project and agent view uses the
+same cached snapshot. Startup, successful command execution, `/refresh`, and
+passive session refresh reread configuration outside paint. Generation checks
+prevent a late pre-save read from replacing a newer value. Read failures or
+invalid accessor results show `?`; normal config-file fallback behavior stays
+the same as `/review-rounds`.
 
-With multiple active task records the project has no authoritative focused task,
-so the header shows a bounded distribution instead of guessing:
-`Reviews 0r:2 1r:1 2+r:1 ?:1 CI:1`. The first four buckets count tasks with zero,
-one, two-or-more, or unknown code-review rounds (exclusive); CI counts tasks
-whose latest confirmed reviewer start was CI-only (overlaps those buckets).
-Agent views match the existing session/branch naming convention and show that
-task's exact rounds; ambiguous matches retain the distribution.
-Task snapshots refresh on the existing header poll; failures show unknown.
+Task review bookkeeping is unchanged: confirmed `reviewMode: review` starts
+count toward actual task rounds, `watch-ci` starts do not, and legacy starts
+retain their unknown status. Task records remain the source of that progress;
+it is no longer shown in the header.
+
 Header geometry continues to clip to width and height budgets; on short screens
-telemetry and model are prioritized over directory/remote details. The existing
-footer running/queued/inbox statuses are unchanged.
-
+telemetry and model are prioritized over directory/remote details. The footer
+running/queued/inbox counts are unchanged apart from lowercase labels.
 
 ## Adoption and rendering
 
@@ -49,10 +44,21 @@ running session cannot send it, and merely changing prompt text is not a valid
 substitute. Do not label such historical dispatches as known reviews. Update the
 installation/tool schema before using reviewer dispatches under this contract.
 
-Identical header poll snapshots do not schedule a redraw. Context estimates
+Identical header snapshots do not schedule a redraw. Context estimates
 are cached by transcript head, model and request-configuration identity: repeated
 draws do not traverse or serialize the chain. On narrow screens an oversized
 telemetry row stacks context/model/review; at short heights model and context
-remain before the distribution. Agent identity precedes paths. Selection
+remain before the configured review count. Agent identity precedes paths. Selection
 completion/auto-copy remains the main-branch behavior; telemetry adds no copy
 or selection ownership operations.
+
+
+## Display case
+
+App-owned labels, help, menus, statuses, errors, and displayed key hints use
+lowercase prose. This is not runtime case-folding: user and assistant text,
+code, paths, URLs, project/agent identifiers, model IDs and provider-returned
+fields, and raw tool/subprocess errors keep their original case. Literal
+commands, environment names (such as `PATH`), git refs (`HEAD`), key parsers,
+and model prompts/tool schemas/protocol markers are also unchanged. Known tool
+labels no longer gain title case; unknown tool identifiers stay verbatim.

@@ -83,10 +83,10 @@ function foreignReasoning(block: ThinkingBlockParam): boolean {
 export function claudeMessages(messages: MessageParam[]): MessageParam[] {
   for (const message of messages) if (Array.isArray(message.content)) for (const block of message.content) {
     if (block.type === "image") {
-      if (message.role !== "user") throw new Error("Assistant image input is unsupported.");
+      if (message.role !== "user") throw new Error("assistant image input is unsupported.");
       validatedBase64(block);
     }
-    if (block.type === "tool_result" && Array.isArray(block.content) && block.content.some(b => b.type === "image")) throw new Error("Nested tool images are unsupported; forward structured attachments instead.");
+    if (block.type === "tool_result" && Array.isArray(block.content) && block.content.some(b => b.type === "image")) throw new Error("nested tool images are unsupported; forward structured attachments instead.");
   }
   return messages.map((message) => ({
     ...message,

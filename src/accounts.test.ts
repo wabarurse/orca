@@ -142,7 +142,7 @@ test("Codex account selection stays independent of Claude and ignores API creden
   await saveConfig({ account: "personal", openaiAccount: "work" });
   const listed = await accounts();
   expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(true);
-  expect(listed.find((a) => a.id === "openai:work")).toMatchObject({ active: true, source: "Codex (ChatGPT subscription)" });
+  expect(listed.find((a) => a.id === "openai:work")).toMatchObject({ active: true, source: "codex (chatgpt subscription)" });
   expect(listed.find((a) => a.id === "openai:personal")?.active).toBe(false);
   interceptFetch(async (request) => {
     expect(request.url).toStartWith("https://chatgpt.com/backend-api/codex/models?");
@@ -161,7 +161,7 @@ test("Codex account selection stays independent of Claude and ignores API creden
 test("custom Anthropic Authorization headers cannot select a different authentication flow", async () => {
   await saveProfile("default");
   process.env.ANTHROPIC_CUSTOM_HEADERS = "Authorization: Bearer platform-token";
-  await expect(provider("anthropic")).rejects.toThrow("Custom Anthropic Authorization headers are unsupported");
+  await expect(provider("anthropic")).rejects.toThrow("custom anthropic authorization headers are unsupported");
 });
 
 test("a 401 refreshes the subscription token once and retries with the rotated token", async () => {

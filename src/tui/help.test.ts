@@ -18,7 +18,7 @@ const plain = (rows: string[]) => rows.map(row => Bun.stripANSI(row).trimEnd()).
 const frame = (cols: number, rows: number, top = 0): Frame => ({
   cols, rows, menu: null,
   input: { prompt: "> ", text: "draft 界", cursor: 5 },
-  status: "2 agents running │ 1 message queued │ Inbox 1",
+  status: "2 agents running │ 1 message queued │ inbox 1",
   help: { lines: helpLines(commands, false, cols), top },
 });
 const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "demo" }], active: 0, model: "example-model · effort default · fast off", directory: "/isolated/demo", remote: "example/repo" }, f.cols, headerHeight(f.rows));
@@ -32,7 +32,7 @@ describe("help appearance fixtures", () => {
       const screen = stickyRows(f, history, chrome(f));
       expect(plain(screen.rows)).toMatchSnapshot();
       const rows = screen.rows.map(Bun.stripANSI);
-      expect(rows.findIndex(row => row.startsWith("Help"))).toBeGreaterThan(rows.findIndex(row => row.startsWith("└")));
+      expect(rows.findIndex(row => row.startsWith("help"))).toBeGreaterThan(rows.findIndex(row => row.startsWith("└")));
       const footerAt = rows.findIndex(row => row.startsWith("┌"));
       expect(rows.slice(footerAt - 2, footerAt)).toEqual(["Conversation record 30", ""]);
       expect(screen.bodyHeight).toBe(footerAt - chrome(f).length - 1);
@@ -42,7 +42,7 @@ describe("help appearance fixtures", () => {
     test(`${cols} columns: full grouped content, including less prominent diagnostics`, () => {
       const lines = helpLines(commands, false, cols);
       expect(plain(lines)).toMatchSnapshot();
-      const advanced = lines.slice(lines.findIndex(row => row.includes("Advanced & diagnostics")));
+      const advanced = lines.slice(lines.findIndex(row => row.includes("advanced & diagnostics")));
       expect(advanced.every(row => !row || row.includes("\x1b[2m"))).toBe(true);
       expect(advanced.join("\n")).not.toContain("\x1b[1m");
       for (const [name, command] of commands) {
@@ -56,7 +56,7 @@ describe("help appearance fixtures", () => {
     const panel = helpPanel({ ...f, rows: 19 });
     expect(panel.top).toBe(panel.maxTop);
     expect(plain(panel.rows)).toContain("/review-rounds");
-    expect(plain(panel.rows)).toContain("Esc close");
+    expect(plain(panel.rows)).toContain("esc close");
   });
 });
 
@@ -86,12 +86,12 @@ test("menu/projects precede help, help precedes questions, and closing leaves no
   expect(plain(liveRows(f).rows)).not.toContain("Hidden question");
   f.projects = { items: [], index: 0, status: "Project panel" };
   expect(plain(liveRows(f).rows)).toContain("Project panel");
-  expect(plain(liveRows(f).rows)).not.toContain("Help");
+  expect(plain(liveRows(f).rows)).not.toContain("help");
   f.menu = { title: "Menu panel", items: ["choice"], index: 0 };
   expect(plain(liveRows(f).rows)).toContain("Menu panel");
   expect(plain(liveRows(f).rows)).not.toContain("Project panel");
   f.menu = null; f.projects = null; f.help = null;
   expect(plain(liveRows(f).rows)).toContain("Hidden question");
   f.question = null;
-  expect(plain(liveRows(f).rows)).not.toMatch(/Help|Esc|Ctrl|↑↓/);
+  expect(plain(liveRows(f).rows)).not.toMatch(/help|esc|ctrl|↑↓/);
 });

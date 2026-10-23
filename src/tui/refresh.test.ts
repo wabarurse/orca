@@ -6,7 +6,7 @@ import { App, type AppDeps } from "./app";
 import { FakeScreen } from "./testing";
 import type { Terminal } from "./term";
 import { createOrchestrator } from "../orchestrator";
-import { paths, saveConfig } from "../config";
+import { loadConfig, paths, saveConfig } from "../config";
 import { open } from "../transcript";
 import { drain, pending, put } from "../inbox";
 import { fakeProvider, text, toolUse } from "../test/fake-provider";
@@ -17,6 +17,7 @@ import { inputEpoch } from "../user-input";
 import { tryStorageLock } from "../storage-lock";
 import { projectTurnLock } from "../project-state";
 import { saveProjectSettings } from "../project-settings";
+import { Calls } from "./tools";
 
 const previous = process.env.PARALLELS_HOME;
 const cleanups: (() => Promise<void>)[] = [];
@@ -302,5 +303,120 @@ test("a turn that loses shared ownership cannot mark an unrendered snapshot as d
     gate.resolve();
     page.orch.refresh = refresh;
     await release?.();
+  }
+});
+
+const header = (screen: FakeScreen) => screen.screen().slice(0, 7).join("\n");
+
+test("saved review limit starts at the default, commands keep all pages and agent views in sync", async () => {
+  const { app, screen, submit } = await setup();
+  await until(() => header(screen).includes("review rounds: 1"));
+  await submit("/review-rounds");
+  expect(raw(app)).toContain("review rounds: 1");
+  await app.openPage("b");
+  for (const n of [0, 100, 7]) {
+    await submit(`/review-rounds ${n}`);
+    expect((await loadConfig()).maxReviewRounds).toBe(n);
+    await until(() => header(screen).includes(`review rounds: ${n}`));
+    await app.openPage("a");
+    await until(() => header(screen).includes(`review rounds: ${n}`));
+    app.page!.view = { name: "reviewer-MixedCase", lines: [], calls: new Calls(), live: false, leave() {} };
+    app.draw();
+    await until(() => header(screen).includes("view reviewer-MixedCase"));
+    expect(header(screen)).toContain(`review rounds: ${n}`);
+    expect(header(screen)).toContain("ctx ?/?");
+    app.page!.view = null;
+    await app.openPage("b");
+  }
+  for (const arg of ["-1", "101", "1.5", "bad", "0100"]) {
+    await submit(`/review-rounds ${arg}`);
+    expect(raw(app)).toContain("usage: /review-rounds");
+    expect((await loadConfig()).maxReviewRounds).toBe(7);
+    expect(header(screen)).toContain("review rounds: 7");
+  }
+});
+
+test("manual and passive refresh observe external saved review limits with existing config fallback rules", async () => {
+  const { app, screen, submit } = await setup({ pollMs: 20 });
+  await until(() => header(screen).includes("review rounds: 1"));
+  await saveConfig({ maxReviewRounds: 0 });
+  await until(() => header(screen).includes("review rounds: 0")); // real timer, no explicit refresh
+  await saveConfig({ maxReviewRounds: 100 });
+  await submit("/refresh");
+  await until(() => header(screen).includes("review rounds: 100"));
+  // Invalid persisted settings use loadConfig's existing default, also used by the command.
+  await Bun.write(paths.config, 'model = "fake-model"\nmaxReviewRounds = 101\n');
+  await app.refreshSessions(false);
+  await until(() => header(screen).includes("review rounds: 1"));
+  await submit("/review-rounds");
+  expect(raw(app)).toContain("review rounds: 1");
+});
+
+test("review config is read once per refresh, never during paint or once per page", async () => {
+  let reads = 0;
+  const { app, screen } = await setup({ reviewLimit: async () => { reads++; return 8; } });
+  await app.openPage("b");
+  await until(() => header(screen).includes("review rounds: 8"));
+  const before = reads;
+  for (let i = 0; i < 100; i++) { app.frame(); app.draw(); }
+  await Bun.sleep(30);
+  expect(reads).toBe(before);
+  await app.refreshSessions(false);
+  expect(reads).toBe(before + 1);
+});
+
+test("unavailable or invalid review snapshots show unknown rather than an invented count, then recover", async () => {
+  let state: number | Error = new Error("Fixture Read FAILED");
+  const { app, screen } = await setup({ reviewLimit: async () => { if (state instanceof Error) throw state; return state; } });
+  await until(() => header(screen).includes("review rounds: ?"));
+  expect(raw(app)).toContain("review rounds refresh failed: Error: Fixture Read FAILED");
+  for (const value of [9, NaN, 101, -1, 1.5, 0]) {
+    state = value;
+    await app.refreshSessions();
+    const label = value === 9 || value === 0 ? String(value) : "?";
+    await until(() => header(screen).includes(`review rounds: ${label}`));
+  }
+  state = new Error("Later Read FAILED");
+  await app.refreshSessions();
+  await until(() => header(screen).includes("review rounds: ?"));
+  state = 1; // cleanup's refresh can succeed
+});
+
+for (const fail of [false, true]) test(`a stale pre-command review ${fail ? "failure" : "snapshot"} cannot replace a newer saved value`, async () => {
+  let delayed: Promise<number> | undefined;
+  const entered = deferred();
+  const { app, screen, submit } = await setup({ reviewLimit: () => {
+    if (delayed) entered.resolve();
+    return delayed ?? loadConfig().then(c => c.maxReviewRounds);
+  } });
+  let release!: () => void;
+  delayed = new Promise<number>((resolve, reject) => { release = () => fail ? reject(new Error("Old read FAILED")) : resolve(1); });
+  // The getter captures the deferred read before the command starts saving.
+  const refreshing = app.refreshSessions(false);
+  try {
+    await entered.promise;
+    delayed = undefined;
+    await submit("/review-rounds 0");
+    await until(() => header(screen).includes("review rounds: 0"));
+    release(); await refreshing;
+    expect(header(screen)).toContain("review rounds: 0");
+    expect((await loadConfig()).maxReviewRounds).toBe(0);
+  } finally { delayed = undefined; release(); await refreshing; }
+});
+
+test("a failed review-rounds save never paints the requested value", async () => {
+  const { app, screen, submit } = await setup();
+  await submit("/review-rounds 7");
+  await until(() => header(screen).includes("review rounds: 7"));
+  rmSync(paths.config);
+  mkdirSync(paths.config); // deterministic write failure, even when run as a privileged test user
+  try {
+    await expect(submit("/review-rounds 100")).rejects.toThrow();
+    expect(header(screen)).toContain("review rounds: 7");
+    expect(header(screen)).not.toContain("review rounds: 100");
+    expect(raw(app)).not.toContain("review rounds set to 100");
+  } finally {
+    rmSync(paths.config, { recursive: true });
+    await saveConfig({ model: "fake-model", maxReviewRounds: 7 });
   }
 });

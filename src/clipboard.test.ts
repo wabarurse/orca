@@ -6,8 +6,8 @@ function adapter(overrides: Partial<ClipboardAdapter> = {}): ClipboardAdapter {
 }
 test("clipboard mechanisms are on-demand, unavailable/headless/remote errors actionable; no dependency installation", async () => {
   await expect(readClipboardImage(adapter())).rejects.toThrow("wl-paste");
-  await expect(readClipboardImage(adapter({ platform: "darwin", env: { SSH_TTY: "/dev/pts/1" } }))).rejects.toThrow("SSH");
-  await expect(readClipboardImage(adapter({ platform: "win32" }))).rejects.toThrow("macOS or Linux");
+  await expect(readClipboardImage(adapter({ platform: "darwin", env: { SSH_TTY: "/dev/pts/1" } }))).rejects.toThrow("ssh");
+  await expect(readClipboardImage(adapter({ platform: "win32" }))).rejects.toThrow("macos or linux");
 });
 test.each([true, false])("Linux existing tool selection (Wayland=%j), types checked before bounded binary read", async wl => {
   const calls: string[][] = [];
@@ -21,7 +21,7 @@ test.each([true, false])("Linux existing tool selection (Wayland=%j), types chec
 });
 test.each(["", "text/plain\n", "image/jpeg\n"])("clipboard unsupported/text/empty %j leaves text paste to terminal", async types => {
   let calls = 0;
-  await expect(readClipboardImage(adapter({ env: { WAYLAND_DISPLAY: "fixture" }, which: () => "/fixture/wl-paste", run: async () => { calls++; return Buffer.from(types); } }))).rejects.toThrow(types.includes("image") ? "Unsupported" : "no image");
+  await expect(readClipboardImage(adapter({ env: { WAYLAND_DISPLAY: "fixture" }, which: () => "/fixture/wl-paste", run: async () => { calls++; return Buffer.from(types); } }))).rejects.toThrow(types.includes("image") ? "unsupported" : "no image");
   expect(calls).toBe(1);
 });
 test("macOS uses embedded JXA system executable only, validates actual output; errors propagate", async () => {

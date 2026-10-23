@@ -66,9 +66,9 @@ test("every streaming tail ends above the blank gap, which never borrows user or
     const tails: [Partial<Frame>, string][] = [
       [{}, "shaded user row"],
       [{ partial: "held line\n" + "x".repeat(85) }, "xxxxx"],
-      [{ running: ["⏺ Bash(wait)"] }, "⏺ Bash(wait)"],
+      [{ running: ["⏺ bash(wait)"] }, "⏺ bash(wait)"],
       [{ activity: "⠋ working…" }, "⠋ working…"],
-      [{ partial: "partial reply", running: ["⏺ Bash(wait)"], activity: "⠙ working…" }, "⠙ working…"],
+      [{ partial: "partial reply", running: ["⏺ bash(wait)"], activity: "⠙ working…" }, "⠙ working…"],
       [{}, "shaded user row"],
     ];
     for (const [tail, last] of tails) {
@@ -195,13 +195,13 @@ test("SGR wheel events scroll without inserting terminal reports into the draft"
 });
 
 test("selected activity and tools live only at the conversation tail, never in either pinned bar", () => {
-  const f = { ...frame(), status: "2 agents running │ 0 messages queued │ 1 question", partial: "partial reply", running: ["⏺ Bash(wait)"], activity: "⠋ working…" };
+  const f = { ...frame(), status: "2 agents running │ 0 messages queued │ 1 question", partial: "partial reply", running: ["⏺ bash(wait)"], activity: "⠋ working…" };
   const header = chapterRows({ tabs: [{ name: "orch-live" }], active: 0, model: "model · effort high · fast on", directory: "/repo", remote: "host/repo" }, 80, headerHeight(24));
   const s = new FakeScreen(80, 24);
   const first = stickyRows(f, history, header);
   s.write(stickyUpdate(first));
   const at = s.screen().indexOf("⠋ working…");
-  expect(s.screen().slice(at - 2, at + 3)).toEqual(["partial reply", "⏺ Bash(wait)", "⠋ working…", "", "┌" + "─".repeat(78) + "┐"]);
+  expect(s.screen().slice(at - 2, at + 3)).toEqual(["partial reply", "⏺ bash(wait)", "⠋ working…", "", "┌" + "─".repeat(78) + "┐"]);
   expect(s.backgrounds()[at]!.some(Boolean)).toBe(false);
   const read = stickyRows(f, history, header, 3);
   s.write(stickyUpdate(read, first));

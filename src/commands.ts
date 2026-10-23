@@ -231,7 +231,7 @@ export async function setModel(id: string, project?: string, identity?: string):
   return `model set to ${id} (applies before each agent’s next model request; running tools finish; failed/stopped turns need another message to resume; exited agents require restart)`;
 }
 
-export const REVIEW_ROUNDS_USAGE = `usage: /review-rounds [n]  (n = 0 to ${MAX_REVIEW_ROUNDS}; 0 skips review and goes straight to CI)`;
+export const REVIEW_ROUNDS_USAGE = `usage: /review-rounds [n]  (n = 0 to ${MAX_REVIEW_ROUNDS}; 0 skips review and goes straight to ci)`;
 
 /** `/review-rounds [n]`: show the review round limit, or save it. */
 export async function reviewRounds(arg: string): Promise<string> {
@@ -256,5 +256,5 @@ export async function login(arg: string, io: { write: (s: string) => void; signa
   if (args.includes(importFlag)) await (name === "anthropic" ? importClaudeCode : importCodex)(profile);
   else await (name === "anthropic" ? loginClaude : loginCodex)(profile, io);
   await saveConfig(name === "anthropic" ? { account: profile } : { openaiAccount: profile });
-  return `signed in; now using ${name}:${profile} (${name === "anthropic" ? "Claude Code / Claude subscription" : "Codex / ChatGPT subscription"})`;
+  return `signed in; now using ${name}:${profile} (${name === "anthropic" ? "claude code / claude subscription" : "codex / chatgpt subscription"})`;
 }

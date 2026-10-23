@@ -132,7 +132,7 @@ for (const make of [claude, codex]) {
     for (const status of [400, 403, 429, 500]) {
       let calls = 0;
       intercept(() => { calls++; return Response.json({ error: { message: "SECRET raw server content", type: "unsupported" } }, { status }); });
-      await expect(invoke(make())).rejects.toThrow("web_search: native search failed or is unsupported by this model/account. No fallback was attempted.");
+      await expect(invoke(make())).rejects.toThrow("web_search: native search failed or is unsupported by this model/account. no fallback was attempted.");
       expect(calls).toBe(1);
     }
   });
@@ -160,7 +160,7 @@ for (const make of [claude, codex]) {
 test("bounded transport explicitly reports its byte limit and disconnects at the deadline", async () => {
   const controller = new AbortController();
   const big = boundedSearchResponse(new Response(new Uint8Array(SEARCH_RESPONSE_BYTES + 1)), controller.signal);
-  await expect(big.text()).rejects.toThrow("exceeded the 2 MiB limit");
+  await expect(big.text()).rejects.toThrow("exceeded the 2 mib limit");
   let cancelled = false;
   await expect(searchOperation(undefined, signal => boundedSearchResponse(new Response(new ReadableStream({ cancel() { cancelled = true; } })), signal).text(), 5)).rejects.toThrow("timed out");
   expect(cancelled).toBe(true);
@@ -208,7 +208,7 @@ test("Codex search fails safely after a second 401 without another account or bi
   let calls = 0, credentials = 0;
   intercept(() => { calls++; return Response.json({ error: { message: "SECRET unauthorized" } }, { status: 401 }); });
   const provider = openai(async () => { credentials++; return fakeCodexTokens(); });
-  await expect(invoke(provider)).rejects.toThrow("web_search: native search failed or is unsupported by this model/account. No fallback was attempted.");
+  await expect(invoke(provider)).rejects.toThrow("web_search: native search failed or is unsupported by this model/account. no fallback was attempted.");
   expect(calls).toBe(2); expect(credentials).toBe(2);
 });
 

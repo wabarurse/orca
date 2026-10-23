@@ -2,7 +2,7 @@ import { ConversationSelection } from "./selection";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "../clipboard";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput, type ImageRef } from "../images";
 import { contextStatus, reviewStatus } from "./context-status";
-import { listTasks, type TaskRow } from "../tasks";
+import { listTasks } from "../tasks";
 import { taskInboxLines, type TaskInboxData } from "./task-inbox";
 import { cancelSession } from "../cancellation";
 import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } from "../project-settings";
@@ -15,7 +15,7 @@ import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } f
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
 import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
-import { paths } from "../config";
+import { loadConfig, paths, validRounds } from "../config";
 import { projectIdentity } from "../project-state";
 import { validateModel, effectiveModel } from "../project-model";
 import type { Message } from "../inbox";
@@ -78,7 +78,6 @@ export interface Page {
   model?: string;
   settings?: RequestSettings;
   agentCount?: number;
-  headerTasks?: TaskRow[];
 }
 
 export interface AppDeps {
@@ -88,6 +87,8 @@ export interface AppDeps {
   clipboardImage?: () => Promise<ClipboardImage>;
   /** Cached header model accessor; defaults to effectiveModel(project). */
   projectModel?: (project: string) => Promise<string>;
+  /** Saved global review limit; cached outside paint, independent of task progress. */
+  reviewLimit?: () => Promise<number>;
   term: Terminal;
   /** Bind a new project to a local checkout and build its orchestrator. */
   /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
@@ -259,21 +260,21 @@ export class App {
   }
   private async pasteImage(): Promise<void> {
     const page = this.page;
-    if (!page || page.view || page.questions.expanded) return this.say(dim("Open a project chat before attaching an image (not a question answer)."));
-    if (this.clipboardReading) return this.say(dim("An image read is already in progress; Ctrl+V again when it finishes."));
-    if (this.images(page).length >= MAX_IMAGES) return this.say(dim("At most 4 images per prompt; Ctrl+Y removes the last image."));
+    if (!page || page.view || page.questions.expanded) return this.say(dim("open a project chat before attaching an image (not a question answer)."));
+    if (this.clipboardReading) return this.say(dim("an image read is already in progress; ctrl+v again when it finishes."));
+    if (this.images(page).length >= MAX_IMAGES) return this.say(dim("at most 4 images per prompt; ctrl+y removes the last image."));
     const generation = ++this.clipboardGeneration;
     this.clipboardReading = true;
     try {
       const identity = projectIdentity(page.project);
       const image = await (this.deps.clipboardImage ?? readClipboardImage)();
       if (!this.imageOwner(page, generation)) return;
-      if (projectIdentity(page.project) !== identity) throw new Error("Project changed; image not attached.");
+      if (projectIdentity(page.project) !== identity) throw new Error("project changed; image not attached.");
       const ref = await saveImage(page.project, image.bytes, image.mime);
       if (!this.imageOwner(page, generation)) return;
       this.draftImages.set(page, [...this.images(page), ref]);
     } catch (error) {
-      if (this.imageOwner(page, generation)) this.say(dim(`Image not attached: ${error instanceof Error ? error.message : error}`), page);
+      if (this.imageOwner(page, generation)) this.say(dim(`image not attached: ${error instanceof Error ? error.message : error}`), page);
     } finally { this.clipboardReading = false; this.draw(); }
   }
   private removeImage(): void {
@@ -290,7 +291,7 @@ export class App {
     }
   }
   private async retryImages(page?: Page): Promise<void> {
-    if (!page || page.view || this.loggingIn) return this.say(dim("Open project chat and finish sign-in before retrying images."));
+    if (!page || page.view || this.loggingIn) return this.say(dim("open project chat and finish sign-in before retrying images."));
     await this.recoverImages(page);
     for (const item of [...page.sent]) if (item.attachments?.length && item.retry) {
       await this.send(page, item.text, item.submission, item.inputId, item.attachments).catch(error => this.say(dim(String(error)), page));
@@ -336,6 +337,8 @@ export class App {
   private refreshing?: Promise<void>;
   private refreshAgain = false;
   private refreshForce = false;
+  private maxReviewRounds?: number;
+  private reviewVersion = 0;
   private readonly deferredRefresh = new Set<Page>();
   private readonly renderedHeads = new WeakMap<Page, string | undefined>();
   private readonly refreshedTurns = new WeakSet<Page>();
@@ -376,7 +379,7 @@ export class App {
     term.onKey((k) => { this.onKey(k).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     term.onResize(() => this.resized());
     const poll = setInterval(() => {
-      if (this.page) { this.checkLive(this.page.project); void this.refreshHeader(this.page).catch(() => {}); }
+      if (this.page) this.checkLive(this.page.project);
       this.watchPages();
       this.questions.poll(this.pages);
       void this.refreshSessions(false); // passive snapshots also follow responses consumed in another window
@@ -531,7 +534,7 @@ export class App {
     const showImages = refs.length > 0 && !page?.questions.expanded;
     const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0));
     if (showImages) {
-      area.lines.unshift(dim(`${imageLabels(refs)} · Ctrl+Y remove last`.slice(0, this.deps.term.cols)));
+      area.lines.unshift(dim(`${imageLabels(refs)} · ctrl+y remove last`.slice(0, this.deps.term.cols)));
       area.row++;
     }
     return {
@@ -560,7 +563,7 @@ export class App {
   private header(page: Page): string[] {
     const settings = page.settings;
     const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: contextStatus(page.view ? undefined : page.model, page.view ? undefined : page.orch.contextUsage?.(page.model ?? "")), review: reviewStatus(page.headerTasks, page.view?.name), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: contextStatus(page.view ? undefined : page.model, page.view ? undefined : page.orch.contextUsage?.(page.model ?? "")), review: reviewStatus(this.maxReviewRounds), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Independent read generations for captured page objects. */
@@ -578,14 +581,32 @@ export class App {
     const model = await this.readModel(page.project);
     const settings = await effectiveSettings(page.project, model).catch(() => undefined);
     if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
-    const headerTasks = await (this.deps.tasks ?? listTasks)(page.project).catch(() => undefined);
-    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
-    const unchanged = model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings)
-      && reviewStatus(headerTasks, page.view?.name) === reviewStatus(page.headerTasks, page.view?.name);
-    page.headerTasks = headerTasks;
+    const unchanged = model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings);
     page.model = model;
     page.settings = settings;
     if (!unchanged && page === this.page) this.draw();
+  }
+
+  /** One global snapshot for all pages and agent views; no config reads during paint.
+   * A slow pre-save/pre-refresh read must never replace a newer observation. */
+  private async refreshReviewRounds(): Promise<void> {
+    const version = ++this.reviewVersion;
+    let rounds: number | undefined;
+    try {
+      const saved = await (this.deps.reviewLimit?.() ?? loadConfig().then(config => config.maxReviewRounds));
+      if (validRounds(saved)) rounds = saved;
+    } finally {
+      if (version === this.reviewVersion && !this.closed && this.maxReviewRounds !== rounds) {
+        this.maxReviewRounds = rounds;
+        this.draw();
+      }
+    }
+  }
+
+  private async reviewRoundsCommand(args: string, page = this.page): Promise<void> {
+    ++this.reviewVersion; // invalidate observations started before this save
+    this.say(dim(await reviewRounds(args)), page);
+    await this.refreshReviewRounds(); // read the saved value, never infer success from input
   }
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
@@ -599,7 +620,7 @@ export class App {
     const background = this.pages.filter(p => p !== page);
     const elsewhere = background.reduce((n, p) => n + (known(p) ? p.questions.open.length : 0), 0);
     const unknown = background.some(p => !known(p));
-    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, `${queued} ${queued === 1 ? "message" : "messages"} queued`, `Inbox ${questions}${elsewhere || unknown ? ` (+${elsewhere || ""}${unknown ? (elsewhere ? "+?" : "?") : ""} elsewhere)` : ""}`].join(" │ ");
+    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, `${queued} ${queued === 1 ? "message" : "messages"} queued`, `inbox ${questions}${elsewhere || unknown ? ` (+${elsewhere || ""}${unknown ? (elsewhere ? "+?" : "?") : ""} elsewhere)` : ""}`].join(" │ ");
   }
 
   /** Only the selected conversation can animate; tool rows already carry their own shimmer. */
@@ -794,7 +815,10 @@ export class App {
         this.refreshAgain = false;
         const forced = this.refreshForce;
         this.refreshForce = false;
-        await Promise.all(this.pages.map(page => this.refreshPage(page, forced)));
+        await Promise.all([
+          ...this.pages.map(page => this.refreshPage(page, forced)),
+          this.refreshReviewRounds().catch(err => this.say(dim(`review rounds refresh failed: ${err}`))),
+        ]);
         await this.refreshProjects().catch(err => this.say(dim(`refresh projects failed: ${err}`)));
         await this.refreshTaskInbox();
       } while (this.refreshAgain && !this.closed);
@@ -900,7 +924,8 @@ export class App {
     page.model = await this.readModel(project);
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
-    catch (error) { this.say(dim(`Image recovery failed: ${error}`), page); }
+    catch (error) { this.say(dim(`image recovery failed: ${error}`), page); }
+    await this.refreshReviewRounds().catch(err => this.say(dim(`review rounds refresh failed: ${err}`), page));
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.checkLive(project);
@@ -1105,7 +1130,7 @@ export class App {
     } catch (err) {
       failed = true;
       this.endPartial(page);
-      this.say(`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. Send another message to resume with retained history; changing model alone does not retry. Exited agents require restart.`, page);
+      this.say(`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. send another message to resume with retained history; changing model alone does not retry. exited agents require restart.`, page);
     } finally {
       this.endPartial(page);
       page.busy = false;
@@ -1133,7 +1158,7 @@ export class App {
     if (!choices.length) return;
     this.helpTop = null;
     this.menu = {
-      title: dim(title) + dim("   ↑↓ Enter   Esc cancels"),
+      title: dim(title) + dim("   ↑↓ enter   esc cancels"),
       items: choices.map((c) => `${c.current ? "●" : " "} ${c.label}`),
       index: Math.max(0, choices.findIndex((c) => c.current)),
       pick: (i) => pick(choices[i]!.value),
@@ -1157,7 +1182,7 @@ export class App {
 
   private async accountsMenu(): Promise<void> {
     this.modelGeneration++;
-    this.openMenu("accounts: Enter uses one or signs it in", await accountChoices(dim), async (account) => {
+    this.openMenu("accounts: enter uses one or signs it in", await accountChoices(dim), async (account) => {
       if (account.ok) return this.say(dim(await useAccount(account)));
       await this.login(`${account.provider} ${account.id.split(":")[1]}`);
     });
@@ -1177,7 +1202,7 @@ export class App {
     const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live, calls: new Calls() }));
     const view = page.view!;
     if (page === this.page) this.reprint();
-    this.say(dim("Esc or /back returns"), page);
+    this.say(dim("esc or /back returns"), page);
     await follow(paths.transcript(page.project, name), (_s, entry) => this.toView(page, view, view.calls.absorb(parts(entry) ?? [])), stopped, 300, () => { if (!view.live) this.toView(page, view, view.calls.interrupt()); });
     if (page.view === view) {
       page.view = null;
@@ -1250,27 +1275,27 @@ export class App {
    * login() itself). Table order is the order within a /help group.
    */
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
-    ["/refresh", { run: () => this.refreshSessions(), help: { group: "conversation", label: "/refresh", description: "Reload shared local state; active context waits until idle; never runs work" } }],
-    ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "Browse projects: Enter opens, p pins, d deletes" } }],
-    ["/retry-images", { run: (_, page) => this.retryImages(page), help: { group: "conversation", label: "/retry-images", description: "Retry unconfirmed image prompts by original ID; never replay consumed input" } }],
-    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends" } }],
-    ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
-    ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [directory]", description: "Create a project page" } }],
-    ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "Close this page; keep its project and history" } }],
-    ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "Exit; keep conversation history" } }],
-    ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "User inbox: Tasks / Questions; Shift+Tab switches sections, Esc/Tab closes" } }],
-    ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "Browse and follow agent conversations" } }],
-    ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { group: "settings", label: "/effort [level|default]", description: "Show or set project/model reasoning effort" } }],
-    ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "Show or set project/model fast mode" } }],
-    ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "Clear model context after confirmation; keep full history" } }],
-    ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "Summarize model context; keep full history" } }],
-    ["/models", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { group: "settings", label: "/models [id]", description: "Choose or set the project model" } }],
-    ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "Choose a subscription account" } }],
-    ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "Sign in to a subscription account" } }],
-    ["/review-rounds", { args: true, run: async (args) => this.say(dim(await reviewRounds(args))), help: { group: "advanced", label: "/review-rounds [n]", description: "Review rounds before CI; 0 goes straight to CI" } }],
-    ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab Tasks" } }],
-    ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "Return from agent view (also Esc)", viewOnly: true } }],
-    ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "Commands and keyboard shortcuts; Esc closes" } }],
+    ["/refresh", { run: () => this.refreshSessions(), help: { group: "conversation", label: "/refresh", description: "reload shared local state; active context waits until idle; never runs work" } }],
+    ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "browse projects: enter opens, p pins, d deletes" } }],
+    ["/retry-images", { run: (_, page) => this.retryImages(page), help: { group: "conversation", label: "/retry-images", description: "retry unconfirmed image prompts by original id; never replay consumed input" } }],
+    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; esc ends")); }, help: { group: "advanced", label: "/keys", description: "diagnose keys/wheel; ctrl+g keeps draft; esc ends" } }],
+    ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "change display name only; project id stays fixed" } }],
+    ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [directory]", description: "create a project page" } }],
+    ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "close this page; keep its project and history" } }],
+    ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
+    ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "user inbox: tasks / questions; shift+tab switches sections, esc/tab closes" } }],
+    ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "browse and follow agent conversations" } }],
+    ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { group: "settings", label: "/effort [level|default]", description: "show or set project/model reasoning effort" } }],
+    ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
+    ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear model context after confirmation; keep full history" } }],
+    ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
+    ["/models", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { group: "settings", label: "/models [id]", description: "choose or set the project model" } }],
+    ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
+    ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
+    ["/review-rounds", { args: true, run: (args, page) => this.reviewRoundsCommand(args, page), help: { group: "advanced", label: "/review-rounds [n]", description: "review rounds before ci; 0 goes straight to ci" } }],
+    ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "inbox questions (ctrl+q); enter answers or picks skip; shift+tab tasks" } }],
+    ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "return from agent view (also esc)", viewOnly: true } }],
+    ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "commands and keyboard shortcuts; esc closes" } }],
   ]);
 
   /** Clear is a local modal, never a prompt or a scheduled model turn. */
@@ -1289,8 +1314,8 @@ export class App {
       this.taskInbox = null;
       this.projectList = null;
       this.menu = operation.menu = {
-        title: dim(`Clear model context for ${page.name}? History/files/agents stay. ↑↓ Enter · Esc`),
-        items: ["Cancel", "Clear context"], index: 0,
+        title: dim(`clear model context for ${page.name}? history/files/agents stay. ↑↓ enter · esc`),
+        items: ["cancel", "clear context"], index: 0,
         pick: index => { if (index === 1) return this.confirmClear(operation!); this.cancelClear(); this.draw(); },
       };
       this.draw();
@@ -1332,7 +1357,7 @@ export class App {
       if (projectIdentity(page.project) !== operation.identity) throw new Error("project changed; reopen it before clearing context");
       // Backend rechecks inside its publication lock and blocks overlapping turns.
       await page.orch.clear!(operation.controller.signal);
-      this.say(dim("Model context cleared. Saved history, files and agents are unchanged."), page);
+      this.say(dim("model context cleared. saved history, files and agents are unchanged."), page);
     } catch (error) {
       if (this.clearCurrent(operation)) this.say(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), page);
     } finally {
@@ -1398,9 +1423,9 @@ export class App {
     const reviewers = agents.filter((name) => name.startsWith("reviewer-")).length;
     const save = () => this.commitModel(page, id, operation, identity);
     if (!workers && !reviewers) return save();
-    this.openMenu(`Switch this project to ${id}? Applies to orchestrator, ${workers} workers and ${reviewers} reviewers. Running tools finish; agents switch before their next model request.`, [
-      { value: false, label: "Cancel", current: true },
-      { value: true, label: "Switch all" },
+    this.openMenu(`switch this project to ${id}? applies to orchestrator, ${workers} workers and ${reviewers} reviewers. running tools finish; agents switch before their next model request.`, [
+      { value: false, label: "cancel", current: true },
+      { value: true, label: "switch all" },
     ], async (confirmed) => { if (confirmed) await save(); }, operation);
   }
 
@@ -1465,10 +1490,10 @@ export class App {
     if (page?.view) {
       const view = page.view;
       await (this.deps.cancelAgent ?? cancelSession)(page.project, view.name);
-      this.toView(page, view, [dim("Stopping selected agent. Press Ctrl+C again within 2 seconds to exit.")]);
+      this.toView(page, view, [dim("stopping selected agent. press ctrl+c again within 2 seconds to exit.")]);
     } else {
       page?.orch.cancel?.();
-      this.say(dim("Turn cancelled. Send a message to resume; press Ctrl+C again within 2 seconds to exit."), page);
+      this.say(dim("turn cancelled. send a message to resume; press ctrl+c again within 2 seconds to exit."), page);
     }
     this.draw();
   }
@@ -1537,7 +1562,7 @@ export class App {
     const text = this.selection.text();
     if (!text) return;
     try { await (this.deps.clipboardText ?? writeClipboardText)(text); }
-    catch (error) { this.say(dim(`Copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
+    catch (error) { this.say(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
   }
 
   async onKey(k: Key): Promise<void> {
@@ -1650,10 +1675,10 @@ export class App {
       const q = page.questions;
       return { section: "questions", top: 0, state: q.error ? "error" : !q.loaded ? "loading" : "ready",
         question: this.questions.view(),
-        notice: page.view ? "Questions belong to the project orchestrator. Close Inbox, then /back to answer; /agents stays separate."
-          : q.error ? `Questions unavailable: ${q.error}${q.loaded ? " · Last snapshot may be stale." : ""} Close and Ctrl+Q to retry.`
+        notice: page.view ? "questions belong to the project orchestrator. close inbox, then /back to answer; /agents stays separate."
+          : q.error ? `questions unavailable: ${q.error}${q.loaded ? " · last snapshot may be stale." : ""} close and ctrl+q to retry.`
           : q.closing ? QUESTION_PROGRESS[q.closing] : undefined,
-        lines: q.error || page.view || q.open.length ? [] : [q.loaded ? "No open questions." : "Loading questions…"],
+        lines: q.error || page.view || q.open.length ? [] : [q.loaded ? "no open questions." : "loading questions…"],
       };
     }
     if (!this.taskInboxCurrent(view)) return null;
@@ -1718,11 +1743,11 @@ export class App {
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
     const attachments = this.images();
     if (attachments.length && text.trimStart().startsWith("/")) {
-      this.say(dim("Draft images are not sent with slash commands. Ctrl+Y removes the last image; Esc clears this draft."));
+      this.say(dim("draft images are not sent with slash commands. ctrl+y removes the last image; esc clears this draft."));
       return this.draw();
     }
-    if (attachments.length && Buffer.byteLength(text) > 60000) return this.say(dim("Image prompt text exceeds 60,000 bytes; shorten it before sending. Draft retained."));
-    if (attachments.length && this.page?.view) return this.say(dim("Return to project chat before sending images."));
+    if (attachments.length && Buffer.byteLength(text) > 60000) return this.say(dim("image prompt text exceeds 60,000 bytes; shorten it before sending. draft retained."));
+    if (attachments.length && this.page?.view) return this.say(dim("return to project chat before sending images."));
     if (this.page) this.draftImages.delete(this.page);
     if (text !== "/help" && text !== "/inbox" && text !== "/questions" && text !== "/refresh") this.scrollTop = null;
     this.input = { text: "", cursor: 0 };
@@ -1796,7 +1821,7 @@ export class App {
   }
 
   private recall(dir: -1 | 1): void {
-    if (this.images().length) return this.say(dim("Remove draft images (Ctrl+Y) before recalling a different prompt from history."));
+    if (this.images().length) return this.say(dim("remove draft images (ctrl+y) before recalling a different prompt from history."));
     const page = this.page;
     if (this.historyPage !== page) { this.historyPage = page; this.historyAt = -1; }
     const history = page?.inputHistory ?? this.looseHistory;

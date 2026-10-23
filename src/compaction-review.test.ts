@@ -58,7 +58,7 @@ for (const kind of ["original", "system", "tools"]) test(`blocked ${kind} makes 
   if (kind === "system") deps.system = "s".repeat(60000);
   if (kind === "tools") deps.tools = { x: { spec: { name: "x", description: "d".repeat(60000), input_schema: { type: "object" } }, run: async () => "" } };
   const before = await saved(deps.transcript);
-  await expect(createAgent(deps).run()).rejects.toThrow("Context blocked"); expect(calls).toBe(0); expect(await saved(deps.transcript)).toEqual(before);
+  await expect(createAgent(deps).run()).rejects.toThrow("context blocked"); expect(calls).toBe(0); expect(await saved(deps.transcript)).toEqual(before);
 });
 test("reducing but still over-budget proposal does not commit or send normal request", async () => {
   let calls = 0; const { deps } = await fixture(async () => { calls++; return end("s".repeat(12000)); });
@@ -141,8 +141,8 @@ test("failed manual suppresses auto for this agent; successful manual and model 
   });
   const agent = createAgent(deps);
   // Pressure makes failure actionable; no blind normal request after failed summary.
-  await expect(agent.compact()).rejects.toThrow("Context blocked"); expect(summaries).toBe(1);
-  await expect(agent.run()).rejects.toThrow("Context blocked"); expect(summaries).toBe(1);
+  await expect(agent.compact()).rejects.toThrow("context blocked"); expect(summaries).toBe(1);
+  await expect(agent.run()).rejects.toThrow("context blocked"); expect(summaries).toBe(1);
   failed = false; await agent.compact(); expect(summaries).toBe(2);
   await transcript.append({ type: "message", message: { role: "assistant", content: "p".repeat(33000) } });
   await transcript.append({ type: "message", message: { role: "user", content: "new task" } });
@@ -152,8 +152,8 @@ test("failed manual suppresses auto for this agent; successful manual and model 
   await transcript.append({ type: "message", message: { role: "assistant", content: "p".repeat(33000) } });
   await transcript.append({ type: "message", message: { role: "user", content: "newer task" } });
   deps.resolveModel = async () => ({ model, provider: deps.provider! }); const switching = createAgent(deps);
-  await expect(switching.run()).rejects.toThrow("Context blocked"); const count = summaries;
-  await expect(switching.run()).rejects.toThrow("Context blocked"); expect(summaries).toBe(count);
+  await expect(switching.run()).rejects.toThrow("context blocked"); const count = summaries;
+  await expect(switching.run()).rejects.toThrow("context blocked"); expect(summaries).toBe(count);
   model = "second"; failed = false; await switching.run(); expect(summaries).toBe(count + 1);
 });
 test("normal output cap uses default/override/disabled policy and statuses use fallback writer only", async () => {

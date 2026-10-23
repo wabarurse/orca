@@ -37,7 +37,7 @@ export async function outputArtifact(project: string) {
       let offset = 0;
       while (offset < bytes.length) {
         const { bytesWritten } = await file.write(bytes, offset, bytes.length - offset);
-        if (!bytesWritten) throw new Error("Could not save tool output");
+        if (!bytesWritten) throw new Error("could not save tool output");
         offset += bytesWritten;
       }
     },
@@ -66,7 +66,7 @@ export class OutputPreview {
     return this.bytes <= this.head.length && Buffer.byteLength(this.head.toString("utf8") + footer) <= max;
   }
   render(max: number, footer: string): string {
-    if (Buffer.byteLength(footer) + 80 > max) throw new Error("Tool output metadata exceeds preview budget; increase maxToolResultBytes");
+    if (Buffer.byteLength(footer) + 80 > max) throw new Error("tool output metadata exceeds preview budget; increase maxToolResultBytes");
     if (this.fits(max, footer)) return this.head.toString("utf8") + footer;
     const marker = `\n...[truncated; ${this.bytes} output bytes]...\n`;
     const available = Math.max(0, max - Buffer.byteLength(marker + footer));

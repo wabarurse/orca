@@ -152,19 +152,19 @@ test("cancelled tool batch pairs every call, skips later tools, and is resumable
   const cancel: Tool = { ...echo, async run(_input, ctx) {
     executions++;
     expect(ctx.signal).toBe(controller.signal);
-    controller.abort(new Error("Cancelled by user"));
+    controller.abort(new Error("cancelled by user"));
     ctx.signal!.throwIfAborted();
     return "unreachable";
   } };
   const provider = fakeProvider([[toolUse("a", "cancel", {}), toolUse("b", "echo", {})]]);
-  await expect(createAgent({ provider, transcript, tools: { cancel, echo }, model: "m", ctx, signal: controller.signal, write() {} }).run()).rejects.toThrow("Cancelled by user");
+  await expect(createAgent({ provider, transcript, tools: { cancel, echo }, model: "m", ctx, signal: controller.signal, write() {} }).run()).rejects.toThrow("cancelled by user");
   expect(executions).toBe(1);
   expect(provider.calls).toHaveLength(1);
   const messages = await transcript.chain();
   const results = messages.at(-1)!.content;
   expect(results).toEqual([
-    { type: "tool_result", tool_use_id: "a", content: "Cancelled by user", is_error: true },
-    { type: "tool_result", tool_use_id: "b", content: "Cancelled by user", is_error: true },
+    { type: "tool_result", tool_use_id: "a", content: "cancelled by user", is_error: true },
+    { type: "tool_result", tool_use_id: "b", content: "cancelled by user", is_error: true },
   ]);
   const { paired } = await import("./tool-pairs");
   expect(paired(messages)).toBe(true);

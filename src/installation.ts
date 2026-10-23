@@ -49,7 +49,7 @@ export interface Installation {
  * operation. Existing locks are never stolen, including after a crashed updater.
  */
 export async function withInstallation<T>(home: string, requireExisting: boolean, body: (installation: Installation) => Promise<T>): Promise<T> {
-  if (process.platform === "win32") throw new Error("installation requires macOS or Linux (git and tmux)");
+  if (process.platform === "win32") throw new Error("installation requires macos or linux (git and tmux)");
   const root = await realpath(home);
   await owned(root, true);
   for (const path of [join(root, ".local"), join(root, ".local", "bin")]) {

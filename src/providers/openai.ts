@@ -29,7 +29,7 @@ export function toResponses(messages: MessageParam[]): CodexInputItem[] {
         // Codex accepts stateless assistant history without a stored server item ID.
         else input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: block.text, annotations: [] }], status: "completed" });
       } else if (block.type === "image") {
-        if (message.role !== "user") throw new Error("Assistant image input is unsupported.");
+        if (message.role !== "user") throw new Error("assistant image input is unsupported.");
         const image = validatedBase64(block);
         addUser({ type: "input_image", image_url: `data:${image.mime};base64,${image.data}`, detail: "auto" });
       } else if (block.type === "tool_use") {
@@ -37,7 +37,7 @@ export function toResponses(messages: MessageParam[]): CodexInputItem[] {
         input.push({ type: "function_call", call_id: block.id, name: block.name, arguments: JSON.stringify(block.input) });
       } else if (block.type === "tool_result") {
         user = undefined;
-        if (Array.isArray(block.content) && block.content.some(b => b.type === "image")) throw new Error("Nested tool images are unsupported; forward structured attachments instead.");
+        if (Array.isArray(block.content) && block.content.some(b => b.type === "image")) throw new Error("nested tool images are unsupported; forward structured attachments instead.");
         const output = typeof block.content === "string" ? block.content
           : (block.content ?? []).map((part) => part.type === "text" ? part.text : "").join("\n");
         input.push({ type: "function_call_output", call_id: block.tool_use_id, output: block.is_error ? `Error: ${output}` : output });
@@ -63,7 +63,7 @@ export function toResponseTools(tools: ApiTool[]): FunctionTool[] {
 export function fromResponses(output: ResponseOutputItem[]): ContentBlock[] {
   const content: ContentBlock[] = [];
   for (const item of output) {
-    if ("status" in item && item.status && item.status !== "completed") throw new Error("Codex returned an unfinished output item.");
+    if ("status" in item && item.status && item.status !== "completed") throw new Error("codex returned an unfinished output item.");
     if (item.type === "message") {
       for (const part of item.content) {
         if (part.type === "output_text") content.push({ type: "text", text: part.text, citations: null });
@@ -71,8 +71,8 @@ export function fromResponses(output: ResponseOutputItem[]): ContentBlock[] {
       }
     } else if (item.type === "function_call") {
       let input: unknown;
-      try { input = JSON.parse(item.arguments); } catch { throw new Error("Codex returned invalid tool arguments."); }
-      if (!input || typeof input !== "object" || Array.isArray(input) || !item.call_id || !item.name) throw new Error("Codex returned an invalid tool call.");
+      try { input = JSON.parse(item.arguments); } catch { throw new Error("codex returned invalid tool arguments."); }
+      if (!input || typeof input !== "object" || Array.isArray(input) || !item.call_id || !item.name) throw new Error("codex returned an invalid tool call.");
       content.push({ type: "tool_use", id: item.call_id, name: item.name, input, caller: { type: "direct" } });
     } else if (item.type === "reasoning" && item.encrypted_content) {
       content.push({ type: "thinking", thinking: item.summary.map((part) => part.text).join("\n"),
@@ -145,7 +145,7 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
       const catalog = await request((client) => client.get<{ models: { slug: string; visibility?: string; priority?: number }[] }>("/models", {
         query: { client_version: CODEX_CLIENT_VERSION },
       }));
-      if (!Array.isArray(catalog.models)) throw new Error("Codex returned an invalid model catalog.");
+      if (!Array.isArray(catalog.models)) throw new Error("codex returned an invalid model catalog.");
       return catalog.models.filter((model) => typeof model.slug === "string" && model.visibility !== "hide")
         .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)).map((model) => model.slug);
     },
@@ -181,11 +181,11 @@ async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: 
     }
     else if (FAILED_EVENTS.has(event.type)) {
       if (strict) throw new SearchError("incomplete");
-      throw new Error("Codex response failed or was incomplete; no tool calls were executed.");
+      throw new Error("codex response failed or was incomplete; no tool calls were executed.");
     }
   }
   if (strict) throw new SearchError("incomplete");
-  throw new Error("Codex stream ended before the response completed.");
+  throw new Error("codex stream ended before the response completed.");
 }
 function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEvent, "type"> & { type: "response.done" }), items: Map<number, ResponseOutputItem>, strict = false): ResponseOutputItem[] {
   if (strict) {
@@ -200,7 +200,7 @@ function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEven
     if (entries.some(([index], position) => index !== position)) throw new SearchError("malformed");
     return entries.map(([, item]) => item);
   }
-  if (event.response.status && event.response.status !== "completed") throw new Error("Codex response did not complete successfully.");
+  if (event.response.status && event.response.status !== "completed") throw new Error("codex response did not complete successfully.");
   return event.response.output ?? [...items].sort(([a], [b]) => a - b).map(([, item]) => item);
 }
 

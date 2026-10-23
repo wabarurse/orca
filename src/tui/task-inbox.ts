@@ -19,7 +19,7 @@ const bounded = (text: string, width: number) => wordWrap(text, width).flatMap(r
 function prLink(row: TaskRow): string {
   if (!row.pr) return "—";
   try { return taskPR(row.pr).url; }
-  catch { return "Invalid PR link"; }
+  catch { return "invalid pr link"; }
 }
 
 /** Full fields wrap (not silently truncated); narrow screens use labelled records.
@@ -28,14 +28,14 @@ export function taskInboxLines(data: TaskInboxData, cols: number): { lines: stri
   cols = Math.max(1, cols);
   const lines: string[] = [];
   if (data.error) {
-    lines.push(...bounded(`Inbox query failed: ${inboxText(data.error)}`, cols));
-    if (data.rows) lines.push(...bounded("Last successful snapshot below; may be stale. r retries.", cols));
-    else lines.push(...bounded("Tasks unavailable, not an empty inbox. r retries.", cols));
-  } else if (data.loading) lines.push(...bounded(data.rows ? "Refreshing task inbox…" : "Loading task inbox…", cols));
+    lines.push(...bounded(`inbox query failed: ${inboxText(data.error)}`, cols));
+    if (data.rows) lines.push(...bounded("last successful snapshot below; may be stale. r retries.", cols));
+    else lines.push(...bounded("tasks unavailable, not an empty inbox. r retries.", cols));
+  } else if (data.loading) lines.push(...bounded(data.rows ? "refreshing task inbox…" : "loading task inbox…", cols));
   if (!data.rows) return { lines };
   if (!data.rows.length) {
-    lines.push(...bounded(data.error ? "Last successful snapshot had no active registered tasks." : "No active registered tasks.", cols));
-    lines.push(...bounded("Unregistered or historical work is not tracked here; this is not a completion claim.", cols));
+    lines.push(...bounded(data.error ? "last successful snapshot had no active registered tasks." : "no active registered tasks.", cols));
+    lines.push(...bounded("unregistered or historical work is not tracked here; this is not a completion claim.", cols));
     return { lines };
   }
   const wide = cols >= 72;
@@ -44,7 +44,7 @@ export function taskInboxLines(data: TaskInboxData, cols: number): { lines: stri
   const prWidth = Math.max(23, Math.floor(room * 0.33));
   const widths = [nameWidth, room - nameWidth - prWidth - 14, 14, prWidth];
   const tableRow = (cells: string[]) => cells.map((cell, i) => cell + " ".repeat(Math.max(0, widths[i]! - visibleLength(cell)))).join(" | ");
-  const labels = ["Name", "Summary", "Status", "PR link"];
+  const labels = ["name", "summary", "status", "pr link"];
   for (const row of data.rows) {
     const url = prLink(row);
     // Add our own hyperlink only AFTER canonical PR validation and cell wrapping.

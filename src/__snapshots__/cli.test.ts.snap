@@ -1,0 +1,28 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`offline CLI usage and owned errors are lowercase without changing supplied command values 1`] = `
+"usage:
+  parallels                            start for the repository in the current directory
+  parallels start [project] [directory]
+  parallels msg <project> <text>
+  parallels version
+  parallels pull                       update ~/.parallels/app from origin/main
+  parallels help | --help
+  parallels agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
+  parallels agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>
+"
+`;
+
+exports[`offline CLI usage and owned errors are lowercase without changing supplied command values 2`] = `
+"parallels: unknown command: UnknownCommand
+usage:
+  parallels                            start for the repository in the current directory
+  parallels start [project] [directory]
+  parallels msg <project> <text>
+  parallels version
+  parallels pull                       update ~/.parallels/app from origin/main
+  parallels help | --help
+  parallels agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
+  parallels agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>
+"
+`;
