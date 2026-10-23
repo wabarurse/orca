@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,10 +7,13 @@ import { effectiveModel, saveProjectModel, projectModelResolver } from "./projec
 import { createAgent } from "./agent";
 import { open } from "./transcript";
 import { fakeProvider, text, toolUse } from "./test/fake-provider";
+import { clearCatalogLimits } from "./model-context";
+import type { Provider } from "./providers";
 
 const home = mkdtempSync(join(tmpdir(), "project-model-"));
 process.env.PARALLELS_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
+afterEach(clearCatalogLimits);
 
 test("project override is atomic, validated and leaves the global default and other projects alone", async () => {
   await saveConfig({ model: "gpt-6-astra" });
@@ -72,6 +75,26 @@ test("new provider credential failure is explicit, never a fallback", async () =
   await saveProjectModel("fail", "gpt-6-astra");
   const resolve = projectModelResolver("fail", async () => { throw new Error("missing credentials"); });
   await expect(resolve()).rejects.toThrow("cannot load provider for project fail model gpt-6-astra: missing credentials");
+});
+
+test("resolving prefetches the model catalog once in the background; load failures do not", async () => {
+  mkdirSync(paths.project("prefetch"), { recursive: true });
+  await saveProjectModel("prefetch", "gpt-6-astra");
+  let calls = 0;
+  const pending: Provider = { name: "openai", async complete() { throw new Error("unused"); },
+    models: () => { calls++; return new Promise<string[]>(() => {}); } };
+  let fail = true;
+  const resolve = projectModelResolver("prefetch", async () => { if (fail) throw new Error("missing credentials"); return pending; });
+  await expect(resolve()).rejects.toThrow("cannot load provider for project prefetch model gpt-6-astra: missing credentials");
+  await Bun.sleep(0);
+  expect(calls).toBe(0);
+  fail = false;
+  expect((await resolve()).provider).toBe(pending); // Returns although models() never settles.
+  await Bun.sleep(0);
+  expect(calls).toBe(1);
+  await resolve();
+  await Bun.sleep(0);
+  expect(calls).toBe(1);
 });
 
 test("a switch during an in-flight request takes effect only after its tools finish", async () => {

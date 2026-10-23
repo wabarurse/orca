@@ -3,11 +3,12 @@ import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { ResponseOutputItem } from "openai/resources/responses/responses";
 import { fromResponses, openai, toResponses, toResponseTools } from "./openai";
 import { providerFor } from "./index";
+import { clearCatalogLimits, contextWindow } from "../model-context";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
 import { png } from "../test/image-fixture";
 
 let mockFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
-afterEach(() => { mockFetch?.mockRestore(); mockFetch = undefined; });
+afterEach(() => { mockFetch?.mockRestore(); mockFetch = undefined; clearCatalogLimits(); });
 function intercept(handler: (request: Request) => Promise<Response>) {
   mockFetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(
     async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -158,15 +159,12 @@ test("model discovery uses the Codex catalog rather than the platform model API"
 });
 
 test("codex catalog context_window fills gaps; absent, null and invalid values are ignored", async () => {
-  const { clearCatalogLimits, contextWindow } = await import("../model-context");
-  clearCatalogLimits();
   intercept(async () => Response.json({ models: [{ slug: "gpt-a", context_window: 300000 }, { slug: "gpt-b" }, { slug: "gpt-c", context_window: null },
     { slug: "gpt-d", context_window: -1 }, { slug: "gpt-e", context_window: "1" }, { slug: "gpt-5.5", context_window: 1000000 }] }));
   await openai(async () => fakeCodexTokens()).models();
   expect(contextWindow({}, "gpt-a")).toEqual({ limit: 300000, estimated: false });
   for (const m of ["gpt-b", "gpt-c", "gpt-d", "gpt-e"]) expect(contextWindow({}, m)).toEqual({ limit: 128000, estimated: true });
   expect(contextWindow({}, "gpt-5.5").limit).toBe(272000);
-  clearCatalogLimits();
 });
 
 test("completed streams can reconstruct output from done items in wire order", async () => {

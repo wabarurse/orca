@@ -35,11 +35,8 @@ const standardWindows: Readonly<Record<string, number>> = {
   "claude-opus-4-6": 200000,
   "claude-sonnet-4-6": 200000,
   "claude-opus-4-5": 200000,
-  "claude-opus-4-5-20251101": 200000,
   "claude-sonnet-4-5": 200000,
-  "claude-sonnet-4-5-20250929": 200000,
   "claude-haiku-4-5": 200000,
-  "claude-haiku-4-5-20251001": 200000,
 };
 /** Context windows reported by provider model catalogs (/models), in memory per process. */
 const catalogLimits = new Map<string, number>();
@@ -63,12 +60,12 @@ export function clearCatalogLimits(): void {
   prefetched.clear();
 }
 
-/** Verified table first; catalog values fill gaps and never exceed the standard window
- * (of the model or its dated snapshot's base), so opt-in 1M never replaces 200k. */
+/** Verified table first (dated snapshot ids use their base model's entry); catalog values
+ * fill gaps and never exceed the standard window, so opt-in 1M never replaces 200k. */
 export function modelContextLimit(model: string): number | undefined {
-  const catalog = catalogLimits.get(model);
-  if (catalog === undefined) return standardWindows[model];
   const standard = standardWindows[model] ?? standardWindows[model.replace(/-\d{8}$/, "")];
+  const catalog = catalogLimits.get(model);
+  if (catalog === undefined) return standard;
   return standard === undefined ? catalog : Math.min(standard, catalog);
 }
 
