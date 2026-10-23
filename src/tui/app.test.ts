@@ -1,3 +1,5 @@
+import { png } from "../test/image-fixture";
+import { pendingImageInputs, type ImageRef } from "../images";
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1880,7 +1882,7 @@ describe("command and key tables", () => {
     expect(help).not.toContain("/back");
     expect(help.indexOf("Advanced & diagnostics")).toBeGreaterThan(help.indexOf("Keyboard · editing"));
     expect(help.indexOf("/keys")).toBeGreaterThan(help.indexOf("Advanced & diagnostics"));
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/refresh", "/rename", "/review-rounds"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/refresh", "/rename", "/retry-images", "/review-rounds"]);
   });
 
   test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {
@@ -1981,7 +1983,7 @@ describe("command and key tables", () => {
   });
 
   test("key layers run in the documented order", () => {
-    expect(bare().keyLayers.map((l) => l.name)).toEqual(["clear", "keyEcho", "chords", "projects", "menu", "help", "inbox", "questions", "escape", "enter", "editor"]);
+    expect(bare().keyLayers.map((l) => l.name)).toEqual(["clear", "keyEcho", "chords", "projects", "menu", "help", "inbox", "questions", "images", "escape", "enter", "editor"]);
   });
 
   test("a key two layers could take goes to the earlier one", async () => {
@@ -3431,4 +3433,148 @@ test("Ctrl+G enters /keys without replacing chat, answer, or no-page drafts and 
     app.input = { text: "no-page draft", cursor: 2 };
     await check();
   } finally { app.quit(); await running; }
+});
+
+describe("clipboard image drafts and immutable queue ownership (isolated fixtures only)", () => {
+  async function fixture(clipboardImage: () => Promise<{ bytes: Uint8Array; mime: string }> = async () => ({ bytes: png(), mime: "image/png" }), extra: Partial<ConstructorParameters<typeof App>[0]> = {}) {
+    const project = `images-${crypto.randomUUID()}`;
+    mkdirSync(paths.project(project), { recursive: true });
+    const term = fakeTerm(100, 28);
+    const sent: { text: string; inputId?: string; attachments?: ImageRef[] }[] = [];
+    const receipts = new Set<string>();
+    let inbox!: (msgs: Message[]) => void;
+    const app = new App({ term, pollMs: 100_000, clipboardImage, watchdog: async () => {}, merges: async () => {}, agents: async () => [],
+      openOrchestrator: async (_p, _url, _write, onInbox) => {
+        inbox = onInbox!;
+        return { say: async (text, _submission, inputId, attachments) => { sent.push({ text, inputId, attachments }); },
+          pending: async () => false, turn: async () => [], consumed: () => receipts };
+      }, ...extra });
+    const running = app.run(project);
+    await until(() => !!app.page && !term.screen().includes("opening…"));
+    return { app, term, project, sent, receipts, inbox: (msgs: Message[]) => inbox(msgs), stop: async () => { app.quit(); await running; } };
+  }
+  const v: Key = { name: "v", ctrl: true }, y: Key = { name: "y", ctrl: true };
+  test("no startup/paste polling; removable visible images, ordinary text paste, image-only sends and exact receipts", async () => {
+    let reads = 0;
+    const f = await fixture(async () => { reads++; return { bytes: png(), mime: "image/png" }; });
+    try {
+      expect(reads).toBe(0);
+      await f.app.onKey({ name: "paste", text: "ordinary\ntext" });
+      expect(reads).toBe(0); expect(f.app.input.text).toBe("ordinary\ntext");
+      await f.app.onKey(v); await f.app.onKey(v);
+      expect(f.app.frame().inputArea!.lines.join("\n")).toContain("[Image 1] [Image 2]");
+      await f.app.onKey(y); expect(f.app.frame().inputArea!.lines.join("\n")).not.toContain("[Image 2]");
+      await f.app.onKey({ name: "enter" });
+      expect(f.sent[0]!.text).toBe("ordinary\ntext"); expect(f.sent[0]!.attachments).toHaveLength(1);
+      expect(f.app.page!.sent).toHaveLength(1);
+      expect(f.app.frame().queued!.texts[0]).toContain("[Image 1]");
+      await f.app.onKey(v); await f.app.onKey({ name: "enter" });
+      expect(f.sent[1]!.text).toBe(""); expect(f.sent[1]!.attachments).toHaveLength(1);
+      expect(f.sent[1]!.inputId).not.toBe(f.sent[0]!.inputId);
+      expect(await pendingImageInputs(f.project)).toHaveLength(2);
+      f.inbox([{ from: "user", text: f.sent[0]!.text, ts: "", inputId: "not-the-same" }]);
+      expect(f.app.page!.sent).toHaveLength(2);
+      f.receipts.add(f.sent[0]!.inputId!);
+      f.inbox([{ from: "user", ...f.sent[0]!, ts: "" }]);
+      expect(f.app.page!.sent).toHaveLength(1);
+      expect(f.term.raw()).not.toContain(png().toString("base64"));
+    } finally { await f.stop(); }
+  });
+  test("slash commands preserve images and draft; Esc clears; projects have separate removable attachments", async () => {
+    const f = await fixture();
+    try {
+      await f.app.onKey(v);
+      await f.app.onKey({ name: "char", text: "/clear" }); await f.app.onKey({ name: "enter" });
+      expect(f.app.input.text).toBe("/clear"); expect(f.sent).toHaveLength(0);
+      expect(f.app.frame().inputArea!.lines.join("\n")).toContain("Image 1");
+      const first = f.app.page!;
+      const second = `images-${crypto.randomUUID()}`; mkdirSync(paths.project(second), { recursive: true });
+      await f.app.openPage(second);
+      expect(f.app.frame().inputArea!.lines.join("\n")).not.toContain("Image 1");
+      f.app.switchPage(-1); expect(f.app.page).toBe(first);
+      expect(f.app.frame().inputArea!.lines.join("\n")).toContain("Image 1");
+      await f.app.onKey({ name: "escape" });
+      expect(f.app.frame().inputArea!.lines.join("\n")).not.toContain("Image 1");
+      expect(f.app.input.text).toBe("");
+    } finally { await f.stop(); }
+  });
+  test.each(["send", "escape", "refresh", "project", "menu", "question", "delete", "close", "cancel", "history"])("late clipboard completion cannot attach to newer draft/page/modal after %s", async action => {
+    let finish!: (image: { bytes: Uint8Array; mime: string }) => void, reads = 0;
+    const f = await fixture(async () => { reads++; return new Promise(r => { finish = r; }); });
+    try {
+      const reading = f.app.onKey(v);
+      await f.app.onKey(v); expect(reads).toBe(1);
+      if (action === "send") { await f.app.onKey({ name: "char", text: "old prompt" }); await f.app.onKey({ name: "enter" }); }
+      if (action === "escape") await f.app.onKey({ name: "escape" });
+      if (action === "refresh") await f.app.refreshSessions();
+      if (action === "project") { const p = `images-${crypto.randomUUID()}`; mkdirSync(paths.project(p), { recursive: true }); await f.app.openPage(p); f.app.switchPage(-1); }
+      if (action === "menu") { f.app.openMenu("fixture", [{ value: "x", label: "x" }], () => {}); await f.app.onKey({ name: "escape" }); }
+      if (action === "question") { await f.app.onKey({ name: "q", ctrl: true }); await f.app.onKey({ name: "escape" }); }
+      if (action === "delete") f.app.page!.deleting = true;
+      if (action === "close") { f.app.closePage(); await f.app.openPage(f.project); }
+      if (action === "cancel") await f.app.onKey({ name: "c", ctrl: true });
+      if (action === "history") await f.app.onKey({ name: "up" });
+      await f.app.onKey({ name: "char", text: "new draft" });
+      finish({ bytes: png(), mime: "image/png" }); await reading;
+      expect(f.app.frame().inputArea!.lines.join("\n")).not.toContain("Image 1");
+      expect(f.app.input.text).toContain("new draft");
+      expect(f.sent.every(m => !m.attachments?.length)).toBe(true);
+    } finally { finish?.({ bytes: png(), mime: "image/png" }); await f.stop(); }
+  });
+  test("clipboard errors and size/count limits retain text/images; modal Ctrl+V never reads clipboard", async () => {
+    let fail = false, reads = 0;
+    const f = await fixture(async () => { reads++; if (fail) throw new Error("fixture clipboard unavailable"); return { bytes: png(), mime: "image/png" }; });
+    try {
+      await f.app.onKey({ name: "char", text: "retained" }); await f.app.onKey(v);
+      fail = true; await f.app.onKey(v);
+      expect(f.app.input.text).toBe("retained"); expect(f.app.frame().inputArea!.lines.join("\n")).toContain("Image 1");
+      expect(f.app.page!.lines.map(raw).join("\n")).toContain("fixture clipboard unavailable");
+      fail = false; for (let n = 0; n < 4; n++) await f.app.onKey(v);
+      expect(reads).toBe(5); expect(f.app.frame().inputArea!.lines.join("\n")).toContain("Image 4");
+      f.app.openMenu("fixture", [{ value: "x", label: "x" }], () => {});
+      await f.app.onKey(v); expect(reads).toBe(5);
+    } finally { await f.stop(); }
+  });
+  test("failed image writes preserve original IDs/bytes, /refresh and explicit retry never infer missing-inbox consumption", async () => {
+    let fails = true; const attempts: string[] = [];
+    const f = await fixture(undefined, { openOrchestrator: async () => ({
+      say: async (_text, _epoch, id) => { attempts.push(id!); if (fails) throw new Error("fixture write error"); },
+      pending: async () => false, turn: async () => [], consumed: () => new Set(),
+    }) });
+    try {
+      await f.app.onKey(v);
+      await expect(f.app.onKey({ name: "enter" })).rejects.toThrow("write error");
+      const inputId = f.app.page!.sent[0]!.inputId;
+      expect(f.app.page!.sent[0]!.retry).toBe(true);
+      await f.app.refreshSessions(); expect(f.app.page!.sent[0]!.inputId).toBe(inputId);
+      f.app.closePage(); await f.app.openPage(f.project);
+      expect(f.app.page!.sent[0]!.inputId).toBe(inputId);
+      expect(attempts).toHaveLength(1); // reopen NEVER auto-resends
+      fails = false;
+      await f.app.onKey({ name: "char", text: "/retry-images" }); await f.app.onKey({ name: "enter" });
+      expect(attempts).toEqual([inputId, inputId]); expect(f.app.page!.sent).toHaveLength(1);
+    } finally { await f.stop(); }
+  });
+  test("login failure journals image prompts, reopen restores them without sending, explicit retry retains exact IDs", async () => {
+    let reject!: (error: Error) => void;
+    const f = await fixture(undefined, { login: async () => new Promise((_resolve, r) => { reject = r; }) });
+    try {
+      await f.app.onKey({ name: "char", text: "/login claude" });
+      const signing = f.app.onKey({ name: "enter" });
+      await until(() => f.app.loggingIn);
+      await f.app.onKey(v); await f.app.onKey({ name: "enter" });
+      const [saved] = await pendingImageInputs(f.project);
+      expect(saved!.text).toBe(""); expect(f.sent).toHaveLength(0);
+      reject(new Error("fixture login failure")); await signing;
+      expect(f.app.page!.sent[0]!.inputId).toBe(saved!.inputId);
+      f.app.closePage(); await f.app.openPage(f.project);
+      expect(f.sent).toHaveLength(0);
+      expect(f.app.page!.sent[0]!.inputId).toBe(saved!.inputId);
+      expect(f.app.frame().queued!.texts[0]).toContain("/retry-images");
+      await f.app.onKey({ name: "char", text: "/retry-images" }); await f.app.onKey({ name: "enter" });
+      expect(f.sent).toHaveLength(1); expect(f.sent[0]!.inputId).toBe(saved!.inputId);
+      expect(f.sent[0]!.attachments).toEqual(saved!.attachments);
+    } finally { await f.stop(); }
+  });
+
 });

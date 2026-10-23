@@ -1,5 +1,6 @@
 // Compiled test entrypoint only: same runner/agent/exit code as the CLI, with a
 // fake provider and fake tmux boundary. No production flags or provider overrides.
+import { installedImages } from "./installed-images";
 import { appendFileSync } from "node:fs";
 import { local } from "../runner";
 import { runAgent } from "../agent";
@@ -12,7 +13,9 @@ const [cmd, ...args] = process.argv.slice(2);
 const record = (entry: object) => appendFileSync(process.env.PROBE_LOG!, JSON.stringify(entry) + "\n");
 const flag = (name: string) => args[args.indexOf(`--${name}`) + 1]!;
 const project = flag("project"), role = flag("role") as Role, branch = flag("branch"), run = flag("run");
-if (cmd === "launch") {
+if (cmd === "images") {
+  console.log(JSON.stringify(await installedImages()));
+} else if (cmd === "launch") {
   await local.start({ project, role, branch: role === "orchestrator" ? undefined : branch, run });
 
 } else if (cmd === "fake-tmux") {

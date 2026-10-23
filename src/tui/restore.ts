@@ -1,3 +1,5 @@
+import { imageLabels } from "../images";
+import type { Message } from "../inbox";
 // Rebuild a page's history from its orchestrator's transcript, like
 // `claude --continue` or `codex resume`: what the page showed live, in the
 // same form. User messages as "> …", agents' messages as "From <id>: …", the
@@ -165,8 +167,8 @@ function inboxMessages(content: MessageEntry["message"]["content"]) {
 const fromUser = (m: { from: string }) => m.from === "user" || m.from === "";
 
 /** A user entry: the user's lines first (they showed when typed), then each agent's message. Says whether the user spoke. */
-function userEntry(content: MessageEntry["message"]["content"], asked?: AskedLookup): { items: Item[]; user: boolean } {
-  const msgs = inboxMessages(content);
+function userEntry(content: MessageEntry["message"]["content"], asked?: AskedLookup, inbox?: Message[]): { items: Item[]; user: boolean } {
+  const msgs = inbox?.some(m => m.attachments?.length) ? inbox.map(m => ({ from: m.from, text: [m.text, imageLabels(m.attachments)].filter(Boolean).join("\n") })) : inboxMessages(content);
   const mine = msgs.filter(fromUser);
   const items = [...mine.map((m) => now(fromUserLines(m.text, asked))), ...msgs.filter((m) => !fromUser(m)).map((m) => now([reportLine(m.from, m.text)]))];
   return { items, user: mine.length > 0 };
@@ -231,7 +233,7 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
   }
   if (e.type !== "message") return;
   if (e.message.role === "user") {
-    const { items, user } = userEntry(e.message.content, asked);
+    const { items, user } = userEntry(e.message.content, asked, e.inbox);
     if (user) release(state);
     state.items.push(...items);
     return;

@@ -65,6 +65,13 @@ test("relocated installed CLI preserves help, errors, version, msg and state rel
   expect(existsSync(join(home, ".parallels"))).toBe(false);
 });
 
+test("relocated compiled image pipeline embeds native fixture script, storage and both serializers without runtime Bun", async () => {
+  const result = await exec([probe, "images"]);
+  expect(result.code).toBe(0); expect(result.err).toBe("");
+  expect(JSON.parse(result.out)).toEqual({ images: 1, claude: true, codex: true, nativeFixture: process.platform === "darwin" });
+  expect(result.out).not.toContain("base64");
+});
+
 const branch = "feat/it's-$space", run = "run-'$space";
 async function seed(project: string, role: "orchestrator" | "worker" | "reviewer") {
   const base = join(state, "projects", project), repo = join(base, "repo");

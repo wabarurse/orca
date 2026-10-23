@@ -78,6 +78,20 @@ clone source (committed history, not uncommitted changes). Workers/reviewers use
 worktrees of the managed clone. Choosing in-place checkout access is a separate,
 not-yet-implemented feature. Normal no-project startup also reopens saved projects.
 
+### Clipboard image attachments
+
+In project chat, **Ctrl+V** attaches a clipboard image, **Ctrl+Y** removes the
+last attachment, and Enter sends text plus images (or images alone). Escape
+clears the draft. Normal terminal text paste is unchanged. Native macOS uses
+system AppKit through `osascript`; Linux uses existing `wl-paste`/`xclip`, with
+no helper installation. Draft labels never contain base64. Queued/history
+attachments are durable, and `/retry-images` explicitly retries unconfirmed
+image prompts with their original IDs. Agents can forward selected attachments
+to workers/reviewers; Claude and Codex receive actual pixels.
+
+See [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md) for terminal boundaries, limits,
+model admission, queue recovery, retention/privacy, compaction and test coverage.
+
 ### Explicit updates: `parallels pull`
 
 Finish active work and let background agents exit before upgrading. From **any**

@@ -213,3 +213,13 @@ original entries through checkpoints and excludes synthetic checkpoint tails,
 showing each original message exactly once. `Orchestrator.entries()` exposes full
 UI replay, including the complete scrollable history and exit transcript. Invalid/truncated legacy JSON records
 are ignored without deleting their bytes, and future appends remain recoverable.
+
+## Image-bearing context
+
+See [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md). Images have a separate operational
+token allowance (6,000 each), never a base64-as-prose estimate. Summaries describe
+only text and IDs; actual image references and historical prompt excerpts are
+retained alongside the checkpoint so later normal requests still carry pixels.
+Accumulated image/context limits fail explicitly instead of silently dropping
+images. `/clear` also refuses unconsumed image-submission journals; a successful
+clear keeps original bytes, journals, history and consumption receipts on disk.

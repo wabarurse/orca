@@ -1,3 +1,5 @@
+import { imageContent, validateRefs, type ImageRef } from "./images";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { withStorageLock } from "./storage-lock";
 import type { Transcript } from "./transcript";
 import { projectIdentity, assertProjectIdentity, withProjectStateLock } from "./project-state";
@@ -19,6 +21,7 @@ import { paths } from "./config";
 export interface Message {
   /** Optional immutable identity of a locally submitted prompt; echoed unchanged at consumption. */
   inputId?: string;
+  attachments?: ImageRef[];
   /** Captured when submitted, never when the asynchronous write finishes. */
   userEpoch?: string;
   from: string;
@@ -43,12 +46,13 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
   const d = dir(project, to);
   mkdirSync(d, { recursive: true });
   const identity = projectIdentity(project);
-  const full: Message = { ...msg, ...(msg.from === "user" ? { userEpoch: msg.userEpoch ?? inputEpoch(project) } : {}), ts: new Date().toISOString() };
+  const full: Message = { ...structuredClone(msg), ...(msg.from === "user" ? { userEpoch: msg.userEpoch ?? inputEpoch(project) } : {}), ts: new Date().toISOString() };
   const n = String(seq++).padStart(6, "0");
   const name = `${full.ts.replaceAll(":", "-")}-${n}-${crypto.randomUUID().slice(0, 8)}.json`;
   const tmp = join(d, `.${name}.tmp`);
   const publish = async () => {
     assertProjectIdentity(project, identity);
+    await validateRefs(project, full.attachments);
     await Bun.write(tmp, JSON.stringify(full) + "\n");
     await rename(tmp, join(d, name));
     return full;
@@ -115,6 +119,15 @@ export function format(msgs: Message[]): string {
   return msgs.map((m) => `[${m.from}] ${m.text}`).join("\n\n");
 }
 
+/** Preserve prompt/image association in inbox order; legacy text stays byte-identical. */
+export function content(msgs: Message[]): MessageParam["content"] {
+  if (!msgs.some(m => m.attachments?.length)) return format(msgs);
+  return msgs.flatMap(m => {
+    const blocks = imageContent(`[${m.from}] ${m.text}`, m.attachments);
+    return typeof blocks === "string" ? [{ type: "text" as const, text: blocks }] : blocks;
+  });
+}
+
 /** A real sender id, as `format` tags it: "user", "orchestrator" or an agent's session id. */
 const SENDER = String.raw`(?:user|orchestrator|(?:worker|reviewer)(?:-[\w.-]+)?)`;
 const TAGGED = new RegExp(String.raw`^\[(${SENDER})\] ([\s\S]*)$`);
@@ -160,6 +173,7 @@ export async function consume(project: string, agent: string, transcript: Transc
       const m = await Bun.file(join(d, name)).json() as Message;
       if (typeof m.from !== "string" || typeof m.text !== "string") throw new Error(`invalid inbox message ${name}`);
       if (m.from === "user" && m.inputId && receipts?.inputs.has(m.inputId)) continue;
+      await validateRefs(project, m.attachments);
       fresh.push({ ...m, deliveryId });
       if (m.from === "user" && m.inputId) receipts?.inputs.add(m.inputId);
     }

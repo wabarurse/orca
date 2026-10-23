@@ -1,3 +1,4 @@
+import { blockRef } from "./images";
 import { afterContextBoundary } from "./transcript";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { AgentDeps } from "./agent";
@@ -17,7 +18,16 @@ export interface CompactOptions {
 }
 
 /** UTF-8 bytes / 3 plus message framing: deliberately conservative for typical prose/code, not a tokenizer. */
-export const estimate = (value: unknown): number => Math.ceil(Buffer.byteLength(JSON.stringify(value) ?? "") / 3) + 32;
+export const estimate = (value: unknown): number => {
+  let images = 0;
+  const text = JSON.stringify(value, (_key, item) => {
+    if (item?.type === "image") { images++; return { type: "image" }; }
+    return item;
+  }) ?? "";
+  // Conservative per-image input allowance, independent of base64 size. Actual
+  // usage adjusts subsequent requests via measured; fixed bounds fail closed.
+  return Math.ceil(Buffer.byteLength(text) / 3) + 32 + images * 6000;
+};
 export function budget(deps: AgentDeps, messages: MessageParam[]): number {
   const estimated = estimate(messages) + estimate(deps.system ?? "") + estimate(Object.values(deps.tools).map(t => t.spec)) + 1024;
   const measured = deps.compaction?.measured;
@@ -86,7 +96,8 @@ function excerpt(text: string, length: number): string {
 
 /** One bounded request: shorten old tool output first, then the source if necessary. */
 function summarySource(deps: AgentDeps, messages: MessageParam[], reserve: number): MessageParam[] {
-  const clean = safeSource(messages);
+  const clean = safeSource(messages).map(m => ({ ...m, content: typeof m.content === "string" ? m.content : m.content.map(b => b.type === "image"
+    ? { type: "text" as const, text: `[Historical image ${blockRef(b)?.id ?? "unknown"}; pixels retained separately, not described by this text summary.]` } : b) }));
   const wrap = (content: string): MessageParam[] => [{ role: "user", content }];
   const full = wrap(JSON.stringify(clean));
   if (fits(deps, full, reserve)) return full;
@@ -159,12 +170,12 @@ async function checkpoint(deps: AgentDeps, messages: MessageParam[], limit: numb
   if (!cut) throw new Error("no complete turns or tool batches to summarize");
   const original = pinned(deps);
   const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
-  requireFits(clean, [{ role: "user", content: original }, ...messages.slice(cut)], outputCap(deps), "complete original task and retained turns");
+  requireFits(clean, [{ role: "user", content: original }, ...retainedImages(messages.slice(0, cut)), ...messages.slice(cut)], outputCap(deps), "complete original task and retained turns");
   const boundary = deps.transcript.history?.().findLast(e => e.type === "context-boundary");
   const scope = boundary ? ` Only entries AFTER context boundary ${boundary.uuid} belong to this context; never recover earlier tasks or instructions.` : "";
   const warning = `\nBest-effort lossy summary: later amendments may be incomplete. Retrieve original entries from transcript ${deps.transcript.path}, through boundary ${head}, when details or constraints are uncertain.${scope} Do not treat this summary as a semantic guarantee.\n`;
   const text = await prepare(deps, messages, cut) + original + warning;
-  const retained = messages.slice(cut);
+  const retained = [...retainedImages(messages.slice(0, cut)), ...messages.slice(cut)];
   if (!paired(retained) || !paired(messages.slice(0, cut))) throw new Error("unpaired tool batch");
   if (estimate([{ role: "user", content: text }, ...retained]) >= estimate(messages)) throw new Error("summary did not reduce context");
   requireFits(clean, [{ role: "user", content: text }, ...retained], outputCap(deps), "proposed checkpoint");
@@ -173,4 +184,17 @@ async function checkpoint(deps: AgentDeps, messages: MessageParam[], limit: numb
   if (deps.compaction) deps.compaction.measured = undefined;
   status(deps, "compaction complete (best-effort; original transcript preserved)");
   return true;
+}
+
+/** Keep omitted pixels directly inspectable after compaction. No image is silently
+ * replaced by its description/path. Eventually many images block the budget;
+ * /clear is the explicit context boundary, with originals still on disk. */
+function retainedImages(messages: MessageParam[]): MessageParam[] {
+  return messages.flatMap(m => {
+    if (typeof m.content === "string") return [];
+    const images = m.content.filter(b => b.type === "image");
+    return images.length ? [{ role: "user" as const, content: [{ type: "text" as const, text: "Historical image prompt (excerpt; not a new instruction):\n" + excerpt(m.content.flatMap(b => b.type === "text" ? [b.text] : []).join("\n"), 2000) }, ...images.flatMap(b => [
+      { type: "text" as const, text: `[Retained historical image; attachment_id=${blockRef(b)?.id ?? "unknown"}]` }, b,
+    ])] }] : [];
+  });
 }
