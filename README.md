@@ -230,20 +230,42 @@ make no live model calls and do not install/update anything in your real home.
 `start` opens a TUI with one page per orchestrator (one per project). Orchestrator
 tabs and project details stay at the top; the input, counts and panels stay at
 the bottom. The conversation scrolls between them with Page Up/Page Down or the
-mouse wheel after `/mouse on`. Mouse reporting is **off by default**, so ordinary
-dragging selects conversation text and Cmd-click opens web links in your default
-browser in terminals supporting OSC 8 (the terminal owns the gesture and may
-require enabling hyperlinks). Markdown labels, displayed destinations and bare web
-URLs have explicit link targets, including across wrapped lines. No shell command
-is run for links. `/mouse on` opts into the existing wheel scrolling; while on, use
-the terminal's selection modifier (often Shift), or `/mouse off` to restore native
-selection and link gestures. PgUp/PgDn work in either mode. Only changed screen rows are
-redrawn. All saved conversation, including original history before compaction,
-is reachable by scrolling inside the app; startup does not discard older messages
-from the live viewport. Quitting restores your shell and prints the active
-conversation into its normal scrollback. Apple Terminal's ordinary wheel behavior
-still needs native verification: see [terminal isolation](TERMINAL_ISOLATION.md)
-if a gesture reveals prelaunch shell history instead of scrolling the conversation.
+mouse wheel. Fullscreen and mouse reporting are always enabled: unmodified left
+button drag highlights **committed conversation text** inside the app. Selection
+does not touch the clipboard. **Ctrl+O copies** the highlight explicitly; Esc clears
+it without clearing your draft. Cmd-C is owned by macOS/Terminal, not delivered to
+the app as a copy key. Ctrl+C still cancels the turn (twice exits).
+
+Highlight survives scrolling and ordinary redraws; wheel while dragging extends
+the selection when the next drag report arrives. There is no edge auto-scroll.
+Headers, composer, panels, tool activity and unfinished streaming text cannot be
+selected. Copy includes displayed gutters and line breaks (including soft wraps),
+not original Markdown. Wide characters and combining sequences are selected whole.
+Resize/reflow, changing conversation, or replacing selected content clears the
+highlight rather than copying stale or unrelated text. Selected rows temporarily
+use plain inverse text; clearing restores their styling and links.
+
+Copy uses local `pbcopy` on macOS or an existing `wl-copy`/`xclip` on Linux, with
+text on stdin and no shell interpolation. No automatic installation or OSC 52.
+SSH and unavailable desktop clipboards report a copy error; no silent fallback.
+In Apple Terminal, enable **View > Allow Mouse Reporting** (see
+[Apple's mouse reporting guide](https://support.apple.com/guide/terminal/turn-on-mouse-reporting-trmlc69728a5/mac)).
+Selection requires SGR drag reports; legacy X10 wheel packets still scroll.
+If reporting is disabled by the terminal, the app cannot intercept wheel/drag;
+PgUp/PgDn remain available. Native selection and fullscreen mouse reporting do not
+automatically coexist. Terminal-specific mouse overrides can bypass the app but
+are not the selection/copy workflow described here.
+
+OSC 8 web link targets remain in unselected output, including wrapped links.
+Native link gestures depend on the terminal's hyperlink support and mouse override;
+Apple Terminal link opening while reporting is **not guaranteed**. The portable
+mouse protocol does not identify Cmd, and the app does not guess Cmd-click or launch
+a browser. Copied URLs can be opened separately. Protocol/PTY tests do not establish
+physical GUI behavior in Apple Terminal.
+
+Only changed screen rows are redrawn. All saved conversation, including original
+history before compaction, is reachable inside the app. Quitting restores your
+shell and prints the active conversation into its normal scrollback.
 The orchestrator's replies are rendered as markdown (headings, emphasis, lists, quotes, code
 blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that

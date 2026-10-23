@@ -9,6 +9,7 @@ export interface StickyScreen {
   cursor: number;
   col: number;
   bodyHeight: number;
+  bodyTop: number;
   start: number;
   maxStart: number;
 }
@@ -38,7 +39,7 @@ export function stickyRows(f: Frame, history: string[], chrome: string[], scroll
   const visible = [...history.slice(start, end), ...tail.slice(Math.max(0, start - history.length), Math.max(0, end - history.length))]
     .map(line => fit(sanitize(line), f.cols));
   const padding = Array.from({ length: bodyHeight - visible.length }, () => "");
-  return { rows: [...top, ...visible, ...padding, ...(gap ? [""] : []), ...bottom.rows], cols: f.cols, cursor: height - bottom.rows.length + bottom.cursor, col: bottom.col, bodyHeight, start, maxStart };
+  return { rows: [...top, ...visible, ...padding, ...(gap ? [""] : []), ...bottom.rows], cols: f.cols, cursor: height - bottom.rows.length + bottom.cursor, col: bottom.col, bodyTop: top.length, bodyHeight, start, maxStart };
 }
 
 /** Repaint changed rows only, without scrolling either bar or flashing the screen. */

@@ -12,6 +12,9 @@ export interface Key {
    *  (text is its body, e.g. "11;rgb:0000/0000/0000"), or a single character for modifier
    *  chords such as Ctrl+N ({ name: "n", ctrl }). */
   name: string;
+  /** One-based terminal cell coordinates for left-button selection events. */
+  x?: number;
+  y?: number;
   ctrl?: boolean;
   alt?: boolean;
   shift?: boolean;
@@ -59,12 +62,19 @@ function wheel(button: number): Key | null {
   return { name: base === 64 ? "wheelup" : "wheeldown" };
 }
 
+function fromMouse(params: string, final: string): Key | null {
+  const m = /^<(\d+);(\d+);(\d+)$/.exec(params);
+  if (!["M", "m"].includes(final) || !m || !m.slice(2).every(n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) return null;
+  const button = Number(m[1]);
+  const scroll = final === "M" ? wheel(button) : null;
+  if (scroll) return scroll;
+  // Modified/unknown clicks are not left-button selection gestures.
+  if (button !== 0 && button !== 32) return null;
+  return { name: final === "m" ? "mouseup" : button === 32 ? "mousemove" : "mousedown", x: Number(m[2]), y: Number(m[3]) };
+}
+
 function fromCsi(params: string, final: string): Key | null {
-  if (params.startsWith("<")) {
-    const m = /^<(\d+);(\d+);(\d+)$/.exec(params);
-    if (final !== "M" || !m || !m.slice(2).every(n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) return null;
-    return wheel(Number(m[1]));
-  }
+  if (params.startsWith("<")) return fromMouse(params, final);
   const nums = params.split(";").map((p) => (p === "" ? NaN : Number(p)));
   if (final === "u") return fromKitty(nums);
   if (final === "~") return fromTilde(nums);

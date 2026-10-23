@@ -13,11 +13,12 @@ const NAVIGATION: HelpEntry[] = [
   { label: "Ctrl+B", description: "Open or close projects" },
   { label: "Ctrl+Q", description: "Inbox Questions toggle; arrivals never open Inbox" },
   { label: "Shift+Tab (Inbox)", description: "Switch Tasks / Questions; Esc or Tab closes without answering" },
-  { label: "PgUp/PgDn / wheel", description: "Scroll conversation, help or Inbox Tasks (wheel: /mouse on)" },
+  { label: "PgUp/PgDn / wheel", description: "Scroll conversation, help or Inbox Tasks (mouse reporting required)" },
   { label: "Ctrl+C", description: "Cancel selected turn/agent; twice within 2s exits, keeping history" },
   { label: "Esc", description: "Close panel, else leave agent view, else clear input" },
 ];
 const EDITING: HelpEntry[] = [
+  { label: "Drag / Ctrl+O / Esc", description: "Highlight saved conversation / copy selection / clear highlight (no auto-copy)" },
   { label: "Ctrl+V / Ctrl+Y", description: "Attach clipboard image / remove last image. Terminal text paste is unchanged" },
   { label: "Shift/Alt+Enter", description: "New line" },
   { label: "Alt+←/→ / Alt+B/F", description: "Move by word" },

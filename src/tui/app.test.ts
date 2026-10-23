@@ -375,24 +375,6 @@ describe("tui app", () => {
     await running;
   });
 
-  test("/mouse opts into reporting and restores native gestures without submitting a prompt", async () => {
-    const term = fakeTerm();
-    const modes: boolean[] = [];
-    const orchs = fakeOrchestrators();
-    const app = new App({ term: Object.assign(term, { setMouse: (on: boolean) => modes.push(on) }), openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
-    const running = app.run("alpha");
-    await until(() => !!app.page);
-    expect(modes).toEqual([]);
-    for (const command of ["/mouse on", "/mouse off", "/mouse", "/mouse invalid"]) {
-      term.type(command + "\r");
-      await settle();
-    }
-    expect(modes).toEqual([true, false]);
-    expect(app.frame().queued?.texts ?? []).toEqual([]);
-    app.quit();
-    await running;
-  });
-
   test("/keys echoes parsed keys until Esc", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
@@ -1918,7 +1900,7 @@ describe("command and key tables", () => {
     expect(help).not.toContain("/back");
     expect(help.indexOf("Advanced & diagnostics")).toBeGreaterThan(help.indexOf("Keyboard · editing"));
     expect(help.indexOf("/keys")).toBeGreaterThan(help.indexOf("Advanced & diagnostics"));
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/models", "/mouse", "/new", "/projects", "/questions", "/quit", "/refresh", "/rename", "/retry-images", "/review-rounds"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/refresh", "/rename", "/retry-images", "/review-rounds"]);
   });
 
   test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {
@@ -3421,9 +3403,9 @@ test("raw SGR/X10 input through realTerminal only scrolls the body: draft, queue
     expect(display.screen()).toEqual(bottom); pinned();
     expect(app.frame().queued?.texts).toEqual(["queued first", "queued second\nline"]);
     const output = writes.join("");
-    for (const mode of [1000, 1006]) {
-      expect(output).not.toContain(`\x1b[?${mode}h`);
-      expect(output).toContain(`\x1b[?${mode}l`);
+    for (const mode of [1000, 1002, 1006]) {
+      expect(output).toContain(`\x1b[?${mode}h`);
+      expect(output).not.toContain(`\x1b[?${mode}l`);
     }
     for (const mode of [1049, 2004]) {
       expect(output.split(`\x1b[?${mode}h`)).toHaveLength(2);
@@ -3617,4 +3599,79 @@ describe("clipboard image drafts and immutable queue ownership (isolated fixture
     } finally { await f.stop(); }
   });
 
+});
+
+test('conversation drag highlights only history, never auto-copies; Ctrl+O copies and Esc/resize/context clear', async () => {
+  const term = fakeTerm(60, 24), orchs = fakeOrchestrators();
+  const copied: string[] = [];
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, pollMs: 100_000 });
+  const running = app.run('selection-probe');
+  try {
+    await until(() => !!app.page);
+    app.page!.lines.push('SELECT-ME 界é', ...Array.from({ length: 40 }, (_, i) => `row-${i}`));
+    app.reprint(); await settle();
+    term.press({ name: 'pageup' }); term.press({ name: 'pageup' }); term.press({ name: 'pageup' });
+    await settle();
+    const y = term.display.screen().findIndex(row => row.includes('SELECT-ME')) + 1;
+    expect(y).toBeGreaterThan(0);
+    term.type(`\x1b[<0;1;${y}M\x1b[<32;9;${y}M\x1b[<0;9;${y}m`);
+    await settle();
+    expect(term.raw()).toContain('\x1b[7mSELECT-ME\x1b[0m');
+    expect(copied).toEqual([]);
+    term.press({ name: 'wheeldown' }); await settle();
+    await app.onKey({ name: 'o', ctrl: true });
+    expect(copied).toEqual(['SELECT-ME']);
+    term.type('draft'); await app.onKey({ name: 'escape' });
+    expect(app.input.text).toBe('draft');
+    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(1);
+    // Header/footer cannot create a selection, and the removed command stays absent.
+    term.type('\x1b[<0;1;1M\x1b[<32;9;1M\x1b[<0;9;1m');
+    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(1);
+    expect(app.commands.has('/mouse')).toBe(false);
+    term.press({ name: 'pageup' }); await settle();
+    term.type(`\x1b[<0;1;${y}M\x1b[<32;9;${y}M\x1b[<0;9;${y}m`);
+    term.resize(40, 20); await Bun.sleep(160);
+    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(1);
+    for (let i = 0; i < 4; i++) { await app.onKey({ name: 'pageup' }); await Bun.sleep(25); }
+    await until(() => term.display.screen().some(row => row.includes('SELECT-ME')));
+    const currentY = term.display.screen().findIndex(row => row.includes('SELECT-ME')) + 1;
+    expect(currentY).toBeGreaterThan(0);
+    term.type(`\x1b[<0;1;${currentY}M\x1b[<32;9;${currentY}M\x1b[<0;9;${currentY}m`);
+    await settle();
+    await app.openPage('selection-other'); await settle();
+    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(1);
+
+  } finally { app.quit(); await running; }
+});
+
+for (const scroll of ['wheeldown', 'pagedown', 'wheelup']) test(`drag ${scroll} motion/release in one input burst preserves queued scroll and painted coordinates`, async () => {
+  const term = fakeTerm(60, 24), orchs = fakeOrchestrators(), copied: string[] = [];
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, pollMs: 100_000 });
+  const running = app.run(`selection-burst-${scroll}`);
+  try {
+    await until(() => !!app.page);
+    const records = Array.from({ length: 60 }, (_, i) => `ROW-${String(i).padStart(2, '0')}`);
+    app.page!.lines = records;
+    app.reprint();
+    await until(() => term.display.screen().includes('ROW-59'));
+    if (scroll !== 'wheelup') {
+      for (let i = 0; i < 10; i++) term.press({ name: 'pageup' });
+      await until(() => term.display.screen().includes('ROW-00'));
+    }
+    const painted = term.display.screen();
+    const y = painted.findIndex(row => row.startsWith('ROW-')) + 1;
+    const first = Number(painted[y - 1]!.slice(4));
+    const count = painted.filter(row => row.startsWith('ROW-')).length;
+    const target = first + (scroll === 'wheelup' ? -3 : scroll === 'wheeldown' ? 3 : count - 1);
+    // No yields/settles: events queue behind the same throttled frame. Motion
+    // still refers to the old painted rows, not the requested scroll target.
+    term.press({ name: 'mousedown', x: 1, y });
+    term.press({ name: scroll });
+    term.press({ name: 'mousemove', x: 6, y: y + 1 });
+    term.press({ name: 'mouseup', x: 6, y: y + 1 });
+    expect(copied).toEqual([]);
+    await app.onKey({ name: 'o', ctrl: true }); // flush pending frame + explicit copy
+    expect(term.display.screen()[y - 1]).toBe(records[target]!);
+    expect(copied).toEqual([`${records[first]}\n${records[first + 1]}`]);
+  } finally { app.quit(); await running; }
 });

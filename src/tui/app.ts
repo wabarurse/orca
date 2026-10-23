@@ -1,4 +1,5 @@
-import { readClipboardImage, type ClipboardImage } from "../clipboard";
+import { ConversationSelection } from "./selection";
+import { writeClipboardText, readClipboardImage, type ClipboardImage } from "../clipboard";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput, type ImageRef } from "../images";
 import { listTasks } from "../tasks";
 import { taskInboxLines, type TaskInboxData } from "./task-inbox";
@@ -79,6 +80,8 @@ export interface Page {
 }
 
 export interface AppDeps {
+  /** Explicit Ctrl+O only; tests inject a writer, never the live clipboard. */
+  clipboardText?: (text: string) => Promise<void>;
   /** Explicit Ctrl+V only; tests inject fixture bytes, never the live clipboard. */
   clipboardImage?: () => Promise<ClipboardImage>;
   /** Cached header model accessor; defaults to effectiveModel(project). */
@@ -696,6 +699,7 @@ export class App {
 
   /** A resize: wait until it settles, drawing nothing meanwhile (the old region's rows no longer match), then reprint. */
   private resized(): void {
+    this.selection.clear();
     if (this.closed) return;
     this.cancelClear();
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
@@ -722,8 +726,19 @@ export class App {
     }
   }
 
+  private readonly selection = new ConversationSelection();
+
+  private selectionAllowed(): boolean {
+    return !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.taskInbox && !this.page?.questions.expanded;
+  }
+
+  private validateSelection(owner: typeof this.screenOwner, cols: number): void {
+    if (!this.selectionAllowed() || owner !== this.screenOwner || this.screen?.cols !== cols) this.selection.clear();
+  }
+
   private viewport(f: Frame): StickyScreen {
     const owner = this.page?.view ?? this.page;
+    this.validateSelection(owner, f.cols);
     this.anchorScroll(owner, f.cols);
     if (this.needReprint || owner !== this.screenOwner) this.screenHistory = this.started ? this.screenLines() : [...this.looseLines];
     else this.screenHistory.push(...this.pending);
@@ -731,6 +746,7 @@ export class App {
     this.pending = [];
     const chrome = this.page ? this.header(this.page) : [];
     const screen = stickyRows(f, this.screenHistory, chrome, this.scrollTop);
+    this.selection.paint(screen, this.screenHistory);
     if (this.scrollTop !== null) this.scrollTop = screen.start;
     return screen;
   }
@@ -1230,11 +1246,6 @@ export class App {
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
     ["/refresh", { run: () => this.refreshSessions(), help: { group: "conversation", label: "/refresh", description: "Reload shared local state; active context waits until idle; never runs work" } }],
     ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "Browse projects: Enter opens, p pins, d deletes" } }],
-    ["/mouse", { args: true, run: (arg) => {
-      if (arg !== "on" && arg !== "off") { this.say("Usage: /mouse on|off (off restores native selection and Cmd-click links)"); return; }
-      this.deps.term.setMouse?.(arg === "on");
-      this.say(arg === "on" ? "Mouse reporting on: wheel scrolls; use your terminal's selection modifier to select text." : "Mouse reporting off: drag to select; Cmd-click links in supporting terminals. Use PgUp/PgDn to scroll.");
-    }, help: { group: "conversation", label: "/mouse on|off", description: "Opt into wheel reporting; off (default) preserves selection and Cmd-click links" } }],
     ["/retry-images", { run: (_, page) => this.retryImages(page), help: { group: "conversation", label: "/retry-images", description: "Retry unconfirmed image prompts by original ID; never replay consumed input" } }],
     ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
@@ -1499,7 +1510,31 @@ export class App {
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
 
+  private selectionMouse(k: Key): void {
+    const screen = this.screen;
+    if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) return;
+    // Hit-test the painted frame, not the pending scroll destination. Only a
+    // new selection pins follow mode; motion/release must not undo queued scroll.
+    this.selection.mouse(k, screen, this.screenHistory);
+    if (k.name === "mousedown" && this.selection.active && this.scrollTop === null) this.scrollTop = screen.start;
+    this.draw();
+  }
+
+  private async copySelection(): Promise<void> {
+    if (!this.selectionAllowed() || this.resizeTimer) return;
+    // Validate against the latest layout before copying, even between frames.
+    this.flush();
+    const text = this.selection.text();
+    if (!text) return;
+    try { await (this.deps.clipboardText ?? writeClipboardText)(text); }
+    catch (error) { this.say(dim(`Copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
+  }
+
   async onKey(k: Key): Promise<void> {
+    if (!this.selectionAllowed()) this.selection.clear();
+    if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) return this.selectionMouse(k);
+    if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
+    if (k.name === "escape" && this.selection.active) { this.selection.clear(); this.draw(); return; }
     // Editing within this draft is fine. Navigation/modal/send/clear/history keys
     // invalidate asynchronous reads, even if the user returns before completion.
     if (!(k.ctrl && k.name === "v") && !typedText(k) && !["left", "right", "backspace", "delete"].includes(k.name)) this.clipboardGeneration++;

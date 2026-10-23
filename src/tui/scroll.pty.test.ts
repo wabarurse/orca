@@ -40,7 +40,7 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
     `, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli.ts")], {
       cwd: home,
       // No inherited auth, tmux server/socket, git config, or user's project.
-      env: { HOME: home, PARALLELS_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      env: { HOME: home, PARALLELS_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
       terminal: { cols: 100, rows: 24, data(_terminal, data) { output += decoder.decode(data, { stream: true }); } },
     });
     const screen = () => {
@@ -63,11 +63,22 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
     expect(screen().join("\n")).not.toContain("PRELAUNCH_SENTINEL");
     expect(output.split("\x1b[?1049h")).toHaveLength(2);
     expect(output.split("\x1b[?2004h")).toHaveLength(2);
-    for (const mode of [1000, 1006]) expect(output).not.toContain(`\x1b[?${mode}h`);
+    for (const mode of [1000, 1002, 1006]) expect(output).toContain(`\x1b[?${mode}h`);
     expect(output).not.toContain("\x1b[?1049l");
     expect(output).not.toContain("\x1b[3J");
+    // Real raw input pipeline, injected reports, no physical gesture claims.
+    // SSH guard ensures this PTY test can never mutate the host clipboard.
+    const y = headerEnd + 1;
+    child.terminal!.write(`\x1b[<0;3;${y}M\x1b[<32;5;${y}M\x1b[<0;5;${y}m`);
+    await until(() => output.includes("\x1b[7mPTY\x1b[0m"));
+    expect(output).not.toContain("Copy failed:");
+    child.terminal!.write("\x0f"); // explicit Ctrl+O, not Cmd-C
+    await Bun.sleep(40);
+    child.terminal!.write("\x1b"); // clear highlight, preserve draft
+    await Bun.sleep(40);
     child.terminal!.write("\x1b[<65;10;8M".repeat(120));
-    await until(() => screen().includes("PTY-LATEST-HISTORY"));
+    await until(() => screen().some(row => row.includes("Copy failed:")));
+    expect(screen().join("\n")).toContain("unavailable over SSH");
     expect(screen().slice(-5)).toEqual(footer);
     // Clear only this synthetic fixture's draft, then exit through the real command.
     child.terminal!.write("\x1b");
@@ -83,7 +94,7 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
     expect(restored.text()).toContain("PTY-ORIGINAL-HISTORY");
     expect(restored.text()).toContain("PTY-LATEST-HISTORY");
     expect(restored.text()).not.toContain("PTY-MODEL-ONLY");
-    for (const mode of [1049, 1000, 1006, 2004]) expect(restored.modes.get(mode)).toBe(false);
+    for (const mode of [1049, 1000, 1002, 1006, 2004]) expect(restored.modes.get(mode)).toBe(false);
   } finally {
     if (child) {
       if (child.exitCode === null) child.kill("SIGTERM");
