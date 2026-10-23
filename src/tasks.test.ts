@@ -132,6 +132,43 @@ test("explicit validation is head/revision bound; new changes/runs invalidate re
   await prepare(t, "fix"); expect((await getTask(project, t.id)).status).toBe("queued"); expect((await getTask(project, t.id)).readiness).toBeUndefined();
 });
 
+for (const wasReady of [false, true]) test(`same-PR correction after ${wasReady ? "a ready report" : "CI failure"} reuses the task and branch through spawn and revalidation`, async () => {
+  const t = await (wasReady ? ready() : reviewing());
+  if (!wasReady) await observeTaskPR(project, t.id, { ...observation(), ready: false, checks: "failed" });
+  let busy = true;
+  const starts: { branch?: string; run?: string; role: string }[] = [];
+  const tool = makeSpawn({ async running() { return busy ? ["reviewer-feat-x"] : []; }, async start(o) { starts.push(o); }, async stop() {} }, { waitMs: 0, pollMs: 1 });
+  const ctx = { project, role: "orchestrator" as const, cwd: home };
+  const correction = { taskId: t.id, branch: t.branch, prompt: "Fix the existing PR on this branch" };
+  const before = await getTask(project, t.id);
+  expect(await tool.run(correction, ctx)).toContain("still running");
+  expect(starts).toHaveLength(0);
+  expect(await getTask(project, t.id)).toEqual(before);
+  await stopTaskRun(project, "reviewer", "waiting", "Reported"); busy = false;
+
+  expect(await tool.run(correction, ctx)).toBe("worker-feat-x");
+  const resumed = await getTask(project, t.id);
+  expect(resumed.pr).toEqual(t.pr);
+  expect(resumed.status).toBe("queued");
+  expect(resumed.readiness).toBeUndefined();
+  expect(resumed.runs.at(-1)?.id).toBe(starts[0]!.run);
+  if (wasReady) expect(resumed.history.some(e => e.kind === "readiness_invalidated")).toBe(true);
+  await startTaskRun(project, starts[0]!.run!);
+  await stopTaskRun(project, starts[0]!.run!, "waiting", "Correction complete");
+
+  expect(await tool.run({ ...correction, role: "reviewer", prompt: "watch ci; update and validate the same PR" }, ctx)).toBe("reviewer-feat-x");
+  const reviewRun = starts[1]!.run!;
+  await startTaskRun(project, reviewRun);
+  const updatedPR = observation("b".repeat(40));
+  const observed = await observeTaskPR(project, t.id, updatedPR);
+  const validated = await validateTaskReadiness(project, t.id, { run: reviewRun, revision: observed.revision, observation: updatedPR, validated: true, validation: "Correction reviewed and tests passed on the updated head" });
+  expect(validated.status).toBe("ready_to_merge");
+  expect(validated.readiness?.head).toBe(updatedPR.pr.head);
+  expect(validated.pr).toEqual({ ...t.pr!, head: updatedPR.pr.head });
+  expect(starts.map(s => [s.branch, s.role])).toEqual([[t.branch, "worker"], [t.branch, "reviewer"]]);
+  expect((await allTasks(project)).map(task => task.id)).toEqual([t.id]);
+});
+
 test("remote head or failed check invalidates readiness; duplicate PR polling is idempotent", async () => {
   const t = await ready();
   await observeTaskPR(project, t.id, observation()); expect(await getTask(project, t.id)).toEqual(t);

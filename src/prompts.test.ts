@@ -61,6 +61,16 @@ describe("rolePrompt", () => {
     const d = makeSpawn({} as Runner).spec.description ?? "";
     expect(d).toMatch(/^- Reuse /m);
     expect(d).toMatch(/^- Start a new branch /m);
+    expect(d).toContain("Reuse the same taskId and branch");
+    expect(d).toContain("user-requested fixes after a ready report");
+    expect(d).toContain("CI or PR publication does not require a fresh branch");
+    expect(d).toContain("refresh its PR state with task pr before resuming");
+    expect(d).toContain("reviewer pushes to the same PR and validates its updated head");
+    expect(d).toContain("Do not register a new task or use a temporary branch/cherry-pick workaround");
+    expect(d).not.toContain("only before it has gone to CI or a PR");
+    expect(d).not.toContain("or the existing branch has gone to CI or a PR");
+    expect(d).toContain("Never spawn on a branch whose PR is merged");
+    expect(d).toContain("One agent works on a branch at a time");
     expect(d).toContain('"<branch> (existing)"');
     for (const maxReviewRounds of [0, 1, 100]) {
       const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
@@ -96,7 +106,8 @@ describe("rolePrompt", () => {
     for (const maxReviewRounds of [0, 1, 100]) {
       const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
       expect(p).toMatch(/Show each task's plan table/);
-      expect(p).toContain("Register authorized work via `task` before spawn");
+      expect(p).toContain("Register new work via `task`");
+      expect(p).toContain("reuse taskId for fixes");
       expect(p).toMatch(/spawn a worker → it reports → spawn (?:the|a) reviewer/);
       expect(p).toMatch(/it reports ready to merge → tell the user/);
       expect(p).toContain("Never read or edit a worker's worktree");
