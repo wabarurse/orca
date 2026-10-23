@@ -12,6 +12,7 @@ import type { Message } from "./inbox";
 import { publish, disk, type Storage } from "./transcript-storage";
 import { dirname } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { RollingMemory } from "./rolling-summary";
 
 export type Role = "orchestrator" | "worker" | "reviewer";
 
@@ -34,6 +35,8 @@ export interface SummaryEntry extends BaseEntry {
   /** Atomic context checkpoint; originals remain in the parent chain. */
   retained?: MessageParam[];
   boundary?: string | null;
+  /** Reusable structured memory, distinct from the verbatim recent tail. */
+  memory?: RollingMemory;
 }
 
 export interface MetaEntry extends BaseEntry {
@@ -68,15 +71,22 @@ export type NewEntry = Entry extends infer E
     : never
   : never;
 
+/** Checkpoints are conditional on the snapshot used to build their retained tail.
+ * check runs again immediately before publication (e.g. shared cancellation epoch).
+ */
+export interface AppendGuard { head: string | null; check?(): void }
+
 export interface Transcript {
   path: string;
   /** Append one entry and return it with uuid/ts filled in. */
-  append(entry: NewEntry, signal?: AbortSignal): Promise<Entry>;
+  append(entry: NewEntry, signal?: AbortSignal, guard?: AppendGuard): Promise<Entry>;
   /** Walk from the latest leaf to the root (or latest summary/context boundary) and return API messages. */
   chain(): Promise<MessageParam[]>;
   /** The entries of that walk, oldest first, the summary (if any) first, excluding the context boundary: what the conversation is now. */
   branch(): Entry[];
   history?(): Entry[];
+  /** Full parent chain including checkpoints, for rebuilding the SQLite archive. */
+  all?(): Entry[];
   /** uuid of the latest entry, used as parentUuid for the next append. */
   head(): string | null;
   /** Read-only snapshot replacement. Call only at a safe context boundary. */
@@ -137,16 +147,18 @@ export function open(path: string, io: Storage = disk): Transcript {
   };
   const lock = `${path}.lock`;
   const refresh = () => withStorageLock(lock, reload);
-  async function append(partial: NewEntry, signal?: AbortSignal): Promise<Entry> {
+  async function append(partial: NewEntry, signal?: AbortSignal, guard?: AppendGuard): Promise<Entry> {
     return withStorageLock(lock, async () => {
       signal?.throwIfAborted();
       await reload(); // choose parent and publish against the SAME locked disk head
+      if (guard && head !== guard.head) throw new Error("transcript changed before checkpoint publication");
+      guard?.check?.();
       const entry = { ...partial, parentUuid: partial.parentUuid ?? head,
         uuid: crypto.randomUUID(), ts: new Date().toISOString() } as Entry;
       await publish(path, JSON.stringify(entry), io, () => {
         byUuid.set(entry.uuid, entry);
         head = entry.uuid;
-      }, signal);
+      }, signal, guard?.check);
       return entry;
     });
   }
@@ -160,6 +172,7 @@ export function open(path: string, io: Storage = disk): Transcript {
     return { deliveries, inputs, epochs };
   };
   return { path, head: () => head, branch, append, refresh, consumed,
+    all: () => walk(byUuid, head, false),
     history: () => walk(byUuid, head, false).filter(e => e.type !== "summary" || !e.retained),
     chain: async () => messages(branch()),
   };

@@ -448,6 +448,67 @@ inference require validation with your account; automated tests use fake tokens.
 
 ## Tool efficiency
 
+### Orchestrator rolling memory
+
+The orchestrator starts a background `gpt-6-luna` summary at about **100,000 input
+tokens**, or earlier if its selected model has a smaller usable context. It keeps
+roughly the newest **20,000 tokens verbatim**, including complete tool exchanges.
+An oversized newest exchange stays intact. Workers and reviewers keep their
+existing compaction behavior.
+
+The summary carries user facts/preferences, standing project decisions, unresolved
+questions, unregistered work, and notes for unfinished tasks. A task is finished
+only after the registry records a verified merge. Blocked, cancelled and
+closed-unmerged tasks stay recorded; their presence never authorizes a restart.
+The current task registry is read again before publication, so an in-flight summary
+cannot restore stale task notes after a merge or other task update.
+
+One summary worker runs per session. The foreground continues until it needs the reclaimed
+space; `/compact` waits explicitly. The summary replaces only the captured older
+prefix at a safe tool boundary. Every newer message, including messages arriving
+while the worker runs, survives unchanged. The TUI can publish a ready summary
+while idle without making another foreground model request. Summary requests have
+no tools, use low effort, and split large sources into bounded UTF-8 parts. The
+worker has a two-minute deadline and a 30-second automatic retry cooldown.
+Closing the page or exiting the TUI cancels its worker. Shared cancellation,
+`/clear`, or another session's checkpoint invalidates stale summary work. Refresh
+only reloads state and invalidates stale work; it never starts or publishes a
+summary. Idle maintenance publishes only work already requested by a turn.
+
+Checkpoint publication holds the project/turn locks, reloads shared history and
+conditionally appends against that exact transcript head. Original inbox receipts
+survive both checkpoints and clears. The internal one-shot orchestrator command
+uses the same turn owner and fresh-input requirement as the TUI, and joins its
+outstanding worker before releasing the lock. Saved history or already-consumed
+inbox residue alone never starts another model turn.
+
+This requires a configured OpenAI subscription login (`/login openai`) even when
+the foreground uses Claude. `compact = false` disables automatic compaction;
+`/compact` still requests it. Missing credentials, failed summaries, archive
+failures and cancellation preserve the original history. If the resulting input
+still cannot fit, the existing context guard stops the model request.
+
+Original entries and task records are indexed in private
+`~/.parallels/projects/<project>/memory.sqlite`, using Bun's built-in SQLite and
+FTS5. JSONL transcripts and `tasks.json` remain authoritative; the index can be
+rebuilt. Inbox delivery and task IDs/status semantics are unchanged.
+
+The orchestrator uses the existing `task` tool:
+
+- `search_history` with `query`, optional `status` (`all`, `merged`, `active`),
+  `taskId`, and `limit` (default 5, maximum 10) returns task records and excerpts.
+- `read_history` with an `entryId` returns up to 2,048 Unicode characters;
+  `nextOffset` retrieves the next page.
+
+Task-specific excerpts require an explicit task UUID in the original entry.
+Use ordinary text search for conversations without that link. Retrieval is
+restricted to the current `/clear` scope; old bytes remain on disk. Retrieved
+text and summaries are historical evidence, not new instructions. Summaries are
+lossy: check original details when they matter. The active model context stays
+bounded, but disk history grows with use; this is not unlimited model context.
+
+### Tool output and scheduling
+
 Claude prompt-prefix caching is enabled by default (`anthropicPromptCache = true`
 in `~/.parallels/config.toml`). It reuses eligible prefixes without rewriting
 instructions or history. Cached tokens still occupy context; caching does not

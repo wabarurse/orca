@@ -339,7 +339,7 @@ export class App {
       this.stopSpinner?.();
       this.stopSpinner = null;
       this.loginAbort.abort();
-      for (const p of this.pages) { if (p.busy) p.orch.cancel?.(); p.view?.leave(); }
+      for (const p of this.pages) { if (p.busy) p.orch.cancel?.(); p.orch.dispose?.(); p.view?.leave(); }
       restoreConsole();
       term.close();
       this.leave();
@@ -829,6 +829,7 @@ export class App {
     if (!page) return;
     this.questions.hide(page);
     page.view?.leave();
+    page.orch.dispose?.();
     this.pages.splice(index, 1);
     if (index < this.active) this.active--;
     this.active = Math.min(this.active, Math.max(0, this.pages.length - 1));

@@ -16,15 +16,22 @@ import { rolePrompt } from "./prompts";
 import { type Provider } from "./providers/index";
 import { registry, toolsFor, type Tool } from "./tools/index";
 import { open, type Entry, type Transcript } from "./transcript";
+import { RollingCompactor, type RollingOptions } from "./rolling-memory";
+import { orchestratorTask } from "./tools/task";
 
 export interface OrchestratorDeps {
   project: string;
+  /** One-shot CLI cancellation and joining use the same whole-turn owner as TUI. */
+  signal?: AbortSignal;
+  joinRolling?: boolean;
   /** Injectable persistence boundary; submission identity is captured before this call. */
   put?: typeof put;
   provider?: Provider;
   loadProvider?: Parameters<typeof projectModelResolver>[1];
   tools?: Record<string, Tool>;
   transcript?: Transcript;
+  /** Separate summary connection; production uses the configured OpenAI account. */
+  rolling?: RollingOptions;
   /** Streamed model text; `plain` marks tool lines, which are not markdown. */
   write?: (text: string, plain?: boolean) => void;
   /** Each batch of inbox messages (the user's and agents') as the orchestrator reads it. */
@@ -43,6 +50,8 @@ export interface Orchestrator {
   submission?(): string;
   /** Abort only this turn and pause automatic inbox turns until the user sends again. */
   cancel?(): void;
+  /** Release the background summarizer when its page closes. */
+  dispose?(): void;
   compact?(): Promise<void>;
   /** Refuse unless this session is idle and its raw durable inbox is empty (even paused input). */
   checkClear?(): Promise<void>;
@@ -121,6 +130,7 @@ class TurnControl {
 }
 function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Orchestrator {
   const state = new TurnControl(deps.project, transcript);
+  const rolling = new RollingCompactor(deps.project, transcript, deps.rolling);
   // A Page/session cannot acquire ownership of a deleted/recreated project.
   const identity = existsSync(paths.project(deps.project)) ? projectIdentity(deps.project) : undefined;
   const checkIdentity = () => {
@@ -135,7 +145,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Or
     if (state.running || state.clearing) return false;
     checkIdentity();
     const request = state.refreshing ??= Promise.resolve().then(() => transcript.refresh?.());
-    try { await request; return !state.running && !state.clearing; }
+    try { await request; rolling.reconcile(); return !state.running && !state.clearing; }
     finally { if (state.refreshing === request) state.refreshing = undefined; }
   };
   return {
@@ -157,11 +167,13 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Or
         await withProjectStateLock(deps.project, async () => {
           authorization.throwIfAborted();
           await check(true);
+          rolling.reset();
           await transcript.append({ type: "context-boundary" }, authorization);
         });
       } finally { state.clearing = undefined; await release?.(); }
     },
-    cancel: () => state.cancel(),
+    cancel: () => { rolling.reset(); state.cancel(); },
+    dispose: () => rolling.dispose(),
     compact: async () => state.compact(),
     submission: () => inputEpoch(deps.project),
     say: async (text, submission = inputEpoch(deps.project), inputId) => {
@@ -172,34 +184,39 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Or
       finally { state.submitting--; }
     },
     pending: async () => !existsSync(turnLock(deps.project)) && await refresh() &&
-      !(await state.isPaused()) && (state.requested || await pending(deps.project, "orchestrator")),
+      !(await state.isPaused()) && (state.requested || rolling.ready() || await pending(deps.project, "orchestrator")),
     entries: () => transcript.history?.() ?? transcript.branch(),
     consumed: () => transcript.consumed?.().inputs ?? new Set(),
     refresh,
-    turn: () => orchestratorTurn(deps, transcript, state, checkIdentity),
+    turn: () => orchestratorTurn(deps, transcript, state, checkIdentity, rolling),
   };
 }
-async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, state: TurnControl, checkIdentity: () => void): Promise<Message[]> {
+async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, state: TurnControl, checkIdentity: () => void, rolling: RollingCompactor): Promise<Message[]> {
   if (state.running || state.clearing) return [];
   state.running = true;
   const cancellation = state.cancellation = new AbortController();
+  const signal = deps.signal ? AbortSignal.any([deps.signal, cancellation.signal]) : cancellation.signal;
   let release: (() => Promise<void>) | undefined;
   try {
     release = await tryStorageLock(turnLock(deps.project));
     if (!release) return [];
+    signal.throwIfAborted();
     checkIdentity();
     await state.refreshing;
     await transcript.refresh?.();
+    rolling.reconcile();
     deps.onRefresh?.();
     if (await state.isPaused()) return [];
     const hasInbox = await pending(deps.project, "orchestrator");
-    if (!state.requested && !hasInbox) return [];
-    const agent = await turnAgent(deps, transcript, state.takeRequest, cancellation.signal);
+    if (!state.requested && !hasInbox && !rolling.ready()) return [];
+    const agent = await turnAgent(deps, transcript, state.takeRequest, signal, rolling);
     if (hasInbox) await agent.run();
     else if (state.takeRequest()) await agent.compact();
+    else await agent.maintain();
+    if (deps.joinRolling && await rolling.finish(signal)) await agent.maintain();
     return await replies(deps.project, transcript);
   } catch (error) {
-    if (!cancellation.signal.aborted) throw error;
+    if (!signal.aborted) throw error;
     return [];
   } finally { await release?.(); state.running = false; state.cancellation = undefined; }
 }
@@ -210,9 +227,10 @@ async function replies(project: string, transcript: Transcript): Promise<Message
 
 function orchestratorTools(overrides?: Record<string, Tool>): Record<string, Tool> {
   if (overrides) return overrides;
-  return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, registry[name]]] : []));
+  return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, name === "task" ? orchestratorTask : registry[name]]] : []));
 }
-async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean, signal: AbortSignal) {
+async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean, signal: AbortSignal, rolling: RollingCompactor) {
+  const epoch = inputEpoch(deps.project);
   const config = await loadConfig();
   const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return createAgent({
@@ -221,6 +239,10 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
     resolveModel: projectModelResolver(deps.project, loadProvider),
     transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project),
     compaction: { enabled: config.compact, fallback: config.contextLimitFallback }, compactRequested,
+    compactBoundary: async (current, manual, maintenance) => {
+      if (inputEpoch(deps.project) !== epoch) { rolling.reset(); return; }
+      await rolling.boundary(current, manual, maintenance);
+    },
     system: rolePrompt("orchestrator", config),
     ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project) },
     write: deps.write, onInbox: deps.onInbox,
