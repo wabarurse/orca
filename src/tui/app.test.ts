@@ -3643,3 +3643,35 @@ test('conversation drag highlights only history, never auto-copies; Ctrl+O copie
 
   } finally { app.quit(); await running; }
 });
+
+for (const scroll of ['wheeldown', 'pagedown', 'wheelup']) test(`drag ${scroll} motion/release in one input burst preserves queued scroll and painted coordinates`, async () => {
+  const term = fakeTerm(60, 24), orchs = fakeOrchestrators(), copied: string[] = [];
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, pollMs: 100_000 });
+  const running = app.run(`selection-burst-${scroll}`);
+  try {
+    await until(() => !!app.page);
+    const records = Array.from({ length: 60 }, (_, i) => `ROW-${String(i).padStart(2, '0')}`);
+    app.page!.lines = records;
+    app.reprint();
+    await until(() => term.display.screen().includes('ROW-59'));
+    if (scroll !== 'wheelup') {
+      for (let i = 0; i < 10; i++) term.press({ name: 'pageup' });
+      await until(() => term.display.screen().includes('ROW-00'));
+    }
+    const painted = term.display.screen();
+    const y = painted.findIndex(row => row.startsWith('ROW-')) + 1;
+    const first = Number(painted[y - 1]!.slice(4));
+    const count = painted.filter(row => row.startsWith('ROW-')).length;
+    const target = first + (scroll === 'wheelup' ? -3 : scroll === 'wheeldown' ? 3 : count - 1);
+    // No yields/settles: events queue behind the same throttled frame. Motion
+    // still refers to the old painted rows, not the requested scroll target.
+    term.press({ name: 'mousedown', x: 1, y });
+    term.press({ name: scroll });
+    term.press({ name: 'mousemove', x: 6, y: y + 1 });
+    term.press({ name: 'mouseup', x: 6, y: y + 1 });
+    expect(copied).toEqual([]);
+    await app.onKey({ name: 'o', ctrl: true }); // flush pending frame + explicit copy
+    expect(term.display.screen()[y - 1]).toBe(records[target]!);
+    expect(copied).toEqual([`${records[first]}\n${records[first + 1]}`]);
+  } finally { app.quit(); await running; }
+});

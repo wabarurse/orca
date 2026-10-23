@@ -62,17 +62,19 @@ function wheel(button: number): Key | null {
   return { name: base === 64 ? "wheelup" : "wheeldown" };
 }
 
+function fromMouse(params: string, final: string): Key | null {
+  const m = /^<(\d+);(\d+);(\d+)$/.exec(params);
+  if (!["M", "m"].includes(final) || !m || !m.slice(2).every(n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) return null;
+  const button = Number(m[1]);
+  const scroll = final === "M" ? wheel(button) : null;
+  if (scroll) return scroll;
+  // Modified/unknown clicks are not left-button selection gestures.
+  if (button !== 0 && button !== 32) return null;
+  return { name: final === "m" ? "mouseup" : button === 32 ? "mousemove" : "mousedown", x: Number(m[2]), y: Number(m[3]) };
+}
+
 function fromCsi(params: string, final: string): Key | null {
-  if (params.startsWith("<")) {
-    const m = /^<(\d+);(\d+);(\d+)$/.exec(params);
-    if (!["M", "m"].includes(final) || !m || !m.slice(2).every(n => Number.isSafeInteger(Number(n)) && Number(n) > 0)) return null;
-    const button = Number(m[1]);
-    if (final === "M" && wheel(button)) return wheel(button);
-    // Modified clicks belong to the terminal (notably link gestures). Never
-    // interpret unknown/extended buttons as a left-button drag.
-    if (button !== 0 && button !== 32) return null;
-    return { name: final === "m" ? "mouseup" : button === 32 ? "mousemove" : "mousedown", x: Number(m[2]), y: Number(m[3]) };
-  }
+  if (params.startsWith("<")) return fromMouse(params, final);
   const nums = params.split(";").map((p) => (p === "" ? NaN : Number(p)));
   if (final === "u") return fromKitty(nums);
   if (final === "~") return fromTilde(nums);

@@ -728,10 +728,17 @@ export class App {
 
   private readonly selection = new ConversationSelection();
 
+  private selectionAllowed(): boolean {
+    return !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.taskInbox && !this.page?.questions.expanded;
+  }
+
+  private validateSelection(owner: typeof this.screenOwner, cols: number): void {
+    if (!this.selectionAllowed() || owner !== this.screenOwner || this.screen?.cols !== cols) this.selection.clear();
+  }
+
   private viewport(f: Frame): StickyScreen {
     const owner = this.page?.view ?? this.page;
-    if (this.clearing || this.keyEcho || this.menu || this.projectList || this.helpTop !== null || this.taskInbox || this.page?.questions.expanded) this.selection.clear();
-    if (owner !== this.screenOwner || this.screen?.cols !== f.cols) this.selection.clear();
+    this.validateSelection(owner, f.cols);
     this.anchorScroll(owner, f.cols);
     if (this.needReprint || owner !== this.screenOwner) this.screenHistory = this.started ? this.screenLines() : [...this.looseLines];
     else this.screenHistory.push(...this.pending);
@@ -1503,28 +1510,30 @@ export class App {
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
 
+  private selectionMouse(k: Key): void {
+    const screen = this.screen;
+    if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) return;
+    // Hit-test the painted frame, not the pending scroll destination. Only a
+    // new selection pins follow mode; motion/release must not undo queued scroll.
+    this.selection.mouse(k, screen, this.screenHistory);
+    if (k.name === "mousedown" && this.selection.active && this.scrollTop === null) this.scrollTop = screen.start;
+    this.draw();
+  }
+
+  private async copySelection(): Promise<void> {
+    if (!this.selectionAllowed() || this.resizeTimer) return;
+    // Validate against the latest layout before copying, even between frames.
+    this.flush();
+    const text = this.selection.text();
+    if (!text) return;
+    try { await (this.deps.clipboardText ?? writeClipboardText)(text); }
+    catch (error) { this.say(dim(`Copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
+  }
+
   async onKey(k: Key): Promise<void> {
-    const selectionAllowed = !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.taskInbox && !this.page?.questions.expanded;
-    if (!selectionAllowed) this.selection.clear();
-    if (["mousedown", "mousemove", "mouseup"].includes(k.name) && !this.keyEcho) {
-      if (selectionAllowed && this.screen && !this.resizeTimer && !this.needReprint) {
-        this.selection.mouse(k, this.screen, this.screenHistory);
-        if (this.selection.active) this.scrollTop = this.screen.start;
-        this.draw();
-      }
-      return;
-    }
-    if (k.ctrl && k.name === "o" && !this.keyEcho) {
-      if (!selectionAllowed || this.resizeTimer) return;
-      // Validate against the latest layout before copying, even between frames.
-      this.flush();
-      const text = this.selection.text();
-      if (text) {
-        try { await (this.deps.clipboardText ?? writeClipboardText)(text); }
-        catch (error) { this.say(dim(`Copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
-      }
-      return;
-    }
+    if (!this.selectionAllowed()) this.selection.clear();
+    if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) return this.selectionMouse(k);
+    if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
     if (k.name === "escape" && this.selection.active) { this.selection.clear(); this.draw(); return; }
     // Editing within this draft is fine. Navigation/modal/send/clear/history keys
     // invalidate asynchronous reads, even if the user returns before completion.

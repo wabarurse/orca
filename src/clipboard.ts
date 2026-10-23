@@ -75,11 +75,28 @@ export interface ClipboardWriter {
   which(name: string): string | null;
   run(argv: string[], text: string): Promise<void>;
 }
-export async function clipboardWriteCommand(argv: string[], text: string): Promise<void> {
+/** Deadline includes an explicit failure state: a TERM handler exiting zero is
+ * still a timeout. Escalate after a short grace period, then await exit to reap.
+ * The optional deadline is for isolated subprocess tests, not user input. */
+export async function clipboardWriteCommand(argv: string[], text: string, timeoutMs = 5000): Promise<void> {
   const child = Bun.spawn(argv, { stdin: new Blob([text]), stdout: 'ignore', stderr: 'ignore' });
-  const timer = setTimeout(() => child.kill(), 5000);
-  try { if (await child.exited !== 0) throw new Error('Clipboard service failed or timed out.'); }
-  finally { clearTimeout(timer); child.kill(); }
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | undefined;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGTERM');
+    escalation = setTimeout(() => child.kill('SIGKILL'), 100);
+  }, timeoutMs);
+  try {
+    const code = await child.exited;
+    if (timedOut) throw new Error('Clipboard service timed out.');
+    if (code !== 0) throw new Error('Clipboard service failed.');
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(escalation);
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await child.exited;
+  }
 }
 export async function writeClipboardText(text: string, adapter: ClipboardWriter = { ...native, run: clipboardWriteCommand }): Promise<void> {
   if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error('Text copy requires a local desktop session; unavailable over SSH.');

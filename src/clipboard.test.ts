@@ -84,3 +84,36 @@ test('text writer subprocess delivers Unicode and shell metacharacters only on s
     await expect(clipboardWriteCommand([process.execPath, '-e', 'process.exit(1)'], text)).rejects.toThrow('failed');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+for (const onTerm of ['ignore', 'exit-zero']) test(`text writer deadline rejects and reaps child that handles TERM: ${onTerm}`, async () => {
+  const { clipboardWriteCommand } = await import('./clipboard');
+  const { mkdtempSync, rmSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'parallels-copy-timeout-'));
+  const ready = join(dir, 'ready'), signal = join(dir, 'signal');
+  let pid: number | undefined;
+  try {
+    const code = `
+      process.on('SIGTERM', () => {
+        require('node:fs').writeFileSync(process.argv[2], 'TERM');
+        ${onTerm === 'exit-zero' ? 'process.exit(0);' : ''}
+      });
+      require('node:fs').writeFileSync(process.argv[1], String(process.pid));
+      setInterval(() => {}, 100);
+      // Safety exit also reproduces a TERM-ignoring child returning zero late.
+      setTimeout(() => process.exit(0), 3000);
+    `;
+    const started = Date.now();
+    await expect(clipboardWriteCommand([process.execPath, '-e', code, ready, signal], 'fixture', 500)).rejects.toThrow('timed out');
+    expect(Date.now() - started).toBeLessThan(2500);
+    pid = Number(readFileSync(ready, 'utf8'));
+    expect(readFileSync(signal, 'utf8')).toBe('TERM');
+    // Rejection is after reaping, not a Promise.race that leaves a child alive.
+    expect(() => process.kill(pid!, 0)).toThrow();
+    pid = undefined;
+  } finally {
+    if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

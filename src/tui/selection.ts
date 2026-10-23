@@ -14,20 +14,26 @@ export class ConversationSelection {
   private dragging = false;
   clear(): void { this.anchor = this.end = undefined; this.snapshot = []; this.dragging = false; }
   get active(): boolean { return !!this.anchor; }
-  mouse(k: Key, screen: StickyScreen, history: string[]): void {
+  private hit(k: Key, screen: StickyScreen, length: number): Point | undefined {
     const row = (k.y ?? 0) - 1 - screen.bodyTop;
     const index = screen.start + row;
-    const valid = row >= 0 && row < screen.bodyHeight && index < history.length && (k.x ?? 0) > 0 && k.x! <= screen.cols;
-    if (k.name === 'mousedown') {
-      this.clear();
-      if (!valid) return;
-      this.snapshot = history.map(s => plainRow(s, screen.cols));
-      this.anchor = this.end = { row: index, col: k.x! - 1 };
-      this.dragging = true;
-    } else if (this.dragging) {
-      if (valid && index < this.snapshot.length) this.end = { row: index, col: k.x! - 1 };
-      if (k.name === 'mouseup') this.dragging = false;
-    }
+    const col = (k.x ?? 0) - 1;
+    if (row < 0 || row >= screen.bodyHeight || index >= length || col < 0 || col >= screen.cols) return;
+    return { row: index, col };
+  }
+  mouse(k: Key, screen: StickyScreen, history: string[]): void {
+    const point = this.hit(k, screen, history.length);
+    if (k.name === 'mousedown') return this.start(point, screen.cols, history);
+    if (!this.dragging) return;
+    if (point && point.row < this.snapshot.length) this.end = point;
+    if (k.name === 'mouseup') this.dragging = false;
+  }
+  private start(point: Point | undefined, cols: number, history: string[]): void {
+    this.clear();
+    if (!point) return;
+    this.snapshot = history.map(s => plainRow(s, cols));
+    this.anchor = this.end = point;
+    this.dragging = true;
   }
   private range(): [Point, Point] | undefined {
     if (!this.anchor || !this.end) return;
