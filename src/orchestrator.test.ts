@@ -56,7 +56,7 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
 
 test("worker reports back: orchestrator spawns a reviewer on the same branch", async () => {
   const provider = fakeProvider([
-    [toolUse("tu3", "spawn", { taskId, prompt: "Review PR #12", branch: "feat/login", role: "reviewer" }), toolUse("tu4", "message", { to: "user", text: "feat/login is in review." })],
+    [toolUse("tu3", "spawn", { taskId, prompt: "Review PR #12", branch: "feat/login", role: "reviewer", reviewMode: "review" }), toolUse("tu4", "message", { to: "user", text: "feat/login is in review." })],
     [text("ok")],
   ]);
   const orch = await createOrchestrator({ project, provider, tools, write: () => {} });
@@ -284,4 +284,40 @@ test("header context follows the current chain, invalidates model switches, and 
   expect(orch.contextUsage!(model)!).toBeLessThan(baseline);
   const other = await createOrchestrator({ project: "other-context-header", provider, tools: {}, write: () => {} });
   expect(other.contextUsage!(model)).toBeUndefined();
+});
+
+test("context cache is constant-work on unchanged draws and tracks summary retained tails", async () => {
+  const { effectiveModel } = await import("./project-model");
+  const p = "context-checkpoint", transcript = open(paths.transcript(p, "orchestrator"));
+  let branches = 0;
+  const branch = transcript.branch;
+  transcript.branch = () => { branches++; return branch(); };
+  const provider = fakeProvider([[text("first")], [text("second")]]);
+  const orch = await createOrchestrator({ project: p, transcript, provider, tools: {}, write: () => {} });
+  const model = await effectiveModel(p);
+  await orch.say("old context ".repeat(2000));
+  await orch.turn();
+  const large = orch.contextUsage!(model)!;
+  const before = branches;
+  for (let i = 0; i < 1000; i++) expect(orch.contextUsage!(model)).toBe(large);
+  expect(branches).toBe(before); // no transcript traversal/serialization/estimation
+  const retained = [{ role: "user" as const, content: "retained tail ".repeat(100) }];
+  await transcript.append({ type: "summary", text: "Compacted checkpoint", retained });
+  const compacted = orch.contextUsage!(model)!;
+  expect(compacted).toBeLessThan(large);
+  expect(branches).toBe(before + 1);
+  expect(await transcript.chain()).toEqual([{ role: "user", content: "Compacted checkpoint" }, ...retained]);
+  // Same summary text but different retained payload must invalidate the cache.
+  await transcript.append({ type: "summary", text: "Compacted checkpoint", retained: [{ role: "user", content: "retained tail ".repeat(300) }] });
+  const moreTail = orch.contextUsage!(model)!;
+  expect(moreTail).toBeGreaterThan(compacted + 800);
+  expect(branches).toBe(before + 2);
+  await transcript.append({ type: "summary", text: "Compacted checkpoint" });
+  expect(orch.contextUsage!(model)!).toBeLessThan(compacted);
+  // A new request captures a new system/tool configuration even with the same
+  // model. Warming that snapshot still leaves subsequent draws constant-work.
+  await orch.say("continue"); await orch.turn();
+  const next = orch.contextUsage!(model), warmed = branches;
+  for (let i = 0; i < 100; i++) expect(orch.contextUsage!(model)).toBe(next);
+  expect(branches).toBe(warmed);
 });

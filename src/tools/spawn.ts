@@ -56,7 +56,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
           branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects). Never use the default branch itself." },
-          reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "For reviewer, explicitly identify: code review or CI-only validation. CI is not another review round." },
+          reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "Required when role is reviewer; explicitly identify: code review or CI-only validation. CI is not another review round." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
         required: ["prompt", "branch", "taskId"],
@@ -68,6 +68,9 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       const branch = typeof input.branch === "string" ? input.branch.trim() : "";
       const role = input.role === "reviewer" ? "reviewer" : "worker";
       if (!prompt || !branch || typeof input.taskId !== "string") return "refused: prompt, branch and registered taskId are required";
+
+      if (role === "reviewer" && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: reviewer requires reviewMode: review or watch-ci (prompt text does not select the mode)";
+      if (role === "worker" && input.reviewMode !== undefined) return "refused: reviewMode is only valid for reviewer";
 
       const attachments = await forwardImages(input.attachments, ctx);
       // One agent per branch: a reported agent may still be finishing, so wait briefly for it.

@@ -156,7 +156,7 @@ for (const wasReady of [false, true]) test(`same-PR correction after ${wasReady 
   await startTaskRun(project, starts[0]!.run!);
   await stopTaskRun(project, starts[0]!.run!, "waiting", "Correction complete");
 
-  expect(await tool.run({ ...correction, role: "reviewer", prompt: "watch ci; update and validate the same PR" }, ctx)).toBe("reviewer-feat-x");
+  expect(await tool.run({ ...correction, role: "reviewer", reviewMode: "watch-ci", prompt: "watch ci; update and validate the same PR" }, ctx)).toBe("reviewer-feat-x");
   const reviewRun = starts[1]!.run!;
   await startTaskRun(project, reviewRun);
   const updatedPR = observation("b".repeat(40));

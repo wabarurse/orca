@@ -580,10 +580,12 @@ export class App {
     if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
     const headerTasks = await (this.deps.tasks ?? listTasks)(page.project).catch(() => undefined);
     if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
+    const unchanged = model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings)
+      && reviewStatus(headerTasks, page.view?.name) === reviewStatus(page.headerTasks, page.view?.name);
     page.headerTasks = headerTasks;
     page.model = model;
     page.settings = settings;
-    if (page === this.page) this.draw();
+    if (!unchanged && page === this.page) this.draw();
   }
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
