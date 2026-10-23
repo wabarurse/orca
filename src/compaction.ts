@@ -4,7 +4,7 @@ import { afterContextBoundary } from "./transcript";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { AgentDeps } from "./agent";
 import { paired } from "./tool-pairs";
-import { modelContextLimit } from "./model-context";
+import { contextWindow } from "./model-context";
 
 export interface CompactOptions {
   enabled?: boolean;
@@ -35,8 +35,7 @@ export function budget(deps: AgentDeps, messages: MessageParam[]): number {
   return measured?.model === deps.model ? Math.max(estimated, measured.input + estimated - measured.estimated) : estimated;
 }
 export function contextLimit(options: CompactOptions, model = ""): number {
-  const n = options.contextLimit ?? modelContextLimit(model) ?? options.fallback ?? 128000;
-  return Number.isFinite(n) && n > 0 ? n : 128000;
+  return contextWindow(options, model).limit;
 }
 
 

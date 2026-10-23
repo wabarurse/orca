@@ -3738,3 +3738,25 @@ test("unchanged telemetry polls avoid redraw; task progress is independent of th
     await until(() => term.screen().includes("ctx ~12.5k/272k") && term.screen().includes("review rounds: 0"));
   } finally { app.quit(); await running; }
 });
+
+test("header denominator: verified claude window, unlisted model shows the session's compaction estimate", async () => {
+  const term = fakeTerm(80, 24);
+  const fake = fakeOrchestrators();
+  let model = "claude-opus-5-5";
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], reviewLimit: async () => 7, agents: async () => [],
+    openOrchestrator: async (...args) => ({ ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]), contextUsage: () => 45000,
+      contextWindow: (m: string) => (m === "claude-opus-5-5" ? { limit: 1000000, estimated: false } : { limit: 64000, estimated: true }) }) });
+  const running = app.run("header-denominator");
+  try {
+    await until(() => !!app.page);
+    await app.refreshHeader();
+    await until(() => term.screen().includes("ctx ~45k/1M"));
+    model = "unlisted-model";
+    await app.refreshHeader();
+    await until(() => term.screen().includes("ctx ~45k/64k?"));
+    app.page!.view = { name: "reviewer-feat-two", lines: [], leave() {}, live: false, calls: new Calls() };
+    app.draw();
+    await until(() => term.screen().includes("view reviewer-feat-two"));
+    expect(term.screen()).toContain("ctx ?/?");
+  } finally { app.quit(); await running; }
+});

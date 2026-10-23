@@ -563,7 +563,7 @@ export class App {
   private header(page: Page): string[] {
     const settings = page.settings;
     const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: contextStatus(page.view ? undefined : page.model, page.view ? undefined : page.orch.contextUsage?.(page.model ?? "")), review: reviewStatus(this.maxReviewRounds), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(this.maxReviewRounds), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Independent read generations for captured page objects. */
@@ -585,6 +585,12 @@ export class App {
     page.model = model;
     page.settings = settings;
     if (!unchanged && page === this.page) this.draw();
+  }
+
+  /** Agent views show no session context; otherwise the orchestrator's own compaction limit. */
+  private contextLabel(page: Page): string {
+    if (page.view || !page.model) return contextStatus(undefined);
+    return contextStatus(page.model, page.orch.contextUsage?.(page.model), page.orch.contextWindow?.(page.model));
   }
 
   /** One global snapshot for all pages and agent views; no config reads during paint.

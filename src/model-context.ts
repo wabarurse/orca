@@ -1,7 +1,15 @@
-/** Verified Codex catalog snapshot. Standard context_window, NOT opt-in max_context_window.
- * Source (fetched and inspected for this table):
+/** Standard context windows only, never opt-in/beta long-context variants. Unlisted models remain unknown.
+ *
+ * Codex: verified catalog snapshot, standard context_window, NOT opt-in max_context_window.
  * https://raw.githubusercontent.com/openai/codex/9b39316997fd8bcecdb2007722f52ef858f0dbd8/codex-rs/models-manager/models.json
- * Effort/fast groups establish no context limits. Unlisted models remain unknown.
+ * Effort/fast groups establish no context limits.
+ *
+ * Claude: the 1M entries are the documented default window (no beta header, no [1m] variant).
+ * https://platform.claude.com/docs/en/models/overview (comparison table)
+ * https://platform.claude.com/docs/en/build-with-claude/context-windows#context-window-sizes-by-model
+ * https://platform.claude.com/docs/en/models/{opus-5,opus-4-8,opus-4-7,sonnet-5,fable-5,opus-4-5,haiku-4-5,sonnet-4-5}/overview
+ * Opus 4.6 and Sonnet 4.6 reach 1M on subscriptions only through their opt-in [1m] variant, so
+ * their standard window is 200k: https://code.claude.com/docs/en/model-config#extended-context
  */
 const standardWindows: Readonly<Record<string, number>> = {
   "gpt-6-astra": 272000,
@@ -15,7 +23,34 @@ const standardWindows: Readonly<Record<string, number>> = {
   "gpt-daybreak-red-latest": 372000,
   "gpt-5.5": 272000,
   "codex-auto-review": 272000,
+  "claude-fable-5-1": 1000000,
+  "claude-fable-5": 1000000,
+  "claude-opus-5-5": 1000000,
+  "claude-opus-5": 1000000,
+  "claude-opus-4-8": 1000000,
+  "claude-opus-4-7": 1000000,
+  "claude-sonnet-5-5": 1000000,
+  "claude-sonnet-5": 1000000,
+  "claude-haiku-5-5": 1000000,
+  "claude-opus-4-6": 200000,
+  "claude-sonnet-4-6": 200000,
+  "claude-opus-4-5": 200000,
+  "claude-opus-4-5-20251101": 200000,
+  "claude-sonnet-4-5": 200000,
+  "claude-sonnet-4-5-20250929": 200000,
+  "claude-haiku-4-5": 200000,
+  "claude-haiku-4-5-20251001": 200000,
 };
 export function modelContextLimit(model: string): number | undefined {
   return standardWindows[model];
+}
+
+export interface ContextWindow { limit: number; estimated: boolean }
+const DEFAULT_LIMIT = 128000;
+/** The one limit resolution shared by compaction and the header. estimated: no explicit
+ * budget and no verified model window, so the configured/default fallback applies. */
+export function contextWindow(options: { contextLimit?: number; fallback?: number }, model = ""): ContextWindow {
+  const known = options.contextLimit ?? modelContextLimit(model);
+  const n = known ?? options.fallback ?? DEFAULT_LIMIT;
+  return Number.isFinite(n) && n > 0 ? { limit: n, estimated: known === undefined } : { limit: DEFAULT_LIMIT, estimated: true };
 }
