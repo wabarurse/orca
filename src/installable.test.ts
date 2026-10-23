@@ -81,7 +81,10 @@ async function seed(project: string, role: "orchestrator" | "worker" | "reviewer
   const id = role === "orchestrator" ? role : `${role}-${slug(branch)}`;
   const t = open(join(base, "transcripts", `${id}.jsonl`));
   await t.append({ type: "meta", role, model: "m" });
-  await t.append({ type: "message", message: { role: "user", content: "offline fixture" } });
+  // Orchestrators require fresh durable input; saved history alone never resumes
+  // a turn (the same receipt/ownership contract as an interactive session).
+  if (role === "orchestrator") expect((await exec([installed, "msg", project, "offline fixture"])).code).toBe(0);
+  else await t.append({ type: "message", message: { role: "user", content: "offline fixture" } });
   return { cwd, base };
 }
 const launch = (project: string, role: string) => [probe, "launch", "--project", project, "--role", role, "--branch", branch, "--run", run];

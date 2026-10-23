@@ -153,22 +153,43 @@ Materialized context has a **16 MiB encoded-PNG-byte total cap**; base64 transpo
 is larger. Multiple prompts and repeated forwarding of the same image count
 separately. Large accumulated histories can therefore block another request.
 
-Compaction sends the summarizer textual IDs with explicit warnings that it did
-not inspect the pixels. It retains actual image-reference blocks and bounded
-historical prompt excerpts alongside the summary/recent turns, so the following
-normal request still receives inspectable pixels. It refuses if fixed retained
-images cannot fit; it never substitutes a lossy description for the only pixels.
-Use an explicit `/clear` for a new task when accumulation blocks context; original
-transcripts/images remain available on disk. The summary itself is still lossy.
+Both **orchestrator rolling memory** (merged PR #74) and worker/reviewer
+checkpoints send summarizers textual IDs with explicit warnings that they did
+not inspect pixels. `image-history.ts` supplies text-only historical markers for
+summaries and search; it never serializes image bytes/URLs as model prose. Actual
+image-reference blocks and bounded historical prompt excerpts are retained
+alongside each checkpoint/recent tail. Repeated checkpoints retain each image
+occurrence exactly once; new messages arriving during background work remain
+verbatim. The following normal request still receives inspectable pixels.
 
-**Coordination with separate rolling-memory work (#71):** do not merge branches
-by copying this implementation. Preserve `imageBlock`/`blockRef`, `imageContent`,
-`materializeImages` and `requireVision` at the pre-provider boundary; budget images
-separately from base64; preserve explicit original image blocks/IDs in checkpoints,
-the original prompt/image association, context boundaries and tool pairing.
-Do not insert base64 into rolling summaries or silently replace pixels with paths.
+The rolling `gpt-6-luna` summarizer remains text-only and uses the account/scheduling
+policy of #74; there is no new vision/provider fallback. Its summary can reduce
+prose while retained images still exceed the foreground budget. In that case a
+checkpoint may commit the reduction, but the foreground request is explicitly
+blocked. Worker checkpoints instead refuse an over-budget proposal. Neither path
+silently drops images. Use an explicit `/clear` for a new task when accumulation
+blocks context; original transcripts/images remain on disk.
+
+SQLite `memory.sqlite` keeps the **original scoped references** losslessly in
+`entries.raw`, and indexes searchable `attachment_id` markers plus prompt text in
+`entries.body`. Image bytes stay in the validated project image store. The
+orchestrator can use `task search_history` (including an attachment UUID query)
+and paged `read_history` to recover prompt/ID associations **within the current
+clear scope**. Search/read results are historical **text**, not new images or new
+permissions. Pixels remain directly inspectable in retained context, so no extra
+image-read tool or implicit cross-task image sharing is needed. Explicit
+spawn/message forwarding still requires a real original image in the sender's
+current context epoch, not merely a retrieved or guessed UUID. After `/clear`,
+old history IDs cannot retrieve/forward old images; reattach from the clipboard.
+
+`materializeImages` and `requireVision` remain at the provider boundary. Keep
+image budgeting, original prompt association, exact receipts, shared cancellation
+and conditional checkpoint publication intact when changing memory semantics.
 `forwardImages` authorizes against `afterContextBoundary(transcript.history())`;
-changing transcript/checkpoint semantics needs matching forwarding/clear tests.
+checkpoint tails must not replace original history for that check. Combined
+regressions in `rolling-images.test.ts` cover repeated compaction, search/reload,
+both provider serializers, explicit worker pixels, clear/cancel, newer arrivals,
+failed publication, unsupported models, missing bytes and image-budget refusal.
 
 ## Validation and reviewer constraints
 
@@ -181,7 +202,10 @@ PTY, installer and updater tests operate only in temporary owned fixtures.
 These tests validate request structure/bytes, not a live provider's visual
 reasoning or service acceptance.
 
-This feature is based on merged PR #70 (`112f1de09c03d42734a9e75ba7dca94dbd1f41e8`).
+This feature started on merged PR #70 (`112f1de09c03d42734a9e75ba7dca94dbd1f41e8`)
+and integrates current main through merged PR #74
+(`aa9064ed4a88ea10ae7927ce6bb2514569e668fe`, including #72/#73). The original
+unmerged #71 branch is not used or modified.
 Publication belongs to the independently invoked reviewer. Before publication,
 validate the current clean branch head locally with `bun test`, `bun run check`,
 `bun run build`, and `git diff --check`; no hosted-check absence is a substitute.
@@ -191,9 +215,17 @@ Do not run `install:local`/`pull` against the real installation. The protected
 local gallery and the merged/retired `feat-session-refresh` worktree are out of
 scope. The worker only commits locally; publication is reviewer-owned.
 
-Worker validation on this implementation: `bun test` **1,034 pass, 0 fail**,
+Pre-integration worker validation (commit `fef8182`): `bun test` **1,034 pass, 0 fail**,
 8 snapshots and 18,219 assertions across 76 files (57.38 s); `bun run check`,
 `bun run build` (552 bundled modules), and `git diff --check` passed. Existing
 locked dependencies were provisioned offline with `bun install --offline
 --frozen-lockfile`; no manifest/lockfile changes or new dependencies. These are
 local results only; the reviewer must revalidate its actual publication head.
+
+Final integrated worker validation against `origin/main` at `aa9064e`:
+focused image/rolling/compaction suites **101 pass, 0 fail**, 632 assertions in
+6 files (1.288 s); full `bun test` **1,083 pass, 0 fail**, 8 snapshots and
+18,635 assertions across 79 files (59.12 s). `bun run check`, `bun run build`
+(556 bundled modules), and staged/unstaged `git diff --check` passed. The added
+combined suite has 10 isolated regressions; no new dependencies, hosted checks,
+live clipboard/provider calls or installation updates were used for integration.

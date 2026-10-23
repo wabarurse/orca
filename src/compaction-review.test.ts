@@ -118,13 +118,13 @@ for (const mode of ["model", "tools"]) test(`manual request during busy ${mode} 
   const entered = gate(), resume = gate(); let normal = 0, summaries = 0, tools = 0;
   const { transcript } = await fixture();
   const p = provider(async r => {
-    if (r.system?.startsWith("Summarize")) { summaries++; if (mode === "tools") expect(tools).toBe(2); return end(); }
+    if (r.system?.startsWith("Maintain a compact")) { summaries++; if (mode === "tools") expect(tools).toBe(2); return end(JSON.stringify({ user: [], project: [], pending: ["continue original task"], tasks: [] })); }
     normal++;
     if (normal === 1 && mode === "model") { entered.release(); await resume.promise; }
     if (normal === 1 && mode === "tools") return { content: [toolUse("a", "echo", {}), toolUse("b", "echo", {})], stop: "tool_use" };
     return end("normal final");
   });
-  const orch = await createOrchestrator({ project: "p", transcript, provider: p, write: () => {}, tools: { echo: { spec: { name: "echo", description: "echo", input_schema: { type: "object" } }, run: async () => { tools++; if (tools === 1) { entered.release(); await resume.promise; } return "result"; } } } });
+  const orch = await createOrchestrator({ project: "p", transcript, provider: p, rolling: { tailTokens: 1000, loadProvider: async () => p }, write: () => {}, tools: { echo: { spec: { name: "echo", description: "echo", input_schema: { type: "object" } }, run: async () => { tools++; if (tools === 1) { entered.release(); await resume.promise; } return "result"; } } } });
   await orch.say("user next task"); const running = orch.turn(); await entered.promise;
   await orch.compact!(); expect(summaries).toBe(0); expect(await orch.turn()).toEqual([]);
   if (mode === "tools") await put("p", "orchestrator", { from: "worker-x", text: "arrived during batch" });

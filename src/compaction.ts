@@ -1,4 +1,5 @@
 import { blockRef } from "./images";
+import { historicalMessages } from "./image-history";
 import { afterContextBoundary } from "./transcript";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { AgentDeps } from "./agent";
@@ -96,8 +97,7 @@ function excerpt(text: string, length: number): string {
 
 /** One bounded request: shorten old tool output first, then the source if necessary. */
 function summarySource(deps: AgentDeps, messages: MessageParam[], reserve: number): MessageParam[] {
-  const clean = safeSource(messages).map(m => ({ ...m, content: typeof m.content === "string" ? m.content : m.content.map(b => b.type === "image"
-    ? { type: "text" as const, text: `[Historical image ${blockRef(b)?.id ?? "unknown"}; pixels retained separately, not described by this text summary.]` } : b) }));
+  const clean = historicalMessages(messages);
   const wrap = (content: string): MessageParam[] => [{ role: "user", content }];
   const full = wrap(JSON.stringify(clean));
   if (fits(deps, full, reserve)) return full;
@@ -189,7 +189,7 @@ async function checkpoint(deps: AgentDeps, messages: MessageParam[], limit: numb
 /** Keep omitted pixels directly inspectable after compaction. No image is silently
  * replaced by its description/path. Eventually many images block the budget;
  * /clear is the explicit context boundary, with originals still on disk. */
-function retainedImages(messages: MessageParam[]): MessageParam[] {
+export function retainedImages(messages: MessageParam[]): MessageParam[] {
   return messages.flatMap(m => {
     if (typeof m.content === "string") return [];
     const images = m.content.filter(b => b.type === "image");

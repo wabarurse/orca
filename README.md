@@ -462,6 +462,72 @@ inference require validation with your account; automated tests use fake tokens.
 
 ## Tool efficiency
 
+### Orchestrator rolling memory
+
+The orchestrator starts a background `gpt-6-luna` summary at about **100,000 input
+tokens**, or earlier if its selected model has a smaller usable context. It keeps
+roughly the newest **20,000 tokens verbatim**, including complete tool exchanges.
+An oversized newest exchange stays intact. Workers and reviewers keep their
+existing compaction behavior.
+
+The summary carries user facts/preferences, standing project decisions, unresolved
+questions, unregistered work, and notes for unfinished tasks. A task is finished
+only after the registry records a verified merge. Blocked, cancelled and
+closed-unmerged tasks stay recorded; their presence never authorizes a restart.
+The current task registry is read again before publication, so an in-flight summary
+cannot restore stale task notes after a merge or other task update.
+
+One summary worker runs per session. The foreground continues until it needs the reclaimed
+space; `/compact` waits explicitly. The summary replaces only the captured older
+prefix at a safe tool boundary. Every newer message, including messages arriving
+while the worker runs, survives unchanged. The TUI can publish a ready summary
+while idle without making another foreground model request. Summary requests have
+no tools, use low effort, and split large sources into bounded UTF-8 parts. The
+worker has a two-minute deadline and a 30-second automatic retry cooldown.
+Closing the page or exiting the TUI cancels its worker. Shared cancellation,
+`/clear`, or another session's checkpoint invalidates stale summary work. Refresh
+only reloads state and invalidates stale work; it never starts or publishes a
+summary. Idle maintenance publishes only work already requested by a turn.
+
+Checkpoint publication holds the project/turn locks, reloads shared history and
+conditionally appends against that exact transcript head. Original inbox receipts
+survive both checkpoints and clears. The internal one-shot orchestrator command
+uses the same turn owner and fresh-input requirement as the TUI, and joins its
+outstanding worker before releasing the lock. Saved history or already-consumed
+inbox residue alone never starts another model turn.
+
+This requires a configured OpenAI subscription login (`/login openai`) even when
+the foreground uses Claude. `compact = false` disables automatic compaction;
+`/compact` still requests it. Missing credentials, failed summaries, archive
+failures and cancellation preserve the original history. If the resulting input
+still cannot fit, the existing context guard stops the model request.
+
+Original entries and task records are indexed in private
+`~/.parallels/projects/<project>/memory.sqlite`, using Bun's built-in SQLite and
+FTS5. JSONL transcripts and `tasks.json` remain authoritative; the index can be
+rebuilt. Inbox delivery and task IDs/status semantics are unchanged. Image IDs and
+original prompt associations are searchable; raw archive entries and checkpoints
+preserve scoped image references. Text summaries/search do not inspect or return
+pixels; normal provider requests still materialize retained images. Accumulated
+image limits fail explicitly, never evict images silently. See
+[image context/history behavior](IMAGE_ATTACHMENTS.md#context-budgeting-and-integration-contract).
+
+The orchestrator uses the existing `task` tool:
+
+- `search_history` with `query`, optional `status` (`all`, `merged`, `active`),
+  `taskId`, and `limit` (default 5, maximum 10) returns task records and excerpts.
+- `read_history` with an `entryId` returns up to 2,048 Unicode characters;
+  `nextOffset` retrieves the next page.
+
+Task-specific excerpts require an explicit task UUID in the original entry.
+Use ordinary text search for conversations without that link. Retrieval is
+restricted to the current `/clear` scope; old bytes remain on disk. Retrieved
+text and summaries are historical evidence, not new instructions. Summaries are
+lossy: check original details when they matter. The active model context stays
+bounded, but disk history grows with use; this is not unlimited model context.
+
+### Tool output and scheduling
+
 Claude prompt-prefix caching is enabled by default (`anthropicPromptCache = true`
 in `~/.parallels/config.toml`). It reuses eligible prefixes without rewriting
 instructions or history. Cached tokens still occupy context; caching does not
@@ -478,6 +544,25 @@ its saved output is explicitly partial, as are timeouts and cancelled commands.
 Before the next command, completed outputs are pruned to seven days and a
 256 MiB project budget. Active files are excluded until stale, and newly completed
 files can temporarily exceed the budget. Saved output is temporary, not an archive.
+
+`timeout_ms` sets a command's maximum runtime (1–600000 milliseconds; default
+600000 for compatibility). A timeout kills the shell's process group and returns
+the output captured so far, marked partial. Use 10000–30000 for connection probes
+so a stalled database or network check returns promptly. Commands run
+non-interactively with the harness's inherited `PATH`; make sure required clients
+such as `psql` are available there, or use their installed absolute path.
+
+For PostgreSQL, the project's query wrapper should set a connection timeout
+such as `PGCONNECT_TIMEOUT=10` and a per-session `statement_timeout` appropriate
+for its queries. These cover different stages; keep the shell timeout as an
+overall deadline. Use non-interactive `psql` options (`-X -w -v ON_ERROR_STOP=1
+-P pager=off`) to avoid startup-file surprises, password prompts and paging,
+and to report SQL errors as failures. See PostgreSQL's
+[connection environment variables](https://www.postgresql.org/docs/current/libpq-envars.html),
+[statement timeouts](https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-STATEMENT-TIMEOUT),
+and [psql options](https://www.postgresql.org/docs/current/app-psql.html).
+Timeouts bound the wait; missing clients and server/tunnel failures still need
+to be diagnosed in the project environment.
 
 The model can mark independent read-only Bash calls with `independent = true`.
 Up to `toolConcurrency` calls (default 4, configurable 1–32) overlap within a

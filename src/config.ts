@@ -13,7 +13,8 @@
 //       tasks.json             versioned structured task registry (src/tasks.ts), not a message queue
 //       questions/             the orchestrator's open questions for the user, a file each
 //       merged/<n>             PR #n's merge claim: started → handled / kept / nothing to do (src/merges.ts)
-//       transcripts/<role>-<branch>.jsonl   one per agent; the only memory
+//       transcripts/<role>-<branch>.jsonl   original agent history + context checkpoints
+//       memory.sqlite          rebuildable orchestrator history/task retrieval index
 
 import { homedir } from "node:os";
 import { join } from "node:path";

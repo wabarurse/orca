@@ -51,7 +51,7 @@ Project model switching and request settings:
 - In-flight calls/tools finish. Failed turns retain drained history and require another message to resume; changing settings never retries a task or restarts exited workers/reviewers. Provider-load errors are explicit. Cross-provider adapter sanitizer and fake tests do not guarantee live service acceptance of all historic reasoning/multimodal blocks.
 - See `MODEL_SETTINGS.md` for exact semantics, verified SDK/official endpoint sources, allowed model/effort/tier subset, tests and limitations.
 
-Compaction: see COMPACTION.md. `/compact` and all-role auto compaction use one resolved model/provider/settings snapshot per safe boundary. Model context uses `Transcript.chain()`; UI replay uses `Transcript.history()` via orchestrator `entries()`. Summaries are best-effort/lossy; complete original task and original disk/UI entries are preserved. Transcript records now publish complete byte-preserving file images via staged fsync/close + rename, with explicit post-commit directory durability warnings.
+Compaction: see COMPACTION.md. `/compact` and auto compaction resolve foreground model/provider/settings once per safe boundary; orchestrator memory uses its separate configured Luna summarizer. Model context uses `Transcript.chain()`; UI replay uses `Transcript.history()` via orchestrator `entries()`. Summaries are best-effort/lossy. Orchestrators use background rolling memory and scoped SQLite search/read via task; workers/reviewers pin their complete original task. Both preserve original disk/UI entries and exact receipts. Transcript records now publish complete byte-preserving file images via staged fsync/close + rename, with explicit post-commit directory durability warnings.
 
 Structured task merge observations are separate from destructive cleanup: exact repository/PR matches archive active rows before cleanup claims or tmux/worktree checks. Task records remain. `src/github.ts` validates explicit PR snapshots; readiness requires reviewer attestation plus a matching clean local/published head, not PR creation or agent exit. `listTasks` is the narrow typed data source for the Inbox Tasks table. See `TASK_INBOX.md`.
 
@@ -65,4 +65,4 @@ reads on explicit Ctrl+V only, with system JXA or existing Linux tools. Keep tes
 on injected/isolated fixtures, never the live clipboard. Inbox receipts still own
 consumption. `spawn`/`message` attachments explicitly forward IDs from the sender's
 current context epoch. Compaction retains real references and budgets pixels, not
-base64; coordinate separate rolling-memory work using the documented contract.
+base64, including #74 rolling checkpoints. `image-history.ts` sanitizes text-only summaries/search, while SQLite raw entries retain scoped references. `rolling-images.test.ts` covers combined checkpoint/history/provider/forwarding/clear behavior.

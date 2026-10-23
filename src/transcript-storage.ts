@@ -41,7 +41,7 @@ async function syncDirectory(path: string, io: Storage): Promise<void> {
  * commit point. Before rename all failures leave the published file unchanged. After rename
  * directory-sync errors are warnings: the process and readers agree on the committed record.
  */
-export async function publish(path: string, record: string, io: Storage = disk, committed: () => void = () => {}, signal?: AbortSignal): Promise<void> {
+export async function publish(path: string, record: string, io: Storage = disk, committed: () => void = () => {}, signal?: AbortSignal, authorize?: () => void): Promise<void> {
   signal?.throwIfAborted();
   const prior = await io.read(path).catch((error) => {
     if (error.code === "ENOENT") return Buffer.alloc(0);
@@ -54,6 +54,7 @@ export async function publish(path: string, record: string, io: Storage = disk, 
   try {
     await stage(temp, bytes, io);
     signal?.throwIfAborted(); // last pre-publication authorization; after rename this is committed
+    authorize?.();
     await io.rename(temp, path);
     committed();
   } finally { await io.unlink(temp).catch(() => {}); }

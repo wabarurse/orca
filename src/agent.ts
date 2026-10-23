@@ -18,6 +18,7 @@ import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
 import { callText, resultText, type ToolCall, type ToolOutcome } from "./toolview";
 import { scheduleTools } from "./tool-scheduler";
+import type { RollingOptions } from "./rolling-memory";
 
 export interface AgentOptions {
   project: string;
@@ -27,6 +28,7 @@ export interface AgentOptions {
   run?: string;
   /** Injectable credentials boundary; production defaults to accounts.provider. */
   loadProvider?: Parameters<typeof projectModelResolver>[1];
+  rolling?: RollingOptions;
 }
 
 export interface AgentDeps {
@@ -41,6 +43,8 @@ export interface AgentDeps {
   requestOutputCap?: number;
   compaction?: CompactOptions;
   compactRequested?: () => boolean;
+  /** Orchestrator-owned background memory, invoked only between complete tool batches. */
+  compactBoundary?: (current: AgentDeps, manual: boolean, maintenance?: boolean) => Promise<void>;
   /** Resolve before budgeting, not just before the normal request. */
   resolveModel?: () => Promise<{ model: string; provider: Provider; settings?: RequestSettings }>;
   transcript: Transcript;
@@ -173,20 +177,21 @@ async function snapshot(deps: AgentDeps): Promise<AgentDeps> {
 function boundaries(deps: AgentDeps) {
   let failed = false;
   let previousModel = "";
-  return async (manual = false): Promise<AgentDeps> => {
+  return async (manual = false, maintenance = false): Promise<AgentDeps> => {
     deps.signal?.throwIfAborted();
     const current = await snapshot(deps);
     deps.signal?.throwIfAborted();
     if (current.model !== previousModel) failed = false;
     previousModel = current.model;
     requireVision(current.model, await current.transcript.chain());
-    if (manual || !failed) {
+    if (current.compactBoundary) await current.compactBoundary(current, manual, maintenance);
+    else if (!maintenance && (manual || !failed)) {
       try {
         const result = await compact(current, manual);
         if (result !== null) failed = !result;
       } catch (error) { failed = true; throw error; }
     }
-    requireFits(current, await current.transcript.chain(), outputCap(current), "model request");
+    if (!maintenance) requireFits(current, await current.transcript.chain(), outputCap(current), "model request");
     return current;
   };
 }
@@ -214,7 +219,7 @@ async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>)
 export function createAgent(input: AgentDeps) {
   const deps = { ...input, compaction: input.compaction ?? {}, write: input.write ?? ((t: string) => { process.stdout.write(t); }) };
   const boundary = boundaries(deps);
-  return { run: () => runLoop(deps, boundary), compact: async () => { await boundary(true); } };
+  return { run: () => runLoop(deps, boundary), compact: async () => { await boundary(true); }, maintain: async () => { await boundary(false, true); } };
 }
 
 /**
@@ -250,6 +255,15 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
 }
 
 async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: Tracker): Promise<void> {
+  if (opts.role === "orchestrator") {
+    // The one-shot CLI must share the TUI's whole-turn lock, cancellation gate
+    // and exact-input requirement, including while joining background memory.
+    const { createOrchestrator } = await import("./orchestrator");
+    const orch = await createOrchestrator({ project: opts.project, loadProvider: opts.loadProvider,
+      rolling: opts.rolling, signal, joinRolling: true });
+    try { await orch.turn(); signal.throwIfAborted(); } finally { orch.dispose?.(); }
+    return;
+  }
   const config = await loadConfig();
   const model = await effectiveModel(opts.project);
   // One transcript per role per branch, so a restart resumes it. spawn seeds
