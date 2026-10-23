@@ -58,7 +58,7 @@ test("duplicate registration on a PR branch guides corrections to the existing t
   const before = await getTask(project, t.id);
   const result = await tool.run({ action: "register", name: "Fix the PR", summary: "Correct the existing change", branch: t.branch, authorized: true }, ctx());
   expect(result).toStartWith("refused:");
-  expect(result).toContain("same unmerged PR");
+  expect(result).toContain("same unmerged pr");
   expect(result).toContain("resume its existing taskId and branch without registering again");
   expect(result).toContain("separate work needs a new branch");
   expect(JSON.parse(await tool.run({ action: "list" }, ctx())).map((row: { id: string }) => row.id)).toEqual([t.id]);

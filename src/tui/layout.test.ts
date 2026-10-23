@@ -66,13 +66,13 @@ test("chapter header stays pinned and unshaded while the conversation scrolls", 
 
 test("logical block separators are neutral, tools stay paired, lists and wrapped rows stay together", () => {
   setUserFill(bg);
-  const lines: Line[] = [...userLines("hello long message\ncontinuation"), { md: "reply", block: true }, { md: "", block: true }, { md: "- a", block: true }, { md: "- b", block: true, continuation: true }, { tool: "Bash(ls)", summary: "2 lines", failed: false }, { tool: "Bash(sleep)", summary: "interrupted", failed: true }];
+  const lines: Line[] = [...userLines("hello long message\ncontinuation"), { md: "reply", block: true }, { md: "", block: true }, { md: "- a", block: true }, { md: "- b", block: true, continuation: true }, { tool: "bash(ls)", summary: "2 lines", failed: false }, { tool: "bash(sleep)", summary: "interrupted", failed: true }];
   const full = historyRows(lines, 12);
   const split = [...historyRows(lines.slice(0, 4), 12), ...historyRows(lines.slice(4), 12, lines[3])];
   expect(split).toEqual(full);
   const s = new FakeScreen(12, 30);
   s.write(commit(full, 12));
-  expect(s.text()).toContain("reply\n\n- a\n- b\n\n⏺ Bash(ls)\n  ⎿  2 lines\n\n⏺ Bash(slee…\n  ⎿  interr…");
+  expect(s.text()).toContain("reply\n\n- a\n- b\n\n⏺ bash(ls)\n  ⎿  2 lines\n\n⏺ bash(slee…\n  ⎿  interr…");
   for (const [i, row] of s.buf.entries()) if (!row.join("").trim()) expect(s.backgrounds()[i]!.some(Boolean)).toBe(false);
 });
 
@@ -91,7 +91,7 @@ test("stream chunk boundaries do not change spacing", () => {
 test("queued previews sit immediately above the composer, with ordered Unicode/multiline clipping and hidden counts", () => {
   const f: Frame = { ...frame(64, 18), menu: null, queued: { project: "display name", texts: ["first\nsecond 界é👩‍💻", "long " + "界é👩‍💻".repeat(100), "third", "fourth", "fifth", "sixth"] } };
   const drawn = liveRows(f), rows = drawn.rows.map(Bun.stripANSI);
-  expect(rows[0]).toBe("Queued 5/6 · orchestrator · 1 hidden · display name");
+  expect(rows[0]).toBe("queued 5/6 · orchestrator · 1 hidden · display name");
   expect(rows[1]).toBe("  1. first ↵ second 界é👩‍💻");
   expect(rows[2]).toEndWith("…");
   expect(rows[5]).toBe("  5. fifth");
@@ -131,15 +131,15 @@ test("pending previews reserve the same help viewport used by its scroll keys", 
   const help = helpPanel(f), drawn = liveRows(f);
   expect(drawn.rows.length).toBeLessThanOrEqual(18); // help retains two conversation rows too
   expect(drawn.rows.slice(-help.rows.length).map(Bun.stripANSI)).toEqual(help.rows.map(Bun.stripANSI));
-  expect(help.rows.at(-1)).toContain("Esc close");
-  expect(drawn.rows.map(Bun.stripANSI)[0]).toStartWith("Queued 2/2");
+  expect(help.rows.at(-1)).toContain("esc close");
+  expect(drawn.rows.map(Bun.stripANSI)[0]).toStartWith("queued 2/2");
 });
 
 
 test("one-row queue budgets still preview the oldest prompt; compact headings prioritize the orchestrator owner", () => {
   const queued = { project: "project", texts: ["oldest", "later", "last"] };
-  expect(queuedRows(queued, 40, 1).map(Bun.stripANSI)).toEqual(["Queued 1/3 · orch: oldest"]);
-  expect(queuedRows(queued, 24, 2).map(Bun.stripANSI)[0]).toStartWith("Queued 1/3 · orch");
+  expect(queuedRows(queued, 40, 1).map(Bun.stripANSI)).toEqual(["queued 1/3 · orch: oldest"]);
+  expect(queuedRows(queued, 24, 2).map(Bun.stripANSI)[0]).toStartWith("queued 1/3 · orch");
   expect(queuedRows(queued, 40, 0)).toEqual([]);
   expect(queuedRows({ ...queued, texts: [] }, 40, 4)).toEqual([]);
 });

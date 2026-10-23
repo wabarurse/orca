@@ -54,7 +54,7 @@ for (const role of ["orchestrator", "worker", "reviewer"] as Role[]) test(`${rol
   expect(JSON.stringify(codexHistory)).toContain("https://example.com/docs");
   expect(JSON.stringify(codexHistory)).not.toContain("opaque-");
   expect(JSON.stringify(claudeMessages(await restored.chain()))).toContain("An actual quoted excerpt.");
-  expect(JSON.stringify(restore(restored.history!(), 100))).toContain("WebSearch(public docs)");
+  expect(JSON.stringify(restore(restored.history!(), 100))).toContain("websearch(public docs)");
   expect(JSON.stringify(restore(restored.history!(), 100))).toContain("Web search: 2 sources.");
 });
 

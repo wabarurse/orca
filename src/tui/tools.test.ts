@@ -14,38 +14,38 @@ const shown = (rows: string[], cols: number) => { const s = new FakeScreen(cols,
 
 describe("tool rows", () => {
   test("a finished call: its line with the name in bold, then the one-line summary; dim marker, red when it failed", () => {
-    const ok = toolRows({ tool: "Bash(git status)", summary: "12 lines", failed: false }, 40);
-    expect(ok.map(strip)).toEqual(["⏺ Bash(git status)", "  ⎿  12 lines"]);
-    expect(ok[0]).toBe("\x1b[2m⏺\x1b[0m \x1b[1mBash\x1b[0m(git status)");
-    const bad = toolRows({ tool: "Bash(make)", summary: "exit 2: boom", failed: true }, 40);
+    const ok = toolRows({ tool: "bash(git status)", summary: "12 lines", failed: false }, 40);
+    expect(ok.map(strip)).toEqual(["⏺ bash(git status)", "  ⎿  12 lines"]);
+    expect(ok[0]).toBe("\x1b[2m⏺\x1b[0m \x1b[1mbash\x1b[0m(git status)");
+    const bad = toolRows({ tool: "bash(make)", summary: "exit 2: boom", failed: true }, 40);
     expect(bad[0]!.startsWith("\x1b[31m⏺\x1b[0m ")).toBe(true);
-    expect(shown(bad, 40)).toBe("⏺ Bash(make)\n  ⎿  exit 2: boom");
+    expect(shown(bad, 40)).toBe("⏺ bash(make)\n  ⎿  exit 2: boom");
   });
 
   test("NO_COLOR: no red, a bold marker for a failure", () => {
     process.env.NO_COLOR = "1";
-    const bad = toolRows({ tool: "Bash(make)", summary: "exit 2", failed: true }, 40);
+    const bad = toolRows({ tool: "bash(make)", summary: "exit 2", failed: true }, 40);
     expect(bad[0]!.startsWith("\x1b[1m⏺\x1b[0m ")).toBe(true);
     expect(bad.join("")).not.toContain("\x1b[31m");
   });
 
   test("cut to narrow widths with …, CJK by display width; escapes in the input cannot get through", () => {
-    const rows = toolRows({ tool: "Bash(echo 你好世界 and more)", summary: "a very long first line of output", failed: false }, 14);
-    expect(rows.map(strip)).toEqual(["⏺ Bash(echo …", "  ⎿  a very l…"]);
+    const rows = toolRows({ tool: "bash(echo 你好世界 and more)", summary: "a very long first line of output", failed: false }, 14);
+    expect(rows.map(strip)).toEqual(["⏺ bash(echo …", "  ⎿  a very l…"]);
     expect(rows.map((r) => Bun.stringWidth(r)).every((w) => w <= 14)).toBe(true);
-    expect(shown(rows, 14)).toBe("⏺ Bash(echo …\n  ⎿  a very l…");
-    expect(toolRows({ tool: "Bash(echo 你好)", summary: "1", failed: false }, 15).map(strip)[0]).toBe("⏺ Bash(echo 你…"); // 你 fits, 好 would not
-    const tiny = toolRows({ tool: "Bash(ls)", summary: "1 line", failed: false }, 4);
+    expect(shown(rows, 14)).toBe("⏺ bash(echo …\n  ⎿  a very l…");
+    expect(toolRows({ tool: "bash(echo 你好)", summary: "1", failed: false }, 15).map(strip)[0]).toBe("⏺ bash(echo 你…"); // 你 fits, 好 would not
+    const tiny = toolRows({ tool: "bash(ls)", summary: "1 line", failed: false }, 4);
     expect(shown(tiny, 4).split("\n").length).toBe(2);
-    expect(strip(toolRows({ tool: "Bash(a\x1b[2Jb)", summary: "x\x07", failed: false }, 40).join("\n"))).toBe("⏺ Bash(ab)\n  ⎿  x");
-    expect(lineRows({ tool: "Bash(ls)", summary: "1 line", failed: false }, 20)).toEqual(toolRows({ tool: "Bash(ls)", summary: "1 line", failed: false }, 20));
+    expect(strip(toolRows({ tool: "bash(a\x1b[2Jb)", summary: "x\x07", failed: false }, 40).join("\n"))).toBe("⏺ bash(ab)\n  ⎿  x");
+    expect(lineRows({ tool: "bash(ls)", summary: "1 line", failed: false }, 20)).toEqual(toolRows({ tool: "bash(ls)", summary: "1 line", failed: false }, 20));
   });
 
   test("a running call: the dim marker and its label shimmering, cut to the width", () => {
     const row = runningRow({ name: "bash", input: { command: "git status" } }, 0, 40);
-    expect(strip(row)).toBe("⏺ Bash(git status)");
-    expect(strip(runningRow({ name: "bash", input: { command: "x".repeat(50) } }, 0, 12))).toBe("⏺ Bash(xxxx…");
-    expect(shown([row], 40)).toBe("⏺ Bash(git status)");
+    expect(strip(row)).toBe("⏺ bash(git status)");
+    expect(strip(runningRow({ name: "bash", input: { command: "x".repeat(50) } }, 0, 12))).toBe("⏺ bash(xxxx…");
+    expect(shown([row], 40)).toBe("⏺ bash(git status)");
   });
 
   test("Calls pairs a followed transcript's calls and results into lines; an unseen result still shows", () => {
@@ -53,10 +53,10 @@ describe("tool rows", () => {
     const lines = calls.absorb(["text", { md: "**hi**" }, { call: { id: "a", name: "bash", input: { command: "ls" } } }]);
     expect(lines).toEqual(["text", { md: "**hi**" }]);
     expect(calls.size).toBe(1);
-    expect(calls.rows(0, 40).map(strip)).toEqual(["⏺ Bash(ls)"]);
-    expect(calls.absorb([{ result: { id: "a", ok: true, text: "x\ny" } }])).toEqual([{ tool: "Bash(ls)", summary: "2 lines", failed: false }]);
+    expect(calls.rows(0, 40).map(strip)).toEqual(["⏺ bash(ls)"]);
+    expect(calls.absorb([{ result: { id: "a", ok: true, text: "x\ny" } }])).toEqual([{ tool: "bash(ls)", summary: "2 lines", failed: false }]);
     expect(calls.size).toBe(0);
-    expect(calls.absorb([{ result: { id: "zz", ok: false, text: "boom" } }])).toEqual([{ tool: "Tool()", summary: "boom", failed: true }]);
+    expect(calls.absorb([{ result: { id: "zz", ok: false, text: "boom" } }])).toEqual([{ tool: "tool()", summary: "boom", failed: true }]);
   });
 });
 
@@ -90,10 +90,10 @@ describe("shimmer", () => {
 test("untrusted escapes cannot be split by the shimmer at any phase", () => {
   for (const now of [0, 400, 800, 1200, 1600]) {
     const row = runningRow({ name: "bash", input: { command: "\x1b[31mred\x1b[0m \x1b]8;;x\x07link\x1b]8;;\x07\x1b]52;c;evil\x07" } }, now, 50);
-    expect(shown([row], 50)).toBe("⏺ Bash(red link)");
+    expect(shown([row], 50)).toBe("⏺ bash(red link)");
   }
   const calls = new Calls();
   calls.start({ id: "a", name: "bash", input: { command: "sleep 99" } });
-  expect(calls.interrupt()).toEqual([{ tool: "Bash(sleep 99)", summary: "interrupted", failed: true }]);
+  expect(calls.interrupt()).toEqual([{ tool: "bash(sleep 99)", summary: "interrupted", failed: true }]);
   expect(calls.size).toBe(0);
 });

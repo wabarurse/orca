@@ -17,7 +17,7 @@ export async function forwardImages(input: unknown, ctx: ToolContext): Promise<I
       const ref = blockRef(block); if (ref) allowed.set(ref.id, ref);
     }
   }
-  const refs = input.map(id => { const ref = allowed.get(id); if (!ref) throw new Error(`Image ${id} was not received in this agent's current context.`); return ref; });
+  const refs = input.map(id => { const ref = allowed.get(id); if (!ref) throw new Error(`image ${id} was not received in this agent's current context.`); return ref; });
   await validateRefs(ctx.project, refs);
   return refs;
 }

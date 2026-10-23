@@ -6,7 +6,7 @@ import { stopTaskRun } from "./tasks";
 import { paths } from "./config";
 
 export class Cancelled extends Error {
-  constructor() { super("Cancelled by user"); }
+  constructor() { super("cancelled by user"); }
 }
 
 /** Publish before making a transcript/window selectable. Kept separate from the
@@ -32,7 +32,7 @@ export async function cancelSession(project: string, id: string): Promise<void> 
     await Bun.write(tmp, JSON.stringify({ token, run }));
     renameSync(tmp, path);
   } finally { rmSync(tmp, { force: true }); }
-  await stopTaskRun(project, run, "cancelled", "Cancelled by user; leave stopped until explicitly authorized to continue");
+  await stopTaskRun(project, run, "cancelled", "cancelled by user; leave stopped until explicitly authorized to continue");
 }
 
 /** Only the exact launch can accept its request, including requests before startup. */

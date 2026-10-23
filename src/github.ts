@@ -38,7 +38,7 @@ function checks(raw: unknown): PRObservation["checks"] {
   return states.includes("pending") ? "pending" : "passed";
 }
 export function parseTaskPR(repository: string, number: number, raw: unknown): PRObservation {
-  if (!obj(raw) || raw.number !== number || !["OPEN", "CLOSED", "MERGED"].includes(String(raw.state)) || typeof raw.headRefName !== "string" || !raw.headRefName || raw.isCrossRepository !== false) throw new Error("invalid or foreign PR observation");
+  if (!obj(raw) || raw.number !== number || !["OPEN", "CLOSED", "MERGED"].includes(String(raw.state)) || typeof raw.headRefName !== "string" || !raw.headRefName || raw.isCrossRepository !== false) throw new Error("invalid or foreign pr observation");
   const pr = taskPR({ repository, number, url: raw.url, head: raw.headRefOid });
   const state = raw.state as PRObservation["state"];
   if (state === "MERGED" && (typeof raw.mergedAt !== "string" || !Number.isFinite(Date.parse(raw.mergedAt)))) throw new Error("merge is not confirmed");

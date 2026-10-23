@@ -104,7 +104,7 @@ test("URL filtering rejects unsafe/credentialed/oversized URLs and preserves que
 });
 
 test("web search has a concise live/restored label, result count, and error state", () => {
-  expect(toolLabel("web_search", { query: "public docs", max_results: 2 })).toBe("WebSearch(public docs)");
+  expect(toolLabel("web_search", { query: "public docs", max_results: 2 })).toBe("websearch(public docs)");
   expect(toolSummary("web_search", { ok: true, text: searchText(result, 1) })).toEqual({ summary: "Web search: 1 source.", failed: false });
   expect(toolSummary("web_search", { ok: false, text: "web_search: cancelled." })).toEqual({ summary: "web_search: cancelled.", failed: true });
 });

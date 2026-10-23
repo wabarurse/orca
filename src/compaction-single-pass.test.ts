@@ -125,10 +125,10 @@ test("a failed summary stops the normal turn; an explicit retry can compact reta
     return end("Requirements and progress.");
   });
   const agent = createAgent(deps);
-  await expect(agent.run()).rejects.toThrow("Context blocked");
+  await expect(agent.run()).rejects.toThrow("context blocked");
   expect(summaries).toBe(1); expect(normal).toBe(0);
   expect(await Bun.file(transcript.path).text()).toBe(bytes);
-  await expect(agent.run()).rejects.toThrow("Context blocked");
+  await expect(agent.run()).rejects.toThrow("context blocked");
   expect(summaries).toBe(1);
   failed = false;
   await agent.compact();

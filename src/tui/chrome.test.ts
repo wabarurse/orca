@@ -50,7 +50,7 @@ test("count strip groups on wide screens and stacks on narrow screens, without s
 
 test("tool history and running labels also obey one-cell and Unicode limits", () => {
   for (const cols of [1, 2, 3, 5, 8]) {
-    const rows = [...toolRows({ tool: "Bash(界界)", summary: "界界".repeat(10), failed: true }, cols), runningRow({ name: "bash", input: { command: "界".repeat(40) } }, 400, cols)];
+    const rows = [...toolRows({ tool: "bash(界界)", summary: "界界".repeat(10), failed: true }, cols), runningRow({ name: "bash", input: { command: "界".repeat(40) } }, 400, cols)];
     expect(rows.every((r) => Bun.stringWidth(r) <= cols)).toBe(true);
   }
 });

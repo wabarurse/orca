@@ -107,7 +107,7 @@ export interface QuestionHost {
 const EMPTY: EditState = { text: "", cursor: 0 };
 /** How long Enter, digits and typing are ignored after a question first shows. */
 export const QUESTION_DELAY_MS = 500;
-export const QUESTION_PROGRESS = { answer: "Sending answer…", skip: "Removing from inbox…" };
+export const QUESTION_PROGRESS = { answer: "sending answer…", skip: "removing from inbox…" };
 
 /** UI-only feedback: dismissal never uses the legacy delivered skip/default formatter. */
 function closeFeedback(question: string, answer: string | null): { kind: "answer" | "skip"; line: string } {
@@ -178,7 +178,7 @@ export class Questions {
     const q = page.questions;
     q.polling ??= this.read(page).catch(err => {
       if (!this.valid(page)) return;
-      q.error = plainText(message(err)) || "Could not read questions.";
+      q.error = plainText(message(err)) || "could not read questions.";
       q.stamp = NaN;
       this.host.draw();
     }).finally(() => { q.polling = null; });

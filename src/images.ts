@@ -58,49 +58,49 @@ function crc32(bytes: Uint8Array): number {
  * and scanline filters. No suffix/MIME trust, animated/interlaced inputs rejected.
  */
 export function validateImage(input: Uint8Array, mime = "image/png"): { width: number; height: number } {
-  if (mime !== "image/png") throw new Error("Unsupported image format; copy a PNG image (macOS also converts TIFF/JPEG).");
+  if (mime !== "image/png") throw new Error("unsupported image format; copy a png image (macos also converts tiff/jpeg).");
   const b = Buffer.from(input);
-  if (!b.length || b.length > MAX_IMAGE_BYTES) throw new Error("Image must be nonempty and at most 4 MiB.");
-  if (!b.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error("Invalid PNG image signature.");
+  if (!b.length || b.length > MAX_IMAGE_BYTES) throw new Error("image must be nonempty and at most 4 mib.");
+  if (!b.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error("invalid png image signature.");
   let pos = 8, width = 0, height = 0, depth = 0, color = 0, ended = false, palette = false, dataEnded = false;
   const data: Buffer[] = [];
   while (pos + 12 <= b.length) {
     const size = b.readUInt32BE(pos), type = b.toString("ascii", pos + 4, pos + 8), end = pos + size + 12;
-    if (end > b.length || crc32(b.subarray(pos + 4, end - 4)) !== b.readUInt32BE(end - 4)) throw new Error("Invalid PNG chunk/CRC.");
+    if (end > b.length || crc32(b.subarray(pos + 4, end - 4)) !== b.readUInt32BE(end - 4)) throw new Error("invalid png chunk/crc.");
     const value = b.subarray(pos + 8, end - 4);
-    if (!width && type !== "IHDR") throw new Error("Invalid PNG header order.");
+    if (!width && type !== "IHDR") throw new Error("invalid png header order.");
     if (type === "IHDR") {
-      if (pos !== 8 || size !== 13) throw new Error("Invalid PNG header.");
+      if (pos !== 8 || size !== 13) throw new Error("invalid png header.");
       width = value.readUInt32BE(0); height = value.readUInt32BE(4); depth = value[8]!; color = value[9]!;
-      if (!width || !height || width > 4096 || height > 4096 || width * height > MAX_PIXELS) throw new Error("Image dimensions exceed 4096 × 4096.");
+      if (!width || !height || width > 4096 || height > 4096 || width * height > MAX_PIXELS) throw new Error("image dimensions exceed 4096 × 4096.");
       const depths: Record<number, number[]> = { 0: [1,2,4,8,16], 2: [8,16], 3: [1,2,4,8], 4: [8,16], 6: [8,16] };
-      if (!depths[color]?.includes(depth) || value[10] !== 0 || value[11] !== 0 || value[12] !== 0) throw new Error("Unsupported PNG encoding (interlaced images are not supported).");
+      if (!depths[color]?.includes(depth) || value[10] !== 0 || value[11] !== 0 || value[12] !== 0) throw new Error("unsupported png encoding (interlaced images are not supported).");
     } else if (type === "PLTE") {
-      if (data.length || palette || !size || size % 3 || size > 768) throw new Error("Invalid PNG palette.");
+      if (data.length || palette || !size || size % 3 || size > 768) throw new Error("invalid png palette.");
       palette = true;
     } else if (type === "IDAT") {
-      if (dataEnded || (color === 3 && !palette)) throw new Error("Invalid PNG data order.");
+      if (dataEnded || (color === 3 && !palette)) throw new Error("invalid png data order.");
       data.push(value);
     } else if (type === "IEND") {
-      if (size || !data.length || end !== b.length) throw new Error("Invalid PNG end.");
+      if (size || !data.length || end !== b.length) throw new Error("invalid png end.");
       ended = true; break;
     } else {
       if (data.length) dataEnded = true;
-      if (type === "acTL" || !/^[a-z][A-Za-z]{3}$/.test(type)) throw new Error("Unsupported PNG chunk/animation.");
+      if (type === "acTL" || !/^[a-z][A-Za-z]{3}$/.test(type)) throw new Error("unsupported png chunk/animation.");
     }
     pos = end;
   }
-  if (!ended) throw new Error("Truncated PNG image.");
+  if (!ended) throw new Error("truncated png image.");
   const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number>)[color]!;
   const row = Math.ceil(width * depth * channels / 8) + 1;
-  if (row * height > 64 * 1024 * 1024) throw new Error("Decoded image exceeds 64 MiB.");
+  if (row * height > 64 * 1024 * 1024) throw new Error("decoded image exceeds 64 mib.");
   const pixels = inflateSync(Buffer.concat(data), { maxOutputLength: row * height });
-  if (pixels.length !== row * height) throw new Error("Invalid PNG scanline length.");
-  for (let y = 0; y < height; y++) if (pixels[y * row]! > 4) throw new Error("Invalid PNG scanline filter.");
+  if (pixels.length !== row * height) throw new Error("invalid png scanline length.");
+  for (let y = 0; y < height; y++) if (pixels[y * row]! > 4) throw new Error("invalid png scanline filter.");
   return { width, height };
 }
 export async function saveImage(project: string, bytes: Uint8Array, mime?: string): Promise<ImageRef> {
-  if (bytes.length > MAX_IMAGE_BYTES) throw new Error("Image must be at most 4 MiB.");
+  if (bytes.length > MAX_IMAGE_BYTES) throw new Error("image must be at most 4 mib.");
   bytes = Buffer.from(bytes); // Caller mutations cannot change bytes after validation/queueing.
   validateImage(bytes, mime);
   const identity = projectIdentity(project), ref = { id: crypto.randomUUID(), scope: scope(project), sha256: hash(bytes) };
@@ -113,18 +113,18 @@ export async function saveImage(project: string, bytes: Uint8Array, mime?: strin
 }
 export async function loadImage(project: string, ref: ImageRef): Promise<Buffer> {
   assertRef(ref);
-  if (ref.scope !== scope(project)) throw new Error("Image belongs to another/deleted project.");
+  if (ref.scope !== scope(project)) throw new Error("image belongs to another/deleted project.");
   await safeDir(imageDir(project));
   const bytes = await readSafe(join(imageDir(project), `${ref.id}.png`), MAX_IMAGE_BYTES);
-  if (hash(bytes) !== ref.sha256) throw new Error(`Image ${ref.id} changed or is corrupt.`);
+  if (hash(bytes) !== ref.sha256) throw new Error(`image ${ref.id} changed or is corrupt.`);
   validateImage(bytes);
-  if (ref.scope !== scope(project)) throw new Error("Project changed while reading image.");
+  if (ref.scope !== scope(project)) throw new Error("project changed while reading image.");
   return bytes;
 }
 export async function validateRefs(project: string, refs: ImageRef[] | undefined): Promise<void> {
   if (refs === undefined) return;
-  if (!Array.isArray(refs) || refs.length > MAX_IMAGES) throw new Error("At most 4 images may be attached to a prompt.");
-  if (new Set(refs.map(r => r?.id)).size !== refs.length) throw new Error("Duplicate image reference.");
+  if (!Array.isArray(refs) || refs.length > MAX_IMAGES) throw new Error("at most 4 images may be attached to a prompt.");
+  if (new Set(refs.map(r => r?.id)).size !== refs.length) throw new Error("duplicate image reference.");
   for (const ref of refs) await loadImage(project, ref);
 }
 export function imageBlock(ref: ImageRef): ImageBlockParam {
@@ -138,7 +138,7 @@ export function blockRef(block: ImageBlockParam): ImageRef | undefined {
   if (extra !== undefined) throw new Error("invalid image reference");
   assertRef(ref); return ref;
 }
-export const imageLabels = (refs?: ImageRef[]) => refs?.length ? refs.map((_, i) => `[Image ${i + 1}]`).join(" ") : "";
+export const imageLabels = (refs?: ImageRef[]) => refs?.length ? refs.map((_, i) => `[image ${i + 1}]`).join(" ") : "";
 export function imageContent(text: string, refs: ImageRef[] = []): MessageParam["content"] {
   if (!refs.length) return text;
   return [{ type: "text", text: text || "[Image-only prompt]" }, ...refs.flatMap((ref, i) => [
@@ -153,12 +153,12 @@ export async function materializeImages(project: string, messages: MessageParam[
     const content: Exclude<MessageParam["content"], string> = [];
     for (const block of message.content) {
       if (block.type !== "image") { content.push(block); continue; }
-      if (message.role !== "user") throw new Error("Assistant image input is unsupported.");
+      if (message.role !== "user") throw new Error("assistant image input is unsupported.");
       const ref = blockRef(block);
-      if (!ref) throw new Error("Unscoped image in saved context; image delivery refused.");
+      if (!ref) throw new Error("unscoped image in saved context; image delivery refused.");
       const bytes = await loadImage(project, ref);
       total += bytes.length;
-      if (total > 16 * 1024 * 1024) throw new Error("Image context exceeds 16 MiB of encoded image bytes. No image was discarded. Use an explicit /clear for a new task; original history is preserved.");
+      if (total > 16 * 1024 * 1024) throw new Error("image context exceeds 16 mib of encoded image bytes. no image was discarded. use an explicit /clear for a new task; original history is preserved.");
       content.push({ type: "image", source: { type: "base64", media_type: "image/png", data: bytes.toString("base64") } });
     }
     out.push({ ...message, content });
@@ -186,12 +186,12 @@ export function requireVision(model: string, messages: MessageParam[]): void {
     "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review",
   ]).has(model);
-  if (!claude && !codex) throw new Error(`Image input is not enabled for model ${model}. Choose a documented vision model explicitly; attachments were preserved.`);
+  if (!claude && !codex) throw new Error(`image input is not enabled for model ${model}. choose a documented vision model explicitly; attachments were preserved.`);
 }
 export function validatedBase64(block: ImageBlockParam): { data: string; mime: "image/png" } {
-  if (block.source.type !== "base64" || block.source.media_type !== "image/png") throw new Error("Image was not resolved to supported PNG bytes; request refused.");
+  if (block.source.type !== "base64" || block.source.media_type !== "image/png") throw new Error("image was not resolved to supported png bytes; request refused.");
   const data = block.source.data;
-  if (data.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) throw new Error("Invalid image base64.");
+  if (data.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) throw new Error("invalid image base64.");
   validateImage(Buffer.from(data, "base64"), block.source.media_type);
   return { data, mime: "image/png" };
 }
@@ -211,10 +211,10 @@ export async function saveImageInput(project: string, input: ImageInput): Promis
     if (!input.attachments?.length) throw new Error("image prompt must have an attachment");
     const dir = join(paths.project(project), "image-inputs"); await safeDir(dir, true);
     const path = join(dir, `${input.inputId}.json`), bytes = Buffer.from(JSON.stringify(input));
-    if (bytes.length > 65536) throw new Error("Image prompt metadata exceeds 64 KiB; shorten the text before sending.");
+    if (bytes.length > 65536) throw new Error("image prompt metadata exceeds 64 kib; shorten the text before sending.");
     try {
       const saved = JSON.parse((await readSafe(path, 66560)).toString());
-      if (JSON.stringify(saved.input) !== bytes.toString()) throw new Error("Image prompt identity is immutable.");
+      if (JSON.stringify(saved.input) !== bytes.toString()) throw new Error("image prompt identity is immutable.");
       return;
     }
     catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }

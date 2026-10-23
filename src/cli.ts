@@ -88,7 +88,7 @@ switch (cmd) {
     if (rest.length) usage("pull takes no arguments; it only updates ~/.parallels/app");
     try { await pullHarness(); }
     catch (error) {
-      console.error(`parallels pull: ${error instanceof Error ? error.message : String(error)}\nThe installed executable was not replaced on failure; the harness checkout/dependencies may have advanced. Inspect the error and retry after resolving it.`);
+      console.error(`parallels pull: ${error instanceof Error ? error.message : String(error)}\nthe installed executable was not replaced on failure; the harness checkout/dependencies may have advanced. inspect the error and retry after resolving it.`);
       process.exitCode = 1;
     }
     break;

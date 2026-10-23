@@ -276,7 +276,7 @@ async function notThePR(project: string, pr: MergedPR, s: string): Promise<strin
   }
   const inPR = await tipInPR(paths.repo(project), pr);
   if (inPR === null) return "could not read the branch";
-  return inPR ? null : "branch has commits not in the PR";
+  return inPR ? null : "branch has commits not in the pr";
 }
 
 // --- stop and clean up ---------------------------------------------------------
@@ -363,7 +363,7 @@ async function cleanTail(project: string, pr: MergedPR, s: string, gone: boolean
 /** The notice for one merged branch. */
 export function mergeNotice(pr: MergedPR, running: string[], stopped: boolean, tail: string): string {
   const who = running.length ? `${running.join(", ")} ${stopped ? "stopped" : "left running"}` : "no agents running";
-  return `[agent-exit] ${who}: PR #${pr.number} (${pr.headRefName}) merged (${pr.url}); ${tail}`;
+  return `[agent-exit] ${who}: pr #${pr.number} (${pr.headRefName}) merged (${pr.url}); ${tail}`;
 }
 
 // --- one PR, one project ------------------------------------------------------
@@ -478,7 +478,7 @@ async function refreshTaskPRs(project: string, repository: string, w: Watcher): 
     const key = `${t.pr!.repository}#${t.pr!.number}`;
     if (!observations.has(key)) observations.set(key, await w.d.pr(project, t.pr!).catch(() => null));
     const observation = observations.get(key);
-    if (!observation && t.readiness) await setTaskAttention(project, t.id, { kind: "unknown", reason: "PR lookup unavailable; revalidate readiness when GitHub is observable" }, t.revision).catch(() => {});
+    if (!observation && t.readiness) await setTaskAttention(project, t.id, { kind: "unknown", reason: "pr lookup unavailable; revalidate readiness when github is observable" }, t.revision).catch(() => {});
     if (observation) await observeTaskPR(project, t.id, observation, t.revision).catch(() => {});
   }
 }

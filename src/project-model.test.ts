@@ -71,7 +71,7 @@ test("new provider credential failure is explicit, never a fallback", async () =
   mkdirSync(paths.project("fail"), { recursive: true });
   await saveProjectModel("fail", "gpt-6-astra");
   const resolve = projectModelResolver("fail", async () => { throw new Error("missing credentials"); });
-  await expect(resolve()).rejects.toThrow("Cannot load provider for project fail model gpt-6-astra: missing credentials");
+  await expect(resolve()).rejects.toThrow("cannot load provider for project fail model gpt-6-astra: missing credentials");
 });
 
 test("a switch during an in-flight request takes effect only after its tools finish", async () => {

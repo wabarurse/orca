@@ -97,8 +97,8 @@ test("cancellation kills a shell and its child, not just the displayed output", 
   while (!(await Bun.file(pidFile).exists()) && Date.now() < deadline) await Bun.sleep(5);
   const pid = Number(await Bun.file(pidFile).text());
   expect(pid).toBeGreaterThan(0);
-  controller.abort(new Error("Cancelled by user"));
-  await expect(result).rejects.toThrow("Cancelled by user");
+  controller.abort(new Error("cancelled by user"));
+  await expect(result).rejects.toThrow("cancelled by user");
   // A killed child can briefly be a zombie while reparented; ps must not show a live sleep.
   const state = await Bun.$`ps -o stat= -p ${pid}`.quiet().nothrow().text();
   expect(!state.trim() || state.trim().startsWith("Z")).toBe(true);

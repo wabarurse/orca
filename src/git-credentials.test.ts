@@ -78,6 +78,6 @@ test("no credential config needs no temporary file; configuration errors do not 
   const command = async () => ({ code: 0, out: "global\0core.hookspath\n/ignored\0", err: "" });
   await withGitCredentials("git", "/unused", env, command, async actual => { expect(actual).toBe(env); });
   let called = false;
-  await expect(withGitCredentials("git", "/unused", env, async () => ({ code: 1, out: "SECRET", err: "SECRET" }), async () => { called = true; })).rejects.toThrow("could not read Git credential configuration");
+  await expect(withGitCredentials("git", "/unused", env, async () => ({ code: 1, out: "SECRET", err: "SECRET" }), async () => { called = true; })).rejects.toThrow("could not read git credential configuration");
   expect(called).toBe(false);
 });

@@ -41,13 +41,13 @@ function text(value: unknown, max: number, what: string): string {
 }
 function projectId(project: string): void { check(/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project), "invalid project id"); }
 export function taskPR(raw: unknown): TaskPR {
-  check(object(raw), "invalid PR");
-  check(typeof raw.repository === "string" && /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(raw.repository), "invalid PR repository");
+  check(object(raw), "invalid pr");
+  check(typeof raw.repository === "string" && /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(raw.repository), "invalid pr repository");
   const repository = raw.repository.toLowerCase();
-  check(Number.isSafeInteger(raw.number) && Number(raw.number) > 0, "invalid PR number");
+  check(Number.isSafeInteger(raw.number) && Number(raw.number) > 0, "invalid pr number");
   const number = Number(raw.number), url = `https://github.com/${repository}/pull/${number}`;
-  check(typeof raw.url === "string" && raw.url.toLowerCase() === url, "PR URL must match its GitHub repository and number");
-  check(sha(raw.head), "invalid PR head");
+  check(typeof raw.url === "string" && raw.url.toLowerCase() === url, "pr url must match its github repository and number");
+  check(sha(raw.head), "invalid pr head");
   return { repository, number, url, head: raw.head };
 }
 function attention(raw: unknown): TaskAttention {
@@ -87,7 +87,7 @@ function validateTask(raw: unknown): asserts raw is Task {
   if (raw.archive !== undefined) {
     const a = raw.archive;
     check(object(a) && a.reason === "merged" && stamp(a.mergedAt) && stamp(a.archivedAt), "invalid archive");
-    const p = taskPR(a.pr); check(object(raw.pr) && samePR(p, taskPR(raw.pr)), "archive PR mismatch");
+    const p = taskPR(a.pr); check(object(raw.pr) && samePR(p, taskPR(raw.pr)), "archive pr mismatch");
   }
   check(raw.history.length === raw.revision, "invalid history revision");
   raw.history.forEach((e, i) => {
@@ -155,7 +155,7 @@ export async function registerTask(project: string, input: { id?: string; name: 
   return update(project, s => {
     const old = s.tasks.find(t => t.id === id);
     if (old) { check(old.name === name && old.summary === summary && old.branch === branch, "task id already registered with different fields"); return old; }
-    check(!s.tasks.some(t => t.branch === branch && t.pr), "branch already has a PR: for a correction to the same unmerged PR, use task list/get and resume its existing taskId and branch without registering again; separate work needs a new branch");
+    check(!s.tasks.some(t => t.branch === branch && t.pr), "branch already has a pr: for a correction to the same unmerged pr, use task list/get and resume its existing taskId and branch without registering again; separate work needs a new branch");
     const now = new Date().toISOString();
     const t: Task = { id, name, summary, branch, status: "queued", createdAt: now, updatedAt: now, revision: 0, runs: [], history: [] };
     event(t, "registered"); s.tasks.push(t); return t;
@@ -170,11 +170,11 @@ export async function prepareTaskRun(project: string, id: string, branch: string
     check(!s.tasks.some(x => x.runs.some(r => r.id === run.id)), "duplicate run id");
     check(!s.tasks.some(x => x.branch === branch && x.runs.some(r => r.state === "prepared" || r.state === "started")), "task run still active on branch; reconcile it before retrying");
     for (const other of s.tasks.filter(x => !x.archive && x.branch === branch && x.readiness)) {
-      unready(other); other.attention = { kind: "waiting", reason: "New run on this branch; readiness must be validated again" }; event(other, "readiness_invalidated", run.id);
+      unready(other); other.attention = { kind: "waiting", reason: "new run on this branch; readiness must be validated again" }; event(other, "readiness_invalidated", run.id);
     }
     t.runs.push({ ...run, state: "prepared", preparedAt: new Date().toISOString() });
     t.status = run.role === "worker" ? "queued" : "reviewing";
-    t.attention = { kind: "waiting", reason: "Launch prepared; agent has not started" }; event(t, "run_prepared", run.id);
+    t.attention = { kind: "waiting", reason: "launch prepared; agent has not started" }; event(t, "run_prepared", run.id);
   });
 }
 /** Called by the supervisor inside the actual child, never by spawn's successful return. */
@@ -216,7 +216,7 @@ export async function invalidateTaskBranch(project: string, run: string): Promis
   const t = await taskForRun(project, run); if (!t) return;
   await update(project, s => {
     for (const other of s.tasks.filter(x => !x.archive && x.branch === t.branch && x.readiness)) {
-      unready(other); other.attention = { kind: "waiting", reason: "Branch activity after validation; validate readiness again" }; event(other, "readiness_invalidated", run);
+      unready(other); other.attention = { kind: "waiting", reason: "branch activity after validation; validate readiness again" }; event(other, "readiness_invalidated", run);
     }
   });
 }
@@ -239,9 +239,9 @@ export async function observeTaskPR(project: string, id: string, observation: PR
   return update(project, s => {
     const t = find(s, id);
     if (t.archive) return t;
-    if (expectedRevision !== undefined) check(t.revision === expectedRevision, "task changed during PR lookup; retry");
-    check(t.branch === observation.branch, "PR branch mismatch");
-    check(!t.pr || samePR(t.pr, pr), "task already associated with another PR");
+    if (expectedRevision !== undefined) check(t.revision === expectedRevision, "task changed during pr lookup; retry");
+    check(t.branch === observation.branch, "pr branch mismatch");
+    check(!t.pr || samePR(t.pr, pr), "task already associated with another pr");
     const before = JSON.stringify(t);
     if (t.pr?.head !== pr.head || !observation.ready || observation.state !== "OPEN") unready(t);
     t.pr = pr;
@@ -249,8 +249,8 @@ export async function observeTaskPR(project: string, id: string, observation: PR
       check(stamp(observation.mergedAt), "merged observation needs mergedAt");
       t.archive = { reason: "merged", mergedAt: observation.mergedAt, archivedAt: new Date().toISOString(), pr };
       delete t.attention;
-    } else if (observation.state === "CLOSED") t.attention = { kind: "closed", reason: "PR closed without merging" };
-    else if (before !== JSON.stringify(t) && !t.readiness && (!t.attention || t.attention.kind === "waiting")) t.attention = { kind: "waiting", reason: "PR observed; readiness needs explicit validation" };
+    } else if (observation.state === "CLOSED") t.attention = { kind: "closed", reason: "pr closed without merging" };
+    else if (before !== JSON.stringify(t) && !t.readiness && (!t.attention || t.attention.kind === "waiting")) t.attention = { kind: "waiting", reason: "pr observed; readiness needs explicit validation" };
     if (before !== JSON.stringify(t)) event(t, t.archive ? "merged" : "pr_observed");
     return t;
   });
@@ -258,13 +258,13 @@ export async function observeTaskPR(project: string, id: string, observation: PR
 /** Only a currently started reviewer can attest readiness, after validating this exact PR head. */
 export async function validateTaskReadiness(project: string, id: string, input: { run: string; revision: number; observation: PRObservation; validation: string; validated: true }): Promise<Task> {
   const pr = taskPR(input.observation.pr), validation = text(input.validation, 2000, "validation");
-  check(input.validated === true && input.observation.ready && input.observation.state === "OPEN" && ["passed", "not_configured"].includes(input.observation.checks), "PR is not validated ready");
+  check(input.validated === true && input.observation.ready && input.observation.state === "OPEN" && ["passed", "not_configured"].includes(input.observation.checks), "pr is not validated ready");
   return update(project, s => {
     const t = find(s, id); active(t);
     const reviewer = current(s, input.run);
     check(reviewer?.run.role === "reviewer" && reviewer.run.state === "started" && reviewer.task.branch === t.branch && t.runs.some(r => r.startedAt), "readiness requires an active reviewer on the task branch");
     check(t.attention?.kind !== "cancelled", "cancelled task needs explicit authorized continuation");
-    check(t.revision === input.revision && t.pr && samePR(t.pr, pr) && t.pr.head === pr.head && t.branch === input.observation.branch, "task/PR changed during validation; retry");
+    check(t.revision === input.revision && t.pr && samePR(t.pr, pr) && t.pr.head === pr.head && t.branch === input.observation.branch, "task/pr changed during validation; retry");
     if (t.readiness?.run === input.run && t.readiness.head === pr.head && t.readiness.validation === validation && t.readiness.checks === input.observation.checks) return t;
     t.readiness = { head: pr.head, run: input.run, validatedAt: new Date().toISOString(), validation, checks: input.observation.checks as "passed" | "not_configured" };
     t.status = "ready_to_merge"; delete t.attention; event(t, "readiness_validated", input.run); return t;

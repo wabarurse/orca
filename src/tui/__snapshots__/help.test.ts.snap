@@ -13,78 +13,78 @@ Conversation record 30
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
-2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                  1–9/57
-  Conversation
-  /refresh       Reload shared local state; active context waits until idle;
+2 agents running │ 1 message queued │ inbox 1
+help · commands & keys                                                  1–9/57
+  conversation
+  /refresh       reload shared local state; active context waits until idle;
                  never runs work
-  /retry-images  Retry unconfirmed image prompts by original ID; never replay
+  /retry-images  retry unconfirmed image prompts by original id; never replay
                  consumed input
-  /inbox         User inbox: Tasks / Questions; Shift+Tab switches sections,
-                 Esc/Tab closes
-  /agents        Browse and follow agent conversations
-  /clear         Clear model context after confirmation; keep full history
-↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
+  /inbox         user inbox: tasks / questions; shift+tab switches sections,
+                 esc/tab closes
+  /agents        browse and follow agent conversations
+  /clear         clear model context after confirmation; keep full history
+↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
-"  Conversation
-  /refresh       Reload shared local state; active context waits until idle;
+"  conversation
+  /refresh       reload shared local state; active context waits until idle;
                  never runs work
-  /retry-images  Retry unconfirmed image prompts by original ID; never replay
+  /retry-images  retry unconfirmed image prompts by original id; never replay
                  consumed input
-  /inbox         User inbox: Tasks / Questions; Shift+Tab switches sections,
-                 Esc/Tab closes
-  /agents        Browse and follow agent conversations
-  /clear         Clear model context after confirmation; keep full history
-  /questions     Inbox Questions (Ctrl+Q); Enter answers or picks skip;
-                 Shift+Tab Tasks
-  /help          Commands and keyboard shortcuts; Esc closes
+  /inbox         user inbox: tasks / questions; shift+tab switches sections,
+                 esc/tab closes
+  /agents        browse and follow agent conversations
+  /clear         clear model context after confirmation; keep full history
+  /questions     inbox questions (ctrl+q); enter answers or picks skip;
+                 shift+tab tasks
+  /help          commands and keyboard shortcuts; esc closes
 
-  Projects
-  /projects                Browse projects: Enter opens, p pins, d deletes
-  /rename <name>           Change display name only; project ID stays fixed
-  /new [name] [directory]  Create a project page
-  /close                   Close this page; keep its project and history
-  /quit                    Exit; keep conversation history
+  projects
+  /projects                browse projects: enter opens, p pins, d deletes
+  /rename <name>           change display name only; project id stays fixed
+  /new [name] [directory]  create a project page
+  /close                   close this page; keep its project and history
+  /quit                    exit; keep conversation history
 
-  Model & accounts
-  /effort [level|default]        Show or set project/model reasoning effort
-  /fast [on|off]                 Show or set project/model fast mode
-  /models [id]                   Choose or set the project model
-  /accounts                      Choose a subscription account
-  /login claude|codex [profile]  Sign in to a subscription account
+  model & accounts
+  /effort [level|default]        show or set project/model reasoning effort
+  /fast [on|off]                 show or set project/model fast mode
+  /models [id]                   choose or set the project model
+  /accounts                      choose a subscription account
+  /login claude|codex [profile]  sign in to a subscription account
 
-  Keyboard · navigation
-  Ctrl+N             New orchestrator
-  Ctrl+Z / Ctrl+X    Previous / next project page
-  Ctrl+B             Open or close projects
-  Ctrl+Q             Inbox Questions toggle; arrivals never open Inbox
-  Shift+Tab (Inbox)  Switch Tasks / Questions; Esc or Tab closes without
+  keyboard · navigation
+  ctrl+n             new orchestrator
+  ctrl+z / ctrl+x    previous / next project page
+  ctrl+b             open or close projects
+  ctrl+q             inbox questions toggle; arrivals never open inbox
+  shift+tab (inbox)  switch tasks / questions; esc or tab closes without
                      answering
-  PgUp/PgDn / wheel  Scroll conversation, help or Inbox Tasks (mouse reporting
+  pgup/pgdn / wheel  scroll conversation, help or inbox tasks (mouse reporting
                      required)
-  Ctrl+C             Cancel selected turn/agent; twice within 2s exits,
+  ctrl+c             cancel selected turn/agent; twice within 2s exits,
                      keeping history
-  Esc                Close panel, else leave agent view, else clear input
+  esc                close panel, else leave agent view, else clear input
 
-  Keyboard · editing
-  Drag / Ctrl+O / Esc  Highlight + auto-copy on release / re-copy / clear
+  keyboard · editing
+  drag / ctrl+o / esc  highlight + auto-copy on release / re-copy / clear
                        highlight
-  Ctrl+V / Ctrl+Y      Attach clipboard image / remove last image. Terminal
+  ctrl+v / ctrl+y      attach clipboard image / remove last image. terminal
                        text paste is unchanged
-  Shift/Alt+Enter      New line
-  Alt+←/→ / Alt+B/F    Move by word
-  Alt+⌫ / Ctrl+W       Delete previous word
-  Alt+D                Delete next word
-  Home/End / Ctrl+A/E  Start / end of current line
-  Ctrl+U / Ctrl+K      Delete to start / end of current line
-  ↑ / ↓                Move between input rows, then project input history
+  shift/alt+enter      new line
+  alt+←/→ / alt+b/f    move by word
+  alt+⌫ / ctrl+w       delete previous word
+  alt+d                delete next word
+  home/end / ctrl+a/e  start / end of current line
+  ctrl+u / ctrl+k      delete to start / end of current line
+  ↑ / ↓                move between input rows, then project input history
 
-  Advanced & diagnostics
-  /keys               Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends
-  /compact            Summarize model context; keep full history
-  /review-rounds [n]  Review rounds before CI; 0 goes straight to CI"
+  advanced & diagnostics
+  /keys               diagnose keys/wheel; ctrl+g keeps draft; esc ends
+  /compact            summarize model context; keep full history
+  /review-rounds [n]  review rounds before ci; 0 goes straight to ci"
 `;
 
 exports[`help appearance fixtures 40x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
@@ -101,134 +101,134 @@ Conversation record 30
 │> draft 界                            │
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
-Inbox 1
-Help                           1–8/114
-  Conversation
+inbox 1
+help                           1–8/114
+  conversation
   /refresh
-    Reload shared local state; active
+    reload shared local state; active
     context waits until idle; never
     runs work
   /retry-images
-    Retry unconfirmed image prompts by
-    original ID; never replay consumed
-↑↓ scroll · Esc close"
+    retry unconfirmed image prompts by
+    original id; never replay consumed
+↑↓ scroll · esc close"
 `;
 
 exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
-"  Conversation
+"  conversation
   /refresh
-    Reload shared local state; active
+    reload shared local state; active
     context waits until idle; never
     runs work
   /retry-images
-    Retry unconfirmed image prompts by
-    original ID; never replay consumed
+    retry unconfirmed image prompts by
+    original id; never replay consumed
     input
   /inbox
-    User inbox: Tasks / Questions;
-    Shift+Tab switches sections,
-    Esc/Tab closes
+    user inbox: tasks / questions;
+    shift+tab switches sections,
+    esc/tab closes
   /agents
-    Browse and follow agent
+    browse and follow agent
     conversations
   /clear
-    Clear model context after
+    clear model context after
     confirmation; keep full history
   /questions
-    Inbox Questions (Ctrl+Q); Enter
-    answers or picks skip; Shift+Tab
-    Tasks
+    inbox questions (ctrl+q); enter
+    answers or picks skip; shift+tab
+    tasks
   /help
-    Commands and keyboard shortcuts;
-    Esc closes
+    commands and keyboard shortcuts;
+    esc closes
 
-  Projects
+  projects
   /projects
-    Browse projects: Enter opens, p
+    browse projects: enter opens, p
     pins, d deletes
   /rename <name>
-    Change display name only; project
-    ID stays fixed
+    change display name only; project
+    id stays fixed
   /new [name] [directory]
-    Create a project page
+    create a project page
   /close
-    Close this page; keep its project
+    close this page; keep its project
     and history
   /quit
-    Exit; keep conversation history
+    exit; keep conversation history
 
-  Model & accounts
+  model & accounts
   /effort [level|default]
-    Show or set project/model
+    show or set project/model
     reasoning effort
   /fast [on|off]
-    Show or set project/model fast
+    show or set project/model fast
     mode
   /models [id]
-    Choose or set the project model
+    choose or set the project model
   /accounts
-    Choose a subscription account
+    choose a subscription account
   /login claude|codex [profile]
-    Sign in to a subscription account
+    sign in to a subscription account
 
-  Keyboard · navigation
-  Ctrl+N
-    New orchestrator
-  Ctrl+Z / Ctrl+X
-    Previous / next project page
-  Ctrl+B
-    Open or close projects
-  Ctrl+Q
-    Inbox Questions toggle; arrivals
-    never open Inbox
-  Shift+Tab (Inbox)
-    Switch Tasks / Questions; Esc or
-    Tab closes without answering
-  PgUp/PgDn / wheel
-    Scroll conversation, help or Inbox
-    Tasks (mouse reporting required)
-  Ctrl+C
-    Cancel selected turn/agent; twice
+  keyboard · navigation
+  ctrl+n
+    new orchestrator
+  ctrl+z / ctrl+x
+    previous / next project page
+  ctrl+b
+    open or close projects
+  ctrl+q
+    inbox questions toggle; arrivals
+    never open inbox
+  shift+tab (inbox)
+    switch tasks / questions; esc or
+    tab closes without answering
+  pgup/pgdn / wheel
+    scroll conversation, help or inbox
+    tasks (mouse reporting required)
+  ctrl+c
+    cancel selected turn/agent; twice
     within 2s exits, keeping history
-  Esc
-    Close panel, else leave agent
+  esc
+    close panel, else leave agent
     view, else clear input
 
-  Keyboard · editing
-  Drag / Ctrl+O / Esc
-    Highlight + auto-copy on release /
+  keyboard · editing
+  drag / ctrl+o / esc
+    highlight + auto-copy on release /
     re-copy / clear highlight
-  Ctrl+V / Ctrl+Y
-    Attach clipboard image / remove
-    last image. Terminal text paste is
+  ctrl+v / ctrl+y
+    attach clipboard image / remove
+    last image. terminal text paste is
     unchanged
-  Shift/Alt+Enter
-    New line
-  Alt+←/→ / Alt+B/F
-    Move by word
-  Alt+⌫ / Ctrl+W
-    Delete previous word
-  Alt+D
-    Delete next word
-  Home/End / Ctrl+A/E
-    Start / end of current line
-  Ctrl+U / Ctrl+K
-    Delete to start / end of current
+  shift/alt+enter
+    new line
+  alt+←/→ / alt+b/f
+    move by word
+  alt+⌫ / ctrl+w
+    delete previous word
+  alt+d
+    delete next word
+  home/end / ctrl+a/e
+    start / end of current line
+  ctrl+u / ctrl+k
+    delete to start / end of current
     line
   ↑ / ↓
-    Move between input rows, then
+    move between input rows, then
     project input history
 
-  Advanced & diagnostics
+  advanced & diagnostics
   /keys
-    Diagnose keys/wheel; Ctrl+G keeps
-    draft; Esc ends
+    diagnose keys/wheel; ctrl+g keeps
+    draft; esc ends
   /compact
-    Summarize model context; keep full
+    summarize model context; keep full
     history
   /review-rounds [n]
-    Review rounds before CI; 0 goes
-    straight to CI"
+    review rounds before ci; 0 goes
+    straight to ci"
 `;
 
 exports[`help appearance fixtures End reaches diagnostics with a bounded range and dismissal hint 1`] = `
@@ -244,16 +244,16 @@ Conversation record 30
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
-2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                49–57/57
-  Alt+D                Delete next word
-  Home/End / Ctrl+A/E  Start / end of current line
-  Ctrl+U / Ctrl+K      Delete to start / end of current line
-  ↑ / ↓                Move between input rows, then project input history
+2 agents running │ 1 message queued │ inbox 1
+help · commands & keys                                                49–57/57
+  alt+d                delete next word
+  home/end / ctrl+a/e  start / end of current line
+  ctrl+u / ctrl+k      delete to start / end of current line
+  ↑ / ↓                move between input rows, then project input history
 
-  Advanced & diagnostics
-  /keys               Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends
-  /compact            Summarize model context; keep full history
-  /review-rounds [n]  Review rounds before CI; 0 goes straight to CI
-↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
+  advanced & diagnostics
+  /keys               diagnose keys/wheel; ctrl+g keeps draft; esc ends
+  /compact            summarize model context; keep full history
+  /review-rounds [n]  review rounds before ci; 0 goes straight to ci
+↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;

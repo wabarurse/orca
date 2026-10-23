@@ -55,7 +55,7 @@ test("selected worker cancels real bash, saves paired results, exits cleanly, an
   expect(await running).toBe(0);
   const messages = await open(path).chain();
   expect(paired(messages)).toBe(true);
-  expect(JSON.stringify(messages)).toContain("Cancelled by user");
+  expect(JSON.stringify(messages)).toContain("cancelled by user");
   expect(provider.calls).toHaveLength(1);
   expect((await drain(project, "orchestrator"))[0]!.text).toContain("cancelled by user");
   const next = fakeProvider([[text("continuing original task")]]);

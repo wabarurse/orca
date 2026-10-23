@@ -56,7 +56,7 @@ export function outputCap(deps: AgentDeps): number {
 }
 export function requireFits(deps: AgentDeps, messages: MessageParam[], reserve: number, label: string): void {
   if (!fits(deps, messages, reserve)) {
-    throw new ContextBlocked(`Context blocked: ${label} exceeds input + output reserve + safety headroom. Select a larger model/context budget or reduce fixed instructions/tools; original transcript is preserved.`);
+    throw new ContextBlocked(`context blocked: ${label} exceeds input + output reserve + safety headroom. select a larger model/context budget or reduce fixed instructions/tools; original transcript is preserved.`);
   }
 }
 function fits(deps: AgentDeps, messages: MessageParam[], reserve: number): boolean {

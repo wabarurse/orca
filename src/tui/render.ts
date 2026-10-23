@@ -228,7 +228,7 @@ export function statusRows(status: string | null | undefined, cols: number, rows
   const out: string[] = [];
   for (const full of groups) {
     // Keep the background unanswered badge recognizable when stacking counts.
-    const group = visibleLength(full) > cols ? full.replace(/^(Inbox \S+) \(\+(.+) elsewhere\)$/, "$1 +$2") : full;
+    const group = visibleLength(full) > cols ? full.replace(/^(inbox \S+) \(\+(.+) elsewhere\)$/, "$1 +$2") : full;
     const last = out.at(-1);
     if (last && visibleLength(`${last} │ ${group}`) <= cols) out[out.length - 1] = `${last} │ ${group}`;
     else out.push(fit(group, cols));
@@ -246,7 +246,7 @@ function projectRow(it: ProjectItem, selected: boolean): string {
   return `${mark}${it.label}${it.busy ? dim(" ·") : ""}`;
 }
 
-export const PROJECTS_HINT = "↑↓ Enter opens   p pins   d deletes   Esc closes";
+export const PROJECTS_HINT = "↑↓ enter opens   p pins   d deletes   esc closes";
 
 /**
  * The project list's rows, at most `height`: a title, the items (scrolled to
@@ -263,8 +263,8 @@ export function projectRows(p: ProjectList, height: number): string[] {
 }
 
 export const QUESTION_HINTS: Record<QuestionMode, string> = {
-  pick: "↑↓ or 1–9 choose · Enter pick · type to answer · Esc/Tab later",
-  answer: "Enter send · Esc/Tab close",
+  pick: "↑↓ or 1–9 choose · enter pick · type to answer · esc/tab later",
+  answer: "enter send · esc/tab close",
 };
 export const OWN_ANSWER = "type your own answer";
 export const skipRow = () => "skip — remove from inbox";
@@ -321,9 +321,9 @@ export function queuedRows(queue: QueuedInput | undefined, cols: number, height:
   if (!queue?.texts.length || height <= 0) return [];
   const shown = Math.min(queue.texts.length, Math.max(1, height - 1));
   const count = `${shown}/${queue.texts.length}`;
-  if (height === 1) return [dim(fit(`Queued ${count} · orch: ${preview(queue.texts[0]!)}`, cols))];
+  if (height === 1) return [dim(fit(`queued ${count} · orch: ${preview(queue.texts[0]!)}`, cols))];
   const hidden = queue.texts.length - shown;
-  const title = `Queued ${count} · ${cols < 48 ? "orch" : "orchestrator"}${hidden ? ` · ${hidden} hidden` : ""} · ${preview(queue.project)}`;
+  const title = `queued ${count} · ${cols < 48 ? "orch" : "orchestrator"}${hidden ? ` · ${hidden} hidden` : ""} · ${preview(queue.project)}`;
   return [dim(fit(title, cols)), ...queue.texts.slice(0, shown).map((text, i) => dim(fit(`  ${i + 1}. ${preview(text)}`, cols)))];
 }
 
@@ -341,7 +341,7 @@ function footerBase(f: Frame): { status: string[]; input: InputArea; queued: str
 
 /** Help leaves conversation space even on ordinary 24-row terminals. Input/status win on tiny screens. */
 export function helpPanel(f: Frame): { rows: string[]; top: number; bodyHeight: number; maxTop: number } {
-  return scrollPanel(f, f.help, "Help · commands & keys", "Help");
+  return scrollPanel(f, f.help, "help · commands & keys", "help");
 }
 
 /** Same bounded footer geometry as help, without displacing the composer. */
@@ -354,19 +354,19 @@ export function taskInboxPanel(f: Frame): ReturnType<typeof helpPanel> {
     const height = Math.min(18, footerBase(f).free);
     const panel = { rows: [] as string[], top: 0, bodyHeight: Math.max(0, height - 1), maxTop: 0 };
     if (height <= 0) return panel;
-    if (height === 1) return { ...panel, rows: [fit(dim("Esc close inbox"), f.cols)] };
+    if (height === 1) return { ...panel, rows: [fit(dim("esc close inbox"), f.cols)] };
     const title = view.state === "error"
-      ? f.cols >= 48 ? "Inbox · Tasks / [Questions] · Error · Shift+Tab" : "Inbox · Questions · Error"
-      : f.cols >= 48 ? "Inbox · Tasks / [Questions] · Shift+Tab switch" : "Inbox · Questions · Shift+Tab";
+      ? f.cols >= 48 ? "inbox · tasks / [questions] · error · shift+tab" : "inbox · questions · error"
+      : f.cols >= 48 ? "inbox · tasks / [questions] · shift+tab switch" : "inbox · questions · shift+tab";
     const room = panel.bodyHeight;
     const notice = view.notice ? wrap(plainText(view.notice), f.cols).slice(0, Math.max(0, room - (view.question ? 3 : 1))) : [];
     const content = view.question ? questionRows(view.question, f.cols, room - notice.length)
-      : [...view.lines.slice(0, Math.max(0, room - notice.length - 1)), dim("Esc/Tab close · Shift+Tab Tasks")];
+      : [...view.lines.slice(0, Math.max(0, room - notice.length - 1)), dim("esc/tab close · shift+tab tasks")];
     return { ...panel, rows: [bold(title), ...notice.map(dim), ...content].map(row => fit(row, f.cols)) };
   }
   return scrollPanel(f, f.inbox,
-    state === "error" ? "Inbox · [Tasks] / Questions · Error (snapshot may be stale)" : state === "loading" ? "Inbox · [Tasks] / Questions · Loading" : "Inbox · [Tasks] / Questions · read-only",
-    state === "error" ? "Inbox · Tasks · Error" : state === "loading" ? "Inbox · Tasks · Loading" : "Inbox · [Tasks]", true);
+    state === "error" ? "inbox · [tasks] / questions · error (snapshot may be stale)" : state === "loading" ? "inbox · [tasks] / questions · loading" : "inbox · [tasks] / questions · read-only",
+    state === "error" ? "inbox · tasks · error" : state === "loading" ? "inbox · tasks · loading" : "inbox · [tasks]", true);
 }
 
 function scrollPanel(f: Frame, view: Help | null | undefined, title: string, shortTitle: string, inbox = false): ReturnType<typeof helpPanel> {
@@ -384,11 +384,11 @@ function scrollPanel(f: Frame, view: Help | null | undefined, title: string, sho
   const gap = f.cols - visibleLength(title) - visibleLength(range) - 2;
   const heading = bold(title) + (gap > 0 && range ? " ".repeat(gap) + dim(range) : "");
   const hint = inbox
-    ? f.cols >= 64 ? "Esc/Tab close · Shift+Tab Questions · ↑↓/PgUp/PgDn · r refresh" : f.cols >= 38 ? "Esc close · Shift+Tab switch · r refresh" : "Esc close · Shift+Tab"
-    : f.cols >= 58 ? "↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close" : f.cols >= 24 ? "↑↓ scroll · Esc close" : "Esc close · ↑↓";
+    ? f.cols >= 64 ? "esc/tab close · shift+tab questions · ↑↓/pgup/pgdn · r refresh" : f.cols >= 38 ? "esc close · shift+tab switch · r refresh" : "esc close · shift+tab"
+    : f.cols >= 58 ? "↑↓ / wheel scroll · pgup/pgdn · home/end · esc close" : f.cols >= 24 ? "↑↓ scroll · esc close" : "esc close · ↑↓";
   // Even when only one panel row fits, dismissal stays discoverable. If no
   // rows fit the help key layer still owns keys, like other hidden modals.
-  const rows = height === 1 ? [dim(`Esc close ${inbox ? "inbox" : "help"}`)] : [heading, ...headingRows, ...lines.slice(top, top + bodyHeight), dim(hint)];
+  const rows = height === 1 ? [dim(`esc close ${inbox ? "inbox" : "help"}`)] : [heading, ...headingRows, ...lines.slice(top, top + bodyHeight), dim(hint)];
   return { rows: rows.map(row => fit(row, f.cols)), top, bodyHeight, maxTop };
 }
 

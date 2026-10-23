@@ -6,25 +6,25 @@ model fake-model
 /isolated/repo
 owner/repo
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Conversation 24
-Conversation 25
-Conversation 26
-Conversation 27
-Conversation 28
-Conversation 29
+conversation 24
+conversation 25
+conversation 26
+conversation 27
+conversation 28
+conversation 29
 
-Queued 1/1 · orchestrator · isolated
+queued 1/1 · orchestrator · isolated
   1. pending input
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                                        │
 │  second line                                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-0 agents running │ 1 message queued │ Inbox 1
-Inbox · [Tasks] / Questions · read-only                                                      1–2/2
-Name               | Summary                       | Status         | PR link
+0 agents running │ 1 message queued │ inbox 1
+inbox · [tasks] / questions · read-only                                                      1–2/2
+name               | summary                       | status         | pr link
 Task one           | A brief structured summary    | queued         | https://github.com/owner/repo/
                    |                               |                | pull/62
-Esc/Tab close · Shift+Tab Questions · ↑↓/PgUp/PgDn · r refresh"
+esc/tab close · shift+tab questions · ↑↓/pgup/pgdn · r refresh"
 `;
 
 exports[`80x24 task inbox footer appearance 1`] = `
@@ -33,25 +33,25 @@ model fake-model
 /isolated/repo
 owner/repo
 ────────────────────────────────────────────────────────────────────────────────
-Conversation 24
-Conversation 25
-Conversation 26
-Conversation 27
-Conversation 28
-Conversation 29
+conversation 24
+conversation 25
+conversation 26
+conversation 27
+conversation 28
+conversation 29
 
-Queued 1/1 · orchestrator · isolated
+queued 1/1 · orchestrator · isolated
   1. pending input
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 │  second line                                                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
-0 agents running │ 1 message queued │ Inbox 1
-Inbox · [Tasks] / Questions · read-only                                  1–2/2
-Name           | Summary              | Status         | PR link
+0 agents running │ 1 message queued │ inbox 1
+inbox · [tasks] / questions · read-only                                  1–2/2
+name           | summary              | status         | pr link
 Task one       | A brief structured   | queued         | https://github.com/owne
                | summary              |                | r/repo/pull/62
-Esc/Tab close · Shift+Tab Questions · ↑↓/PgUp/PgDn · r refresh"
+esc/tab close · shift+tab questions · ↑↓/pgup/pgdn · r refresh"
 `;
 
 exports[`40x24 task inbox footer appearance 1`] = `
@@ -60,23 +60,23 @@ model fake-model
 /isolated/repo
 owner/repo
 ────────────────────────────────────────
-Conversation 27
-Conversation 28
-Conversation 29
+conversation 27
+conversation 28
+conversation 29
 
-Queued 1/1 · orch · isolated
+queued 1/1 · orch · isolated
   1. pending input
 ┌──────────────────────────────────────┐
 │> draft 界                            │
 │  second line                         │
 └──────────────────────────────────────┘
 0 agents running │ 1 message queued
-Inbox 1
-Inbox · [Tasks]                  1–5/5
-Name: Task one
-Summary: A brief structured summary
-Status: queued
-PR link:
+inbox 1
+inbox · [tasks]                  1–5/5
+name: Task one
+summary: A brief structured summary
+status: queued
+pr link:
 https://github.com/owner/repo/pull/62
-Esc close · Shift+Tab switch · r refresh"
+esc close · shift+tab switch · r refresh"
 `;

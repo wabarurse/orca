@@ -28,7 +28,7 @@ function tokensFrom(value: unknown): ClaudeTokens {
   if (!v || typeof v.accessToken !== "string" || !v.accessToken ||
       typeof v.refreshToken !== "string" || !v.refreshToken ||
       typeof v.expiresAt !== "number" || !Number.isFinite(v.expiresAt) || v.expiresAt <= 0) {
-    throw new Error("Claude OAuth credentials are invalid; run /login anthropic again.");
+    throw new Error("claude oauth credentials are invalid; run /login anthropic again.");
   }
   return { accessToken: v.accessToken, refreshToken: v.refreshToken, expiresAt: v.expiresAt };
 }
@@ -39,7 +39,7 @@ export async function readClaudeTokens(profile: string): Promise<ClaudeTokens | 
   try {
     return tokensFrom(await file.json());
   } catch {
-    throw new Error(`Claude profile '${profile}' is invalid; run /login anthropic ${profile} again.`);
+    throw new Error(`claude profile '${profile}' is invalid; run /login anthropic ${profile} again.`);
   }
 }
 
@@ -63,10 +63,10 @@ async function requestTokens(body: Record<string, string>, fetcher: Fetch, fallb
       redirect: "error",
     });
   } catch {
-    throw new Error("Claude OAuth request failed or timed out; try again.");
+    throw new Error("claude oauth request failed or timed out; try again.");
   }
   // Never include the response body: providers can echo credentials on errors.
-  if (!response.ok) throw new Error(`Claude OAuth failed (HTTP ${response.status}); run /login anthropic again.`);
+  if (!response.ok) throw new Error(`claude oauth failed (http ${response.status}); run /login anthropic again.`);
   try {
     const data = await response.json() as Record<string, unknown>;
     if (typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in) || data.expires_in <= 0 ||
@@ -77,7 +77,7 @@ async function requestTokens(body: Record<string, string>, fetcher: Fetch, fallb
       expiresAt: Date.now() + data.expires_in * 1000,
     });
   } catch {
-    throw new Error("Claude OAuth returned invalid credentials; try logging in again.");
+    throw new Error("claude oauth returned invalid credentials; try logging in again.");
   }
 }
 
@@ -87,7 +87,7 @@ export function claudeCredentials(profile: string, fetcher: Fetch = fetch) {
   let previousToken: string | undefined;
   return async (opts?: { forceRefresh?: boolean }) => withCredentialLock(path, async () => {
     let tokens = await readClaudeTokens(profile);
-    if (!tokens) throw new Error(`Claude profile '${profile}' is not signed in; run /login anthropic ${profile}.`);
+    if (!tokens) throw new Error(`claude profile '${profile}' is not signed in; run /login anthropic ${profile}.`);
     // Another process may already have replaced the token rejected by this client.
     const rejected = opts?.forceRefresh && tokens.accessToken === previousToken;
     if (rejected || tokens.expiresAt <= Date.now() + REFRESH_MARGIN_MS) {
@@ -107,7 +107,7 @@ export async function importClaudeCode(profile: string): Promise<void> {
   for (const name of [".credentials.json", "credentials.json"]) {
     const file = Bun.file(join(dir, name));
     if (await file.exists()) {
-      try { value = await file.json(); } catch { throw new Error("Claude Code credentials could not be read; use /login anthropic."); }
+      try { value = await file.json(); } catch { throw new Error("claude code credentials could not be read; use /login anthropic."); }
       break;
     }
   }
@@ -119,7 +119,7 @@ export async function importClaudeCode(profile: string): Promise<void> {
       try { value = JSON.parse(result.stdout.toString()); } catch { /* Report the same actionable error below. */ }
     }
   }
-  if (!value) throw new Error("No Claude Code login found; use /login anthropic to sign in with your Claude subscription.");
+  if (!value) throw new Error("no claude code login found; use /login anthropic to sign in with your claude subscription.");
   const data = value as Record<string, unknown>;
   await saveClaudeTokens(profile, tokensFrom(data.claudeAiOauth ?? data.oauth ?? data));
 }
@@ -128,7 +128,7 @@ export async function importClaudeCode(profile: string): Promise<void> {
 export async function loginClaude(profile: string, options: LoginOptions): Promise<void> {
   validateProfile(profile);
   await loginOAuth({
-    label: "Claude", authorizeURL: "https://claude.ai/oauth/authorize", clientId: CLAUDE_CLIENT_ID,
+    label: "claude", authorizeURL: "https://claude.ai/oauth/authorize", clientId: CLAUDE_CLIENT_ID,
     scope: SCOPES, port: 53692, callbackPath: "/callback", extraParams: { code: "true" },
     async exchange(body, fetcher, signal) {
       await saveClaudeTokens(profile, await requestTokens(body, fetcher, undefined, signal), signal);
