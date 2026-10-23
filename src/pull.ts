@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { owned, prepareArtifact, withInstallation } from "./installation";
+import { withGitCredentials } from "./git-credentials";
 
 export const HARNESS_ORIGIN = "https://github.com/wabarurse/parallels.git";
 export interface CommandResult { code: number; out: string; err: string }
@@ -17,7 +18,8 @@ export const updateCommand: UpdateCommand = async (argv, cwd, env) => {
 
 function updateEnvironment(app: string, home: string): NodeJS.ProcessEnv {
   // In particular ignore GIT_DIR/WORK_TREE/CONFIG_* inherited from a caller's
-  // repository or shell. Global URL rewrites/hooks cannot redirect this update.
+  // repository or shell. Global URL rewrites/hooks cannot redirect this update;
+  // fetch separately restores only credential settings through withGitCredentials.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
   return { ...env, HOME: home, PWD: app, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0" };
 }
@@ -84,8 +86,8 @@ export async function pullHarness(options: PullOptions = {}): Promise<void> {
   const git = need("git"), bun = need("bun");
   const gitArgs = [git, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0"];
   const askGit = (...args: string[]) => command([...gitArgs, ...args], app, env);
-  async function checked(argv: string[], label: string): Promise<string> {
-    const result = await command(argv, app, env);
+  async function checked(argv: string[], label: string, commandEnv = env): Promise<string> {
+    const result = await command(argv, app, commandEnv);
     if (result.code !== 0) throw new Error(`${label} failed (exit ${result.code}): ${(result.err || result.out).trim()}`);
     return result.out.trim();
   }
@@ -130,7 +132,9 @@ export async function pullHarness(options: PullOptions = {}): Promise<void> {
     write(`Updating harness only: ${app}\nFetching verified origin/main…`);
     // Use the verified URL rather than remote-specific helper/refspec options.
     // No leading '+' (force), tags, pruning, submodules or auxiliary ref updates.
-    await checkedGit("fetch", "--no-tags", "--no-prune", "--no-recurse-submodules", "--refmap=", HARNESS_ORIGIN, "refs/heads/main:refs/remotes/origin/main");
+    await withGitCredentials(git, app, env, command, authenticated => checked([
+      ...gitArgs, "fetch", "--no-tags", "--no-prune", "--no-recurse-submodules", "--refmap=", HARNESS_ORIGIN, "refs/heads/main:refs/remotes/origin/main",
+    ], "git fetch", authenticated));
     // Recheck after the network operation: never merge over a concurrent local edit.
     await identity();
     await clean();

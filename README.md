@@ -140,8 +140,13 @@ The updater validates the app's path/ownership, requires its own `.git` director
 raw and effective origin URL are exactly
 `https://github.com/wabarurse/parallels.git`. SSH URLs, forks, local replacements,
 and local URL rewrites are refused. Inherited Git repository/config overrides
-and global/system Git config are ignored, and Git hooks are disabled for this
-operation. It fetches only main from that verified URL, **fast-forwards only**,
+and non-authentication global/system Git settings are ignored, and Git hooks are
+disabled for this operation. Fetch retains system/global `credential.*` settings,
+including Keychain, Git Credential Manager and configured `gh` helpers, in their
+normal order with local overrides. Only those settings enter a private temporary
+config, deleted after the fetch succeeds or fails; credentials are not put in
+command arguments or copied into the harness checkout. Terminal prompts remain
+disabled. It fetches only main from that verified URL, **fast-forwards only**,
 runs `bun install --frozen-lockfile` and `bun run build` in the app checkout, then
 uses the same ownership-checked atomic installer as `install:local`. This runs
 build/dependency code from origin/main; review/trust that upstream before pulling.
