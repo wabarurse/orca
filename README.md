@@ -465,6 +465,25 @@ Before the next command, completed outputs are pruned to seven days and a
 256 MiB project budget. Active files are excluded until stale, and newly completed
 files can temporarily exceed the budget. Saved output is temporary, not an archive.
 
+`timeout_ms` sets a command's maximum runtime (1–600000 milliseconds; default
+600000 for compatibility). A timeout kills the shell's process group and returns
+the output captured so far, marked partial. Use 10000–30000 for connection probes
+so a stalled database or network check returns promptly. Commands run
+non-interactively with the harness's inherited `PATH`; make sure required clients
+such as `psql` are available there, or use their installed absolute path.
+
+For PostgreSQL, the project's query wrapper should set a connection timeout
+such as `PGCONNECT_TIMEOUT=10` and a per-session `statement_timeout` appropriate
+for its queries. These cover different stages; keep the shell timeout as an
+overall deadline. Use non-interactive `psql` options (`-X -w -v ON_ERROR_STOP=1
+-P pager=off`) to avoid startup-file surprises, password prompts and paging,
+and to report SQL errors as failures. See PostgreSQL's
+[connection environment variables](https://www.postgresql.org/docs/current/libpq-envars.html),
+[statement timeouts](https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-STATEMENT-TIMEOUT),
+and [psql options](https://www.postgresql.org/docs/current/app-psql.html).
+Timeouts bound the wait; missing clients and server/tunnel failures still need
+to be diagnosed in the project environment.
+
 The model can mark independent read-only Bash calls with `independent = true`.
 Up to `toolConcurrency` calls (default 4, configurable 1–32) overlap within a
 batch; all other calls are ordering barriers. Tool results retain request order.

@@ -3,7 +3,7 @@ import { loadConfig } from "../config";
 import { outputArtifact, OutputPreview } from "../tool-output";
 import type { Tool } from "./index";
 
-const TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 // A model nudge, not a security boundary. Shell commands retain the user's privileges.
 const SUDO = /\bsudo\b/;
 
@@ -19,11 +19,12 @@ export const bash: Tool = {
   parallel: input => input.independent === true,
   spec: {
     name: "bash",
-    description: "Run a shell command in the working directory. No sudo. Full output is saved outside the repository; large results include a preview and path to inspect with shell tools. Normal-sized output is returned intact. Set max_output_bytes to adjust the preview (up to the configured cap). Issue independent read-only commands together with independent=true; never use it for edits, shared writes, or commands requiring another call's result. All other calls run in order.",
+    description: "Run a non-interactive shell command in the working directory, inheriting the harness PATH. No sudo. Set timeout_ms to 10000–30000 for connection probes and other short network/database checks; also use the client's connection and query timeouts. Full output is saved outside the repository; large results include a preview and path to inspect with shell tools. Normal-sized output is returned intact. Set max_output_bytes to adjust the preview (up to the configured cap). Issue independent read-only commands together with independent=true; never use it for edits, shared writes, or commands requiring another call's result. All other calls run in order.",
     input_schema: {
       type: "object",
       properties: {
         command: { type: "string" },
+        timeout_ms: { type: "integer", minimum: 1, maximum: MAX_TIMEOUT_MS, description: "Maximum command runtime in milliseconds; on timeout the shell and its child processes are killed and partial output is returned. Default: 600000 (10 minutes). Use a shorter timeout for quick checks." },
         independent: { type: "boolean", description: "This read-only command has no dependency or conflicting effects with other calls in this batch. Default false." },
         max_output_bytes: { type: "integer", minimum: 512, maximum: 65536, description: "Requested preview limit, bounded by the configured maximum. Default: preserve normal output, shorten oversized output to 4 KiB." },
       }, required: ["command"],
@@ -32,6 +33,9 @@ export const bash: Tool = {
   async run(input, ctx) {
     const command = String(input.command ?? "");
     if (SUDO.test(command)) return "refused: sudo is not allowed";
+    const timeout = input.timeout_ms;
+    if (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > MAX_TIMEOUT_MS)) throw new Error("timeout_ms must be an integer from 1 to 600000");
+    const timeoutMs = timeout ?? MAX_TIMEOUT_MS;
     const requested = input.max_output_bytes;
     if (requested !== undefined && (typeof requested !== "number" || !Number.isSafeInteger(requested) || requested < 512 || requested > 65536)) throw new Error("max_output_bytes must be an integer from 512 to 65536");
     ctx.signal?.throwIfAborted();
@@ -45,7 +49,7 @@ export const bash: Tool = {
       ctx.signal?.throwIfAborted();
       const proc = Bun.spawn(["sh", "-c", `exec 2>&1\n${command}`], { cwd: ctx.cwd, detached: true, stdout: "pipe", stdin: "ignore" });
       const kill = () => killGroup(proc);
-      const timer = setTimeout(() => { timedOut = true; kill(); }, TIMEOUT_MS);
+      const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
       process.once("exit", kill);
       ctx.signal?.addEventListener("abort", kill, { once: true });
       if (ctx.signal?.aborted) kill();
@@ -65,7 +69,7 @@ export const bash: Tool = {
         clearTimeout(timer); ctx.signal?.removeEventListener("abort", kill); process.off("exit", kill);
       }
     } finally { path = await artifact.finish(complete); }
-    let footer = limited ? "\n[output limit reached; command terminated; saved output is incomplete]" : timedOut ? `\n[timed out after ${TIMEOUT_MS / 1000}s; saved output is incomplete]` : "";
+    let footer = limited ? "\n[output limit reached; command terminated; saved output is incomplete]" : timedOut ? `\n[timed out after ${timeoutMs / 1000}s; saved output is incomplete]` : "";
     if (code !== 0) footer += `\n[exit ${code}]`;
     const clipped = !preview.fits(cap, footer);
     if (clipped || !complete) footer += `\n[${complete ? "full" : "partial"} output: ${path}]`;

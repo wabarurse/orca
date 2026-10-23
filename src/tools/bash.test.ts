@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { toolSummary } from "../toolview";
 
 // Point config at a temp dir so tests never read the real ~/.parallels.
 const home = mkdtempSync(join(tmpdir(), "parallels-bash-"));
@@ -29,6 +30,40 @@ test("captures stderr and reports non-zero exit", async () => {
 
 test("no exit line on success", async () => {
   expect(await bash.run({ command: "echo hi" }, ctx(home))).toBe("hi\n");
+  expect(await bash.run({ command: "echo hi", timeout_ms: 1000 }, ctx(home))).toBe("hi\n");
+});
+
+test("invalid timeouts are rejected before starting a command", async () => {
+  for (const timeout_ms of [null, 0, -1, 1.5, 600001, NaN, Infinity, "1000", true]) {
+    await expect(bash.run({ command: "touch invalid-timeout-started", timeout_ms }, ctx(home))).rejects.toThrow("timeout_ms must be an integer from 1 to 600000");
+  }
+  expect(await Bun.file(join(home, "invalid-timeout-started")).exists()).toBe(false);
+});
+
+test("timeout kills the shell and child, preserves partial output and reports failure", async () => {
+  const controller = new AbortController();
+  const pidFile = join(home, "timed-out-child.pid");
+  const started = Date.now();
+  // The child closes its output so EOF alone cannot establish that it stopped.
+  const pending = bash.run({ command: `printf started; sleep 60 >/dev/null 2>&1 & echo $! > '${pidFile}'; wait; touch timeout-finished`, timeout_ms: 1000 }, { ...ctx(home), signal: controller.signal });
+  // Bound cleanup even if the timeout regresses, instead of leaking a process.
+  const cleanup = setTimeout(() => controller.abort(new Error("test deadline exceeded")), 4000);
+  let out: string;
+  try { out = await pending; }
+  finally { clearTimeout(cleanup); controller.abort(); }
+  expect(Date.now() - started).toBeLessThan(4000);
+  expect(out).toStartWith("started");
+  expect(out).toContain("[timed out after 1s; saved output is incomplete]");
+  const path = /\[partial output: (.+)\]$/.exec(out)?.[1];
+  expect(path).toBeDefined();
+  expect(path).toEndWith(".partial");
+  expect(await Bun.file(path!).text()).toBe("started");
+  expect(await Bun.file(join(home, "timeout-finished")).exists()).toBe(false);
+  const pid = Number(await Bun.file(pidFile).text());
+  expect(pid).toBeGreaterThan(0);
+  const state = await Bun.$`ps -o stat= -p ${pid}`.quiet().nothrow().text();
+  expect(!state.trim() || state.trim().startsWith("Z")).toBe(true);
+  expect(toolSummary("bash", { ok: true, text: out })).toEqual({ summary: "timed out after 1s", failed: true });
 });
 
 test("truncateMiddle keeps head and tail", () => {
