@@ -170,7 +170,7 @@ generic paid-API SDK examples:
   constructs the native search spec with live/cached mode and context size;
   [`core/tests/suite/web_search.rs`](https://github.com/openai/codex/blob/9b39316997fd8bcecdb2007722f52ef858f0dbd8/codex-rs/core/tests/suite/web_search.rs)
   and protocol models cover search calls. Existing subscription endpoint/auth
-  evidence is documented in [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md).
+  evidence is documented in the [provider implementation reference](REFERENCE.md#provider-implementation).
 - Anthropic's published [Claude Code 2.1.63 package](https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.63.tgz)
   contains a WebSearch wrapper issuing a separate model request with
   `web_search_20250305`. The package was inspected, not executed/installed as a

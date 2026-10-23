@@ -44,7 +44,7 @@ invalidates stale work. The one-shot CLI joins its worker while owning the turn.
 SQLite is a rebuildable private original-entry/task index, not a replacement for
 JSONL or tasks.json. Search/read results are bounded historical text and restricted
 to the current `/clear` scope; clear does not delete bytes or receipts. See the
-[README rolling-memory section](README.md#orchestrator-rolling-memory) for tool
+[reference rolling-memory section](REFERENCE.md#orchestrator-rolling-memory) for tool
 arguments. Reasoning and image bytes/URLs are excluded from searchable text and
 summary source. Scoped image references survive in raw archive records **and as
 real image blocks alongside checkpoints**, not merely textual image descriptions.
