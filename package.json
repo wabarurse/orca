@@ -10,7 +10,8 @@
     "dev": "bun src/cli.ts",
     "check": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build src/cli.ts --compile --outfile dist/parallels"
+    "build": "bun build src/cli.ts --compile --outfile dist/parallels",
+    "install:local": "bun scripts/install.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3"
@@ -22,5 +23,8 @@
     "@anthropic-ai/sdk": "^0.135.0",
     "@babel/parser": "^8.0.7",
     "openai": "^7.39.0"
+  },
+  "engines": {
+    "bun": ">=1.4.2"
   }
 }

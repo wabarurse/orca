@@ -81,7 +81,7 @@ export function toolLabel(name: string, input: unknown): string {
 
 const EXIT = /\n?\[exit (\d+)\]$/;
 /** bash's timeout note, at the end (before its exit line, when there is one). */
-const TIMEOUT = /\[timed out after ([^\]]+)\](?:\n\[exit \d+\])?$/;
+const TIMEOUT = /\[timed out after ([^\];]+)(?:; saved output is incomplete)?\](?:\n\[exit \d+\])?$/;
 /** The note bash.ts's truncateMiddle leaves where it cut the output. */
 const TRUNCATED = /\n\.\.\.\[truncated \d+ bytes\]\.\.\.\n/;
 const ERRORISH = /error|fail|fatal|denied|not found/i;
@@ -114,6 +114,7 @@ function lines(output: string): string {
 
 /** bash's result: "N lines" (or "no output"), "exit N: <error line>", or the timeout. */
 function bashSummary(text: string): { summary: string; failed: boolean } {
+  text = text.replace(/\n\[(?:full|partial) output: [^\n]+\]$/, "");
   const timeout = TIMEOUT.exec(text);
   if (timeout) return { summary: `timed out after ${oneLine(timeout[1]!)}`, failed: true };
   const exit = EXIT.exec(text);

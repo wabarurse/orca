@@ -88,12 +88,17 @@ test("spawn seeded the worker and reviewer transcripts with their prompts", asyn
   expect(reviewer[0]?.content).toBe("Branch: feat/login\n\nReview PR #12");
 });
 
-test("ensureProject starts an empty repository when no url is given", async () => {
-  await ensureProject("fresh");
-  const head = Bun.file(paths.repo("fresh") + "/.git/HEAD");
-  expect(await head.exists()).toBe(true);
-  await ensureProject("fresh"); // idempotent
-  expect(await head.exists()).toBe(true);
+test("ensureProject binds an existing main checkout without creating a clone", async () => {
+  const source = join(home, "..", `parallels-source-${crypto.randomUUID()}`);
+  await Bun.$`git init -q -b main ${source}`.quiet();
+  try {
+    await ensureProject("fresh", source);
+    const head = Bun.file(paths.repo("fresh") + "/.git/HEAD");
+    expect(await head.exists()).toBe(true);
+    await ensureProject("fresh"); // idempotent
+    expect(await head.exists()).toBe(true);
+    expect(await Bun.file(join(paths.project("fresh"), "repo", ".git", "HEAD")).exists()).toBe(false);
+  } finally { rmSync(source, { recursive: true, force: true }); }
 });
 
 test("onInbox gets each batch as it is read, and the turn's replies are kept in the transcript", async () => {

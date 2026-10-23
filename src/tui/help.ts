@@ -18,6 +18,7 @@ const NAVIGATION: HelpEntry[] = [
   { label: "Esc", description: "Close panel, else leave agent view, else clear input" },
 ];
 const EDITING: HelpEntry[] = [
+  { label: "Ctrl+V / Ctrl+Y", description: "Attach clipboard image / remove last image. Terminal text paste is unchanged" },
   { label: "Shift/Alt+Enter", description: "New line" },
   { label: "Alt+←/→ / Alt+B/F", description: "Move by word" },
   { label: "Alt+⌫ / Ctrl+W", description: "Delete previous word" },

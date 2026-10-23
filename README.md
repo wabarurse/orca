@@ -2,10 +2,230 @@
 
 A simple, light-context agent harness with an orchestrator → worker → reviewer loop.
 
-```bash
-bun install
-bun src/cli.ts start [project] [git-url]
+## Install once, run from any repository
+
+Supported hosts: **macOS or Linux** with **git** and **tmux** on `PATH`. Building
+and updating also require **Bun 1.4.2 or newer** (TypeScript and the other build
+dependencies are installed by `bun install`). The compiled executable includes
+its runtime: **Bun and the harness source are not needed on runtime PATH**, even
+for background workers/reviewers and their crash-reporting follow-up. Install a
+native build on each OS/architecture; this is not a cross-platform binary.
+Standard system tools (`sh` and `env`) must also remain on PATH.
+`gh` and project-specific tools may additionally be needed for the work you ask
+agents to do (for example PR publication/review).
+
+Keep the harness checkout separate from the repositories you work on. This
+local-only workflow installs the app at `~/.parallels/app` and the executable at
+`~/.local/bin/parallels`; it does not download or run a remote bootstrap script:
+
+```sh
+(
+  set -eu
+  # Never replace an existing app or follow a symlink into unrelated content.
+  if [ -L "$HOME/.parallels" ] || [ -e "$HOME/.parallels/app" ] || [ -L "$HOME/.parallels/app" ]; then
+    echo "Existing app or symlink: inspect it first; use the update steps for your own clone." >&2
+    exit 1
+  fi
+  mkdir -p "$HOME/.parallels"
+  git clone https://github.com/wabarurse/parallels.git "$HOME/.parallels/app"
+  cd "$HOME/.parallels/app"
+  # To install an exact reviewed revision, first: git switch --detach <reviewed-commit>
+  bun install --frozen-lockfile
+  bun run install:local
+)
 ```
+
+`install:local` builds `dist/parallels` from that checkout, then copies it to
+`$HOME/.local/bin/parallels` with executable permissions. It works even when
+invoked by an absolute script path from another directory. It never replaces
+`~/.parallels` itself, changes auth/config/projects, moves your repositories, or
+edits shell startup files. `PARALLELS_HOME` still relocates **runtime state**;
+it does not change the app checkout or executable installation destination.
+
+If `~/.local/bin` is not on your PATH, for the current sh/bash/zsh session use:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+command -v parallels
+parallels version
+```
+
+For future sessions, add that export to the appropriate shell startup file
+**yourself**, or use your shell's equivalent (e.g. `fish_add_path ~/.local/bin`
+in fish). Check `command -v parallels` for another executable shadowing this
+one. You can always invoke `"$HOME/.local/bin/parallels"` directly.
+
+```sh
+cd /path/to/any/repository
+parallels
+# Equivalent explicit form; optional project and git URL still work:
+parallels start [project] [directory]
+parallels msg <project> <text>
+parallels version
+parallels --help
+```
+
+Bare invocation and `start` need an interactive terminal. Launching does **not**
+`cd` into the installation directory: repository detection uses the invoking
+working directory, including repository subdirectories. The main agent works
+in your **original checkout on its default branch** (origin/HEAD, otherwise
+main or master). Local files, Git configuration and repository-local logins
+remain available. If the checkout is on another branch, switch it yourself
+when safe; the harness never switches or stashes your work. It checks the
+branch again before each main-agent turn.
+
+Workers use task branches in Git worktrees beside the original checkout:
+`<checkout>.parallels-worktrees/<worktree-id>/<branch-slug>`. Reviewers reuse
+the worker's worktree. These share Git objects and repository-local config with
+the original checkout, including later login updates. Worktrees do not contain
+the original's uncommitted changes or untracked/ignored files such as `.env`;
+project setup must provision files needed in each worktree. New agents inherit
+the launch process's exported environment (HOME, PATH, auth variables and agent
+sockets), even when tmux was started with older values. Private temporary
+environment handoffs delete themselves before starting the agent; values are
+not placed in command arguments or tmux options. This does not transfer browser
+sessions or logins in a different OS account/container.
+
+`$PARALLELS_HOME/projects` (default `~/.parallels/projects`) stores conversations,
+tasks and a `repository.json` reference, not a new source clone. Discovery uses
+the canonical checkout path, so two clones with the same origin stay distinct.
+Multiple conversations sharing a checkout serialize their main-agent turns.
+Remote URLs are no longer cloned by `start` or `/new`: clone locally first and
+pass the directory. Starting outside Git requires an existing project or an
+explicit local checkout; no empty repository is created inside harness state.
+
+Existing clone-based projects remain usable with their original paths and
+history; they are not automatically rebound or deleted. Start from your original
+checkout to create a new project using this layout. Normal no-project startup
+also reopens saved projects. Deleting a new project removes its state and clean
+worktrees, preserving the original checkout and local branches; local worker
+files (including ignored files) block deletion. Background merge cleanup never
+pulls or changes the original checkout. Update main explicitly when needed.
+
+### Clipboard image attachments
+
+In project chat, **Ctrl+V** attaches a clipboard image, **Ctrl+Y** removes the
+last attachment, and Enter sends text plus images (or images alone). Escape
+clears the draft. Normal terminal text paste is unchanged. Native macOS uses
+system AppKit through `osascript`; Linux uses existing `wl-paste`/`xclip`, with
+no helper installation. Draft labels never contain base64. Queued/history
+attachments are durable, and `/retry-images` explicitly retries unconfirmed
+image prompts with their original IDs. Agents can forward selected attachments
+to workers/reviewers; Claude and Codex receive actual pixels.
+
+See [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md) for terminal boundaries, limits,
+model admission, queue recovery, retention/privacy, compaction and test coverage.
+
+### Explicit updates: `parallels pull`
+
+Finish active work and let background agents exit before upgrading. From **any**
+directory (including an unrelated repository), run:
+
+```sh
+parallels pull
+# Or, if another command shadows it:
+"$HOME/.local/bin/parallels" pull
+```
+
+This command accepts no arguments. It updates **only the dedicated harness
+installation** at `$HOME/.parallels/app`, never the invoking repository or a
+managed project. `PARALLELS_HOME` still relocates runtime state, not the updater's
+checkout or executable. Git and **Bun >= 1.4.2 on PATH** are required for updates;
+Bun is not required for normal compiled runtime. An initial clone and successful
+`bun run install:local` are required first; `pull` does not create or guess a
+missing installation.
+
+The updater validates the app's path/ownership, requires its own `.git` directory
+(not a symlink, shared-object clone or linked worktree), and checks that both the
+raw and effective origin URL are exactly
+`https://github.com/wabarurse/parallels.git`. SSH URLs, forks, local replacements,
+and local URL rewrites are refused. Inherited Git repository/config overrides
+and non-authentication global/system Git settings are ignored, and Git hooks are
+disabled for this operation. Fetch retains system/global `credential.*` settings,
+including Keychain, Git Credential Manager and configured `gh` helpers, in their
+normal order with local overrides. Only those settings enter a private temporary
+config, deleted after the fetch succeeds or fails; credentials are not put in
+command arguments or copied into the harness checkout. Terminal prompts remain
+disabled. It fetches only main from that verified URL, **fast-forwards only**,
+runs `bun install --frozen-lockfile` and `bun run build` in the app checkout, then
+uses the same ownership-checked atomic installer as `install:local`. This runs
+build/dependency code from origin/main; review/trust that upstream before pulling.
+It does not run the full test suite for you. Even an up-to-date checkout is rebuilt
+and reinstalled, so a failed dependency/build step can be retried.
+
+Checkout behavior is deliberately conservative:
+
+- **main:** advance only when current HEAD is an ancestor of fetched origin/main.
+  Local-only/ahead/divergent commits are not reset or discarded.
+- **Detached exact-reviewed installation:** advance only when that reviewed HEAD
+  is an ancestor of origin/main, and remain detached. This works after an
+  ancestry-preserving merge. An unmerged PR head or a squash/rebased merge can
+  fail this check; preserve the reviewed head in a named branch, inspect the
+  history, and manually choose the desired checkout before retrying. The updater
+  does not guess that different commit IDs contain equivalent changes.
+- **Any other branch:** refuse. Preserve its work, then explicitly select main or
+  a suitable detached revision yourself. No branch is silently switched/deleted.
+- Dirty/untracked source, Git operations in progress, unsafe paths (including
+  symlinked `dist` or `node_modules`), conflicting installs, and concurrent
+  installer/updater operations are refused. There is no automatic stash, reset,
+  clean, force-overwrite, or session restart.
+
+Fetch/dependency/build/installation failure leaves the previously installed
+executable intact. The app's fetched refs, checkout or dependencies **may already
+have advanced** before a later failure; they are not rolled back. Inspect the
+error, preserve any local work, resolve it, then rerun `parallels pull`. Do not
+blindly delete files to make the check pass. A failed build does not require
+resetting the checkout.
+
+**Existing processes keep the code they already loaded.** Nothing is stopped,
+killed or restarted. New launches use the replacement executable; an old
+worker/reviewer shell wrapper can also re-enter that new executable for its
+`agent-exit` follow-up. Mixed protocol/code versions are therefore possible if
+you update during a run: update **between active runs**, then start a new session
+when ready. Source-development processes are not upgraded in place either.
+
+### Installer ownership and recovery
+
+Both `install:local` and `pull` refuse unrelated existing `parallels` files,
+symlinks (including dangling links and symlinked `.local` / `bin` directories),
+directories at file destinations, and files not owned by you or writable by
+other users. Neither modifies shell startup files or auth/config/projects.
+The installer records the binary's SHA-256 in
+`~/.local/bin/.parallels-install.json`; keep this receipt alongside the executable.
+An upgrade is permitted only when the current executable matches that receipt.
+The binary is staged on the same filesystem and replaced with one atomic rename,
+so build/copy failure leaves the previous executable intact and an already-open
+executable is not truncated. The receipt is published separately **before** the
+final binary rename (and restored if that rename fails). Abrupt interruption
+between those renames fails closed on the next install rather than guessing
+ownership. An exclusive `~/.local/bin/.parallels-install.lock` covers the entire
+fetch/dependencies/build/install operation, and also manual `install:local` builds.
+
+If installation refuses, inspect the named paths; do not blindly delete or
+replace them. A stale lock, missing/mismatched receipt, or interrupted upgrade
+needs manual inspection (including confirmation no installer/updater is running).
+Preserve/move aside only the verified installation files or stale lock before a
+fresh install; never remove `~/.parallels`, auth, config, or projects to resolve
+an installation problem. A different existing executable must be preserved or
+explicitly moved by you. The receipt and path checks are accidental-overwrite
+guards, not a security boundary against another process running as your user.
+For a manually chosen reviewed revision, preserve any existing commits first,
+select that exact revision in the dedicated app clone, then run
+`bun install --frozen-lockfile` and `bun run install:local`; do not build from the
+unrelated project you happened to invoke `parallels` in.
+
+### Development
+
+From a development checkout, `bun install --frozen-lockfile` followed by
+`bun src/cli.ts` (or `bun src/cli.ts start [project] [directory]`) still works.
+`bun run check`, `bun test`, `bun run build`, and `git diff --check` are the local
+validation commands. The compiled/installation tests use temporary HOME/state,
+relocated executables, fake provider/tmux boundaries and an owned PTY. Updater
+tests use temporary local Git remotes and offline dependency/build boundaries,
+including an installed standalone invocation from another dirty repository. They
+make no live model calls and do not install/update anything in your real home.
+
+## Using the TUI
 
 `start` opens a TUI with one page per orchestrator (one per project). Orchestrator
 tabs and project details stay at the top; the input, counts and panels stay at
@@ -27,7 +247,7 @@ if a gesture reveals prelaunch shell history instead of scrolling the conversati
 The orchestrator's replies are rendered as markdown (headings, emphasis, lists, quotes, code
 blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that
-repository: an `orch-xxxx` project cloned from its origin (reused next time you
+repository: an `orch-xxxx` project referencing the original checkout (reused next time you
 start there). With no project named it also reopens every project under
 `~/.parallels/projects`. The ruled, pinned header shows bracketed project/display names (the active one
 marked `>`), cached model, effort, fast mode, directory and remote, and refreshes
@@ -54,9 +274,9 @@ conversation history with one summary line under it
 `spawned worker-feat`), its marker red when it failed. A call whose run stops
 without a result is red with an `interrupted` summary. Truncated bash output
 shows `N+ lines (truncated)`. Restored pages and the
-`/agents` view show calls the same way. Ctrl+N starts a new orchestrator named `orch-xxxx`, cloned from the
-repository you started in (an empty repository otherwise; `/rename <name>`
-renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X move between pages,
+`/agents` view show calls the same way. Ctrl+N starts a new conversation named `orch-xxxx` in the
+original checkout. `/rename <name>` renames it; `/new <name> <directory>` selects
+another local checkout (the directory may contain spaces). Ctrl+Z and Ctrl+X move between pages,
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
 `/help` for grouped commands and keyboard shortcuts in a panel below the input
 and counts, not in the conversation history. Scroll help with ↑/↓, Page Up/Down
@@ -64,6 +284,17 @@ or the wheel; Home/End jumps to its start/end (including advanced diagnostics).
 Esc closes it without changing your draft or leaving an agent view. Help is
 read-only while open; close it before typing. Global cancellation/page shortcuts
 still work, and Ctrl+Q replaces help with the Inbox's Questions section.
+
+`/refresh` reloads **shared local persisted state**: project names/pins/list,
+saved conversation/model context, tasks/questions, agent status and model/settings.
+It also runs automatically when submitting a prompt, including while busy or
+signing in; publication never waits for refresh. Periodic snapshots pick up
+consumption in other windows. Drafts/cursors, active page, pinned bars and history
+stay intact; disruptive context replacement waits until the local turn is idle.
+Refresh does not pull Git changes, update/restart the harness, synchronize laptops,
+submit/resend input, run tools or restart agents. Normal inbox processing remains
+separate. See [SESSION_REFRESH.md](SESSION_REFRESH.md) for receipt semantics,
+concurrency, mixed-version limitations and safe stale-lock recovery.
 
 `/clear` clears only the current orchestrator's **model context**, after a local
 confirmation. **Cancel is selected by default** (Enter alone cancels); choose
@@ -112,6 +343,10 @@ conversation and composer space; at tiny sizes input/status take precedence.
 Switching projects selects that project's queue and draft (including its cursor).
 When viewing an agent, the footer still labels the queue as the **orchestrator's**.
 Successful inbox writes, turn completion and cancellation are not consumption.
+A preview clears only when its exact immutable input ID is committed with model
+context, locally or in another updated window; identical text or a missing inbox
+file is not evidence. A provider failure after that commit does not resend input.
+Older transcripts without receipts cannot retroactively acknowledge previews.
 Submitting never interrupts a running tool. Assistant message identity is retained
 across streamed paragraph/quote/list
 source lines and transcript entries. Logical conversation blocks have a neutral blank
@@ -168,8 +403,16 @@ you what was left open. When a review is clean the orchestrator tells the review
 "watch ci": it pushes, opens the PR, runs `gh pr checks --watch`, fixes what
 fails until green, and reports ready to merge. One agent codes on a branch at a
 time: spawn waits briefly and then refuses while the branch's worker or reviewer
-is still running. A small follow-up on a branch that has not gone to CI yet can
-reuse it (its worker keeps its context); other work gets a new branch.
+is still running. Corrections to an existing task or unmerged PR reuse its task ID
+and branch, including CI failures, review feedback and user-requested fixes after
+a ready report. The orchestrator finds the task with `task list/get` and refreshes
+its PR state with `task pr` before resuming. It messages a running agent or
+restarts the worker on the same branch, then runs the task flow again. The reviewer
+updates the same PR and validates its new head; previous readiness is invalidated.
+These corrections need no new task, temporary branch or cherry-pick workaround.
+A separate small follow-up before PR publication can reuse the branch with a new
+task ID. Independent work, separate work after publication, and work after a merge
+get a new branch.
 
 When a branch's PR is merged, the TUI notices within about 30 seconds (it asks
 `gh pr list --repo <origin> --state merged` for each open project whose origin
@@ -262,6 +505,72 @@ inference require validation with your account; automated tests use fake tokens.
 
 ## Tool efficiency
 
+### Orchestrator rolling memory
+
+The orchestrator starts a background `gpt-6-luna` summary at about **100,000 input
+tokens**, or earlier if its selected model has a smaller usable context. It keeps
+roughly the newest **20,000 tokens verbatim**, including complete tool exchanges.
+An oversized newest exchange stays intact. Workers and reviewers keep their
+existing compaction behavior.
+
+The summary carries user facts/preferences, standing project decisions, unresolved
+questions, unregistered work, and notes for unfinished tasks. A task is finished
+only after the registry records a verified merge. Blocked, cancelled and
+closed-unmerged tasks stay recorded; their presence never authorizes a restart.
+The current task registry is read again before publication, so an in-flight summary
+cannot restore stale task notes after a merge or other task update.
+
+One summary worker runs per session. The foreground continues until it needs the reclaimed
+space; `/compact` waits explicitly. The summary replaces only the captured older
+prefix at a safe tool boundary. Every newer message, including messages arriving
+while the worker runs, survives unchanged. The TUI can publish a ready summary
+while idle without making another foreground model request. Summary requests have
+no tools, use low effort, and split large sources into bounded UTF-8 parts. The
+worker has a two-minute deadline and a 30-second automatic retry cooldown.
+Closing the page or exiting the TUI cancels its worker. Shared cancellation,
+`/clear`, or another session's checkpoint invalidates stale summary work. Refresh
+only reloads state and invalidates stale work; it never starts or publishes a
+summary. Idle maintenance publishes only work already requested by a turn.
+
+Checkpoint publication holds the project/turn locks, reloads shared history and
+conditionally appends against that exact transcript head. Original inbox receipts
+survive both checkpoints and clears. The internal one-shot orchestrator command
+uses the same turn owner and fresh-input requirement as the TUI, and joins its
+outstanding worker before releasing the lock. Saved history or already-consumed
+inbox residue alone never starts another model turn.
+
+This requires a configured OpenAI subscription login (`/login openai`) even when
+the foreground uses Claude. `compact = false` disables automatic compaction;
+`/compact` still requests it. Missing credentials, failed summaries, archive
+failures and cancellation preserve the original history. If the resulting input
+still cannot fit, the existing context guard stops the model request.
+
+Original entries and task records are indexed in private
+`~/.parallels/projects/<project>/memory.sqlite`, using Bun's built-in SQLite and
+FTS5. JSONL transcripts and `tasks.json` remain authoritative; the index can be
+rebuilt. Inbox delivery and task IDs/status semantics are unchanged. Image IDs and
+original prompt associations are searchable; raw archive entries and checkpoints
+preserve scoped image references. Text summaries/search do not inspect or return
+pixels; normal provider requests still materialize retained images. Accumulated
+image limits fail explicitly, never evict images silently. See
+[image context/history behavior](IMAGE_ATTACHMENTS.md#context-budgeting-and-integration-contract).
+
+The orchestrator uses the existing `task` tool:
+
+- `search_history` with `query`, optional `status` (`all`, `merged`, `active`),
+  `taskId`, and `limit` (default 5, maximum 10) returns task records and excerpts.
+- `read_history` with an `entryId` returns up to 2,048 Unicode characters;
+  `nextOffset` retrieves the next page.
+
+Task-specific excerpts require an explicit task UUID in the original entry.
+Use ordinary text search for conversations without that link. Retrieval is
+restricted to the current `/clear` scope; old bytes remain on disk. Retrieved
+text and summaries are historical evidence, not new instructions. Summaries are
+lossy: check original details when they matter. The active model context stays
+bounded, but disk history grows with use; this is not unlimited model context.
+
+### Tool output and scheduling
+
 Claude prompt-prefix caching is enabled by default (`anthropicPromptCache = true`
 in `~/.parallels/config.toml`). It reuses eligible prefixes without rewriting
 instructions or history. Cached tokens still occupy context; caching does not
@@ -278,6 +587,25 @@ its saved output is explicitly partial, as are timeouts and cancelled commands.
 Before the next command, completed outputs are pruned to seven days and a
 256 MiB project budget. Active files are excluded until stale, and newly completed
 files can temporarily exceed the budget. Saved output is temporary, not an archive.
+
+`timeout_ms` sets a command's maximum runtime (1–600000 milliseconds; default
+600000 for compatibility). A timeout kills the shell's process group and returns
+the output captured so far, marked partial. Use 10000–30000 for connection probes
+so a stalled database or network check returns promptly. Commands run
+non-interactively with the harness's inherited `PATH`; make sure required clients
+such as `psql` are available there, or use their installed absolute path.
+
+For PostgreSQL, the project's query wrapper should set a connection timeout
+such as `PGCONNECT_TIMEOUT=10` and a per-session `statement_timeout` appropriate
+for its queries. These cover different stages; keep the shell timeout as an
+overall deadline. Use non-interactive `psql` options (`-X -w -v ON_ERROR_STOP=1
+-P pager=off`) to avoid startup-file surprises, password prompts and paging,
+and to report SQL errors as failures. See PostgreSQL's
+[connection environment variables](https://www.postgresql.org/docs/current/libpq-envars.html),
+[statement timeouts](https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-STATEMENT-TIMEOUT),
+and [psql options](https://www.postgresql.org/docs/current/app-psql.html).
+Timeouts bound the wait; missing clients and server/tunnel failures still need
+to be diagnosed in the project environment.
 
 The model can mark independent read-only Bash calls with `independent = true`.
 Up to `toolConcurrency` calls (default 4, configurable 1–32) overlap within a

@@ -1,3 +1,4 @@
+import { requireVision, validatedBase64 } from "../images";
 import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./web-search";
 import { codexSearchItemSources, codexSearchResults } from "./search-results";
 import { validateSettings, type RequestSettings } from "../project-settings";
@@ -16,20 +17,32 @@ type CodexStreamEvent = ResponseStreamEvent | (Omit<ResponseCompletedEvent, "typ
 export function toResponses(messages: MessageParam[]): CodexInputItem[] {
   const input: CodexInputItem[] = [];
   for (const message of messages) {
+    let user: { role: "user"; content: ({ type: "input_text"; text: string } | { type: "input_image"; image_url: string; detail: "auto" })[] } | undefined;
+    const addUser = (part: NonNullable<typeof user>["content"][number]) => {
+      if (!user) { user = { role: "user", content: [] }; input.push(user); }
+      user.content.push(part);
+    };
     const blocks = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
     for (const block of blocks) {
       if (block.type === "text") {
-        input.push(message.role === "user"
-          ? { role: "user", content: [{ type: "input_text", text: block.text }] }
-          // Codex accepts stateless assistant history without a stored server item ID.
-          : { type: "message", role: "assistant", content: [{ type: "output_text", text: block.text, annotations: [] }], status: "completed" });
+        if (message.role === "user") addUser({ type: "input_text", text: block.text });
+        // Codex accepts stateless assistant history without a stored server item ID.
+        else input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: block.text, annotations: [] }], status: "completed" });
+      } else if (block.type === "image") {
+        if (message.role !== "user") throw new Error("Assistant image input is unsupported.");
+        const image = validatedBase64(block);
+        addUser({ type: "input_image", image_url: `data:${image.mime};base64,${image.data}`, detail: "auto" });
       } else if (block.type === "tool_use") {
+        user = undefined;
         input.push({ type: "function_call", call_id: block.id, name: block.name, arguments: JSON.stringify(block.input) });
       } else if (block.type === "tool_result") {
+        user = undefined;
+        if (Array.isArray(block.content) && block.content.some(b => b.type === "image")) throw new Error("Nested tool images are unsupported; forward structured attachments instead.");
         const output = typeof block.content === "string" ? block.content
           : (block.content ?? []).map((part) => part.type === "text" ? part.text : "").join("\n");
         input.push({ type: "function_call_output", call_id: block.tool_use_id, output: block.is_error ? `Error: ${output}` : output });
       } else if (block.type === "thinking") {
+        user = undefined;
         try {
           const signature = JSON.parse(block.signature);
           if (signature.provider === "codex" && typeof signature.id === "string" && typeof signature.encrypted_content === "string") {
@@ -93,6 +106,7 @@ export function openai(credentials: ReturnType<typeof codexCredentials>): Provid
   return {
     name: "openai",
     async complete(req) {
+      requireVision(req.model, req.messages);
       const stream = await request((client) => client.responses.create({
         // The SDK's platform type requires server IDs that Codex's stateless history omits.
         model: req.model, input: toResponses(req.messages) as ResponseInputItem[], instructions: req.system ? `You are Codex, an AI coding agent.\n\n${req.system}` : "You are Codex, an AI coding agent.",

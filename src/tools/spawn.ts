@@ -1,3 +1,5 @@
+import { attachmentSchema, forwardImages } from "../image-handoff";
+import { imageContent, type ImageRef } from "../images";
 import { delay, publishLaunch } from "../cancellation";
 import { prepareTaskRun, stopTaskRun } from "../tasks";
 import { paths } from "../config";
@@ -38,18 +40,22 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
         "so spawn again only after it has reported or exited.\n" +
         "Never spawn on a branch whose PR is merged; the harness stops and cleans those up (within ~30s, when gh is available). Follow-up work goes on a new branch.\n\n" +
         "Reuse or new branch, decided per task when you plan:\n" +
-        "- Reuse an open branch (spawn its worker again with the new task) only before it has gone to CI or a PR: its worker has reported, and review has not started or is between rounds. " +
-        "It fits small work on the same files or feature. Its whole transcript is resent each call, so reuse a worker for small follow-ups, not a long series of tasks. " +
-        "The new task runs the whole task flow anew, with its own review rounds.\n" +
-        "- Start a new branch when the work is independent, needs its own merge order, or the existing branch has gone to CI or a PR.\n" +
+        "- Reuse the same taskId and branch for corrections to an existing task or unmerged PR, including review feedback, CI failures and user-requested fixes after a ready report. " +
+        "CI or PR publication does not require a fresh branch for these corrections. Use task list/get to find the existing task and refresh its PR state with task pr before resuming. " +
+        "If its agent is still running, message it; otherwise spawn the worker on that branch with the correction. " +
+        "Run the task flow again; the reviewer pushes to the same PR and validates its updated head. Do not register a new task or use a temporary branch/cherry-pick workaround for the correction.\n" +
+        "- A separate small follow-up on the same feature may reuse a branch before PR publication, with a new taskId and its own task flow. " +
+        "Its whole transcript is resent each call, so avoid a long series of tasks on one worker.\n" +
+        "- Start a new branch for independent work, a separate task after PR publication, work needing its own merge order, or work after the original PR has merged.\n" +
         "- If unsure, say so in the plan table and let the user choose.\n" +
         "In the plan table, mark a reused branch (existing): \"<branch> (existing)\".",
       input_schema: {
         type: "object",
         properties: {
-          taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries/review rounds; register a new ID for separate follow-up work." },
+          attachments: attachmentSchema,
+          taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
-          branch: { type: "string", description: "Branch to work on: an open branch to reuse it, or a new name, created from HEAD." },
+          branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects). Never use the default branch itself." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
         required: ["prompt", "branch", "taskId"],
@@ -62,18 +68,19 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       const role = input.role === "reviewer" ? "reviewer" : "worker";
       if (!prompt || !branch || typeof input.taskId !== "string") return "refused: prompt, branch and registered taskId are required";
 
+      const attachments = await forwardImages(input.attachments, ctx);
       // One agent per branch: a reported agent may still be finishing, so wait briefly for it.
       const busy = await stillLive(runner, ctx.project, branch, wait, ctx.signal);
       ctx.signal?.throwIfAborted();
       if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
-      return launch(runner, prompt, branch, role, input.taskId, ctx);
+      return launch(runner, prompt, branch, role, input.taskId, ctx, attachments);
     },
   };
 }
 
 /** Publish identity before the first transcript entry (the TUI lists transcripts). */
-async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", taskId: string, ctx: ToolContext): Promise<string> {
+async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", taskId: string, ctx: ToolContext, attachments: ImageRef[] = []): Promise<string> {
   const id = sessionId(role, branch);
   const run = crypto.randomUUID();
   await prepareTaskRun(ctx.project, taskId, branch, { id: run, agent: id, role });
@@ -81,7 +88,7 @@ async function launch(runner: Runner, prompt: string, branch: string, role: "wor
     publishLaunch(ctx.project, id, run);
     const t = open(paths.transcript(ctx.project, id));
     if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
-    await t.append({ type: "message", message: { role: "user", content: `Branch: ${branch}\n\n${prompt}` } });
+    await t.append({ type: "message", message: { role: "user", content: imageContent(`Branch: ${branch}\n\n${prompt}`, attachments) } });
     ctx.signal?.throwIfAborted();
     await runner.start({ project: ctx.project, role, branch, run, ...(ctx.signal ? { signal: ctx.signal } : {}) });
     return id;

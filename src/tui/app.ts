@@ -1,3 +1,5 @@
+import { readClipboardImage, type ClipboardImage } from "../clipboard";
+import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput, type ImageRef } from "../images";
 import { listTasks } from "../tasks";
 import { taskInboxLines, type TaskInboxData } from "./task-inbox";
 import { cancelSession } from "../cancellation";
@@ -21,7 +23,7 @@ import { follow, parts } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
 import { historyRows, type Line } from "./lines";
-import { appendHistory, keepable, loadHistory, remember } from "./history";
+import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { helpLines, type CommandHelp } from "./help";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./questions";
@@ -44,7 +46,7 @@ export interface Page {
   /** What the header tab shows; /rename sets it. */
   name: string;
   orch: Orchestrator;
-  /** Where the clone came from, for the pinned header. */
+  /** Repository remote, for the pinned header. */
   remote: string;
   /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
@@ -62,7 +64,7 @@ export interface Page {
   historyLines: number;
   savingHistory: Promise<void>;
   /** Submitted inbox prompts, previewed in the footer but not yet in history; removed by identity at onInbox. */
-  sent: { readonly inputId: string; text: string }[];
+  sent: { readonly inputId: string; text: string; attachments?: ImageRef[]; submission?: string; retry?: boolean }[];
   /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
   questions: PageQuestions;
   /** Answered-question lines waiting for the streaming reply's partial line to end, so they never split it. */
@@ -77,16 +79,18 @@ export interface Page {
 }
 
 export interface AppDeps {
+  /** Explicit Ctrl+V only; tests inject fixture bytes, never the live clipboard. */
+  clipboardImage?: () => Promise<ClipboardImage>;
   /** Cached header model accessor; defaults to effectiveModel(project). */
   projectModel?: (project: string) => Promise<string>;
   term: Terminal;
-  /** Make sure the project exists (cloning when a url is given) and build its orchestrator. */
+  /** Bind a new project to a local checkout and build its orchestrator. */
   /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
   /** `tools` gets each tool call as it starts and ends: running in the live region, then its "⏺" line and summary in the history. */
   openOrchestrator(project: string, url: string | undefined, write: (text: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void, tools?: ToolEvents): Promise<Orchestrator>;
   /** Inbox poll period; tests shorten it. */
   pollMs?: number;
-  /** Clone source of the repository `start` was run from, if any: opened on start and cloned by Ctrl+N. */
+  /** Original checkout directory: opened on start and shared by Ctrl+N conversations. */
   source?: string | null;
   /** Clock and repeating timer for the busy spinner; tests inject fakes so they never sleep. */
   clock?: Clock;
@@ -112,7 +116,7 @@ export interface AppDeps {
   questionDelayMs?: number;
 }
 
-export interface ToolEvents { onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void }
+export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
 
@@ -221,7 +225,7 @@ export class App {
   private _active = 0;
   get active(): number { return this._active; }
   set active(index: number) {
-    if (index !== this._active) { if (this.page) this.questions.hide(this.page); this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
+    if (index !== this._active) { this.clipboardGeneration++; if (this.page) this.questions.hide(this.page); this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
     this._active = index;
   }
   private looseLines: string[] = [];
@@ -237,7 +241,57 @@ export class App {
   projectList: ProjectListState | null = null;
   loggingIn = false;
   /** Text typed while signing in, per page; sent when sign-in succeeds, dropped when it fails. */
-  private readonly queued = new Map<Page, { text: string; submission?: string }[]>();
+  private readonly queued = new Map<Page, { text: string; submission?: string; inputId: string; attachments?: ImageRef[] }[]>();
+  private readonly draftImages = new WeakMap<Page, ImageRef[]>();
+  private clipboardGeneration = 0;
+  private clipboardReading = false;
+  private readonly sending = new WeakMap<Page, Promise<void>>();
+  private images(page = this.page): ImageRef[] { return page ? this.draftImages.get(page) ?? [] : []; }
+  private imageOwner(page: Page, generation: number): boolean {
+    return generation === this.clipboardGeneration && this.page === page && this.validPage(page)
+      && !page.view && !this.menu && !this.projectList && !this.clearing && !this.taskInbox
+      && this.helpTop === null && !page.questions.expanded;
+  }
+  private async pasteImage(): Promise<void> {
+    const page = this.page;
+    if (!page || page.view || page.questions.expanded) return this.say(dim("Open a project chat before attaching an image (not a question answer)."));
+    if (this.clipboardReading) return this.say(dim("An image read is already in progress; Ctrl+V again when it finishes."));
+    if (this.images(page).length >= MAX_IMAGES) return this.say(dim("At most 4 images per prompt; Ctrl+Y removes the last image."));
+    const generation = ++this.clipboardGeneration;
+    this.clipboardReading = true;
+    try {
+      const identity = projectIdentity(page.project);
+      const image = await (this.deps.clipboardImage ?? readClipboardImage)();
+      if (!this.imageOwner(page, generation)) return;
+      if (projectIdentity(page.project) !== identity) throw new Error("Project changed; image not attached.");
+      const ref = await saveImage(page.project, image.bytes, image.mime);
+      if (!this.imageOwner(page, generation)) return;
+      this.draftImages.set(page, [...this.images(page), ref]);
+    } catch (error) {
+      if (this.imageOwner(page, generation)) this.say(dim(`Image not attached: ${error instanceof Error ? error.message : error}`), page);
+    } finally { this.clipboardReading = false; this.draw(); }
+  }
+  private removeImage(): void {
+    const page = this.page;
+    if (page && !page.questions.expanded && !page.view) this.draftImages.set(page, this.images(page).slice(0, -1));
+    this.draw();
+  }
+  private async recoverImages(page: Page): Promise<void> {
+    const inputs = await pendingImageInputs(page.project, page.orch.consumed?.());
+    if (!this.validPage(page)) return;
+    for (const input of inputs) if (!page.orch.consumed?.().has(input.inputId)
+      && !page.sent.some(m => m.inputId === input.inputId) && !this.queued.get(page)?.some(m => m.inputId === input.inputId)) {
+      page.sent.push({ ...input, retry: true });
+    }
+  }
+  private async retryImages(page?: Page): Promise<void> {
+    if (!page || page.view || this.loggingIn) return this.say(dim("Open project chat and finish sign-in before retrying images."));
+    await this.recoverImages(page);
+    for (const item of [...page.sent]) if (item.attachments?.length && item.retry) {
+      await this.send(page, item.text, item.submission, item.inputId, item.attachments).catch(error => this.say(dim(String(error)), page));
+    }
+    this.runTurn(page);
+  }
   /** /keys: echo every key as parsed until Esc, to see what a terminal really sends. */
   keyEcho = false;
   /** Input history while no page is open; a page keeps its own. */
@@ -274,6 +328,13 @@ export class App {
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
   private readonly liveChecks = new Map<string, Promise<void>>();
   private closed = false;
+  private refreshing?: Promise<void>;
+  private refreshAgain = false;
+  private refreshForce = false;
+  private readonly deferredRefresh = new Set<Page>();
+  private readonly renderedHeads = new WeakMap<Page, string | undefined>();
+  private readonly refreshedTurns = new WeakSet<Page>();
+  private readonly notices = new WeakMap<Page, Line[]>();
 
   /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
   readonly questions: Questions;
@@ -289,6 +350,7 @@ export class App {
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
       say: (line, page) => app.toPage(page as Page, [line]),
       record: (line, page) => app.record(page as Page, line),
+      submitted: () => { void app.refreshSessions(); },
       width: () => app.inputWidth("answer> "),
       now: () => app.clock.now(),
       isCommand: (text) => app.commands.has(text.split(" ")[0]!),
@@ -312,6 +374,7 @@ export class App {
       if (this.page) { this.checkLive(this.page.project); void this.refreshHeader(this.page).catch(() => {}); }
       this.watchPages();
       this.questions.poll(this.pages);
+      void this.refreshSessions(false); // passive snapshots also follow responses consumed in another window
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
     try {
@@ -330,7 +393,7 @@ export class App {
       this.stopSpinner?.();
       this.stopSpinner = null;
       this.loginAbort.abort();
-      for (const p of this.pages) { p.orch.cancel?.(); p.view?.leave(); }
+      for (const p of this.pages) { if (p.busy) p.orch.cancel?.(); p.orch.dispose?.(); p.view?.leave(); }
       restoreConsole();
       term.close();
       this.leave();
@@ -340,10 +403,13 @@ export class App {
   /** The given project, or every known one plus the repo we were started in, or a fresh orch-xxxx. */
   private async openStartPages(project?: string, url?: string): Promise<void> {
     if (project) { await this.openPage(project, url); return; }
-    for (const name of await listProjects()) await this.openPage(name);
+    for (const name of await listProjects()) {
+      try { await this.openPage(name); }
+      catch (error) { this.say(`could not open ${name}: ${error instanceof Error ? error.message : String(error)}`); }
+    }
     const source = this.deps.source;
     if (source) {
-      // Reuse the project already cloned from this repo, else start a fresh orch-xxxx on it.
+      // Reuse by original checkout path, never by origin (another clone may share it).
       const existing = await projectFor(source);
       if (existing) await this.openPage(existing);
       else await this.newPage();
@@ -371,7 +437,12 @@ export class App {
   say(line: string, page = this.page): void {
     if (!page) { this.looseLines.push(line); this.pending.push(line); return this.draw(); }
     if (page.view) this.toView(page, page.view, [line]);
-    else this.toPage(page, [line]);
+    else { this.keepNotice(page, line); this.toPage(page, [line]); }
+  }
+
+  private keepNotice(page: Page, line: Line): void {
+    const notes = this.notices.get(page) ?? [];
+    notes.push(line); this.notices.set(page, notes);
   }
 
   /** Finished lines of the page's own history; they reach the screen only while it is active and shows no agent. */
@@ -420,9 +491,9 @@ export class App {
       // Match identity, not text: an identical external message is not an acknowledgement.
       // Typed here: show only now, at the consumption boundary (answer-shaped chat stays chat).
       const at = m.inputId ? page.sent.findIndex(item => item.inputId === m.inputId) : -1;
-      if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines(m.text)); continue; }
+      if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines([m.text, imageLabels(m.attachments)].filter(Boolean).join("\n"))); continue; }
       // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`parallels msg`) as "> …", as restore shows it.
-      this.toPage(page, this.questions.inboxLines(page, m.text) ?? userLines(m.text));
+      this.toPage(page, this.questions.inboxLines(page, [m.text, imageLabels(m.attachments)].filter(Boolean).join("\n")) ?? userLines(m.text));
     }
   }
 
@@ -443,6 +514,7 @@ export class App {
 
   /** An answered question's line: into the page's history now, or once the reply streaming there ends its partial line. */
   private record(page: Page, line: Line): void {
+    this.keepNotice(page, line);
     if (page.md.pending) page.held.push(line);
     else this.toPage(page, [line]);
   }
@@ -450,7 +522,13 @@ export class App {
   frame(): Frame {
     const page = this.page;
     const status = this.started && page ? this.status(page) : null;
-    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length);
+    const refs = this.images(page);
+    const showImages = refs.length > 0 && !page?.questions.expanded;
+    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0));
+    if (showImages) {
+      area.lines.unshift(dim(`${imageLabels(refs)} · Ctrl+Y remove last`.slice(0, this.deps.term.cols)));
+      area.row++;
+    }
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
@@ -459,7 +537,7 @@ export class App {
       status, input, inputArea: area,
       // Project-owned submitted text only: never reconstruct from conversation
       // user lines or from the chat/answer draft. This is presentation, not delivery.
-      queued: page ? { project: page.name, texts: [...page.sent.map(item => item.text), ...(this.queued.get(page) ?? []).map(item => item.text)] } : undefined,
+      queued: page ? { project: page.name, texts: [...page.sent.map(item => `${item.retry ? "[not confirmed; /retry-images] " : ""}${item.text}${item.attachments?.length ? " " + imageLabels(item.attachments) : ""}`), ...(this.queued.get(page) ?? []).map(item => `${item.text}${item.attachments?.length ? " " + imageLabels(item.attachments) : ""}`)] } : undefined,
       menu: this.menu,
       help: this.helpView(),
       inbox: this.taskInboxView(),
@@ -682,6 +760,90 @@ export class App {
 
   // --- pages ------------------------------------------------------------------
 
+  /** Read-only reconciliation. Coalesce bursts, but a request arriving during a
+   * snapshot gets one trailing pass. Submission and turn ownership are separate. */
+  refreshSessions(force = true): Promise<void> {
+    if (force) this.clipboardGeneration++;
+    this.refreshAgain = true;
+    this.refreshForce ||= force;
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = Promise.resolve().then(async () => {
+      do {
+        this.refreshAgain = false;
+        const forced = this.refreshForce;
+        this.refreshForce = false;
+        await Promise.all(this.pages.map(page => this.refreshPage(page, forced)));
+        await this.refreshProjects().catch(err => this.say(dim(`refresh projects failed: ${err}`)));
+        await this.refreshTaskInbox();
+      } while (this.refreshAgain && !this.closed);
+    }).finally(() => { this.refreshing = undefined; });
+    return this.refreshing;
+  }
+
+  private validPage(page: Page): boolean {
+    return !this.closed && !page.deleting && this.pages.includes(page);
+  }
+
+  private async refreshPage(page: Page, forced: boolean): Promise<void> {
+    if (!this.validPage(page)) return;
+    const nameBefore = page.name, remoteBefore = page.remote;
+    const safe = [this.refreshHeader(page), forced ? this.questions.refresh(page) : Promise.resolve(),
+      displayName(page.project).then(name => { if (this.validPage(page) && page.name === nameBefore) page.name = name; }),
+      remoteOf(page.project).then(remote => { if (this.validPage(page) && page.remote === remoteBefore) page.remote = remote; })];
+    this.checkLive(page.project);
+    const results = await Promise.allSettled(safe);
+    try {
+      if (page.busy) this.deferredRefresh.add(page);
+      else if (await page.orch.refresh?.() === false || page.busy) this.deferredRefresh.add(page);
+      else if (this.validPage(page)) {
+        this.deferredRefresh.delete(page);
+        this.syncTranscript(page);
+        await this.recoverImages(page);
+      }
+      // Don't overwrite a history append/recall that raced the read.
+      const before = page.inputHistory, writing = page.savingHistory;
+      await writing;
+      const saved = await loadHistory(page.project);
+      if (this.validPage(page) && page.inputHistory === before && page.savingHistory === writing && this.historyAt === -1) {
+        page.inputHistory = [...saved.entries, ...before.filter(text => !saved.entries.includes(text))].slice(-MAX_INPUT_HISTORY);
+        page.historyLines = saved.lines;
+      }
+      const failed = results.find(r => r.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+    } catch (error) {
+      if (this.validPage(page)) this.say(dim(`refresh failed (input retained): ${error instanceof Error ? error.message : String(error)}`), page);
+    }
+    this.draw();
+  }
+
+  /** Only durable exact IDs acknowledge pending input. Re-rendering saved tool
+   * entries is presentation, never tool execution. Called idle or pre-stream. */
+  private syncTranscript(page: Page): void {
+    const consumed = page.orch.consumed?.();
+    if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
+    const entries = page.orch.entries?.();
+    if (!entries) return;
+    const head = entries.at(-1)?.uuid;
+    if (this.renderedHeads.get(page) === head) return;
+    const lines = restore(entries, this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
+    // Keep local diagnostics/skip feedback, but don't duplicate persisted answers.
+    const saved = new Set(lines.map(line => JSON.stringify(line)));
+    const notes = (this.notices.get(page) ?? []).filter(line => !saved.has(JSON.stringify(line)));
+    this.notices.set(page, notes);
+    const anchor = page === this.page && !page.view && this.scrollTop !== null
+      ? captureAnchor(page.lines, this.deps.term.cols, this.scrollTop) : undefined;
+    if (anchor) {
+      const source = JSON.stringify(page.lines[anchor.line]);
+      const occurrence = page.lines.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
+      const matches = lines.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
+      anchor.line = matches[occurrence] ?? Math.min(anchor.line, lines.length);
+    }
+    page.lines = [...lines, ...notes];
+    if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(page.lines, this.deps.term.cols, anchor); }
+    this.renderedHeads.set(page, head);
+    if (page === this.page && !page.view) this.reprint();
+  }
+
   private restorePage(page: Page, asked: import("./restore").AskedLookup): void {
     const entries = page.orch.entries?.() ?? [];
     // All saved conversation must be scrollable before exit, including originals
@@ -691,6 +853,7 @@ export class App {
   }
 
   async openPage(project: string, url?: string): Promise<Page> {
+    this.clipboardGeneration++;
     this.modelGeneration++;
     const existing = this.pages.findIndex((p) => p.project === project);
     if (existing !== -1) {
@@ -698,20 +861,24 @@ export class App {
       return this.pages[existing]!;
     }
     const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), held: [], view: null, calls: new Calls() };
-    const tools: ToolEvents = { onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]) };
+    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     const asked = await this.questions.load(page);
     this.restorePage(page, asked);
+    this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
     const saved = await loadHistory(project);
     page.inputHistory = saved.entries;
     page.historyLines = saved.lines;
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
+    this.notices.set(page, [...this.looseLines]);
     page.lines.unshift(...this.looseLines);
     this.looseLines = [];
     page.model = await this.readModel(project);
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
+    try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
+    catch (error) { this.say(dim(`Image recovery failed: ${error}`), page); }
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.checkLive(project);
@@ -722,6 +889,7 @@ export class App {
   }
 
   closePage(index = this.active): void {
+    this.clipboardGeneration++;
     this.taskInbox = null;
     this.cancelClear();
     this.helpTop = null;
@@ -730,6 +898,7 @@ export class App {
     if (!page) return;
     this.questions.hide(page);
     page.view?.leave();
+    page.orch.dispose?.();
     this.pages.splice(index, 1);
     if (index < this.active) this.active--;
     this.active = Math.min(this.active, Math.max(0, this.pages.length - 1));
@@ -737,6 +906,7 @@ export class App {
   }
 
   switchPage(delta: number): void {
+    this.clipboardGeneration++;
     if (this.pages.length < 2) return;
     this.active = (this.active + delta + this.pages.length) % this.pages.length;
     this.reprint();
@@ -749,7 +919,7 @@ export class App {
     return shown;
   }
 
-  /** Start a fresh orchestrator named orch-xxxx (or `name`), cloning `url`, else the repo we were started in. */
+  /** Start a conversation in the given local directory, else the original launch checkout. */
   async newPage(name?: string, url?: string): Promise<void> {
     const shown = await this.shownNames();
     if (name && [...shown].some(([id, n]) => id !== name && n === name)) return this.say(dim(`another project is already called ${name}`));
@@ -800,9 +970,12 @@ export class App {
 
   /** Reload the project list, keeping the selection on `select` (or the selected name) when it is still there. */
   private async refreshProjects(select = this.projectList?.items[this.projectList.index]?.name): Promise<void> {
-    const items = await orderedProjects();
     const list = this.projectList;
     if (!list) return;
+    const index = list.index;
+    const items = await orderedProjects();
+    if (this.projectList !== list) return;
+    if (list.index !== index) select = list.items[list.index]?.name;
     list.items = items;
     const at = items.findIndex((it) => it.name === select);
     list.index = at !== -1 ? at : Math.min(list.index, Math.max(0, items.length - 1));
@@ -895,23 +1068,35 @@ export class App {
   }
 
   private async runTurn(page: Page): Promise<void> {
-    if (page.busy || page.deleting) return;
+    if (page.busy || !this.validPage(page)) return;
+    this.refreshedTurns.delete(page);
     page.busy = true;
     page.busySince = this.clock.now();
     page.streamed = false;
     this.draw();
+    let failed = false;
     try {
       for (const reply of await page.orch.turn()) {
         this.endPartial(page);
         this.toPage(page, [replyLine(reply.from, reply.text)]);
       }
     } catch (err) {
+      failed = true;
       this.endPartial(page);
-      this.toPage(page, [`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. Send another message to resume with retained history; changing model alone does not retry. Exited agents require restart.`]);
+      this.say(`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. Send another message to resume with retained history; changing model alone does not retry. Exited agents require restart.`, page);
     } finally {
       this.endPartial(page);
       page.busy = false;
+      // Only a turn that rendered its initial shared snapshot can claim its
+      // subsequent streamed head. Losing turn ownership renders nothing.
+      if (this.refreshedTurns.delete(page)) this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
       this.toPage(page, page.calls.interrupt());
+      if (failed) {
+        const saved = restore(page.orch.entries?.() ?? [], this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
+        const known = new Set([...saved, ...(this.notices.get(page) ?? [])].map(line => JSON.stringify(line)));
+        for (const line of page.lines) if (!known.has(JSON.stringify(line))) this.keepNotice(page, line);
+      }
+      if (this.deferredRefresh.has(page) || page.sent.length) void this.refreshSessions();
       this.draw();
     }
   }
@@ -919,6 +1104,7 @@ export class App {
   // --- menus ------------------------------------------------------------------
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
+    this.clipboardGeneration++;
     this.taskInbox = null;
     this.cancelClear();
     if (modelOperation === undefined) this.modelGeneration++;
@@ -1021,12 +1207,15 @@ export class App {
     for (const [page, texts] of [...this.queued]) await this.drainLoginPage(page, texts, ok);
   }
 
-  private async drainLoginPage(page: Page, texts: { text: string; submission?: string }[], ok: boolean): Promise<void> {
-    if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
+  private async drainLoginPage(page: Page, texts: { text: string; submission?: string; inputId: string; attachments?: ImageRef[] }[], ok: boolean): Promise<void> {
+    if (!ok) this.say(dim(texts.some(m => m.attachments?.length) ? "sign-in failed; image prompts retained for /retry-images" : `sign-in failed; dropped ${texts.length} queued message(s)`), page);
     while (texts.length) {
-      const { text, submission } = texts.shift()!; // ownership transfers to send (Page.sent), or an explicit drop report
-      if (ok && this.pages.includes(page)) await this.send(page, text, submission).catch(() => {});
-      else this.say(dim(`not sent after sign-in (${page.name}): ${text}`), this.pages.includes(page) ? page : this.page);
+      const { text, submission, inputId, attachments } = texts.shift()!; // ownership transfers to send (Page.sent), or an explicit drop report
+      if (ok && this.pages.includes(page)) await this.send(page, text, submission, inputId, attachments).catch(() => {});
+      else {
+        if (attachments?.length) page.sent.push({ text, submission, inputId, attachments, retry: true });
+        this.say(dim(`not sent after sign-in (${page.name}): ${text}${imageLabels(attachments)}${attachments?.length ? "; /retry-images" : ""}`), this.pages.includes(page) ? page : this.page);
+      }
     }
     if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
   }
@@ -1039,15 +1228,17 @@ export class App {
    * login() itself). Table order is the order within a /help group.
    */
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
+    ["/refresh", { run: () => this.refreshSessions(), help: { group: "conversation", label: "/refresh", description: "Reload shared local state; active context waits until idle; never runs work" } }],
     ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "Browse projects: Enter opens, p pins, d deletes" } }],
     ["/mouse", { args: true, run: (arg) => {
       if (arg !== "on" && arg !== "off") { this.say("Usage: /mouse on|off (off restores native selection and Cmd-click links)"); return; }
       this.deps.term.setMouse?.(arg === "on");
       this.say(arg === "on" ? "Mouse reporting on: wheel scrolls; use your terminal's selection modifier to select text." : "Mouse reporting off: drag to select; Cmd-click links in supporting terminals. Use PgUp/PgDn to scroll.");
     }, help: { group: "conversation", label: "/mouse on|off", description: "Opt into wheel reporting; off (default) preserves selection and Cmd-click links" } }],
+    ["/retry-images", { run: (_, page) => this.retryImages(page), help: { group: "conversation", label: "/retry-images", description: "Retry unconfirmed image prompts by original ID; never replay consumed input" } }],
     ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
-    ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [git-url]", description: "Create a project page" } }],
+    ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [directory]", description: "Create a project page" } }],
     ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "Close this page; keep its project and history" } }],
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "Exit; keep conversation history" } }],
     ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "User inbox: Tasks / Questions; Shift+Tab switches sections, Esc/Tab closes" } }],
@@ -1149,11 +1340,11 @@ export class App {
     this.draw();
   }
 
-  /** /new [name] [git-url]: the name must be a valid project id. */
+  /** /new [name] [directory]: the name must be a valid project id. */
   private newCommand(args: string): Promise<void> | void {
-    const [name, url] = args.split(/\s+/).filter(Boolean);
+    const [, name, directory] = args.trim().match(/^(\S+)(?:\s+([\s\S]+))?$/) ?? [];
     if (name && !validProjectName(name)) return this.say(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
-    return this.newPage(name, url);
+    return this.newPage(name, directory);
   }
 
   /** /models opens the menu; /models <id> sets any id. */
@@ -1214,7 +1405,8 @@ export class App {
    * 4. an unknown one (or arguments to a command that takes none) says "unknown command /x";
    * 5. plain text goes to the orchestrator (talk), refused in an agent view and queued while signing in.
    */
-  private async submit(text: string): Promise<void> {
+  private async submit(text: string, attachments: ImageRef[] = []): Promise<void> {
+    this.clipboardGeneration++;
     this.cancelClear();
     const call = parseCommand(text, this.commands);
     if (call && call.name !== "/models") this.modelGeneration++;
@@ -1223,22 +1415,26 @@ export class App {
     if (!page) return this.newPage();
     if (call?.command) return call.command.run(call.args, page);
     if (call) return this.say(dim(`unknown command ${call.name}`));
-    return this.talk(page, text);
+    return this.talk(page, text, attachments);
   }
 
   /** Plain text for the page's orchestrator: refused while viewing an agent, held while signing in. */
-  private async talk(page: Page, text: string): Promise<void> {
+  private async talk(page: Page, text: string, attachments: ImageRef[] = []): Promise<void> {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
+    const submission = page.orch.submission?.();
+    const inputId = crypto.randomUUID();
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
     if (this.loggingIn || this.queued.has(page)) {
       // Append to the same owner while login is draining too, so a new submit
       // cannot overtake older held input during an asynchronous inbox write.
       const texts = this.queued.get(page) ?? [];
-      texts.push({ text, submission: page.orch.submission?.() });
+      texts.push({ text, submission, inputId, ...(attachments.length ? { attachments } : {}) });
+      void this.refreshSessions();
       this.queued.set(page, texts);
+      if (attachments.length) await saveImageInput(page.project, { text, submission, inputId, attachments });
       return this.say(dim("queued; runs after sign-in"), page);
     }
-    await this.send(page, text);
+    await this.send(page, text, submission, inputId, attachments);
     this.runTurn(page);
   }
 
@@ -1297,12 +1493,16 @@ export class App {
     { name: "help", takes: () => this.helpTop !== null, handle: (k) => this.helpKey(k) },
     { name: "inbox", takes: k => !!this.taskInbox || (!!this.page?.questions.expanded && ((!k.ctrl && !k.alt && (k.name === "escape" && !k.shift || k.name === "tab")) || !this.questions.view())), handle: (k) => this.taskInboxKey(k) },
     { name: "questions", takes: (k) => this.questions.takes(k), handle: (k) => this.questions.handle(k).then(() => this.draw()) },
+    { name: "images", takes: k => !!k.ctrl && !k.alt && ["v", "y"].includes(k.name), handle: k => k.name === "v" ? this.pasteImage() : this.removeImage() },
     { name: "escape", takes: (k) => k.name === "escape", handle: () => this.escapeKey() },
     { name: "enter", takes: (k) => k.name === "enter" && !k.shift && !k.alt, handle: () => this.enterKey() },
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
 
   async onKey(k: Key): Promise<void> {
+    // Editing within this draft is fine. Navigation/modal/send/clear/history keys
+    // invalidate asynchronous reads, even if the user returns before completion.
+    if (!(k.ctrl && k.name === "v") && !typedText(k) && !["left", "right", "backspace", "delete"].includes(k.name)) this.clipboardGeneration++;
     if (this.canScroll(k)) return this.scroll(k);
     if (k.name === "escape") this.modelGeneration++;
     for (const layer of this.keyLayers) if (layer.takes(k)) return layer.handle(k);
@@ -1464,20 +1664,28 @@ export class App {
   /** Esc: leave the agent view, else clear the input. */
   private escapeKey(): void {
     if (this.page?.view) this.page.view.leave();
-    else this.input = { text: "", cursor: 0 };
+    else { this.input = { text: "", cursor: 0 }; if (this.page) this.draftImages.delete(this.page); }
     return this.draw();
   }
 
   /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
   private enterKey(): Promise<void> | void {
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
-    if (text !== "/help" && text !== "/inbox" && text !== "/questions") this.scrollTop = null;
+    const attachments = this.images();
+    if (attachments.length && text.trimStart().startsWith("/")) {
+      this.say(dim("Draft images are not sent with slash commands. Ctrl+Y removes the last image; Esc clears this draft."));
+      return this.draw();
+    }
+    if (attachments.length && Buffer.byteLength(text) > 60000) return this.say(dim("Image prompt text exceeds 60,000 bytes; shorten it before sending. Draft retained."));
+    if (attachments.length && this.page?.view) return this.say(dim("Return to project chat before sending images."));
+    if (this.page) this.draftImages.delete(this.page);
+    if (text !== "/help" && text !== "/inbox" && text !== "/questions" && text !== "/refresh") this.scrollTop = null;
     this.input = { text: "", cursor: 0 };
     this.historyAt = -1;
-    if (!text) return this.draw();
+    if (!text && !attachments.length) return this.draw();
     this.remember(text);
     this.draw();
-    return this.submit(text);
+    return this.submit(text, attachments);
   }
 
   /** Editing on the input area; the logic lives in editor.ts. */
@@ -1497,16 +1705,34 @@ export class App {
   }
 
 
-  /** Track submitted input until onInbox consumes it; a failed write is explicitly reported, never echoed as sent. */
-  private async send(page: Page, text: string, submission?: string): Promise<void> {
-    const sent = { inputId: crypto.randomUUID(), text };
-    page.sent.push(sent);
+  /** Track input until an exact committed receipt (local callback or shared refresh); failed writes are reported explicitly. */
+  private async send(page: Page, text: string, submission?: string, inputId: string = crypto.randomUUID(), attachments: ImageRef[] = []): Promise<void> {
+    const sent = page.sent.find(m => m.inputId === inputId) ?? { inputId, text, submission, ...(attachments.length ? { attachments } : {}), retry: false };
+    if (!page.sent.includes(sent)) page.sent.push(sent);
+    sent.retry = false;
     this.draw();
-    try { await page.orch.say(text, submission, sent.inputId); }
+    try {
+      // Start publication before refresh and never await a refresh to submit.
+      const publish = async () => {
+        if (attachments.length) await saveImageInput(page.project, { inputId, text, submission, attachments });
+        return { writing: page.orch.say(text, submission, sent.inputId, attachments) };
+      };
+      const prior = this.sending.get(page);
+      const prepared = prior ? prior.then(publish) : publish();
+      // Reserve inbox invocation order, not completion: put owns disk FIFO, and
+      // later sends must still be attempted after an earlier delayed failure.
+      const gate = prepared.then(() => {}, () => {});
+      this.sending.set(page, gate);
+      void gate.then(() => { if (this.sending.get(page) === gate) this.sending.delete(page); });
+      void this.refreshSessions(false);
+      const { writing } = await prepared;
+      await writing;
+    }
     catch (err) {
       const at = page.sent.indexOf(sent);
-      if (at !== -1) page.sent.splice(at, 1);
-      this.say(dim(`not sent: ${text}`), page);
+      if (attachments.length) sent.retry = true;
+      else if (at !== -1) page.sent.splice(at, 1);
+      this.say(dim(`not sent: ${text}${imageLabels(attachments)}${attachments.length ? "; retained in this window for /retry-images" : ""}`), page);
       throw err;
     } finally { this.draw(); }
   }
@@ -1525,6 +1751,7 @@ export class App {
   }
 
   private recall(dir: -1 | 1): void {
+    if (this.images().length) return this.say(dim("Remove draft images (Ctrl+Y) before recalling a different prompt from history."));
     const page = this.page;
     if (this.historyPage !== page) { this.historyPage = page; this.historyAt = -1; }
     const history = page?.inputHistory ?? this.looseHistory;

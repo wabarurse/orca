@@ -1,25 +1,47 @@
-// Everything lives under ~/.parallels, like ~/.claude.
+// Harness state lives under ~/.parallels. Checkouts stay outside it.
 //
 //   ~/.parallels/
 //     config.toml              model, byte limits, defaults, pinned projects
 //     projects/<name>/
 //       name                   display name set by /rename (absent = <name>)
 //       input-history          the TUI's ↑/↓ input history, one JSON string per line, newest last
-//       repo/                  the orchestrator's clone
-//       worktrees/<branch>/    one per branch, removed when done
+//       repository.json        original checkout, default branch and worktree namespace
+//       repo/, worktrees/      legacy projects only
 //       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
 //       runs/<agent>.json       the agent's current run: run id, pid, reported or running, last step (src/exits.ts)
 //       runs/<agent>.<run>.exit a run's close claim: created once, by whoever sends its exit notice (or none)
 //       tasks.json             versioned structured task registry (src/tasks.ts), not a message queue
 //       questions/             the orchestrator's open questions for the user, a file each
 //       merged/<n>             PR #n's merge claim: started → handled / kept / nothing to do (src/merges.ts)
-//       transcripts/<role>-<branch>.jsonl   one per agent; the only memory
+//       transcripts/<role>-<branch>.jsonl   original agent history + context checkpoints
+//       memory.sqlite          rebuildable orchestrator history/task retrieval index
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { readFileSync } from "node:fs";
 
 // Read lazily so tests can point PARALLELS_HOME at a temp dir after import.
 const root = () => process.env.PARALLELS_HOME ?? join(homedir(), ".parallels");
+
+export interface RepositoryBinding { version: 1; directory: string; branch: string; worktreeId: string }
+
+/** Missing means a legacy managed clone; malformed metadata must never fall back to it. */
+export function repositoryBinding(name: string): RepositoryBinding | undefined {
+  let raw: string;
+  try { raw = readFileSync(join(root(), "projects", name, "repository.json"), "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  const value = JSON.parse(raw);
+  if (value?.version !== 1 || typeof value.directory !== "string" || !isAbsolute(value.directory) ||
+      typeof value.branch !== "string" || !value.branch || !/^[a-f0-9-]{36}$/.test(value.worktreeId)) {
+    throw new Error(`invalid repository binding for ${name}`);
+  }
+  return value;
+}
+
+function worktrees(name: string): string {
+  const binding = repositoryBinding(name);
+  return binding ? join(`${binding.directory}.parallels-worktrees`, binding.worktreeId) : join(root(), "projects", name, "worktrees");
+}
 
 export const paths = {
   get root() { return root(); },
@@ -27,8 +49,10 @@ export const paths = {
   project: (name: string) => join(root(), "projects", name),
   displayName: (name: string) => join(root(), "projects", name, "name"),
   inputHistory: (name: string) => join(root(), "projects", name, "input-history"),
-  repo: (name: string) => join(root(), "projects", name, "repo"),
-  worktree: (name: string, slug: string) => join(root(), "projects", name, "worktrees", slug),
+  repository: (name: string) => join(root(), "projects", name, "repository.json"),
+  repo: (name: string) => repositoryBinding(name)?.directory ?? join(root(), "projects", name, "repo"),
+  worktrees,
+  worktree: (name: string, slug: string) => join(worktrees(name), slug),
   inbox: (name: string) => join(root(), "projects", name, "inbox"),
   runs: (name: string) => join(root(), "projects", name, "runs"),
   questions: (name: string) => join(root(), "projects", name, "questions"),

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { defaults } from "./config";
 import { rolePrompt } from "./prompts";
 import type { Runner } from "./runner";
+import { ask } from "./tools/ask";
 import { message } from "./tools/message";
 import { makeSpawn } from "./tools/spawn";
 
@@ -60,6 +61,16 @@ describe("rolePrompt", () => {
     const d = makeSpawn({} as Runner).spec.description ?? "";
     expect(d).toMatch(/^- Reuse /m);
     expect(d).toMatch(/^- Start a new branch /m);
+    expect(d).toContain("Reuse the same taskId and branch");
+    expect(d).toContain("user-requested fixes after a ready report");
+    expect(d).toContain("CI or PR publication does not require a fresh branch");
+    expect(d).toContain("refresh its PR state with task pr before resuming");
+    expect(d).toContain("reviewer pushes to the same PR and validates its updated head");
+    expect(d).toContain("Do not register a new task or use a temporary branch/cherry-pick workaround");
+    expect(d).not.toContain("only before it has gone to CI or a PR");
+    expect(d).not.toContain("or the existing branch has gone to CI or a PR");
+    expect(d).toContain("Never spawn on a branch whose PR is merged");
+    expect(d).toContain("One agent works on a branch at a time");
     expect(d).toContain('"<branch> (existing)"');
     for (const maxReviewRounds of [0, 1, 100]) {
       const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
@@ -77,17 +88,51 @@ describe("rolePrompt", () => {
     expect(w).toContain("later messages are follow-ups");
   });
 
-  test("ask avoids routine approvals without removing the plan and execution gate", () => {
+  // Source-level policy contracts, not a live-model test of intent inference.
+  test("clear contextual requests authorize only their scope without magic words or reconfirmation", () => {
+    for (const maxReviewRounds of [0, 1, 100]) {
+      const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
+      expect(p).toMatch(/Clear user requests in context/);
+      expect(p).toContain('"fix X"'); // An ordinary imperative is a request, not a special command.
+      expect(p).toMatch(/authorize only that scope/);
+      expect(p).toMatch(/no magic words\/reconfirmation/);
+      expect(p).toMatch(/not discussion, quotes or mere possibility/);
+      expect(p).not.toMatch(/Before spawning, changing or pushing, wait/);
+      expect(p).toContain('"Execute"/"dispatch" alone means the whole plan last shown');
+    }
+  });
+
+  test("request authorization retains the plan, registration, review and lifecycle boundaries", () => {
+    for (const maxReviewRounds of [0, 1, 100]) {
+      const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
+      expect(p).toMatch(/Show each task's plan table/);
+      expect(p).toContain("Register new work via `task`");
+      expect(p).toContain("reuse taskId for fixes");
+      expect(p).toMatch(/spawn a worker → it reports → spawn (?:the|a) reviewer/);
+      expect(p).toMatch(/it reports ready to merge → tell the user/);
+      expect(p).toContain("Never read or edit a worker's worktree");
+      expect(p).toContain("One agent per branch");
+      expect(p).toContain('quoting the source: From worker-xyz: "<message>"');
+      expect(p).toContain("no respawn or tool retry without explicit user authorization");
+    }
+  });
+
+  test("ask still reserves clarification for genuine unresolved decisions, not routine approvals", () => {
     for (const maxReviewRounds of [0, 1, 100]) {
       const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
       const guidance = p.split("\n").find((line) => line.includes("(see ask)"))!;
       expect(guidance).toMatch(/only for necessary unresolved decisions/);
       expect(guidance).toMatch(/not routine approved work/);
-      expect(p).toMatch(/Show each task's plan table/);
-      expect(p).toMatch(/Before spawning, changing or pushing, wait for explicit user authorization/);
-      expect(p).toMatch(/execute, dispatch or clear chat equivalent/);
-      expect(p).toContain('"Execute"/"dispatch" alone means the whole plan last shown');
     }
+    // Detailed safety guidance remains in the referenced tool, not duplicated in the prompt.
+    const guidance = ask.spec.description ?? "";
+    expect(guidance).toContain("currently unresolved decision");
+    expect(guidance).toContain("materially affects scope/results");
+    expect(guidance).toContain("destructive/data-loss risk");
+    expect(guidance).toContain("new access, credentials, provider or billing beyond existing authorization");
+    expect(guidance).toContain("Do not treat real scope expansion or destructive changes as routine");
+    expect(guidance).toContain("Skip, silence and closing the panel never apply it");
+    expect(guidance).toContain("Never use a default, Skip or silence to authorize destructive steps");
   });
 
   // Every prompt stays under 2000 characters: it is sent with every request

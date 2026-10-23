@@ -10,7 +10,9 @@ import { command, run } from "./proc";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { $ } from "bun";
-import { paths } from "./config";
+import { paths, repositoryBinding } from "./config";
+import { assertMainCheckout, assertWorktree } from "./workspace";
+import { launchEnvironment } from "./launch-environment";
 import type { Role } from "./transcript";
 
 export interface StartOptions {
@@ -19,7 +21,7 @@ export interface StartOptions {
   signal?: AbortSignal;
   project: string;
   role: Role;
-  /** Branch to work on. Omitted for the orchestrator, which runs in repo/. */
+  /** Branch to work on. Omitted for the orchestrator in the original checkout. */
   branch?: string;
 }
 
@@ -32,7 +34,12 @@ export interface Runner {
   running(project: string, ids: string[], signal?: AbortSignal): Promise<string[] | null>;
 }
 
-const CLI = resolve(import.meta.dir, "cli.ts");
+/** Re-enter this exact executable, not a build-machine path or a Bun found on PATH.
+ * Development still runs cli.ts using the current (absolute) Bun executable.
+ */
+export function cliCommand(): string[] {
+  return Bun.isStandaloneExecutable ? [process.execPath] : [process.execPath, resolve(import.meta.dir, "cli.ts")];
+}
 
 function need(bin: string): string {
   const found = Bun.which(bin);
@@ -52,18 +59,21 @@ export const sessionId = (role: Role, branch?: string) => windowName(role, branc
 
 /**
  * Ensure a worktree for `branch` exists, creating the branch from the repo's
- * HEAD if needed. Reusing an existing worktree is how a reviewer shares the
+ * default branch if needed (HEAD for legacy projects). Reusing a worktree lets a reviewer share the
  * worker's checkout.
  */
 export async function ensureWorktree(project: string, branch: string, signal?: AbortSignal): Promise<string> {
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
-  if (existsSync(dir)) return dir;
+  if (!branch || slug(branch) === "." || slug(branch) === "..") throw new Error("invalid worker branch");
+  const base = repositoryBinding(project)?.branch;
+  if (branch === base) throw new Error("workers must use a task branch, not the default branch");
+  if (existsSync(dir)) { await assertWorktree(project, dir, branch); return dir; }
   if (!existsSync(repo)) throw new Error(`runner: repo not found at ${repo}`);
 
   const exists = (await command(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo, signal)).code === 0;
-  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, "HEAD"])], repo, signal);
+  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, base ? `refs/heads/${base}` : "HEAD"])], repo, signal);
   if (res.code !== 0) throw new Error(`runner: git worktree add failed: ${res.err.trim()}`);
   return dir;
 }
@@ -73,6 +83,7 @@ export async function removeWorktree(project: string, branch: string): Promise<v
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
   if (existsSync(dir)) {
+    await assertWorktree(project, dir, branch);
     const res = await $`git -C ${repo} worktree remove --force ${dir}`.quiet().nothrow();
     if (res.exitCode !== 0) throw new Error(`runner: git worktree remove failed: ${res.stderr.toString().trim()}`);
   }
@@ -144,14 +155,17 @@ export const SETTLED_EXIT = 70;
 
 /**
  * The follow-up script run by `sh -c` around a worker or reviewer. Values
- * arrive as positional parameters ($1 PARALLELS_HOME, $2 cli.ts, $3 project,
- * $4 role, $5 branch, $6 run id), never spliced into the script, so nothing
- * is quoted at all.
+ * arrive as positional parameters (home, project, role, branch, run, then
+ * the CLI argv). After shifting the metadata, "$@" preserves either a single
+ * compiled executable or Bun + source, including spaces/quotes in every path.
  */
 const WRAPPER = [
-  `PARALLELS_HOME="$1" bun "$2" agent --project "$3" --role "$4" --branch "$5" --run "$6"`,
+  `export PARALLELS_HOME="$1"`,
+  `project="$2" role="$3" branch="$4" run="$5"`,
+  `shift 5`,
+  `"$@" agent --project "$project" --role "$role" --branch "$branch" --run "$run"`,
   `code=$?`,
-  `case "$code" in 0|${SETTLED_EXIT}) ;; *) PARALLELS_HOME="$1" bun "$2" agent-exit --project "$3" --role "$4" --branch "$5" --run "$6" --code "$code" ;; esac`,
+  `case "$code" in 0|${SETTLED_EXIT}) ;; *) "$@" agent-exit --project "$project" --role "$role" --branch "$branch" --run "$run" --code "$code" ;; esac`,
   `exit "$code"`,
 ].join("\n");
 
@@ -163,17 +177,20 @@ const WRAPPER = [
  * orchestrator an `[agent-exit]` notice unless the run is already closed
  * (src/exits.ts). Both share one run id.
  */
-export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID().slice(0, 8)): string[] {
+export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID().slice(0, 8), cli: string[] = cliCommand()): string[] {
   if (opts.role === "orchestrator" || !opts.branch) {
-    return ["env", `PARALLELS_HOME=${paths.root}`, "bun", CLI, "agent", "--project", opts.project, "--role", opts.role];
+    return ["env", `PARALLELS_HOME=${paths.root}`, ...cli, "agent", "--project", opts.project, "--role", opts.role];
   }
-  return ["sh", "-c", WRAPPER, "sh", paths.root, CLI, opts.project, opts.role, opts.branch, run];
+  return ["sh", "-c", WRAPPER, "sh", paths.root, opts.project, opts.role, opts.branch, run, ...cli];
 }
 
 export const local: Runner = {
   async start(opts) {
     need("git");
     need("tmux");
+    if (opts.role !== "orchestrator" && !opts.branch) throw new Error("workers and reviewers require a task branch");
+    if (opts.role === "orchestrator" && opts.branch) throw new Error("the orchestrator runs in the original checkout, without a task branch");
+    if (opts.role === "orchestrator") await assertMainCheckout(opts.project);
     let cwd: string;
     if (opts.branch) {
       cwd = await ensureWorktree(opts.project, opts.branch, opts.signal);
@@ -185,7 +202,9 @@ export const local: Runner = {
     await tmux.ensureSession(session, paths.repo(opts.project), opts.signal);
     const run = opts.run ?? crypto.randomUUID();
     if (!opts.run) publishLaunch(opts.project, sessionId(opts.role, opts.branch), run);
-    await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, agentCommand(opts, run), opts.signal);
+    const launch = await launchEnvironment(opts.project, agentCommand(opts, run));
+    try { await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, launch.argv, opts.signal); }
+    catch (error) { await launch.cleanup(); throw error; }
   },
 
   async stop(project, branch) {

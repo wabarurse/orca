@@ -1,15 +1,16 @@
+import { materializeImages, requireVision } from "./images";
 import { publishLaunch, watchCancellation } from "./cancellation";
 import type { RequestSettings } from "./project-settings";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/prompts.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).
 
-import type { ContentBlock, TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ContentBlock, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { effectiveModel, projectModelResolver } from "./project-model";
 import { budget, compact, outputCap, requireFits, type CompactOptions } from "./compaction";
 import { loadConfig, paths } from "./config";
 import { supervise, type Tracker } from "./exits";
-import { drain, format, type Message } from "./inbox";
+import { consume, content, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { type Provider } from "./providers/index";
 import { sessionId } from "./runner";
@@ -17,6 +18,7 @@ import { open, type Role, type Transcript } from "./transcript";
 import { registry, toolsFor, type Tool, type ToolContext } from "./tools/index";
 import { callText, resultText, type ToolCall, type ToolOutcome } from "./toolview";
 import { scheduleTools } from "./tool-scheduler";
+import type { RollingOptions } from "./rolling-memory";
 
 export interface AgentOptions {
   project: string;
@@ -26,11 +28,14 @@ export interface AgentOptions {
   run?: string;
   /** Injectable credentials boundary; production defaults to accounts.provider. */
   loadProvider?: Parameters<typeof projectModelResolver>[1];
+  rolling?: RollingOptions;
 }
 
 export interface AgentDeps {
   /** Maximum overlap of calls explicitly marked independent. Other tools are barriers. */
   toolConcurrency?: number;
+  /** An orchestrator must never resume historical context without fresh input. */
+  requireInbox?: boolean;
   signal?: AbortSignal;
   provider?: Provider;
   settings?: RequestSettings;
@@ -38,6 +43,8 @@ export interface AgentDeps {
   requestOutputCap?: number;
   compaction?: CompactOptions;
   compactRequested?: () => boolean;
+  /** Orchestrator-owned background memory, invoked only between complete tool batches. */
+  compactBoundary?: (current: AgentDeps, manual: boolean, maintenance?: boolean) => Promise<void>;
   /** Resolve before budgeting, not just before the normal request. */
   resolveModel?: () => Promise<{ model: string; provider: Provider; settings?: RequestSettings }>;
   transcript: Transcript;
@@ -50,7 +57,7 @@ export interface AgentDeps {
   write?: (text: string, plain?: boolean) => void;
   /** Records steps and reports for exit notices (src/exits.ts); absent for the orchestrator and in most tests. */
   tracker?: Tracker;
-  /** Each batch of inbox messages as it is read, before it reaches the transcript (the TUI shows them). */
+  /** Each batch of inbox messages after its context and exact identities are durably committed (the TUI shows them). */
   onInbox?: (msgs: Message[]) => void;
   /** A tool call starting and ending (the TUI shows it running, then its line and summary). Without them, `write` gets the "⏺" line and its "⎿" summary as plain lines. */
   onTool?: (call: ToolCall) => void;
@@ -117,21 +124,19 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
   }, deps.toolConcurrency ?? 1);
 }
 
-/** Waiting inbox messages as one text block, or null when there are none. New messages mean new instructions. */
-async function inboxBlock(deps: AgentDeps): Promise<TextBlockParam | null> {
-  const msgs = await drain(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch));
-  if (!msgs.length) return null;
-  deps.onInbox?.(msgs);
-  await deps.tracker?.instructed();
-  return { type: "text", text: format(msgs) };
-}
-
-/** Move waiting inbox messages into the transcript as one user turn. */
-async function readInbox(deps: AgentDeps): Promise<boolean> {
-  const block = await inboxBlock(deps);
-  if (!block) return false;
-  await deps.transcript.append({ type: "message", message: { role: "user", content: block.text } });
-  return true;
+/** Persist payload and acknowledgements in the same transcript entry. Notification
+ * follows commit; a failed append leaves the original inbox files retryable. */
+async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Promise<boolean> {
+  const msgs = await consume(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch), deps.transcript, async inbox => {
+    const blocks = content(inbox);
+    await deps.transcript.append({ type: "message", inbox,
+      message: { role: "user", content: results ? [...results, ...(typeof blocks === "string" ? [{ type: "text" as const, text: blocks }] : blocks)] : blocks } });
+  });
+  if (msgs.length) {
+    deps.onInbox?.(msgs);
+    await deps.tracker?.instructed();
+  } else if (results) await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
+  return msgs.length > 0;
 }
 
 /** One model request, streamed and appended to the transcript. */
@@ -140,13 +145,15 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
   const messages = await deps.transcript.chain();
   const estimated = budget({ ...deps, compaction: undefined }, messages);
   if (!deps.provider) throw new Error("agent: no provider or resolver");
+  requireVision(deps.model, messages);
+  const delivered = await materializeImages(deps.ctx.project, messages);
   const message = await deps.provider.complete({
     signal: deps.signal,
     model: deps.model,
     settings: deps.settings,
     system: deps.system,
     maxTokens: outputCap(deps),
-    messages,
+    messages: delivered,
     tools: Object.values(deps.tools).map((t) => t.spec),
     onText: (t) => write(t),
   });
@@ -170,30 +177,33 @@ async function snapshot(deps: AgentDeps): Promise<AgentDeps> {
 function boundaries(deps: AgentDeps) {
   let failed = false;
   let previousModel = "";
-  return async (manual = false): Promise<AgentDeps> => {
+  return async (manual = false, maintenance = false): Promise<AgentDeps> => {
     deps.signal?.throwIfAborted();
     const current = await snapshot(deps);
     deps.signal?.throwIfAborted();
     if (current.model !== previousModel) failed = false;
     previousModel = current.model;
-    if (manual || !failed) {
+    requireVision(current.model, await current.transcript.chain());
+    if (current.compactBoundary) await current.compactBoundary(current, manual, maintenance);
+    else if (!maintenance && (manual || !failed)) {
       try {
         const result = await compact(current, manual);
         if (result !== null) failed = !result;
       } catch (error) { failed = true; throw error; }
     }
-    requireFits(current, await current.transcript.chain(), outputCap(current), "model request");
+    if (!maintenance) requireFits(current, await current.transcript.chain(), outputCap(current), "model request");
     return current;
   };
 }
 async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<void> {
   const results = await runTools(deps, content, deps.write!);
-  const note = deps.signal?.aborted ? null : await inboxBlock(deps);
-  await deps.transcript.append({ type: "message", message: { role: "user", content: note ? [...results, note] : results } });
+  if (!deps.signal?.aborted) await readInbox(deps, results);
+  else await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
 }
 async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>): Promise<void> {
   deps.signal?.throwIfAborted();
-  await readInbox(deps);
+  const consumed = await readInbox(deps);
+  if (deps.requireInbox && !consumed) return;
   for (;;) {
     const current = await boundary(deps.compactRequested?.() ?? false);
     deps.signal?.throwIfAborted();
@@ -209,7 +219,7 @@ async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>)
 export function createAgent(input: AgentDeps) {
   const deps = { ...input, compaction: input.compaction ?? {}, write: input.write ?? ((t: string) => { process.stdout.write(t); }) };
   const boundary = boundaries(deps);
-  return { run: () => runLoop(deps, boundary), compact: async () => { await boundary(true); } };
+  return { run: () => runLoop(deps, boundary), compact: async () => { await boundary(true); }, maintain: async () => { await boundary(false, true); } };
 }
 
 /**
@@ -245,6 +255,15 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
 }
 
 async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: Tracker): Promise<void> {
+  if (opts.role === "orchestrator") {
+    // The one-shot CLI must share the TUI's whole-turn lock, cancellation gate
+    // and exact-input requirement, including while joining background memory.
+    const { createOrchestrator } = await import("./orchestrator");
+    const orch = await createOrchestrator({ project: opts.project, loadProvider: opts.loadProvider,
+      rolling: opts.rolling, signal, joinRolling: true });
+    try { await orch.turn(); signal.throwIfAborted(); } finally { orch.dispose?.(); }
+    return;
+  }
   const config = await loadConfig();
   const model = await effectiveModel(opts.project);
   // One transcript per role per branch, so a restart resumes it. spawn seeds

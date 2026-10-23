@@ -50,3 +50,13 @@ test("bash heuristics only recognize terminal markers, skip zero errors, and rep
   expect(toolSummary("bash", { ok: true, text: "a\nb\n...[truncated 123 bytes]...\nc\n" }).summary).toBe("3+ lines (truncated)");
   expect(toolSummary("bash", { ok: true, text: "error: old\n0 failed\nerror: latest\nno errors\n[exit 1]" }).summary).toBe("exit 1: error: latest");
 });
+
+test("saved output footers preserve timeout and exit failure summaries", () => {
+  expect(toolSummary("bash", { ok: true, text: "connecting\n[timed out after 0.25s; saved output is incomplete]\n[exit 137]\n[partial output: /tmp/output.partial]" }))
+    .toEqual({ summary: "timed out after 0.25s", failed: true });
+  expect(toolSummary("bash", { ok: true, text: "[timed out after 1s; saved output is incomplete]\n[partial output: /tmp/output.partial]" }))
+    .toEqual({ summary: "timed out after 1s", failed: true });
+  expect(toolSummary("bash", { ok: true, text: "error: connection closed\n[exit 2]\n[full output: /tmp/output.txt]" }))
+    .toEqual({ summary: "exit 2: error: connection closed", failed: true });
+  expect(toolSummary("bash", { ok: true, text: "[timed out after 1s; saved output is incomplete]\nstill here\n[full output: /tmp/output.txt]" }).failed).toBe(false);
+});

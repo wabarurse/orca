@@ -152,7 +152,7 @@ export async function registerTask(project: string, input: { id?: string; name: 
   return update(project, s => {
     const old = s.tasks.find(t => t.id === id);
     if (old) { check(old.name === name && old.summary === summary && old.branch === branch, "task id already registered with different fields"); return old; }
-    check(!s.tasks.some(t => t.branch === branch && t.pr), "new tasks need a new branch after a PR");
+    check(!s.tasks.some(t => t.branch === branch && t.pr), "branch already has a PR: for a correction to the same unmerged PR, use task list/get and resume its existing taskId and branch without registering again; separate work needs a new branch");
     const now = new Date().toISOString();
     const t: Task = { id, name, summary, branch, status: "queued", createdAt: now, updatedAt: now, revision: 0, runs: [], history: [] };
     event(t, "registered"); s.tasks.push(t); return t;

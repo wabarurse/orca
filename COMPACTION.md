@@ -1,22 +1,60 @@
 # Conversation compaction
 
-The flow is **one summary of older history + recent complete turns or tool batches**. Each
-compaction makes one model request. If the source is too large, shorten old tool
-results first, then keep the beginning and end of the source with explicit omission
-markers. There are no rolling summaries or multipart inference loops.
+There are two compaction paths:
 
-`/compact` queues compaction on the active orchestrator. Idle pages run it on
-normal scheduler polling; busy pages consume the flag only between complete
-model/tool batches (or after the final response). It injects no user message.
-Workers, reviewers and orchestrators use the same path. Status goes through the
-scoped plain writer (stdout in standalone agents), never assistant content.
+- **Orchestrator:** background rolling structured memory plus recent complete
+  exchanges, backed by searchable original history (merged PR #74).
+- **Workers/reviewers:** one bounded summary request over older history, a pinned
+  complete original task, and recent complete turns/tool batches. Oversized source
+  is excerpted locally; this path has no multipart inference loop.
+
+`/compact` queues compaction on the active orchestrator and explicitly waits for
+its worker at a safe boundary. Idle pages handle it on scheduler polling; busy
+pages handle it between complete model/tool batches or after the final response.
+It injects no user message. Status goes through the scoped plain writer (stdout
+in standalone agents), never assistant content.
 
 **Compaction is lossy, best-effort summarization, not a semantic guarantee.**
-The complete original task in the current context epoch is kept verbatim, but later amendments and details
-may be missed by the summarizer. Every checkpoint warns about that limitation
-and identifies the source transcript path and boundary UUID, with instructions
-to retrieve original entries when uncertain. Original messages remain on disk and
-in UI replay. A success notice explicitly says “best-effort”.
+Recent verbatim entries override summaries. Original entries remain on disk and
+in UI replay; retrieve details when uncertain. Worker checkpoints pin the original
+task and identify the source transcript/boundary. Orchestrator checkpoints instead
+carry structured memory with current task records and reference scoped
+`task search_history`/`read_history` retrieval.
+
+## Orchestrator rolling memory and history
+
+`rolling-memory.ts` starts one background `gpt-6-luna` summarizer per session at
+about 100,000 input tokens, earlier for a smaller usable selected-model context.
+It keeps roughly 20,000 recent tokens, never splitting a tool exchange, and always
+keeps the newest whole exchange even if oversized. Summarization uses low effort,
+no tools, bounded UTF-8 source chunks, a two-minute deadline and a 30-second
+automatic retry cooldown. It requires the configured OpenAI subscription even
+when Claude is the foreground provider; failure never changes foreground models.
+No live provider capability is implied by local tests.
+
+The foreground continues while summaries run unless the context limit requires
+waiting. Publication reloads the latest transcript under project/turn ownership,
+checks an exact source prefix, context/cancellation epoch and previous checkpoint,
+and conditionally appends against the locked head. All newer arrivals survive
+verbatim. Task registry revisions are reconciled before publication. Idle
+maintenance only publishes work already requested; refresh never starts or
+publishes inference. Page disposal, cancellation, clear or another checkpoint
+invalidates stale work. The one-shot CLI joins its worker while owning the turn.
+
+SQLite is a rebuildable private original-entry/task index, not a replacement for
+JSONL or tasks.json. Search/read results are bounded historical text and restricted
+to the current `/clear` scope; clear does not delete bytes or receipts. See the
+[README rolling-memory section](README.md#orchestrator-rolling-memory) for tool
+arguments. Reasoning and image bytes/URLs are excluded from searchable text and
+summary source. Scoped image references survive in raw archive records **and as
+real image blocks alongside checkpoints**, not merely textual image descriptions.
+Image IDs stay searchable without granting new forwarding permission.
+
+A reduction may commit even when newer arrivals or retained images still exceed
+the input budget. The normal request guard then fails explicitly rather than
+sending an oversized or text-only request. A failed/stale checkpoint leaves
+original context intact. No image-count reduction, automatic image eviction or
+unbounded context is promised; see [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md).
 
 ## Clear model context (not saved history)
 
@@ -49,7 +87,7 @@ The transcript appends an explicit `context-boundary` record with its parent sti
 pointing to the previous head. This is neither an empty summary nor a new root.
 After reopen, `chain()` and `branch()` start **after** the latest boundary;
 `history()` still walks through it to all original entries. The marker itself is
-not model content or a visible chat message. Later compaction only pins the first
+not model content or a visible chat message. Later worker compaction only pins the first
 original task **after** that boundary, including across repeated compactions;
 checkpoint retrieval warnings explicitly exclude earlier epochs. Clearing is not
 secure deletion: old context remains readable in saved history/files, and agents
@@ -64,8 +102,10 @@ committed clear without losing the new input. Orchestrator inbox `put()` and cle
 share the project lock across processes: an external send ordered after the clear
 is retained as new input, not deleted. Local queued writes and leftover inbox temp
 files conservatively refuse clearing. These guarantees cover managed project and
-inbox operations; arbitrary external filesystem edits and concurrent independent
-writers to one transcript still require external serialization (see below).
+inbox operations. Clear and deletion also acquire the shared orchestrator turn
+lock, refusing while another updated session owns a turn. Arbitrary filesystem
+edits and older binaries that do not honor these locks remain unsupported (see
+[SESSION_REFRESH.md](SESSION_REFRESH.md)).
 
 ## Policy and configuration
 
@@ -83,7 +123,8 @@ establish context or output windows. No undocumented model limits are invented.
 
 The project model/provider/credentials/settings are resolved **once per safe
 boundary, before budgeting**. The snapshot (including effort and fast tier) is
-used for both summary and following normal request. Config changes during a
+used for worker/reviewer summary and following normal request. The orchestrator
+uses its separate rolling summary model described above. Config changes during a
 summary take effect at the next boundary, not between those two requests.
 Credential errors abort; there is no fallback to stale credentials or provider.
 
@@ -95,7 +136,8 @@ calibrates estimates upward with estimated subsequent growth; other providers
 currently use estimates. Measurements are invalidated after compaction and ignored
 across model changes.
 
-The trigger is **input + output reserve >= 80% of the window**, NOT 80% input alone.
+The worker/reviewer trigger is **input + output reserve >= 80% of the window**,
+NOT 80% input alone. The orchestrator starts earlier as described above.
 The remaining 20% is safety headroom. With auto enabled, the default output cap /
 accounting reserve is min(64000, 20% of window). The embedder's `outputReserve`
 overrides that cap. It is normalized once per boundary: positive finite integer,
@@ -103,11 +145,11 @@ capped at the harness's 64000, context-1, and any supplied verified output ceili
 Invalid overrides fall back to the default. With `compact=false`, the old 64000
 normal output cap is preserved unless explicitly overridden or capped by known
 context/output metadata. Disabling auto does not disable safety budget checks.
-Summary requests use min(4096, normalized output cap) and ask for at most 600 words;
+Worker/reviewer summary requests use min(4096, normalized output cap) and ask for at most 600 words;
 returned summaries over
 4096 estimated tokens are rejected in addition to checking provider completion.
 
-Before summary inference, both complete original task + retained tail + fixed
+For workers/reviewers, before summary inference, both complete original task + retained tail + fixed
 system/tools and the actual sanitized summary request must fit their budgets
 including output reserve and headroom. The proposed checkpoint is checked again
 with the normal system/tools/output reserve before publication. A shorter summary
@@ -123,7 +165,7 @@ historical data, not live tool messages. Middle details can be omitted; the pinn
 original task and retained live tail are unchanged. A failed or invalid summary
 preserves the published transcript and head.
 
-## Summary and scheduling
+## Worker/reviewer summary and scheduling
 
 Prefer complete user-led turns within min(8000, 15% of window). If one long task
 has no user-turn boundary that fits, cut after a completed tool batch and retain
@@ -148,7 +190,7 @@ Legacy/custom providers may omit terminal metadata for ordinary turns, but must
 supply successful `Turn.completion` (`end_turn` or `completed`) for compaction.
 
 Failures suppress automatic attempts for the lifetime of that `createAgent`
-instance (an orchestrator creates one per turn). Manual retry is allowed and a
+instance. Manual retry is allowed and a
 successful retry clears suppression; changing model also clears it. Context
 failures stop that run explicitly rather than retrying in an inference loop.
 Arriving inbox files stay pending during compaction; there is no competing writer.
@@ -179,8 +221,12 @@ copy-on-write + rename: the previous byte prefix is preserved exactly, never tri
 or re-serialized. This trades O(history size) I/O per append for simple recoverable
 publication. It does not preserve the old inode; no old messages are deleted.
 The same publication protocol protects normal appends too. Newly staged files have
-0600 permissions. Only one logical writer per transcript is supported; cross-process
-concurrent TUIs/writers require external serialization, as before.
+0600 permissions. Updated writers serialize reload/parent selection/publication
+with a per-transcript directory lock, and orchestrators additionally own a
+cross-process lock for the whole model/tool turn. Reloads use the latest committed
+disk head; old binaries and arbitrary external writers do not participate in this
+protocol. Inbox receipts survive compaction and context clear, so cleanup residue
+cannot replay previously consumed prompts. See [SESSION_REFRESH.md](SESSION_REFRESH.md).
 
 1. Read published bytes, append a separator if a legacy damaged final line lacks
    a newline, and encode the new record in a unique temporary file.
@@ -207,3 +253,13 @@ original entries through checkpoints and excludes synthetic checkpoint tails,
 showing each original message exactly once. `Orchestrator.entries()` exposes full
 UI replay, including the complete scrollable history and exit transcript. Invalid/truncated legacy JSON records
 are ignored without deleting their bytes, and future appends remain recoverable.
+
+## Image-bearing context
+
+See [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md). Images have a separate operational
+token allowance (6,000 each), never a base64-as-prose estimate. Summaries describe
+only text and IDs; actual image references and historical prompt excerpts are
+retained alongside the checkpoint so later normal requests still carry pixels.
+Accumulated image/context limits fail explicitly instead of silently dropping
+images. `/clear` also refuses unconsumed image-submission journals; a successful
+clear keeps original bytes, journals, history and consumption receipts on disk.
