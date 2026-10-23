@@ -3750,7 +3750,7 @@ test("header denominator: verified claude window, unlisted model shows the sessi
   try {
     await until(() => !!app.page);
     await app.refreshHeader();
-    await until(() => term.screen().includes("ctx ~45k/1000k"));
+    await until(() => term.screen().includes("ctx ~45k/1M"));
     model = "unlisted-model";
     await app.refreshHeader();
     await until(() => term.screen().includes("ctx ~45k/64k?"));

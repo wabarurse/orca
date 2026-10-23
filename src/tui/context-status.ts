@@ -1,6 +1,10 @@
 import { contextWindow, type ContextWindow } from "../model-context";
 import { validRounds } from "../config";
-const k = (n: number) => `${Number((n / 1000).toFixed(1))}k`;
+/** One-decimal trimmed k below 1M; M from 1M, including values that would round to 1000k. */
+const k = (n: number) => {
+  const thousands = Number((n / 1000).toFixed(1));
+  return thousands < 1000 ? `${thousands}k` : `${Number((n / 1e6).toFixed(1))}M`;
+};
 /** ~ explicitly distinguishes byte-based budgeting from provider tokenization. The limit is
  * the one compaction uses (window from the session when given); a trailing ? marks a fallback estimate. */
 export function contextStatus(model: string | undefined, used?: number, window?: ContextWindow): string {

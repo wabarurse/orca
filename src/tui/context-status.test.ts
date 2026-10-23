@@ -7,7 +7,11 @@ import { visibleLength } from "./render";
 test("context uses k units, honest estimates and unknown limits/counts", () => {
   expect(contextStatus("gpt-5.5", 12345)).toBe("ctx ~12.3k/272k");
   expect(contextStatus("gpt-daybreak-red-latest", 0)).toBe("ctx ~0k/372k");
-  expect(contextStatus("claude-opus-5-5", 45000)).toBe("ctx ~45k/1000k");
+  expect(contextStatus("claude-opus-5-5", 45000)).toBe("ctx ~45k/1M");
+  expect(contextStatus("claude-opus-5-5", 999949)).toBe("ctx ~999.9k/1M");
+  expect(contextStatus("claude-opus-5-5", 999990)).toBe("ctx ~1M/1M");
+  expect(contextStatus("claude-opus-5-5", 1000000)).toBe("ctx ~1M/1M");
+  expect(contextStatus("unknown", 1520000, { limit: 1500000, estimated: true })).toBe("ctx ~1.5M/1.5M?");
   expect(contextStatus("claude-opus-4-6", 45000)).toBe("ctx ~45k/200k");
   // Unlisted: the limit compaction uses, marked as an estimate rather than a bare ?.
   expect(contextStatus("unknown", 1500)).toBe("ctx ~1.5k/128k?");
