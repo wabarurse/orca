@@ -41,14 +41,41 @@ const standardWindows: Readonly<Record<string, number>> = {
   "claude-haiku-4-5": 200000,
   "claude-haiku-4-5-20251001": 200000,
 };
+/** Context windows reported by provider model catalogs (/models), in memory per process. */
+const catalogLimits = new Map<string, number>();
+const prefetched = new Set<string>();
+const validLimit = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
+
+/** Records catalog windows; null, 0, negative and non-finite values are ignored. */
+export function rememberCatalogLimits(entries: Iterable<readonly [string, unknown]>): void {
+  for (const [model, limit] of entries) if (validLimit(limit)) catalogLimits.set(model, limit);
+}
+
+/** Fetches a provider's catalog once per process in the background; never awaited, failures are silent and retried later. */
+export function prefetchContextLimits(provider: { name: string; models(): Promise<unknown> }): void {
+  if (prefetched.has(provider.name)) return;
+  prefetched.add(provider.name);
+  Promise.resolve().then(() => provider.models()).catch(() => prefetched.delete(provider.name));
+}
+
+export function clearCatalogLimits(): void {
+  catalogLimits.clear();
+  prefetched.clear();
+}
+
+/** Verified table first; catalog values fill gaps and never exceed the standard window
+ * (of the model or its dated snapshot's base), so opt-in 1M never replaces 200k. */
 export function modelContextLimit(model: string): number | undefined {
-  return standardWindows[model];
+  const catalog = catalogLimits.get(model);
+  if (catalog === undefined) return standardWindows[model];
+  const standard = standardWindows[model] ?? standardWindows[model.replace(/-\d{8}$/, "")];
+  return standard === undefined ? catalog : Math.min(standard, catalog);
 }
 
 export interface ContextWindow { limit: number; estimated: boolean }
 const DEFAULT_LIMIT = 128000;
 /** The one limit resolution shared by compaction and the header. estimated: no explicit
- * budget and no verified model window, so the configured/default fallback applies. */
+ * budget and no verified or catalog model window, so the configured/default fallback applies. */
 export function contextWindow(options: { contextLimit?: number; fallback?: number }, model = ""): ContextWindow {
   const known = options.contextLimit ?? modelContextLimit(model);
   const n = known ?? options.fallback ?? DEFAULT_LIMIT;

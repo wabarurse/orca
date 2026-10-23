@@ -5,6 +5,7 @@ import { rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig, paths } from "./config";
 import { provider } from "./accounts";
+import { prefetchContextLimits } from "./model-context";
 import { providerFor, type Provider } from "./providers";
 
 function modelPath(project: string): string {
@@ -47,7 +48,11 @@ async function commitModel(project: string, model: string, identity: string): Pr
 export function projectModelResolver(project: string, load: typeof provider = provider): () => Promise<{ model: string; provider: Provider; settings: RequestSettings }> {
   return async () => {
     const model = await effectiveModel(project);
-    try { return { model, provider: await load(providerFor(model)), settings: await effectiveSettings(project, model) }; }
+    try {
+      const selected = await load(providerFor(model));
+      prefetchContextLimits(selected); // Background only: the turn never waits on the catalog.
+      return { model, provider: selected, settings: await effectiveSettings(project, model) };
+    }
     catch (error) { throw new Error(`cannot load provider for project ${project} model ${model}: ${error instanceof Error ? error.message : error}`); }
   };
 }

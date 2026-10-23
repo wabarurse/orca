@@ -157,6 +157,18 @@ test("model discovery uses the Codex catalog rather than the platform model API"
   expect(await openai(async () => fakeCodexTokens()).models()).toEqual(["first", "later"]);
 });
 
+test("codex catalog context_window fills gaps; absent, null and invalid values are ignored", async () => {
+  const { clearCatalogLimits, contextWindow } = await import("../model-context");
+  clearCatalogLimits();
+  intercept(async () => Response.json({ models: [{ slug: "gpt-a", context_window: 300000 }, { slug: "gpt-b" }, { slug: "gpt-c", context_window: null },
+    { slug: "gpt-d", context_window: -1 }, { slug: "gpt-e", context_window: "1" }, { slug: "gpt-5.5", context_window: 1000000 }] }));
+  await openai(async () => fakeCodexTokens()).models();
+  expect(contextWindow({}, "gpt-a")).toEqual({ limit: 300000, estimated: false });
+  for (const m of ["gpt-b", "gpt-c", "gpt-d", "gpt-e"]) expect(contextWindow({}, m)).toEqual({ limit: 128000, estimated: true });
+  expect(contextWindow({}, "gpt-5.5").limit).toBe(272000);
+  clearCatalogLimits();
+});
+
 test("completed streams can reconstruct output from done items in wire order", async () => {
   intercept(async () => codexSSE([
     { type: "response.output_item.done", output_index: 1, item: call },
