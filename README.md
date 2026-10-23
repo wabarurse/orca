@@ -232,7 +232,8 @@ tabs and project details stay at the top; the input, counts and panels stay at
 the bottom. The conversation scrolls between them with Page Up/Page Down or the
 mouse wheel. Fullscreen and mouse reporting are always enabled: unmodified left
 button drag highlights **committed conversation text** inside the app. Selection
-does not touch the clipboard. **Ctrl+O copies** the highlight explicitly; Esc clears
+automatically copies on valid drag release (not a mere click). **Ctrl+O re-copies**
+the retained highlight explicitly; Esc clears
 it without clearing your draft. Cmd-C is owned by macOS/Terminal, not delivered to
 the app as a copy key. Ctrl+C still cancels the turn (twice exits).
 

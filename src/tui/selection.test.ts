@@ -30,7 +30,7 @@ test('body-only hit testing; cross-row wraps copied as displayed; scroll during 
   }
   s.mouse({ name: 'mousedown', x: 1, y: 2 }, screen(), history);
   s.mouse({ name: 'mousemove', x: 3, y: 3 }, screen(1), history);
-  s.mouse({ name: 'mouseup', x: 1, y: 4 }, screen(1), history);
+  s.mouse({ name: 'mouseup', x: 3, y: 3 }, screen(1), history);
   expect(s.text()).toBe('a界éZ\nsecond\nthi');
   const f = screen(1); s.paint(f, history);
   expect(f.rows[0]).toBe('HEADER'); expect(f.rows[3]).toBe('FOOTER');
@@ -52,4 +52,27 @@ test('copy/highlight use the same sanitized clipped rows as the screen, never ov
   const restored = screen(); restored.rows[1] = link;
   s.paint(restored, [link, 'next']);
   expect(restored.rows[1]).toBe(link);
+});
+
+test('completion is once per valid nonzero drag, never motion, click, invalid or canceled release', () => {
+  const s = new ConversationSelection(), f = screen();
+  const down = () => s.mouse({ name: 'mousedown', x: 1, y: 2 }, f, history);
+  const up = (x = 5, y = 2) => s.mouse({ name: 'mouseup', x, y }, f, history);
+  expect(up()).toBe(false);
+  expect(down()).toBe(false);
+  expect(up(1)).toBe(false);
+  expect(s.text()).toBe('');
+  down();
+  expect(s.mouse({ name: 'mousemove', x: 4, y: 2 }, f, history)).toBe(false);
+  expect(up()).toBe(true);
+  expect(s.text()).toBe('a界éZ');
+  expect(up()).toBe(false);
+  for (const y of [1, 4, 100]) {
+    down();
+    s.mouse({ name: 'mousemove', x: 4, y: 2 }, f, history);
+    expect(up(5, y)).toBe(false);
+    expect(s.active).toBe(false);
+  }
+  down(); s.clear(); expect(up()).toBe(false);
+  down(); s.paint(f, ['replacement', ...history.slice(1)]); expect(up()).toBe(false);
 });

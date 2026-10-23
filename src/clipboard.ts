@@ -67,8 +67,8 @@ export async function readClipboardImage(adapter: ClipboardAdapter = native): Pr
   return { bytes, mime: "image/png" };
 }
 
-/** Explicit text copy only. Fixed argv + stdin, never a shell, OSC 52, or an
- * automatic clipboard write on selection. SSH cannot address the local desktop. */
+/** Bounded text copy. Fixed argv + stdin, never a shell or OSC 52.
+ * SSH cannot address the local desktop. */
 export interface ClipboardWriter {
   platform: string;
   env: Record<string, string | undefined>;
