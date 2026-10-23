@@ -14,28 +14,30 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                  1–9/48
+Help · commands & keys                                                  1–9/51
   Conversation
-  /inbox      User inbox: Tasks / Questions; Shift+Tab switches sections,
-              Esc/Tab closes
-  /agents     Browse and follow agent conversations
-  /clear      Clear model context after confirmation; keep full history
-  /questions  Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab
-              Tasks
-  /help       Commands and keyboard shortcuts; Esc closes
-
+  /mouse on|off  Opt into wheel reporting; off (default) preserves selection
+                 and Cmd-click links
+  /inbox         User inbox: Tasks / Questions; Shift+Tab switches sections,
+                 Esc/Tab closes
+  /agents        Browse and follow agent conversations
+  /clear         Clear model context after confirmation; keep full history
+  /questions     Inbox Questions (Ctrl+Q); Enter answers or picks skip;
+                 Shift+Tab Tasks
 ↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
-  /inbox      User inbox: Tasks / Questions; Shift+Tab switches sections,
-              Esc/Tab closes
-  /agents     Browse and follow agent conversations
-  /clear      Clear model context after confirmation; keep full history
-  /questions  Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab
-              Tasks
-  /help       Commands and keyboard shortcuts; Esc closes
+  /mouse on|off  Opt into wheel reporting; off (default) preserves selection
+                 and Cmd-click links
+  /inbox         User inbox: Tasks / Questions; Shift+Tab switches sections,
+                 Esc/Tab closes
+  /agents        Browse and follow agent conversations
+  /clear         Clear model context after confirmation; keep full history
+  /questions     Inbox Questions (Ctrl+Q); Enter answers or picks skip;
+                 Shift+Tab Tasks
+  /help          Commands and keyboard shortcuts; Esc closes
 
   Projects
   /projects              Browse projects: Enter opens, p pins, d deletes
@@ -58,7 +60,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   Ctrl+Q             Inbox Questions toggle; arrivals never open Inbox
   Shift+Tab (Inbox)  Switch Tasks / Questions; Esc or Tab closes without
                      answering
-  PgUp/PgDn / wheel  Scroll conversation, help or Inbox Tasks
+  PgUp/PgDn / wheel  Scroll conversation, help or Inbox Tasks (wheel: /mouse
+                     on)
   Ctrl+C             Cancel selected turn/agent; twice within 2s exits,
                      keeping history
   Esc                Close panel, else leave agent view, else clear input
@@ -93,35 +96,41 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 Inbox 1
-Help                            1–8/97
+Help                           1–8/103
   Conversation
-  /inbox      User inbox: Tasks /
-              Questions; Shift+Tab
-              switches sections,
-              Esc/Tab closes
-  /agents     Browse and follow agent
-              conversations
-  /clear      Clear model context
+  /mouse on|off
+    Opt into wheel reporting; off
+    (default) preserves selection and
+    Cmd-click links
+  /inbox
+    User inbox: Tasks / Questions;
+    Shift+Tab switches sections,
 ↑↓ scroll · Esc close"
 `;
 
 exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
-  /inbox      User inbox: Tasks /
-              Questions; Shift+Tab
-              switches sections,
-              Esc/Tab closes
-  /agents     Browse and follow agent
-              conversations
-  /clear      Clear model context
-              after confirmation; keep
-              full history
-  /questions  Inbox Questions
-              (Ctrl+Q); Enter answers
-              or picks skip; Shift+Tab
-              Tasks
-  /help       Commands and keyboard
-              shortcuts; Esc closes
+  /mouse on|off
+    Opt into wheel reporting; off
+    (default) preserves selection and
+    Cmd-click links
+  /inbox
+    User inbox: Tasks / Questions;
+    Shift+Tab switches sections,
+    Esc/Tab closes
+  /agents
+    Browse and follow agent
+    conversations
+  /clear
+    Clear model context after
+    confirmation; keep full history
+  /questions
+    Inbox Questions (Ctrl+Q); Enter
+    answers or picks skip; Shift+Tab
+    Tasks
+  /help
+    Commands and keyboard shortcuts;
+    Esc closes
 
   Projects
   /projects
@@ -167,7 +176,7 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     Tab closes without answering
   PgUp/PgDn / wheel
     Scroll conversation, help or Inbox
-    Tasks
+    Tasks (wheel: /mouse on)
   Ctrl+C
     Cancel selected turn/agent; twice
     within 2s exits, keeping history
@@ -219,7 +228,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                40–48/48
+Help · commands & keys                                                43–51/51
   Alt+D                Delete next word
   Home/End / Ctrl+A/E  Start / end of current line
   Ctrl+U / Ctrl+K      Delete to start / end of current line

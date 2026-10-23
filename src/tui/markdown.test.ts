@@ -58,6 +58,19 @@ describe("inline", () => {
 
   });
 
+  test("bare web URLs and displayed destinations are explicit safe links, including wrapped targets", () => {
+    const url = "https://example.com/path_(item)";
+    const out = inline(`See ${url}.`);
+    expect(out).toBe(`See \x1b]8;;${url}\x1b\\${url}\x1b]8;;\x1b\\.`);
+    expect(inline(`[docs](${url})`)).toContain(`\x1b]8;;${url}\x1b\\(${url})`);
+    const rows = wordWrap(out, 12);
+    expect(rows.filter(row => row.includes("\x1b]8;;https://")).length).toBeGreaterThan(1);
+    expect(inline("`https://example.com`")).not.toContain("\x1b]8");
+    for (const bad of ["https://", "https://user:pass@example.com", "javascript:alert(1)", "file:///tmp/a", "https://example.com/\x07", "https://example.com/\u202eabc"]) {
+      expect(inline(`[label](${bad})`)).not.toContain("\x1b]8");
+    }
+  });
+
   test("URLs may hold balanced parentheses; empty text shows the URL; only http(s) and mailto become links", () => {
     const paren = inline("[x](https://e.com/a_(b)_c) after");
     expect(paren).toContain("\x1b]8;;https://e.com/a_(b)_c\x1b\\x\x1b]8;;\x1b\\");

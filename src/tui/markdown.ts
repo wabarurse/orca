@@ -128,39 +128,60 @@ const escape: Rule = (s, i) => {
 const cleanUrl = (u: string) => u.replace(/[\x00-\x20\x7f-\x9f]/g, "");
 
 /** Only these schemes become OSC 8 links; anything else (javascript:, file:, relative paths) is plain text. */
-const LINKABLE = /^(?:https?:|mailto:)/i;
+function linkable(url: string): boolean {
+  if (/[\x00-\x20\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u.test(url)) return false;
+  try {
+    const parsed = new URL(url);
+    return ((parsed.protocol === "https:" || parsed.protocol === "http:") && !!parsed.hostname && !parsed.username && !parsed.password)
+      || (parsed.protocol === "mailto:" && !!parsed.pathname);
+  } catch { return false; }
+}
 
 /**
  * Link text as an OSC 8 hyperlink; like Codex, the URL follows in brackets
  * when the text is something else. Empty text shows the URL.
  */
-function link(rawText: string, url: string, outer: string): string {
+function link(rawText: string, rawUrl: string, outer: string): string {
+  const url = cleanUrl(rawUrl);
   const text = rawText.trim() ? rawText : url;
-  const label = inline(text, outer);
-  const shown = LINKABLE.test(url) ? `${linkOpen(url)}${label}${LINK_CLOSE}` : label;
-  return text === url ? shown : `${shown} ${SGR.dim}(${url})${RESET}${outer}`;
+  const label = inline(text, outer, false);
+  const clickable = linkable(rawUrl);
+  const shown = clickable ? `${linkOpen(url)}${label}${LINK_CLOSE}` : label;
+  const destination = clickable ? `${linkOpen(url)}(${url})${LINK_CLOSE}` : `(${url})`;
+  return text === url ? shown : `${shown} ${SGR.dim}${destination}${RESET}${outer}`;
 }
 
 /** [text](url "title"): the URL may hold balanced (...) groups anywhere, as in Wikipedia links. */
 const LINK = /^\[((?:[^[\]]|\[[^\]]*\])*)\]\(\s*<?((?:[^\s<>()]|\([^\s<>()]*\))+)>?(?:\s+"[^"]*")?\s*\)/;
 const markdownLink: Rule = (s, i, outer) => {
   const m = LINK.exec(s.slice(i));
-  return m ? { out: link(m[1]!, cleanUrl(m[2]!), outer), next: i + m[0].length } : null;
+  return m ? { out: link(m[1]!, m[2]!, outer), next: i + m[0].length } : null;
 };
 
 const autolink: Rule = (s, i, outer) => {
   const m = /^<((?:https?|mailto):[^\s<>]+)>/.exec(s.slice(i));
-  return m ? { out: link(m[1]!, cleanUrl(m[1]!), outer), next: i + m[0].length } : null;
+  return m ? { out: link(m[1]!, m[1]!, outer), next: i + m[0].length } : null;
 };
 
 const RULES: Record<string, Rule> = { "\\": escape, "`": codeSpan, "[": markdownLink, "<": autolink, "*": emphasis, _: emphasis, "~": emphasis };
 
 /** Inline markdown → styled text. `outer` is the SGR already in force around it, restored after every span. */
-export function inline(s: string, outer = ""): string {
+/** Bare web URLs get explicit OSC 8 targets too: do not depend on terminal URL heuristics. */
+const bareLink: Rule = (s, i) => {
+  if (i > 0 && /[\w@/]/u.test(s[i - 1]!)) return null;
+  const match = /^https?:\/\/[^\s<>`"\x00-\x1f\x7f-\x9f]+/i.exec(s.slice(i));
+  if (!match) return null;
+  let url = match[0].replace(/[.,;:!?]+$/, "");
+  while (url.endsWith(")") && (url.match(/\)/g)?.length ?? 0) > (url.match(/\(/g)?.length ?? 0)) url = url.slice(0, -1);
+  if (!linkable(url)) return null;
+  return { out: `${linkOpen(url)}${url}${LINK_CLOSE}`, next: i + url.length };
+};
+
+export function inline(s: string, outer = "", bareLinks = true): string {
   let out = "";
   let i = 0;
   while (i < s.length) {
-    const hit = RULES[s[i]!]?.(s, i, outer);
+    const hit = RULES[s[i]!]?.(s, i, outer) ?? (bareLinks && /[hH]/.test(s[i]!) ? bareLink(s, i, outer) : null);
     if (hit) { out += hit.out; i = hit.next; }
     else { out += s[i]; i++; }
   }

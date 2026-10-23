@@ -357,6 +357,24 @@ describe("tui app", () => {
     await running;
   });
 
+  test("/mouse opts into reporting and restores native gestures without submitting a prompt", async () => {
+    const term = fakeTerm();
+    const modes: boolean[] = [];
+    const orchs = fakeOrchestrators();
+    const app = new App({ term: Object.assign(term, { setMouse: (on: boolean) => modes.push(on) }), openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    expect(modes).toEqual([]);
+    for (const command of ["/mouse on", "/mouse off", "/mouse", "/mouse invalid"]) {
+      term.type(command + "\r");
+      await settle();
+    }
+    expect(modes).toEqual([true, false]);
+    expect(app.frame().queued?.texts ?? []).toEqual([]);
+    app.quit();
+    await running;
+  });
+
   test("/keys echoes parsed keys until Esc", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
@@ -1880,7 +1898,7 @@ describe("command and key tables", () => {
     expect(help).not.toContain("/back");
     expect(help.indexOf("Advanced & diagnostics")).toBeGreaterThan(help.indexOf("Keyboard · editing"));
     expect(help.indexOf("/keys")).toBeGreaterThan(help.indexOf("Advanced & diagnostics"));
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/rename", "/review-rounds"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/models", "/mouse", "/new", "/projects", "/questions", "/quit", "/rename", "/review-rounds"]);
   });
 
   test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {
@@ -3383,7 +3401,11 @@ test("raw SGR/X10 input through realTerminal only scrolls the body: draft, queue
     expect(display.screen()).toEqual(bottom); pinned();
     expect(app.frame().queued?.texts).toEqual(["queued first", "queued second\nline"]);
     const output = writes.join("");
-    for (const mode of [1049, 1000, 1006, 2004]) {
+    for (const mode of [1000, 1006]) {
+      expect(output).not.toContain(`\x1b[?${mode}h`);
+      expect(output).toContain(`\x1b[?${mode}l`);
+    }
+    for (const mode of [1049, 2004]) {
       expect(output.split(`\x1b[?${mode}h`)).toHaveLength(2);
       expect(output).not.toContain(`\x1b[?${mode}l`);
     }

@@ -10,8 +10,14 @@ bun src/cli.ts start [project] [git-url]
 `start` opens a TUI with one page per orchestrator (one per project). Orchestrator
 tabs and project details stay at the top; the input, counts and panels stay at
 the bottom. The conversation scrolls between them with Page Up/Page Down or the
-mouse wheel when the terminal delivers mouse reports. Use the terminal's selection
-modifier (often Shift) for native text selection. Only changed screen rows are
+mouse wheel after `/mouse on`. Mouse reporting is **off by default**, so ordinary
+dragging selects conversation text and Cmd-click opens web links in your default
+browser in terminals supporting OSC 8 (the terminal owns the gesture and may
+require enabling hyperlinks). Markdown labels, displayed destinations and bare web
+URLs have explicit link targets, including across wrapped lines. No shell command
+is run for links. `/mouse on` opts into the existing wheel scrolling; while on, use
+the terminal's selection modifier (often Shift), or `/mouse off` to restore native
+selection and link gestures. PgUp/PgDn work in either mode. Only changed screen rows are
 redrawn. All saved conversation, including original history before compaction,
 is reachable by scrolling inside the app; startup does not discard older messages
 from the live viewport. Quitting restores your shell and prints the active

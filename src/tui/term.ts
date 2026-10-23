@@ -1,6 +1,9 @@
 // The terminal behind the TUI: raw mode, bracketed paste, size and key
 // events. The alternate screen keeps sticky bars separate from the shell's
-// scrollback; mouse reporting lets the app scroll its middle viewport. Tests pass a
+// scrollback; opt-in mouse reporting lets the app scroll its middle viewport.
+// Reporting is off by default: DECSET 1000 consumes native drag selection and
+// link gestures, and the portable mouse protocol cannot identify macOS Cmd.
+// Leave those gestures to the terminal/OSC 8 instead of spawning a browser. Tests pass a
 // fake with the same shape. Opening asks the terminal for its background
 // colour (OSC 11) once, without blocking: a reply within BG_REPLY_MS sets the
 // user background's shade (style.ts) and settles `background` (so does the
@@ -19,6 +22,8 @@ export interface Terminal {
   onResize(cb: () => void): void;
   /** Enter raw mode and bracketed paste. */
   open(): void;
+  /** Opt into wheel reporting (which takes native selection away). Off by default. */
+  setMouse?(enabled: boolean): void;
   /** Undo open(); safe to call twice. */
   close(): void;
   /** What to write, on a crash or a signal, to take the live region off the screen (the app keeps it current). */
@@ -28,7 +33,7 @@ export interface Terminal {
 }
 
 // Restore the primary screen and disable all modes we enabled on every exit path.
-const ENTER = "\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h";
+const ENTER = "\x1b[?1049h\x1b[?1000l\x1b[?1006l\x1b[?2004h";
 const LEAVE = "\x1b[0m\x1b[?1006l\x1b[?1000l\x1b[?2004l\x1b[?1049l\x1b[?25h";
 /** On a crash or signal: end any synchronized update, paste mode and a hidden cursor first. */
 const RESCUE = `\x1b[?2026l${LEAVE}`;
@@ -158,6 +163,10 @@ class RealTerminal implements Terminal {
     this.stdin.resume();
     this.stdout.write(ENTER);
     if (!this.queried) { this.queried = true; this.ask(); }
+  }
+
+  setMouse(enabled: boolean): void {
+    if (this.opened) this.stdout.write(enabled ? "\x1b[?1000h\x1b[?1006h" : "\x1b[?1006l\x1b[?1000l");
   }
 
   /** Leave paste mode at once; while the background reply is still expected, keep reading (and dropping) stdin until it comes or the window ends, so it never lands at the shell prompt. */

@@ -1040,6 +1040,11 @@ export class App {
    */
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
     ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "Browse projects: Enter opens, p pins, d deletes" } }],
+    ["/mouse", { args: true, run: (arg) => {
+      if (arg !== "on" && arg !== "off") { this.say("Usage: /mouse on|off (off restores native selection and Cmd-click links)"); return; }
+      this.deps.term.setMouse?.(arg === "on");
+      this.say(arg === "on" ? "Mouse reporting on: wheel scrolls; use your terminal's selection modifier to select text." : "Mouse reporting off: drag to select; Cmd-click links in supporting terminals. Use PgUp/PgDn to scroll.");
+    }, help: { group: "conversation", label: "/mouse on|off", description: "Opt into wheel reporting; off (default) preserves selection and Cmd-click links" } }],
     ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
     ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [git-url]", description: "Create a project page" } }],
