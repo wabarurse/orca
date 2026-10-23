@@ -59,7 +59,7 @@ one. You can always invoke `"$HOME/.local/bin/parallels"` directly.
 cd /path/to/any/repository
 parallels
 # Equivalent explicit form; optional project and git URL still work:
-parallels start [project] [git-url]
+parallels start [project] [directory]
 parallels msg <project> <text>
 parallels version
 parallels --help
@@ -67,16 +67,40 @@ parallels --help
 
 Bare invocation and `start` need an interactive terminal. Launching does **not**
 `cd` into the installation directory: repository detection uses the invoking
-working directory, including repository subdirectories. **This is not in-place
-access to that checkout.** Existing behavior is unchanged: with an origin, the
-harness creates/reuses an `orch-xxxx` managed project cloned **from the origin**
-under `$PARALLELS_HOME/projects` (default `~/.parallels/projects`). Uncommitted
-local edits, untracked files, and local-only commits not available from that
-origin are **not included**; the invoking checkout's current branch is not
-selected automatically. With no origin, the local repository path is the
-clone source (committed history, not uncommitted changes). Workers/reviewers use
-worktrees of the managed clone. Choosing in-place checkout access is a separate,
-not-yet-implemented feature. Normal no-project startup also reopens saved projects.
+working directory, including repository subdirectories. The main agent works
+in your **original checkout on its default branch** (origin/HEAD, otherwise
+main or master). Local files, Git configuration and repository-local logins
+remain available. If the checkout is on another branch, switch it yourself
+when safe; the harness never switches or stashes your work. It checks the
+branch again before each main-agent turn.
+
+Workers use task branches in Git worktrees beside the original checkout:
+`<checkout>.parallels-worktrees/<worktree-id>/<branch-slug>`. Reviewers reuse
+the worker's worktree. These share Git objects and repository-local config with
+the original checkout, including later login updates. Worktrees do not contain
+the original's uncommitted changes or untracked/ignored files such as `.env`;
+project setup must provision files needed in each worktree. New agents inherit
+the launch process's exported environment (HOME, PATH, auth variables and agent
+sockets), even when tmux was started with older values. Private temporary
+environment handoffs delete themselves before starting the agent; values are
+not placed in command arguments or tmux options. This does not transfer browser
+sessions or logins in a different OS account/container.
+
+`$PARALLELS_HOME/projects` (default `~/.parallels/projects`) stores conversations,
+tasks and a `repository.json` reference, not a new source clone. Discovery uses
+the canonical checkout path, so two clones with the same origin stay distinct.
+Multiple conversations sharing a checkout serialize their main-agent turns.
+Remote URLs are no longer cloned by `start` or `/new`: clone locally first and
+pass the directory. Starting outside Git requires an existing project or an
+explicit local checkout; no empty repository is created inside harness state.
+
+Existing clone-based projects remain usable with their original paths and
+history; they are not automatically rebound or deleted. Start from your original
+checkout to create a new project using this layout. Normal no-project startup
+also reopens saved projects. Deleting a new project removes its state and clean
+worktrees, preserving the original checkout and local branches; local worker
+files (including ignored files) block deletion. Background merge cleanup never
+pulls or changes the original checkout. Update main explicitly when needed.
 
 ### Clipboard image attachments
 
@@ -188,7 +212,7 @@ unrelated project you happened to invoke `parallels` in.
 ### Development
 
 From a development checkout, `bun install --frozen-lockfile` followed by
-`bun src/cli.ts` (or `bun src/cli.ts start [project] [git-url]`) still works.
+`bun src/cli.ts` (or `bun src/cli.ts start [project] [directory]`) still works.
 `bun run check`, `bun test`, `bun run build`, and `git diff --check` are the local
 validation commands. The compiled/installation tests use temporary HOME/state,
 relocated executables, fake provider/tmux boundaries and an owned PTY. Updater
@@ -212,7 +236,7 @@ if a gesture reveals prelaunch shell history instead of scrolling the conversati
 The orchestrator's replies are rendered as markdown (headings, emphasis, lists, quotes, code
 blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that
-repository: an `orch-xxxx` project cloned from its origin (reused next time you
+repository: an `orch-xxxx` project referencing the original checkout (reused next time you
 start there). With no project named it also reopens every project under
 `~/.parallels/projects`. The ruled, pinned header shows bracketed project/display names (the active one
 marked `>`), cached model, effort, fast mode, directory and remote, and refreshes
@@ -239,9 +263,9 @@ conversation history with one summary line under it
 `spawned worker-feat`), its marker red when it failed. A call whose run stops
 without a result is red with an `interrupted` summary. Truncated bash output
 shows `N+ lines (truncated)`. Restored pages and the
-`/agents` view show calls the same way. Ctrl+N starts a new orchestrator named `orch-xxxx`, cloned from the
-repository you started in (an empty repository otherwise; `/rename <name>`
-renames it; `/new <name> <git-url>` clones from elsewhere), Ctrl+Z and Ctrl+X move between pages,
+`/agents` view show calls the same way. Ctrl+N starts a new conversation named `orch-xxxx` in the
+original checkout. `/rename <name>` renames it; `/new <name> <directory>` selects
+another local checkout (the directory may contain spaces). Ctrl+Z and Ctrl+X move between pages,
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
 `/help` for grouped commands and keyboard shortcuts in a panel below the input
 and counts, not in the conversation history. Scroll help with ↑/↓, Page Up/Down

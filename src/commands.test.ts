@@ -64,14 +64,14 @@ describe("repoHere", () => {
     expect(shortRemote("https://github.com/wabarurse/parallels.git")).toBe("github.com/wabarurse/parallels");
     expect(shortRemote("git@github.com:me/app.git")).toBe("github.com/me/app");
   });
-  test("prefers the origin url over the path", async () => {
+  test("retains the original checkout path even when it has an origin", async () => {
     const dir = mkdtempSync(join(tmpdir(), "parallels-here-"));
     try {
       const repo = join(dir, "my-app");
       await Bun.$`git init -q ${repo}`.quiet();
       expect(await repoHere(repo)).toBe(realpathSync(repo));
       await Bun.$`git -C ${repo} remote add origin git@example.com:me/my-app.git`.quiet();
-      expect(await repoHere(join(repo))).toBe("git@example.com:me/my-app.git");
+      expect(await repoHere(join(repo))).toBe(realpathSync(repo));
       expect(await repoHere(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });

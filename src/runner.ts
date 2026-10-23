@@ -10,7 +10,9 @@ import { command, run } from "./proc";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { $ } from "bun";
-import { paths } from "./config";
+import { paths, repositoryBinding } from "./config";
+import { assertMainCheckout, assertWorktree } from "./workspace";
+import { launchEnvironment } from "./launch-environment";
 import type { Role } from "./transcript";
 
 export interface StartOptions {
@@ -19,7 +21,7 @@ export interface StartOptions {
   signal?: AbortSignal;
   project: string;
   role: Role;
-  /** Branch to work on. Omitted for the orchestrator, which runs in repo/. */
+  /** Branch to work on. Omitted for the orchestrator in the original checkout. */
   branch?: string;
 }
 
@@ -57,18 +59,21 @@ export const sessionId = (role: Role, branch?: string) => windowName(role, branc
 
 /**
  * Ensure a worktree for `branch` exists, creating the branch from the repo's
- * HEAD if needed. Reusing an existing worktree is how a reviewer shares the
+ * default branch if needed (HEAD for legacy projects). Reusing a worktree lets a reviewer share the
  * worker's checkout.
  */
 export async function ensureWorktree(project: string, branch: string, signal?: AbortSignal): Promise<string> {
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
-  if (existsSync(dir)) return dir;
+  if (!branch || slug(branch) === "." || slug(branch) === "..") throw new Error("invalid worker branch");
+  const base = repositoryBinding(project)?.branch;
+  if (branch === base) throw new Error("workers must use a task branch, not the default branch");
+  if (existsSync(dir)) { await assertWorktree(project, dir, branch); return dir; }
   if (!existsSync(repo)) throw new Error(`runner: repo not found at ${repo}`);
 
   const exists = (await command(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo, signal)).code === 0;
-  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, "HEAD"])], repo, signal);
+  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, base ? `refs/heads/${base}` : "HEAD"])], repo, signal);
   if (res.code !== 0) throw new Error(`runner: git worktree add failed: ${res.err.trim()}`);
   return dir;
 }
@@ -78,6 +83,7 @@ export async function removeWorktree(project: string, branch: string): Promise<v
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
   if (existsSync(dir)) {
+    await assertWorktree(project, dir, branch);
     const res = await $`git -C ${repo} worktree remove --force ${dir}`.quiet().nothrow();
     if (res.exitCode !== 0) throw new Error(`runner: git worktree remove failed: ${res.stderr.toString().trim()}`);
   }
@@ -182,6 +188,9 @@ export const local: Runner = {
   async start(opts) {
     need("git");
     need("tmux");
+    if (opts.role !== "orchestrator" && !opts.branch) throw new Error("workers and reviewers require a task branch");
+    if (opts.role === "orchestrator" && opts.branch) throw new Error("the orchestrator runs in the original checkout, without a task branch");
+    if (opts.role === "orchestrator") await assertMainCheckout(opts.project);
     let cwd: string;
     if (opts.branch) {
       cwd = await ensureWorktree(opts.project, opts.branch, opts.signal);
@@ -193,7 +202,9 @@ export const local: Runner = {
     await tmux.ensureSession(session, paths.repo(opts.project), opts.signal);
     const run = opts.run ?? crypto.randomUUID();
     if (!opts.run) publishLaunch(opts.project, sessionId(opts.role, opts.branch), run);
-    await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, agentCommand(opts, run), opts.signal);
+    const launch = await launchEnvironment(opts.project, agentCommand(opts, run));
+    try { await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, launch.argv, opts.signal); }
+    catch (error) { await launch.cleanup(); throw error; }
   },
 
   async stop(project, branch) {

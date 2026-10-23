@@ -42,11 +42,11 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   /help          Commands and keyboard shortcuts; Esc closes
 
   Projects
-  /projects              Browse projects: Enter opens, p pins, d deletes
-  /rename <name>         Change display name only; project ID stays fixed
-  /new [name] [git-url]  Create a project page
-  /close                 Close this page; keep its project and history
-  /quit                  Exit; keep conversation history
+  /projects                Browse projects: Enter opens, p pins, d deletes
+  /rename <name>           Change display name only; project ID stays fixed
+  /new [name] [directory]  Create a project page
+  /close                   Close this page; keep its project and history
+  /quit                    Exit; keep conversation history
 
   Model & accounts
   /effort [level|default]        Show or set project/model reasoning effort
@@ -146,7 +146,7 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   /rename <name>
     Change display name only; project
     ID stays fixed
-  /new [name] [git-url]
+  /new [name] [directory]
     Create a project page
   /close
     Close this page; keep its project

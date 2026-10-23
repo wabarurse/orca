@@ -46,7 +46,7 @@ export interface Page {
   /** What the header tab shows; /rename sets it. */
   name: string;
   orch: Orchestrator;
-  /** Where the clone came from, for the pinned header. */
+  /** Repository remote, for the pinned header. */
   remote: string;
   /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
@@ -84,13 +84,13 @@ export interface AppDeps {
   /** Cached header model accessor; defaults to effectiveModel(project). */
   projectModel?: (project: string) => Promise<string>;
   term: Terminal;
-  /** Make sure the project exists (cloning when a url is given) and build its orchestrator. */
+  /** Bind a new project to a local checkout and build its orchestrator. */
   /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
   /** `tools` gets each tool call as it starts and ends: running in the live region, then its "⏺" line and summary in the history. */
   openOrchestrator(project: string, url: string | undefined, write: (text: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void, tools?: ToolEvents): Promise<Orchestrator>;
   /** Inbox poll period; tests shorten it. */
   pollMs?: number;
-  /** Clone source of the repository `start` was run from, if any: opened on start and cloned by Ctrl+N. */
+  /** Original checkout directory: opened on start and shared by Ctrl+N conversations. */
   source?: string | null;
   /** Clock and repeating timer for the busy spinner; tests inject fakes so they never sleep. */
   clock?: Clock;
@@ -403,10 +403,13 @@ export class App {
   /** The given project, or every known one plus the repo we were started in, or a fresh orch-xxxx. */
   private async openStartPages(project?: string, url?: string): Promise<void> {
     if (project) { await this.openPage(project, url); return; }
-    for (const name of await listProjects()) await this.openPage(name);
+    for (const name of await listProjects()) {
+      try { await this.openPage(name); }
+      catch (error) { this.say(`could not open ${name}: ${error instanceof Error ? error.message : String(error)}`); }
+    }
     const source = this.deps.source;
     if (source) {
-      // Reuse the project already cloned from this repo, else start a fresh orch-xxxx on it.
+      // Reuse by original checkout path, never by origin (another clone may share it).
       const existing = await projectFor(source);
       if (existing) await this.openPage(existing);
       else await this.newPage();
@@ -916,7 +919,7 @@ export class App {
     return shown;
   }
 
-  /** Start a fresh orchestrator named orch-xxxx (or `name`), cloning `url`, else the repo we were started in. */
+  /** Start a conversation in the given local directory, else the original launch checkout. */
   async newPage(name?: string, url?: string): Promise<void> {
     const shown = await this.shownNames();
     if (name && [...shown].some(([id, n]) => id !== name && n === name)) return this.say(dim(`another project is already called ${name}`));
@@ -1230,7 +1233,7 @@ export class App {
     ["/retry-images", { run: (_, page) => this.retryImages(page), help: { group: "conversation", label: "/retry-images", description: "Retry unconfirmed image prompts by original ID; never replay consumed input" } }],
     ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
-    ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [git-url]", description: "Create a project page" } }],
+    ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [directory]", description: "Create a project page" } }],
     ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "Close this page; keep its project and history" } }],
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "Exit; keep conversation history" } }],
     ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "User inbox: Tasks / Questions; Shift+Tab switches sections, Esc/Tab closes" } }],
@@ -1332,11 +1335,11 @@ export class App {
     this.draw();
   }
 
-  /** /new [name] [git-url]: the name must be a valid project id. */
+  /** /new [name] [directory]: the name must be a valid project id. */
   private newCommand(args: string): Promise<void> | void {
-    const [name, url] = args.split(/\s+/).filter(Boolean);
+    const [, name, directory] = args.trim().match(/^(\S+)(?:\s+([\s\S]+))?$/) ?? [];
     if (name && !validProjectName(name)) return this.say(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
-    return this.newPage(name, url);
+    return this.newPage(name, directory);
   }
 
   /** /models opens the menu; /models <id> sets any id. */

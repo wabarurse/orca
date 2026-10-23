@@ -185,7 +185,9 @@ test("automatic polling clears consumption in another window, then processes new
   const remoteProvider = fakeProvider([[text("received elsewhere")]]);
   const remote = await createOrchestrator({ project: "a", provider: remoteProvider, tools: {}, write() {} });
   await remote.turn();
-  await until(() => app.page!.sent.length === 0);
+  // Input consumption may be observed before the remote reply is appended;
+  // wait for both independent publications to reach the local view.
+  await until(() => app.page!.sent.length === 0 && raw(app).includes("received elsewhere"));
   expect(raw(app)).toContain("received elsewhere");
   const provider = fakeProvider([[text("poll processed")]]);
   const real = await createOrchestrator({ project: "a", provider, tools: {}, write() {} });

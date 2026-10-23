@@ -4,9 +4,16 @@
 import { mkdir, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { join } from "node:path";
-import { paths } from "./config";
+import { createHash } from "node:crypto";
+import { paths, repositoryBinding } from "./config";
 
-export const projectTurnLock = (project: string) => join(paths.root, "turn-locks", project);
+// Separate conversations using one original checkout must never run overlapping turns.
+export const projectTurnLock = (project: string) => {
+  const binding = repositoryBinding(project);
+  return binding
+    ? join(paths.root, "checkout-locks", createHash("sha256").update(binding.directory).digest("hex"))
+    : join(paths.root, "turn-locks", project);
+};
 
 export function projectIdentity(project: string): string {
   const s = statSync(paths.project(project), { bigint: true });

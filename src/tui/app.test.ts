@@ -1,7 +1,7 @@
 import { png } from "../test/image-fixture";
 import { pendingImageInputs, type ImageRef } from "../images";
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
@@ -403,7 +403,7 @@ describe("tui app", () => {
     await until(() => !!app.frame().help);
     const help = app.frame().help!.lines.join("\n");
     expect(app.page!.lines).toEqual([]);
-    for (const cmd of ["/keys", "/rename <name>", "/new [name] [git-url]", "/close", "/quit", "/agents", "/models [id]", "/accounts", "/login claude|codex", "/review-rounds [n]"]) expect(help).toContain(cmd);
+    for (const cmd of ["/keys", "/rename <name>", "/new [name] [directory]", "/close", "/quit", "/agents", "/models [id]", "/accounts", "/login claude|codex", "/review-rounds [n]"]) expect(help).toContain(cmd);
     expect(help).not.toContain("/back");
     app.quit();
     await running;
@@ -421,10 +421,12 @@ describe("tui app", () => {
     await running;
   });
 
-  test("started inside a repo, it opens an orch-xxxx cloned from it, reused next time; Ctrl+N clones it too", async () => {
+  test("startup and Ctrl+N use the original directory; later startup reuses its bound project", async () => {
     const term = fakeTerm(200);
     const orchs = fakeOrchestrators();
-    const source = "git@example.com:harness.git";
+    const repo = join(home, "original");
+    await Bun.$`git init -q -b main ${repo}`.quiet();
+    const source = realpathSync(repo);
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, source });
     const running = app.run();
     await until(() => !!app.page?.project.startsWith("orch-"));
@@ -435,20 +437,20 @@ describe("tui app", () => {
     await until(() => app.page!.project !== first.project);
     expect(orchs.opened.at(-1)!.project).toMatch(/^orch-/);
     expect(orchs.opened.at(-1)!.url).toBe(source);
-    term.type("/new other\r"); // an explicit name without a url still clones the launch repo
+    term.type("/new other\r"); // an explicit name still uses the launch checkout
     await until(() => app.page?.project === "other");
     expect(orchs.opened.at(-1)).toEqual({ project: "other", url: source });
+    term.type("/new spaces /a/local checkout\r");
+    await until(() => app.page?.project === "spaces");
+    expect(orchs.opened.at(-1)).toEqual({ project: "spaces", url: "/a/local checkout" });
     app.quit();
     await running;
 
-    // A project with this remote on disk is reused instead of cloned again.
-    const repo = join(home, "projects", "cloned", "repo");
-    mkdirSync(repo, { recursive: true });
-    await Bun.$`git init -q ${repo}`.quiet();
-    await Bun.$`git -C ${repo} remote add origin ${source}`.quiet();
+    // Persist the binding as the real openOrchestrator does.
+    await Bun.write(paths.repository("bound"), JSON.stringify({ version: 1, directory: source, branch: "main", worktreeId: crypto.randomUUID() }));
     const again = new App({ term: fakeTerm(), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000, source });
     const running2 = again.run();
-    await until(() => again.page?.project === "cloned");
+    await until(() => again.page?.project === "bound");
     again.quit();
     await running2;
   });

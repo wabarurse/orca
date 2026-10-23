@@ -23,11 +23,11 @@ if (cmd === "images") {
   if (args[0] === "has-session") process.exit(1);
   if (args[0] === "new-window") {
     const cwd = args[args.indexOf("-c") + 1]!;
-    const child = Bun.spawn(args.slice(args.indexOf("--") + 1), { cwd, stdout: "ignore", stderr: "ignore" });
+    const child = Bun.spawn(args.slice(args.indexOf("--") + 1), { cwd, env: { ...process.env, FIXTURE_LOGIN: "stale-login", STALE_FIXTURE: "old" }, stdout: "ignore", stderr: "ignore" });
     record({ exit: await child.exited, cwd });
   }
 } else if (cmd === "agent") {
-  record({ cmd, args, cwd: process.cwd(), home: process.env.PARALLELS_HOME, executable: process.execPath });
+  record({ cmd, args, cwd: process.cwd(), home: process.env.PARALLELS_HOME, executable: process.execPath, login: process.env.FIXTURE_LOGIN, stale: process.env.STALE_FIXTURE });
   if (process.env.PROBE_EXIT === "kill") process.kill(process.pid, "SIGKILL");
   else if (process.env.PROBE_EXIT) process.exit(Number(process.env.PROBE_EXIT));
   else {
