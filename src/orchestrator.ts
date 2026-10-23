@@ -1,4 +1,5 @@
-import { budget } from "./compaction";
+import { budget, type CompactOptions } from "./compaction";
+import { contextWindow, type ContextWindow } from "./model-context";
 import { contextMessages } from "./transcript";
 import { pendingImageInputs, type ImageRef } from "./images";
 import { tryStorageLock } from "./storage-lock";
@@ -14,7 +15,7 @@ import { existsSync } from "node:fs";
 import { assertMainCheckout, initializeWorkspace } from "./workspace";
 import { effectiveModel, projectModelResolver } from "./project-model";
 import { createAgent, type AgentDeps } from "./agent";
-import { loadConfig, paths } from "./config";
+import { loadConfig, paths, type Config } from "./config";
 import { consume, pending, pendingInput, put, userInEpoch, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { type Provider } from "./providers/index";
@@ -50,6 +51,8 @@ export interface OrchestratorDeps {
 export interface Orchestrator {
   /** Conservative current-context estimate, never cumulative billing usage. */
   contextUsage?(model: string): number | undefined;
+  /** The limit compaction uses for this model with the session's options (estimated when unverified). */
+  contextWindow?(model: string): ContextWindow;
   /** Put a user message in the inbox; optional inputId round-trips unchanged through onInbox for UI ownership. */
   say(text: string, submission?: string, inputId?: string, attachments?: ImageRef[]): Promise<void>;
   /** Capture before holding input for login (or any other asynchronous UI operation). */
@@ -86,7 +89,11 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
     await transcript.append({ type: "meta", role: "orchestrator", model: await effectiveModel(project) });
   }
 
-  return orchestratorSession(deps, transcript);
+  return orchestratorSession(deps, transcript, compactionOptions(await loadConfig()));
+}
+/** The options every orchestrator turn compacts with; the header reads them before the first turn. */
+function compactionOptions(config: Config): CompactOptions {
+  return { enabled: config.compact, fallback: config.contextLimitFallback };
 }
 
 /** A small lifecycle owner keeps submission, pause and active-request state separate. */
@@ -128,7 +135,7 @@ class TurnControl {
   }
   takeRequest = (): boolean => { const value = this.requested; this.requested = false; return value; };
 }
-function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Orchestrator {
+function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, configured: CompactOptions): Orchestrator {
   const state = new TurnControl(deps.project, transcript);
   const rolling = new RollingCompactor(deps.project, transcript, deps.rolling);
   // A Page/session cannot acquire ownership of a deleted/recreated project.
@@ -162,6 +169,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Or
       }
       return cachedUsed;
     },
+    contextWindow: model => contextWindow(state.context?.compaction ?? configured, model),
     checkClear: async () => {
       if (state.clearing) throw new Error("context clear in progress");
       await check();
@@ -253,7 +261,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
     toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(deps.project, loadProvider),
     transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project),
-    compaction: { enabled: config.compact, fallback: config.contextLimitFallback }, compactRequested,
+    compaction: compactionOptions(config), compactRequested,
     compactBoundary: async (current, manual, maintenance) => {
       if (inputEpoch(deps.project) !== epoch) { rolling.reset(); return; }
       await rolling.boundary(current, manual, maintenance);

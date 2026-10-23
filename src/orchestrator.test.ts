@@ -286,6 +286,22 @@ test("header context follows the current chain, invalidates model switches, and 
   expect(other.contextUsage!(model)).toBeUndefined();
 });
 
+test("header context limit is the one the session's compaction uses", async () => {
+  const { saveConfig } = await import("./config");
+  const { contextLimit } = await import("./compaction");
+  await saveConfig({ contextLimitFallback: 64000 });
+  try {
+    const p = "context-header-limit";
+    const orch = await createOrchestrator({ project: p, provider: fakeProvider([[text("ok")]]), tools: {}, write: () => {} });
+    expect(orch.contextWindow!("unlisted-model")).toEqual({ limit: 64000, estimated: true }); // before any turn: configured fallback
+    await orch.say("hello");
+    await orch.turn();
+    expect(orch.contextWindow!("unlisted-model")).toEqual({ limit: 64000, estimated: true });
+    expect(contextLimit({ fallback: 64000 }, "unlisted-model")).toBe(64000);
+    expect(orch.contextWindow!("claude-opus-5-5")).toEqual({ limit: 1000000, estimated: false });
+  } finally { await saveConfig({ contextLimitFallback: 128000 }); }
+});
+
 test("context cache is constant-work on unchanged draws and tracks summary retained tails", async () => {
   const { effectiveModel } = await import("./project-model");
   const p = "context-checkpoint", transcript = open(paths.transcript(p, "orchestrator"));

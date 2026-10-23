@@ -183,6 +183,8 @@ test("actual project config changes during gated summary are deferred until the 
   const { saveProjectSettings } = await import("./project-settings");
   const { paths } = await import("./config"); const { mkdirSync } = await import("node:fs");
   const { deps } = await fixture(); mkdirSync(paths.project("p"), { recursive: true });
+  // claude-opus-5 has a verified 1M window: provider-reported usage near it gates the summary.
+  deps.compaction = { fallback: 20000, measured: { input: 900000, estimated: 0, model: "claude-opus-5" } };
   await saveProjectModel("p", "claude-opus-5"); await saveProjectSettings("p", "claude-opus-5", { effort: "high", fast: true });
   const entered = gate(), resume = gate(); const calls: CompleteRequest[] = [];
   const p = provider(async r => { calls.push(r); if (calls.length === 1) { entered.release(); await resume.promise; return end(); } if (calls.length === 2) return { content: [toolUse("a", "echo", {})], stop: "tool_use" }; return end("final"); });

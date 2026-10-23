@@ -7,7 +7,14 @@ import { visibleLength } from "./render";
 test("context uses k units, honest estimates and unknown limits/counts", () => {
   expect(contextStatus("gpt-5.5", 12345)).toBe("ctx ~12.3k/272k");
   expect(contextStatus("gpt-daybreak-red-latest", 0)).toBe("ctx ~0k/372k");
-  expect(contextStatus("unknown", 1500)).toBe("ctx ~1.5k/?");
+  expect(contextStatus("claude-opus-5-5", 45000)).toBe("ctx ~45k/1000k");
+  expect(contextStatus("claude-opus-4-6", 45000)).toBe("ctx ~45k/200k");
+  // Unlisted: the limit compaction uses, marked as an estimate rather than a bare ?.
+  expect(contextStatus("unknown", 1500)).toBe("ctx ~1.5k/128k?");
+  expect(contextStatus("unknown", 45000, { limit: 64000, estimated: true })).toBe("ctx ~45k/64k?");
+  expect(contextStatus("unknown", 45000, { limit: 6789, estimated: false })).toBe("ctx ~45k/6.8k");
+  expect(contextStatus(undefined, 45000, { limit: 64000, estimated: true })).toBe("ctx ~45k/?");
+  expect(contextStatus(undefined)).toBe("ctx ?/?");
   for (const value of [undefined, NaN, Infinity, -1]) expect(contextStatus("gpt-5.5", value)).toBe("ctx ?/272k");
 });
 const run = (mode?: "review" | "watch-ci", started = true): TaskRun => ({ id: crypto.randomUUID(), agent: "reviewer-feat-x", role: "reviewer", state: started ? "started" : "prepared", preparedAt: "now", ...(started ? { startedAt: "now" } : {}), reviewMode: mode });
@@ -39,7 +46,7 @@ test("common terminal sizes expose the saved review limit even in an agent view"
 });
 
 test("lowercase telemetry snapshot preserves project, model, path, remote and agent identity", () => {
-  const chapter = { tabs: [{ name: "MyProject" }], active: 0, model: "Provider-Model-ID · effort default · fast off", directory: "/Users/Ada/Repo", remote: "Host/Owner/Repo", context: contextStatus("unknown"), review: reviewStatus(100), agent: "reviewer-MyTask" };
+  const chapter = { tabs: [{ name: "MyProject" }], active: 0, model: "Provider-Model-ID · effort default · fast off", directory: "/Users/Ada/Repo", remote: "Host/Owner/Repo", context: contextStatus(undefined), review: reviewStatus(100), agent: "reviewer-MyTask" };
   for (const cols of [40, 100]) {
     const rendered = chapterRows(chapter, cols, 9).map(Bun.stripANSI).join("\n");
     expect(rendered).toMatchSnapshot();
