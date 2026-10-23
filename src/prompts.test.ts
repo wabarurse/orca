@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { defaults } from "./config";
-import { rolePrompt } from "./prompts";
+import { DYNAMIC_DISPATCH, ORCHESTRATOR, rolePrompt } from "./prompts";
 import type { Runner } from "./runner";
 import { ask } from "./tools/ask";
 import { message } from "./tools/message";
@@ -156,4 +156,48 @@ test("all production review flows require structured intent including zero-revie
     expect(prompt).toContain('reviewMode: "watch-ci" for CI-only validation');
     expect(prompt).toContain("Missing reviewer reviewMode is refused");
   }
+});
+
+describe("dynamic dispatch", () => {
+  const rounds = [0, 1, 100];
+  test("off leaves the orchestrator prompt exactly the base prompt; on appends one section after it", () => {
+    expect(defaults.dynamicDispatch).toBe(false);
+    for (const maxReviewRounds of rounds) {
+      const off = rolePrompt("orchestrator", { ...defaults, maxReviewRounds, dynamicDispatch: false });
+      const on = rolePrompt("orchestrator", { ...defaults, maxReviewRounds, dynamicDispatch: true });
+      expect(off).toBe(rolePrompt("orchestrator", { ...defaults, maxReviewRounds }));
+      expect(off.startsWith(ORCHESTRATOR.slice(0, ORCHESTRATOR.indexOf("{taskFlow}")))).toBe(true);
+      expect(off.endsWith(ORCHESTRATOR.slice(ORCHESTRATOR.indexOf("{taskFlow}") + "{taskFlow}".length))).toBe(true);
+      expect(off).not.toContain("Splitting work into PRs");
+      expect(on).toBe(`${off}\n\n${DYNAMIC_DISPATCH}`);
+      // The base keeps its budget; the section sits outside it.
+      expect(off.length).toBeLessThan(2200);
+      expect(on).not.toMatch(/\{\w+\}/);
+    }
+  });
+  test("workers and reviewers never get the section", () => {
+    for (const role of ["worker", "reviewer"] as const) {
+      expect(rolePrompt(role, { ...defaults, dynamicDispatch: true })).toBe(rolePrompt(role, defaults));
+    }
+  });
+  test("the section carries the user's guidance adapted to this app", () => {
+    const s = DYNAMIC_DISPATCH;
+    expect(s.startsWith("## Splitting work into PRs\nThe PR is the unit of work.")).toBe(true);
+    expect(s).toContain("Split by what a reviewer can approve alone, never by layer.");
+    expect(s).toContain("The plan table gets one row per PR.");
+    // Stacks: spawn only branches from the default branch, so milestones go one after another.
+    expect(s).toContain("titled `<feature> 2/5: <milestone>`");
+    expect(s).toContain("Spawn only branches from the default branch, so dispatch the stack sequentially: each PR starts after the previous one merges.");
+    expect(s).toContain("Every body lists the stack and marks the current PR.");
+    expect(s).not.toContain("opened together");
+    // Findings after approval override same-branch re-spawns; pre-approval fixes keep the normal flow.
+    expect(s).toContain("Findings after approval become a follow-up PR, not another commit: a new task and branch started after this PR merges, instead of re-spawning the worker on the same branch.");
+    expect(s).toContain("Review fixes before approval stay on the same branch per the task flow, within the review-round limit.");
+    // Terminal app; workers don't push.
+    expect(s).toContain("pasted terminal output for UI");
+    expect(s).not.toMatch(/screenshot/i);
+    expect(s).toContain("Format, lint, typecheck and test before reporting so the bot review finds nothing.");
+    expect(s).not.toMatch(/push/i);
+    for (const kept of ["Data change: expand/contract.", "Codeowner-owned migrations get their own PR.", "Behavior switch: one PR adds it dormant with tests, a second small PR turns it on.", 'If the title needs "and", split.', "Never a branch name.", "2 to 5 files, under 300 lines. Over 600 lines needs a stated reason.", "Merges alone, leaves main working, carries its own test or eval change.", "Parallel only on disjoint files; shared prerequisites ship first as their own PR, dependents start when it merges.", "Brief names the files, the exact change, the test, and the pattern.", "Own the PR to merge."]) expect(s).toContain(kept);
+  });
 });

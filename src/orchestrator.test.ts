@@ -5,9 +5,10 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { paths } from "./config";
+import { loadConfig, paths, saveConfig } from "./config";
 import { put } from "./inbox";
 import { createOrchestrator, ensureProject } from "./orchestrator";
+import { DYNAMIC_DISPATCH } from "./prompts";
 import type { Runner, StartOptions } from "./runner";
 import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import { message } from "./tools/message";
@@ -336,4 +337,23 @@ test("context cache is constant-work on unchanged draws and tracks summary retai
   const next = orch.contextUsage!(model), warmed = branches;
   for (let i = 0; i < 100; i++) expect(orch.contextUsage!(model)).toBe(next);
   expect(branches).toBe(warmed);
+});
+
+test("/dynamic-dispatch is read per turn: toggling between turns changes the next system prompt", async () => {
+  const p = "dispatch-per-turn", systems: (string | undefined)[] = [];
+  const base = fakeProvider([[text("one")], [text("two")], [text("three")]]);
+  const provider = { ...base, complete: (req: Parameters<typeof base.complete>[0]) => { systems.push(req.system); return base.complete(req); } };
+  const orch = await createOrchestrator({ project: p, provider, tools: {}, write: () => {} });
+  expect((await loadConfig()).dynamicDispatch).toBe(false);
+  try {
+    for (const on of [false, true, false]) {
+      await saveConfig({ dynamicDispatch: on });
+      await orch.say(`turn ${systems.length}`);
+      await orch.turn();
+    }
+  } finally { await saveConfig({ dynamicDispatch: false }); }
+  expect(systems.length).toBe(3);
+  expect(systems[0]).not.toContain(DYNAMIC_DISPATCH);
+  expect(systems[1]).toBe(`${systems[0]}\n\n${DYNAMIC_DISPATCH}`);
+  expect(systems[2]).toBe(systems[0]);
 });
