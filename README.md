@@ -78,6 +78,20 @@ clone source (committed history, not uncommitted changes). Workers/reviewers use
 worktrees of the managed clone. Choosing in-place checkout access is a separate,
 not-yet-implemented feature. Normal no-project startup also reopens saved projects.
 
+### Clipboard image attachments
+
+In project chat, **Ctrl+V** attaches a clipboard image, **Ctrl+Y** removes the
+last attachment, and Enter sends text plus images (or images alone). Escape
+clears the draft. Normal terminal text paste is unchanged. Native macOS uses
+system AppKit through `osascript`; Linux uses existing `wl-paste`/`xclip`, with
+no helper installation. Draft labels never contain base64. Queued/history
+attachments are durable, and `/retry-images` explicitly retries unconfirmed
+image prompts with their original IDs. Agents can forward selected attachments
+to workers/reviewers; Claude and Codex receive actual pixels.
+
+See [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md) for terminal boundaries, limits,
+model admission, queue recovery, retention/privacy, compaction and test coverage.
+
 ### Explicit updates: `parallels pull`
 
 Finish active work and let background agents exit before upgrading. From **any**
@@ -491,7 +505,12 @@ still cannot fit, the existing context guard stops the model request.
 Original entries and task records are indexed in private
 `~/.parallels/projects/<project>/memory.sqlite`, using Bun's built-in SQLite and
 FTS5. JSONL transcripts and `tasks.json` remain authoritative; the index can be
-rebuilt. Inbox delivery and task IDs/status semantics are unchanged.
+rebuilt. Inbox delivery and task IDs/status semantics are unchanged. Image IDs and
+original prompt associations are searchable; raw archive entries and checkpoints
+preserve scoped image references. Text summaries/search do not inspect or return
+pixels; normal provider requests still materialize retained images. Accumulated
+image limits fail explicitly, never evict images silently. See
+[image context/history behavior](IMAGE_ATTACHMENTS.md#context-budgeting-and-integration-contract).
 
 The orchestrator uses the existing `task` tool:
 

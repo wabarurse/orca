@@ -1,3 +1,4 @@
+import { requireVision, validatedBase64 } from "../images";
 import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./web-search";
 import { claudeSearchResults } from "./search-results";
 import { CLAUDE_BETAS } from "../claude-auth";
@@ -11,6 +12,7 @@ export function anthropic(client: Anthropic, options: { promptCache?: boolean } 
   return {
     name: "anthropic",
     async complete(req) {
+      requireVision(req.model, req.messages);
       const settings = claudeRequestSettings(req.model, req.settings);
       const stream = client.messages.stream({
         ...settings,
@@ -79,6 +81,13 @@ function foreignReasoning(block: ThinkingBlockParam): boolean {
   catch { return false; }
 }
 export function claudeMessages(messages: MessageParam[]): MessageParam[] {
+  for (const message of messages) if (Array.isArray(message.content)) for (const block of message.content) {
+    if (block.type === "image") {
+      if (message.role !== "user") throw new Error("Assistant image input is unsupported.");
+      validatedBase64(block);
+    }
+    if (block.type === "tool_result" && Array.isArray(block.content) && block.content.some(b => b.type === "image")) throw new Error("Nested tool images are unsupported; forward structured attachments instead.");
+  }
   return messages.map((message) => ({
     ...message,
     content: typeof message.content === "string" ? message.content

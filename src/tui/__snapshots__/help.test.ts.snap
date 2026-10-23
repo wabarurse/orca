@@ -14,30 +14,32 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                  1–9/50
+Help · commands & keys                                                  1–9/54
   Conversation
-  /refresh    Reload shared local state; active context waits until idle;
-              never runs work
-  /inbox      User inbox: Tasks / Questions; Shift+Tab switches sections,
-              Esc/Tab closes
-  /agents     Browse and follow agent conversations
-  /clear      Clear model context after confirmation; keep full history
-  /questions  Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab
-              Tasks
+  /refresh       Reload shared local state; active context waits until idle;
+                 never runs work
+  /retry-images  Retry unconfirmed image prompts by original ID; never replay
+                 consumed input
+  /inbox         User inbox: Tasks / Questions; Shift+Tab switches sections,
+                 Esc/Tab closes
+  /agents        Browse and follow agent conversations
+  /clear         Clear model context after confirmation; keep full history
 ↑↓ / wheel scroll · PgUp/PgDn · Home/End · Esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
-  /refresh    Reload shared local state; active context waits until idle;
-              never runs work
-  /inbox      User inbox: Tasks / Questions; Shift+Tab switches sections,
-              Esc/Tab closes
-  /agents     Browse and follow agent conversations
-  /clear      Clear model context after confirmation; keep full history
-  /questions  Inbox Questions (Ctrl+Q); Enter answers or picks skip; Shift+Tab
-              Tasks
-  /help       Commands and keyboard shortcuts; Esc closes
+  /refresh       Reload shared local state; active context waits until idle;
+                 never runs work
+  /retry-images  Retry unconfirmed image prompts by original ID; never replay
+                 consumed input
+  /inbox         User inbox: Tasks / Questions; Shift+Tab switches sections,
+                 Esc/Tab closes
+  /agents        Browse and follow agent conversations
+  /clear         Clear model context after confirmation; keep full history
+  /questions     Inbox Questions (Ctrl+Q); Enter answers or picks skip;
+                 Shift+Tab Tasks
+  /help          Commands and keyboard shortcuts; Esc closes
 
   Projects
   /projects              Browse projects: Enter opens, p pins, d deletes
@@ -66,6 +68,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   Esc                Close panel, else leave agent view, else clear input
 
   Keyboard · editing
+  Ctrl+V / Ctrl+Y      Attach clipboard image / remove last image. Terminal
+                       text paste is unchanged
   Shift/Alt+Enter      New line
   Alt+←/→ / Alt+B/F    Move by word
   Alt+⌫ / Ctrl+W       Delete previous word
@@ -95,39 +99,45 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 Inbox 1
-Help                           1–8/101
+Help                           1–8/111
   Conversation
-  /refresh    Reload shared local
-              state; active context
-              waits until idle; never
-              runs work
-  /inbox      User inbox: Tasks /
-              Questions; Shift+Tab
-              switches sections,
+  /refresh
+    Reload shared local state; active
+    context waits until idle; never
+    runs work
+  /retry-images
+    Retry unconfirmed image prompts by
+    original ID; never replay consumed
 ↑↓ scroll · Esc close"
 `;
 
 exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  Conversation
-  /refresh    Reload shared local
-              state; active context
-              waits until idle; never
-              runs work
-  /inbox      User inbox: Tasks /
-              Questions; Shift+Tab
-              switches sections,
-              Esc/Tab closes
-  /agents     Browse and follow agent
-              conversations
-  /clear      Clear model context
-              after confirmation; keep
-              full history
-  /questions  Inbox Questions
-              (Ctrl+Q); Enter answers
-              or picks skip; Shift+Tab
-              Tasks
-  /help       Commands and keyboard
-              shortcuts; Esc closes
+  /refresh
+    Reload shared local state; active
+    context waits until idle; never
+    runs work
+  /retry-images
+    Retry unconfirmed image prompts by
+    original ID; never replay consumed
+    input
+  /inbox
+    User inbox: Tasks / Questions;
+    Shift+Tab switches sections,
+    Esc/Tab closes
+  /agents
+    Browse and follow agent
+    conversations
+  /clear
+    Clear model context after
+    confirmation; keep full history
+  /questions
+    Inbox Questions (Ctrl+Q); Enter
+    answers or picks skip; Shift+Tab
+    Tasks
+  /help
+    Commands and keyboard shortcuts;
+    Esc closes
 
   Projects
   /projects
@@ -182,6 +192,10 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     view, else clear input
 
   Keyboard · editing
+  Ctrl+V / Ctrl+Y
+    Attach clipboard image / remove
+    last image. Terminal text paste is
+    unchanged
   Shift/Alt+Enter
     New line
   Alt+←/→ / Alt+B/F
@@ -225,7 +239,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ Inbox 1
-Help · commands & keys                                                42–50/50
+Help · commands & keys                                                46–54/54
   Alt+D                Delete next word
   Home/End / Ctrl+A/E  Start / end of current line
   Ctrl+U / Ctrl+K      Delete to start / end of current line

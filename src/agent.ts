@@ -1,3 +1,4 @@
+import { materializeImages, requireVision } from "./images";
 import { publishLaunch, watchCancellation } from "./cancellation";
 import type { RequestSettings } from "./project-settings";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
@@ -9,7 +10,7 @@ import { effectiveModel, projectModelResolver } from "./project-model";
 import { budget, compact, outputCap, requireFits, type CompactOptions } from "./compaction";
 import { loadConfig, paths } from "./config";
 import { supervise, type Tracker } from "./exits";
-import { consume, format, type Message } from "./inbox";
+import { consume, content, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { type Provider } from "./providers/index";
 import { sessionId } from "./runner";
@@ -127,9 +128,9 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
  * follows commit; a failed append leaves the original inbox files retryable. */
 async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Promise<boolean> {
   const msgs = await consume(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch), deps.transcript, async inbox => {
-    const text = format(inbox);
+    const blocks = content(inbox);
     await deps.transcript.append({ type: "message", inbox,
-      message: { role: "user", content: results ? [...results, { type: "text", text }] : text } });
+      message: { role: "user", content: results ? [...results, ...(typeof blocks === "string" ? [{ type: "text" as const, text: blocks }] : blocks)] : blocks } });
   });
   if (msgs.length) {
     deps.onInbox?.(msgs);
@@ -144,13 +145,15 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
   const messages = await deps.transcript.chain();
   const estimated = budget({ ...deps, compaction: undefined }, messages);
   if (!deps.provider) throw new Error("agent: no provider or resolver");
+  requireVision(deps.model, messages);
+  const delivered = await materializeImages(deps.ctx.project, messages);
   const message = await deps.provider.complete({
     signal: deps.signal,
     model: deps.model,
     settings: deps.settings,
     system: deps.system,
     maxTokens: outputCap(deps),
-    messages,
+    messages: delivered,
     tools: Object.values(deps.tools).map((t) => t.spec),
     onText: (t) => write(t),
   });
@@ -180,6 +183,7 @@ function boundaries(deps: AgentDeps) {
     deps.signal?.throwIfAborted();
     if (current.model !== previousModel) failed = false;
     previousModel = current.model;
+    requireVision(current.model, await current.transcript.chain());
     if (current.compactBoundary) await current.compactBoundary(current, manual, maintenance);
     else if (!maintenance && (manual || !failed)) {
       try {

@@ -1,3 +1,4 @@
+import { pendingImageInputs, type ImageRef } from "./images";
 import { tryStorageLock } from "./storage-lock";
 import { inputEpoch, advanceInputEpoch } from "./user-input";
 import { Cancelled } from "./cancellation";
@@ -45,7 +46,7 @@ export interface OrchestratorDeps {
 
 export interface Orchestrator {
   /** Put a user message in the inbox; optional inputId round-trips unchanged through onInbox for UI ownership. */
-  say(text: string, submission?: string, inputId?: string): Promise<void>;
+  say(text: string, submission?: string, inputId?: string, attachments?: ImageRef[]): Promise<void>;
   /** Capture before holding input for login (or any other asynchronous UI operation). */
   submission?(): string;
   /** Abort only this turn and pause automatic inbox turns until the user sends again. */
@@ -139,6 +140,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Or
   const check = async (ownsTurn = false) => {
     checkIdentity();
     if (state.running || state.requested || (!ownsTurn && existsSync(turnLock(deps.project)))) throw new Error("orchestrator is running or compacting; wait before clearing context");
+    if ((await pendingImageInputs(deps.project, transcript.consumed?.().inputs)).length) throw new Error("image input is pending; retry it before clearing context");
     if (state.submitting || await pendingInput(deps.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
   };
   const refresh = async () => {
@@ -176,11 +178,11 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Or
     dispose: () => rolling.dispose(),
     compact: async () => state.compact(),
     submission: () => inputEpoch(deps.project),
-    say: async (text, submission = inputEpoch(deps.project), inputId) => {
+    say: async (text, submission = inputEpoch(deps.project), inputId, attachments) => {
       checkIdentity();
       state.submitting++;
       state.clearing?.abort(new Error("input arrived; context was not cleared"));
-      try { await (deps.put ?? put)(deps.project, "orchestrator", { from: "user", text, userEpoch: submission, ...(inputId ? { inputId } : {}) }); }
+      try { await (deps.put ?? put)(deps.project, "orchestrator", { from: "user", text, ...(attachments?.length ? { attachments } : {}), userEpoch: submission, ...(inputId ? { inputId } : {}) }); }
       finally { state.submitting--; }
     },
     pending: async () => !existsSync(turnLock(deps.project)) && await refresh() &&

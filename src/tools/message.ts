@@ -1,3 +1,4 @@
+import { attachmentSchema, forwardImages } from "../image-handoff";
 import { put } from "../inbox";
 import { sessionId } from "../runner";
 import type { Tool } from "./index";
@@ -15,6 +16,7 @@ export const message: Tool = {
     input_schema: {
       type: "object",
       properties: {
+        attachments: attachmentSchema,
         to: { type: "string" },
         text: { type: "string" },
       },
@@ -28,7 +30,9 @@ export const message: Tool = {
     if (!text) return "refused: empty message";
     const from = sessionId(ctx.role, ctx.branch);
     if (to === from) return "refused: that's your own inbox";
-    await put(ctx.project, to, { from, text });
+    if (to === "user" && Array.isArray(input.attachments) && input.attachments.length) return "refused: image forwarding is agent-to-agent only";
+    const attachments = await forwardImages(input.attachments, ctx);
+    await put(ctx.project, to, { from, text, ...(attachments.length ? { attachments } : {}) });
     return `sent to ${to}`;
   },
 };

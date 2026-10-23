@@ -1,6 +1,6 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { AgentDeps } from "./agent";
-import { budget, contextLimit, estimate, outputCap } from "./compaction";
+import { budget, contextLimit, estimate, outputCap, retainedImages } from "./compaction";
 import { archiveTranscript, contextEpoch, transcriptEntries } from "./memory-archive";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./project-state";
 import type { Provider } from "./providers";
@@ -175,7 +175,11 @@ export class RollingCompactor {
       const tasks = await archiveTranscript(this.project, this.transcript);
       if (this.disposed) return;
       const memory = { ...job.memory!, tasks: job.memory!.tasks.filter(note => tasks.some(t => t.id === note.id && !t.archive && t.revision === job.revisions.get(t.id))) };
-      const text = memoryText(memory, tasks), retained = current.slice(job.cut);
+      // Summaries never see pixels. Preserve omitted image blocks separately,
+      // including their original prompt association, exactly as worker checkpoints do.
+      // New arrivals and the recent tail stay verbatim; receipts remain on originals.
+      const text = memoryText(memory, tasks);
+      const retained = [...retainedImages(current.slice(0, job.cut)), ...current.slice(job.cut)];
       const proposed: MessageParam[] = [{ role: "user", content: text }, ...retained];
       const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
       if (!paired(proposed) || estimate(proposed) >= estimate(current)) { status(deps, "Background summary did not reduce context; original history kept."); return; }

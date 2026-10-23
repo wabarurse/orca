@@ -2,6 +2,7 @@
 import { Database } from "bun:sqlite";
 import { chmodSync } from "node:fs";
 import { paths } from "./config";
+import { historicalMessages } from "./image-history";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./project-state";
 import { allTasks, type Task } from "./tasks";
 import { open, type Entry, type Transcript } from "./transcript";
@@ -10,12 +11,13 @@ export const archivePath = (project: string) => `${paths.project(project)}/memor
 export const transcriptEntries = (t: Transcript): Entry[] => t.all?.() ?? t.history?.() ?? t.branch();
 export const contextEpoch = (entries: Entry[]): string => entries.findLast(e => e.type === "context-boundary")?.uuid ?? "initial";
 
-/** Never index reasoning blocks, but preserve the original serialized entry on disk. */
+/** Searchable text never indexes reasoning, image bytes or image URLs. Original
+ * entries (including scoped image references) are retained losslessly in raw. */
 export function entryText(entry: Entry): string {
   if (entry.type === "replies") return entry.messages.map(m => `[${m.from}] ${m.text}`).join("\n");
   if (entry.type !== "message") return "";
-  const content = entry.message.content;
-  return `[${entry.message.role}] ${typeof content === "string" ? content : JSON.stringify(content.filter(b => b.type !== "thinking" && b.type !== "redacted_thinking"))}`;
+  const content = historicalMessages([entry.message])[0]!.content;
+  return `[${entry.message.role}] ${typeof content === "string" ? content : JSON.stringify(content)}`;
 }
 
 /** A clear starts a fresh scope; old tasks only return when explicitly referenced again. */

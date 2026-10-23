@@ -1,3 +1,5 @@
+import { attachmentSchema, forwardImages } from "../image-handoff";
+import { imageContent, type ImageRef } from "../images";
 import { delay, publishLaunch } from "../cancellation";
 import { prepareTaskRun, stopTaskRun } from "../tasks";
 import { paths } from "../config";
@@ -47,6 +49,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       input_schema: {
         type: "object",
         properties: {
+          attachments: attachmentSchema,
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries/review rounds; register a new ID for separate follow-up work." },
           prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
           branch: { type: "string", description: "Branch to work on: an open branch to reuse it, or a new name, created from HEAD." },
@@ -62,18 +65,19 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       const role = input.role === "reviewer" ? "reviewer" : "worker";
       if (!prompt || !branch || typeof input.taskId !== "string") return "refused: prompt, branch and registered taskId are required";
 
+      const attachments = await forwardImages(input.attachments, ctx);
       // One agent per branch: a reported agent may still be finishing, so wait briefly for it.
       const busy = await stillLive(runner, ctx.project, branch, wait, ctx.signal);
       ctx.signal?.throwIfAborted();
       if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
-      return launch(runner, prompt, branch, role, input.taskId, ctx);
+      return launch(runner, prompt, branch, role, input.taskId, ctx, attachments);
     },
   };
 }
 
 /** Publish identity before the first transcript entry (the TUI lists transcripts). */
-async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", taskId: string, ctx: ToolContext): Promise<string> {
+async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", taskId: string, ctx: ToolContext, attachments: ImageRef[] = []): Promise<string> {
   const id = sessionId(role, branch);
   const run = crypto.randomUUID();
   await prepareTaskRun(ctx.project, taskId, branch, { id: run, agent: id, role });
@@ -81,7 +85,7 @@ async function launch(runner: Runner, prompt: string, branch: string, role: "wor
     publishLaunch(ctx.project, id, run);
     const t = open(paths.transcript(ctx.project, id));
     if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
-    await t.append({ type: "message", message: { role: "user", content: `Branch: ${branch}\n\n${prompt}` } });
+    await t.append({ type: "message", message: { role: "user", content: imageContent(`Branch: ${branch}\n\n${prompt}`, attachments) } });
     ctx.signal?.throwIfAborted();
     await runner.start({ project: ctx.project, role, branch, run, ...(ctx.signal ? { signal: ctx.signal } : {}) });
     return id;

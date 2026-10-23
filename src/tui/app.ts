@@ -1,3 +1,5 @@
+import { readClipboardImage, type ClipboardImage } from "../clipboard";
+import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput, type ImageRef } from "../images";
 import { listTasks } from "../tasks";
 import { taskInboxLines, type TaskInboxData } from "./task-inbox";
 import { cancelSession } from "../cancellation";
@@ -62,7 +64,7 @@ export interface Page {
   historyLines: number;
   savingHistory: Promise<void>;
   /** Submitted inbox prompts, previewed in the footer but not yet in history; removed by identity at onInbox. */
-  sent: { readonly inputId: string; text: string }[];
+  sent: { readonly inputId: string; text: string; attachments?: ImageRef[]; submission?: string; retry?: boolean }[];
   /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
   questions: PageQuestions;
   /** Answered-question lines waiting for the streaming reply's partial line to end, so they never split it. */
@@ -77,6 +79,8 @@ export interface Page {
 }
 
 export interface AppDeps {
+  /** Explicit Ctrl+V only; tests inject fixture bytes, never the live clipboard. */
+  clipboardImage?: () => Promise<ClipboardImage>;
   /** Cached header model accessor; defaults to effectiveModel(project). */
   projectModel?: (project: string) => Promise<string>;
   term: Terminal;
@@ -221,7 +225,7 @@ export class App {
   private _active = 0;
   get active(): number { return this._active; }
   set active(index: number) {
-    if (index !== this._active) { if (this.page) this.questions.hide(this.page); this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
+    if (index !== this._active) { this.clipboardGeneration++; if (this.page) this.questions.hide(this.page); this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
     this._active = index;
   }
   private looseLines: string[] = [];
@@ -237,7 +241,57 @@ export class App {
   projectList: ProjectListState | null = null;
   loggingIn = false;
   /** Text typed while signing in, per page; sent when sign-in succeeds, dropped when it fails. */
-  private readonly queued = new Map<Page, { text: string; submission?: string; inputId: string }[]>();
+  private readonly queued = new Map<Page, { text: string; submission?: string; inputId: string; attachments?: ImageRef[] }[]>();
+  private readonly draftImages = new WeakMap<Page, ImageRef[]>();
+  private clipboardGeneration = 0;
+  private clipboardReading = false;
+  private readonly sending = new WeakMap<Page, Promise<void>>();
+  private images(page = this.page): ImageRef[] { return page ? this.draftImages.get(page) ?? [] : []; }
+  private imageOwner(page: Page, generation: number): boolean {
+    return generation === this.clipboardGeneration && this.page === page && this.validPage(page)
+      && !page.view && !this.menu && !this.projectList && !this.clearing && !this.taskInbox
+      && this.helpTop === null && !page.questions.expanded;
+  }
+  private async pasteImage(): Promise<void> {
+    const page = this.page;
+    if (!page || page.view || page.questions.expanded) return this.say(dim("Open a project chat before attaching an image (not a question answer)."));
+    if (this.clipboardReading) return this.say(dim("An image read is already in progress; Ctrl+V again when it finishes."));
+    if (this.images(page).length >= MAX_IMAGES) return this.say(dim("At most 4 images per prompt; Ctrl+Y removes the last image."));
+    const generation = ++this.clipboardGeneration;
+    this.clipboardReading = true;
+    try {
+      const identity = projectIdentity(page.project);
+      const image = await (this.deps.clipboardImage ?? readClipboardImage)();
+      if (!this.imageOwner(page, generation)) return;
+      if (projectIdentity(page.project) !== identity) throw new Error("Project changed; image not attached.");
+      const ref = await saveImage(page.project, image.bytes, image.mime);
+      if (!this.imageOwner(page, generation)) return;
+      this.draftImages.set(page, [...this.images(page), ref]);
+    } catch (error) {
+      if (this.imageOwner(page, generation)) this.say(dim(`Image not attached: ${error instanceof Error ? error.message : error}`), page);
+    } finally { this.clipboardReading = false; this.draw(); }
+  }
+  private removeImage(): void {
+    const page = this.page;
+    if (page && !page.questions.expanded && !page.view) this.draftImages.set(page, this.images(page).slice(0, -1));
+    this.draw();
+  }
+  private async recoverImages(page: Page): Promise<void> {
+    const inputs = await pendingImageInputs(page.project, page.orch.consumed?.());
+    if (!this.validPage(page)) return;
+    for (const input of inputs) if (!page.orch.consumed?.().has(input.inputId)
+      && !page.sent.some(m => m.inputId === input.inputId) && !this.queued.get(page)?.some(m => m.inputId === input.inputId)) {
+      page.sent.push({ ...input, retry: true });
+    }
+  }
+  private async retryImages(page?: Page): Promise<void> {
+    if (!page || page.view || this.loggingIn) return this.say(dim("Open project chat and finish sign-in before retrying images."));
+    await this.recoverImages(page);
+    for (const item of [...page.sent]) if (item.attachments?.length && item.retry) {
+      await this.send(page, item.text, item.submission, item.inputId, item.attachments).catch(error => this.say(dim(String(error)), page));
+    }
+    this.runTurn(page);
+  }
   /** /keys: echo every key as parsed until Esc, to see what a terminal really sends. */
   keyEcho = false;
   /** Input history while no page is open; a page keeps its own. */
@@ -434,9 +488,9 @@ export class App {
       // Match identity, not text: an identical external message is not an acknowledgement.
       // Typed here: show only now, at the consumption boundary (answer-shaped chat stays chat).
       const at = m.inputId ? page.sent.findIndex(item => item.inputId === m.inputId) : -1;
-      if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines(m.text)); continue; }
+      if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines([m.text, imageLabels(m.attachments)].filter(Boolean).join("\n"))); continue; }
       // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`parallels msg`) as "> …", as restore shows it.
-      this.toPage(page, this.questions.inboxLines(page, m.text) ?? userLines(m.text));
+      this.toPage(page, this.questions.inboxLines(page, [m.text, imageLabels(m.attachments)].filter(Boolean).join("\n")) ?? userLines(m.text));
     }
   }
 
@@ -465,7 +519,13 @@ export class App {
   frame(): Frame {
     const page = this.page;
     const status = this.started && page ? this.status(page) : null;
-    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length);
+    const refs = this.images(page);
+    const showImages = refs.length > 0 && !page?.questions.expanded;
+    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0));
+    if (showImages) {
+      area.lines.unshift(dim(`${imageLabels(refs)} · Ctrl+Y remove last`.slice(0, this.deps.term.cols)));
+      area.row++;
+    }
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
@@ -474,7 +534,7 @@ export class App {
       status, input, inputArea: area,
       // Project-owned submitted text only: never reconstruct from conversation
       // user lines or from the chat/answer draft. This is presentation, not delivery.
-      queued: page ? { project: page.name, texts: [...page.sent.map(item => item.text), ...(this.queued.get(page) ?? []).map(item => item.text)] } : undefined,
+      queued: page ? { project: page.name, texts: [...page.sent.map(item => `${item.retry ? "[not confirmed; /retry-images] " : ""}${item.text}${item.attachments?.length ? " " + imageLabels(item.attachments) : ""}`), ...(this.queued.get(page) ?? []).map(item => `${item.text}${item.attachments?.length ? " " + imageLabels(item.attachments) : ""}`)] } : undefined,
       menu: this.menu,
       help: this.helpView(),
       inbox: this.taskInboxView(),
@@ -700,6 +760,7 @@ export class App {
   /** Read-only reconciliation. Coalesce bursts, but a request arriving during a
    * snapshot gets one trailing pass. Submission and turn ownership are separate. */
   refreshSessions(force = true): Promise<void> {
+    if (force) this.clipboardGeneration++;
     this.refreshAgain = true;
     this.refreshForce ||= force;
     if (this.refreshing) return this.refreshing;
@@ -734,6 +795,7 @@ export class App {
       else if (this.validPage(page)) {
         this.deferredRefresh.delete(page);
         this.syncTranscript(page);
+        await this.recoverImages(page);
       }
       // Don't overwrite a history append/recall that raced the read.
       const before = page.inputHistory, writing = page.savingHistory;
@@ -788,6 +850,7 @@ export class App {
   }
 
   async openPage(project: string, url?: string): Promise<Page> {
+    this.clipboardGeneration++;
     this.modelGeneration++;
     const existing = this.pages.findIndex((p) => p.project === project);
     if (existing !== -1) {
@@ -811,6 +874,8 @@ export class App {
     this.looseLines = [];
     page.model = await this.readModel(project);
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
+    try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
+    catch (error) { this.say(dim(`Image recovery failed: ${error}`), page); }
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.checkLive(project);
@@ -821,6 +886,7 @@ export class App {
   }
 
   closePage(index = this.active): void {
+    this.clipboardGeneration++;
     this.taskInbox = null;
     this.cancelClear();
     this.helpTop = null;
@@ -837,6 +903,7 @@ export class App {
   }
 
   switchPage(delta: number): void {
+    this.clipboardGeneration++;
     if (this.pages.length < 2) return;
     this.active = (this.active + delta + this.pages.length) % this.pages.length;
     this.reprint();
@@ -1034,6 +1101,7 @@ export class App {
   // --- menus ------------------------------------------------------------------
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
+    this.clipboardGeneration++;
     this.taskInbox = null;
     this.cancelClear();
     if (modelOperation === undefined) this.modelGeneration++;
@@ -1136,12 +1204,15 @@ export class App {
     for (const [page, texts] of [...this.queued]) await this.drainLoginPage(page, texts, ok);
   }
 
-  private async drainLoginPage(page: Page, texts: { text: string; submission?: string; inputId: string }[], ok: boolean): Promise<void> {
-    if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
+  private async drainLoginPage(page: Page, texts: { text: string; submission?: string; inputId: string; attachments?: ImageRef[] }[], ok: boolean): Promise<void> {
+    if (!ok) this.say(dim(texts.some(m => m.attachments?.length) ? "sign-in failed; image prompts retained for /retry-images" : `sign-in failed; dropped ${texts.length} queued message(s)`), page);
     while (texts.length) {
-      const { text, submission, inputId } = texts.shift()!; // ownership transfers to send (Page.sent), or an explicit drop report
-      if (ok && this.pages.includes(page)) await this.send(page, text, submission, inputId).catch(() => {});
-      else this.say(dim(`not sent after sign-in (${page.name}): ${text}`), this.pages.includes(page) ? page : this.page);
+      const { text, submission, inputId, attachments } = texts.shift()!; // ownership transfers to send (Page.sent), or an explicit drop report
+      if (ok && this.pages.includes(page)) await this.send(page, text, submission, inputId, attachments).catch(() => {});
+      else {
+        if (attachments?.length) page.sent.push({ text, submission, inputId, attachments, retry: true });
+        this.say(dim(`not sent after sign-in (${page.name}): ${text}${imageLabels(attachments)}${attachments?.length ? "; /retry-images" : ""}`), this.pages.includes(page) ? page : this.page);
+      }
     }
     if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
   }
@@ -1156,6 +1227,7 @@ export class App {
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
     ["/refresh", { run: () => this.refreshSessions(), help: { group: "conversation", label: "/refresh", description: "Reload shared local state; active context waits until idle; never runs work" } }],
     ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "Browse projects: Enter opens, p pins, d deletes" } }],
+    ["/retry-images", { run: (_, page) => this.retryImages(page), help: { group: "conversation", label: "/retry-images", description: "Retry unconfirmed image prompts by original ID; never replay consumed input" } }],
     ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
     ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [git-url]", description: "Create a project page" } }],
@@ -1325,7 +1397,8 @@ export class App {
    * 4. an unknown one (or arguments to a command that takes none) says "unknown command /x";
    * 5. plain text goes to the orchestrator (talk), refused in an agent view and queued while signing in.
    */
-  private async submit(text: string): Promise<void> {
+  private async submit(text: string, attachments: ImageRef[] = []): Promise<void> {
+    this.clipboardGeneration++;
     this.cancelClear();
     const call = parseCommand(text, this.commands);
     if (call && call.name !== "/models") this.modelGeneration++;
@@ -1334,11 +1407,11 @@ export class App {
     if (!page) return this.newPage();
     if (call?.command) return call.command.run(call.args, page);
     if (call) return this.say(dim(`unknown command ${call.name}`));
-    return this.talk(page, text);
+    return this.talk(page, text, attachments);
   }
 
   /** Plain text for the page's orchestrator: refused while viewing an agent, held while signing in. */
-  private async talk(page: Page, text: string): Promise<void> {
+  private async talk(page: Page, text: string, attachments: ImageRef[] = []): Promise<void> {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
     const submission = page.orch.submission?.();
     const inputId = crypto.randomUUID();
@@ -1347,12 +1420,13 @@ export class App {
       // Append to the same owner while login is draining too, so a new submit
       // cannot overtake older held input during an asynchronous inbox write.
       const texts = this.queued.get(page) ?? [];
-      texts.push({ text, submission, inputId });
+      texts.push({ text, submission, inputId, ...(attachments.length ? { attachments } : {}) });
       void this.refreshSessions();
       this.queued.set(page, texts);
+      if (attachments.length) await saveImageInput(page.project, { text, submission, inputId, attachments });
       return this.say(dim("queued; runs after sign-in"), page);
     }
-    await this.send(page, text, submission, inputId);
+    await this.send(page, text, submission, inputId, attachments);
     this.runTurn(page);
   }
 
@@ -1411,12 +1485,16 @@ export class App {
     { name: "help", takes: () => this.helpTop !== null, handle: (k) => this.helpKey(k) },
     { name: "inbox", takes: k => !!this.taskInbox || (!!this.page?.questions.expanded && ((!k.ctrl && !k.alt && (k.name === "escape" && !k.shift || k.name === "tab")) || !this.questions.view())), handle: (k) => this.taskInboxKey(k) },
     { name: "questions", takes: (k) => this.questions.takes(k), handle: (k) => this.questions.handle(k).then(() => this.draw()) },
+    { name: "images", takes: k => !!k.ctrl && !k.alt && ["v", "y"].includes(k.name), handle: k => k.name === "v" ? this.pasteImage() : this.removeImage() },
     { name: "escape", takes: (k) => k.name === "escape", handle: () => this.escapeKey() },
     { name: "enter", takes: (k) => k.name === "enter" && !k.shift && !k.alt, handle: () => this.enterKey() },
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
 
   async onKey(k: Key): Promise<void> {
+    // Editing within this draft is fine. Navigation/modal/send/clear/history keys
+    // invalidate asynchronous reads, even if the user returns before completion.
+    if (!(k.ctrl && k.name === "v") && !typedText(k) && !["left", "right", "backspace", "delete"].includes(k.name)) this.clipboardGeneration++;
     if (this.canScroll(k)) return this.scroll(k);
     if (k.name === "escape") this.modelGeneration++;
     for (const layer of this.keyLayers) if (layer.takes(k)) return layer.handle(k);
@@ -1578,20 +1656,28 @@ export class App {
   /** Esc: leave the agent view, else clear the input. */
   private escapeKey(): void {
     if (this.page?.view) this.page.view.leave();
-    else this.input = { text: "", cursor: 0 };
+    else { this.input = { text: "", cursor: 0 }; if (this.page) this.draftImages.delete(this.page); }
     return this.draw();
   }
 
   /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
   private enterKey(): Promise<void> | void {
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
+    const attachments = this.images();
+    if (attachments.length && text.trimStart().startsWith("/")) {
+      this.say(dim("Draft images are not sent with slash commands. Ctrl+Y removes the last image; Esc clears this draft."));
+      return this.draw();
+    }
+    if (attachments.length && Buffer.byteLength(text) > 60000) return this.say(dim("Image prompt text exceeds 60,000 bytes; shorten it before sending. Draft retained."));
+    if (attachments.length && this.page?.view) return this.say(dim("Return to project chat before sending images."));
+    if (this.page) this.draftImages.delete(this.page);
     if (text !== "/help" && text !== "/inbox" && text !== "/questions" && text !== "/refresh") this.scrollTop = null;
     this.input = { text: "", cursor: 0 };
     this.historyAt = -1;
-    if (!text) return this.draw();
+    if (!text && !attachments.length) return this.draw();
     this.remember(text);
     this.draw();
-    return this.submit(text);
+    return this.submit(text, attachments);
   }
 
   /** Editing on the input area; the logic lives in editor.ts. */
@@ -1612,20 +1698,33 @@ export class App {
 
 
   /** Track input until an exact committed receipt (local callback or shared refresh); failed writes are reported explicitly. */
-  private async send(page: Page, text: string, submission?: string, inputId: string = crypto.randomUUID()): Promise<void> {
-    const sent = { inputId, text };
-    page.sent.push(sent);
+  private async send(page: Page, text: string, submission?: string, inputId: string = crypto.randomUUID(), attachments: ImageRef[] = []): Promise<void> {
+    const sent = page.sent.find(m => m.inputId === inputId) ?? { inputId, text, submission, ...(attachments.length ? { attachments } : {}), retry: false };
+    if (!page.sent.includes(sent)) page.sent.push(sent);
+    sent.retry = false;
     this.draw();
     try {
       // Start publication before refresh and never await a refresh to submit.
-      const writing = page.orch.say(text, submission, sent.inputId);
-      void this.refreshSessions();
+      const publish = async () => {
+        if (attachments.length) await saveImageInput(page.project, { inputId, text, submission, attachments });
+        return { writing: page.orch.say(text, submission, sent.inputId, attachments) };
+      };
+      const prior = this.sending.get(page);
+      const prepared = prior ? prior.then(publish) : publish();
+      // Reserve inbox invocation order, not completion: put owns disk FIFO, and
+      // later sends must still be attempted after an earlier delayed failure.
+      const gate = prepared.then(() => {}, () => {});
+      this.sending.set(page, gate);
+      void gate.then(() => { if (this.sending.get(page) === gate) this.sending.delete(page); });
+      void this.refreshSessions(false);
+      const { writing } = await prepared;
       await writing;
     }
     catch (err) {
       const at = page.sent.indexOf(sent);
-      if (at !== -1) page.sent.splice(at, 1);
-      this.say(dim(`not sent: ${text}`), page);
+      if (attachments.length) sent.retry = true;
+      else if (at !== -1) page.sent.splice(at, 1);
+      this.say(dim(`not sent: ${text}${imageLabels(attachments)}${attachments.length ? "; retained in this window for /retry-images" : ""}`), page);
       throw err;
     } finally { this.draw(); }
   }
@@ -1644,6 +1743,7 @@ export class App {
   }
 
   private recall(dir: -1 | 1): void {
+    if (this.images().length) return this.say(dim("Remove draft images (Ctrl+Y) before recalling a different prompt from history."));
     const page = this.page;
     if (this.historyPage !== page) { this.historyPage = page; this.historyAt = -1; }
     const history = page?.inputHistory ?? this.looseHistory;
