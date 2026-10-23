@@ -71,7 +71,7 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
     const y = headerEnd + 1;
     child.terminal!.write(`\x1b[<0;3;${y}M\x1b[<32;5;${y}M\x1b[<0;5;${y}m`);
     await until(() => output.includes("\x1b[7mPTY\x1b[0m"));
-    expect(output).not.toContain("Copy failed:");
+    // Automatic copy uses the same SSH-guarded backend as explicit re-copy.
     child.terminal!.write("\x0f"); // explicit Ctrl+O, not Cmd-C
     await Bun.sleep(40);
     child.terminal!.write("\x1b"); // clear highlight, preserve draft

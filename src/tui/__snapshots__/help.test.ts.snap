@@ -69,8 +69,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   Esc                Close panel, else leave agent view, else clear input
 
   Keyboard · editing
-  Drag / Ctrl+O / Esc  Highlight saved conversation / copy selection / clear
-                       highlight (no auto-copy)
+  Drag / Ctrl+O / Esc  Highlight + auto-copy on release / re-copy / clear
+                       highlight
   Ctrl+V / Ctrl+Y      Attach clipboard image / remove last image. Terminal
                        text paste is unchanged
   Shift/Alt+Enter      New line
@@ -102,7 +102,7 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 Inbox 1
-Help                           1–8/115
+Help                           1–8/114
   Conversation
   /refresh
     Reload shared local state; active
@@ -196,9 +196,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
 
   Keyboard · editing
   Drag / Ctrl+O / Esc
-    Highlight saved conversation /
-    copy selection / clear highlight
-    (no auto-copy)
+    Highlight + auto-copy on release /
+    re-copy / clear highlight
   Ctrl+V / Ctrl+Y
     Attach clipboard image / remove
     last image. Terminal text paste is
