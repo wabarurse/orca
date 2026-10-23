@@ -9,13 +9,17 @@ export const complexity: Tool = {
   spec: {
     name: "complexity",
     description:
-      "Cyclomatic and cognitive complexity per function for JavaScript/TypeScript files. With no `files`, scores every file " +
-      "this branch changed against `base` (default: the default branch). Reports a table and which functions are over the thresholds.",
+      "Cyclomatic and cognitive complexity per function for JavaScript/TypeScript. Use for changed JS/TS logic where relevant to risk, not automatically for every review or touched file. " +
+      "Skip for pure wording/formatting or comment-only edits; semantic prompt/config changes and executable examples still need substantive review, even when this metric is inapplicable. " +
+      "Prefer explicit `files` to bound analysis. With no files (or an empty array), selects branch-changed files against `base` (default: the default branch), plus tracked uncommitted changes. " +
+      "Scores all functions in selected files, NOT just changed functions; base selects files, it does not compute metric deltas. Compare the actual diff/base before calling a score a regression. " +
+      "Unchanged functions are baseline context, not new findings merely because their file was touched. Reports measured scores and flags over configured thresholds; report relevant changed functions with name, file and both numbers. " +
+      "Unsupported languages, parse failures or no functions are not zero complexity or proof of safety. State limitations and skipped-check rationale briefly; no mandatory table when inapplicable.",
     input_schema: {
       type: "object",
       properties: {
-        files: { type: "array", items: { type: "string" }, description: "Paths relative to the working directory." },
-        base: { type: "string", description: "Git ref to diff against when `files` is omitted." },
+        files: { type: "array", items: { type: "string" }, description: "Paths relative to the working directory; prefer relevant changed JS/TS logic. Every function in each selected file is scored." },
+        base: { type: "string", description: "Git ref for changed-file selection when `files` is omitted/empty, not a baseline-score comparison." },
       },
     },
   },

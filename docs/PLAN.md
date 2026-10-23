@@ -8,9 +8,9 @@ An agent harness built around an orchestrator → worker → reviewer loop, with
 |---|---|---|
 | Orchestrator | Works on the default branch in the original checkout, splits work, spawns workers | — |
 | Worker | Implements one task on its own branch | Hands off to reviewer |
-| Reviewer | Checks the work, including cyclomatic and cognitive complexity | CI is green, then reports to orchestrator |
+| Reviewer | Judges actual diff/risk; relevant checks and complexity for changed JS/TS logic where applicable | Exact clean PR head validated with evidence (no CI is not validation), then reports to orchestrator |
 
-`spawn` starts a worker-reviewer loop.
+`spawn` starts a worker-reviewer loop. Trivial wording/formatting in README/docs/comments may go directly to `reviewMode: "watch-ci"` for publication and bounded text/link checks, without a formal review round, complexity call or full app suite. Behavior/security/config, agent instructions and executable examples need substantive risk review even in Markdown; extension alone is not a risk classification. `maxReviewRounds` caps substantive review (0 disables rounds, not validation). Material review needs discovered in watch-ci return to the orchestrator when rounds are enabled, respecting the cap and disclosing exhausted-budget exceptions. Only explicitly tagged review dispatches count as rounds.
 
 ## Tools (keep the set small)
 
@@ -49,5 +49,5 @@ An agent harness built around an orchestrator → worker → reviewer loop, with
 4. **Compaction loses detail.** A small model will drop things like file paths, error text and decisions. Keep the last N turns verbatim and only summarize older ones; consider pinning key facts (task, branch, PR) outside the summary.
 5. **Which cache?** Is the byte limit on tool output stored in context, or on something persisted to disk? They need different limits.
 6. **Waiting on CI.** The reviewer needs to wait for CI without burning tokens in a poll loop: block on `gh run watch` or a webhook, not repeated checks.
-7. **Reviewer gates.** Pick thresholds for complexity (e.g. flag functions over N) and decide if failing them blocks or just warns.
+7. **Reviewer gates.** Configured thresholds flag relevant measured complexity; unchanged functions are baseline context, not regressions. Unsupported/failed analysis is not zero. Reviewers judge findings by risk rather than treating every flag as a blocker.
 8. **"Instinct can message"** — what is instinct here? A separate agent, a user-level hook, or the orchestrator? Who can it message?

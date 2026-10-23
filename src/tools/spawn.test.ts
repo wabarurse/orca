@@ -200,3 +200,23 @@ test("production reviewer protocol refuses omitted intent and persists both mode
     expect((await listTasks("p")).find(t => t.id === task.id)?.review).toEqual({ rounds: 1, unknown: false, ci: reviewMode === "watch-ci" });
   }
 });
+
+
+test("editorial publication dispatch creates no code-review round; explicit tags alone determine rounds", async () => {
+  const { listTasks, startTaskRun } = await import("../tasks");
+  const task = await registerTask("p", { name: "Editorial", summary: "Two README sentences", branch: "docs/editorial", authorized: true });
+  const tool = realSpawn({
+    async start(opts) {
+      await startTaskRun(opts.project, opts.run!);
+      await stopTaskRun(opts.project, opts.run!, "waiting", "Test reviewer finished");
+    },
+    async stop() {}, async running() { return []; },
+  });
+  const input = { taskId: task.id, branch: task.branch, role: "reviewer", prompt: "Review two README sentences: requested wording/link validation only; no code-review round needed." };
+  expect(await tool.run(input, ctx("orchestrator"))).toContain("requires reviewMode");
+  expect(await tool.run({ ...input, reviewMode: "watch-ci" }, ctx("orchestrator"))).toBe("reviewer-docs-editorial");
+  expect((await listTasks("p")).find(t => t.id === task.id)?.review).toEqual({ rounds: 0, unknown: false, ci: true });
+  // The same editorial prose with an explicit review tag really is a review dispatch; no extension/prose classifier.
+  expect(await tool.run({ ...input, reviewMode: "review" }, ctx("orchestrator"))).toBe("reviewer-docs-editorial");
+  expect((await listTasks("p")).find(t => t.id === task.id)?.review).toEqual({ rounds: 1, unknown: false, ci: false });
+});

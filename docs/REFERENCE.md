@@ -527,18 +527,36 @@ worktrees stay outside it. Design notes are in [PLAN.md](PLAN.md).
 
 ## The cycle
 
-The orchestrator first shows how it would split the task and answers questions;
-nothing starts until you say "execute" or "dispatch". Then it spawns a
-**worker** on a branch; each worker run ends in one
-commit and one report. It then spawns a **reviewer**, which reads the diff
-against the task's goal, runs the `complexity` tool (cyclomatic and cognitive,
-per function) and reports without touching code. Problems go back to the worker
-with notes and the reviewer looks again, for at most `maxReviewRounds` rounds;
-if the last review still finds problems, the worker gets one more pass, the
-branch goes straight to CI with no further review, and the orchestrator tells
-you what was left open. When a review is clean the orchestrator tells the reviewer to
-"watch ci": it pushes, opens the PR, runs `gh pr checks --watch`, fixes what
-fails until green, and reports ready to merge. One agent codes on a branch at a
+The orchestrator shows a plan and answers questions; clear requests authorize only
+their scope, while "execute" or "dispatch" alone authorizes the plan last shown.
+It spawns a **worker** on a branch; each run ends in one commit and one report,
+with local checks proportionate to the actual diff and risk.
+
+Pure wording/formatting in README/docs/comments may go directly to a **reviewer**
+in `reviewMode: "watch-ci"` for publication and bounded requested-text/link checks,
+with a risk rationale and no code-review round, complexity call or full app suite.
+The reviewer inspects the actual diff: behavior, security, config, agent instructions
+and executable examples need substantive risk review and relevant checks, even in
+Markdown. File extension alone never establishes low risk.
+
+Substantive work uses `reviewMode: "review"`: assess the diff against the task,
+without editing code, and use `complexity` for changed JS/TS logic where relevant.
+The tool scores all functions in selected files; prefer explicit files and compare
+the diff/base before calling scores regressions. Unchanged functions are baseline
+context, not new findings merely because a file was touched. Report measured
+scores against configured thresholds; unsupported or failed analysis is not zero.
+Explain skipped checks briefly, not with an N/A table.
+
+Problems go back to the worker, then review again, for at most `maxReviewRounds`;
+if the last review still finds problems, the worker gets one more pass, followed
+by watch-ci with no further review, and the user hears what remains. A clean review
+also proceeds to watch-ci: push/open the PR, run `gh pr checks --watch`, fix failures
+and revalidate. If watch-ci discovers material changes needing review with rounds
+enabled, return to the orchestrator before readiness; respect the cap and disclose
+any explicitly exhausted-budget exception. Only explicitly tagged review dispatches
+count as rounds, not prose or watch-ci validation. Publication or no hosted checks
+is not validation: `task ready` needs explicit evidence for the exact clean PR head,
+including bounded editorial checks when appropriate. One agent codes on a branch at a
 time: spawn waits briefly and then refuses while the branch's worker or reviewer
 is still running. Corrections to an existing task or unmerged PR reuse its task ID
 and branch, including CI failures, review feedback and user-requested fixes after

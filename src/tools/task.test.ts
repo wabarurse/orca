@@ -21,9 +21,9 @@ const observed = (): PRObservation => ({ pr: { repository: "o/r", number: 2, url
 const tool = makeTaskTool({ repo: async () => repository, pr: async () => snapshot, head: async () => { await beforeHead?.(); return localHead; } });
 const ctx = (role: ToolContext["role"] = "orchestrator", run?: string, branch = "feat/x"): ToolContext => ({ project, role, run, branch, cwd: home });
 beforeEach(() => { project = `t-${n++}`; mkdirSync(paths.project(project), { recursive: true }); snapshot = observed(); repository = "o/r"; localHead = head; beforeHead = undefined; });
-async function reviewer() {
+async function reviewer(reviewMode?: "review" | "watch-ci") {
   const t = await registerTask(project, { name: "Task", summary: "Summary", branch: "feat/x", authorized: true });
-  await prepareTaskRun(project, t.id, t.branch, { id: "reviewer", role: "reviewer", agent: "reviewer-feat-x" });
+  await prepareTaskRun(project, t.id, t.branch, { id: "reviewer", role: "reviewer", agent: "reviewer-feat-x", ...(reviewMode ? { reviewMode } : {}) });
   await startTaskRun(project, "reviewer"); return t;
 }
 const record = (taskId?: string) => tool.run({ action: "pr", taskId, repository: "o/r", number: 2 }, ctx("reviewer", "reviewer"));
@@ -37,8 +37,8 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
   expect(task.status).toBe("queued");
   expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual(await listTasks(project));
   expect(JSON.parse(await tool.run({ action: "get", taskId: task.id }, ctx())).id).toBe(task.id);
-  expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain('spawn the reviewer with only the instruction "watch ci"');
-  expect(rolePrompt("reviewer", defaults)).toContain("Review-only mode never asserts readiness");
+  expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain('spawn the reviewer with "watch ci" (no code review)');
+  expect(rolePrompt("reviewer", defaults)).toContain("Review-only never asserts readiness");
 });
 
 test("PR creation/no CI is not ready; active reviewer explicitly validates verified exact clean head", async () => {
@@ -114,4 +114,23 @@ test("failed explicit PR refresh invalidates previously validated readiness with
   expect(await validate()).toContain("lookup failed/unknown");
   const retained = await getTask(project, t.id);
   expect(retained.readiness).toBeUndefined(); expect(retained.attention?.kind).toBe("unknown"); expect(await listTasks(project)).toHaveLength(1);
+});
+
+
+test("editorial watch-ci with no hosted checks still needs exact-head bounded evidence, not a code-review round", async () => {
+  const t = await reviewer("watch-ci");
+  await record();
+  expect((await getTask(project, t.id)).readiness).toBeUndefined();
+  expect((await listTasks(project))[0]?.review).toEqual({ rounds: 0, unknown: false, ci: true });
+  expect(await validate({ validation: "" })).toContain("validation is required");
+  const validation = "README wording only: checked requested sentences and local link targets against this clean PR head; no executable or instruction changes. App suite/complexity inapplicable.";
+  for (const invalid of [null, "b".repeat(40)]) {
+    localHead = invalid;
+    expect(await validate({ validation })).toContain("clean HEAD");
+  }
+  localHead = head;
+  const ready = JSON.parse(await validate({ validation }));
+  expect(ready.status).toBe("ready_to_merge");
+  expect(ready.readiness).toMatchObject({ head, validation, checks: "not_configured" });
+  expect((await listTasks(project))[0]?.review).toEqual({ rounds: 0, unknown: false, ci: true });
 });

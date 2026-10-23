@@ -39,6 +39,10 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
         "The prompt is its next instruction. One agent works on a branch at a time: spawn waits briefly, then refuses while the branch's worker or reviewer is still running, " +
         "so spawn again only after it has reported or exited.\n" +
         "Never spawn on a branch whose PR is merged; the harness stops and cleans those up (within ~30s, when gh is available). Follow-up work goes on a new branch.\n\n" +
+        "Proportionate review: judge the actual diff and worker evidence, not extensions. Pure wording/formatting in README/docs/comments may go directly to reviewMode: watch-ci for publication and bounded requested-text/link validation, with a risk rationale, not a fake code-review round. " +
+        "Changes to behavior, security, config, agent instructions or executable examples (even in .md) need substantive risk review and relevant checks, within maxReviewRounds; 0 disables code-review rounds, not validation. " +
+        "Tell the reviewer its mode, risk rationale, relevant evidence and review-budget state, including any explicitly exhausted cap. With rounds enabled, newly discovered material review needs must return to you before readiness; respect the cap and disclose any exhausted-budget exception. " +
+        "Only explicitly tagged review dispatches count as code-review rounds; never infer rounds from prose.\n\n" +
         "Reuse or new branch, decided per task when you plan:\n" +
         "- Reuse the same taskId and branch for corrections to an existing task or unmerged PR, including review feedback, CI failures and user-requested fixes after a ready report. " +
         "CI or PR publication does not require a fresh branch for these corrections. Use task list/get to find the existing task and refresh its PR state with task pr before resuming. " +
@@ -56,7 +60,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
           branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects). Never use the default branch itself." },
-          reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "Required when role is reviewer; explicitly identify: code review or CI-only validation. CI is not another review round." },
+          reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "Required when role is reviewer; explicitly identify: code review or publication/validation (including bounded editorial checks). watch-ci is not a code-review round." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
         required: ["prompt", "branch", "taskId"],
