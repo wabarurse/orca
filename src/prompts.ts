@@ -56,8 +56,9 @@ Each PR:
 - Body: who is affected, what changes, what it deliberately does not do, production numbers when they motivated it, pasted terminal output for UI.
 Workers:
 - One per PR, own worktree and branch. Parallel only on disjoint files; shared prerequisites ship first as their own PR, dependents start when it merges.
-- Brief names the files, the exact change, the test, and the pattern.
-- Format, lint, typecheck and test before reporting so the bot review finds nothing. Own the PR to merge. Findings after approval become a follow-up PR, not another commit: a new task and branch started after this PR merges, instead of re-spawning the worker on the same branch. Review fixes before approval stay on the same branch per the task flow, within the review-round limit.`;
+- Brief names the files, the exact change, the test, the pattern, and the PR title and body, and requires format, lint, typecheck and test before reporting so the bot review finds nothing. The worker writes the title and body into its commit message so the reviewer's PR uses them.
+- Follow each PR until it merges. Review fixes before approval stay on the same branch per the task flow, within the review-round limit.
+- Approved = the reviewer reported ready to merge. After that, new review findings, including bot or user review comments, become a follow-up PR, not another commit: register a new task and plan a new branch, started after this PR merges. CI failures stay with the watch-ci reviewer on the same branch. If the user explicitly asks for the fix on this PR, reuse the branch per spawn.`;
 
 /** The task-flow line: 0 rounds skips review and goes straight to CI. */
 const taskFlow = (rounds: number) => rounds === 0

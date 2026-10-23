@@ -190,14 +190,23 @@ describe("dynamic dispatch", () => {
     expect(s).toContain("Spawn only branches from the default branch, so dispatch the stack sequentially: each PR starts after the previous one merges.");
     expect(s).toContain("Every body lists the stack and marks the current PR.");
     expect(s).not.toContain("opened together");
-    // Findings after approval override same-branch re-spawns; pre-approval fixes keep the normal flow.
-    expect(s).toContain("Findings after approval become a follow-up PR, not another commit: a new task and branch started after this PR merges, instead of re-spawning the worker on the same branch.");
+    // Approval is defined; post-approval findings become follow-up PRs, with CI and explicit-user exceptions.
+    expect(s).toContain("- Approved = the reviewer reported ready to merge.");
+    expect(s).toContain("After that, new review findings, including bot or user review comments, become a follow-up PR, not another commit: register a new task and plan a new branch, started after this PR merges.");
+    expect(s).toContain("CI failures stay with the watch-ci reviewer on the same branch.");
+    expect(s).toContain("If the user explicitly asks for the fix on this PR, reuse the branch per spawn.");
     expect(s).toContain("Review fixes before approval stay on the same branch per the task flow, within the review-round limit.");
+    expect(s).not.toContain("instead of re-spawning the worker on the same branch");
+    // Title and body reach the watch-ci reviewer through the worker's commit message; checks are a brief requirement.
+    expect(s).toContain("- Brief names the files, the exact change, the test, the pattern, and the PR title and body, and requires format, lint, typecheck and test before reporting so the bot review finds nothing.");
+    expect(s).toContain("The worker writes the title and body into its commit message so the reviewer's PR uses them.");
+    expect(s).toContain("- Follow each PR until it merges.");
+    expect(s).not.toContain("Own the PR to merge");
+    expect(s).not.toMatch(/^- Format, lint/m);
     // Terminal app; workers don't push.
     expect(s).toContain("pasted terminal output for UI");
     expect(s).not.toMatch(/screenshot/i);
-    expect(s).toContain("Format, lint, typecheck and test before reporting so the bot review finds nothing.");
     expect(s).not.toMatch(/push/i);
-    for (const kept of ["Data change: expand/contract.", "Codeowner-owned migrations get their own PR.", "Behavior switch: one PR adds it dormant with tests, a second small PR turns it on.", 'If the title needs "and", split.', "Never a branch name.", "2 to 5 files, under 300 lines. Over 600 lines needs a stated reason.", "Merges alone, leaves main working, carries its own test or eval change.", "Parallel only on disjoint files; shared prerequisites ship first as their own PR, dependents start when it merges.", "Brief names the files, the exact change, the test, and the pattern.", "Own the PR to merge."]) expect(s).toContain(kept);
+    for (const kept of ["Data change: expand/contract.", "Codeowner-owned migrations get their own PR.", "Behavior switch: one PR adds it dormant with tests, a second small PR turns it on.", 'If the title needs "and", split.', "Never a branch name.", "2 to 5 files, under 300 lines. Over 600 lines needs a stated reason.", "Merges alone, leaves main working, carries its own test or eval change.", "Parallel only on disjoint files; shared prerequisites ship first as their own PR, dependents start when it merges."]) expect(s).toContain(kept);
   });
 });
