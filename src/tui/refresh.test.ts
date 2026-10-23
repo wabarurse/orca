@@ -420,3 +420,78 @@ test("a failed review-rounds save never paints the requested value", async () =>
     await saveConfig({ model: "fake-model", maxReviewRounds: 7 });
   }
 });
+
+test("dynamic dispatch starts off, commands keep pages and agent views in sync, invalid input keeps the saved value", async () => {
+  const { app, screen, submit } = await setup();
+  await until(() => header(screen).includes("review rounds: 1 · dispatch: off"));
+  await app.openPage("b");
+  for (const v of ["on", "off", "on"]) {
+    await submit(`/dynamic-dispatch ${v}`);
+    expect(raw(app)).toContain(`dynamic dispatch set to ${v}`);
+    expect((await loadConfig()).dynamicDispatch).toBe(v === "on");
+    await until(() => header(screen).includes(`dispatch: ${v}`));
+    await app.openPage("a");
+    await until(() => header(screen).includes(`dispatch: ${v}`));
+    app.page!.view = { name: "reviewer-MixedCase", lines: [], calls: new Calls(), live: false, leave() {} };
+    app.draw();
+    await until(() => header(screen).includes("view reviewer-MixedCase"));
+    expect(header(screen)).toContain(`dispatch: ${v}`);
+    app.page!.view = null;
+    await app.openPage("b");
+  }
+  await submit("/dynamic-dispatch");
+  expect(raw(app)).toContain("dynamic dispatch: on");
+  await submit("/dynamic-dispatch maybe");
+  expect(raw(app)).toContain("usage: /dynamic-dispatch [on|off]");
+  expect((await loadConfig()).dynamicDispatch).toBe(true);
+  expect(header(screen)).toContain("dispatch: on");
+});
+
+test("refresh observes external dispatch changes; invalid saved values read as off", async () => {
+  const { app, screen, submit } = await setup({ pollMs: 20 });
+  await until(() => header(screen).includes("dispatch: off"));
+  await saveConfig({ dynamicDispatch: true });
+  await until(() => header(screen).includes("dispatch: on")); // passive poll
+  await Bun.write(paths.config, 'model = "fake-model"\ndynamicDispatch = "on"\n');
+  await submit("/refresh");
+  await until(() => header(screen).includes("dispatch: off"));
+});
+
+test("unavailable dispatch snapshots show unknown, read once per refresh, then recover", async () => {
+  let state: boolean | Error = new Error("Dispatch Read FAILED");
+  let reads = 0;
+  const { app, screen } = await setup({ dispatchSetting: async () => { reads++; if (state instanceof Error) throw state; return state; } });
+  await until(() => header(screen).includes("dispatch: ?"));
+  expect(raw(app)).toContain("dynamic dispatch refresh failed: Error: Dispatch Read FAILED");
+  state = true;
+  await app.refreshSessions();
+  await until(() => header(screen).includes("dispatch: on"));
+  const before = reads;
+  for (let i = 0; i < 50; i++) { app.frame(); app.draw(); }
+  await app.refreshSessions(false);
+  expect(reads).toBe(before + 1);
+  state = 1 as unknown as boolean;
+  await app.refreshSessions();
+  await until(() => header(screen).includes("dispatch: ?"));
+  state = false;
+});
+
+test("a stale pre-command dispatch snapshot cannot replace a newer saved value", async () => {
+  let delayed: Promise<boolean> | undefined;
+  const entered = deferred();
+  const { app, screen, submit } = await setup({ dispatchSetting: () => {
+    if (delayed) entered.resolve();
+    return delayed ?? loadConfig().then(c => c.dynamicDispatch);
+  } });
+  let release!: () => void;
+  delayed = new Promise<boolean>(resolve => { release = () => resolve(false); });
+  const refreshing = app.refreshSessions(false);
+  try {
+    await entered.promise;
+    delayed = undefined;
+    await submit("/dynamic-dispatch on");
+    await until(() => header(screen).includes("dispatch: on"));
+    release(); await refreshing;
+    expect(header(screen)).toContain("dispatch: on");
+  } finally { delayed = undefined; release(); await refreshing; }
+});

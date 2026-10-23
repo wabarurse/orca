@@ -18,7 +18,7 @@ export const COMPACT_AT = 2 * MAX_INPUT_HISTORY;
 
 /** /clear is deliberately not recalled: resets always require a freshly typed command.
  * Commands safe to keep: they carry nothing secret. /new is kept unless its URL has credentials. */
-const SAFE_COMMANDS = new Set(["/refresh", "/inbox", "/compact", "/agents", "/models", "/help", "/projects", "/review-rounds", "/back", "/close", "/quit", "/keys", "/rename", "/new", "/questions"]);
+const SAFE_COMMANDS = new Set(["/refresh", "/inbox", "/compact", "/agents", "/models", "/help", "/projects", "/review-rounds", "/dynamic-dispatch", "/back", "/close", "/quit", "/keys", "/rename", "/new", "/questions"]);
 
 /** A URL with a user or password in it (`https://user:token@host`, `ssh://user@host`). */
 const CREDENTIAL_URL = /[a-z][a-z0-9+.-]*:\/\/[^\s/@]+@/i;

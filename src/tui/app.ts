@@ -1,7 +1,7 @@
 import { ConversationSelection } from "./selection";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "../clipboard";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput, type ImageRef } from "../images";
-import { contextStatus, reviewStatus } from "./context-status";
+import { contextStatus, dispatchStatus, reviewStatus } from "./context-status";
 import { listTasks } from "../tasks";
 import { taskInboxLines, type TaskInboxData } from "./task-inbox";
 import { cancelSession } from "../cancellation";
@@ -14,7 +14,7 @@ import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } f
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
+import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, dynamicDispatch, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { loadConfig, paths, validRounds } from "../config";
 import { projectIdentity } from "../project-state";
 import { validateModel, effectiveModel } from "../project-model";
@@ -89,6 +89,8 @@ export interface AppDeps {
   projectModel?: (project: string) => Promise<string>;
   /** Saved global review limit; cached outside paint, independent of task progress. */
   reviewLimit?: () => Promise<number>;
+  /** Saved global /dynamic-dispatch switch; cached like reviewLimit. */
+  dispatchSetting?: () => Promise<boolean>;
   term: Terminal;
   /** Bind a new project to a local checkout and build its orchestrator. */
   /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
@@ -339,6 +341,8 @@ export class App {
   private refreshForce = false;
   private maxReviewRounds?: number;
   private reviewVersion = 0;
+  private dynamicDispatch?: boolean;
+  private dispatchVersion = 0;
   private readonly deferredRefresh = new Set<Page>();
   private readonly renderedHeads = new WeakMap<Page, string | undefined>();
   private readonly refreshedTurns = new WeakSet<Page>();
@@ -563,7 +567,7 @@ export class App {
   private header(page: Page): string[] {
     const settings = page.settings;
     const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(this.maxReviewRounds), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(this.maxReviewRounds), dispatch: dispatchStatus(this.dynamicDispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Independent read generations for captured page objects. */
@@ -613,6 +617,27 @@ export class App {
     ++this.reviewVersion; // invalidate observations started before this save
     this.say(dim(await reviewRounds(args)), page);
     await this.refreshReviewRounds(); // read the saved value, never infer success from input
+  }
+
+  /** Same snapshot, race and failure rules as refreshReviewRounds. */
+  private async refreshDynamicDispatch(): Promise<void> {
+    const version = ++this.dispatchVersion;
+    let on: boolean | undefined;
+    try {
+      const saved = await (this.deps.dispatchSetting?.() ?? loadConfig().then(config => config.dynamicDispatch));
+      if (typeof saved === "boolean") on = saved;
+    } finally {
+      if (version === this.dispatchVersion && !this.closed && this.dynamicDispatch !== on) {
+        this.dynamicDispatch = on;
+        this.draw();
+      }
+    }
+  }
+
+  private async dynamicDispatchCommand(args: string, page = this.page): Promise<void> {
+    ++this.dispatchVersion; // invalidate observations started before this save
+    this.say(dim(await dynamicDispatch(args)), page);
+    await this.refreshDynamicDispatch(); // read the saved value, never infer success from input
   }
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
@@ -824,6 +849,7 @@ export class App {
         await Promise.all([
           ...this.pages.map(page => this.refreshPage(page, forced)),
           this.refreshReviewRounds().catch(err => this.say(dim(`review rounds refresh failed: ${err}`))),
+          this.refreshDynamicDispatch().catch(err => this.say(dim(`dynamic dispatch refresh failed: ${err}`))),
         ]);
         await this.refreshProjects().catch(err => this.say(dim(`refresh projects failed: ${err}`)));
         await this.refreshTaskInbox();
@@ -932,6 +958,7 @@ export class App {
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
     catch (error) { this.say(dim(`image recovery failed: ${error}`), page); }
     await this.refreshReviewRounds().catch(err => this.say(dim(`review rounds refresh failed: ${err}`), page));
+    await this.refreshDynamicDispatch().catch(err => this.say(dim(`dynamic dispatch refresh failed: ${err}`), page));
     this.pages.push(page);
     this.active = this.pages.length - 1;
     this.checkLive(project);
@@ -1299,6 +1326,7 @@ export class App {
     ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
     ["/review-rounds", { args: true, run: (args, page) => this.reviewRoundsCommand(args, page), help: { group: "advanced", label: "/review-rounds [n]", description: "review rounds before ci; 0 goes straight to ci" } }],
+    ["/dynamic-dispatch", { args: true, run: (args, page) => this.dynamicDispatchCommand(args, page), help: { group: "settings", label: "/dynamic-dispatch [on|off]", description: "show or set dynamic dispatch (global)" } }],
     ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "inbox questions (ctrl+q); enter answers or picks skip; shift+tab tasks" } }],
     ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "return from agent view (also esc)", viewOnly: true } }],
     ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "commands and keyboard shortcuts; esc closes" } }],

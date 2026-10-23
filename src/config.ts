@@ -77,6 +77,8 @@ export interface Config {
   maxToolResultBytes: number;
   /** Max review rounds before the orchestrator reports what is still open; 0 skips review and goes straight to CI. */
   maxReviewRounds: number;
+  /** Saved /dynamic-dispatch switch; dormant until the orchestrator reads it. Default off. */
+  dynamicDispatch: boolean;
   /** Complexity thresholds the reviewer reports against. */
   cyclomatic: number;
   cognitive: number;
@@ -95,6 +97,7 @@ export const defaults: Config = {
   maxToolOutputBytes: 64 * 1024 * 1024,
   maxToolResultBytes: 16 * 1024,
   maxReviewRounds: 1,
+  dynamicDispatch: false,
   cyclomatic: 10,
   cognitive: 15,
   pinned: [],
@@ -119,12 +122,17 @@ export async function loadConfig(): Promise<Config> {
     warned = warning;
     return defaults;
   }
-  const config = { ...defaults, ...parsed };
+  return withFallbacks({ ...defaults, ...parsed });
+}
+
+/** Invalid saved values read as their defaults. */
+function withFallbacks(config: Config): Config {
   if (typeof config.anthropicPromptCache !== "boolean") config.anthropicPromptCache = defaults.anthropicPromptCache;
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;
   if (!integerWithin(config.maxToolOutputBytes, 1024, 256 * 1024 * 1024)) config.maxToolOutputBytes = defaults.maxToolOutputBytes;
   if (!validRounds(config.maxReviewRounds)) config.maxReviewRounds = defaults.maxReviewRounds;
+  if (typeof config.dynamicDispatch !== "boolean") config.dynamicDispatch = defaults.dynamicDispatch;
   return config;
 }
 

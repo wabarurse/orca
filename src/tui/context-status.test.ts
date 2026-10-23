@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { contextStatus, reviewStatus } from "./context-status";
+import { contextStatus, dispatchStatus, reviewStatus } from "./context-status";
 import { reviewProgress, type TaskRun } from "../tasks";
 import { chapterRows } from "./chrome";
 import { visibleLength } from "./render";
@@ -29,6 +29,21 @@ test("task progress still counts confirmed code reviews, not CI or prepared/lega
 test("review label accepts only the configured count, including both limits", () => {
   for (const n of [0, 1, 7, 100]) expect(reviewStatus(n)).toBe(`review rounds: ${n}`);
   for (const n of [undefined, NaN, Infinity, -1, 1.5, 101]) expect(reviewStatus(n)).toBe("review rounds: ?");
+});
+test("dispatch label shows the saved switch, or unknown", () => {
+  expect(dispatchStatus(true)).toBe("dispatch: on");
+  expect(dispatchStatus(false)).toBe("dispatch: off");
+  expect(dispatchStatus(undefined)).toBe("dispatch: ?");
+});
+test("dispatch sits next to review rounds and stays bounded at every width", () => {
+  const c = { tabs: [{ name: "Project" }], active: 0, model: "Model-ID", directory: "/Repo", remote: "Host/Repo", context: "ctx ~12k/272k", review: reviewStatus(100), dispatch: dispatchStatus(false) };
+  expect(chapterRows(c, 120, 8).map(Bun.stripANSI).join("\n")).toContain("review rounds: 100 · dispatch: off");
+  for (const cols of [40, 80]) expect(chapterRows(c, cols, 8).map(Bun.stripANSI).join("\n")).toContain("dispatch: off");
+  for (const cols of [1, 4, 12, 25, 40, 80, 160]) for (const budget of [0, 1, 2, 4, 8]) {
+    const rows = chapterRows({ ...c, agent: "reviewer-Task" }, cols, budget);
+    expect(rows.length).toBeLessThanOrEqual(budget);
+    for (const row of rows) expect(visibleLength(row)).toBeLessThanOrEqual(cols);
+  }
 });
 test("telemetry and identities remain bounded at narrow widths and height budgets", () => {
   for (const cols of [1, 4, 12, 25, 40, 80, 160]) for (const budget of [0, 1, 2, 4, 8]) {
