@@ -55,7 +55,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
           attachments: attachmentSchema,
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
-          branch: { type: "string", description: "Branch to work on: an open branch to reuse it, or a new name, created from HEAD." },
+          branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects). Never use the default branch itself." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
         required: ["prompt", "branch", "taskId"],

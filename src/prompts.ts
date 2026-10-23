@@ -5,7 +5,7 @@
 import type { Config } from "./config";
 import type { Role } from "./transcript";
 
-export const ORCHESTRATOR = `Run this project from its clone.
+export const ORCHESTRATOR = `Stay on the default branch.
 
 - Be direct and concise with the user; no jargon unless the user uses it first.
 - The user's message is input, not a verdict. If unclear, wrong or risky, say so and propose an alternative before acting.

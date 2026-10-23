@@ -6,7 +6,7 @@ An agent harness built around an orchestrator → worker → reviewer loop, with
 
 | Role | Job | Done when |
 |---|---|---|
-| Orchestrator | One per long-term project. Owns a git clone, splits work, spawns workers | — |
+| Orchestrator | Works on the default branch in the original checkout, splits work, spawns workers | — |
 | Worker | Implements one task on its own branch | Hands off to reviewer |
 | Reviewer | Checks the work, including cyclomatic and cognitive complexity | CI is green, then reports to orchestrator |
 
@@ -35,7 +35,7 @@ An agent harness built around an orchestrator → worker → reviewer loop, with
 
 - Every agent runs in a tmux session.
 - Sessions run in a sandbox: either a separate folder on disk or a Docker container. If sessions are sandboxed, moving them to the cloud is the same thing on another machine.
-- Each new orchestrator does a `git clone` of its project.
+- Local orchestrators reference the original checkout; workers and reviewers use its Git worktrees. Harness state and conversations live under `~/.parallels`.
 
 ## UI
 
@@ -45,7 +45,7 @@ An agent harness built around an orchestrator → worker → reviewer loop, with
 
 1. **"No sudo" by string matching is weak.** Agents can get around it (`su`, scripts, aliases). The real guard is running as a user without sudo inside the sandbox. Keep the check as a nudge, not as security.
 2. **Folder vs Docker.** A plain folder does not isolate anything: the agent can still touch the whole machine. Docker gives isolation and makes local and cloud identical, so it is probably the default, with folders as a fast dev mode.
-3. **Clone per orchestrator, worktree per worker.** One clone per project is good. Workers should use `git worktree` off that clone rather than cloning again: faster and shares objects.
+3. **Original checkout, worktree per task branch.** Preserve local configuration and logins by using the existing repository. Reviewers share worker worktrees; conversations sharing the original checkout serialize orchestrator turns.
 4. **Compaction loses detail.** A small model will drop things like file paths, error text and decisions. Keep the last N turns verbatim and only summarize older ones; consider pinning key facts (task, branch, PR) outside the summary.
 5. **Which cache?** Is the byte limit on tool output stored in context, or on something persisted to disk? They need different limits.
 6. **Waiting on CI.** The reviewer needs to wait for CI without burning tokens in a poll loop: block on `gh run watch` or a webhook, not repeated checks.

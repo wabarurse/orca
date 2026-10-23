@@ -30,7 +30,7 @@ import type { PRObservation, TaskPR } from "./tasks";
 import { existsSync, linkSync, mkdirSync, statSync } from "node:fs";
 import { readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "./config";
+import { paths, repositoryBinding } from "./config";
 import { claim, dirtyCount, pidAlive, readRun } from "./exits";
 import { put } from "./inbox";
 import { run, type ProcResult } from "./proc";
@@ -312,6 +312,7 @@ async function removeBranches(project: string, branch: string): Promise<string[]
     await removeWorktree(project, branch);
   } catch (err) {
     problems.push(err instanceof Error ? err.message : String(err));
+    return problems; // An unverified or unremovable worktree must keep its branches too.
   }
   const local = await git(repo, ["branch", "-D", "--", branch]);
   if (local && local.code !== 0 && !/not found/i.test(local.err)) problems.push(`git branch -D: ${local.err.trim()}`);
@@ -342,7 +343,8 @@ async function stopAndClean(project: string, pr: MergedPR, s: string, live: stri
   const { runs, gone } = await stopAgents(project, s, live, d);
   const tail = await cleanTail(project, pr, s, gone, runs, d);
   const repo = paths.repo(project);
-  await git(repo, ["pull", "--ff-only", "--quiet"], GIT_NET_TIMEOUT_MS);
+  // Background cleanup must not modify the user's original checkout.
+  if (!repositoryBinding(project)) await git(repo, ["pull", "--ff-only", "--quiet"], GIT_NET_TIMEOUT_MS);
   return tail;
 }
 

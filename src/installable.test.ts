@@ -74,10 +74,14 @@ test("relocated compiled image pipeline embeds native fixture script, storage an
 
 const branch = "feat/it's-$space", run = "run-'$space";
 async function seed(project: string, role: "orchestrator" | "worker" | "reviewer") {
-  const base = join(state, "projects", project), repo = join(base, "repo");
-  mkdirSync(repo, { recursive: true });
-  const cwd = role === "orchestrator" ? repo : join(base, "worktrees", slug(branch));
-  mkdirSync(cwd, { recursive: true });
+  const base = join(state, "projects", project), repo = join(root, `original-${project}`);
+  mkdirSync(base, { recursive: true });
+  expect((await exec(["git", "init", "-q", "-b", "main", repo])).code).toBe(0);
+  expect((await exec(["git", "-c", "user.name=Test", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "fixture"], repo)).code).toBe(0);
+  const worktreeId = crypto.randomUUID();
+  writeFileSync(join(base, "repository.json"), JSON.stringify({ version: 1, directory: repo, branch: "main", worktreeId }));
+  const cwd = role === "orchestrator" ? repo : join(`${repo}.parallels-worktrees`, worktreeId, slug(branch));
+  if (role !== "orchestrator") expect((await exec(["git", "worktree", "add", "-b", branch, cwd], repo)).code).toBe(0);
   const id = role === "orchestrator" ? role : `${role}-${slug(branch)}`;
   const t = open(join(base, "transcripts", `${id}.jsonl`));
   await t.append({ type: "meta", role, model: "m" });
@@ -93,10 +97,11 @@ for (const role of ["orchestrator", "worker", "reviewer"] as const) {
   test(`relocated compiled runner launches ${role} through fake tmux into correct cwd with a fake provider`, async () => {
     resetLog();
     const project = `normal-${role}`, { cwd } = await seed(project, role);
-    const result = await exec(launch(project, role));
+    const result = await exec(launch(project, role), root, { FIXTURE_LOGIN: "current-login" });
     expect(result.code).toBe(0);
     const rows = records(), agent = rows.find(row => row.cmd === "agent");
-    expect(agent).toMatchObject({ cwd, home: state, executable: probe });
+    expect(agent).toMatchObject({ cwd, home: state, executable: probe, login: "current-login" });
+    expect(agent.stale).toBeUndefined();
     expect(rows.find(row => row.providerCalls !== undefined)).toEqual({ providerCalls: 1, role });
     expect(rows.find(row => row.exit !== undefined)).toMatchObject({ exit: 0, cwd });
     expect(rows.some(row => row.cmd === "agent-exit")).toBe(false);
@@ -109,7 +114,7 @@ for (const exit of ["0", "70", "19", "kill"]) {
     resetLog();
     const project = `exit-${exit}`, { cwd, base } = await seed(project, "worker");
     // Dirty status must be read in the worktree, not the installation/source dir.
-    script("git", 'printf "%s" "$PWD" > "$HOME/git-cwd"\nprintf "?? one\\n?? two\\n"');
+    script("git", 'if [ "$1" = "--no-optional-locks" ] && [ "$2" = "status" ]; then\n  printf "%s" "$PWD" > "$HOME/git-cwd"\n  printf "?? one\\n?? two\\n"\nelse\n  exec /usr/bin/git "$@"\nfi');
     try {
       const result = await exec(launch(project, "worker"), root, { PROBE_EXIT: exit, PROBE_FOLLOWUP_EXIT: "23" });
       expect(result.code).toBe(0); // tmux itself accepted the launch
@@ -150,7 +155,7 @@ async function until(check: () => boolean) {
   expect(check()).toBe(true);
 }
 
-test("bare and explicit installed startup retain invoking cwd and reuse origin clone, excluding local edits", async () => {
+test("bare and explicit installed startup reuse the original checkout with its local edits", async () => {
   const origin = join(root, "origin repo"), checkout = join(root, "caller ' checkout"), isolated = join(root, "pty-state");
   mkdirSync(origin); mkdirSync(isolated);
   expect((await exec(["git", "init", "-q", "-b", "main"], origin)).code).toBe(0);
@@ -159,7 +164,7 @@ test("bare and explicit installed startup retain invoking cwd and reuse origin c
   expect((await exec(["git", "-c", "user.name=Test", "-c", "user.email=t@t", "commit", "-qm", "fixture"], origin)).code).toBe(0);
   expect((await exec(["git", "clone", origin, checkout])).code).toBe(0);
   writeFileSync(join(checkout, "committed"), "uncommitted edit");
-  writeFileSync(join(checkout, "untracked"), "not cloned");
+  writeFileSync(join(checkout, "untracked"), "local file");
   const cwd = join(checkout, "nested"); mkdirSync(cwd);
   let projects: string[] = [];
   for (const args of [[], ["start"]]) {
@@ -178,9 +183,12 @@ test("bare and explicit installed startup retain invoking cwd and reuse origin c
       expect(current).toHaveLength(1);
       if (projects.length) expect(current).toEqual(projects);
       projects = current;
-      const clone = join(isolated, "projects", current[0]!, "repo");
-      expect(readFileSync(join(clone, "committed"), "utf8")).toBe("from origin");
-      expect(existsSync(join(clone, "untracked"))).toBe(false);
+      const project = join(isolated, "projects", current[0]!);
+      const binding = JSON.parse(readFileSync(join(project, "repository.json"), "utf8"));
+      expect(binding.directory).toBe(realpathSync(checkout));
+      expect(binding.branch).toBe("main");
+      expect(existsSync(join(project, "repo"))).toBe(false);
+      expect(readFileSync(join(binding.directory, "untracked"), "utf8")).toBe("local file");
       expect(readFileSync(join(checkout, "committed"), "utf8")).toBe("uncommitted edit");
     } finally { if (child.exitCode === null) child.kill(); await child.exited; child.terminal?.close(); }
   }

@@ -8,7 +8,8 @@ import { projectIdentity, projectTurnLock as turnLock, withProjectStateLock } fr
 // the loop until it stops calling tools, then drain the user's inbox for
 // anything addressed to them.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { assertMainCheckout, initializeWorkspace } from "./workspace";
 import { effectiveModel, projectModelResolver } from "./project-model";
 import { createAgent, type AgentDeps } from "./agent";
 import { loadConfig, paths } from "./config";
@@ -69,19 +70,9 @@ export interface Orchestrator {
   consumed?(): Set<string>;
 }
 
-/**
- * Make sure ~/.parallels/projects/<name>/repo exists: clone it when a url is
- * given, otherwise start an empty repository the orchestrator can fill.
- */
-export function ensureProject(project: string, url?: string): Promise<void> {
-  return withProjectStateLock(project, () => initializeProject(project, url));
-}
-async function initializeProject(project: string, url?: string): Promise<void> {
-  const repo = paths.repo(project);
-  mkdirSync(paths.project(project), { recursive: true });
-  if (existsSync(repo)) return;
-  const res = url ? await Bun.$`git clone ${url} ${repo}`.quiet().nothrow() : await Bun.$`git init -q ${repo}`.quiet().nothrow();
-  if (res.exitCode !== 0) throw new Error(`git ${url ? "clone" : "init"} failed: ${res.stderr.toString().trim()}`);
+/** Bind a new project to its original checkout, or reopen an existing project. */
+export function ensureProject(project: string, directory?: string): Promise<void> {
+  return withProjectStateLock(project, () => initializeWorkspace(project, directory));
 }
 
 export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orchestrator> {
@@ -104,10 +95,13 @@ class TurnControl {
   submitting = 0;
   refreshing?: Promise<void>;
   constructor(private project: string, private transcript: Transcript) {}
-  cancel(): void {
+  pause(): void {
     advanceInputEpoch(this.project);
     this.compactEpoch = undefined;
     this.requested = false;
+  }
+  cancel(): void {
+    this.pause();
     this.cancellation?.abort(new Cancelled());
     this.clearing?.abort(new Cancelled());
   }
@@ -211,6 +205,8 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     if (await state.isPaused()) return [];
     const hasInbox = await pending(deps.project, "orchestrator");
     if (!state.requested && !hasInbox && !rolling.ready()) return [];
+    try { await assertMainCheckout(deps.project); }
+    catch (error) { state.pause(); throw error; } // Retain input without a failing poll/retry loop.
     const agent = await turnAgent(deps, transcript, state.takeRequest, signal, rolling);
     if (hasInbox) await agent.run();
     else if (state.takeRequest()) await agent.compact();

@@ -4,7 +4,7 @@ import { effectiveModel, saveProjectModel, validateModel } from "./project-model
 // What the slash commands do, apart from how they are shown. The TUI turns
 // these into menus and status lines.
 
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { $ } from "bun";
@@ -12,6 +12,7 @@ import { accounts, provider, type Account } from "./accounts";
 import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
 import { loadConfig, paths, saveConfig, validRounds, MAX_REVIEW_ROUNDS } from "./config";
+import { checkoutHere, removeProjectWorktrees } from "./workspace";
 import { watchdog } from "./exits";
 import { mergeWatcher } from "./merges";
 import type { ProviderName } from "./providers/index";
@@ -68,28 +69,24 @@ export async function setDisplayName(project: string, name: string): Promise<str
   return name;
 }
 
-/** Where a project's clone came from: its origin url, or "no remote". */
+/** A project's origin URL, or "no remote". */
 export async function remoteOf(project: string): Promise<string> {
   const res = await $`git -C ${paths.repo(project)} remote get-url origin`.quiet().nothrow();
   return res.exitCode === 0 ? res.stdout.toString().trim() : "no remote";
 }
 
-/**
- * The git repository `start` was run from, as a clone source: its origin url
- * when it has one (so pushes go to the real remote), else its path. Null
- * outside a repository.
- */
+/** Original checkout path, even when origin exists; null outside a repository. */
 export async function repoHere(cwd = process.cwd()): Promise<string | null> {
-  const top = await $`git -C ${cwd} rev-parse --show-toplevel`.quiet().nothrow();
-  if (top.exitCode !== 0) return null;
-  const path = top.stdout.toString().trim();
-  const origin = await $`git -C ${path} remote get-url origin`.quiet().nothrow();
-  return origin.exitCode === 0 ? origin.stdout.toString().trim() : path;
+  return checkoutHere(cwd);
 }
 
-/** The known project whose clone came from `url`, if any. */
-export async function projectFor(url: string): Promise<string | null> {
-  for (const name of await listProjects()) if ((await remoteOf(name)) === url) return name;
+/** Reuse by canonical checkout identity, never by a shared remote URL. */
+export async function projectFor(directory: string): Promise<string | null> {
+  const source = await checkoutHere(directory);
+  if (!source) return null;
+  for (const name of await listProjects()) {
+    if (existsSync(paths.repo(name)) && realpathSync(paths.repo(name)) === source) return name;
+  }
   return null;
 }
 
@@ -98,11 +95,11 @@ export function shortRemote(url: string): string {
   return url.replace(/^[a-z+]+:\/\//, "").replace(/^git@([^:]+):/, "$1/").replace(/\.git$/, "").replace(homedir(), "~");
 }
 
-/** Projects that have been started before: every ~/.parallels/projects/<name> with a repo. */
+/** Keep unavailable bound checkouts listed so their conversations remain discoverable. */
 export async function listProjects(): Promise<string[]> {
   const names = await readdir(paths.project("x").replace(/x$/, "")).catch(() => [] as string[]);
   const out: string[] = [];
-  for (const name of names.sort()) if (existsSync(paths.repo(name))) out.push(name);
+  for (const name of names.sort()) if (existsSync(paths.repository(name)) || existsSync(paths.repo(name))) out.push(name);
   return out;
 }
 
@@ -167,7 +164,7 @@ export async function killProjectSession(project: string): Promise<void> {
 
 export interface DeleteOptions {
   /** Live agent windows; defaults to the tmux session's. Tests replace it. */
-  live?: (project: string) => Promise<string[]>;
+  live?: (project: string) => Promise<string[] | null>;
   /** Close the project's idle tmux session; defaults to killProjectSession. Tests replace it. */
   kill?: (project: string) => Promise<void>;
   /** Runs once the checks pass, before anything is removed (the TUI closes the project's page here). */
@@ -175,8 +172,8 @@ export interface DeleteOptions {
 }
 
 /**
- * Delete ~/.parallels/projects/<name> entirely: clone, worktrees, inboxes and
- * transcripts. Refused while any agent still runs in its tmux session. Also
+ * Delete project state and clean managed worktrees, preserving an original
+ * checkout. Legacy clones retain their old deletion behavior. Refused while agents run. Also
  * drops it from the pins and closes its idle tmux session.
  */
 export async function deleteProject(name: string, opts: DeleteOptions = {}): Promise<void> {
@@ -185,11 +182,15 @@ export async function deleteProject(name: string, opts: DeleteOptions = {}): Pro
   const release = await tryStorageLock(projectTurnLock(name));
   if (!release) throw new Error(`${name} orchestrator is running in another session; wait before deleting`);
   try {
-    const live = await (opts.live ?? liveAgents)(name);
+    const live = await (opts.live ?? liveAgentsOrNull)(name);
+    if (live === null) throw new Error("cannot check live agents; project was not deleted");
     if (live.length) throw new Error(`${name} still has live agents (${live.join(", ")}); wait for them or stop them first`);
-    await opts.beforeRemove?.();
     await (opts.kill ?? killProjectSession)(name);
-    await withProjectStateLock(name, () => rm(paths.project(name), { recursive: true, force: true }));
+    await withProjectStateLock(name, async () => {
+      await removeProjectWorktrees(name);
+      await opts.beforeRemove?.();
+      await rm(paths.project(name), { recursive: true, force: true });
+    });
     const { pinned } = await loadConfig();
     if (pinned.includes(name)) await saveConfig({ pinned: pinned.filter((n) => n !== name) });
   } finally { await release(); }

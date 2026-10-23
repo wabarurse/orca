@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// parallels / parallels start [project] [git-url]   open the TUI: one page per orchestrator (clones on first run;
+// parallels / parallels start [project] [directory]   open the TUI: one page per orchestrator (binds the original checkout;
 //                                         run inside a git repo to get an orchestrator for it)
 // parallels msg <project> <text>        drop a message in the orchestrator's inbox
 // parallels pull                       update the dedicated harness clone from origin/main
@@ -32,7 +32,7 @@ function usage(error?: string): never {
   if (error) write(`parallels: ${error}`);
   write(`usage:
   parallels                            start for the repository in the current directory
-  parallels start [project] [git-url]
+  parallels start [project] [directory]
   parallels msg <project> <text>
   parallels version
   parallels pull                       update ~/.parallels/app from origin/main
@@ -47,7 +47,7 @@ if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 switch (cmd) {
   case undefined:
   case "start": {
-    if (rest.length > 2 || rest.some((arg) => arg.startsWith("-"))) usage("expected start [project] [git-url]");
+    if (rest.length > 2 || rest.some((arg) => arg.startsWith("-"))) usage("expected start [project] [directory]");
     if (!process.stdin.isTTY || !process.stdout.isTTY) usage("start requires an interactive terminal");
     const app = new App({
       term: realTerminal(),
