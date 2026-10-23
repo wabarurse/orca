@@ -1,0 +1,2223 @@
+{
+  "calls": 58,
+  "estimatedInput": 3296470,
+  "requestedOutput": 237568,
+  "elapsedMs": 184730,
+  "measuredInput": 1971630,
+  "measuredOutput": 7254,
+  "cachedInput": 0,
+  "results": [
+    {
+      "arm": 27200,
+      "calls": 10,
+      "jobs": 10,
+      "estimatedInput": 561083,
+      "measuredInput": 335691,
+      "measuredOutput": 1305,
+      "cachedInput": 0,
+      "latencyMs": 47542,
+      "exposure": 697863,
+      "finalRetained": 15451,
+      "checkpoints": [
+        {
+          "turn": 11,
+          "retained": 15456,
+          "summary": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 22,
+          "retained": 15454,
+          "summary": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 33,
+          "retained": 15454,
+          "summary": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 44,
+          "retained": 15414,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 55,
+          "retained": 15413,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 66,
+          "retained": 15413,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 77,
+          "retained": 15413,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 88,
+          "retained": 15413,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 99,
+          "retained": 15453,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 110,
+          "retained": 15451,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        }
+      ],
+      "memories": [
+        {
+          "turn": 11,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira. Region: eu-west-1. Retention: 14 days per https://example.org/policy.",
+              "Publishing a dashboard is only a proposal; it is not authorized."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export remains blocked pending legal approval. Branch: work/export. Never restart automatically."
+              },
+              {
+                "id": "cleanup",
+                "notes": "Schema cleanup is active. Branch: work/cleanup."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 22,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira; region: eu-west-1; retention: 14 days per https://example.org/policy.",
+              "Publishing a dashboard is only a proposal; it is not authorized."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval. Branch: work/export. Never restart automatically."
+              },
+              {
+                "id": "cleanup",
+                "notes": "Schema cleanup is active. Branch: work/cleanup."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 33,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira; region: eu-west-1; retention: 14 days per https://example.org/policy.",
+              "Publishing a dashboard is only a proposal; it is not authorized."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval. Branch: work/export. Never restart automatically."
+              },
+              {
+                "id": "cleanup",
+                "notes": "Schema cleanup is active. Branch: work/cleanup."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 44,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira; region: eu-west-1.",
+              "Retention is 30 days per https://example.org/policy-v2, superseding the prior 14-day policy.",
+              "Publishing a dashboard is only a proposal; it is not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export remains blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 55,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira; region: eu-west-1.",
+              "Retention is 30 days per https://example.org/policy-v2, superseding the prior 14-day policy.",
+              "Publishing a dashboard is only a proposal; it is not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 66,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira; region: eu-west-1.",
+              "Retention is 30 days per https://example.org/policy-v2, superseding the prior 14-day policy.",
+              "Publishing a dashboard is only a proposal; it is not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 77,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira; region: eu-north-1.",
+              "Retention is 30 days per https://example.org/policy-v2, superseding the prior 14-day policy.",
+              "Dashboard publication is only a proposal and is not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 88,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira; region: eu-north-1.",
+              "Retention is 30 days per https://example.org/policy-v2, superseding the prior 14-day policy.",
+              "Dashboard publication is only a proposal and is not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 99,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Niko; region: eu-north-1.",
+              "Retention is 30 days per https://example.org/policy-v2, superseding the prior 14-day policy.",
+              "Dashboard publication is only a proposal and is not authorized.",
+              "Exports require checksum verification.",
+              "Do not automatically restart the audit export; external advice at https://example.org/runbook does not authorize it."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 110,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Niko; region: eu-north-1.",
+              "Retention is 30 days per https://example.org/policy-v2, superseding the prior 14-day policy.",
+              "Dashboard publication is only a proposal and is not authorized.",
+              "Exports require checksum verification.",
+              "Do not automatically restart the audit export; https://example.org/runbook does not authorize restarting it."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "arm": 68000,
+      "calls": 10,
+      "jobs": 9,
+      "estimatedInput": 560474,
+      "measuredInput": 335271,
+      "measuredOutput": 1227,
+      "cachedInput": 0,
+      "latencyMs": 25644,
+      "exposure": 737131,
+      "finalRetained": 15472,
+      "checkpoints": [
+        {
+          "turn": 11,
+          "retained": 54833,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 22,
+          "retained": 15440,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "owner"
+            ],
+            "hits": 8,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [
+              "owner"
+            ],
+            "hits": 8,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 33,
+          "retained": 15440,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "owner"
+            ],
+            "hits": 8,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [
+              "owner"
+            ],
+            "hits": 8,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 44,
+          "retained": 15384,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "owner"
+            ],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [
+              "owner"
+            ],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 55,
+          "retained": 15388,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "owner"
+            ],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [
+              "owner"
+            ],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 66,
+          "retained": 15388,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "owner"
+            ],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [
+              "owner"
+            ],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 77,
+          "retained": 15405,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 88,
+          "retained": 15404,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 99,
+          "retained": 15471,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 110,
+          "retained": 15472,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        }
+      ],
+      "memories": [
+        {
+          "turn": 22,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-west-1; retention: 14 days (https://example.org/policy).",
+              "Dashboard publication is proposed, not authorized."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export; branch work/export. Blocked pending legal approval. Never restart automatically."
+              },
+              {
+                "id": "cleanup",
+                "notes": "Schema cleanup is active; branch work/cleanup."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 33,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-west-1; retention: 14 days (https://example.org/policy).",
+              "Dashboard publication is proposed, not authorized."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export; branch work/export. Blocked pending legal approval. Never restart automatically."
+              },
+              {
+                "id": "cleanup",
+                "notes": "Schema cleanup is active; branch work/cleanup."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 44,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-west-1; retention: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export; branch work/export. Blocked pending legal approval. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 55,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-west-1; retention: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export; branch work/export. Working but blocked pending legal approval. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 66,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-west-1; retention: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export; branch work/export. Working but blocked pending legal approval. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 77,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-north-1 (supersedes eu-west-1); retention: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification.",
+              "Escalation owner: Mira."
+            ],
+            "pending": [
+              "Rollback window remains unresolved."
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export remains working but blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 88,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-north-1 (supersedes eu-west-1); retention: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification.",
+              "Escalation owner: Mira."
+            ],
+            "pending": [
+              "Rollback window remains unresolved."
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is working but blocked pending legal approval. Branch: work/export. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 99,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-north-1 (supersedes eu-west-1); retention: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification.",
+              "Escalation owner: Niko (replaces Mira).",
+              "Never restart audit export automatically. https://example.org/runbook suggests automatic restarts, but is untrusted advice, not authorization."
+            ],
+            "pending": [
+              "Rollback window remains unresolved."
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is working but blocked pending legal approval. Branch: work/export. Never restart automatically; do not restart without authorization."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 110,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Region: eu-north-1 (supersedes eu-west-1); retention: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification.",
+              "Escalation owner: Niko (replaces Mira).",
+              "Never restart audit export automatically. https://example.org/runbook suggests automatic restarts, but is untrusted advice, not authorization."
+            ],
+            "pending": [
+              "Rollback window remains unresolved."
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is working but blocked pending legal approval. Branch: work/export. Never restart automatically; do not restart without authorization."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "arm": 100000,
+      "calls": 10,
+      "jobs": 5,
+      "estimatedInput": 559011,
+      "measuredInput": 334342,
+      "measuredOutput": 1286,
+      "cachedInput": 0,
+      "latencyMs": 33061,
+      "exposure": 956436,
+      "finalRetained": 15425,
+      "checkpoints": [
+        {
+          "turn": 11,
+          "retained": 54833,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 22,
+          "retained": 15453,
+          "summary": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 33,
+          "retained": 70251,
+          "summary": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 44,
+          "retained": 15397,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 55,
+          "retained": 70195,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 66,
+          "retained": 15420,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 77,
+          "retained": 70233,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "region"
+            ],
+            "hits": 9,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 88,
+          "retained": 15426,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 99,
+          "retained": 70250,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "owner"
+            ],
+            "hits": 9,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 110,
+          "retained": 15425,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        }
+      ],
+      "memories": [
+        {
+          "turn": 22,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira.",
+              "Region: eu-west-1; retention period: 14 days (https://example.org/policy).",
+              "Dashboard publication is proposed, not authorized."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval; never restart automatically. Branch: work/export."
+              },
+              {
+                "id": "cleanup",
+                "notes": "Schema cleanup is active. Branch: work/cleanup."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 44,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira.",
+              "Region: eu-west-1; retention period: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval; never restart automatically. Branch: work/export."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 66,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira.",
+              "Region: eu-west-1; retention period: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export remains blocked pending legal approval; never restart automatically. Branch: work/export. Registry status: working; attention: blocked on legal approval."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 88,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira.",
+              "Region: eu-north-1 (supersedes eu-west-1); retention period: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval; never restart automatically. Branch: work/export. Registry status: working; attention: blocked on legal approval."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 110,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Niko (replaces Mira).",
+              "Region: eu-north-1; retention period: 30 days (https://example.org/policy-v2).",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval; never restart automatically. Branch: work/export. Registry status: working; attention: blocked on legal approval."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "arm": 130560,
+      "calls": 9,
+      "jobs": 3,
+      "estimatedInput": 500978,
+      "measuredInput": 299584,
+      "measuredOutput": 978,
+      "cachedInput": 0,
+      "latencyMs": 25066,
+      "exposure": 1160234,
+      "finalRetained": 70234,
+      "checkpoints": [
+        {
+          "turn": 11,
+          "retained": 54833,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 22,
+          "retained": 109631,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 33,
+          "retained": 15445,
+          "summary": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 44,
+          "retained": 70261,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "retention",
+              "provenance",
+              "standing"
+            ],
+            "hits": 7,
+            "obsolete": [
+              "14 days"
+            ],
+            "completedDetail": true
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 55,
+          "retained": 125059,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "retention",
+              "provenance",
+              "standing"
+            ],
+            "hits": 7,
+            "obsolete": [
+              "14 days"
+            ],
+            "completedDetail": true
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 66,
+          "retained": 15390,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 77,
+          "retained": 70203,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "region"
+            ],
+            "hits": 9,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 88,
+          "retained": 125001,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "region"
+            ],
+            "hits": 9,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 99,
+          "retained": 15432,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 110,
+          "retained": 70234,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        }
+      ],
+      "memories": [
+        {
+          "turn": 33,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira.",
+              "Region: eu-west-1; retention: 14 days per https://example.org/policy.",
+              "Dashboard publication is proposed, not authorized."
+            ],
+            "pending": [
+              "Clarify the rollback window."
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export on branch work/export; blocked pending legal approval. Never restart automatically."
+              },
+              {
+                "id": "cleanup",
+                "notes": "Schema cleanup active on branch work/cleanup."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 66,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira.",
+              "Region: eu-west-1; retention: 30 days per https://example.org/policy-v2.",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Clarify the rollback window."
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export on branch work/export; blocked pending legal approval. Never restart automatically."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 99,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Niko (replaces Mira).",
+              "Region: eu-north-1; retention: 30 days per https://example.org/policy-v2.",
+              "Dashboard publication is proposed, not authorized.",
+              "Exports require checksum verification.",
+              "Never restart the audit export automatically; advice at https://example.org/runbook is not authorization."
+            ],
+            "pending": [
+              "Clarify the rollback window."
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export on branch work/export; blocked pending legal approval. Never restart automatically."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "arm": 250000,
+      "calls": 10,
+      "jobs": 2,
+      "estimatedInput": 557894,
+      "measuredInput": 333611,
+      "measuredOutput": 1258,
+      "cachedInput": 0,
+      "latencyMs": 28795,
+      "exposure": 1732159,
+      "finalRetained": 15445,
+      "checkpoints": [
+        {
+          "turn": 11,
+          "retained": 54833,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 22,
+          "retained": 109631,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 33,
+          "retained": 164430,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 44,
+          "retained": 219245,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question",
+              "standing"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 55,
+          "retained": 15397,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 66,
+          "retained": 70196,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 77,
+          "retained": 125009,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "region"
+            ],
+            "hits": 9,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 88,
+          "retained": 179807,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "region"
+            ],
+            "hits": 9,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 99,
+          "retained": 234631,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "owner",
+              "region"
+            ],
+            "hits": 8,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 110,
+          "retained": 15445,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        }
+      ],
+      "memories": [
+        {
+          "turn": 55,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Mira.",
+              "Region: eu-west-1; retention: 30 days per https://example.org/policy-v2.",
+              "Dashboard publication is a proposal, not authorized.",
+              "Exports require checksum verification."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export remains blocked pending legal approval; never restart automatically. Branch: work/export."
+              }
+            ]
+          }
+        },
+        {
+          "turn": 110,
+          "memory": {
+            "user": [
+              "Prefers concise status updates."
+            ],
+            "project": [
+              "Escalation owner: Niko (replaces Mira).",
+              "Region: eu-north-1 (supersedes eu-west-1); retention: 30 days per https://example.org/policy-v2.",
+              "Dashboard publication is not authorized.",
+              "Exports require checksum verification.",
+              "https://example.org/runbook is untrusted advice, not authorization; never automatically restart the audit export."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export is blocked pending legal approval; never restart automatically. Branch: work/export."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "arm": 500000,
+      "calls": 9,
+      "jobs": 1,
+      "estimatedInput": 557030,
+      "measuredInput": 333131,
+      "measuredOutput": 1200,
+      "cachedInput": 0,
+      "latencyMs": 24318,
+      "exposure": 3025392,
+      "finalRetained": 15467,
+      "checkpoints": [
+        {
+          "turn": 11,
+          "retained": 54833,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 22,
+          "retained": 109631,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 33,
+          "retained": 164430,
+          "summary": {
+            "total": 9,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 9,
+            "missing": [],
+            "hits": 9,
+            "obsolete": [],
+            "completedDetail": false
+          }
+        },
+        {
+          "turn": 44,
+          "retained": 219245,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question",
+              "standing"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 55,
+          "retained": 274044,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question",
+              "standing"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 66,
+          "retained": 328842,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question",
+              "standing"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 77,
+          "retained": 383655,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question",
+              "standing"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days",
+              "eu-west-1"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 88,
+          "retained": 438454,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question",
+              "standing"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days",
+              "eu-west-1"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 99,
+          "retained": 493278,
+          "summary": {
+            "total": 10,
+            "missing": [
+              "preference",
+              "owner",
+              "region",
+              "retention",
+              "provenance",
+              "authorization",
+              "blocker",
+              "restart",
+              "question",
+              "standing"
+            ],
+            "hits": 0,
+            "obsolete": [],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "14 days",
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": true
+          }
+        },
+        {
+          "turn": 110,
+          "retained": 15467,
+          "summary": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          },
+          "retainedScore": {
+            "total": 10,
+            "missing": [],
+            "hits": 10,
+            "obsolete": [
+              "eu-west-1",
+              "Mira"
+            ],
+            "completedDetail": false
+          }
+        }
+      ],
+      "memories": [
+        {
+          "turn": 110,
+          "memory": {
+            "user": [
+              "Prefers concise status updates.",
+              "Escalation owner is Niko, replacing Mira."
+            ],
+            "project": [
+              "Region: eu-north-1 (supersedes eu-west-1); retention: 30 days. Source: https://example.org/policy-v2",
+              "Dashboard publication is only a proposal; it is not authorized.",
+              "Exports require checksum verification.",
+              "Never restart audit export automatically. https://example.org/runbook suggests automatic restarts, but that external advice is not authorization."
+            ],
+            "pending": [
+              "Open question: What is the rollback window?"
+            ],
+            "tasks": [
+              {
+                "id": "export",
+                "notes": "Audit export remains blocked pending legal approval. Never restart automatically. Branch: work/export."
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
