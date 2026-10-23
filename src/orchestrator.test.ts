@@ -262,3 +262,26 @@ test("local prompt identities survive persistence unchanged and are reported onl
   await orch.turn();
   expect(seen).toHaveLength(3);
 });
+
+test("header context follows the current chain, invalidates model switches, and isolates sessions", async () => {
+  const { effectiveModel } = await import("./project-model");
+  const p = "context-header";
+  const provider = fakeProvider([[text("a response")]]);
+  const orch = await createOrchestrator({ project: p, provider, tools: {}, write: () => {} });
+  const model = await effectiveModel(p);
+  expect(orch.contextUsage?.(model)).toBeUndefined();
+  await orch.say("hello");
+  await orch.turn();
+  const baseline = orch.contextUsage!(model)!;
+  expect(baseline).toBeGreaterThan(0);
+  expect(orch.contextUsage!("another-model")).toBeUndefined();
+  const t = open(paths.transcript(p, "orchestrator"));
+  await t.append({ type: "message", message: { role: "user", content: "x".repeat(15000) } });
+  await orch.refresh!();
+  expect(orch.contextUsage!(model)!).toBeGreaterThan(baseline + 4000);
+  await t.append({ type: "context-boundary" });
+  await orch.refresh!();
+  expect(orch.contextUsage!(model)!).toBeLessThan(baseline);
+  const other = await createOrchestrator({ project: "other-context-header", provider, tools: {}, write: () => {} });
+  expect(other.contextUsage!(model)).toBeUndefined();
+});

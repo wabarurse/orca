@@ -56,6 +56,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
           branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects). Never use the default branch itself." },
+          reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "For reviewer, explicitly identify: code review or CI-only validation. CI is not another review round." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
         required: ["prompt", "branch", "taskId"],
@@ -74,16 +75,17 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       ctx.signal?.throwIfAborted();
       if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
-      return launch(runner, prompt, branch, role, input.taskId, ctx, attachments);
+      if (input.reviewMode !== undefined && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: invalid reviewMode";
+      return launch(runner, prompt, branch, role, input.taskId, ctx, attachments, role === "reviewer" ? input.reviewMode as "review" | "watch-ci" : undefined);
     },
   };
 }
 
 /** Publish identity before the first transcript entry (the TUI lists transcripts). */
-async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", taskId: string, ctx: ToolContext, attachments: ImageRef[] = []): Promise<string> {
+async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", taskId: string, ctx: ToolContext, attachments: ImageRef[] = [], reviewMode?: "review" | "watch-ci"): Promise<string> {
   const id = sessionId(role, branch);
   const run = crypto.randomUUID();
-  await prepareTaskRun(ctx.project, taskId, branch, { id: run, agent: id, role });
+  await prepareTaskRun(ctx.project, taskId, branch, { id: run, agent: id, role, ...(reviewMode ? { reviewMode } : {}) });
   try {
     publishLaunch(ctx.project, id, run);
     const t = open(paths.transcript(ctx.project, id));

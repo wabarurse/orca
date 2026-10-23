@@ -32,6 +32,8 @@ export interface AgentOptions {
 }
 
 export interface AgentDeps {
+  /** UI observer of the actual safe-boundary request configuration. */
+  onContext?: (deps: AgentDeps) => void;
   /** Maximum overlap of calls explicitly marked independent. Other tools are barriers. */
   toolConcurrency?: number;
   /** An orchestrator must never resume historical context without fresh input. */
@@ -172,7 +174,9 @@ async function snapshot(deps: AgentDeps): Promise<AgentDeps> {
   const current = deps.resolveModel ? await deps.resolveModel() : { model: deps.model, provider: deps.provider, settings: deps.settings };
   if (!current.provider) throw new Error("agent: no provider or resolver");
   const selected = { ...deps, ...current, settings: current.settings ? { ...current.settings } : undefined };
-  return { ...selected, requestOutputCap: outputCap(selected) };
+  const configured = { ...selected, requestOutputCap: outputCap(selected) };
+  deps.onContext?.(configured);
+  return configured;
 }
 function boundaries(deps: AgentDeps) {
   let failed = false;

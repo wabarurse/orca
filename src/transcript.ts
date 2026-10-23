@@ -121,7 +121,7 @@ function load(path: string): Map<string, Entry> {
   }
   return entries;
 }
-function messages(entries: Entry[]): MessageParam[] {
+export function contextMessages(entries: Entry[]): MessageParam[] {
   return entries.flatMap((e): MessageParam[] => {
     if (e.type === "summary") return [{ role: "user", content: e.text }, ...(e.retained ?? [])];
     return e.type === "message" ? [e.message] : [];
@@ -174,6 +174,6 @@ export function open(path: string, io: Storage = disk): Transcript {
   return { path, head: () => head, branch, append, refresh, consumed,
     all: () => walk(byUuid, head, false),
     history: () => walk(byUuid, head, false).filter(e => e.type !== "summary" || !e.retained),
-    chain: async () => messages(branch()),
+    chain: async () => contextMessages(branch()),
   };
 }
