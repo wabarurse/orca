@@ -236,6 +236,17 @@ Esc closes it without changing your draft or leaving an agent view. Help is
 read-only while open; close it before typing. Global cancellation/page shortcuts
 still work, and Ctrl+Q replaces help with the Inbox's Questions section.
 
+`/refresh` reloads **shared local persisted state**: project names/pins/list,
+saved conversation/model context, tasks/questions, agent status and model/settings.
+It also runs automatically when submitting a prompt, including while busy or
+signing in; publication never waits for refresh. Periodic snapshots pick up
+consumption in other windows. Drafts/cursors, active page, pinned bars and history
+stay intact; disruptive context replacement waits until the local turn is idle.
+Refresh does not pull Git changes, update/restart the harness, synchronize laptops,
+submit/resend input, run tools or restart agents. Normal inbox processing remains
+separate. See [SESSION_REFRESH.md](SESSION_REFRESH.md) for receipt semantics,
+concurrency, mixed-version limitations and safe stale-lock recovery.
+
 `/clear` clears only the current orchestrator's **model context**, after a local
 confirmation. **Cancel is selected by default** (Enter alone cancels); choose
 **Clear context**, then Enter to confirm. Esc cancels without changing drafts.
@@ -283,6 +294,10 @@ conversation and composer space; at tiny sizes input/status take precedence.
 Switching projects selects that project's queue and draft (including its cursor).
 When viewing an agent, the footer still labels the queue as the **orchestrator's**.
 Successful inbox writes, turn completion and cancellation are not consumption.
+A preview clears only when its exact immutable input ID is committed with model
+context, locally or in another updated window; identical text or a missing inbox
+file is not evidence. A provider failure after that commit does not resend input.
+Older transcripts without receipts cannot retroactively acknowledge previews.
 Submitting never interrupts a running tool. Assistant message identity is retained
 across streamed paragraph/quote/list
 source lines and transcript entries. Logical conversation blocks have a neutral blank

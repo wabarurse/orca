@@ -4,12 +4,12 @@ import type { RequestSettings } from "./project-settings";
 // a different tool set and a short role prompt (src/prompts.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).
 
-import type { ContentBlock, TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ContentBlock, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { effectiveModel, projectModelResolver } from "./project-model";
 import { budget, compact, outputCap, requireFits, type CompactOptions } from "./compaction";
 import { loadConfig, paths } from "./config";
 import { supervise, type Tracker } from "./exits";
-import { drain, format, type Message } from "./inbox";
+import { consume, format, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
 import { type Provider } from "./providers/index";
 import { sessionId } from "./runner";
@@ -31,6 +31,8 @@ export interface AgentOptions {
 export interface AgentDeps {
   /** Maximum overlap of calls explicitly marked independent. Other tools are barriers. */
   toolConcurrency?: number;
+  /** An orchestrator must never resume historical context without fresh input. */
+  requireInbox?: boolean;
   signal?: AbortSignal;
   provider?: Provider;
   settings?: RequestSettings;
@@ -50,7 +52,7 @@ export interface AgentDeps {
   write?: (text: string, plain?: boolean) => void;
   /** Records steps and reports for exit notices (src/exits.ts); absent for the orchestrator and in most tests. */
   tracker?: Tracker;
-  /** Each batch of inbox messages as it is read, before it reaches the transcript (the TUI shows them). */
+  /** Each batch of inbox messages after its context and exact identities are durably committed (the TUI shows them). */
   onInbox?: (msgs: Message[]) => void;
   /** A tool call starting and ending (the TUI shows it running, then its line and summary). Without them, `write` gets the "⏺" line and its "⎿" summary as plain lines. */
   onTool?: (call: ToolCall) => void;
@@ -117,21 +119,19 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
   }, deps.toolConcurrency ?? 1);
 }
 
-/** Waiting inbox messages as one text block, or null when there are none. New messages mean new instructions. */
-async function inboxBlock(deps: AgentDeps): Promise<TextBlockParam | null> {
-  const msgs = await drain(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch));
-  if (!msgs.length) return null;
-  deps.onInbox?.(msgs);
-  await deps.tracker?.instructed();
-  return { type: "text", text: format(msgs) };
-}
-
-/** Move waiting inbox messages into the transcript as one user turn. */
-async function readInbox(deps: AgentDeps): Promise<boolean> {
-  const block = await inboxBlock(deps);
-  if (!block) return false;
-  await deps.transcript.append({ type: "message", message: { role: "user", content: block.text } });
-  return true;
+/** Persist payload and acknowledgements in the same transcript entry. Notification
+ * follows commit; a failed append leaves the original inbox files retryable. */
+async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Promise<boolean> {
+  const msgs = await consume(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch), deps.transcript, async inbox => {
+    const text = format(inbox);
+    await deps.transcript.append({ type: "message", inbox,
+      message: { role: "user", content: results ? [...results, { type: "text", text }] : text } });
+  });
+  if (msgs.length) {
+    deps.onInbox?.(msgs);
+    await deps.tracker?.instructed();
+  } else if (results) await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
+  return msgs.length > 0;
 }
 
 /** One model request, streamed and appended to the transcript. */
@@ -188,12 +188,13 @@ function boundaries(deps: AgentDeps) {
 }
 async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<void> {
   const results = await runTools(deps, content, deps.write!);
-  const note = deps.signal?.aborted ? null : await inboxBlock(deps);
-  await deps.transcript.append({ type: "message", message: { role: "user", content: note ? [...results, note] : results } });
+  if (!deps.signal?.aborted) await readInbox(deps, results);
+  else await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
 }
 async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>): Promise<void> {
   deps.signal?.throwIfAborted();
-  await readInbox(deps);
+  const consumed = await readInbox(deps);
+  if (deps.requireInbox && !consumed) return;
   for (;;) {
     const current = await boundary(deps.compactRequested?.() ?? false);
     deps.signal?.throwIfAborted();

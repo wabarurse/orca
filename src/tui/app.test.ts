@@ -1880,7 +1880,7 @@ describe("command and key tables", () => {
     expect(help).not.toContain("/back");
     expect(help.indexOf("Advanced & diagnostics")).toBeGreaterThan(help.indexOf("Keyboard · editing"));
     expect(help.indexOf("/keys")).toBeGreaterThan(help.indexOf("Advanced & diagnostics"));
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/rename", "/review-rounds"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/models", "/new", "/projects", "/questions", "/quit", "/refresh", "/rename", "/review-rounds"]);
   });
 
   test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {

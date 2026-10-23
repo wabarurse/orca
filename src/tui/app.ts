@@ -21,7 +21,7 @@ import { follow, parts } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
 import { historyRows, type Line } from "./lines";
-import { appendHistory, keepable, loadHistory, remember } from "./history";
+import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { helpLines, type CommandHelp } from "./help";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./questions";
@@ -112,7 +112,7 @@ export interface AppDeps {
   questionDelayMs?: number;
 }
 
-export interface ToolEvents { onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void }
+export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
 
@@ -237,7 +237,7 @@ export class App {
   projectList: ProjectListState | null = null;
   loggingIn = false;
   /** Text typed while signing in, per page; sent when sign-in succeeds, dropped when it fails. */
-  private readonly queued = new Map<Page, { text: string; submission?: string }[]>();
+  private readonly queued = new Map<Page, { text: string; submission?: string; inputId: string }[]>();
   /** /keys: echo every key as parsed until Esc, to see what a terminal really sends. */
   keyEcho = false;
   /** Input history while no page is open; a page keeps its own. */
@@ -274,6 +274,13 @@ export class App {
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
   private readonly liveChecks = new Map<string, Promise<void>>();
   private closed = false;
+  private refreshing?: Promise<void>;
+  private refreshAgain = false;
+  private refreshForce = false;
+  private readonly deferredRefresh = new Set<Page>();
+  private readonly renderedHeads = new WeakMap<Page, string | undefined>();
+  private readonly refreshedTurns = new WeakSet<Page>();
+  private readonly notices = new WeakMap<Page, Line[]>();
 
   /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
   readonly questions: Questions;
@@ -289,6 +296,7 @@ export class App {
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
       say: (line, page) => app.toPage(page as Page, [line]),
       record: (line, page) => app.record(page as Page, line),
+      submitted: () => { void app.refreshSessions(); },
       width: () => app.inputWidth("answer> "),
       now: () => app.clock.now(),
       isCommand: (text) => app.commands.has(text.split(" ")[0]!),
@@ -312,6 +320,7 @@ export class App {
       if (this.page) { this.checkLive(this.page.project); void this.refreshHeader(this.page).catch(() => {}); }
       this.watchPages();
       this.questions.poll(this.pages);
+      void this.refreshSessions(false); // passive snapshots also follow responses consumed in another window
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
     try {
@@ -330,7 +339,7 @@ export class App {
       this.stopSpinner?.();
       this.stopSpinner = null;
       this.loginAbort.abort();
-      for (const p of this.pages) { p.orch.cancel?.(); p.view?.leave(); }
+      for (const p of this.pages) { if (p.busy) p.orch.cancel?.(); p.view?.leave(); }
       restoreConsole();
       term.close();
       this.leave();
@@ -371,7 +380,12 @@ export class App {
   say(line: string, page = this.page): void {
     if (!page) { this.looseLines.push(line); this.pending.push(line); return this.draw(); }
     if (page.view) this.toView(page, page.view, [line]);
-    else this.toPage(page, [line]);
+    else { this.keepNotice(page, line); this.toPage(page, [line]); }
+  }
+
+  private keepNotice(page: Page, line: Line): void {
+    const notes = this.notices.get(page) ?? [];
+    notes.push(line); this.notices.set(page, notes);
   }
 
   /** Finished lines of the page's own history; they reach the screen only while it is active and shows no agent. */
@@ -443,6 +457,7 @@ export class App {
 
   /** An answered question's line: into the page's history now, or once the reply streaming there ends its partial line. */
   private record(page: Page, line: Line): void {
+    this.keepNotice(page, line);
     if (page.md.pending) page.held.push(line);
     else this.toPage(page, [line]);
   }
@@ -682,6 +697,88 @@ export class App {
 
   // --- pages ------------------------------------------------------------------
 
+  /** Read-only reconciliation. Coalesce bursts, but a request arriving during a
+   * snapshot gets one trailing pass. Submission and turn ownership are separate. */
+  refreshSessions(force = true): Promise<void> {
+    this.refreshAgain = true;
+    this.refreshForce ||= force;
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = Promise.resolve().then(async () => {
+      do {
+        this.refreshAgain = false;
+        const forced = this.refreshForce;
+        this.refreshForce = false;
+        await Promise.all(this.pages.map(page => this.refreshPage(page, forced)));
+        await this.refreshProjects().catch(err => this.say(dim(`refresh projects failed: ${err}`)));
+        await this.refreshTaskInbox();
+      } while (this.refreshAgain && !this.closed);
+    }).finally(() => { this.refreshing = undefined; });
+    return this.refreshing;
+  }
+
+  private validPage(page: Page): boolean {
+    return !this.closed && !page.deleting && this.pages.includes(page);
+  }
+
+  private async refreshPage(page: Page, forced: boolean): Promise<void> {
+    if (!this.validPage(page)) return;
+    const nameBefore = page.name, remoteBefore = page.remote;
+    const safe = [this.refreshHeader(page), forced ? this.questions.refresh(page) : Promise.resolve(),
+      displayName(page.project).then(name => { if (this.validPage(page) && page.name === nameBefore) page.name = name; }),
+      remoteOf(page.project).then(remote => { if (this.validPage(page) && page.remote === remoteBefore) page.remote = remote; })];
+    this.checkLive(page.project);
+    const results = await Promise.allSettled(safe);
+    try {
+      if (page.busy) this.deferredRefresh.add(page);
+      else if (await page.orch.refresh?.() === false || page.busy) this.deferredRefresh.add(page);
+      else if (this.validPage(page)) {
+        this.deferredRefresh.delete(page);
+        this.syncTranscript(page);
+      }
+      // Don't overwrite a history append/recall that raced the read.
+      const before = page.inputHistory, writing = page.savingHistory;
+      await writing;
+      const saved = await loadHistory(page.project);
+      if (this.validPage(page) && page.inputHistory === before && page.savingHistory === writing && this.historyAt === -1) {
+        page.inputHistory = [...saved.entries, ...before.filter(text => !saved.entries.includes(text))].slice(-MAX_INPUT_HISTORY);
+        page.historyLines = saved.lines;
+      }
+      const failed = results.find(r => r.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+    } catch (error) {
+      if (this.validPage(page)) this.say(dim(`refresh failed (input retained): ${error instanceof Error ? error.message : String(error)}`), page);
+    }
+    this.draw();
+  }
+
+  /** Only durable exact IDs acknowledge pending input. Re-rendering saved tool
+   * entries is presentation, never tool execution. Called idle or pre-stream. */
+  private syncTranscript(page: Page): void {
+    const consumed = page.orch.consumed?.();
+    if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
+    const entries = page.orch.entries?.();
+    if (!entries) return;
+    const head = entries.at(-1)?.uuid;
+    if (this.renderedHeads.get(page) === head) return;
+    const lines = restore(entries, this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
+    // Keep local diagnostics/skip feedback, but don't duplicate persisted answers.
+    const saved = new Set(lines.map(line => JSON.stringify(line)));
+    const notes = (this.notices.get(page) ?? []).filter(line => !saved.has(JSON.stringify(line)));
+    this.notices.set(page, notes);
+    const anchor = page === this.page && !page.view && this.scrollTop !== null
+      ? captureAnchor(page.lines, this.deps.term.cols, this.scrollTop) : undefined;
+    if (anchor) {
+      const source = JSON.stringify(page.lines[anchor.line]);
+      const occurrence = page.lines.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
+      const matches = lines.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
+      anchor.line = matches[occurrence] ?? Math.min(anchor.line, lines.length);
+    }
+    page.lines = [...lines, ...notes];
+    if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(page.lines, this.deps.term.cols, anchor); }
+    this.renderedHeads.set(page, head);
+    if (page === this.page && !page.view) this.reprint();
+  }
+
   private restorePage(page: Page, asked: import("./restore").AskedLookup): void {
     const entries = page.orch.entries?.() ?? [];
     // All saved conversation must be scrollable before exit, including originals
@@ -698,16 +795,18 @@ export class App {
       return this.pages[existing]!;
     }
     const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), held: [], view: null, calls: new Calls() };
-    const tools: ToolEvents = { onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]) };
+    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     const asked = await this.questions.load(page);
     this.restorePage(page, asked);
+    this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
     const saved = await loadHistory(project);
     page.inputHistory = saved.entries;
     page.historyLines = saved.lines;
     page.remote = await remoteOf(project);
     page.name = await displayName(project);
+    this.notices.set(page, [...this.looseLines]);
     page.lines.unshift(...this.looseLines);
     this.looseLines = [];
     page.model = await this.readModel(project);
@@ -800,9 +899,12 @@ export class App {
 
   /** Reload the project list, keeping the selection on `select` (or the selected name) when it is still there. */
   private async refreshProjects(select = this.projectList?.items[this.projectList.index]?.name): Promise<void> {
-    const items = await orderedProjects();
     const list = this.projectList;
     if (!list) return;
+    const index = list.index;
+    const items = await orderedProjects();
+    if (this.projectList !== list) return;
+    if (list.index !== index) select = list.items[list.index]?.name;
     list.items = items;
     const at = items.findIndex((it) => it.name === select);
     list.index = at !== -1 ? at : Math.min(list.index, Math.max(0, items.length - 1));
@@ -895,23 +997,35 @@ export class App {
   }
 
   private async runTurn(page: Page): Promise<void> {
-    if (page.busy || page.deleting) return;
+    if (page.busy || !this.validPage(page)) return;
+    this.refreshedTurns.delete(page);
     page.busy = true;
     page.busySince = this.clock.now();
     page.streamed = false;
     this.draw();
+    let failed = false;
     try {
       for (const reply of await page.orch.turn()) {
         this.endPartial(page);
         this.toPage(page, [replyLine(reply.from, reply.text)]);
       }
     } catch (err) {
+      failed = true;
       this.endPartial(page);
-      this.toPage(page, [`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. Send another message to resume with retained history; changing model alone does not retry. Exited agents require restart.`]);
+      this.say(`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. Send another message to resume with retained history; changing model alone does not retry. Exited agents require restart.`, page);
     } finally {
       this.endPartial(page);
       page.busy = false;
+      // Only a turn that rendered its initial shared snapshot can claim its
+      // subsequent streamed head. Losing turn ownership renders nothing.
+      if (this.refreshedTurns.delete(page)) this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
       this.toPage(page, page.calls.interrupt());
+      if (failed) {
+        const saved = restore(page.orch.entries?.() ?? [], this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
+        const known = new Set([...saved, ...(this.notices.get(page) ?? [])].map(line => JSON.stringify(line)));
+        for (const line of page.lines) if (!known.has(JSON.stringify(line))) this.keepNotice(page, line);
+      }
+      if (this.deferredRefresh.has(page) || page.sent.length) void this.refreshSessions();
       this.draw();
     }
   }
@@ -1021,11 +1135,11 @@ export class App {
     for (const [page, texts] of [...this.queued]) await this.drainLoginPage(page, texts, ok);
   }
 
-  private async drainLoginPage(page: Page, texts: { text: string; submission?: string }[], ok: boolean): Promise<void> {
+  private async drainLoginPage(page: Page, texts: { text: string; submission?: string; inputId: string }[], ok: boolean): Promise<void> {
     if (!ok) this.say(dim(`sign-in failed; dropped ${texts.length} queued message(s)`), page);
     while (texts.length) {
-      const { text, submission } = texts.shift()!; // ownership transfers to send (Page.sent), or an explicit drop report
-      if (ok && this.pages.includes(page)) await this.send(page, text, submission).catch(() => {});
+      const { text, submission, inputId } = texts.shift()!; // ownership transfers to send (Page.sent), or an explicit drop report
+      if (ok && this.pages.includes(page)) await this.send(page, text, submission, inputId).catch(() => {});
       else this.say(dim(`not sent after sign-in (${page.name}): ${text}`), this.pages.includes(page) ? page : this.page);
     }
     if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
@@ -1039,6 +1153,7 @@ export class App {
    * login() itself). Table order is the order within a /help group.
    */
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
+    ["/refresh", { run: () => this.refreshSessions(), help: { group: "conversation", label: "/refresh", description: "Reload shared local state; active context waits until idle; never runs work" } }],
     ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "Browse projects: Enter opens, p pins, d deletes" } }],
     ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; Esc ends")); }, help: { group: "advanced", label: "/keys", description: "Diagnose keys/wheel; Ctrl+G keeps draft; Esc ends" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "Change display name only; project ID stays fixed" } }],
@@ -1224,16 +1339,19 @@ export class App {
   /** Plain text for the page's orchestrator: refused while viewing an agent, held while signing in. */
   private async talk(page: Page, text: string): Promise<void> {
     if (page.view) return this.say(dim(`viewing ${page.view.name}; /back first to talk to the orchestrator`));
+    const submission = page.orch.submission?.();
+    const inputId = crypto.randomUUID();
     // While signing in the text waits in the app; login() sends it only if sign-in succeeds.
     if (this.loggingIn || this.queued.has(page)) {
       // Append to the same owner while login is draining too, so a new submit
       // cannot overtake older held input during an asynchronous inbox write.
       const texts = this.queued.get(page) ?? [];
-      texts.push({ text, submission: page.orch.submission?.() });
+      texts.push({ text, submission, inputId });
+      void this.refreshSessions();
       this.queued.set(page, texts);
       return this.say(dim("queued; runs after sign-in"), page);
     }
-    await this.send(page, text);
+    await this.send(page, text, submission, inputId);
     this.runTurn(page);
   }
 
@@ -1466,7 +1584,7 @@ export class App {
   /** Enter: send the input, dropping blank lines around it but keeping the first line's indent. */
   private enterKey(): Promise<void> | void {
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
-    if (text !== "/help" && text !== "/inbox" && text !== "/questions") this.scrollTop = null;
+    if (text !== "/help" && text !== "/inbox" && text !== "/questions" && text !== "/refresh") this.scrollTop = null;
     this.input = { text: "", cursor: 0 };
     this.historyAt = -1;
     if (!text) return this.draw();
@@ -1492,12 +1610,17 @@ export class App {
   }
 
 
-  /** Track submitted input until onInbox consumes it; a failed write is explicitly reported, never echoed as sent. */
-  private async send(page: Page, text: string, submission?: string): Promise<void> {
-    const sent = { inputId: crypto.randomUUID(), text };
+  /** Track input until an exact committed receipt (local callback or shared refresh); failed writes are reported explicitly. */
+  private async send(page: Page, text: string, submission?: string, inputId: string = crypto.randomUUID()): Promise<void> {
+    const sent = { inputId, text };
     page.sent.push(sent);
     this.draw();
-    try { await page.orch.say(text, submission, sent.inputId); }
+    try {
+      // Start publication before refresh and never await a refresh to submit.
+      const writing = page.orch.say(text, submission, sent.inputId);
+      void this.refreshSessions();
+      await writing;
+    }
     catch (err) {
       const at = page.sent.indexOf(sent);
       if (at !== -1) page.sent.splice(at, 1);

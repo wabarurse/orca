@@ -84,6 +84,7 @@ export interface QuestionPage { project: string; name: string; questions: PageQu
 
 /** What the controller needs from the app. */
 export interface QuestionHost {
+  submitted?(): void;
   page(): QuestionPage | undefined;
   /** Captured page ownership; removed/deleting pages cannot publish late results. */
   valid?(page: QuestionPage): boolean;
@@ -162,6 +163,15 @@ export class Questions {
   /** Re-read each page's open questions when its questions dir changed; one read per page at a time. */
   poll(pages: QuestionPage[]): void {
     for (const p of pages) this.pollPage(p);
+  }
+
+  /** Force a fresh read without opening a panel or changing its draft ownership. */
+  async refresh(page: QuestionPage): Promise<void> {
+    await page.questions.polling;
+    if (!this.valid(page)) return;
+    page.questions.stamp = NaN;
+    await this.pollPage(page);
+    await this.load(page);
   }
 
   private pollPage(page: QuestionPage): Promise<void> {
@@ -408,7 +418,11 @@ export class Questions {
     this.host.draw();
     try {
       if (answer === null) await this.store.skip(page.project, h.id);
-      else await this.store.answer(page.project, h.id, answer);
+      else {
+        const sending = this.store.answer(page.project, h.id, answer);
+        this.host.submitted?.();
+        await sending;
+      }
       if (!this.valid(page)) return;
       q.mine.add(h.id);
       this.host.record(feedback.line, page);

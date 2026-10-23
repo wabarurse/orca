@@ -6,6 +6,8 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "./config";
 
+export const projectTurnLock = (project: string) => join(paths.root, "turn-locks", project);
+
 export function projectIdentity(project: string): string {
   const s = statSync(paths.project(project), { bigint: true });
   return `${s.dev}:${s.ino}:${s.birthtimeNs}`;
