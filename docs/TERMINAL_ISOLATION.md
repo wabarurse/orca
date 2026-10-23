@@ -7,7 +7,7 @@ valid release through the local desktop clipboard writer; Ctrl+O explicitly re-c
 A mere click or canceled/invalid release does not copy. No Cmd-C assumption.
 Esc clears selection, and reflow/context replacement cancels it. Soft wraps copy as
 visible newlines; transient streaming/activity rows are excluded. Legacy X10 wheels
-remain supported, but selection requires SGR reports. See README for limitations.
+remain supported, but selection requires SGR reports. See [the TUI reference](REFERENCE.md#using-the-tui) for limitations.
 
 Apple documents [Allow Mouse Reporting](https://support.apple.com/guide/terminal/turn-on-mouse-reporting-trmlc69728a5/mac).
 A terminal that disables reporting can still scroll its own history; the app cannot

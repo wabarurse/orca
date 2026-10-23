@@ -1,5 +1,5 @@
 // Conservative protocol snapshot, not a claim of account entitlement. See
-// MODEL_SETTINGS.md for official sources and intentionally unsupported values.
+// docs/MODEL_SETTINGS.md for official sources and intentionally unsupported values.
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 const full: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 const claudeFull = new Set([
