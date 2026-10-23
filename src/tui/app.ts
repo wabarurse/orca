@@ -80,7 +80,7 @@ export interface Page {
 }
 
 export interface AppDeps {
-  /** Explicit Ctrl+O only; tests inject a writer, never the live clipboard. */
+  /** Completed drag or explicit Ctrl+O; tests inject a writer, never the live clipboard. */
   clipboardText?: (text: string) => Promise<void>;
   /** Explicit Ctrl+V only; tests inject fixture bytes, never the live clipboard. */
   clipboardImage?: () => Promise<ClipboardImage>;
@@ -1510,14 +1510,18 @@ export class App {
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
 
-  private selectionMouse(k: Key): void {
+  private async selectionMouse(k: Key): Promise<void> {
     const screen = this.screen;
-    if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) return;
+    if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) {
+      this.selection.clear();
+      return;
+    }
     // Hit-test the painted frame, not the pending scroll destination. Only a
     // new selection pins follow mode; motion/release must not undo queued scroll.
-    this.selection.mouse(k, screen, this.screenHistory);
+    const completed = this.selection.mouse(k, screen, this.screenHistory);
     if (k.name === "mousedown" && this.selection.active && this.scrollTop === null) this.scrollTop = screen.start;
     this.draw();
+    if (completed) await this.copySelection();
   }
 
   private async copySelection(): Promise<void> {

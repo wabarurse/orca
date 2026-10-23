@@ -21,12 +21,18 @@ export class ConversationSelection {
     if (row < 0 || row >= screen.bodyHeight || index >= length || col < 0 || col >= screen.cols) return;
     return { row: index, col };
   }
-  mouse(k: Key, screen: StickyScreen, history: string[]): void {
+  mouse(k: Key, screen: StickyScreen, history: string[]): boolean {
     const point = this.hit(k, screen, history.length);
-    if (k.name === 'mousedown') return this.start(point, screen.cols, history);
-    if (!this.dragging) return;
+    if (k.name === 'mousedown') { this.start(point, screen.cols, history); return false; }
+    if (!this.dragging) return false;
+    if (k.name === 'mouseup' && (!point || point.row >= this.snapshot.length)) { this.clear(); return false; }
     if (point && point.row < this.snapshot.length) this.end = point;
-    if (k.name === 'mouseup') this.dragging = false;
+    if (k.name === 'mouseup') {
+      this.dragging = false;
+      if (this.anchor!.row === this.end!.row && this.anchor!.col === this.end!.col) { this.clear(); return false; }
+      return true;
+    }
+    return false;
   }
   private start(point: Point | undefined, cols: number, history: string[]): void {
     this.clear();

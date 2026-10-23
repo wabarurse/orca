@@ -3601,7 +3601,7 @@ describe("clipboard image drafts and immutable queue ownership (isolated fixture
 
 });
 
-test('conversation drag highlights only history, never auto-copies; Ctrl+O copies and Esc/resize/context clear', async () => {
+test('conversation drag highlights only history, auto-copies on release; Ctrl+O re-copies and Esc/resize/context clear', async () => {
   const term = fakeTerm(60, 24), orchs = fakeOrchestrators();
   const copied: string[] = [];
   const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, pollMs: 100_000 });
@@ -3609,29 +3609,30 @@ test('conversation drag highlights only history, never auto-copies; Ctrl+O copie
   try {
     await until(() => !!app.page);
     app.page!.lines.push('SELECT-ME 界é', ...Array.from({ length: 40 }, (_, i) => `row-${i}`));
-    app.reprint(); await settle();
+    app.reprint();
+    await until(() => term.display.screen().some(row => row.includes('row-39')));
     term.press({ name: 'pageup' }); term.press({ name: 'pageup' }); term.press({ name: 'pageup' });
-    await settle();
+    await until(() => term.display.screen().some(row => row.includes('SELECT-ME')));
     const y = term.display.screen().findIndex(row => row.includes('SELECT-ME')) + 1;
     expect(y).toBeGreaterThan(0);
     term.type(`\x1b[<0;1;${y}M\x1b[<32;9;${y}M\x1b[<0;9;${y}m`);
     await settle();
     expect(term.raw()).toContain('\x1b[7mSELECT-ME\x1b[0m');
-    expect(copied).toEqual([]);
+    expect(copied).toEqual(['SELECT-ME']);
     term.press({ name: 'wheeldown' }); await settle();
     await app.onKey({ name: 'o', ctrl: true });
-    expect(copied).toEqual(['SELECT-ME']);
+    expect(copied).toEqual(['SELECT-ME', 'SELECT-ME']);
     term.type('draft'); await app.onKey({ name: 'escape' });
     expect(app.input.text).toBe('draft');
-    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(1);
+    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(2);
     // Header/footer cannot create a selection, and the removed command stays absent.
     term.type('\x1b[<0;1;1M\x1b[<32;9;1M\x1b[<0;9;1m');
-    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(1);
+    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(2);
     expect(app.commands.has('/mouse')).toBe(false);
     term.press({ name: 'pageup' }); await settle();
     term.type(`\x1b[<0;1;${y}M\x1b[<32;9;${y}M\x1b[<0;9;${y}m`);
     term.resize(40, 20); await Bun.sleep(160);
-    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(1);
+    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(3);
     for (let i = 0; i < 4; i++) { await app.onKey({ name: 'pageup' }); await Bun.sleep(25); }
     await until(() => term.display.screen().some(row => row.includes('SELECT-ME')));
     const currentY = term.display.screen().findIndex(row => row.includes('SELECT-ME')) + 1;
@@ -3639,7 +3640,7 @@ test('conversation drag highlights only history, never auto-copies; Ctrl+O copie
     term.type(`\x1b[<0;1;${currentY}M\x1b[<32;9;${currentY}M\x1b[<0;9;${currentY}m`);
     await settle();
     await app.openPage('selection-other'); await settle();
-    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(1);
+    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(4);
 
   } finally { app.quit(); await running; }
 });
@@ -3669,9 +3670,33 @@ for (const scroll of ['wheeldown', 'pagedown', 'wheelup']) test(`drag ${scroll} 
     term.press({ name: scroll });
     term.press({ name: 'mousemove', x: 6, y: y + 1 });
     term.press({ name: 'mouseup', x: 6, y: y + 1 });
-    expect(copied).toEqual([]);
+    expect(copied).toEqual([`${records[first]}\n${records[first + 1]}`]);
     await app.onKey({ name: 'o', ctrl: true }); // flush pending frame + explicit copy
     expect(term.display.screen()[y - 1]).toBe(records[target]!);
-    expect(copied).toEqual([`${records[first]}\n${records[first + 1]}`]);
+    expect(copied).toEqual(Array(2).fill(`${records[first]}\n${records[first + 1]}`));
+  } finally { app.quit(); await running; }
+});
+
+test('automatic copy errors stay visible, highlight supports explicit retry; motion and canceled release do not copy', async () => {
+  const term = fakeTerm(60, 24), orchs = fakeOrchestrators(), copied: string[] = [];
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => {
+    copied.push(text); throw new Error('fixture desktop unavailable');
+  }, pollMs: 100_000 });
+  const running = app.run('selection-error');
+  try {
+    await until(() => !!app.page);
+    app.page!.lines = ['COPY-ME']; app.reprint(); await settle();
+    const y = term.display.screen().findIndex(row => row.includes('COPY-ME')) + 1;
+    const down = () => app.onKey({ name: 'mousedown', x: 1, y });
+    const up = () => app.onKey({ name: 'mouseup', x: 7, y });
+    await down(); await app.onKey({ name: 'mousemove', x: 7, y });
+    expect(copied).toEqual([]);
+    await app.onKey({ name: 'escape' }); await up();
+    expect(copied).toEqual([]);
+    await down(); await up(); await up();
+    expect(copied).toEqual(['COPY-ME']);
+    expect(app.page!.lines.map(raw).join('\n')).toContain('Copy failed: fixture desktop unavailable');
+    await app.onKey({ name: 'o', ctrl: true });
+    expect(copied).toEqual(['COPY-ME', 'COPY-ME']);
   } finally { app.quit(); await running; }
 });
