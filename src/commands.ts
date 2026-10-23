@@ -242,6 +242,16 @@ export async function reviewRounds(arg: string): Promise<string> {
   return `review rounds set to ${n} (takes effect from the orchestrator's next turn)`;
 }
 
+export const DYNAMIC_DISPATCH_USAGE = "usage: /dynamic-dispatch [on|off]";
+
+/** `/dynamic-dispatch [on|off]`: show the global switch, or save it. */
+export async function dynamicDispatch(arg: string): Promise<string> {
+  if (!arg) return `dynamic dispatch: ${(await loadConfig()).dynamicDispatch ? "on" : "off"}`;
+  if (arg !== "on" && arg !== "off") return DYNAMIC_DISPATCH_USAGE;
+  await saveConfig({ dynamicDispatch: arg === "on" });
+  return `dynamic dispatch set to ${arg}`;
+}
+
 export const LOGIN_USAGE = "usage: /login anthropic [profile] [--from-claude-code]  |  /login openai [profile] [--from-codex]";
 
 /** `/login <provider> [profile] [--from-...]`; returns what to tell the user, or throws. */

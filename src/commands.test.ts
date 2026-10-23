@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentWindows, deleteProject, displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "./commands";
-import { recentModels, REVIEW_ROUNDS_USAGE, reviewRounds } from "./commands";
+import { DYNAMIC_DISPATCH_USAGE, dynamicDispatch, recentModels, REVIEW_ROUNDS_USAGE, reviewRounds } from "./commands";
 import { loadConfig, saveConfig } from "./config";
 
 describe("recentModels", () => {
@@ -75,6 +75,28 @@ describe("repoHere", () => {
       expect(await repoHere(dir)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("/dynamic-dispatch", () => {
+  test("shows, saves and refuses", async () => {
+    const before = process.env.PARALLELS_HOME;
+    const home = mkdtempSync(join(tmpdir(), "parallels-dispatch-"));
+    process.env.PARALLELS_HOME = home;
+    try {
+      expect(await dynamicDispatch("")).toBe("dynamic dispatch: off");
+      expect(await dynamicDispatch("on")).toBe("dynamic dispatch set to on");
+      expect((await loadConfig()).dynamicDispatch).toBe(true);
+      expect(await dynamicDispatch("")).toBe("dynamic dispatch: on");
+      for (const bad of ["ON", "true", "1", "yes", "on off", "of"]) expect(await dynamicDispatch(bad)).toBe(DYNAMIC_DISPATCH_USAGE);
+      expect(DYNAMIC_DISPATCH_USAGE).toBe(DYNAMIC_DISPATCH_USAGE.toLowerCase());
+      expect((await loadConfig()).dynamicDispatch).toBe(true);
+      expect(await dynamicDispatch("off")).toBe("dynamic dispatch set to off");
+      expect(await dynamicDispatch("")).toBe("dynamic dispatch: off");
+    } finally {
+      if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

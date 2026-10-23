@@ -14,7 +14,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ inbox 1
-help · commands & keys                                                  1–9/57
+help · commands & keys                                                  1–9/58
   conversation
   /refresh       reload shared local state; active context waits until idle;
                  never runs work
@@ -54,6 +54,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   /models [id]                   choose or set the project model
   /accounts                      choose a subscription account
   /login claude|codex [profile]  sign in to a subscription account
+  /dynamic-dispatch [on|off]     show or set dynamic dispatch (global)
 
   keyboard · navigation
   ctrl+n             new orchestrator
@@ -102,7 +103,7 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 inbox 1
-help                           1–8/114
+help                           1–8/117
   conversation
   /refresh
     reload shared local state; active
@@ -170,6 +171,9 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     choose a subscription account
   /login claude|codex [profile]
     sign in to a subscription account
+  /dynamic-dispatch [on|off]
+    show or set dynamic dispatch
+    (global)
 
   keyboard · navigation
   ctrl+n
@@ -245,7 +249,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ inbox 1
-help · commands & keys                                                49–57/57
+help · commands & keys                                                50–58/58
   alt+d                delete next word
   home/end / ctrl+a/e  start / end of current line
   ctrl+u / ctrl+k      delete to start / end of current line

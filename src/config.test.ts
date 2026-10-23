@@ -12,6 +12,22 @@ afterEach(() => {
   if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
 });
 
+describe("dynamicDispatch", () => {
+  test("defaults to off; reads booleans; anything else reads as off", async () => {
+    expect(defaults.dynamicDispatch).toBe(false);
+    expect((await loadConfig()).dynamicDispatch).toBe(false);
+    await Bun.write(paths.config, "dynamicDispatch = true\n");
+    expect((await loadConfig()).dynamicDispatch).toBe(true);
+    for (const bad of [`"on"`, `"true"`, "1", "0", "[]"]) {
+      await Bun.write(paths.config, `dynamicDispatch = ${bad}\n`);
+      expect((await loadConfig()).dynamicDispatch).toBe(false);
+    }
+    await saveConfig({ dynamicDispatch: true });
+    await saveConfig({ maxReviewRounds: 3 });
+    expect(await loadConfig()).toMatchObject({ dynamicDispatch: true, maxReviewRounds: 3 });
+  });
+});
+
 describe("maxReviewRounds", () => {
   test("defaults to 1", async () => {
     expect(defaults.maxReviewRounds).toBe(1);

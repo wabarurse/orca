@@ -15,3 +15,7 @@ export function contextStatus(model: string | undefined, used?: number, window?:
 export function reviewStatus(maxReviewRounds: number | undefined): string {
   return `review rounds: ${validRounds(maxReviewRounds) ? maxReviewRounds : "?"}`;
 }
+/** The saved global /dynamic-dispatch switch; unknown until a read succeeds. */
+export function dispatchStatus(on: boolean | undefined): string {
+  return `dispatch: ${on === undefined ? "?" : on ? "on" : "off"}`;
+}
