@@ -91,6 +91,25 @@ test.each(["", "implement this screen"])("image prompt %j: queue -> exact commit
   expect(second.calls).toHaveLength(0);
 });
 
+test.each(["orchestrator", "worker", "reviewer"] as const)("%s on GPT-6 Astra receives materialized image input", async role => {
+  const p = project(), ref = await saveImage(p, png());
+  const branch = role === "orchestrator" ? undefined : "vision";
+  const id = branch ? `${role}-${branch}` : "orchestrator";
+  const t = open(paths.transcript(p, id));
+  await put(p, id, { from: "user", text: "inspect screenshot", attachments: [ref] });
+  const provider = fakeProvider([[text("seen")]]);
+  const complete = provider.complete;
+  provider.complete = async req => { expect(req.model).toBe("gpt-6-astra"); return complete(req); };
+  await createAgent({ transcript: t, provider, model: "gpt-6-astra", tools: {},
+    ctx: { ...ctx(p), role, branch }, write() {}, compaction: { enabled: false } }).run();
+  expect(provider.calls).toHaveLength(1);
+  const blocks = provider.calls[0]!.messages.flatMap(m => typeof m.content === "string" ? [] : m.content);
+  expect(blocks.filter(b => b.type === "image")).toEqual([
+    { type: "image", source: { type: "base64", media_type: "image/png", data: png().toString("base64") } },
+  ]);
+  expect(imageCount(await t.chain())).toBe(1);
+});
+
 test("same text/different immutable prompt IDs consume independently; old text files keep exact format", async () => {
   const p = project(), ref = await saveImage(p, png());
   const t = open(paths.transcript(p, "orchestrator"));
@@ -181,13 +200,13 @@ test("unsupported model and provider failure preserve committed pixels; refresh 
   expect(imageCount(await open(t.path).chain())).toBe(1);
   const failed = { ...fakeProvider([]), complete: async () => { throw new Error("fixture provider rejected image"); } };
   await put(p, "orchestrator", { from: "user", text: "resume on chosen vision model" });
-  await expect(createAgent({ ...deps, provider: failed, model: "gpt-5.5" }).run()).rejects.toThrow("provider rejected");
+  await expect(createAgent({ ...deps, provider: failed, model: "gpt-6-astra" }).run()).rejects.toThrow("provider rejected");
   expect(imageCount(await t.chain())).toBe(1);
   const good = fakeProvider([[text("seen")]]);
-  await createAgent({ ...deps, provider: good, model: "gpt-5.5" }).run();
+  await createAgent({ ...deps, provider: good, model: "gpt-6-astra" }).run();
   expect(good.calls).toHaveLength(0); // No new input: failed request never auto-replays.
   await put(p, "orchestrator", { from: "user", text: "retry now" });
-  await createAgent({ ...deps, provider: good, model: "gpt-5.5" }).run();
+  await createAgent({ ...deps, provider: good, model: "gpt-6-astra" }).run();
   expect(imageCount(good.calls[0]!.messages)).toBe(1);
   expect(await pendingImageInputs(p, t.consumed!().inputs)).toEqual([]);
 });
