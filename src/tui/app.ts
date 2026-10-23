@@ -1,7 +1,8 @@
 import { ConversationSelection } from "./selection";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "../clipboard";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput, type ImageRef } from "../images";
-import { listTasks } from "../tasks";
+import { contextStatus, reviewStatus } from "./context-status";
+import { listTasks, type TaskRow } from "../tasks";
 import { taskInboxLines, type TaskInboxData } from "./task-inbox";
 import { cancelSession } from "../cancellation";
 import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } from "../project-settings";
@@ -77,6 +78,7 @@ export interface Page {
   model?: string;
   settings?: RequestSettings;
   agentCount?: number;
+  headerTasks?: TaskRow[];
 }
 
 export interface AppDeps {
@@ -558,7 +560,7 @@ export class App {
   private header(page: Page): string[] {
     const settings = page.settings;
     const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: contextStatus(page.view ? undefined : page.model, page.view ? undefined : page.orch.contextUsage?.(page.model ?? "")), review: reviewStatus(page.headerTasks, page.view?.name), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Independent read generations for captured page objects. */
@@ -576,10 +578,14 @@ export class App {
     const model = await this.readModel(page.project);
     const settings = await effectiveSettings(page.project, model).catch(() => undefined);
     if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
-    if (model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings)) return;
+    const headerTasks = await (this.deps.tasks ?? listTasks)(page.project).catch(() => undefined);
+    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
+    const unchanged = model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings)
+      && reviewStatus(headerTasks, page.view?.name) === reviewStatus(page.headerTasks, page.view?.name);
+    page.headerTasks = headerTasks;
     page.model = model;
     page.settings = settings;
-    if (page === this.page) this.draw();
+    if (!unchanged && page === this.page) this.draw();
   }
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }

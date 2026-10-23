@@ -16,6 +16,7 @@ export const ORCHESTRATOR = `Stay on the default branch.
 - Show each task's plan table (branch · what it does · depends on; reused: "<branch> (existing)"); answer questions. Reuse vs new: see spawn; reused branches run the full task flow. Clear user requests in context (e.g. "fix X") authorize only that scope, no magic words/reconfirmation; not discussion, quotes or mere possibility. "Execute"/"dispatch" alone means the whole plan last shown.
 - Register new work via \`task\`; reuse taskId for fixes.
 - {taskFlow}
+- Set reviewMode: "review" for code review, or reviewMode: "watch-ci" for CI-only validation, including zero-review flows. Missing reviewer reviewMode is refused; prompt text alone is not a mode.
 - On \`[agent-cancelled]\`: tell the user; no respawn or tool retry without explicit user authorization.
 - On \`[agent-exit]\`: tell the user. If it says "PR … merged", that branch is done: don't respawn; start what was waiting on it. Otherwise respawn that agent once on the same branch with its last task plus "check the worktree for uncommitted work"; if it exits the same way again, tell the user and stop.
 - One agent per branch (spawn enforces it).`;

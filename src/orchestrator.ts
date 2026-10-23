@@ -1,3 +1,5 @@
+import { budget } from "./compaction";
+import { contextMessages } from "./transcript";
 import { pendingImageInputs, type ImageRef } from "./images";
 import { tryStorageLock } from "./storage-lock";
 import { inputEpoch, advanceInputEpoch } from "./user-input";
@@ -46,6 +48,8 @@ export interface OrchestratorDeps {
 }
 
 export interface Orchestrator {
+  /** Conservative current-context estimate, never cumulative billing usage. */
+  contextUsage?(model: string): number | undefined;
   /** Put a user message in the inbox; optional inputId round-trips unchanged through onInbox for UI ownership. */
   say(text: string, submission?: string, inputId?: string, attachments?: ImageRef[]): Promise<void>;
   /** Capture before holding input for login (or any other asynchronous UI operation). */
@@ -94,6 +98,7 @@ class TurnControl {
   clearing?: AbortController;
   submitting = 0;
   refreshing?: Promise<void>;
+  context?: AgentDeps;
   constructor(private project: string, private transcript: Transcript) {}
   pause(): void {
     advanceInputEpoch(this.project);
@@ -144,7 +149,19 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript): Or
     try { await request; rolling.reconcile(); return !state.running && !state.clearing; }
     finally { if (state.refreshing === request) state.refreshing = undefined; }
   };
+  let cachedContext: AgentDeps | undefined;
+  let cachedHead: string | null | undefined, cachedModel: string | undefined, cachedUsed: number | undefined;
   return {
+    contextUsage: (model) => {
+      if (!state.context || state.context.model !== model) return undefined;
+      const head = transcript.head();
+      if (head !== cachedHead || model !== cachedModel || cachedContext !== state.context) {
+        cachedContext = state.context;
+        cachedHead = head; cachedModel = model;
+        cachedUsed = budget({ ...state.context, compaction: undefined }, contextMessages(transcript.branch()));
+      }
+      return cachedUsed;
+    },
     checkClear: async () => {
       if (state.clearing) throw new Error("context clear in progress");
       await check();
@@ -207,7 +224,7 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     if (!state.requested && !hasInbox && !rolling.ready()) return [];
     try { await assertMainCheckout(deps.project); }
     catch (error) { state.pause(); throw error; } // Retain input without a failing poll/retry loop.
-    const agent = await turnAgent(deps, transcript, state.takeRequest, signal, rolling);
+    const agent = await turnAgent(deps, transcript, state.takeRequest, signal, rolling, current => { state.context = current; });
     if (hasInbox) await agent.run();
     else if (state.takeRequest()) await agent.compact();
     else await agent.maintain();
@@ -227,12 +244,12 @@ function orchestratorTools(overrides?: Record<string, Tool>): Record<string, Too
   if (overrides) return overrides;
   return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, name === "task" ? orchestratorTask : registry[name]]] : []));
 }
-async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean, signal: AbortSignal, rolling: RollingCompactor) {
+async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean, signal: AbortSignal, rolling: RollingCompactor, onContext: (current: AgentDeps) => void) {
   const epoch = inputEpoch(deps.project);
   const config = await loadConfig();
   const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return createAgent({
-    signal, requireInbox: true,
+    signal, requireInbox: true, onContext,
     toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(deps.project, loadProvider),
     transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project),

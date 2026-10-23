@@ -52,13 +52,13 @@ test("spawn seeds the worker transcript with the prompt and starts it on the bra
 });
 
 test("spawn with role reviewer uses the same branch and its own transcript", async () => {
-  const id = await spawn.run({ prompt: "Review it", branch: "feat/login", role: "reviewer" }, ctx("orchestrator"));
+  const id = await spawn.run({ prompt: "Review it", branch: "feat/login", role: "reviewer", reviewMode: "review" }, ctx("orchestrator"));
   expect(id).toBe("reviewer-feat-login");
   expect(started.at(-1)).toEqual({ project: "p", role: "reviewer", branch: "feat/login", run: expect.any(String) });
 });
 
 test("spawning again on the same branch appends to the existing transcript", async () => {
-  await spawn.run({ prompt: "Round two", branch: "feat/login", role: "reviewer" }, ctx("orchestrator"));
+  await spawn.run({ prompt: "Round two", branch: "feat/login", role: "reviewer", reviewMode: "review" }, ctx("orchestrator"));
   const chain = await open(paths.transcript("p", "reviewer-feat-login")).chain();
   expect(chain.map((m) => m.content)).toEqual(["Branch: feat/login\n\nReview it", "Branch: feat/login\n\nRound two"]);
 });
@@ -174,4 +174,29 @@ for (const previous of [false, true]) test(`cancel before supervisor publication
     try { await Bun.sleep(110); expect(replacement.signal.aborted).toBe(false); }
     finally { stop(); }
   } finally { off(); hook.mockRestore(); }
+});
+
+test("production reviewer protocol refuses omitted intent and persists both modes through dispatch", async () => {
+  const { listTasks, startTaskRun, getTask } = await import("../tasks");
+  const task = await registerTask("p", { name: "Telemetry", summary: "Explicit reviewer intent", branch: "feat/telemetry", authorized: true });
+  const runner: Runner = {
+    async start(opts) {
+      await startTaskRun(opts.project, opts.run!);
+      await stopTaskRun(opts.project, opts.run!, "waiting", "Test reviewer finished");
+    },
+    async stop() {}, async running() { return []; },
+  };
+  const tool = realSpawn(runner);
+  const base = { taskId: task.id, branch: task.branch, role: "reviewer" };
+  // Even a seemingly obvious prompt must not heuristically choose a mode.
+  for (const prompt of ["Review the code", "watch ci"]) {
+    expect(await tool.run({ ...base, prompt }, ctx("orchestrator"))).toContain("requires reviewMode");
+  }
+  expect((await getTask("p", task.id)).runs).toEqual([]);
+  for (const reviewMode of ["review", "watch-ci"] as const) {
+    expect(await tool.run({ ...base, reviewMode, prompt: "Full task instructions" }, ctx("orchestrator"))).toBe("reviewer-feat-telemetry");
+    const persisted = await getTask("p", task.id);
+    expect(persisted.runs.at(-1)?.reviewMode).toBe(reviewMode);
+    expect((await listTasks("p")).find(t => t.id === task.id)?.review).toEqual({ rounds: 1, unknown: false, ci: reviewMode === "watch-ci" });
+  }
 });

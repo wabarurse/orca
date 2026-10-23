@@ -11,6 +11,8 @@ export type AttentionKind = "waiting" | "blocked" | "cancelled" | "closed" | "un
 export interface TaskAttention { kind: AttentionKind; reason: string }
 export interface TaskPR { repository: string; number: number; url: string; head: string }
 export interface TaskRun {
+  /** Explicit dispatch intent; absent in legacy runs (not safely inferable). */
+  reviewMode?: "review" | "watch-ci";
   id: string; agent: string; role: "worker" | "reviewer";
   state: "prepared" | "started" | "stopped" | "failed";
   preparedAt: string; startedAt?: string; endedAt?: string;
@@ -25,7 +27,7 @@ export interface Task {
   history: TaskEvent[];
 }
 /** Small UI projection. No transcripts, prompts, reports or mutable display-name identities. */
-export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr">;
+export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
 interface Store { version: 1; tasks: Task[] }
 const file = (project: string) => `${paths.project(project)}/tasks.json`;
 const uuid = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
@@ -68,6 +70,7 @@ function validateTask(raw: unknown): asserts raw is Task {
     seen.add(r.id);
     check(typeof r.agent === "string" && /^[\w.-]+$/.test(r.agent) && ["worker", "reviewer"].includes(String(r.role)), "invalid run agent");
     check(["prepared", "started", "stopped", "failed"].includes(String(r.state)) && stamp(r.preparedAt), "invalid run state");
+    check(r.reviewMode === undefined || (r.role === "reviewer" && ["review", "watch-ci"].includes(String(r.reviewMode))), "invalid review mode");
     check(r.startedAt === undefined || stamp(r.startedAt), "invalid start time");
     check(r.endedAt === undefined || stamp(r.endedAt), "invalid end time");
     check((r.state === "prepared" || r.state === "failed") ? r.startedAt === undefined : r.state !== "started" || r.startedAt !== undefined, "run start/state mismatch");
@@ -140,7 +143,7 @@ function current(s: Store, run: string): { task: Task; run: TaskRun } | undefine
 export async function allTasks(project: string): Promise<Task[]> { return (await read(project)).tasks; }
 export async function getTask(project: string, id: string): Promise<Task> { return find(await read(project), id); }
 export async function listTasks(project: string): Promise<TaskRow[]> {
-  return (await allTasks(project)).filter(t => !t.archive).map(({ id, name, summary, branch, status, createdAt, updatedAt, attention, pr }) => ({ id, name, summary, branch, status, createdAt, updatedAt, ...(attention ? { attention } : {}), ...(pr ? { pr } : {}) }));
+  return (await allTasks(project)).filter(t => !t.archive).map(({ id, name, summary, branch, status, createdAt, updatedAt, attention, pr, runs }) => ({ id, name, summary, branch, status, createdAt, updatedAt, ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), review: reviewProgress(runs) }));
 }
 export async function taskForRun(project: string, run: string): Promise<Task | undefined> { return current(await read(project), run)?.task; }
 /** Caller must have authorization already; id enables idempotent retry, never derives from branch/name. */
@@ -159,7 +162,7 @@ export async function registerTask(project: string, input: { id?: string; name: 
   });
 }
 /** Persist before dispatch, but do not assert that a process has started. */
-export async function prepareTaskRun(project: string, id: string, branch: string, run: Pick<TaskRun, "id" | "agent" | "role">): Promise<void> {
+export async function prepareTaskRun(project: string, id: string, branch: string, run: Pick<TaskRun, "id" | "agent" | "role" | "reviewMode">): Promise<void> {
   await update(project, s => {
     const t = find(s, id); active(t); check(t.branch === branch, "task branch mismatch");
     const existing = t.runs.find(r => r.id === run.id);
@@ -272,4 +275,11 @@ export async function archiveMergedTasks(project: string, pr: TaskPR, mergedAt: 
   pr = taskPR(pr); check(stamp(mergedAt), "invalid merge timestamp");
   const matches = (await allTasks(project)).filter(t => !t.archive && t.pr && samePR(t.pr, pr));
   for (const t of matches) await observeTaskPR(project, t.id, { pr, branch: t.branch, state: "MERGED", mergedAt, ready: false, checks: "unknown" });
+}
+
+/** Only confirmed starts count; CI-only runs are not code reviews. */
+export function reviewProgress(runs: TaskRun[]): { rounds: number; unknown: boolean; ci: boolean } {
+  const started = runs.filter(r => r.role === "reviewer" && r.startedAt);
+  return { rounds: started.filter(r => r.reviewMode === "review").length,
+    unknown: started.some(r => !r.reviewMode), ci: started.at(-1)?.reviewMode === "watch-ci" };
 }

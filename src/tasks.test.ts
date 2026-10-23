@@ -38,7 +38,7 @@ test("versioned persistence, stable UUIDs, narrow typed rows and project isolati
   await expect(registerTask(project, { ...input(), id: t.id, name: "Different task" })).rejects.toThrow("different fields");
   expect(await getTask(project, t.id)).toEqual(t);
   expect(await listTasks("another-project")).toEqual([]);
-  expect(Object.keys((await listTasks(project))[0]!).sort()).toEqual(["id", "name", "summary", "branch", "status", "createdAt", "updatedAt"].sort());
+  expect(Object.keys((await listTasks(project))[0]!).sort()).toEqual(["id", "name", "summary", "branch", "status", "createdAt", "updatedAt", "review"].sort());
   expect(JSON.parse(readFileSync(join(paths.project(project), "tasks.json"), "utf8")).version).toBe(1);
   expect(taskStatusLabels.ready_to_merge).toBe("ready to merge");
 });
@@ -156,7 +156,7 @@ for (const wasReady of [false, true]) test(`same-PR correction after ${wasReady 
   await startTaskRun(project, starts[0]!.run!);
   await stopTaskRun(project, starts[0]!.run!, "waiting", "Correction complete");
 
-  expect(await tool.run({ ...correction, role: "reviewer", prompt: "watch ci; update and validate the same PR" }, ctx)).toBe("reviewer-feat-x");
+  expect(await tool.run({ ...correction, role: "reviewer", reviewMode: "watch-ci", prompt: "watch ci; update and validate the same PR" }, ctx)).toBe("reviewer-feat-x");
   const reviewRun = starts[1]!.run!;
   await startTaskRun(project, reviewRun);
   const updatedPR = observation("b".repeat(40));
@@ -327,4 +327,15 @@ test("malformed persisted run states and readiness history fail closed", async (
     writeFileSync(path, JSON.stringify({ version: 1, tasks: [corrupt] }));
     await expect(allTasks(project)).rejects.toThrow();
   }
+});
+
+test("persisted explicit review intent projects review rounds independently of CI", async () => {
+  const t = await registerTask(project, { ...input(), branch: "feat/review-telemetry" });
+  for (const [index, reviewMode] of (["review", "watch-ci"] as const).entries()) {
+    const id = `telemetry-${index}`;
+    await prepareTaskRun(project, t.id, t.branch, { id, agent: "reviewer-feat-review-telemetry", role: "reviewer", reviewMode });
+    await startTaskRun(project, id);
+    await stopTaskRun(project, id, "waiting", "finished");
+  }
+  expect((await listTasks(project)).find(row => row.id === t.id)?.review).toEqual({ rounds: 1, unknown: false, ci: true });
 });

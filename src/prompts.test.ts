@@ -142,8 +142,18 @@ describe("rolePrompt", () => {
     for (const [role, maxReviewRounds] of [["orchestrator", 0], ["orchestrator", 1], ["orchestrator", 100], ["worker", 1], ["reviewer", 1]] as const) {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
       expect(p.split("\n").filter((l) => l.startsWith("- ")).length).toBeGreaterThan(3);
-      expect(p.length).toBeLessThan(2000);
+      // Includes the mandatory structured review/CI dispatch protocol.
+      expect(p.length).toBeLessThan(2200);
       expect(p).not.toMatch(/\{\w+\}/);
     }
   });
+});
+
+test("all production review flows require structured intent including zero-review CI", () => {
+  for (const maxReviewRounds of [0, 1, 2]) {
+    const prompt = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
+    expect(prompt).toContain('reviewMode: "review" for code review');
+    expect(prompt).toContain('reviewMode: "watch-ci" for CI-only validation');
+    expect(prompt).toContain("Missing reviewer reviewMode is refused");
+  }
 });

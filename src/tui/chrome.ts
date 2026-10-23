@@ -10,6 +10,8 @@ export interface Chapter {
   directory: string;
   remote: string;
   agent?: string;
+  context?: string;
+  review?: string;
 }
 
 const plain = (s: string) => Bun.stripANSI(sanitize(s.replace(/[\r\n\t]/g, " ")));
@@ -65,6 +67,11 @@ export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   const tabs = tabRow(c.tabs, c.active, cols - inset);
   const head = inset ? `${dim("── ")}${tabs}${dim(" " + "─".repeat(Math.max(0, cols - 4 - visibleLength(tabs))))}` : tabs;
   if (budget === 1) return [head];
-  const fields = [`model ${c.model}`, c.directory, c.remote, ...(c.agent ? [`view ${c.agent}`] : [])];
+  const telemetry = [c.context, c.review].filter(Boolean).join(" · ");
+  // Narrow telemetry stacks without sacrificing the selected model to a long
+  // multi-task distribution. Agent identity precedes paths in constrained views.
+  const fields = telemetry && visibleLength(plain(telemetry)) > cols
+    ? [c.context ?? "", `model ${c.model}`, c.review ?? "", ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote].filter(Boolean)
+    : [...(telemetry ? [telemetry] : []), `model ${c.model}`, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote];
   return [head, ...details(fields, cols, budget - 2), dim("─".repeat(cols))];
 }
