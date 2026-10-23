@@ -150,7 +150,7 @@ Normal output through 16 KiB stays intact; larger default previews use 4 KiB.
 Per-call limits are adjustable up to the configured cap. Full outputs are private
 files outside the repository; cancellation, timeout and output-cap termination
 preserve explicitly partial artifacts. Per-command output, age and completed-file
-storage limits keep the store bounded. See [configuration details](../../README.md#tool-efficiency).
+storage limits keep the store bounded. See [configuration details](../../docs/REFERENCE.md#tool-efficiency).
 
 Tests cover cache request parity and accounting, real-orchestrator concurrency,
 barriers and result ordering, concurrent artifacts, byte/UTF-8 bounds, source-sized

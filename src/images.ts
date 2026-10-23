@@ -181,7 +181,7 @@ export function requireVision(model: string, messages: MessageParam[]): void {
     "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-5", "gpt-5-mini", "gpt-5-nano",
     "gpt-5-codex", "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max", "gpt-5.2", "gpt-5.2-codex",
     "gpt-5.3-codex", "gpt-5.4", "gpt-5.5",
-    // Codex catalog input_modalities (same snapshot as MODEL_SETTINGS.md).
+    // Codex catalog input_modalities (same snapshot as docs/MODEL_SETTINGS.md).
     // Admission is independent of reasoning/fast support and account access.
     "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review",
