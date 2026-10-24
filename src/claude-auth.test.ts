@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -134,6 +134,19 @@ test("login prints an ssh tunnel hint only over ssh and removes the URL file whe
     if (saved.c === undefined) delete process.env.SSH_CONNECTION; else process.env.SSH_CONNECTION = saved.c;
     if (saved.t === undefined) delete process.env.SSH_TTY; else process.env.SSH_TTY = saved.t;
   }
+});
+
+test("login still works with just the short link when the URL file cannot be written", async () => {
+  mkdirSync(join(home, "login-url.txt")); // a directory in the way makes the write fail
+  const abort = new AbortController();
+  let written = "";
+  await expect(loginClaude("default", {
+    port: 0, signal: abort.signal, write(text) { written += text; },
+    openBrowser() { abort.abort(); },
+  })).rejects.toThrow("cancelled");
+  expect(written).toMatch(/http:\/\/localhost:\d+\/login\//);
+  expect(written).not.toContain("login-url.txt");
+  expect(statSync(join(home, "login-url.txt")).isDirectory()).toBe(true);
 });
 
 test("cancelling a code exchange aborts the request and preserves the previous login", async () => {
