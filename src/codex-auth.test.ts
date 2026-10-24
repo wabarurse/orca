@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CODEX_CLIENT_ID, CODEX_TOKEN_URL, codexCredentials, codexCredentialsPath, importCodex, loginCodex, readCodexTokens, saveCodexTokens } from "./codex-auth";
@@ -18,6 +18,24 @@ afterEach(() => {
   else process.env.PARALLELS_HOME = originalHome;
   rmSync(home, { recursive: true, force: true });
 });
+
+async function expectShortLink(output: string, port: string, full: string, file: string) {
+  const link = output.match(/http:\/\/localhost:\d+\/login\/[\w-]+/)?.[0];
+  expect(link).toBeDefined();
+  expect(link!.length).toBeLessThan(50);
+  expect(output).not.toContain(full);
+  expect(output).toContain(file);
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+  expect(readFileSync(file, "utf8").trim()).toBe(full);
+  const short = new URL(link!);
+  short.hostname = "127.0.0.1";
+  expect(short.port).toBe(port);
+  const redirect = await fetch(short, { redirect: "manual" });
+  expect(redirect.status).toBe(302);
+  expect(redirect.headers.get("location")).toBe(full);
+  short.pathname = "/login/wrong";
+  expect((await fetch(short, { redirect: "manual" })).status).toBe(404);
+}
 
 test("Codex browser login uses its public client ID, PKCE and form token exchange", async () => {
   const tokens = fakeCodexTokens();
@@ -37,6 +55,7 @@ test("Codex browser login uses its public client ID, PKCE and form token exchang
         const target = new URL(authorization.searchParams.get("redirect_uri")!);
         expect(target.pathname).toBe("/auth/callback");
         target.hostname = "127.0.0.1";
+        await expectShortLink(output, target.port, authorization.toString(), join(home, "login-url.txt"));
         target.search = new URLSearchParams({ code: "test-code", state: "wrong" }).toString();
         expect((await fetch(target)).status).toBe(400);
         expect(await readCodexTokens("personal")).toBeNull();
@@ -63,6 +82,7 @@ test("Codex browser login uses its public client ID, PKCE and form token exchang
   expect(statSync(codexCredentialsPath("personal")).mode & 0o777).toBe(0o600);
   expect(output).not.toContain(tokens.accessToken);
   expect(output).not.toContain(tokens.refreshToken);
+  expect(existsSync(join(home, "login-url.txt"))).toBe(false);
 });
 
 test("Codex refresh is serialized and persists rotated tokens and account routing", async () => {
