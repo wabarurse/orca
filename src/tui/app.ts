@@ -14,7 +14,7 @@ import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } f
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deleteProject, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, dynamicDispatch, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
+import { accountChoices, deleteProject, type AgentInfo, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, dynamicDispatch, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { loadConfig, paths, validRounds } from "../config";
 import { projectIdentity } from "../project-state";
 import { validateModel, effectiveModel } from "../project-model";
@@ -36,6 +36,7 @@ import { shimmer } from "./shimmer";
 import { chapterRows, headerHeight } from "./chrome";
 import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./anchor";
 import { Calls } from "./tools";
+import { agentRow, reselect } from "./agent-clock";
 import type { ToolCall, ToolOutcome } from "../toolview";
 import { stickyRows, stickyUpdate, type StickyScreen } from "./sticky";
 
@@ -104,7 +105,7 @@ export interface AppDeps {
   clock?: Clock;
   /** A project's agents and which are live: /agents lists these and live views poll them. Defaults to listAgents for the menu and to tmux alone (liveAgents) for the poll. */
   cancelAgent?: typeof cancelSession;
-  agents?: (project: string) => Promise<{ name: string; live: boolean }[]>;
+  agents?: (project: string) => Promise<AgentInfo[]>;
   /** Sign-in; tests replace it. */
   login?: typeof login;
   modelChoices?: typeof modelChoices;
@@ -143,11 +144,21 @@ const SPIN_MS = 100;
 const TICK_MS = 33;
 /** How often a live agent view checks whether its agent has finished. */
 const LIVE_CHECK_MS = 1000;
+/** The open /agents menu redraws this often (its clocks tick in seconds) and re-reads the agent list every AGENTS_REFRESH_MS. */
+export const AGENTS_TICK_MS = 1000;
+const AGENTS_REFRESH_MS = 2000;
 
 /** The project list (Ctrl+B, /projects): every project on disk, pinned first. Takes the keys while open. */
 interface ProjectListState { items: ProjectEntry[]; index: number; status: string; confirm: ProjectEntry | null }
 
-interface ActiveMenu extends Menu { pick: (index: number) => Promise<void> | void }
+interface ActiveMenu extends Menu {
+  pick: (index: number) => Promise<void> | void;
+  /** Set on the /agents menu, whose rows depend on the time: the rows at `now`, built per frame. `items` is then just the row count's source, as last built. */
+  itemsAt?: (now: number) => string[];
+  /** Set on the /agents menu: re-read the agent list and show it, keeping the selected agent by name. */
+  reload?: () => Promise<void>;
+}
+interface AgentsTimer { menu: ActiveMenu; readAt: number; reading: boolean; stop: () => void }
 interface TaskInboxState extends TaskInboxData {
   page: Page;
   top: number;
@@ -326,6 +337,8 @@ export class App {
    */
   private started = false;
   private stopSpinner: (() => void) | null = null;
+  /** The open /agents menu's redraw timer; null whenever that menu is not the open overlay. */
+  private agentsTimer: AgentsTimer | null = null;
   private tickMs = 0;
   private screen: StickyScreen | undefined;
   private screenHistory: string[] = [];
@@ -404,6 +417,7 @@ export class App {
       for (const t of [this.frameTimer, this.resizeTimer]) if (t) clearTimeout(t);
       this.stopSpinner?.();
       this.stopSpinner = null;
+      this.syncAgentsTimer();
       this.loginAbort.abort();
       for (const p of this.pages) { if (p.busy) p.orch.cancel?.(); p.orch.dispose?.(); p.view?.leave(); }
       restoreConsole();
@@ -550,7 +564,7 @@ export class App {
       // Project-owned submitted text only: never reconstruct from conversation
       // user lines or from the chat/answer draft. This is presentation, not delivery.
       queued: page ? { project: page.name, texts: [...page.sent.map(item => `${item.retry ? "[not confirmed; /retry-images] " : ""}${item.text}${item.attachments?.length ? " " + imageLabels(item.attachments) : ""}`), ...(this.queued.get(page) ?? []).map(item => `${item.text}${item.attachments?.length ? " " + imageLabels(item.attachments) : ""}`)] } : undefined,
-      menu: this.menu,
+      menu: this.menuView(),
       help: this.helpView(),
       inbox: this.taskInboxView(),
       question: this.questions.view(),
@@ -676,12 +690,37 @@ export class App {
 
   /** Run the spinner timer only while some page is busy or viewing a live agent. */
   private animate(): void {
+    this.syncAgentsTimer();
     const fast = this.shimmering();
     const ms = fast ? TICK_MS : SPIN_MS;
     const want = !this.closed && (fast || this.pages.some(active));
     if (this.tickMs !== ms || !want) { this.stopSpinner?.(); this.stopSpinner = null; }
     this.tickMs = ms;
     if (want && !this.stopSpinner) this.stopSpinner = this.clock.every(() => this.tick(), ms);
+  }
+
+  /** Tick the open /agents menu (and only it) once a second, re-reading its list every other second. */
+  private syncAgentsTimer(): void {
+    const menu = !this.closed && this.menu?.reload ? this.menu : null;
+    if (this.agentsTimer?.menu === menu) return;
+    this.agentsTimer?.stop();
+    this.agentsTimer = null;
+    if (!menu) return;
+    const timer = { menu, readAt: this.clock.now(), reading: false, stop: () => {} };
+    timer.stop = this.clock.every(() => this.agentsTick(timer), AGENTS_TICK_MS);
+    this.agentsTimer = timer;
+  }
+
+  private agentsTick(timer: AgentsTimer): void {
+    if (this.agentsTimer !== timer) return;
+if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while pick runs): the draw syncs the timer off
+    const now = this.clock.now();
+    if (!timer.reading && now - timer.readAt >= AGENTS_REFRESH_MS) {
+      timer.readAt = now;
+      timer.reading = true;
+      void timer.menu.reload!().catch(() => {}).finally(() => { timer.reading = false; this.draw(); });
+    }
+    this.draw();
   }
 
   private tick(): void {
@@ -1184,18 +1223,33 @@ export class App {
   // --- menus ------------------------------------------------------------------
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
-    this.clipboardGeneration++;
-    this.taskInbox = null;
-    this.cancelClear();
-    if (modelOperation === undefined) this.modelGeneration++;
+    this.beginMenu(modelOperation);
     if (!choices.length) return;
-    this.helpTop = null;
-    this.menu = {
+    this.showMenu({
       title: dim(title) + dim("   ↑↓ enter   esc cancels"),
       items: choices.map((c) => `${c.current ? "●" : " "} ${c.label}`),
       index: Math.max(0, choices.findIndex((c) => c.current)),
       pick: (i) => pick(choices[i]!.value),
-    };
+    });
+  }
+
+  /** The open menu as drawn now: the /agents rows are rebuilt for the current time. */
+  private menuView(): Menu | null {
+    const m = this.menu;
+    return m?.itemsAt ? { ...m, items: m.itemsAt(this.clock.now()) } : m;
+  }
+
+  /** What opening any menu first closes or invalidates. */
+  private beginMenu(modelOperation?: number): void {
+    this.clipboardGeneration++;
+    this.taskInbox = null;
+    this.cancelClear();
+    if (modelOperation === undefined) this.modelGeneration++;
+  }
+
+  private showMenu(menu: ActiveMenu): void {
+    this.helpTop = null;
+    this.menu = menu;
     this.draw();
   }
 
@@ -1203,14 +1257,34 @@ export class App {
     const operation = ++this.modelGeneration;
     const view = page.view;
     const current = () => operation === this.modelGeneration && page === this.page && this.pages.includes(page) && !page.deleting && page.view === view;
-    const agents = await (this.deps.agents ?? listAgents)(page.project);
+    const list = this.deps.agents ?? listAgents;
+    let agents = await list(page.project);
     if (!current()) return;
     if (!agents.length) return this.say(dim("no agents yet"));
-    this.openMenu("attach to an agent", agents.map((a) => ({ value: a.name, label: `${a.name}  ${dim(a.live ? "live" : "finished")}` })), (name) => {
-      if (!current()) return;
-      page.view?.leave();
-      return this.attach(page, name, agents.find((a) => a.name === name)?.live ?? false);
-    }, operation);
+    const rowsAt = (now: number) => agents.map((a) => agentRow(a, now));
+    this.beginMenu(operation);
+    const menu: ActiveMenu = {
+      title: dim("attach to an agent") + dim("   ↑↓ enter   esc cancels"),
+      items: rowsAt(this.clock.now()),
+      index: 0,
+      itemsAt: rowsAt,
+      pick: (i) => {
+        const agent = agents[i];
+        if (!agent || !current()) return;
+        page.view?.leave();
+        return this.attach(page, agent.name, agent.live);
+      },
+      reload: async () => {
+        const next = await list(page.project);
+        if (this.menu !== menu) return;
+        if (!current()) { this.menu = null; return this.draw(); } // the view or model operation moved on: close, don't tick a stale list
+        if (!next.length) return;
+        menu.index = reselect(menu.index, agents, next);
+        agents = next;
+        menu.items = rowsAt(this.clock.now());
+      },
+    };
+    this.showMenu(menu);
   }
 
   private async accountsMenu(): Promise<void> {

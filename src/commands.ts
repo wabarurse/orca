@@ -1,3 +1,4 @@
+import { readRun } from "./exits";
 import { tryStorageLock } from "./storage-lock";
 import { projectTurnLock, withProjectStateLock } from "./project-state";
 import { effectiveModel, saveProjectModel, validateModel } from "./project-model";
@@ -30,12 +31,51 @@ export function recentModels(ids: string[], current: string, limit = RECENT_MODE
   return ids.includes(current) && !head.includes(current) ? [...head, current] : head;
 }
 
-/** Every agent that has a transcript, marked live when its tmux window is still open. */
-export async function listAgents(project: string): Promise<{ name: string; live: boolean }[]> {
+/** One /agents row: the agent, whether its window is live, and its latest run's times. */
+export interface AgentInfo {
+  name: string;
+  live: boolean;
+  /** ISO start of the latest run. */
+  startedAt?: string;
+  /** ISO end of that run; absent while it is live. */
+  endedAt?: string;
+  /** endedAt is the run state's last update, not a recorded end (the agent was killed hard). */
+  approximateEnd?: boolean;
+}
+
+/** The first transcript entry's ts: read from the file's first line only. */
+async function firstEntryTs(path: string): Promise<string | undefined> {
+  try {
+    const head = await Bun.file(path).slice(0, 8192).text();
+    const ts = (JSON.parse(head.split("\n")[0]!) as { ts?: unknown }).ts;
+    return typeof ts === "string" && !Number.isNaN(Date.parse(ts)) ? ts : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The latest run's times for agent `name` (its run file id is its transcript id).
+ * A live agent has no end; if its state already has one, that state is a previous run's
+ * (a respawn before beginRun) or a run mid-close, so there is no clock. A finished one without endedAt gets the run file's
+ * last update, marked approximate; without startedAt, the transcript's first entry.
+ */
+async function agentTimes(project: string, name: string, live: boolean): Promise<Pick<AgentInfo, "startedAt" | "endedAt" | "approximateEnd">> {
+  const state = await readRun(project, name);
+  if (live && state?.endedAt) return {};
+  const startedAt = state?.startedAt ?? (await firstEntryTs(paths.transcript(project, name)));
+  if (!startedAt) return {};
+  if (live) return { startedAt };
+  if (state?.endedAt) return { startedAt, endedAt: state.endedAt };
+  return state?.ts ? { startedAt, endedAt: state.ts, approximateEnd: true } : { startedAt };
+}
+
+/** Every agent that has a transcript, marked live when its tmux window is still open, with its latest run's times. */
+export async function listAgents(project: string): Promise<AgentInfo[]> {
   const live = new Set(await liveAgents(project));
   const dir = paths.transcript(project, "x").replace(/x\.jsonl$/, "");
   const names = (await readdir(dir).catch(() => [])).filter((f) => f.endsWith(".jsonl")).map((f) => f.slice(0, -6));
-  return names.filter((n) => n !== "orchestrator").map((name) => ({ name, live: live.has(name) }));
+  return Promise.all(names.filter((n) => n !== "orchestrator").map(async (name) => ({ name, live: live.has(name), ...(await agentTimes(project, name, live.has(name))) })));
 }
 
 /** A fresh orchestrator name, orch-xxxx, that no project uses yet. */

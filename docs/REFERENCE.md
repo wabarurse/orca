@@ -121,8 +121,15 @@ branch/worktree cleanup, including removal of ignored files.
 
 - `/help` shows commands and shortcuts; Esc closes it. `parallels --help` shows
   shell commands outside the TUI.
-- `/agents` shows agents; `/back` returns to the orchestrator. `/inbox` shows
-  registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
+- `/agents` lists agents to attach to, each with a clock for its latest run:
+  `worker-foo  live 3m 12s` (bold, ticking once a second) while its tmux window
+  is open, `worker-foo  finished 14m 02s` (dim, final) after. Times read
+  `59s`, `3m 12s`, `1h 04m`, `2d 3h`. An agent that reported but whose window is
+  still open counts as running. An agent killed hard (no recorded end) shows
+  `~` and ends at the run state's last update; an agent started before clocks
+  existed starts at its first transcript entry. A respawn on the same branch
+  restarts the clock. The attached view's header has no clock. `/back` returns to
+  the orchestrator. `/inbox` shows registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
 - Ctrl+C cancels the current turn; `/quit` exits. Background workers/reviewers
   can keep running; see [Using the TUI](#using-the-tui) for cancellation details.
 - Finish active work and let background agents exit, then run `parallels pull`
