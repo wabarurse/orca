@@ -84,7 +84,7 @@ for (const mode of ["dirty", "untracked", "staged", "branch", "main-ahead", "div
   });
 }
 
-for (const mode of ["wrong-origin", "missing-origin", "rewritten-origin", "multiple-origins", "missing-app", "unowned-binary", "missing-binary", "modified-binary", "app-symlink", "git-symlink", "nested-git-symlink", "worktree", "alternate", "writable-directory"] as const) {
+for (const mode of ["wrong-origin", "missing-origin", "rewritten-origin", "multiple-origins", "missing-app", "unowned-binary", "missing-binary", "modified-binary", "app-symlink", "git-symlink", "nested-git-symlink", "worktree", "alternate", "writable-directory", "writable-index"] as const) {
   test(`refuses ${mode} before fetching`, async () => {
     const f = await fixture();
     if (mode === "wrong-origin") await f.g(f.app, "remote", "set-url", "origin", f.remote);
@@ -105,6 +105,7 @@ for (const mode of ["wrong-origin", "missing-origin", "rewritten-origin", "multi
     }
     if (mode === "alternate") await writeFile(join(f.app, ".git", "objects", "info", "alternates"), join(f.remote, ".git", "objects"));
     if (mode === "writable-directory") await chmod(f.app, 0o777);
+    if (mode === "writable-index") await chmod(join(f.app, ".git", "index"), 0o664);
     await expect(pullHarness(f.options)).rejects.toThrow();
     expect(fetched(f.calls)).toBe(false);
     if (mode !== "missing-binary") expect(await f.binary()).toBe(mode === "modified-binary" ? "modified executable" : "old executable");

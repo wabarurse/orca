@@ -12,7 +12,12 @@ export interface CommandResult { code: number; out: string; err: string }
 export type UpdateCommand = (argv: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<CommandResult>;
 
 export const updateCommand: UpdateCommand = async (argv, cwd, env) => {
-  const child = Bun.spawn(argv, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  // Git and build tools must not create paths our ownership checks reject under
+  // a permissive caller umask. Restrict only the child, retaining stricter masks.
+  // Pass argv as positional arguments: paths/credentials are never shell source.
+  const mask = (process.umask() | 0o022).toString(8);
+  const child = Bun.spawn(["/bin/sh", "-c", 'umask "$1" && shift && exec "$@"', "orca-update", mask, ...argv],
+    { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { code, out, err };
 };

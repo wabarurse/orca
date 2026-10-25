@@ -332,6 +332,12 @@ build/dependency code from origin/main; review/trust that upstream before pullin
 It does not run the full test suite for you. Even an up-to-date checkout is rebuilt
 and reinstalled, so a failed dependency/build step can be retried.
 
+Updater subprocesses add `022` to the caller's umask, so Git, dependencies, and
+builds do not create group/world-writable paths that fail the next safety check.
+A stricter mask such as `077` stays strict, and the caller's umask is unchanged.
+Existing unsafe permissions still require inspection; the updater does not
+automatically chmod files to bypass ownership checks.
+
 Checkout behavior is deliberately conservative:
 
 - **main:** advance only when current HEAD is an ancestor of fetched origin/main.
