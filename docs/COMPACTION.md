@@ -42,8 +42,13 @@ publishes inference. Page disposal, cancellation, clear or another checkpoint
 invalidates stale work. The one-shot CLI joins its worker while owning the turn.
 
 SQLite is a rebuildable private original-entry/task index, not a replacement for
-JSONL or tasks.json. Search/read results are bounded historical text and restricted
-to the current `/clear` scope; clear does not delete bytes or receipts. See the
+JSONL or tasks.json: one global `~/.parallels/memory.sqlite` (WAL, mode `0600`)
+shared by all projects, with `project` and `agent` columns on every row, holding
+only orchestrator transcripts and task records. Old per-project `memory.sqlite`
+files are migrated by a background backfill and deleted only after the rebuilt
+rows verify identical. Search/read results are bounded historical text and
+restricted to this project, the orchestrator and the current `/clear` scope; clear
+does not delete bytes or receipts. See the
 [reference rolling-memory section](REFERENCE.md#orchestrator-rolling-memory) for tool
 arguments. Reasoning and image bytes/URLs are excluded from searchable text and
 summary source. Scoped image references survive in raw archive records **and as

@@ -684,15 +684,48 @@ the foreground uses Claude. `compact = false` disables automatic compaction;
 failures and cancellation preserve the original history. If the resulting input
 still cannot fit, the existing context guard stops the model request.
 
-Original entries and task records are indexed in private
-`~/.parallels/projects/<project>/memory.sqlite`, using Bun's built-in SQLite and
-FTS5. JSONL transcripts and `tasks.json` remain authoritative; the index can be
-rebuilt. Inbox delivery and task IDs/status semantics are unchanged. Image IDs and
-original prompt associations are searchable; raw archive entries and checkpoints
-preserve scoped image references. Text summaries/search do not inspect or return
-pixels; normal provider requests still materialize retained images. Accumulated
-image limits fail explicitly, never evict images silently. See
+Original orchestrator entries and task records are indexed in one private,
+global `~/.parallels/memory.sqlite` (mode `0600`, as are its `-wal`/`-shm` files),
+using Bun's built-in SQLite and FTS5. Every project shares the file: `entries`
+carry `project` and `agent` columns (`agent` is always `orchestrator`; worker and
+reviewer transcripts are never indexed and have no database access), `tasks`
+are keyed by `(project, id)`, and `entry_tasks`, `sources` (per-project
+`indexed_through`) and `meta` complete the schema (`PRAGMA user_version = 1`).
+The file runs in WAL mode with a long busy timeout; writers use
+`BEGIN IMMEDIATE` transactions, so several orchestrators can index concurrently.
+
+JSONL transcripts and `tasks.json` remain authoritative and the index is
+rebuildable: deleting `memory.sqlite` (with its `-wal`/`-shm`) loses nothing, and
+the next archive, query or startup backfill re-creates it from the transcripts.
+Indexing happens at compaction, `/clear`, query time and (best effort, errors
+reported, never failing the turn) at the end of each orchestrator turn. Reading a
+project's transcript and registry still happens under that project's state lock
+and identity check. Inbox delivery and task IDs/status semantics are unchanged.
+Image IDs and original prompt associations are searchable; raw archive entries and
+checkpoints preserve scoped image references. Text summaries/search do not inspect
+or return pixels; normal provider requests still materialize retained images.
+Accumulated image limits fail explicitly, never evict images silently. See
 [image context/history behavior](IMAGE_ATTACHMENTS.md#context-budgeting-and-integration-contract).
+
+**Migration from per-project files.** Earlier versions kept
+`~/.parallels/projects/<project>/memory.sqlite`. When the global file is first
+created, or lacks `meta.backfill_version`, the orchestrator starts a resumable
+background backfill that never blocks startup (failures are reported and
+retried on a later start). Per project, under its state lock, it re-indexes the
+full orchestrator transcript (including history before clears) and `tasks.json`
+in one transaction, then **verifies** by reading the global database back: every
+transcript entry must be present with identical body, raw record and epoch,
+counts must match, no old-index entry may be missing from the result, and every
+task must be present at its revision or newer. Only after that passes are the
+project's old `memory.sqlite` and its `-wal`, `-shm` and `-journal` files
+deleted. If indexing or verification fails or is partial, or the transcript or
+`tasks.json` cannot be read, nothing is deleted for that project; it is logged
+and retried later. Completion is recorded per project in `meta`. The backfill
+also removes rows of projects whose folder no longer exists.
+
+Deleting a project purges its rows from the global database (entries, tasks,
+links, sources and FTS postings) on a best-effort basis; a failure never blocks
+the deletion, and the backfill's orphan cleanup removes any leftovers.
 
 The orchestrator uses the existing `task` tool:
 
@@ -703,7 +736,9 @@ The orchestrator uses the existing `task` tool:
 
 Task-specific excerpts require an explicit task UUID in the original entry.
 Use ordinary text search for conversations without that link. Retrieval is
-restricted to the current `/clear` scope; old bytes remain on disk. Retrieved
+restricted to this project, the orchestrator's own entries and the current
+`/clear` scope (the shared database holds other projects' rows, which never match);
+old bytes remain on disk. Retrieved
 text and summaries are historical evidence, not new instructions. Summaries are
 lossy: check original details when they matter. The active model context stays
 bounded, but disk history grows with use; this is not unlimited model context.

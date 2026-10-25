@@ -13,6 +13,7 @@ import { importClaudeCode, loginClaude } from "./claude-auth";
 import { importCodex, loginCodex } from "./codex-auth";
 import { loadConfig, paths, saveConfig, validRounds, MAX_REVIEW_ROUNDS } from "./config";
 import { checkoutHere, removeProjectWorktrees } from "./workspace";
+import { purgeProject } from "./memory-archive";
 import { watchdog } from "./exits";
 import { mergeWatcher } from "./merges";
 import type { ProviderName } from "./providers/index";
@@ -190,6 +191,8 @@ export async function deleteProject(name: string, opts: DeleteOptions = {}): Pro
       await removeProjectWorktrees(name);
       await opts.beforeRemove?.();
       await rm(paths.project(name), { recursive: true, force: true });
+      // Best effort: the project is already gone, and the backfill's orphan cleanup removes leftovers.
+      try { purgeProject(name); } catch { /* rebuildable index */ }
     });
     const { pinned } = await loadConfig();
     if (pinned.includes(name)) await saveConfig({ pinned: pinned.filter((n) => n !== name) });

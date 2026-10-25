@@ -182,7 +182,7 @@ blocked. Worker checkpoints instead refuse an over-budget proposal. Neither path
 silently drops images. Use an explicit `/clear` for a new task when accumulation
 blocks context; original transcripts/images remain on disk.
 
-SQLite `memory.sqlite` keeps the **original scoped references** losslessly in
+The global SQLite `~/.parallels/memory.sqlite` (rows keyed by project and agent) keeps the **original scoped references** losslessly in
 `entries.raw`, and indexes searchable `attachment_id` markers plus prompt text in
 `entries.body`. Image bytes stay in the validated project image store. The
 orchestrator can use `task search_history` (including an attachment UUID query)

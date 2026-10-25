@@ -23,6 +23,8 @@ import { registry, toolsFor, type Tool } from "./tools/index";
 import { open, type Entry, type Transcript } from "./transcript";
 import { RollingCompactor, type RollingOptions } from "./rolling-memory";
 import { orchestratorTask } from "./tools/task";
+import { archiveBestEffort } from "./memory-archive";
+import { startMemoryBackfill } from "./memory-backfill";
 
 export interface OrchestratorDeps {
   project: string;
@@ -89,7 +91,13 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
     await transcript.append({ type: "meta", role: "orchestrator", model: await effectiveModel(project) });
   }
 
+  // Background and best-effort: the first start after an upgrade migrates old per-project indexes.
+  void startMemoryBackfill({ log: memoryLog(deps) });
   return orchestratorSession(deps, transcript, compactionOptions(await loadConfig()));
+}
+/** Memory-index problems are reported where the session reports status, never thrown into a turn. */
+function memoryLog(deps: OrchestratorDeps): (message: string) => void {
+  return message => { if (deps.write) deps.write(`${message}\n`, true); else console.error(message); };
 }
 /** The options every orchestrator turn compacts with; the header reads them before the first turn. */
 function compactionOptions(config: Config): CompactOptions {
@@ -189,6 +197,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
           authorization.throwIfAborted();
           await check(true);
           rolling.reset();
+          await archiveBestEffort(deps.project, transcript, memoryLog(deps), true);
           await transcript.append({ type: "context-boundary" }, authorization);
         });
       } finally { state.clearing = undefined; await release?.(); }
@@ -237,7 +246,9 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     else if (state.takeRequest()) await agent.compact();
     else await agent.maintain();
     if (deps.joinRolling && await rolling.finish(signal)) await agent.maintain();
-    return await replies(deps.project, transcript);
+    const sent = await replies(deps.project, transcript);
+    await archiveBestEffort(deps.project, transcript, memoryLog(deps));
+    return sent;
   } catch (error) {
     if (!signal.aborted) throw error;
     return [];
