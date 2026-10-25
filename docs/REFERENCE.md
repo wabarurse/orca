@@ -527,18 +527,29 @@ worktrees stay outside it. Design notes are in [PLAN.md](PLAN.md).
 
 ## The cycle
 
-The orchestrator first shows how it would split the task and answers questions;
-nothing starts until you say "execute" or "dispatch". Then it spawns a
-**worker** on a branch; each worker run ends in one
-commit and one report. It then spawns a **reviewer**, which reads the diff
-against the task's goal, runs the `complexity` tool (cyclomatic and cognitive,
-per function) and reports without touching code. Problems go back to the worker
-with notes and the reviewer looks again, for at most `maxReviewRounds` rounds;
-if the last review still finds problems, the worker gets one more pass, the
-branch goes straight to CI with no further review, and the orchestrator tells
-you what was left open. When a review is clean the orchestrator tells the reviewer to
-"watch ci": it pushes, opens the PR, runs `gh pr checks --watch`, fixes what
-fails until green, and reports ready to merge. One agent codes on a branch at a
+The orchestrator shows its plan; a clear request to implement authorizes that scope.
+It spawns a **worker** on a branch to implement the request and run only relevant
+checks. Each worker run ends in one commit and one report, including the check
+commands, tested commit/code state, results and saved failure-output paths.
+Never run the full test suite, baseline comparisons or duplicate tests. A check
+runs once for the code it covers; feedback permits a rerun only when that code
+changes. Unchanged passing results carry forward; unchanged failures are reported,
+not retried. Missing evidence is reported rather than triggering broader checks.
+
+The **reviewer** reads the diff against the request, inspects failed-check output
+and runs `complexity` (cyclomatic and cognitive, per function). It never runs tests
+or validation commands, investigates passing checks again, or edits code. Feedback
+goes to the worker for changes and relevant checks; subsequent reviews focus on
+the new diff and prior findings. This repeats for at most `maxReviewRounds` rounds.
+Unresolved findings at the limit are reported without claiming readiness.
+
+After approval, "watch ci" publishes the PR and observes hosted checks with
+`gh pr checks --watch`. It reuses worker evidence matched to the current PR head,
+never reruns jobs or adds a final local validation pass. Failures return to the
+worker through the orchestrator; missing or stale evidence prevents readiness.
+With no hosted checks, existing worker evidence still has to establish readiness.
+These are role/dispatch instructions, not a shell-command sandbox or a durable
+check-result cache. One agent codes on a branch at a
 time: spawn waits briefly and then refuses while the branch's worker or reviewer
 is still running. Corrections to an existing task or unmerged PR reuse its task ID
 and branch, including CI failures, review feedback and user-requested fixes after
