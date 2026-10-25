@@ -22,7 +22,7 @@ import type { Message } from "../inbox";
 //   user next speaks (or the end), so a reply from an earlier turn that ended
 //   without the user speaking shows later than it did live, and worker or
 //   reviewer messages to "user" (not in the orchestrator's transcript) are lost.
-// - "user" messages that did not come from the TUI (`parallels msg`) show as
+// - "user" messages that did not come from the TUI (`orca msg`) show as
 //   "> …" both live and restored.
 // - An explicit answer (or a legacy delivered skip) showed live as its dim
 //   "? <question> → <answer>" line when it was answered; restored, the same

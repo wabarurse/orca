@@ -21,7 +21,7 @@ async function defaultBranch(directory: string): Promise<string> {
   // An unborn main/master is a valid original checkout too.
   const head = await command(["git", "symbolic-ref", "--short", "-q", "HEAD"], directory);
   if (head.code === 0 && ["main", "master"].includes(head.out.trim())) return head.out.trim();
-  throw new Error("cannot determine the default branch; set origin/HEAD or create main before starting parallels");
+  throw new Error("cannot determine the default branch; set origin/HEAD or create main before starting orca");
 }
 
 async function requireBranch(directory: string, branch: string): Promise<void> {
@@ -67,12 +67,12 @@ async function originalCheckout(source: string): Promise<string> {
   await mkdir(paths.root, { recursive: true });
   const state = realpathSync(paths.root);
   if (inside(state, directory) || inside(directory, state)) {
-    throw new Error("the original checkout and PARALLELS_HOME must be separate directories");
+    throw new Error("the original checkout and ORCA_HOME must be separate directories");
   }
   // A linked worktree is for workers; the first Git worktree is the original checkout.
   const trees = await command(["git", "worktree", "list", "--porcelain", "-z"], directory);
   if (trees.code !== 0 || trees.out.split("\0")[0] !== `worktree ${directory}`) {
-    throw new Error("start parallels in the original checkout, not a linked worker worktree");
+    throw new Error("start orca in the original checkout, not a linked worker worktree");
   }
   return directory;
 }

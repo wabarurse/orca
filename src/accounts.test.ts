@@ -8,15 +8,15 @@ import { saveConfig } from "./config";
 import { saveCodexTokens } from "./codex-auth";
 import { fakeCodexTokens } from "./test/codex";
 
-const keys = ["PARALLELS_HOME", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_CUSTOM_HEADERS", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
+const keys = ["ORCA_HOME", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_CUSTOM_HEADERS", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
 let original: Record<string, string | undefined>;
 let home: string;
 let mockFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
 beforeEach(() => {
   original = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   for (const key of keys) delete process.env[key];
-  home = mkdtempSync(join(tmpdir(), "parallels-accounts-"));
-  process.env.PARALLELS_HOME = home;
+  home = mkdtempSync(join(tmpdir(), "orca-accounts-"));
+  process.env.ORCA_HOME = home;
   process.env.ANTHROPIC_CONFIG_DIR = join(home, "ant");
 });
 afterEach(() => {

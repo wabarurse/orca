@@ -12,7 +12,7 @@ import { ask, list as questions } from "./questions";
 import { pending, put } from "./inbox";
 
 const home = mkdtempSync(join(tmpdir(), "task-registry-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 let n = 0, project: string;
 beforeEach(() => { project = `task-${n++}`; mkdirSync(paths.project(project), { recursive: true }); });
@@ -229,7 +229,7 @@ test("concurrent/duplicate updates serialize without lost history, conflicting d
 test("separate processes serialize registration and restart sees durable data, ignores abandoned temp files", async () => {
   const module = resolve(import.meta.dir, "tasks.ts"), id = crypto.randomUUID();
   const script = `import { registerTask } from ${JSON.stringify(module)}; await registerTask(${JSON.stringify(project)}, ${JSON.stringify({ ...input(), id })});`;
-  const children = Array.from({ length: 5 }, () => Bun.spawn([process.execPath, "-e", script], { env: { ...process.env, PARALLELS_HOME: home }, stdout: "pipe", stderr: "pipe" }));
+  const children = Array.from({ length: 5 }, () => Bun.spawn([process.execPath, "-e", script], { env: { ...process.env, ORCA_HOME: home }, stdout: "pipe", stderr: "pipe" }));
   expect(await Promise.all(children.map(c => c.exited))).toEqual([0, 0, 0, 0, 0]);
   writeFileSync(join(paths.project(project), "tasks.json.abandoned.tmp"), "half a write");
   expect(await allTasks(project)).toHaveLength(1); expect((await getTask(project, id)).revision).toBe(1);

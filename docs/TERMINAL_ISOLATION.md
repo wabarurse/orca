@@ -106,7 +106,7 @@ independent `/clear` implementation or justify a mode/history workaround.
 
 ### Local validation of this parser follow-up
 
-Bun 1.4.2, isolated test fixtures (no live PARALLELS_HOME changes):
+Bun 1.4.2, isolated test fixtures (no live ORCA_HOME changes):
 
 - Targeted keys/terminal/app/sticky/restore/continuity/layout/FakeScreen/owned-PTY/
   help suites: **201 pass, 0 fail**, five snapshots, 9,207 assertions in ten files.
@@ -204,7 +204,7 @@ and whether the main UI is inside tmux, not toggling anything without approval.
   updates read at most the body viewport height, including frames straddling or
   entirely inside the transient tail, not all saved rows.
 - `src/tui/scroll.pty.test.ts` runs the real source CLI in an owned PTY/shell,
-  temporary HOME/PARALLELS_HOME, empty inbox and synthetic checkpointed history,
+  temporary HOME/ORCA_HOME, empty inbox and synthetic checkpointed history,
   without inherited credentials or tmux/gh on PATH. Sixty prelaunch shell
   sentinels, a multiline draft, injected SGR sweeps/clamps and `/quit` verify
   complete live history access, pinned bars, one mode entry/leave, no `3J`,
@@ -286,9 +286,9 @@ new tests included in the repository test count below.
 
 ### Compiled CLI through real PTYs
 
-Built `dist/parallels` with `bun run build`, then launched it through
+Built `dist/orca` with `bun run build`, then launched it through
 `Bun.spawn({ terminal: { cols: 100, rows: 24, ... } })` in fresh temporary homes.
-Each child had an explicit environment: temporary `HOME` and `PARALLELS_HOME`,
+Each child had an explicit environment: temporary `HOME` and `ORCA_HOME`,
 `PATH=/usr/bin:/bin` (no tmux or gh), `TERM=xterm-256color`, no inherited provider
 credentials, and no Git global/system configuration. Its cwd was the temporary
 home, not a user's repository.
@@ -299,7 +299,7 @@ Reproduction setup and assertions:
    containing `APP_ROW_000` through `APP_ROW_159`; leave the inbox empty. Starting
    this restored, idle orchestrator does not call a model.
 2. In an owned shell, record `stty -g` and print 60 `SHELL_SENTINEL_n` lines before
-   launching the freshly compiled `parallels start probe`.
+   launching the freshly compiled `orca start probe`.
 3. Capture actual process output. Send `ESC [ < 64 ; 10 ; 10 M` and the equivalent
    button-65 report through the PTY, not directly to `App.onKey()`.
 4. Send 1,000 up events, 20 more at the top boundary, then 1,000 down events.

@@ -43,7 +43,7 @@ export { helpLines } from "./help";
 export { lineRows, type Line } from "./lines";
 
 export interface Page {
-  /** The project id: its folder under ~/.parallels/projects. Never changes. */
+  /** The project id: its folder under ~/.orca/projects. Never changes. */
   project: string;
   /** What the header tab shows; /rename sets it. */
   name: string;
@@ -504,7 +504,7 @@ export class App {
       // Typed here: show only now, at the consumption boundary (answer-shaped chat stays chat).
       const at = m.inputId ? page.sent.findIndex(item => item.inputId === m.inputId) : -1;
       if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines([m.text, imageLabels(m.attachments)].filter(Boolean).join("\n"))); continue; }
-      // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`parallels msg`) as "> …", as restore shows it.
+      // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`orca msg`) as "> …", as restore shows it.
       this.toPage(page, this.questions.inboxLines(page, [m.text, imageLabels(m.attachments)].filter(Boolean).join("\n")) ?? userLines(m.text));
     }
   }
@@ -567,7 +567,7 @@ export class App {
   private header(page: Page): string[] {
     const settings = page.settings;
     const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(this.maxReviewRounds), dispatch: dispatchStatus(this.dynamicDispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(this.maxReviewRounds), dispatch: dispatchStatus(this.dynamicDispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, whale: { time: this.clock.now(), active: page.view ? page.view.live : page.busy } }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Independent read generations for captured page objects. */

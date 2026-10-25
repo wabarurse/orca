@@ -9,8 +9,8 @@ import { all, answer, ask, cleanQuestions, list, skip } from "./questions";
 import { ask as askTool } from "./tools/ask";
 import { registry, toolsFor } from "./tools/index";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-questions-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-questions-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 test("questions list in ask order, a file each, no temp files", async () => {
@@ -81,7 +81,7 @@ for (const def of [undefined, "yes, ship it"]) {
     expect(await skip(project, qs[0]!.id)).toEqual({ ...original, status: "skipped" });
     // Fresh disk reads (no in-memory cache), including a new process/restart.
     expect((await list(project)).map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
-    const child = Bun.spawn([process.execPath, "-e", 'import { list } from "./src/questions.ts"; console.log(JSON.stringify(await list(process.argv[1])));', project], { stdout: "pipe", stderr: "pipe", env: { ...process.env, PARALLELS_HOME: paths.root } });
+    const child = Bun.spawn([process.execPath, "-e", 'import { list } from "./src/questions.ts"; console.log(JSON.stringify(await list(process.argv[1])));', project], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ORCA_HOME: paths.root } });
     expect(await child.exited).toBe(0);
     expect(JSON.parse(await new Response(child.stdout).text())).toEqual(qs.slice(1));
     expect((await all(project))[0]).toEqual({ ...original, status: "skipped" });

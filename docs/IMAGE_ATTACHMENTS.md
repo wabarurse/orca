@@ -16,7 +16,7 @@ that there is no image and leaves the draft unchanged; it **does not also paste
 text**, avoiding duplicate terminal paste. Use the terminal's normal text-paste
 shortcut. A terminal or multiplexer that intercepts Ctrl+V must deliver the literal
 control key for this feature to work. `/keys` (or draft-safe Ctrl+G) shows what
-arrives; Parallels does not change terminal settings or key bindings for you.
+arrives; orca does not change terminal settings or key bindings for you.
 
 Menus, projects, help, task/question panels and agent views keep ownership of
 input. Ctrl+V does not attach an image to a question answer. Pending asynchronous

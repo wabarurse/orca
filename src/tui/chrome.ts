@@ -1,6 +1,7 @@
 // Chapter rules for the pinned header. Labels are display-only; navigation and
 // storage continue to use the immutable project IDs held by App.
 import { bold, dim, fit, sanitize, visibleLength, wrap } from "./render";
+import { whaleRows } from "./whale";
 
 export interface Tab { name: string; busy?: boolean }
 export interface Chapter {
@@ -13,6 +14,7 @@ export interface Chapter {
   context?: string;
   review?: string;
   dispatch?: string;
+  whale?: { time: number; active: boolean };
 }
 
 const plain = (s: string) => Bun.stripANSI(sanitize(s.replace(/[\r\n\t]/g, " ")));
@@ -60,7 +62,7 @@ function details(fields: string[], cols: number, budget: number): string[] {
   }).slice(0, budget).map(dim);
 }
 
-/** No brand or heavy fill: the selected identities sit directly in the rule. */
+/** Keep project identity and metadata before spending spare rows on the whale. */
 export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   if (budget < 1) return [];
   cols = Math.max(1, cols);
@@ -68,11 +70,37 @@ export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   const tabs = tabRow(c.tabs, c.active, cols - inset);
   const head = inset ? `${dim("── ")}${tabs}${dim(" " + "─".repeat(Math.max(0, cols - 4 - visibleLength(tabs))))}` : tabs;
   if (budget === 1) return [head];
+  const metadata = details(chapterFields(c, cols), cols, budget - 2);
+  if (c.whale) {
+    const { time, active } = c.whale;
+    // Use the full reference when it fits. Smaller terminals share rows between
+    // the whale and metadata instead of taking space from the input or history.
+    const banner = whaleRows(cols, budget - metadata.length - 3, time, active);
+    if (banner.length >= 10) return [dim("orca"), ...banner, head, ...metadata, dim("─".repeat(cols))];
+    const artCols = budget >= 12 && cols >= 80 ? 44 : 32;
+    const detailCols = cols - artCols - 3;
+    if (detailCols >= 32) {
+      const fields = chapterFields(c, detailCols);
+      const art = whaleRows(artCols, budget - 2, time, active);
+      if (art.length && fields.length <= budget - 2) {
+        const info = details(fields, detailCols, budget - 2);
+        const rows = Array.from({ length: Math.max(art.length, info.length) }, (_, i) => {
+          const whale = (art[i] ?? " ".repeat(artCols));
+          const label = i === 0 ? "orca" + whale.slice(4) : whale;
+          return label + "   " + (info[i] ?? "");
+        });
+        return [head, ...rows, dim("─".repeat(cols))];
+      }
+    }
+  }
+  return [head, ...metadata, dim("─".repeat(cols))];
+}
+
+function chapterFields(c: Chapter, cols: number): string[] {
   const telemetry = [c.context, c.review, c.dispatch].filter(Boolean).join(" · ");
   // Narrow telemetry stacks without sacrificing the selected model to telemetry.
   // Agent identity precedes paths in constrained views.
-  const fields = telemetry && visibleLength(plain(telemetry)) > cols
+  return telemetry && visibleLength(plain(telemetry)) > cols
     ? [c.context, `model ${c.model}`, c.review, c.dispatch, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote].filter((f): f is string => !!f)
     : [...(telemetry ? [telemetry] : []), `model ${c.model}`, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote];
-  return [head, ...details(fields, cols, budget - 2), dim("─".repeat(cols))];
 }

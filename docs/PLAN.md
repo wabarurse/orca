@@ -1,4 +1,4 @@
-# parallels-harness — plan
+# orca-harness — plan
 
 An agent harness built around an orchestrator → worker → reviewer loop, with agents running in tmux sessions that can live locally or in the cloud.
 
@@ -35,7 +35,7 @@ An agent harness built around an orchestrator → worker → reviewer loop, with
 
 - Every agent runs in a tmux session.
 - Sessions run in a sandbox: either a separate folder on disk or a Docker container. If sessions are sandboxed, moving them to the cloud is the same thing on another machine.
-- Local orchestrators reference the original checkout; workers and reviewers use its Git worktrees. Harness state and conversations live under `~/.parallels`.
+- Local orchestrators reference the original checkout; workers and reviewers use its Git worktrees. Harness state and conversations live under `~/.orca`.
 
 ## UI
 

@@ -17,8 +17,8 @@ import { task } from "./tools/task";
 import { makeSpawn } from "./tools/spawn";
 import { open } from "./transcript";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-e2e-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-e2e-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const started: StartOptions[] = [];
@@ -90,7 +90,7 @@ test("spawn seeded the worker and reviewer transcripts with their prompts", asyn
 });
 
 test("ensureProject binds an existing main checkout without creating a clone", async () => {
-  const source = join(home, "..", `parallels-source-${crypto.randomUUID()}`);
+  const source = join(home, "..", `orca-source-${crypto.randomUUID()}`);
   await Bun.$`git init -q -b main ${source}`.quiet();
   try {
     await ensureProject("fresh", source);
@@ -240,7 +240,7 @@ test("the real CLI send resumes a cancelled orchestrator across processes", asyn
   const orch = await createOrchestrator({ project, provider, tools: {}, write() {} });
   orch.cancel!();
   const proc = Bun.spawn(["bun", `${import.meta.dir}/cli.ts`, "msg", project, "external continuation"], {
-    env: { ...process.env, PARALLELS_HOME: home }, stdout: "pipe", stderr: "pipe",
+    env: { ...process.env, ORCA_HOME: home }, stdout: "pipe", stderr: "pipe",
   });
   expect(await proc.exited).toBe(0);
   expect(await orch.pending()).toBe(true);

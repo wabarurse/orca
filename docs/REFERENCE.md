@@ -1,10 +1,42 @@
-# Parallels reference
+# orca reference
+
+### Upgrading to orca
+
+The command, package, compiled executable and visible branding are now `orca`.
+New installations use `~/.orca`, `ORCA_HOME`, and `.orca-worktrees` beside the
+original checkout. The whale in the header uses your terminal's available space:
+a detailed silhouette in tall terminals, compact artwork beside metadata in
+ordinary terminals, and metadata alone when space is tight. Only the selected
+working conversation animates; idle headers stay still. Artwork never enters
+model context or saved conversation history.
+
+Finish active runs before upgrading, including background workers: new tmux
+sessions use the `orca-` prefix. From your updated harness checkout, run
+`bun run install:local` once to install `~/.local/bin/orca`, then use `orca`.
+The installer leaves the old executable and its receipt in place, rather than
+overwriting an unrelated command or changing a running process.
+
+Existing data stays readable without moving it. `ORCA_HOME` takes precedence;
+the old `PARALLELS_HOME` override still works. Without an override, established
+state in `~/.orca` wins; otherwise an existing `~/.parallels` is reused, including
+saved accounts and conversations. Creating only `~/.orca/app` does not hide old
+state. Set `ORCA_HOME` explicitly if you keep two separate state stores. Existing
+worker worktrees retain their registered paths, and old saved image references
+remain valid. There is no automatic migration or deletion.
+
+`orca pull` also supports an existing dedicated `~/.parallels/app` checkout when
+`~/.orca/app` is absent. Builds include a compatibility output for an already
+running old updater, so it receives the new binary instead of a stale build;
+the one-time install above supplies the new `orca` command. The verified GitHub
+origin is still `https://github.com/wabarurse/parallels.git`; renaming the product
+does not rename the hosted repository. Historical evaluation evidence retains
+its original names and paths.
 
 [Getting started](../README.md) · [Documentation index](README.md)
 
 Repository file paths in this guide are relative to the repository root.
 
-Parallels is a terminal app that helps you work on a Git repository with AI agents.
+orca is a terminal app that helps you work on a Git repository with AI agents.
 Discuss a task with an **orchestrator**, approve a plan, then let a **worker** make
 changes on a separate branch and a **reviewer** check the result.
 
@@ -29,7 +61,7 @@ review their work; this is not a shell sandbox.
 ### 2. Install once
 
 Keep the app separate from your work repositories. Run this in your shell to
-build from source in `~/.parallels/app` and install `~/.local/bin/parallels`.
+build from source in `~/.orca/app` and install `~/.local/bin/orca`.
 The checks refuse existing paths and symlinks instead of overwriting them; if
 installation refuses, inspect the paths and read
 [ownership and recovery](#installer-ownership-and-recovery).
@@ -38,13 +70,13 @@ installation refuses, inspect the paths and read
 (
   set -eu
   # Never replace an existing app or follow a symlink into unrelated content.
-  if [ -L "$HOME/.parallels" ] || [ -e "$HOME/.parallels/app" ] || [ -L "$HOME/.parallels/app" ]; then
+  if [ -L "$HOME/.orca" ] || [ -e "$HOME/.orca/app" ] || [ -L "$HOME/.orca/app" ]; then
     echo "Existing app or symlink: inspect it first; use the update steps for your own clone." >&2
     exit 1
   fi
-  mkdir -p "$HOME/.parallels"
-  git clone https://github.com/wabarurse/parallels.git "$HOME/.parallels/app"
-  cd "$HOME/.parallels/app"
+  mkdir -p "$HOME/.orca"
+  git clone https://github.com/wabarurse/parallels.git "$HOME/.orca/app"
+  cd "$HOME/.orca/app"
   # To install an exact reviewed revision, first: git switch --detach <reviewed-commit>
   bun install --frozen-lockfile
   bun run install:local
@@ -55,24 +87,24 @@ For this shell session, make the executable available and check which one runs:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
-command -v parallels
-parallels version
+command -v orca
+orca version
 ```
 
 For a permanent PATH change, see [installation details](#install-once-run-from-any-repository).
-You can also use `"$HOME/.local/bin/parallels"` directly.
+You can also use `"$HOME/.local/bin/orca"` directly.
 
 ### 3. Open your repository and sign in
 
 In your shell, go to an existing local repository. Check `git status` and resolve
 local work before switching to its default branch (`main` below; substitute your
-repository's default branch if different). Parallels will not switch or stash for you.
+repository's default branch if different). orca will not switch or stash for you.
 
 ```sh
 cd /path/to/your/repository
 git status --short
 git switch main
-parallels
+orca
 ```
 
 The terminal UI opens with an orchestrator working in your **original checkout**
@@ -119,16 +151,16 @@ branch/worktree cleanup, including removal of ignored files.
 
 ### Help and updates
 
-- `/help` shows commands and shortcuts; Esc closes it. `parallels --help` shows
+- `/help` shows commands and shortcuts; Esc closes it. `orca --help` shows
   shell commands outside the TUI.
 - `/agents` shows agents; `/back` returns to the orchestrator. `/inbox` shows
   registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
 - Ctrl+C cancels the current turn; `/quit` exits. Background workers/reviewers
   can keep running; see [Using the TUI](#using-the-tui) for cancellation details.
-- Finish active work and let background agents exit, then run `parallels pull`
+- Finish active work and let background agents exit, then run `orca pull`
   from any directory to update **only the dedicated app installation**. Git and
   Bun 1.4.2+ are required. Restart afterward; existing processes are not upgraded.
-  Read [update safety and recovery](#explicit-updates-parallels-pull) before updating.
+  Read [update safety and recovery](#explicit-updates-orca-pull) before updating.
 
 ## Install once, run from any repository
 
@@ -143,39 +175,39 @@ Standard system tools (`sh` and `env`) must also remain on PATH.
 agents to do (for example PR publication/review).
 
 Keep the harness checkout separate from the repositories you work on. This
-local-only workflow installs the app at `~/.parallels/app` and the executable at
-`~/.local/bin/parallels`; it does not download or run a remote bootstrap script.
+local-only workflow installs the app at `~/.orca/app` and the executable at
+`~/.local/bin/orca`; it does not download or run a remote bootstrap script.
 
 Follow the [quick-start installation steps](#2-install-once) above.
 
-`install:local` builds `dist/parallels` from that checkout, then copies it to
-`$HOME/.local/bin/parallels` with executable permissions. It works even when
+`install:local` builds `dist/orca` from that checkout, then copies it to
+`$HOME/.local/bin/orca` with executable permissions. It works even when
 invoked by an absolute script path from another directory. It never replaces
-`~/.parallels` itself, changes auth/config/projects, moves your repositories, or
-edits shell startup files. `PARALLELS_HOME` still relocates **runtime state**;
+`~/.orca` itself, changes auth/config/projects, moves your repositories, or
+edits shell startup files. `ORCA_HOME` still relocates **runtime state**;
 it does not change the app checkout or executable installation destination.
 
 If `~/.local/bin` is not on your PATH, for the current sh/bash/zsh session use:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
-command -v parallels
-parallels version
+command -v orca
+orca version
 ```
 
 For future sessions, add that export to the appropriate shell startup file
 **yourself**, or use your shell's equivalent (e.g. `fish_add_path ~/.local/bin`
-in fish). Check `command -v parallels` for another executable shadowing this
-one. You can always invoke `"$HOME/.local/bin/parallels"` directly.
+in fish). Check `command -v orca` for another executable shadowing this
+one. You can always invoke `"$HOME/.local/bin/orca"` directly.
 
 ```sh
 cd /path/to/any/repository
-parallels
+orca
 # Equivalent explicit form; optional project and local directory:
-parallels start [project] [directory]
-parallels msg <project> <text>
-parallels version
-parallels --help
+orca start [project] [directory]
+orca msg <project> <text>
+orca version
+orca --help
 ```
 
 Bare invocation and `start` need an interactive terminal. Launching does **not**
@@ -188,7 +220,7 @@ when safe; the harness never switches or stashes your work. It checks the
 branch again before each main-agent turn.
 
 Workers use task branches in Git worktrees beside the original checkout:
-`<checkout>.parallels-worktrees/<worktree-id>/<branch-slug>`. Reviewers reuse
+`<checkout>.orca-worktrees/<worktree-id>/<branch-slug>`. Reviewers reuse
 the worker's worktree. These share Git objects and repository-local config with
 the original checkout, including later login updates. Worktrees do not contain
 the original's uncommitted changes or untracked/ignored files such as `.env`;
@@ -199,7 +231,7 @@ environment handoffs delete themselves before starting the agent; values are
 not placed in command arguments or tmux options. This does not transfer browser
 sessions or logins in a different OS account/container.
 
-`$PARALLELS_HOME/projects` (default `~/.parallels/projects`) stores conversations,
+`$ORCA_HOME/projects` (default `~/.orca/projects`) stores conversations,
 tasks and a `repository.json` reference, not a new source clone. Discovery uses
 the canonical checkout path, so two clones with the same origin stay distinct.
 Multiple conversations sharing a checkout serialize their main-agent turns.
@@ -229,20 +261,20 @@ to workers/reviewers; Claude and Codex receive actual pixels.
 See [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md) for terminal boundaries, limits,
 model admission, queue recovery, retention/privacy, compaction and test coverage.
 
-### Explicit updates: `parallels pull`
+### Explicit updates: `orca pull`
 
 Finish active work and let background agents exit before upgrading. From **any**
 directory (including an unrelated repository), run:
 
 ```sh
-parallels pull
+orca pull
 # Or, if another command shadows it:
-"$HOME/.local/bin/parallels" pull
+"$HOME/.local/bin/orca" pull
 ```
 
 This command accepts no arguments. It updates **only the dedicated harness
-installation** at `$HOME/.parallels/app`, never the invoking repository or a
-managed project. `PARALLELS_HOME` still relocates runtime state, not the updater's
+installation** at `$HOME/.orca/app`, never the invoking repository or a
+managed project. `ORCA_HOME` still relocates runtime state, not the updater's
 checkout or executable. Git and **Bun >= 1.4.2 on PATH** are required for updates;
 Bun is not required for normal compiled runtime. An initial clone and successful
 `bun run install:local` are required first; `pull` does not create or guess a
@@ -286,7 +318,7 @@ Checkout behavior is deliberately conservative:
 Fetch/dependency/build/installation failure leaves the previously installed
 executable intact. The app's fetched refs, checkout or dependencies **may already
 have advanced** before a later failure; they are not rolled back. Inspect the
-error, preserve any local work, resolve it, then rerun `parallels pull`. Do not
+error, preserve any local work, resolve it, then rerun `orca pull`. Do not
 blindly delete files to make the check pass. A failed build does not require
 resetting the checkout.
 
@@ -299,33 +331,33 @@ when ready. Source-development processes are not upgraded in place either.
 
 ### Installer ownership and recovery
 
-Both `install:local` and `pull` refuse unrelated existing `parallels` files,
+Both `install:local` and `pull` refuse unrelated existing `orca` files,
 symlinks (including dangling links and symlinked `.local` / `bin` directories),
 directories at file destinations, and files not owned by you or writable by
 other users. Neither modifies shell startup files or auth/config/projects.
 The installer records the binary's SHA-256 in
-`~/.local/bin/.parallels-install.json`; keep this receipt alongside the executable.
+`~/.local/bin/.orca-install.json`; keep this receipt alongside the executable.
 An upgrade is permitted only when the current executable matches that receipt.
 The binary is staged on the same filesystem and replaced with one atomic rename,
 so build/copy failure leaves the previous executable intact and an already-open
 executable is not truncated. The receipt is published separately **before** the
 final binary rename (and restored if that rename fails). Abrupt interruption
 between those renames fails closed on the next install rather than guessing
-ownership. An exclusive `~/.local/bin/.parallels-install.lock` covers the entire
+ownership. An exclusive `~/.local/bin/.orca-install.lock` covers the entire
 fetch/dependencies/build/install operation, and also manual `install:local` builds.
 
 If installation refuses, inspect the named paths; do not blindly delete or
 replace them. A stale lock, missing/mismatched receipt, or interrupted upgrade
 needs manual inspection (including confirmation no installer/updater is running).
 Preserve/move aside only the verified installation files or stale lock before a
-fresh install; never remove `~/.parallels`, auth, config, or projects to resolve
+fresh install; never remove `~/.orca`, auth, config, or projects to resolve
 an installation problem. A different existing executable must be preserved or
 explicitly moved by you. The receipt and path checks are accidental-overwrite
 guards, not a security boundary against another process running as your user.
 For a manually chosen reviewed revision, preserve any existing commits first,
 select that exact revision in the dedicated app clone, then run
 `bun install --frozen-lockfile` and `bun run install:local`; do not build from the
-unrelated project you happened to invoke `parallels` in.
+unrelated project you happened to invoke `orca` in.
 
 ### Development
 
@@ -385,7 +417,7 @@ blocks, links and box-drawn tables that fit the terminal's width, re-laid out
 when it is resized). Run it inside a git repository and you get an orchestrator for that
 repository: an `orch-xxxx` project referencing the original checkout (reused next time you
 start there). With no project named it also reopens every project under
-`~/.parallels/projects`. The ruled, pinned header shows bracketed project/display names (the active one
+`~/.orca/projects`. The ruled, pinned header shows bracketed project/display names (the active one
 marked `>`), cached model, effort, fast mode, directory and remote, and refreshes
 when settings change.
 Short terminals collapse header details to keep the input usable. A blank row
@@ -522,7 +554,7 @@ dim `? question → answer` line; a skip leaves only a local removed-from-inbox 
 not a delivered reply or model input. Historical delivered skip/default messages
 still render as before. Background projects' question counts are shown too.
 
-Harness state lives under `~/.parallels` by default; your checkout and worker
+Harness state lives under `~/.orca` by default; your checkout and worker
 worktrees stay outside it. Design notes are in [PLAN.md](PLAN.md).
 
 ## The cycle
@@ -573,7 +605,7 @@ to the defaults); 0 skips review and sends the worker's branch straight to "watc
 
 ## Subscription login
 
-Parallels always connects as **Claude Code** for Claude models and **Codex** for
+orca always connects as **Claude Code** for Claude models and **Codex** for
 OpenAI models. Those are its only authentication and inference paths.
 
 In the TUI:
@@ -600,7 +632,7 @@ automatically. `/models` reads the providers' catalogs; a listed model can still
 require an entitlement your account does not have.
 
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, developer-platform profiles, and keys from
-an old `~/.parallels/credentials.json` are never used. There is no API-key prompt,
+an old `~/.orca/credentials.json` are never used. There is no API-key prompt,
 override, billing mode, or fallback. Existing OpenAI users must run `/login codex`
 once. Old key files are left untouched and can be removed manually.
 
@@ -618,7 +650,7 @@ Claude import reads credential files under `CLAUDE_CONFIG_DIR` (default
 the default directory. Codex import reads `auth.json` under `CODEX_HOME` (default
 `~/.codex`) and accepts only ChatGPT subscription tokens. If Codex uses an OS
 credential store, use `/login codex` to create a separate browser session.
-Imports do not modify either CLI's original store. Browser login gives parallels
+Imports do not modify either CLI's original store. Browser login gives orca
 independent refresh tokens when you also use the native CLI concurrently.
 
 Browser login requires a browser on the same machine: Claude receives its callback
@@ -629,13 +661,13 @@ characters, so it survives terminal wrapping and copying). The loopback server
 answers that one random path with a 302 to the full authorize URL; every other path
 except the OAuth callback is a 404. The browser is opened with the full URL. Over
 SSH (`SSH_CONNECTION` or `SSH_TTY` set) it also prints an `ssh -L` tunnel hint, since
-the link and the callback only exist on the machine running parallels. If the short
-link does not work, the full URL is in `$PARALLELS_HOME/login-url.txt` (0600; the
+the link and the callback only exist on the machine running orca. If the short
+link does not work, the full URL is in `$ORCA_HOME/login-url.txt` (0600; the
 message prints only its path). The file is deleted when the login finishes, fails or
 is cancelled.
-Credentials live under `~/.parallels/auth/{anthropic,openai}/` in private (0600)
+Credentials live under `~/.orca/auth/{anthropic,openai}/` in private (0600)
 files with atomic writes and a per-profile lock shared across workers.
-`PARALLELS_HOME` relocates parallels' state. Failed login and refresh attempts
+`ORCA_HOME` relocates orca' state. Failed login and refresh attempts
 preserve the previous credentials.
 
 ## Provider implementation
@@ -695,7 +727,7 @@ failures and cancellation preserve the original history. If the resulting input
 still cannot fit, the existing context guard stops the model request.
 
 Original entries and task records are indexed in private
-`~/.parallels/projects/<project>/memory.sqlite`, using Bun's built-in SQLite and
+`~/.orca/projects/<project>/memory.sqlite`, using Bun's built-in SQLite and
 FTS5. JSONL transcripts and `tasks.json` remain authoritative; the index can be
 rebuilt. Inbox delivery and task IDs/status semantics are unchanged. Image IDs and
 original prompt associations are searchable; raw archive entries and checkpoints
@@ -721,12 +753,12 @@ bounded, but disk history grows with use; this is not unlimited model context.
 ### Tool output and scheduling
 
 Claude prompt-prefix caching is enabled by default (`anthropicPromptCache = true`
-in `~/.parallels/config.toml`). It reuses eligible prefixes without rewriting
+in `~/.orca/config.toml`). It reuses eligible prefixes without rewriting
 instructions or history. Cached tokens still occupy context; caching does not
 replace compaction or guarantee faster responses.
 
 Bash streams full output into private files under
-`~/.parallels/projects/<project>/tool-outputs/`, outside the repository.
+`~/.orca/projects/<project>/tool-outputs/`, outside the repository.
 Normal output up to `maxToolResultBytes` (16 KiB by default) stays intact.
 Larger output returns a head/tail preview of at most 4 KiB and the saved file path,
 which the model can inspect with bounded shell reads. `max_output_bytes` adjusts a

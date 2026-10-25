@@ -12,8 +12,8 @@ import { put, pending } from "./inbox";
 import { fakeProvider, text, toolUse } from "./test/fake-provider";
 
 const dirs: string[] = [];
-const oldHome = process.env.PARALLELS_HOME;
-afterEach(() => { process.env.PARALLELS_HOME = oldHome; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+const oldHome = process.env.ORCA_HOME;
+afterEach(() => { process.env.ORCA_HOME = oldHome; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "compact-")); dirs.push(dir);
   const transcript = open(join(dir, "t.jsonl"));
@@ -76,7 +76,7 @@ test("model change to smaller context rechecks and compact off can be overridden
   expect(await compact(deps, true)).toBe(true);
 });
 test("manual idle queues without user messages; busy request and arriving inbox use safe boundaries", async () => {
-  const { deps, transcript, dir } = await fixture(); process.env.PARALLELS_HOME = dir;
+  const { deps, transcript, dir } = await fixture(); process.env.ORCA_HOME = dir;
   mkdirSync(paths.project("p"), { recursive: true });
   let release!: () => void;
   let started!: () => void;
@@ -95,7 +95,7 @@ test("manual idle queues without user messages; busy request and arriving inbox 
   expect(orch.entries!()).toHaveLength(4);
 });
 for (const role of ["worker", "reviewer"] as const) test(`${role} uses shared pre-request path`, async () => {
-  const { deps, provider, dir } = await fixture(); process.env.PARALLELS_HOME = dir;
+  const { deps, provider, dir } = await fixture(); process.env.ORCA_HOME = dir;
   deps.ctx.role = role;
   deps.provider = fakeProvider([[text("Goal: constraints. Progress: done. Next: task.")], [text("final")]]);
   await createAgent(deps).run();
@@ -118,7 +118,7 @@ test("non-reducing small summary and orphaned tool batches are rejected", async 
   expect(deps.transcript.head()).toBe(before);
 });
 test("resolver is consulted before compaction and summarizer uses newly selected provider", async () => {
-  const { deps, dir } = await fixture(); process.env.PARALLELS_HOME = dir;
+  const { deps, dir } = await fixture(); process.env.ORCA_HOME = dir;
   deps.model = "gpt-6-astra";
   deps.compaction = { fallback: 20000 };
   const selected = fakeProvider([[text("Goal and progress summary")], [text("done")]]);
@@ -142,7 +142,7 @@ test("restart ignores truncated checkpoint and subsequent append remains readabl
 
 test("scheduled compaction retains full UI replay and forwards subsequent tool events", async () => {
   const { transcript, dir } = await fixture();
-  process.env.PARALLELS_HOME = dir;
+  process.env.ORCA_HOME = dir;
   mkdirSync(paths.project("compaction-ui"), { recursive: true });
   const originals = transcript.history!();
   const provider = fakeProvider([

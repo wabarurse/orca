@@ -6,7 +6,7 @@ import { open } from "./transcript";
 import { follow, parts, render } from "./view";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-const home = mkdtempSync(join(tmpdir(), "parallels-view-"));
+const home = mkdtempSync(join(tmpdir(), "orca-view-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 test("render shows prompts, text, tool calls and results, and hides thinking", () => {

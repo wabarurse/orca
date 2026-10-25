@@ -9,11 +9,11 @@ const system = "This is explicitly authorized local work: execute directly in th
 const directSystem = process.env.EFF_DIRECT === "1" ? "Benchmark-specific workflow: execute the authorized local task directly. This overrides the usual plan, task-registration, delegation, branch, commit, reviewer and approval workflow. The fixture intentionally has no Git repository; no branch setup is needed. Do not ask for approval or invoke agents. Inspect files, make the requested local changes, run tests and return the requested answer." : undefined;
 const cliSystem = [system, directSystem].filter(Boolean).join("\n\n");
 const arms = [
-  { name: "before-gpt", engine: "parallels", model: "gpt-6-astra", after: false },
-  { name: "after-gpt", engine: "parallels", model: "gpt-6-astra", after: true },
+  { name: "before-gpt", engine: "orca", model: "gpt-6-astra", after: false },
+  { name: "after-gpt", engine: "orca", model: "gpt-6-astra", after: true },
   { name: "codex-gpt", engine: "codex", model: "gpt-6-astra" },
-  { name: "before-opus", engine: "parallels", model: "claude-opus-5-5", after: false },
-  { name: "after-opus", engine: "parallels", model: "claude-opus-5-5", after: true },
+  { name: "before-opus", engine: "orca", model: "claude-opus-5-5", after: false },
+  { name: "after-opus", engine: "orca", model: "claude-opus-5-5", after: true },
   { name: "claude-opus", engine: "claude", model: "claude-opus-5-5" },
 ];
 const repeats = Number(process.env.EFF_REPEATS ?? 3);
@@ -46,7 +46,7 @@ for (let repeat = 0; repeat < repeats; repeat++) for (const [taskIndex, task] of
     const spec = { ...arm, dir, state, cwd, sourceRoot: arm.after ? locations.after : locations.baseline, prompt: data.prompt, system, directSystem };
     const specPath = join(dir, "spec.json"); await Bun.write(specPath, JSON.stringify(spec));
     let argv: string[];
-    if (arm.engine === "parallels") argv = [process.execPath, join(import.meta.dir, "worker.ts"), specPath];
+    if (arm.engine === "orca") argv = [process.execPath, join(import.meta.dir, "worker.ts"), specPath];
     else if (arm.engine === "codex") argv = ["codex", "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--json", "--color", "never", "--skip-git-repo-check", "-m", arm.model,
       "-c", 'model_reasoning_effort="medium"', "-c", 'approval_policy="never"', "-c", 'web_search="disabled"',
       "-c", "features.skip_host_skill_discovery=true", "-c", "features.plugins=false", "-c", "features.apps=false", "-c", "features.hooks=false", "-c", "features.multi_agent=false",

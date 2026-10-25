@@ -11,9 +11,9 @@ import { paired } from "./tool-pairs";
 import { text, toolUse } from "./test/fake-provider";
 
 const dirs: string[] = [];
-const oldHome = process.env.PARALLELS_HOME;
+const oldHome = process.env.ORCA_HOME;
 afterEach(() => {
-  process.env.PARALLELS_HOME = oldHome;
+  process.env.ORCA_HOME = oldHome;
   dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true }));
 });
 const end = (value: string): Turn => ({ content: [text(value)], stop: "end", completion: "end_turn" });
@@ -22,7 +22,7 @@ const reasoning = { type: "thinking" as const, thinking: "plan", signature: "sig
 const result = (id: string, content: string) => ({ type: "tool_result" as const, tool_use_id: id, content });
 
 async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "compact-batches-")); dirs.push(dir); process.env.PARALLELS_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "compact-batches-")); dirs.push(dir); process.env.ORCA_HOME = dir;
   const transcript = open(join(dir, "transcript.jsonl"));
   await transcript.append({ type: "message", message: { role: "user", content: original } });
   const deps: AgentDeps = { transcript, model: "unknown", tools: {}, ctx: { project: "batches", role: "worker", cwd: dir },

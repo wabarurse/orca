@@ -39,7 +39,7 @@ async function acquire(path: string): Promise<void> {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     await Bun.sleep(10);
   }
-  throw new Error(`project state is locked; try again (if no parallels process is active, remove stale lock ${path})`);
+  throw new Error(`project state is locked; try again (if no orca process is active, remove stale lock ${path})`);
 }
 async function locked<T>(path: string, action: () => Promise<T>): Promise<T> {
   await acquire(path);

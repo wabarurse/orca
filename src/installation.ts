@@ -3,8 +3,8 @@ import { chmod, copyFile, lstat, mkdir, readFile, rename, rm, realpath, writeFil
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-const RECEIPT = ".parallels-install.json";
-const KIND = "parallels-local-install-v1";
+const RECEIPT = ".orca-install.json";
+const KIND = "orca-local-install-v1";
 const digest = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
 
 async function stat(path: string) {
@@ -29,7 +29,7 @@ async function ensureDirectory(path: string) {
 }
 
 async function previous(bin: string): Promise<string | null> {
-  const target = join(bin, "parallels"), receipt = join(bin, RECEIPT);
+  const target = join(bin, "orca"), receipt = join(bin, RECEIPT);
   const executable = await owned(target), record = await owned(receipt);
   if (!executable && !record) return null;
   if (!executable || !record) throw new Error(`refusing incomplete or unowned installation at ${target}; inspect it manually`);
@@ -57,8 +57,8 @@ export async function withInstallation<T>(home: string, requireExisting: boolean
       if (!await owned(path, true)) throw new Error(`missing installation: ${path}; install with bun run install:local first`);
     } else await ensureDirectory(path);
   }
-  const bin = join(root, ".local", "bin"), target = join(bin, "parallels");
-  const lock = join(bin, ".parallels-install.lock");
+  const bin = join(root, ".local", "bin"), target = join(bin, "orca");
+  const lock = join(bin, ".orca-install.lock");
   try { await mkdir(lock, { mode: 0o700 }); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`installation/update lock already exists: ${lock}; wait for the other operation, or inspect a stale lock manually`);
@@ -78,14 +78,14 @@ export async function withInstallation<T>(home: string, requireExisting: boolean
 async function replaceBinary(source: string, bin: string, lock: string, before: string | null): Promise<string> {
   const sourceStat = await owned(source);
   if (!sourceStat || !(sourceStat.mode & 0o111)) throw new Error(`not a compiled executable: ${source}`);
-  const staged = join(lock, "parallels");
+  const staged = join(lock, "orca");
   await copyFile(source, staged, constants.COPYFILE_EXCL);
   await chmod(staged, 0o755);
   const sha256 = digest(await readFile(staged));
   await writeFile(join(lock, "receipt"), JSON.stringify({ kind: KIND, sha256 }) + "\n", { flag: "wx", mode: 0o600 });
   // Do not replace a destination edited while fetching/building/copying.
   if (await previous(bin) !== before) throw new Error("installation changed during operation; refusing replacement");
-  const receipt = join(bin, RECEIPT), target = join(bin, "parallels");
+  const receipt = join(bin, RECEIPT), target = join(bin, "orca");
   if (before) await copyFile(receipt, join(lock, "old-receipt"), constants.COPYFILE_EXCL);
   // Publish the receipt first, binary LAST. Any failed operation before the
   // final rename leaves the old executable intact. Restore metadata on failure;
@@ -106,7 +106,7 @@ export function installBinary(source: string, home = homedir()): Promise<string>
 }
 
 export async function prepareArtifact(app: string): Promise<string> {
-  const artifact = join(app, "dist", "parallels");
+  const artifact = join(app, "dist", "orca");
   await ensureDirectory(dirname(artifact));
   await owned(artifact);
   return artifact;

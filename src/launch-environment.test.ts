@@ -7,12 +7,12 @@ import { paths } from "./config";
 
 let home: string, previous: string | undefined;
 beforeEach(() => {
-  previous = process.env.PARALLELS_HOME;
-  home = mkdtempSync(join(tmpdir(), "parallels-env-"));
-  process.env.PARALLELS_HOME = home;
+  previous = process.env.ORCA_HOME;
+  home = mkdtempSync(join(tmpdir(), "orca-env-"));
+  process.env.ORCA_HOME = home;
 });
 afterEach(() => {
-  if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous;
+  if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
   rmSync(home, { recursive: true, force: true });
 });
 

@@ -6,8 +6,8 @@ import { dirname, join } from "node:path";
 import { paths } from "../config";
 import { appendHistory, COMPACT_AT, keepable, loadHistory, MAX_INPUT_HISTORY, remember } from "./history";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-history-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-history-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const tmps = (project: string) => readdirSync(dirname(paths.inputHistory(project))).filter((n) => n.endsWith(".tmp"));

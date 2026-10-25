@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 
-// config.ts reads PARALLELS_HOME at import time, so set it before importing the runner.
-const home = mkdtempSync(join(tmpdir(), "parallels-runner-"));
-process.env.PARALLELS_HOME = home;
+// config.ts reads ORCA_HOME at import time, so set it before importing the runner.
+const home = mkdtempSync(join(tmpdir(), "orca-runner-"));
+process.env.ORCA_HOME = home;
 const { paths } = await import("./config");
 const { local, ensureWorktree, removeWorktree, tmux, sessionName, agentCommand, slug } = await import("./runner");
 
@@ -75,7 +75,7 @@ test("agentCommand is an argv: workers run the fixed sh -c wrapper with values a
   expect(cmd[2]).not.toContain(home);
   expect(slug("feat/b c")).toBe("feat-b-c");
   const orch = agentCommand({ project: "p", role: "orchestrator" }, "r1");
-  expect(orch).toEqual(["env", `PARALLELS_HOME=${home}`, process.execPath, expect.stringMatching(/cli\.ts$/), "agent", "--project", "p", "--role", "orchestrator"]);
+  expect(orch).toEqual(["env", `ORCA_HOME=${home}`, process.execPath, expect.stringMatching(/cli\.ts$/), "agent", "--project", "p", "--role", "orchestrator"]);
 });
 
 describe.skipIf(!hasTmux)("tmux", () => {

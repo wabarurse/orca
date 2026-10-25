@@ -7,11 +7,11 @@ import { paths } from "./config";
 import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import { open } from "./transcript";
 let home: string;
-const before = process.env.PARALLELS_HOME;
-afterEach(async () => { if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before; if (home) await rm(home, { recursive: true, force: true }); });
+const before = process.env.ORCA_HOME;
+afterEach(async () => { if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before; if (home) await rm(home, { recursive: true, force: true }); });
 
 test("production orchestrator overlaps independent tools, keeps barriers and ordered transcript results", async () => {
-  home = await mkdtemp(join(tmpdir(), "efficiency-")); process.env.PARALLELS_HOME = home;
+  home = await mkdtemp(join(tmpdir(), "efficiency-")); process.env.ORCA_HOME = home;
   await Bun.write(paths.config, 'model = "test"\n');
   let active = 0, peak = 0, entered = 0;
   let release!: () => void;

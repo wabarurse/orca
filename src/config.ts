@@ -1,6 +1,6 @@
-// Harness state lives under ~/.parallels. Checkouts stay outside it.
+// Harness state lives under ~/.orca. Checkouts stay outside it.
 //
-//   ~/.parallels/
+//   ~/.orca/
 //     config.toml              model, byte limits, defaults, pinned projects
 //     projects/<name>/
 //       name                   display name set by /rename (absent = <name>)
@@ -19,9 +19,10 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { readFileSync } from "node:fs";
+import { stateRoot, worktreeRoot } from "./legacy";
 
-// Read lazily so tests can point PARALLELS_HOME at a temp dir after import.
-const root = () => process.env.PARALLELS_HOME ?? join(homedir(), ".parallels");
+// Read lazily so tests can point ORCA_HOME at a temp dir after import.
+const root = () => stateRoot(homedir(), process.env);
 
 export interface RepositoryBinding { version: 1; directory: string; branch: string; worktreeId: string }
 
@@ -40,7 +41,7 @@ export function repositoryBinding(name: string): RepositoryBinding | undefined {
 
 function worktrees(name: string): string {
   const binding = repositoryBinding(name);
-  return binding ? join(`${binding.directory}.parallels-worktrees`, binding.worktreeId) : join(root(), "projects", name, "worktrees");
+  return binding ? worktreeRoot(binding.directory, binding.worktreeId) : join(root(), "projects", name, "worktrees");
 }
 
 export const paths = {
@@ -117,7 +118,7 @@ export async function loadConfig(): Promise<Config> {
     parsed = Bun.TOML.parse(await file.text()) as Partial<Config>;
   } catch (err) {
     // A broken config.toml must not break every command and turn.
-    const warning = `parallels: ignoring ${paths.config}: ${err instanceof Error ? err.message : String(err)}`;
+    const warning = `orca: ignoring ${paths.config}: ${err instanceof Error ? err.message : String(err)}`;
     if (warning !== warned) console.error(warning);
     warned = warning;
     return defaults;

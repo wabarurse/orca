@@ -12,7 +12,7 @@ import { fakeProvider, text } from "./test/fake-provider";
 import { open } from "./transcript";
 
 const home = mkdtempSync(join(tmpdir(), "silent-skip-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 test("silent skip produces no model input, pending user message or provider call, even on restart", async () => {

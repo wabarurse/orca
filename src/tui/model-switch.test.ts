@@ -12,7 +12,7 @@ import { effectiveModel } from "../project-model";
 import { paths, saveConfig } from "../config";
 
 const home = mkdtempSync(join(tmpdir(), "model-ui-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 async function until(check: () => boolean) {
   for (let i = 0; i < 200 && !check(); i++) await Bun.sleep(5);

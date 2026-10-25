@@ -25,11 +25,11 @@ import { disk } from "./transcript-storage";
 import { message } from "./tools/message";
 import { orchestratorTask } from "./tools/task";
 
-const before = process.env.PARALLELS_HOME;
+const before = process.env.ORCA_HOME;
 const dirs: string[] = [], sessions: Orchestrator[] = [], controllers: RollingCompactor[] = [];
 afterEach(() => {
   sessions.splice(0).forEach(o => o.dispose?.()); controllers.splice(0).forEach(c => c.dispose());
-  if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
+  if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
   dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true }));
 });
 const memory = { user: [], project: ["Retain visual requirements; pixels are separate."], pending: [], tasks: [] };
@@ -43,7 +43,7 @@ function summary(gated = false) {
   return { provider, calls, entered, release };
 }
 async function fixture(model = "claude-sonnet-4-6") {
-  const dir = mkdtempSync(join(tmpdir(), "rolling-images-")); dirs.push(dir); process.env.PARALLELS_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "rolling-images-")); dirs.push(dir); process.env.ORCA_HOME = dir;
   await saveConfig({ model });
   const project = "p", transcript = open(paths.transcript(project, "orchestrator"));
   const refs = [await saveImage(project, png()), await saveImage(project, png(2, 1, 250))];
@@ -99,19 +99,19 @@ for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> r
   for (const request of worker.calls) {
     const source = JSON.stringify(request.messages);
     expect(source).toContain(f.refs[0]!.id); expect(source).toContain("not inspected");
-    expect(source).not.toContain("parallels-image:"); expect(source).not.toContain(png().toString("base64"));
+    expect(source).not.toContain("orca-image:"); expect(source).not.toContain(png().toString("base64"));
     expect(pixels(request.messages)).toEqual([]);
   }
   const rows = JSON.parse(await queryHistory(f.project, { action: "search_history", query: f.refs[0]!.id }));
   expect(rows.entries.some((e: { entryId: string }) => e.entryId === original.uuid)).toBe(true);
   const page = JSON.parse(await orchestratorTask.run({ action: "read_history", entryId: original.uuid, offset: entryText(original).indexOf("[Historical image") }, f.ctx));
   expect(page.text).toContain(`attachment_id=${f.refs[0]!.id}`);
-  expect(page.text).not.toContain("parallels-image:"); expect(page.text).not.toContain("base64");
+  expect(page.text).not.toContain("orca-image:"); expect(page.text).not.toContain("base64");
   const db = new Database(archivePath(f.project), { readonly: true });
   try {
     const row = db.query("SELECT raw,body FROM entries WHERE id=?").get(original.uuid) as { raw: string; body: string };
-    expect(JSON.parse(row.raw)).toEqual(original); expect(row.raw).toContain("parallels-image:");
-    expect(row.body).not.toContain("parallels-image:"); expect(row.body).toContain(f.refs[0]!.id);
+    expect(JSON.parse(row.raw)).toEqual(original); expect(row.raw).toContain("orca-image:");
+    expect(row.body).not.toContain("orca-image:"); expect(row.body).toContain(f.refs[0]!.id);
   } finally { db.close(); }
   const refreshed = await createOrchestrator({ project: f.project, provider: foreground, tools: {}, write() {}, rolling: { triggerTokens: 1e9, loadProvider: async () => worker.provider } });
   sessions.push(refreshed); await refreshed.refresh!();

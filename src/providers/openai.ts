@@ -97,7 +97,7 @@ function clientFor(tokens: CodexTokens): OpenAI {
     fetchOptions: { redirect: "error" },
     defaultHeaders: { authorization: `Bearer ${tokens.accessToken}`, "x-api-key": null, "api-key": null,
       "chatgpt-account-id": tokens.accountId, originator: "codex_cli_rs",
-      "openai-beta": "responses=experimental", "user-agent": `codex_cli_rs/${CODEX_CLIENT_VERSION} (parallels)` },
+      "openai-beta": "responses=experimental", "user-agent": `codex_cli_rs/${CODEX_CLIENT_VERSION} (orca)` },
   });
 }
 

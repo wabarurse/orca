@@ -3,6 +3,7 @@ import { chapterRows, tabRow, headerHeight, type Chapter } from "./chrome";
 import { commit, statusRows } from "./render";
 import { toolRows, runningRow } from "./tools";
 import { FakeScreen } from "./testing";
+import { whaleRows } from "./whale";
 
 const plain = (rows: string[]) => rows.map(Bun.stripANSI);
 const chapter: Chapter = { tabs: [{ name: "orch-one" }, { name: "orch-two" }], active: 1, model: "model-a", directory: "/repo", remote: "host/repo" };
@@ -12,7 +13,7 @@ test("chapter rules lead with real bracketed pages, selected in text and intensi
   const rows = chapterRows(chapter, 80);
   expect(plain(rows)).toEqual(["── [orch-one] >[orch-two] " + "─".repeat(54), "model model-a", "/repo", "host/repo", "─".repeat(80)]);
   expect(rows[0]).toContain("\x1b[1m>[orch-two]");
-  expect(rows.join("")).not.toMatch(/parallels|Ctrl\+|48;/);
+  expect(rows.join("")).not.toMatch(/orca|Ctrl\+|48;/);
   const s = new FakeScreen(80, 24);
   s.write(commit(rows, 80));
   expect(s.backgrounds().every((row) => row.every((cell) => !cell))).toBe(true);
@@ -67,5 +68,31 @@ test("bounded header budgets retain each field before wrapping long metadata", (
       expect(header.join("\n")).toContain("host/repo");
       expect(header.at(-1)).toBe("─".repeat(40));
     }
+  }
+});
+
+test("whale fits beside metadata at ordinary sizes and falls back safely on tiny terminals", () => {
+  for (const cols of [1, 20, 40, 68, 80, 100, 160]) for (const rows of [6, 12, 24, 36, 60, 90]) {
+    const budget = headerHeight(rows);
+    const c = { ...chapter, context: "24k / 272k", review: "review 1", dispatch: "dispatch off", whale: { time: 1200, active: true } };
+    const header = plain(chapterRows(c, cols, budget));
+    expect(header.length).toBeLessThanOrEqual(budget);
+    expect(header.every(line => Bun.stringWidth(line) <= cols)).toBe(true);
+    if (cols >= 80 && rows >= 24) {
+      expect(header.join("\n")).toContain("orca");
+      expect(header.join("\n")).toContain("model model-a");
+      expect(header.join("\n")).toContain("host/repo");
+      expect(header.join("\n")).toContain(">[orch-two]");
+    }
+  }
+});
+
+test("whale animation only changes the tail and stays still when idle", () => {
+  for (const [cols, budget] of [[32, 6], [44, 10], [84, 19]]) {
+    const a = whaleRows(cols!, budget!, 0, true), b = whaleRows(cols!, budget!, 1200, true);
+    expect(a.slice(0, -2)).toEqual(b.slice(0, -2));
+    expect(a).not.toEqual(b);
+    expect(whaleRows(cols!, budget!, 0, false)).toEqual(whaleRows(cols!, budget!, 1200, false));
+    expect(b.every(row => row.length === cols && /^[ -~]+$/.test(row))).toBe(true);
   }
 });

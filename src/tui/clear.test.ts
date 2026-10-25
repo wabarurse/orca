@@ -14,16 +14,16 @@ import { ask, all } from "../questions";
 import { fakeProvider } from "../test/fake-provider";
 import { withProjectStateLock } from "../project-state";
 
-const previous = process.env.PARALLELS_HOME;
+const previous = process.env.ORCA_HOME;
 const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); process.env.PARALLELS_HOME = previous; });
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); process.env.ORCA_HOME = previous; });
 async function until(check: () => boolean) {
   for (let i = 0; i < 200 && !check(); i++) await Bun.sleep(5);
   expect(check()).toBe(true);
 }
 async function setup(extra: Partial<AppDeps> = {}) {
   const home = mkdtempSync(join(tmpdir(), "clear-ui-"));
-  process.env.PARALLELS_HOME = home;
+  process.env.ORCA_HOME = home;
   await saveConfig({ model: "unknown", compact: false });
   const project = "p";
   const t = open(paths.transcript(project, "orchestrator"));

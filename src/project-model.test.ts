@@ -11,7 +11,7 @@ import { clearCatalogLimits } from "./model-context";
 import type { Provider } from "./providers";
 
 const home = mkdtempSync(join(tmpdir(), "project-model-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 afterEach(clearCatalogLimits);
 

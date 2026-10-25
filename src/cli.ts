@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-// parallels / parallels start [project] [directory]   open the TUI: one page per orchestrator (binds the original checkout;
+// orca / orca start [project] [directory]   open the TUI: one page per orchestrator (binds the original checkout;
 //                                         run inside a git repo to get an orchestrator for it)
-// parallels msg <project> <text>        drop a message in the orchestrator's inbox
-// parallels pull                       update the dedicated harness clone from origin/main
-// parallels version                    print the package.json version
-// parallels agent --project p --role r [--branch b] [--run id]   internal: what spawn runs
-// parallels agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit
+// orca msg <project> <text>        drop a message in the orchestrator's inbox
+// orca pull                       update the dedicated harness clone from origin/main
+// orca version                    print the package.json version
+// orca agent --project p --role r [--branch b] [--run id]   internal: what spawn runs
+// orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit
 
 import { pullHarness } from "./pull";
 import pkg from "../package.json";
@@ -29,16 +29,16 @@ function flag(name: string): string | undefined {
 
 function usage(error?: string): never {
   const write = error ? console.error : console.log;
-  if (error) write(`parallels: ${error}`);
+  if (error) write(`orca: ${error}`);
   write(`usage:
-  parallels                            start for the repository in the current directory
-  parallels start [project] [directory]
-  parallels msg <project> <text>
-  parallels version
-  parallels pull                       update ~/.parallels/app from origin/main
-  parallels help | --help
-  parallels agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
-  parallels agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>`);
+  orca                            start for the repository in the current directory
+  orca start [project] [directory]
+  orca msg <project> <text>
+  orca version
+  orca pull                       update ~/.orca/app from origin/main
+  orca help | --help
+  orca agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
+  orca agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>`);
   process.exit(error ? 1 : 0);
 }
 
@@ -85,10 +85,10 @@ switch (cmd) {
     break;
   }
   case "pull":
-    if (rest.length) usage("pull takes no arguments; it only updates ~/.parallels/app");
+    if (rest.length) usage("pull takes no arguments; it only updates ~/.orca/app");
     try { await pullHarness(); }
     catch (error) {
-      console.error(`parallels pull: ${error instanceof Error ? error.message : String(error)}\nthe installed executable was not replaced on failure; the harness checkout/dependencies may have advanced. inspect the error and retry after resolving it.`);
+      console.error(`orca pull: ${error instanceof Error ? error.message : String(error)}\nthe installed executable was not replaced on failure; the harness checkout/dependencies may have advanced. inspect the error and retry after resolving it.`);
       process.exitCode = 1;
     }
     break;

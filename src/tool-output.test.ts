@@ -6,9 +6,9 @@ import { bash } from "./tools/bash";
 import { paths } from "./config";
 import { OutputPreview, pruneOutputs } from "./tool-output";
 let home: string;
-const before = process.env.PARALLELS_HOME;
-beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "tool-output-")); process.env.PARALLELS_HOME = home; });
-afterEach(async () => { if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before; await rm(home, { recursive: true, force: true }); });
+const before = process.env.ORCA_HOME;
+beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "tool-output-")); process.env.ORCA_HOME = home; });
+afterEach(async () => { if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before; await rm(home, { recursive: true, force: true }); });
 const context = () => ({ project: "test", role: "worker" as const, cwd: home });
 const directory = () => join(paths.project("test"), "tool-outputs");
 async function saved() { return Promise.all((await readdir(directory())).map(async name => ({ path: join(directory(), name), text: await Bun.file(join(directory(), name)).text() }))); }

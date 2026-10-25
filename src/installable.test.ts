@@ -8,13 +8,13 @@ import { agentCommand, slug } from "./runner";
 import pkg from "../package.json";
 import { pullFixture } from "./test/pull-fixture";
 
-const root = realpathSync(mkdtempSync(join(tmpdir(), "parallels-relocated-")));
+const root = realpathSync(mkdtempSync(join(tmpdir(), "orca-relocated-")));
 const home = join(root, "home ' $space"), state = join(root, "state ' $space"), bin = join(root, "fake-bin");
-const installed = join(home, ".local", "bin", "parallels");
+const installed = join(home, ".local", "bin", "orca");
 const probe = join(root, "relocated ' $probe");
 const log = join(root, "probe.jsonl");
 const source = resolve(import.meta.dir, "..");
-const env = { HOME: home, PARALLELS_HOME: state, PATH: `${bin}:/usr/bin:/bin`, TERM: "xterm-256color", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", PROBE: probe, PROBE_LOG: log };
+const env = { HOME: home, ORCA_HOME: state, PATH: `${bin}:/usr/bin:/bin`, TERM: "xterm-256color", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", PROBE: probe, PROBE_LOG: log };
 
 async function exec(argv: string[], cwd = root, extra: Record<string, string> = {}) {
   const child = Bun.spawn(argv, { cwd, env: { ...env, ...extra }, stdout: "pipe", stderr: "pipe" });
@@ -30,7 +30,7 @@ function resetLog() { writeFileSync(log, ""); }
 beforeAll(async () => {
   mkdirSync(home); mkdirSync(state); mkdirSync(bin);
   const build = join(root, "build ' directory"); mkdirSync(build);
-  const artifact = join(build, "parallels");
+  const artifact = join(build, "orca");
   const result = await exec([process.execPath, "build", join(source, "src/cli.ts"), "--compile", "--outfile", artifact]);
   expect(result.code).toBe(0);
   expect(await installBinary(artifact, home)).toBe(installed);
@@ -50,7 +50,7 @@ test("relocated installed CLI preserves help, errors, version, msg and state rel
   expect(await exec([installed, "version"])).toEqual({ code: 0, out: `${pkg.version}\n`, err: "" });
   for (const args of [["help"], ["--help"], ["-h"], ["start", "--help"], ["pull", "--help"]]) {
     const result = await exec([installed, ...args]);
-    expect(result.code).toBe(0); expect(result.out).toContain("parallels start");
+    expect(result.code).toBe(0); expect(result.out).toContain("orca start");
   }
   for (const args of [["pull", "extra"], ["not-a-command"], ["msg"], ["agent"], ["agent-exit"], ["version", "extra"], ["start", "--bad"], ["agent", "--project", "p", "--role", "invalid"], ["agent-exit", "--project", "p", "--role", "worker", "--branch", "b", "--run", "r", "--code", "NaN"]]) {
     const result = await exec([installed, ...args]);
@@ -62,7 +62,7 @@ test("relocated installed CLI preserves help, errors, version, msg and state rel
   const files = readdirSync(inbox).filter(f => f.endsWith(".json"));
   expect(files).toHaveLength(1);
   expect(JSON.parse(readFileSync(join(inbox, files[0]!), "utf8")).text).toBe("literal ' $() --help");
-  expect(existsSync(join(home, ".parallels"))).toBe(false);
+  expect(existsSync(join(home, ".orca"))).toBe(false);
 });
 
 test("relocated compiled image pipeline embeds native fixture script, storage and both serializers without runtime Bun", async () => {
@@ -80,7 +80,7 @@ async function seed(project: string, role: "orchestrator" | "worker" | "reviewer
   expect((await exec(["git", "-c", "user.name=Test", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "fixture"], repo)).code).toBe(0);
   const worktreeId = crypto.randomUUID();
   writeFileSync(join(base, "repository.json"), JSON.stringify({ version: 1, directory: repo, branch: "main", worktreeId }));
-  const cwd = role === "orchestrator" ? repo : join(`${repo}.parallels-worktrees`, worktreeId, slug(branch));
+  const cwd = role === "orchestrator" ? repo : join(`${repo}.orca-worktrees`, worktreeId, slug(branch));
   if (role !== "orchestrator") expect((await exec(["git", "worktree", "add", "-b", branch, cwd], repo)).code).toBe(0);
   const id = role === "orchestrator" ? role : `${role}-${slug(branch)}`;
   const t = open(join(base, "transcripts", `${id}.jsonl`));
@@ -136,11 +136,11 @@ for (const exit of ["0", "70", "19", "kill"]) {
 }
 
 test("actual installed internal agent and agent-exit settle a startup failure once without credentials", async () => {
-  const previous = process.env.PARALLELS_HOME;
-  process.env.PARALLELS_HOME = state;
+  const previous = process.env.ORCA_HOME;
+  process.env.ORCA_HOME = state;
   let argv: string[];
   try { argv = agentCommand({ project: "actual", role: "reviewer", branch }, run, [installed]); }
-  finally { if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous; }
+  finally { if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous; }
   const result = await exec(argv);
   expect(result.code).toBe(70); expect(result.err).toContain("spawn seeds it");
   const inbox = join(state, "projects", "actual", "inbox", "orchestrator");
@@ -171,7 +171,7 @@ test("bare and explicit installed startup reuse the original checkout with its l
     let output = "";
     const decoder = new TextDecoder();
     const child = Bun.spawn([installed, ...args], {
-      cwd, env: { ...env, PARALLELS_HOME: isolated },
+      cwd, env: { ...env, ORCA_HOME: isolated },
       terminal: { cols: 110, rows: 28, data(_term, data) { output += decoder.decode(data, { stream: true }); } },
     });
     try {
@@ -195,11 +195,11 @@ test("bare and explicit installed startup reuse the original checkout with its l
 }, 30_000);
 
 test("development CLI re-entry uses absolute Bun without Bun on PATH", async () => {
-  const previous = process.env.PARALLELS_HOME;
-  process.env.PARALLELS_HOME = state;
+  const previous = process.env.ORCA_HOME;
+  process.env.ORCA_HOME = state;
   let argv: string[];
   try { argv = agentCommand({ project: "development", role: "worker", branch }, run); }
-  finally { if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous; }
+  finally { if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous; }
   expect(argv).toContain(process.execPath);
   const result = await exec(argv);
   expect(result.code).toBe(70); expect(result.err).toContain("spawn seeds it");
@@ -214,7 +214,7 @@ test("local install script builds from its checkout, upgrades fixture HOME, and 
   expect(result.out).toContain("installed");
   expect((await exec([installed, "version"])).out).toBe(`${pkg.version}\n`);
   expect(readFileSync(sentinel, "utf8")).toBe("# fixture state, do not edit\n");
-  expect(existsSync(join(home, ".parallels"))).toBe(false);
+  expect(existsSync(join(home, ".orca"))).toBe(false);
   expect(existsSync(join(home, ".zshrc"))).toBe(false);
 }, 30_000);
 
@@ -246,7 +246,7 @@ test("installed standalone pull from an unrelated dirty repo updates only the de
       } else if (args.join(" ") === "install --frozen-lockfile") {
         process.exit(0); // offline fixture has no dependencies
       } else if (args.join(" ") === "run build") {
-        command = [${JSON.stringify(process.execPath)}, "build", "fixture.ts", "--compile", "--outfile", "dist/parallels"];
+        command = [${JSON.stringify(process.execPath)}, "build", "fixture.ts", "--compile", "--outfile", "dist/orca"];
       } else throw new Error("unexpected build command");
       const child = Bun.spawn(command, { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
       process.exit(await child.exited);
@@ -256,7 +256,7 @@ test("installed standalone pull from an unrelated dirty repo updates only the de
 exec ${quote(process.execPath)} ${quote(boundary)} ${tool} "$@"
 `, { mode: 0o755 });
     const result = await exec([f.target, "pull"], f.caller, {
-      HOME: f.home, PARALLELS_HOME: f.state, PATH: `${tools}:/usr/bin:/bin`,
+      HOME: f.home, ORCA_HOME: f.state, PATH: `${tools}:/usr/bin:/bin`,
       GIT_DIR: join(f.caller, ".git"), GIT_WORK_TREE: f.caller, GIT_CONFIG_COUNT: "invalid",
     });
     expect({ code: result.code, err: result.err, status: await f.g(f.app, "status", "--porcelain") }).toEqual({ code: 0, err: "", status: "" });
@@ -272,7 +272,7 @@ exec ${quote(process.execPath)} ${quote(boundary)} ${tool} "$@"
     const calls = readFileSync(trace, "utf8").trim().split("\n").map(line => JSON.parse(line));
     expect(calls.every(c => c.cwd === f.app && c.gitDir === undefined)).toBe(true);
     expect(calls.filter(c => c.kind === "bun").map(c => c.args)).toEqual([["--version"], ["install", "--frozen-lockfile"], ["run", "build"]]);
-    const missingBun = await exec([installed, "pull"], f.caller, { HOME: f.home, PARALLELS_HOME: f.state, PATH: "/usr/bin:/bin" });
+    const missingBun = await exec([installed, "pull"], f.caller, { HOME: f.home, ORCA_HOME: f.state, PATH: "/usr/bin:/bin" });
     expect(missingBun.code).toBe(1);
     expect(missingBun.err).toContain("requires bun on PATH");
     expect(missingBun.err).toContain("installed executable was not replaced");

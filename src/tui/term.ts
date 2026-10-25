@@ -68,7 +68,7 @@ export interface TermClock { now: () => number; setTimer: SetTimer }
 const realClock: TermClock = { now: Date.now, setTimer: (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); } };
 
 export function realTerminal(stdin = process.stdin, stdout = process.stdout, proc: Proc = process, clock: TermClock = realClock): Terminal {
-  if (!stdin.isTTY || !stdout.isTTY) throw new Error("parallels start needs a terminal; run it from an interactive shell");
+  if (!stdin.isTTY || !stdout.isTTY) throw new Error("orca start needs a terminal; run it from an interactive shell");
   return new RealTerminal(stdin, stdout, proc, clock);
 }
 

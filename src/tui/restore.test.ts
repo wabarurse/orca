@@ -9,7 +9,7 @@ import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, res
 import { toolView } from "../toolview";
 import { bold, dim } from "./render";
 
-const dir = mkdtempSync(join(tmpdir(), "parallels-restore-"));
+const dir = mkdtempSync(join(tmpdir(), "orca-restore-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 let files = 0;
 

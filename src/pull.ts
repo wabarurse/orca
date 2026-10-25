@@ -1,10 +1,11 @@
-// Explicit harness updates only. The caller's repository and PARALLELS_HOME are
+// Explicit harness updates only. The caller's repository and ORCA_HOME are
 // never selection inputs. Tests inject a command boundary, not a runtime override.
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { owned, prepareArtifact, withInstallation } from "./installation";
 import { withGitCredentials } from "./git-credentials";
+import { installedApp, legacy } from "./legacy";
 
 export const HARNESS_ORIGIN = "https://github.com/wabarurse/parallels.git";
 export interface CommandResult { code: number; out: string; err: string }
@@ -31,8 +32,8 @@ async function directory(path: string) {
 async function appDirectory(home: string): Promise<string> {
   const root = await realpath(home);
   await directory(root);
-  await directory(join(root, ".parallels"));
-  const app = join(root, ".parallels", "app");
+  const app = installedApp(root);
+  await directory(dirname(app));
   await directory(app);
   // An actual dedicated clone, not a linked worktree or symlink into a project.
   await directory(join(app, ".git"));
@@ -57,7 +58,8 @@ async function safeBuildPaths(app: string): Promise<void> {
   await owned(join(app, "node_modules"), true);
   for (const name of ["package.json", "bun.lock", "bun.lockb", "bunfig.toml"]) await owned(join(app, name));
   await owned(join(app, "dist"), true);
-  await owned(join(app, "dist", "parallels"));
+  await owned(join(app, "dist", "orca"));
+  await owned(join(app, "dist", legacy.executable));
 }
 
 async function noOperationInProgress(app: string) {
@@ -70,7 +72,7 @@ async function noOperationInProgress(app: string) {
 
 function need(bin: string): string {
   const path = Bun.which(bin);
-  if (!path) throw new Error(`parallels pull requires ${bin} on PATH (bun >= 1.4.2 is needed for updates, not normal runtime)`);
+  if (!path) throw new Error(`orca pull requires ${bin} on PATH (bun >= 1.4.2 is needed for updates, not normal runtime)`);
   return path;
 }
 
@@ -127,7 +129,7 @@ export async function pullHarness(options: PullOptions = {}): Promise<void> {
     const version = await checked([bun, "--version"], "bun version check");
     const match = /^(\d+)\.(\d+)\.(\d+)(?:\D.*)?$/.exec(version);
     if (!match || Number(match[1]) < 1 || (Number(match[1]) === 1 && (Number(match[2]) < 4 || Number(match[2]) === 4 && Number(match[3]) < 2))) {
-      throw new Error("parallels pull requires bun >= 1.4.2 on PATH");
+      throw new Error("orca pull requires bun >= 1.4.2 on PATH");
     }
     write(`updating harness only: ${app}\nfetching verified origin/main…`);
     // Use the verified URL rather than remote-specific helper/refspec options.

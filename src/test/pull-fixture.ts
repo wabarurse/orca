@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { installBinary } from "../installation";
 import { HARNESS_ORIGIN, updateCommand, type UpdateCommand } from "../pull";
+import { legacy } from "../legacy";
 
-export async function pullFixture() {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "parallels-pull-")));
-  const home = join(root, "home ' $space"), app = join(home, ".parallels", "app"), remote = join(root, "remote ' repo");
+export async function pullFixture(options: { legacyApp?: boolean } = {}) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "orca-pull-")));
+  const home = join(root, "home ' $space"), stateDirectory = options.legacyApp ? legacy.stateDirectory : ".orca";
+  const app = join(home, stateDirectory, "app"), remote = join(root, "remote ' repo");
   const caller = join(root, "unrelated ' repo"), state = join(root, "relocated state");
   const env = { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null" };
   for (const key of Object.keys(env)) if (key.startsWith("GIT_") && !["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM"].includes(key)) delete env[key as keyof typeof env];
@@ -18,7 +20,7 @@ export async function pullFixture() {
     if (r.code) throw new Error(r.err);
     return r.out.trim();
   }
-  await mkdir(remote, { recursive: true }); await mkdir(join(home, ".parallels"), { recursive: true });
+  await mkdir(remote, { recursive: true }); await mkdir(join(home, stateDirectory), { recursive: true });
   await g(remote, "init", "-q", "-b", "main");
   await writeFile(join(remote, ".gitignore"), "dist\nnode_modules\n.*.bun-build\n");
   await writeFile(join(remote, "tracked"), "old content\n");
@@ -49,8 +51,8 @@ export async function pullFixture() {
       if (argv[1] === "--version") return { code: 0, out: "1.4.2\n", err: "" };
       if (argv.slice(1).join(" ") === "install --frozen-lockfile") return { code: 0, out: "", err: "" };
       if (argv.slice(1).join(" ") !== "run build") throw new Error(`unexpected bun call: ${argv}`);
-      await writeFile(join(app, "dist", "parallels"), "new executable", { mode: 0o755 });
-      await chmod(join(app, "dist", "parallels"), 0o755);
+      await writeFile(join(app, "dist", "orca"), "new executable", { mode: 0o755 });
+      await chmod(join(app, "dist", "orca"), 0o755);
       return { code: 0, out: "", err: "" };
     }
     if (argv.includes("fetch")) {
@@ -60,7 +62,7 @@ export async function pullFixture() {
     }
     return updateCommand(argv, cwd, childEnv);
   };
-  const options = { home, command, write: (text: string) => output.push(text) };
+  const pullOptions = { home, command, write: (text: string) => output.push(text) };
   const binary = () => readFile(target, "utf8");
-  return { root, home, app, remote, caller, state, target, bin, source, before, after, g, calls, output, options, command, binary };
+  return { root, home, app, remote, caller, state, target, bin, source, before, after, g, calls, output, options: pullOptions, command, binary };
 }

@@ -4,12 +4,16 @@ import { join } from "node:path";
 import { provider as accountProvider } from "../../src/accounts";
 import { providerFor, type Provider, type Turn } from "../../src/providers";
 import type { Tool } from "../../src/tools";
+import { paths } from "../../src/config";
+import { legacy } from "../../src/legacy";
 const spec = await Bun.file(process.argv[2]!).json();
 // Resolve the configured subscription before switching to a disposable project store.
 // Both arms share the instrumented adapter. Cache off reproduces the baseline request payload.
-const authHome = process.env.PARALLELS_HOME;
+const authHome = paths.root;
+// Frozen baseline checkouts still read the old variable. Isolate both versions.
+const useState = (root: string) => { process.env.ORCA_HOME = root; process.env[legacy.homeVariable] = root; };
 const source = await accountProvider(providerFor(spec.model), { promptCache: spec.after === true });
-process.env.PARALLELS_HOME = spec.state;
+useState(spec.state);
 await mkdir(spec.state, { recursive: true });
 await Bun.write(join(spec.state, "config.toml"), `model = ${JSON.stringify(spec.model)}\n`);
 const project = "trial", projectRoot = join(spec.state, "projects", project);
@@ -29,11 +33,10 @@ const wrapped: Provider = { ...source, async complete(req) {
   try {
     // The production auth refreshers read their root lazily. Only the model phase
     // uses the real auth root; tools/inbox/transcripts always use disposable state.
-    if (authHome === undefined) delete process.env.PARALLELS_HOME;
-    else process.env.PARALLELS_HOME = authHome;
+    useState(authHome);
     let result: Turn;
     try { result = await source.complete(req); }
-    finally { process.env.PARALLELS_HOME = spec.state; }
+    finally { useState(spec.state); }
     row.usage = result.usage;
     await Bun.write(join(spec.dir, `response-${index}.json`), JSON.stringify(result));
     // The old OpenAI adapter did not feed observed input into context budgeting.

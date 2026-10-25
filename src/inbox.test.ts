@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { paths } from "./config";
 import { drain, format, parseFormatted, pending, put } from "./inbox";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-inbox-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-inbox-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 test("an empty or missing inbox drains to nothing", async () => {

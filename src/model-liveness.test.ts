@@ -15,7 +15,7 @@ for (const error of ["can't find session: missing", "no server running", "permis
     chmodSync(executable, 0o755);
     const commands = join(import.meta.dir, "commands.ts");
     const child = Bun.spawn([process.execPath, "-e", `import {liveAgentsOrNull} from ${JSON.stringify(commands)}; console.log(JSON.stringify(await liveAgentsOrNull("missing")));`], {
-      env: { ...process.env, PATH: bin, PARALLELS_HOME: home, FAKE_TMUX_ERROR: error }, stdout: "pipe", stderr: "pipe",
+      env: { ...process.env, PATH: bin, ORCA_HOME: home, FAKE_TMUX_ERROR: error }, stdout: "pipe", stderr: "pipe",
     });
     expect(await child.exited).toBe(0);
     expect(JSON.parse(await new Response(child.stdout).text())).toEqual(error === "permission denied" ? null : []);

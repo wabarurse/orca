@@ -12,7 +12,7 @@ import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import type { ProviderName, CompleteRequest } from "./providers";
 
 const home = mkdtempSync(join(tmpdir(), "model-startup-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 test("orchestrator 429 → switch → explicit resume: drained task retained, no automatic replay", async () => {

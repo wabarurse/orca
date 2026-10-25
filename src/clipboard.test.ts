@@ -75,7 +75,7 @@ test('text writer subprocess delivers Unicode and shell metacharacters only on s
   const { mkdtempSync, rmSync, readFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const dir = mkdtempSync(join(tmpdir(), 'parallels-copy-'));
+  const dir = mkdtempSync(join(tmpdir(), 'orca-copy-'));
   const file = join(dir, 'copied');
   const text = '界é\n$(echo injected); `echo nope` "quotes"';
   try {
@@ -90,7 +90,7 @@ for (const onTerm of ['ignore', 'exit-zero']) test(`text writer deadline rejects
   const { mkdtempSync, rmSync, readFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const dir = mkdtempSync(join(tmpdir(), 'parallels-copy-timeout-'));
+  const dir = mkdtempSync(join(tmpdir(), 'orca-copy-timeout-'));
   const ready = join(dir, 'ready'), signal = join(dir, 'signal');
   let pid: number | undefined;
   try {
