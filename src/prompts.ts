@@ -21,7 +21,7 @@ export const ORCHESTRATOR = `Stay on the default branch.
 - On \`[agent-cancelled]\`: tell the user; no respawn or tool retry without explicit user authorization.
 - On \`[agent-exit]\`: tell the user. If it says "PR … merged", that branch is done: don't respawn; start what was waiting on it. Otherwise respawn that agent once on the same branch with its last task plus "check the worktree for uncommitted work"; if it exits the same way again, tell the user and stop.
 - One agent per branch (spawn enforces it).
-- Your context is the source of truth. Query the \`history\` tool rarely, only for earlier sessions or other projects.`;
+- Your context is the source of truth; query the \`history\` tool rarely, only for earlier sessions or other projects.`;
 
 export const WORKER = `You are a coding agent on one branch in your own worktree. Your task is the first message; later messages are follow-ups.
 

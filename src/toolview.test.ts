@@ -67,3 +67,11 @@ test("lowercase owned tool labels do not normalize unknown identifiers, values o
   expect(toolSummary("CustomTool", { ok: true, text: "RAW ToolOutput https://Host/Path\nMore Text" }).summary).toBe("RAW ToolOutput https://Host/Path");
   expect(toolLabel("message", { to: "Reviewer-MixedCase", text: "Please Keep THIS" })).toBe("message(Reviewer-MixedCase: Please Keep THIS)");
 });
+
+test("history calls show the action with the query, or the entry being read", () => {
+  expect(toolLabel("history", { action: "search", query: "login redesign" })).toBe("history(search login redesign)");
+  expect(toolLabel("history", { action: "search" })).toBe("history(search)");
+  expect(toolLabel("history", { action: "read", project: "alpha", entryId: "e1" })).toBe("history(read alpha/e1)");
+  expect(toolSummary("history", { ok: true, text: "refused: only the orchestrator can query archived history" })).toEqual({ summary: "refused: only the orchestrator can query archived history", failed: true });
+  expect(toolSummary("history", { ok: true, text: '{"entries":[]}' }).failed).toBe(false);
+});

@@ -326,8 +326,10 @@ function searchHistory(db: Database, project: string, epoch: string, tasks: Task
 
 // ---- Global archive search (the orchestrator-only `history` tool) -------------------------------------------
 
-/** Read-only handle on the global archive, or undefined when it is missing or not initialized. Takes no project
- * state lock and writes nothing; other projects' rows are never touched. */
+/** Read-only handle on the global archive, or undefined when it is missing or not initialized (e.g. 0 bytes). Takes no
+ * project state lock. The connection never modifies the database file or any row, but SQLite may create empty
+ * `-wal`/`-shm` siblings to read a WAL database. The caller's own transcript is archived (a write to its own
+ * project's rows only) before this is opened; other projects' rows are never touched. */
 function readonlyDatabase(): Database | undefined {
   if (!existsSync(archivePath())) return undefined;
   const db = new Database(archivePath(), { readonly: true, strict: true });
@@ -354,8 +356,15 @@ function onlyProject(value: unknown): string | undefined {
   return value;
 }
 
+/** Unlike the session scope (where "" means "all"), an empty taskId must not silently match nothing. */
+function globalFilter(input: Record<string, unknown>): Filter {
+  const filter = parseFilter(input);
+  if (filter.taskId === "") throw new Error("taskId must be a non-empty task UUID");
+  return filter;
+}
+
 function searchGlobal(db: Database, own: { project: string; epoch: string; taskIds: string[] }, input: Record<string, unknown>): string {
-  const terms = parseTerms(input), scope = globalScope(own, parseFilter(input), onlyProject(input.project));
+  const terms = parseTerms(input), scope = globalScope(own, globalFilter(input), onlyProject(input.project));
   return JSON.stringify({ ...archiveState(db), tasks: searchTasks(db, terms, scope), entries: searchEntries(db, terms, scope), source: GLOBAL_SOURCE });
 }
 
@@ -374,10 +383,11 @@ function readGlobal(db: Database, own: { project: string; epoch: string }, input
 export async function queryGlobalHistory(project: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
   const identity = projectIdentity(project);
   return withProjectStateLock(project, async () => {
+    // An abort while queued behind the project lock is only observed after acquisition (same as the task path).
     assertProjectIdentity(project, identity);
     const transcript = open(paths.transcript(project, ARCHIVE_AGENT));
-    // Refresh our own transcript first so a just-cleared epoch is searchable; nothing to do for a brand-new project without an archive.
-    const tasks = existsSync(archivePath()) || transcript.head() !== null ? await archiveTranscript(project, transcript, { signal }) : [];
+    // Refresh our own transcript first so a just-cleared epoch is searchable; an empty transcript has nothing to index (and creates no file).
+    const tasks = transcript.head() !== null ? await archiveTranscript(project, transcript, { signal }) : await allTasks(project);
     const own = { project, epoch: contextEpoch(transcriptEntries(transcript)), taskIds: tasks.map(t => t.id) };
     signal?.throwIfAborted();
     const db = readonlyDatabase();

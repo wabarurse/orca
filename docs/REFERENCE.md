@@ -818,13 +818,26 @@ orchestrator transcripts are indexed.
 epoch, `agent = orchestrator`, **except the caller's own current session** (this
 project, the current `/clear` epoch, and that scope's tasks). Reading an entry of
 the current session is refused with a pointer to `task read_history`. Before each
-query the caller's own transcript is archived, so a just-cleared epoch is
-searchable immediately. Other projects appear as far as they have been indexed
-(turn end, `/clear`, startup backfill); the result reports `indexedThrough` (the
-latest indexing time) and `projectsIndexed`, plus `backfill in progress` while
-`meta.backfill_version` is missing. The database is opened read-only with no
-project state lock of any other project and no write to another project's rows. A
-missing global file gives an empty result with a note, never an error.
+query the caller's own transcript is archived first (a write to its own project's
+rows only; an empty transcript is not archived and creates no file), so a
+just-cleared epoch is searchable immediately. Other projects appear as far as they
+have been indexed (turn end, `/clear`, startup backfill); the result reports
+`indexedThrough` (the latest indexing time) and `projectsIndexed`, both counting
+the caller's own project as well, plus `backfill in progress` while
+`meta.backfill_version` is missing.
+
+The query connection is read-only and takes no project state lock of any other
+project: it never modifies the database file or any row, but SQLite may create
+empty `-wal`/`-shm` siblings to read a WAL database. A missing global file, or a
+file that exists but is not yet initialized (for example 0 bytes), gives an empty
+result with the note "no global archive yet", never an error; an archive written
+by a newer version is refused.
+
+`status` and `taskId` filter tasks and the conversation linked to them. `taskId`
+must be a non-empty task UUID (an empty string is refused; `task search_history`
+keeps its own behaviour). A `taskId` that belongs to the caller's current session
+returns no task row, since its tasks are in scope of the session, but still returns
+conversation from earlier epochs (or other projects) linked to it.
 
 **Use it rarely.** Nothing is loaded into context automatically, and the
 orchestrator prompt says its context is the source of truth: query `history` only

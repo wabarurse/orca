@@ -70,7 +70,7 @@ const ARGS: Record<string, (input: Input) => string> = {
   complexity: complexityArgs,
   ask: askArgs,
   web_search: (i) => oneLine(str(i.query)),
-  history: (i) => oneLine(`${str(i.action)} ${str(i.query) || str(i.entryId)}`),
+  history: (i) => oneLine(i.action === "read" ? `read ${str(i.project)}/${str(i.entryId)}` : `${str(i.action)} ${str(i.query)}`.trim()),
 };
 
 const asInput = (input: unknown): Input => (input && typeof input === "object" && !Array.isArray(input) ? (input as Input) : {});
@@ -131,7 +131,7 @@ const SUMMARIES: Record<string, (text: string) => { summary: string; failed: boo
 };
 
 /** Tools whose own refusals ("refused: …", not is_error results) count as failures; bash's output is the command's, so it never does. */
-const REFUSING = new Set(["spawn", "message", "ask", "complexity"]);
+const REFUSING = new Set(["spawn", "message", "ask", "complexity", "history"]);
 const refused = (name: string, text: string) => REFUSING.has(name) && /^refused\b/.test(text.trim());
 
 /** The one-line summary of how a call ended, and whether it failed. */
