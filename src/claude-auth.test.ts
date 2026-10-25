@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -31,6 +31,24 @@ const tokenResponse = (access = "new-access", refresh: string | undefined = "new
   access_token: access, refresh_token: refresh, expires_in: 3600, token_type: "Bearer",
 });
 
+async function expectShortLink(output: string, port: string, full: string, file: string) {
+  const link = output.match(/http:\/\/localhost:\d+\/login\/[\w-]+/)?.[0];
+  expect(link).toBeDefined();
+  expect(link!.length).toBeLessThan(50);
+  expect(output).not.toContain(full);
+  expect(output).toContain(file);
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+  expect(readFileSync(file, "utf8").trim()).toBe(full);
+  const short = new URL(link!);
+  short.hostname = "127.0.0.1";
+  expect(short.port).toBe(port);
+  const redirect = await fetch(short, { redirect: "manual" });
+  expect(redirect.status).toBe(302);
+  expect(redirect.headers.get("location")).toBe(full);
+  short.pathname = "/login/wrong";
+  expect((await fetch(short, { redirect: "manual" })).status).toBe(404);
+}
+
 test("browser OAuth validates state and exchanges a PKCE code for private, named credentials", async () => {
   let authorization: URL;
   let callback: Promise<void> | undefined;
@@ -47,6 +65,7 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
         expect(authorization.searchParams.get("scope")).toContain("user:inference");
         const target = new URL(authorization.searchParams.get("redirect_uri")!);
         target.hostname = "127.0.0.1";
+        await expectShortLink(written, target.port, authorization.toString(), join(home, "login-url.txt"));
         target.search = new URLSearchParams({ code: "test-code", state: "wrong-state" }).toString();
         expect((await fetch(target)).status).toBe(400);
         expect(await readClaudeTokens("personal")).toBeNull();
@@ -77,6 +96,8 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
   expect(statSync(join(home, "auth", "anthropic")).mode & 0o777).toBe(0o700);
   expect(written).not.toContain("new-access");
   expect(written).not.toContain("new-refresh");
+  expect(written).not.toContain("code_challenge");
+  expect(existsSync(join(home, "login-url.txt"))).toBe(false);
 });
 
 test("cancelled login releases its callback port and saves nothing", async () => {
@@ -92,6 +113,40 @@ test("cancelled login releases its callback port and saves nothing", async () =>
   const server = Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response() });
   await server.stop(true);
   expect(claudeProfiles()).toEqual([]);
+});
+
+test("login prints an ssh tunnel hint only over ssh and removes the URL file when cancelled", async () => {
+  const saved = { c: process.env.SSH_CONNECTION, t: process.env.SSH_TTY };
+  try {
+    for (const ssh of [false, true]) {
+      delete process.env.SSH_CONNECTION; delete process.env.SSH_TTY;
+      if (ssh) process.env.SSH_CONNECTION = "1.2.3.4 5 6.7.8.9 22";
+      const abort = new AbortController();
+      let written = "";
+      await expect(loginClaude("default", {
+        port: 0, signal: abort.signal, write(text) { written += text; },
+        openBrowser() { abort.abort(); },
+      })).rejects.toThrow("cancelled");
+      expect(written.includes("ssh -L")).toBe(ssh);
+      expect(existsSync(join(home, "login-url.txt"))).toBe(false);
+    }
+  } finally {
+    if (saved.c === undefined) delete process.env.SSH_CONNECTION; else process.env.SSH_CONNECTION = saved.c;
+    if (saved.t === undefined) delete process.env.SSH_TTY; else process.env.SSH_TTY = saved.t;
+  }
+});
+
+test("login still works with just the short link when the URL file cannot be written", async () => {
+  mkdirSync(join(home, "login-url.txt")); // a directory in the way makes the write fail
+  const abort = new AbortController();
+  let written = "";
+  await expect(loginClaude("default", {
+    port: 0, signal: abort.signal, write(text) { written += text; },
+    openBrowser() { abort.abort(); },
+  })).rejects.toThrow("cancelled");
+  expect(written).toMatch(/http:\/\/localhost:\d+\/login\//);
+  expect(written).not.toContain("login-url.txt");
+  expect(statSync(join(home, "login-url.txt")).isDirectory()).toBe(true);
 });
 
 test("cancelling a code exchange aborts the request and preserves the previous login", async () => {

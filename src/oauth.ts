@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { paths } from "./config";
 
 export interface OAuthTokens {
   accessToken: string;
@@ -85,6 +86,36 @@ export interface OAuthLoginConfig {
   exchange: (body: Record<string, string>, fetcher: Fetch, signal: AbortSignal) => Promise<void>;
 }
 
+/** The short, copyable entry point that redirects to the long authorize URL. */
+function isShortLink(request: Request, url: URL, nonce: string): boolean {
+  return request.method === "GET" && url.pathname === `/login/${nonce}`;
+}
+
+/**
+ * The full authorize URL is too long to copy from a terminal, so keep it in a private file as a
+ * fallback. Returns whether the file now holds the URL; a failed or partial write is removed.
+ */
+async function writeLoginUrlFile(path: string, url: string): Promise<boolean> {
+  try {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await rm(path, { force: true });
+    const file = await open(path, "wx", 0o600); // private from creation
+    try { await file.writeFile(url + "\n"); } finally { await file.close(); }
+    return true;
+  } catch {
+    await rm(path, { force: true }).catch(() => {});
+    return false;
+  }
+}
+
+function loginMessage(label: string, shortLink: string, port: number | undefined, urlFile?: string): string {
+  const lines = [`sign in with your ${label} subscription in your browser:`, shortLink];
+  if (process.env.SSH_CONNECTION || process.env.SSH_TTY) lines.push(`over ssh, first run: ssh -L ${port}:localhost:${port} <this-host>`);
+  if (urlFile) lines.push(`if the link does not work, the full url is in ${urlFile}`);
+  lines.push("waiting for login…");
+  return lines.join("\n");
+}
+
 /** Browser PKCE login with state validation and a loopback-only callback. */
 export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions): Promise<void> {
   const verifier = randomBytes(32).toString("base64url");
@@ -93,11 +124,14 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
   const result = Promise.withResolvers<void>();
   const cancellation = new AbortController();
   let received = false;
+  const nonce = randomBytes(6).toString("base64url");
+  let authorizeURL = "";
   const server = Bun.serve({
     hostname: "127.0.0.1", port: options.port ?? config.port,
     idleTimeout: 60,
     async fetch(request) {
       const url = new URL(request.url);
+      if (isShortLink(request, url, nonce)) return new Response(null, { status: 302, headers: { location: authorizeURL } });
       if (request.method !== "GET" || url.pathname !== config.callbackPath) return new Response("not found", { status: 404 });
       if (url.searchParams.get("state") !== state) return new Response("invalid oauth state", { status: 400 });
       if (received) return new Response("login already received", { status: 409 });
@@ -123,6 +157,10 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
     ...config.extraParams, client_id: config.clientId, response_type: "code", scope: config.scope,
     code_challenge: challenge, code_challenge_method: "S256", state, redirect_uri: redirectUri,
   }).toString();
+  authorizeURL = url.toString();
+  const shortLink = `http://localhost:${server.port}/login/${nonce}`;
+  const urlFile = join(paths.root, "login-url.txt");
+  let urlFileAttempted = false;
   const fail = (message: string) => {
     const error = new Error(message);
     cancellation.abort(error);
@@ -134,14 +172,17 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
   try {
     if (options.signal?.aborted) cancel();
     else {
-      options.write(`sign in with your ${config.label} subscription in your browser:\n${url}\nwaiting for login…`);
+      urlFileAttempted = true;
+      const savedUrl = await writeLoginUrlFile(urlFile, authorizeURL);
+      options.write(loginMessage(config.label, shortLink, server.port, savedUrl ? urlFile : undefined));
       // Do not await browser completion before observing the login promise.
-      Promise.resolve().then(() => (options.openBrowser ?? openBrowser)(url.toString())).catch(() => {});
+      Promise.resolve().then(() => (options.openBrowser ?? openBrowser)(authorizeURL)).catch(() => {});
     }
     await result.promise;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", cancel);
     await server.stop();
+    if (urlFileAttempted) await rm(urlFile, { force: true }).catch(() => {});
   }
 }

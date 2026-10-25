@@ -623,6 +623,16 @@ independent refresh tokens when you also use the native CLI concurrently.
 
 Browser login requires a browser on the same machine: Claude receives its callback
 on `localhost:53692`, Codex on `localhost:1455`. `/quit` cancels a pending login.
+
+The login prints a short link, `http://localhost:<port>/login/<nonce>` (about 45
+characters, so it survives terminal wrapping and copying). The loopback server
+answers that one random path with a 302 to the full authorize URL; every other path
+except the OAuth callback is a 404. The browser is opened with the full URL. Over
+SSH (`SSH_CONNECTION` or `SSH_TTY` set) it also prints an `ssh -L` tunnel hint, since
+the link and the callback only exist on the machine running parallels. If the short
+link does not work, the full URL is in `$PARALLELS_HOME/login-url.txt` (0600; the
+message prints only its path). The file is deleted when the login finishes, fails or
+is cancelled.
 Credentials live under `~/.parallels/auth/{anthropic,openai}/` in private (0600)
 files with atomic writes and a per-profile lock shared across workers.
 `PARALLELS_HOME` relocates parallels' state. Failed login and refresh attempts
