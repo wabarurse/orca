@@ -6,6 +6,7 @@ import type { Role } from "../transcript";
 import { ask } from "./ask";
 import { bash } from "./bash";
 import { complexity } from "./complexity";
+import { history } from "./history";
 import { message } from "./message";
 import { task } from "./task";
 import { spawn } from "./spawn";
@@ -29,11 +30,11 @@ export interface Tool {
   run(input: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }
 
-// Which tools each role gets. The set is deliberately small.
+// Which tools each role gets. The set is deliberately small. `history` is orchestrator-only by owner decision.
 export const toolsFor: Record<Role, string[]> = {
-  orchestrator: ["bash", "spawn", "message", "ask", "web_search", "task"],
+  orchestrator: ["bash", "spawn", "message", "ask", "web_search", "task", "history"],
   worker: ["bash", "message", "web_search", "task"],
   reviewer: ["bash", "message", "complexity", "web_search", "task"],
 };
 
-export const registry: Record<string, Tool> = { bash, spawn, message, ask, complexity, web_search, task };
+export const registry: Record<string, Tool> = { bash, spawn, message, ask, complexity, web_search, task, history };

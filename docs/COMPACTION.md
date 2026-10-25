@@ -19,7 +19,9 @@ Recent verbatim entries override summaries. Original entries remain on disk and
 in UI replay; retrieve details when uncertain. Worker checkpoints pin the original
 task and identify the source transcript/boundary. Orchestrator checkpoints instead
 carry structured memory with current task records and reference scoped
-`task search_history`/`read_history` retrieval.
+`task search_history`/`read_history` retrieval (current session only; the
+orchestrator-only `history` tool searches earlier sessions and other projects, see
+[REFERENCE](REFERENCE.md#the-history-tool-orchestrator-only)).
 
 ## Orchestrator rolling memory and history
 

@@ -193,6 +193,9 @@ image-read tool or implicit cross-task image sharing is needed. Explicit
 spawn/message forwarding still requires a real original image in the sender's
 current context epoch, not merely a retrieved or guessed UUID. After `/clear`,
 old history IDs cannot retrieve/forward old images; reattach from the clipboard.
+The orchestrator-only `history` tool (earlier sessions and other projects) returns the
+same text markers only: never pixels, and no forwarding permission. Image IDs stay
+project-scoped.
 
 `materializeImages` and `requireVision` remain at the provider boundary. Keep
 image budgeting, original prompt association, exact receipts, shared cancellation
