@@ -12,12 +12,12 @@ import { projectIdentity, withProjectStateLock } from "./project-state";
 import { fakeProvider, text } from "./test/fake-provider";
 import { restore } from "./tui/restore";
 
-const previous = process.env.PARALLELS_HOME;
+const previous = process.env.ORCA_HOME;
 const dirs: string[] = [];
-afterEach(() => { process.env.PARALLELS_HOME = previous; dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); });
+afterEach(() => { process.env.ORCA_HOME = previous; dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); });
 async function fixture(io: Storage = disk) {
   const dir = mkdtempSync(join(tmpdir(), "clear-context-")); dirs.push(dir);
-  process.env.PARALLELS_HOME = dir;
+  process.env.ORCA_HOME = dir;
   await saveConfig({ model: "unknown", compact: false });
   const project = "p", transcript = open(paths.transcript(project, "orchestrator"), io);
   await transcript.append({ type: "message", message: { role: "user", content: "OLD_SECRET_TASK" } });
@@ -209,7 +209,7 @@ test("external-process send during publication waits for the boundary and remain
   // This child only puts a message into the isolated fixture; no model, tmux or network.
   const marker = join(dir, "child-started");
   const source = `import { put } from ${JSON.stringify(join(import.meta.dir, "inbox.ts"))}; await Bun.write(${JSON.stringify(marker)}, "ready"); await put("p", "orchestrator", { from: "worker-a", text: "new report" });`;
-  const child = Bun.spawn([process.execPath, "-e", source], { env: { ...process.env, PARALLELS_HOME: dir }, stdout: "ignore", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, "-e", source], { env: { ...process.env, ORCA_HOME: dir }, stdout: "ignore", stderr: "pipe" });
   try {
     for (let i = 0; i < 200 && !await Bun.file(marker).exists(); i++) await Bun.sleep(5);
     expect(await Bun.file(marker).exists()).toBe(true);

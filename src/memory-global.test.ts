@@ -12,13 +12,13 @@ import { fakeProvider, text } from "./test/fake-provider";
 import { orchestratorTask } from "./tools/task";
 import { open } from "./transcript";
 
-const previous = process.env.PARALLELS_HOME, dirs: string[] = [];
+const previous = process.env.ORCA_HOME, dirs: string[] = [];
 afterEach(() => {
-  if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous;
+  if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
   dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true }));
 });
 function home() {
-  const dir = mkdtempSync(join(tmpdir(), "memory-global-")); dirs.push(dir); process.env.PARALLELS_HOME = dir; return dir;
+  const dir = mkdtempSync(join(tmpdir(), "memory-global-")); dirs.push(dir); process.env.ORCA_HOME = dir; return dir;
 }
 const mk = (...projects: string[]) => projects.forEach(p => mkdirSync(paths.project(p), { recursive: true }));
 async function say(project: string, role: "user" | "assistant", content: string, agent = "orchestrator") {
@@ -197,7 +197,7 @@ import { open } from ${JSON.stringify(transcripts)};
 import { paths } from ${JSON.stringify(cfg)};
 const project = process.argv[2]!;
 for (let round = 0; round < 5; round++) await archiveTranscript(project, open(paths.transcript(project, "orchestrator")));`);
-  const procs = projects.map(p => Bun.spawn(["bun", script, p], { env: { ...process.env, PARALLELS_HOME: dir }, stdout: "pipe", stderr: "pipe" }));
+  const procs = projects.map(p => Bun.spawn(["bun", script, p], { env: { ...process.env, ORCA_HOME: dir }, stdout: "pipe", stderr: "pipe" }));
   const results = await Promise.all(procs.map(async p => ({ code: await p.exited, err: await new Response(p.stderr).text() })));
   expect(results.map(r => r.code), results.map(r => r.err).join()).toEqual([0, 0, 0, 0]);
   for (const p of projects) expect(rows<{ n: number }>("SELECT count(*) AS n FROM entries WHERE project=?", p)[0]!.n).toBe(40);

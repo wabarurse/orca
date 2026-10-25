@@ -33,7 +33,7 @@ export async function withGitCredentials<T>(git: string, cwd: string, env: NodeJ
   if (result.code !== 0) throw new Error("could not read git credential configuration; check your system/global git config");
   const credentials = credentialConfig(result.out);
   if (!credentials) return action(env);
-  const directory = await mkdtemp(join(tmpdir(), "parallels-git-auth-"));
+  const directory = await mkdtemp(join(tmpdir(), "orca-git-auth-"));
   try {
     const file = join(directory, "config");
     await writeFile(file, credentials, { flag: "wx", mode: 0o600 });

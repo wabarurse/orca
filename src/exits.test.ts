@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-exits-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-exits-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const { createAgent } = await import("./agent");
@@ -263,7 +263,7 @@ describe("signals", () => {
     const script = join(home, `sig-${project}.ts`);
     writeFileSync(script, `import { supervise } from ${JSON.stringify(join(import.meta.dir, "exits.ts"))};
 process.exitCode = await supervise(${JSON.stringify(info(cwd))}, async (t) => { await t.tool("bash", { command: "wait" }); await new Promise(() => setInterval(() => {}, 1000)); }, { log: () => {} });`);
-    const proc = Bun.spawn(["bun", script], { cwd, env: { ...process.env, PARALLELS_HOME: home }, stdout: "ignore", stderr: "ignore" });
+    const proc = Bun.spawn(["bun", script], { cwd, env: { ...process.env, ORCA_HOME: home }, stdout: "ignore", stderr: "ignore" });
     const deadline = Date.now() + 5000;
     while ((await readRun(project, "worker-feat"))?.step !== 'bash {"command":"wait"}' && Date.now() < deadline) await Bun.sleep(20);
     proc.kill("SIGHUP");
@@ -449,9 +449,9 @@ describe("agentCommand", () => {
 
   // One fake `bun` for every test here, made and run once at load: on macOS the first exec of a new
   // file waits for a system policy check, which took over 5s (the test timeout) under parallel load.
-  // It logs its argv and $PARALLELS_HOME into $FAKE_BUN and exits with $FAKE_BUN/code for `agent`.
+  // It logs its argv and $ORCA_HOME into $FAKE_BUN and exits with $FAKE_BUN/code for `agent`.
   const fakeBin = mkdtempSync(join(home, "bin ' space-"));
-  writeFileSync(join(fakeBin, "bun"), `#!/bin/sh\nd="$FAKE_BUN"\nprintf '%s' "$PARALLELS_HOME" > "$d/home"\nfor a in "$@"; do printf '%s\\n' "$a"; done >> "$d/log"\necho --- >> "$d/log"\nif [ "$2" = agent ]; then exit "$(cat "$d/code")"; fi\nexit 0\n`);
+  writeFileSync(join(fakeBin, "bun"), `#!/bin/sh\nd="$FAKE_BUN"\nprintf '%s' "$ORCA_HOME" > "$d/home"\nfor a in "$@"; do printf '%s\\n' "$a"; done >> "$d/log"\necho --- >> "$d/log"\nif [ "$2" = agent ]; then exit "$(cat "$d/code")"; fi\nexit 0\n`);
   chmodSync(join(fakeBin, "bun"), 0o755);
   Bun.spawnSync([join(fakeBin, "bun")], { env: { ...process.env, FAKE_BUN: mkdtempSync(join(home, "warm-")) } });
 
@@ -466,14 +466,14 @@ describe("agentCommand", () => {
     return { dir, env, calls };
   }
 
-  /** agentCommand built with a PARALLELS_HOME full of quotes and backslashes. */
+  /** agentCommand built with a ORCA_HOME full of quotes and backslashes. */
   function command(run: string) {
     const weirdHome = join(home, `ho'me\\ $x`);
-    process.env.PARALLELS_HOME = weirdHome;
+    process.env.ORCA_HOME = weirdHome;
     try {
       return { argv: agentCommand({ project: nasty, role: "worker", branch: nastyBranch }, run, [join(fakeBin, "bun"), "source ' $space \\back/cli.ts"]), weirdHome };
     } finally {
-      process.env.PARALLELS_HOME = home;
+      process.env.ORCA_HOME = home;
     }
   }
 
@@ -509,7 +509,7 @@ describe("agentCommand", () => {
     expect(calls.length).toBe(1);
   });
 
-  test("PARALLELS_HOME with ' and \\ reaches the agent intact", async () => {
+  test("ORCA_HOME with ' and \\ reaches the agent intact", async () => {
     const { dir, env } = fakeBun(0);
     const { argv, weirdHome } = command("r");
     await Bun.spawn(argv, { env }).exited;
@@ -542,7 +542,7 @@ describe("agentCommand", () => {
   });
 
   test("end to end: a real agent that crashes at start sends exactly one notice and exits 70", async () => {
-    // No transcript seeded, so `parallels agent` throws; the follow-up is skipped.
+    // No transcript seeded, so `orca agent` throws; the follow-up is skipped.
     const cwd = await repo(0);
     mkdirSync(paths.project(project), { recursive: true });
     const proc = Bun.spawn(agentCommand({ project, role: "worker", branch: "feat" }, "e2e"), { cwd, stdout: "ignore", stderr: "ignore" });

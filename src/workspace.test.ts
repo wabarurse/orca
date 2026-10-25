@@ -18,15 +18,15 @@ const git = async (cwd: string, ...args: string[]) => {
   return result.stdout.toString().trim();
 };
 beforeEach(async () => {
-  previous = process.env.PARALLELS_HOME;
-  temp = realpathSync(mkdtempSync(join(tmpdir(), "parallels-workspace-")));
-  process.env.PARALLELS_HOME = join(temp, "state");
+  previous = process.env.ORCA_HOME;
+  temp = realpathSync(mkdtempSync(join(tmpdir(), "orca-workspace-")));
+  process.env.ORCA_HOME = join(temp, "state");
   repo = join(temp, "original with spaces");
   await Bun.$`git init -q -b main ${repo}`.quiet();
   await git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init");
 });
 afterEach(() => {
-  if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous;
+  if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
   rmSync(temp, { recursive: true, force: true });
 });
 
@@ -44,7 +44,7 @@ test("original checkout, generic local login settings and untracked files remain
   expect(JSON.stringify(provider.calls[1]!.messages)).toContain("local context");
   expect(JSON.stringify(provider.calls[1]!.messages)).toContain("another-fake-login");
   const worker = await ensureWorktree("p", "task/fix");
-  expect(worker.startsWith(`${repo}.parallels-worktrees/`)).toBe(true);
+  expect(worker.startsWith(`${repo}.orca-worktrees/`)).toBe(true);
   expect(await git(worker, "config", "--local", "--get", "buildbuddy.api-key")).toBe("fake-local-login");
   await git(repo, "config", "test.login", "refreshed-login");
   expect(await git(worker, "config", "--local", "--get", "test.login")).toBe("refreshed-login");

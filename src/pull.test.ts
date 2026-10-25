@@ -4,11 +4,31 @@ import { join } from "node:path";
 import { installBinary } from "./installation";
 import { HARNESS_ORIGIN, pullHarness } from "./pull";
 import { pullFixture } from "./test/pull-fixture";
+import { legacy } from "./legacy";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture() { const f = await pullFixture(); roots.push(f.root); return f; }
 const fetched = (calls: string[][]) => calls.some(a => a.includes("fetch"));
+
+test("orca updates a legacy dedicated checkout without moving it or changing origin trust", async () => {
+  const f = await pullFixture({ legacyApp: true }); roots.push(f.root);
+  await pullHarness(f.options);
+  expect(await f.binary()).toBe("new executable");
+  expect(await f.g(f.app, "rev-parse", "HEAD")).toBe(f.after);
+  expect(f.output.join("\n")).toContain(f.app);
+  expect(await f.g(f.app, "remote", "get-url", "origin")).toBe(HARNESS_ORIGIN);
+});
+
+test("legacy build compatibility output cannot follow a symlink outside the checkout", async () => {
+  const f = await fixture(), outside = join(f.root, "preserve");
+  await writeFile(outside, "keep");
+  await mkdir(join(f.app, "dist"));
+  await symlink(outside, join(f.app, "dist", legacy.executable));
+  await expect(pullHarness(f.options)).rejects.toThrow("unsafe file");
+  expect(await readFile(outside, "utf8")).toBe("keep");
+  expect(fetched(f.calls)).toBe(false);
+});
 
 test("pull fast-forwards only the dedicated main clone, freezes deps and reinstalls on no-op", async () => {
   const f = await fixture(), cwd = process.cwd();
@@ -72,7 +92,7 @@ for (const mode of ["wrong-origin", "missing-origin", "rewritten-origin", "multi
     if (mode === "rewritten-origin") await f.g(f.app, "config", `url.${f.remote}.insteadOf`, HARNESS_ORIGIN);
     if (mode === "multiple-origins") await f.g(f.app, "config", "--add", "remote.origin.url", f.remote);
     if (mode === "missing-app") await rename(f.app, join(f.root, "preserved-app"));
-    if (mode === "unowned-binary") await rm(join(f.bin, ".parallels-install.json"));
+    if (mode === "unowned-binary") await rm(join(f.bin, ".orca-install.json"));
     if (mode === "missing-binary") await rm(f.target);
     if (mode === "modified-binary") await writeFile(f.target, "modified executable");
     if (["app-symlink", "git-symlink", "nested-git-symlink"].includes(mode)) {
@@ -101,12 +121,12 @@ for (const phase of ["fetch", "install", "build", "replace", "dist-symlink", "no
     const command: typeof f.command = async (argv, cwd, env) => {
       if (argv.includes(phase)) return { code: 31, out: "", err: "fixture failure" };
       const result = await f.command(argv, cwd, env);
-      if (phase === "replace" && argv.includes("build")) await chmod(join(f.app, "dist", "parallels"), 0o644);
+      if (phase === "replace" && argv.includes("build")) await chmod(join(f.app, "dist", "orca"), 0o644);
       return result;
     };
     await expect(pullHarness({ ...f.options, command })).rejects.toThrow();
     expect(await f.binary()).toBe("old executable");
-    expect((await readdir(f.bin)).sort()).toEqual([".parallels-install.json", "parallels"]);
+    expect((await readdir(f.bin)).sort()).toEqual([".orca-install.json", "orca"]);
     expect(await f.g(f.app, "rev-parse", "HEAD")).toBe(phase === "fetch" || phase.endsWith("symlink") ? f.before : f.after);
     if (phase.endsWith("symlink")) expect(await readdir(join(f.root, "outside"))).toEqual([]);
     else { // A no-op retry after a failed build is deliberately not skipped.
@@ -128,7 +148,7 @@ test("one shared lock covers fetch, dependencies, build and manual installation"
     return f.command(argv, cwd, env);
   } });
   expect(checked).toBe(3);
-  const lock = join(f.bin, ".parallels-install.lock"); await mkdir(lock); await writeFile(join(lock, "keep"), "stale or live");
+  const lock = join(f.bin, ".orca-install.lock"); await mkdir(lock); await writeFile(join(lock, "keep"), "stale or live");
   await expect(pullHarness(f.options)).rejects.toThrow("lock already exists");
   expect(await readFile(join(lock, "keep"), "utf8")).toBe("stale or live");
 });

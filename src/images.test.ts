@@ -20,13 +20,26 @@ import { fakeProvider, text } from "./test/fake-provider";
 import { png } from "./test/image-fixture";
 import { render } from "./view";
 import { restore } from "./tui/restore";
+import { legacy } from "./legacy";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-images-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-images-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 function project() { const id = `p-${crypto.randomUUID()}`; mkdirSync(paths.project(id), { recursive: true }); return id; }
 const ctx = (project: string) => ({ project, role: "orchestrator" as const, cwd: home });
 function imageCount(messages: MessageParam[]) { return messages.flatMap(m => typeof m.content === "string" ? [] : m.content).filter(b => b.type === "image").length; }
+
+test("saved pre-rename image references still materialize, while new references use orca", async () => {
+  const p = project(), ref = await saveImage(p, png());
+  const block = imageBlock(ref);
+  expect(block.source.type).toBe("url");
+  if (block.source.type !== "url") throw new Error("expected local image reference");
+  expect(block.source.url.startsWith("orca-image:")).toBe(true);
+  block.source.url = block.source.url.replace("orca-image:", legacy.imagePrefix);
+  const messages = await materializeImages(p, [{ role: "user", content: [block] }]);
+  expect(JSON.stringify(messages)).toContain('"type":"base64"');
+  await expect(materializeImages(project(), [{ role: "user", content: [block] }])).rejects.toThrow("another/deleted");
+});
 
 test("PNG validation rejects invalid MIME, empty/truncated, wrong CRC, excessive bytes/dimensions, and compressed bombs", () => {
   expect(validateImage(png())).toEqual({ width: 1, height: 1 });
@@ -67,7 +80,7 @@ test.each(["", "implement this screen"])("image prompt %j: queue -> exact commit
   expect(transcript.consumed!().inputs.has(inputId)).toBe(true);
   expect(await pendingImageInputs(p, transcript.consumed!().inputs)).toEqual([]);
   const saved = readFileSync(transcript.path, "utf8");
-  expect(saved).toContain("parallels-image:"); expect(saved).not.toContain(png().toString("base64"));
+  expect(saved).toContain("orca-image:"); expect(saved).not.toContain(png().toString("base64"));
   const loaded = open(transcript.path), messages = await loaded.chain();
   expect(imageCount(messages)).toBe(2);
   const bytes = await materializeImages(p, messages);
@@ -82,7 +95,7 @@ test.each(["", "implement this screen"])("image prompt %j: queue -> exact commit
   expect(loaded.history!().map(e => render(e)).join("\n")).not.toContain("base64");
   const restored = JSON.stringify(restore(loaded.history!(), 80));
   expect(restored).toContain("[image 1] [image 2]");
-  expect(restored).not.toContain("parallels-image:");
+  expect(restored).not.toContain("orca-image:");
   expect(restored).not.toContain(png().toString("base64"));
   // Duplicate input ID after interrupted cleanup/retry cannot replay the prompt.
   await put(p, "orchestrator", { from: "user", text: prompt, inputId, attachments: refs });

@@ -3,7 +3,7 @@ import { Cancelled } from "./cancellation";
 // Exit notices: when a worker or reviewer stops without reporting, the
 // orchestrator hears about it through its inbox, at most once per run.
 //
-// Each run of an agent (one `parallels agent` process) has a run id, chosen by
+// Each run of an agent (one `orca agent` process) has a run id, chosen by
 // agentCommand and passed to both the agent and the shell follow-up after it.
 // The agent keeps runs/<id>.json up to date: run id, pid, whether its last
 // act was a report, its last step and tool. A run is closed by creating
@@ -303,7 +303,7 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
 }
 
 /**
- * The shell follow-up after a non-zero exit (`parallels agent-exit`): a signal,
+ * The shell follow-up after a non-zero exit (`orca agent-exit`): a signal,
  * OOM or an uncaught error the agent could not report itself. Sends nothing if
  * the run is already closed or its last act was a report.
  */

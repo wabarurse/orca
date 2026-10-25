@@ -11,12 +11,12 @@ import type { CompleteRequest, Provider, Turn } from "./providers/index";
 import { createOrchestrator } from "./orchestrator";
 import { put } from "./inbox";
 const dirs: string[] = [];
-const home = process.env.PARALLELS_HOME;
-afterEach(() => { process.env.PARALLELS_HOME = home; dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); });
+const home = process.env.ORCA_HOME;
+afterEach(() => { process.env.ORCA_HOME = home; dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true })); });
 const end = (s = "Goal: preserve requirements. Later amendment: use green. Progress: implemented. Next: test."): Turn => ({ content: [text(s)], stop: "end", completion: "end_turn" });
 function provider(fn: (r: CompleteRequest) => Promise<Turn>): Provider { return { name: "anthropic", complete: fn, models: async () => [] }; }
 async function fixture(fn: (r: CompleteRequest) => Promise<Turn> = async () => end()) {
-  const dir = mkdtempSync(join(tmpdir(), "review-compact-")); dirs.push(dir); process.env.PARALLELS_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "review-compact-")); dirs.push(dir); process.env.ORCA_HOME = dir;
   const transcript = open(join(dir, "transcript.jsonl"));
   const original = "requirements " + "x".repeat(3000) + " DO NOT DROP FINAL REQUIREMENT";
   for (const [role, content] of [["user", original], ["assistant", "old progress " + "z".repeat(33000)], ["user", "Later amendment: use green"], ["assistant", "done"], ["user", "next task"]] as const) await transcript.append({ type: "message", message: { role, content } });

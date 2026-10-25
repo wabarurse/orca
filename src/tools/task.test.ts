@@ -10,7 +10,7 @@ import { makeTaskTool } from "./task";
 import { registry, toolsFor, type ToolContext } from "./index";
 
 const home = mkdtempSync(join(tmpdir(), "task-tool-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 let n = 0, project: string;
 let snapshot: PRObservation | null;

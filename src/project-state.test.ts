@@ -8,7 +8,7 @@ import { projectIdentity, withProjectStateLock } from "./project-state";
 import { effectiveModel, saveProjectModel } from "./project-model";
 
 const home = mkdtempSync(join(tmpdir(), "project-state-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 function deferred() {
   let resolve!: () => void;

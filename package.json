@@ -1,16 +1,16 @@
 {
-  "name": "parallels",
+  "name": "orca",
   "version": "0.0.1",
   "type": "module",
   "private": true,
   "bin": {
-    "parallels": "src/cli.ts"
+    "orca": "src/cli.ts"
   },
   "scripts": {
     "dev": "bun src/cli.ts",
     "check": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build src/cli.ts --compile --outfile dist/parallels",
+    "build": "bun scripts/build.ts",
     "install:local": "bun scripts/install.ts"
   },
   "devDependencies": {

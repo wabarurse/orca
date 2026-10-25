@@ -14,13 +14,13 @@ import { open, type Transcript } from "./transcript";
 import { disk } from "./transcript-storage";
 import { advanceInputEpoch } from "./user-input";
 
-const previous = process.env.PARALLELS_HOME;
+const previous = process.env.ORCA_HOME;
 const dirs: string[] = [], sessions: Orchestrator[] = [], controllers: RollingCompactor[] = [], gates: (() => void)[] = [];
 afterEach(() => {
   sessions.splice(0).forEach(o => o.dispose?.());
   controllers.splice(0).forEach(c => c.dispose());
   gates.splice(0).forEach(release => release());
-  if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous;
+  if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
   dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true }));
 });
 function gate() {
@@ -35,7 +35,7 @@ function summary() {
   return { provider, calls, entered, released };
 }
 async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "rolling-integration-")); dirs.push(dir); process.env.PARALLELS_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "rolling-integration-")); dirs.push(dir); process.env.ORCA_HOME = dir;
   const project = "p", transcript = open(paths.transcript(project, "orchestrator"));
   await saveConfig({ model: "gpt-6-sol" });
   for (const [role, content] of [["user", "old-original-evidence ".repeat(3000)], ["assistant", "older findings ".repeat(2500)], ["user", "recent question"], ["assistant", "recent answer"]] as const) {

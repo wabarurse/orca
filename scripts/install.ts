@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
-// Local-only installer. Never touches PARALLELS_HOME, auth, projects, or shell files.
+// Local-only installer. Never touches ORCA_HOME, auth, projects, or shell files.
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { prepareArtifact, withInstallation } from "../src/installation";
 export { installBinary } from "../src/installation";
 
 async function main() {
-  if (process.argv.length !== 2) throw new Error("usage: bun run install:local (installs to $HOME/.local/bin/parallels)");
-  if (typeof Bun.isStandaloneExecutable !== "boolean") throw new Error("bun 1.4.2 or newer is required to build parallels");
+  if (process.argv.length !== 2) throw new Error("usage: bun run install:local (installs to $HOME/.local/bin/orca)");
+  if (typeof Bun.isStandaloneExecutable !== "boolean") throw new Error("bun 1.4.2 or newer is required to build orca");
   const app = resolve(import.meta.dir, "..");
   const target = await withInstallation(homedir(), false, async installation => {
     const artifact = await prepareArtifact(app);
@@ -15,7 +15,7 @@ async function main() {
     if (await build.exited !== 0) throw new Error("build failed; installed executable was not changed");
     return installation.replace(artifact);
   });
-  console.log(`installed ${target}\nadd $HOME/.local/bin to PATH yourself if needed. no shell files or parallels state were changed.`);
+  console.log(`installed ${target}\nadd $HOME/.local/bin to PATH yourself if needed. no shell files or orca state were changed.`);
 }
 
 if (import.meta.main) {

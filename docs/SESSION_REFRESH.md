@@ -3,7 +3,7 @@
 ## User contract
 
 `/refresh` reads the persisted state used by windows sharing the same
-`PARALLELS_HOME` (normally `~/.parallels`). It reconciles names, pins and the
+`ORCA_HOME` (normally `~/.orca`). It reconciles names, pins and the
 project picker; full saved conversation and next-turn model context; tasks in
 an open Inbox panel; open/closed questions; agent liveness; and applicable
 model/settings. The picker is read on opening when closed. Accounts/config
@@ -142,7 +142,7 @@ head evidence before publication/readiness, using the orchestrator's task flow.
 
 Constraints for this branch: no live inbox/transcript experiments; no changes to
 the user's checkout/stash, other worktrees, shell configuration/history,
-installed `~/.local/bin/parallels` or `~/.parallels/app`; no live process
+installed `~/.local/bin/orca` or `~/.orca/app`; no live process
 restarts/kills, desktop automation, web/provider/billing fallback, clone-UX
 changes, or hosted CI. Do not touch gallery server `127.0.0.1:64830`. Use only
 isolated temporary test storage and fake providers/tools; do not validate via

@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { inflateSync } from "node:zlib";
 import type { ImageBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { paths } from "./config";
+import { legacy } from "./legacy";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./project-state";
 
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -129,10 +130,10 @@ export async function validateRefs(project: string, refs: ImageRef[] | undefined
 }
 export function imageBlock(ref: ImageRef): ImageBlockParam {
   assertRef(ref);
-  return { type: "image", source: { type: "url", url: `parallels-image:${ref.scope}:${ref.id}:${ref.sha256}` } };
+  return { type: "image", source: { type: "url", url: `orca-image:${ref.scope}:${ref.id}:${ref.sha256}` } };
 }
 export function blockRef(block: ImageBlockParam): ImageRef | undefined {
-  if (block.source.type !== "url" || !block.source.url.startsWith("parallels-image:")) return;
+  if (block.source.type !== "url" || !(block.source.url.startsWith("orca-image:") || block.source.url.startsWith(legacy.imagePrefix))) return;
   const [, scope, id, sha256, extra] = block.source.url.split(":");
   const ref = { scope: scope!, id: id!, sha256: sha256! };
   if (extra !== undefined) throw new Error("invalid image reference");

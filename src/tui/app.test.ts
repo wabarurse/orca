@@ -26,8 +26,8 @@ import { bold, dim, live as renderLive } from "./render";
 import { setUserFill } from "./style";
 import { Calls } from "./tools";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-tui-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-tui-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 /** Anything the fake screen refused (an escape or control a real terminal would misread); checked after every test. */
@@ -884,7 +884,7 @@ describe("sticky screen", () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
-    term.display.write("$ parallels start\r\n"); // the shell's output stays above
+    term.display.write("$ orca start\r\n"); // the shell's output stays above
     const running = app.run("alpha");
     await until(() => !!app.page && term.screen().includes(">"));
     term.type("build it");
@@ -1089,7 +1089,7 @@ describe("frames, resizes, startup and crashes", () => {
     const orchs = fakeOrchestrators();
     const openOrchestrator: typeof orchs.openOrchestrator = async (...args) => { await new Promise<void>((r) => (gate = r)); return orchs.openOrchestrator(...args); };
     const app = new App({ term, openOrchestrator, pollMs: 100_000 });
-    term.display.write("$ parallels start\r\n");
+    term.display.write("$ orca start\r\n");
     const running = app.run("alpha");
     await until(() => term.screen().includes("opening…"));
     app.say("early note");
@@ -1118,7 +1118,7 @@ describe("frames, resizes, startup and crashes", () => {
     try {
       await loadConfig();
       console.log("a log line");
-      await until(() => term.screen().includes("parallels: ignoring") && term.screen().includes("a log line"));
+      await until(() => term.screen().includes("orca: ignoring") && term.screen().includes("a log line"));
       expect(stderr).not.toHaveBeenCalled();
       expect(stdout).not.toHaveBeenCalled();
     } finally {
@@ -1276,7 +1276,7 @@ describe("restored pages", () => {
     await t.append({ type: "message", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x1", content: "SECRET-RESULT" }, { type: "text", text: "[worker-feat] all done" }] } });
     await t.append({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Worker done.", citations: null }] } });
     const term = fakeTerm(50, 40);
-    term.display.write("shell$ parallels start\r\n");
+    term.display.write("shell$ orca start\r\n");
     const orchs = fakeOrchestrators();
     // The page is built from the transcript its orchestrator loaded.
     const openOrchestrator: typeof orchs.openOrchestrator = async (...args) => ({ ...(await orchs.openOrchestrator(...args)), entries: () => (args[0] === "resumed" ? t.branch() : []) });
@@ -1317,7 +1317,7 @@ describe("restored pages", () => {
       [said(`Plan:\n${TABLE_MD}\nthen *go*`), toolUse("t1", "spawn", { taskId, prompt: "do it", branch: "feat" })],
       [said("```ts\nconst x = 1;\n"), toolUse("t2", "message", { to: "user", text: "Started **feat**." })],
       [said("All set.")],
-      // A second turn, started by the poll: a message from `parallels msg` and a report, nothing typed here.
+      // A second turn, started by the poll: a message from `orca msg` and a report, nothing typed here.
       [said("Got it."), toolUse("t3", "message", { to: "user", text: "Second." })],
       [said("Done.")],
     ]);
@@ -3036,7 +3036,9 @@ describe("explicit footer help", () => {
     } finally { ready(); app.quit(); await running; }
     expect(term.screen()).toContain("DURABLE-HELP-SENTINEL");
     expect(term.screen()).not.toContain("advanced & diagnostics");
-    expect(term.screen()).not.toContain("/help");
+    // A visible repository path may contain /help-durable; the command itself
+    // must never be printed as a conversation entry.
+    expect(term.screen()).not.toMatch(/^\s*>?\s*\/help\s*$/m);
     expect(await Bun.file(path).text()).toBe(saved);
     const again = new App({ term: fakeTerm(80, 24), openOrchestrator: open, pollMs: 100_000 });
     const restarted = again.run(project);

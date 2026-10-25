@@ -93,8 +93,8 @@ describe("live", () => {
     const a = live(f);
     const b = append(["> hello", "reply"], f, a.shown);
     const c = append(["more"], f, b.shown);
-    const s = show(f, "$ parallels start\r\n", a.text, b.text, c.text);
-    expect(s.text()).toBe("$ parallels start\n> hello\nreply\nmore\n> hi\nbusy");
+    const s = show(f, "$ orca start\r\n", a.text, b.text, c.text);
+    expect(s.text()).toBe("$ orca start\n> hello\nreply\nmore\n> hi\nbusy");
     expect(c.text).not.toContain("\x1b[2J");
   });
 

@@ -253,7 +253,7 @@ Normal restart reloads all records; duplicate events don't duplicate transitions
 
 This intentionally uses the existing lock's conservative policy: a process killed
 while holding the project-state lock can leave a stale lock. Writes time out with
-its location; remove it **only after verifying no Parallels process is active**.
+its location; remove it **only after verifying no orca process is active**.
 There is no unsafe timed lock stealing or power-loss/fsync guarantee. Storage is
 one small snapshot, read/written and validated in full; history grows with the
 project. Polling depends on an open TUI project, GitHub access and `gh`; status is

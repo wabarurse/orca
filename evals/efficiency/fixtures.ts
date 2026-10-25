@@ -17,7 +17,7 @@ export async function fixture(root: string, task: Task, seed: number) {
       await Bun.write(join(root, file), text);
     }
     return { expected: { summaryWords: 600, summaryOutputCap: 4096, recentTailCap: 8000, toolResultBytes: 16384, searchTimeoutMs: 60000, searchMaxResults: 10 }, tests: "",
-      prompt: "Inspect this snapshot of the Parallels harness. Return only JSON with numeric values for: summaryWords (requested word limit), summaryOutputCap (summary-specific maximum output tokens), recentTailCap (maximum recent-tail estimate), toolResultBytes (default tool result byte cap), searchTimeoutMs, searchMaxResults (largest allowed user request). Read the implementation; do not modify files." };
+      prompt: "Inspect this snapshot of the orca harness. Return only JSON with numeric values for: summaryWords (requested word limit), summaryOutputCap (summary-specific maximum output tokens), recentTailCap (maximum recent-tail estimate), toolResultBytes (default tool result byte cap), searchTimeoutMs, searchMaxResults (largest allowed user request). Read the implementation; do not modify files." };
   }
   const expected: Record<string, number> = {};
   for (let i = 0; i < 24; i++) {

@@ -10,7 +10,7 @@ import { open } from "./transcript";
 import { fakeProvider, toolUse, text } from "./test/fake-provider";
 import type { CompleteRequest } from "./providers";
 const home = mkdtempSync(join(tmpdir(), "project-settings-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 async function setup(project: string, model = "gpt-6-astra") {

@@ -48,7 +48,7 @@ export async function clipboardCommand(argv: string[], limit: number): Promise<U
 }
 const native: ClipboardAdapter = { platform: process.platform, env: process.env, which: name => Bun.which(name), run: clipboardCommand };
 export async function readClipboardImage(adapter: ClipboardAdapter = native): Promise<ClipboardImage> {
-  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error("image clipboard is unavailable over ssh. run parallels in the local desktop session; terminal text paste still works.");
+  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error("image clipboard is unavailable over ssh. run orca in the local desktop session; terminal text paste still works.");
   let bytes: Uint8Array;
   if (adapter.platform === "darwin") {
     const encoded = Buffer.from(await adapter.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_CLIPBOARD_SCRIPT], Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 16)).toString().trim();

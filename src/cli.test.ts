@@ -6,7 +6,7 @@ import pkg from "../package.json";
 import { accounts } from "./accounts";
 import { login } from "./commands";
 
-test("`parallels version` prints the package.json version", async () => {
+test("`orca version` prints the package.json version", async () => {
   const proc = Bun.spawn(["bun", "src/cli.ts", "version"], {
     cwd: import.meta.dir + "/..",
     stdout: "pipe",
@@ -18,9 +18,9 @@ test("`parallels version` prints the package.json version", async () => {
 });
 
 test("login uses subscriptions despite API keys and rejects invalid input", async () => {
-  const home = await mkdtemp(join(tmpdir(), "parallels-login-auth-"));
-  const env = { PARALLELS_HOME: process.env.PARALLELS_HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
-  process.env.PARALLELS_HOME = home;
+  const home = await mkdtemp(join(tmpdir(), "orca-login-auth-"));
+  const env = { ORCA_HOME: process.env.ORCA_HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
+  process.env.ORCA_HOME = home;
   process.env.CLAUDE_CONFIG_DIR = join(home, "claude");
   process.env.ANTHROPIC_API_KEY = "test-api-key";
   await mkdir(join(home, "projects", "p", "repo"), { recursive: true });

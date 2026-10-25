@@ -11,13 +11,13 @@ import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import { inputEpoch } from "./user-input";
 
 let home: string;
-const previous = process.env.PARALLELS_HOME;
+const previous = process.env.ORCA_HOME;
 beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), "session-refresh-"));
-  process.env.PARALLELS_HOME = home;
+  process.env.ORCA_HOME = home;
   await Bun.write(paths.config, 'model = "fake-model"\n');
 });
-afterEach(() => { rmSync(home, { recursive: true, force: true }); if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous; });
+afterEach(() => { rmSync(home, { recursive: true, force: true }); if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous; });
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; };
 
 // All providers/tools are local fakes. Child processes inherit only the temp home.
@@ -170,7 +170,7 @@ test("separate Bun processes serialize transcript publications and inbox consump
     const t = open(${JSON.stringify(path)});
     await consume(${JSON.stringify(project)}, "orchestrator", t, inbox => t.append({type:"message", inbox, message:{role:"user",content:format(inbox)}}));
     for(let i=0;i<8;i++) await t.append({type:"message", message:{role:"assistant",content:process.pid+":"+i}});`;
-  const children = Array.from({ length: 3 }, () => Bun.spawn([process.execPath, "--eval", code], { env: { ...process.env, PARALLELS_HOME: home }, stdout: "pipe", stderr: "pipe" }));
+  const children = Array.from({ length: 3 }, () => Bun.spawn([process.execPath, "--eval", code], { env: { ...process.env, ORCA_HOME: home }, stdout: "pipe", stderr: "pipe" }));
   expect(await Promise.all(children.map(p => p.exited))).toEqual([0, 0, 0]);
   const t = open(path);
   expect(t.history!()).toHaveLength(25);

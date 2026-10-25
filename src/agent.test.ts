@@ -10,8 +10,8 @@ import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import type { Entry, NewEntry, Transcript } from "./transcript";
 import type { Tool, ToolContext } from "./tools/index";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-agent-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-agent-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const user = (text: string): NewEntry => ({ type: "message", message: { role: "user", content: text } });

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fixture, grade } from "./fixtures";
 import { jsonLines, claudeMetrics, codexMetrics } from "./metrics";
+import { harnessEngine } from "../../src/legacy";
 const input = process.argv[2] ?? join(import.meta.dir, "results/live.jsonl");
 const rows = jsonLines(await Bun.file(input).text());
 const temporary = await mkdtemp(join(tmpdir(), "efficiency-audit-"));
@@ -18,7 +19,7 @@ try {
     }
     const answer = await Bun.file(join(row.artifacts, "answer.txt")).text();
     if (metrics.answer !== answer) throw new Error(`Answer mismatch: ${row.artifacts}`);
-    const evidence = row.engine === "parallels" ? jsonLines(await Bun.file(join(row.artifacts, "transcript.jsonl")).text()) : events;
+    const evidence = harnessEngine(row.engine) ? jsonLines(await Bun.file(join(row.artifacts, "transcript.jsonl")).text()) : events;
     const commands = new Map<string, string>();
     for (const e of evidence) {
       if (e.type === "item.completed" && e.item?.command) commands.set(e.item.id, e.item.command);
@@ -42,7 +43,7 @@ try {
     }
     for await (const file of new Bun.Glob("**/*").scan({ cwd: row.cwd, onlyFiles: true, dot: true })) if (!expectedFiles.has(file)) scope.push(file);
     const correct = await grade(row.cwd, row.task, answer, data);
-    if (row.engine === "parallels") {
+    if (harnessEngine(row.engine)) {
       // Reconstruct totals directly from provider results, not the worker's aggregate.
       const usage = await Promise.all(Array.from({ length: row.requests }, async (_, n) => (await Bun.file(join(row.artifacts, `response-${n}.json`)).exists()) ? (await Bun.file(join(row.artifacts, `response-${n}.json`)).json()).usage : undefined));
       for (const [metric, key] of [["inputTokens", "input"], ["cachedInputTokens", "cachedInput"], ["outputTokens", "output"]]) {

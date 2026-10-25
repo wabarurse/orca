@@ -12,15 +12,15 @@ let home: string;
 let previousHome: string | undefined;
 let previousClaude: string | undefined;
 beforeEach(() => {
-  previousHome = process.env.PARALLELS_HOME;
+  previousHome = process.env.ORCA_HOME;
   previousClaude = process.env.CLAUDE_CONFIG_DIR;
-  home = mkdtempSync(join(tmpdir(), "parallels-claude-auth-"));
-  process.env.PARALLELS_HOME = home;
+  home = mkdtempSync(join(tmpdir(), "orca-claude-auth-"));
+  process.env.ORCA_HOME = home;
   process.env.CLAUDE_CONFIG_DIR = join(home, "claude");
 });
 afterEach(() => {
-  if (previousHome === undefined) delete process.env.PARALLELS_HOME;
-  else process.env.PARALLELS_HOME = previousHome;
+  if (previousHome === undefined) delete process.env.ORCA_HOME;
+  else process.env.ORCA_HOME = previousHome;
   if (previousClaude === undefined) delete process.env.CLAUDE_CONFIG_DIR;
   else process.env.CLAUDE_CONFIG_DIR = previousClaude;
   rmSync(home, { recursive: true, force: true });
@@ -220,7 +220,7 @@ test("refresh is serialized between independent worker processes", async () => {
   await Bun.write(script, `
     import { claudeCredentials } from ${JSON.stringify(join(import.meta.dir, "claude-auth.ts"))};
     const credentials = claudeCredentials("workers", async () => {
-      await Bun.write(process.env.PARALLELS_HOME + "/refresh-" + process.pid, "called");
+      await Bun.write(process.env.ORCA_HOME + "/refresh-" + process.pid, "called");
       await Bun.sleep(100);
       return Response.json({ access_token: "worker-access", refresh_token: "worker-refresh", expires_in: 3600 });
     });
@@ -228,7 +228,7 @@ test("refresh is serialized between independent worker processes", async () => {
     if (result.token !== "worker-access") process.exit(1);
   `);
   const workers = Array.from({ length: 3 }, () => Bun.spawn([process.execPath, script], {
-    env: { ...process.env, PARALLELS_HOME: home }, stdout: "pipe", stderr: "pipe",
+    env: { ...process.env, ORCA_HOME: home }, stdout: "pipe", stderr: "pipe",
   }));
   const errors = await Promise.all(workers.map((worker) => new Response(worker.stderr).text()));
   expect(errors).toEqual(["", "", ""]);

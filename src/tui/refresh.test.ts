@@ -19,11 +19,11 @@ import { projectTurnLock } from "../project-state";
 import { saveProjectSettings } from "../project-settings";
 import { Calls } from "./tools";
 
-const previous = process.env.PARALLELS_HOME;
+const previous = process.env.ORCA_HOME;
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-  if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous;
+  if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
 });
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 async function until(check: () => boolean) {
@@ -33,7 +33,7 @@ async function until(check: () => boolean) {
 const raw = (app: App) => JSON.stringify(app.page?.lines);
 async function setup(extra: Partial<AppDeps> = {}) {
   const home = mkdtempSync(join(tmpdir(), "tui-refresh-"));
-  process.env.PARALLELS_HOME = home;
+  process.env.ORCA_HOME = home;
   await saveConfig({ model: "fake-model" });
   const screen = new FakeScreen(90, 28);
   const term: Terminal = { cols: 90, rows: 28, open() {}, close() {}, eraseOnExit() {}, onKey() {}, onResize() {}, write(s) { screen.write(s); } };

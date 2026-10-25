@@ -6,7 +6,7 @@ import { paths } from "./config";
 import { ghTaskPR, parseTaskPR } from "./github";
 
 const home = mkdtempSync(join(tmpdir(), "task-github-"));
-process.env.PARALLELS_HOME = home;
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 mkdirSync(paths.repo("p"), { recursive: true });
 const head = "a".repeat(40);

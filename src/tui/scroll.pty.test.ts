@@ -16,7 +16,7 @@ async function until(check: () => boolean): Promise<void> {
 }
 
 test("owned PTY: full saved history scrolls between pinned bars without mode changes; exit restores shell", async () => {
-  const home = mkdtempSync(join(tmpdir(), "parallels-scroll-pty-"));
+  const home = mkdtempSync(join(tmpdir(), "orca-scroll-pty-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
     mkdirSync(join(home, "projects", "probe", "repo"), { recursive: true });
@@ -40,7 +40,7 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
     `, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli.ts")], {
       cwd: home,
       // No inherited auth, tmux server/socket, git config, or user's project.
-      env: { HOME: home, PARALLELS_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      env: { HOME: home, ORCA_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
       terminal: { cols: 100, rows: 24, data(_terminal, data) { output += decoder.decode(data, { stream: true }); } },
     });
     const screen = () => {

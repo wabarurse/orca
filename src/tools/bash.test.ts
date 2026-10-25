@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { toolSummary } from "../toolview";
 
-// Point config at a temp dir so tests never read the real ~/.parallels.
-const home = mkdtempSync(join(tmpdir(), "parallels-bash-"));
-process.env.PARALLELS_HOME = home;
+// Point config at a temp dir so tests never read the real ~/.orca.
+const home = mkdtempSync(join(tmpdir(), "orca-bash-"));
+process.env.ORCA_HOME = home;
 
 let bash: typeof import("./bash").bash;
 let truncateMiddle: typeof import("./bash").truncateMiddle;
@@ -17,7 +17,7 @@ beforeAll(async () => {
 const ctx = (cwd: string) => ({ project: "p", role: "worker" as const, cwd });
 
 test("runs in cwd", async () => {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "parallels-cwd-")));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "orca-cwd-")));
   expect((await bash.run({ command: "pwd" }, ctx(dir))).trim()).toBe(dir);
 });
 

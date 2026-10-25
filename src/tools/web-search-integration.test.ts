@@ -16,12 +16,12 @@ import { restore } from "../tui/restore";
 import { registry, toolsFor } from "./index";
 import { web_search } from "./web-search";
 
-const oldHome = process.env.PARALLELS_HOME;
+const oldHome = process.env.ORCA_HOME;
 const dirs: string[] = [];
-afterEach(() => { process.env.PARALLELS_HOME = oldHome; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { process.env.ORCA_HOME = oldHome; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "parallels-search-")); dirs.push(dir);
-  process.env.PARALLELS_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "orca-search-")); dirs.push(dir);
+  process.env.ORCA_HOME = dir;
   return { dir, transcript: open(join(dir, "test.jsonl")) };
 }
 

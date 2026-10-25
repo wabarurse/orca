@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { $ } from "bun";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-merges-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-merges-"));
+process.env.ORCA_HOME = home;
 for (const k of ["GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"]) process.env[k] = "t";
 for (const k of ["GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"]) process.env[k] = "t@t";
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -79,7 +79,7 @@ async function agent(id: string, b: string, run: string): Promise<ReturnType<typ
   writeFileSync(script, `import { supervise } from ${JSON.stringify(SUPERVISED)};
 await supervise({ project: ${JSON.stringify(project)}, id: ${JSON.stringify(id)}, run: ${JSON.stringify(run)}, role: ${JSON.stringify(id.split("-")[0])}, branch: ${JSON.stringify(b)}, cwd: ${JSON.stringify(paths.worktree(project, slug(b)))} }, () => new Promise(() => {}), { log: () => {} });
 `);
-  const proc = Bun.spawn(["bun", script], { env: { ...process.env, PARALLELS_HOME: home }, stdout: "ignore", stderr: "ignore" });
+  const proc = Bun.spawn(["bun", script], { env: { ...process.env, ORCA_HOME: home }, stdout: "ignore", stderr: "ignore" });
   await until(async () => (await readRun(project, id))?.pid === proc.pid);
   await Bun.sleep(100); // signal handlers are installed right after the run state is written
   return proc;

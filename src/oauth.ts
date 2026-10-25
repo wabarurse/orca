@@ -144,10 +144,10 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
       try {
         await config.exchange({ grant_type: "authorization_code", code, state, code_verifier: verifier, redirect_uri: redirectUri }, options.fetcher ?? fetch, cancellation.signal);
         result.resolve();
-        return new Response("signed in to parallels. you can close this tab.");
+        return new Response("signed in to orca. you can close this tab.");
       } catch (err) {
         result.reject(err);
-        return new Response("login failed. return to parallels and try again.", { status: 400 });
+        return new Response("login failed. return to orca and try again.", { status: 400 });
       }
     },
   });

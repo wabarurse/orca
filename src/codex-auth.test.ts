@@ -9,13 +9,13 @@ import { fakeCodexTokens } from "./test/codex";
 let home: string;
 let originalHome: string | undefined;
 beforeEach(() => {
-  originalHome = process.env.PARALLELS_HOME;
-  home = mkdtempSync(join(tmpdir(), "parallels-codex-"));
-  process.env.PARALLELS_HOME = home;
+  originalHome = process.env.ORCA_HOME;
+  home = mkdtempSync(join(tmpdir(), "orca-codex-"));
+  process.env.ORCA_HOME = home;
 });
 afterEach(() => {
-  if (originalHome === undefined) delete process.env.PARALLELS_HOME;
-  else process.env.PARALLELS_HOME = originalHome;
+  if (originalHome === undefined) delete process.env.ORCA_HOME;
+  else process.env.ORCA_HOME = originalHome;
   rmSync(home, { recursive: true, force: true });
 });
 

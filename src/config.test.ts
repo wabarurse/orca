@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { defaults, loadConfig, paths, saveConfig } from "./config";
 
 let home: string;
-const before = process.env.PARALLELS_HOME;
-beforeEach(() => { home = mkdtempSync(join(tmpdir(), "parallels-config-")); process.env.PARALLELS_HOME = home; });
+const before = process.env.ORCA_HOME;
+beforeEach(() => { home = mkdtempSync(join(tmpdir(), "orca-config-")); process.env.ORCA_HOME = home; });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
-  if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
+  if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
 });
 
 describe("dynamicDispatch", () => {

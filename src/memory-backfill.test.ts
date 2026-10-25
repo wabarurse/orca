@@ -10,12 +10,12 @@ import { backfillMemory, cleanOrphans, startMemoryBackfill } from "./memory-back
 import { registerTask } from "./tasks";
 import { open, type Entry } from "./transcript";
 
-const previous = process.env.PARALLELS_HOME, dirs: string[] = [];
+const previous = process.env.ORCA_HOME, dirs: string[] = [];
 afterEach(() => {
-  if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous;
+  if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
   dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true }));
 });
-const home = () => { const dir = mkdtempSync(join(tmpdir(), "memory-backfill-")); dirs.push(dir); process.env.PARALLELS_HOME = dir; return dir; };
+const home = () => { const dir = mkdtempSync(join(tmpdir(), "memory-backfill-")); dirs.push(dir); process.env.ORCA_HOME = dir; return dir; };
 const oldFile = (project: string) => join(paths.project(project), "memory.sqlite");
 const siblings = (project: string) => ["", "-wal", "-shm", "-journal"].map(s => oldFile(project) + s);
 const globalRows = <T>(sql: string, ...params: string[]) => {
@@ -202,7 +202,7 @@ test("startup backfill is fire-and-forget, deduplicated and never rejects", asyn
   expect(await first).toBe(true);
   expect(existsSync(oldFile("alpha"))).toBe(false);
   mkdirSync(join(dir, "other")); // an unusable archive: reported, not thrown
-  process.env.PARALLELS_HOME = join(dir, "other"); mkdirSync(archivePath(), { recursive: true });
+  process.env.ORCA_HOME = join(dir, "other"); mkdirSync(archivePath(), { recursive: true });
   const logs: string[] = [];
   expect(await startMemoryBackfill({ log: m => logs.push(m) })).toBe(false);
   expect(logs).toHaveLength(1);

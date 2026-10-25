@@ -26,16 +26,16 @@ const frame = (cols = 100, rows = 24, tasks = [row()]): Frame => ({ cols, rows, 
   inbox: { ...taskInboxLines({ rows: tasks, loading: false }, cols), top: 0, state: "ready" } });
 const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "isolated" }], active: 0, model: "fake-model", directory: "/isolated/repo", remote: "owner/repo" }, f.cols, headerHeight(f.rows));
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
-const previous = process.env.PARALLELS_HOME;
+const previous = process.env.ORCA_HOME;
 const cleanups: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); process.env.PARALLELS_HOME = previous; });
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); process.env.ORCA_HOME = previous; });
 async function until(check: () => boolean) {
   for (let i = 0; i < 200 && !check(); i++) await Bun.sleep(5);
   expect(check()).toBe(true);
 }
 async function setup(extra: Partial<AppDeps> = {}) {
   const home = mkdtempSync(join(tmpdir(), "task-inbox-ui-"));
-  process.env.PARALLELS_HOME = home;
+  process.env.ORCA_HOME = home;
   await saveConfig({ model: "fake-model" });
   const screen = new FakeScreen(100, 28);
   let resize = () => {}, turns = 0, cancelled = 0, closed = false, exit = "";

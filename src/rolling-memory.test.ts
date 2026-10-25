@@ -19,10 +19,10 @@ import { paired } from "./tool-pairs";
 import { open } from "./transcript";
 import { orchestratorTask as task, task as agentTask } from "./tools/task";
 
-const previous = process.env.PARALLELS_HOME, dirs: string[] = [], compacters: RollingCompactor[] = [];
+const previous = process.env.ORCA_HOME, dirs: string[] = [], compacters: RollingCompactor[] = [];
 afterEach(() => {
   compacters.splice(0).forEach(c => c.reset());
-  process.env.PARALLELS_HOME = previous;
+  process.env.ORCA_HOME = previous;
   dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true }));
 });
 const memory = (patch: Partial<RollingMemory> = {}): RollingMemory => ({ user: ["Prefers concise responses"], project: ["Use Bun"], pending: [], tasks: [], ...patch });
@@ -36,7 +36,7 @@ function gated(value = memory()) {
   return { provider, calls, entered: entered.promise, release: release.resolve };
 }
 async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), "rolling-memory-")); dirs.push(dir); process.env.PARALLELS_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "rolling-memory-")); dirs.push(dir); process.env.ORCA_HOME = dir;
   const project = "p", transcript = open(paths.transcript(project, "orchestrator"));
   await saveConfig({ model: "gpt-6-sol" });
   for (const [role, content] of [["user", "Prefers concise responses. Use Bun. " + "old work ".repeat(2500)], ["assistant", "old findings ".repeat(2500)], ["user", "recent question"], ["assistant", "recent answer"]] as const) {

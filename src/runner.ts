@@ -26,7 +26,7 @@ export interface StartOptions {
 }
 
 export interface Runner {
-  /** Create the worktree if needed and start `parallels agent` in a tmux window. */
+  /** Create the worktree if needed and start `orca agent` in a tmux window. */
   start(opts: StartOptions): Promise<void>;
   /** Close the branch's windows and remove its worktree. */
   stop(project: string, branch: string): Promise<void>;
@@ -49,7 +49,7 @@ function need(bin: string): string {
 
 /** A branch name as a safe directory / window / transcript name. */
 export const slug = (branch: string) => branch.replace(/[^A-Za-z0-9._-]+/g, "-");
-export const sessionName = (project: string) => `parallels-${project}`;
+export const sessionName = (project: string) => `orca-${project}`;
 export const windowName = (role: Role, branch?: string) =>
   role === "orchestrator" || !branch ? role : `${role}-${slug(branch)}`;
 /** Transcript id for a role on a branch; the orchestrator has one transcript. */
@@ -160,7 +160,7 @@ export const SETTLED_EXIT = 70;
  * compiled executable or Bun + source, including spaces/quotes in every path.
  */
 const WRAPPER = [
-  `export PARALLELS_HOME="$1"`,
+  `export ORCA_HOME="$1"`,
   `project="$2" role="$3" branch="$4" run="$5"`,
   `shift 5`,
   `"$@" agent --project "$project" --role "$role" --branch "$branch" --run "$run"`,
@@ -173,13 +173,13 @@ const WRAPPER = [
  * The tmux window's command as an argv, which tmux execs directly without the
  * user's default shell (fish, zsh, ...). Workers and reviewers run under a
  * fixed `sh -c` script: if the agent exits non-zero and not SETTLED_EXIT (a
- * signal, OOM, an uncaught error), `parallels agent-exit` sends the
+ * signal, OOM, an uncaught error), `orca agent-exit` sends the
  * orchestrator an `[agent-exit]` notice unless the run is already closed
  * (src/exits.ts). Both share one run id.
  */
 export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID().slice(0, 8), cli: string[] = cliCommand()): string[] {
   if (opts.role === "orchestrator" || !opts.branch) {
-    return ["env", `PARALLELS_HOME=${paths.root}`, ...cli, "agent", "--project", opts.project, "--role", opts.role];
+    return ["env", `ORCA_HOME=${paths.root}`, ...cli, "agent", "--project", opts.project, "--role", opts.role];
   }
   return ["sh", "-c", WRAPPER, "sh", paths.root, opts.project, opts.role, opts.branch, run, ...cli];
 }

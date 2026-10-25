@@ -28,8 +28,8 @@ function makeSpawn(...args: Parameters<typeof realSpawn>) {
   } };
 }
 
-const home = mkdtempSync(join(tmpdir(), "parallels-spawn-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-spawn-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const started: StartOptions[] = [];

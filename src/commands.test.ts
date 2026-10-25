@@ -37,9 +37,9 @@ describe("project names", () => {
 
 describe("display names", () => {
   test("are saved per project, keep the folder, and must be unique", async () => {
-    const home = mkdtempSync(join(tmpdir(), "parallels-names-"));
-    const before = process.env.PARALLELS_HOME;
-    process.env.PARALLELS_HOME = home;
+    const home = mkdtempSync(join(tmpdir(), "orca-names-"));
+    const before = process.env.ORCA_HOME;
+    process.env.ORCA_HOME = home;
     try {
       for (const p of ["a", "b"]) mkdirSync(join(home, "projects", p, "repo"), { recursive: true });
       expect(await displayName("a")).toBe("a");
@@ -54,7 +54,7 @@ describe("display names", () => {
       expect(await setDisplayName("b", "café ✓")).toBe("café ✓");
       expect(await setDisplayName("a", "login page")).toBe("login page"); // its own name again is fine
     } finally {
-      if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
+      if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
       rmSync(home, { recursive: true, force: true });
     }
   });
@@ -62,11 +62,11 @@ describe("display names", () => {
 
 describe("repoHere", () => {
   test("shortRemote drops scheme and .git", () => {
-    expect(shortRemote("https://github.com/wabarurse/parallels.git")).toBe("github.com/wabarurse/parallels");
+    expect(shortRemote("https://github.com/example/orca.git")).toBe("github.com/example/orca");
     expect(shortRemote("git@github.com:me/app.git")).toBe("github.com/me/app");
   });
   test("retains the original checkout path even when it has an origin", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "parallels-here-"));
+    const dir = mkdtempSync(join(tmpdir(), "orca-here-"));
     try {
       const repo = join(dir, "my-app");
       await Bun.$`git init -q ${repo}`.quiet();
@@ -82,9 +82,9 @@ describe("repoHere", () => {
 
 describe("/dynamic-dispatch", () => {
   test("shows, saves and refuses", async () => {
-    const before = process.env.PARALLELS_HOME;
-    const home = mkdtempSync(join(tmpdir(), "parallels-dispatch-"));
-    process.env.PARALLELS_HOME = home;
+    const before = process.env.ORCA_HOME;
+    const home = mkdtempSync(join(tmpdir(), "orca-dispatch-"));
+    process.env.ORCA_HOME = home;
     try {
       expect(await dynamicDispatch("")).toBe("dynamic dispatch: off");
       expect(await dynamicDispatch("on")).toBe("dynamic dispatch set to on (takes effect from the orchestrator's next turn)");
@@ -96,7 +96,7 @@ describe("/dynamic-dispatch", () => {
       expect(await dynamicDispatch("off")).toBe("dynamic dispatch set to off (takes effect from the orchestrator's next turn)");
       expect(await dynamicDispatch("")).toBe("dynamic dispatch: off");
     } finally {
-      if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
+      if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
       rmSync(home, { recursive: true, force: true });
     }
   });
@@ -104,9 +104,9 @@ describe("/dynamic-dispatch", () => {
 
 describe("/review-rounds", () => {
   test("shows, saves and refuses", async () => {
-    const before = process.env.PARALLELS_HOME;
-    const home = mkdtempSync(join(tmpdir(), "parallels-rounds-"));
-    process.env.PARALLELS_HOME = home;
+    const before = process.env.ORCA_HOME;
+    const home = mkdtempSync(join(tmpdir(), "orca-rounds-"));
+    process.env.ORCA_HOME = home;
     try {
       expect(await reviewRounds("")).toBe("review rounds: 1");
       expect(await reviewRounds("3")).toContain("next turn");
@@ -116,7 +116,7 @@ describe("/review-rounds", () => {
       for (const bad of ["-1", "1.5", "two", "1e2", "1e23", "2 3", "101", "999", "0100", "9007199254740993"]) expect(await reviewRounds(bad)).toBe(REVIEW_ROUNDS_USAGE);
       expect((await loadConfig()).maxReviewRounds).toBe(0);
     } finally {
-      if (before === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = before;
+      if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
       rmSync(home, { recursive: true, force: true });
     }
   });
@@ -124,11 +124,11 @@ describe("/review-rounds", () => {
 
 describe("project list", () => {
   const withHome = async (fn: (home: string) => Promise<void>) => {
-    const prev = process.env.PARALLELS_HOME;
-    const home = mkdtempSync(join(tmpdir(), "parallels-projects-"));
-    process.env.PARALLELS_HOME = home;
+    const prev = process.env.ORCA_HOME;
+    const home = mkdtempSync(join(tmpdir(), "orca-projects-"));
+    process.env.ORCA_HOME = home;
     try { await fn(home); } finally {
-      if (prev === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = prev;
+      if (prev === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = prev;
       rmSync(home, { recursive: true, force: true });
     }
   };
@@ -229,13 +229,13 @@ describe("project list", () => {
 
 describe("listAgents", () => {
   const withProject = async (fn: (project: string, home: string) => Promise<void>) => {
-    const prev = process.env.PARALLELS_HOME;
-    const home = mkdtempSync(join(tmpdir(), "parallels-agents-"));
-    process.env.PARALLELS_HOME = home;
+    const prev = process.env.ORCA_HOME;
+    const home = mkdtempSync(join(tmpdir(), "orca-agents-"));
+    process.env.ORCA_HOME = home;
     const windows = tmux.listWindows;
     try { await fn("p", home); } finally {
       tmux.listWindows = windows;
-      if (prev === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = prev;
+      if (prev === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = prev;
       rmSync(home, { recursive: true, force: true });
     }
   };

@@ -44,7 +44,7 @@ publishes inference. Page disposal, cancellation, clear or another checkpoint
 invalidates stale work. The one-shot CLI joins its worker while owning the turn.
 
 SQLite is a rebuildable private original-entry/task index, not a replacement for
-JSONL or tasks.json: one global `~/.parallels/memory.sqlite` (WAL, mode `0600`)
+JSONL or tasks.json: one global `~/.orca/memory.sqlite` (WAL, mode `0600`)
 shared by all projects, with `project` and `agent` columns on every row, holding
 only orchestrator transcripts and task records. Old per-project `memory.sqlite`
 files are migrated by a background backfill and deleted only after the rebuilt

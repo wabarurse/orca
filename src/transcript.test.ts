@@ -9,7 +9,7 @@ let dir: string;
 let path: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "parallels-transcript-"));
+  dir = mkdtempSync(join(tmpdir(), "orca-transcript-"));
   path = join(dir, "nested", "t.jsonl");
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));

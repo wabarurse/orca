@@ -27,7 +27,7 @@ if (cmd === "images") {
     record({ exit: await child.exited, cwd });
   }
 } else if (cmd === "agent") {
-  record({ cmd, args, cwd: process.cwd(), home: process.env.PARALLELS_HOME, executable: process.execPath, login: process.env.FIXTURE_LOGIN, stale: process.env.STALE_FIXTURE });
+  record({ cmd, args, cwd: process.cwd(), home: process.env.ORCA_HOME, executable: process.execPath, login: process.env.FIXTURE_LOGIN, stale: process.env.STALE_FIXTURE });
   if (process.env.PROBE_EXIT === "kill") process.kill(process.pid, "SIGKILL");
   else if (process.env.PROBE_EXIT) process.exit(Number(process.env.PROBE_EXIT));
   else {
@@ -36,7 +36,7 @@ if (cmd === "images") {
     record({ providerCalls: provider.calls.length, role });
   }
 } else if (cmd === "agent-exit") {
-  record({ cmd, args, cwd: process.cwd(), home: process.env.PARALLELS_HOME, executable: process.execPath });
+  record({ cmd, args, cwd: process.cwd(), home: process.env.ORCA_HOME, executable: process.execPath });
   await afterExit({ project, role, branch, run, id: sessionId(role, branch), cwd: process.cwd(), code: Number(flag("code")) });
   process.exitCode = Number(process.env.PROBE_FOLLOWUP_EXIT ?? 0);
 } else throw new Error("unknown test probe command");

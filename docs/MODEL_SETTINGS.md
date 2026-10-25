@@ -50,7 +50,7 @@ controls are provided for these settings.
   that project. Files use unique sibling temp files plus atomic rename.
 - A crashed process may leave a lock. Acquisition fails clearly after ~5 seconds,
   rather than stealing an uncertain lock; the error names it. Remove a stale lock
-  only after confirming no parallels process is using it. Arbitrary external
+  only after confirming no orca process is using it. Arbitrary external
   filesystem operations that ignore the lock are **not** a supported concurrency
   protocol; atomic rename alone does not protect against such mutations.
 

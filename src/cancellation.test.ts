@@ -10,8 +10,8 @@ import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import { paired } from "./tool-pairs";
 import { drain } from "./inbox";
 
-const home = mkdtempSync(join(tmpdir(), "parallels-cancellation-"));
-process.env.PARALLELS_HOME = home;
+const home = mkdtempSync(join(tmpdir(), "orca-cancellation-"));
+process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 async function until(check: () => boolean) {
