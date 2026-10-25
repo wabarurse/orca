@@ -11,12 +11,12 @@ import { open } from "../transcript";
 import { registry, toolsFor, type ToolContext } from "./index";
 import { history } from "./history";
 
-const previous = process.env.PARALLELS_HOME, dirs: string[] = [];
+const previous = process.env.ORCA_HOME, dirs: string[] = [];
 afterEach(() => {
-  if (previous === undefined) delete process.env.PARALLELS_HOME; else process.env.PARALLELS_HOME = previous;
+  if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
   dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true }));
 });
-function home() { const dir = mkdtempSync(join(tmpdir(), "history-tool-")); dirs.push(dir); process.env.PARALLELS_HOME = dir; return dir; }
+function home() { const dir = mkdtempSync(join(tmpdir(), "history-tool-")); dirs.push(dir); process.env.ORCA_HOME = dir; return dir; }
 const mk = (...projects: string[]) => projects.forEach(p => mkdirSync(paths.project(p), { recursive: true }));
 /** Appends to a transcript and, like a finished turn, indexes the project's orchestrator transcript. */
 async function say(project: string, content: string, role: "user" | "assistant" = "user", agent = "orchestrator") {
