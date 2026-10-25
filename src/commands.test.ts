@@ -281,6 +281,15 @@ describe("listAgents", () => {
     });
   });
 
+  test("live window with a previous run's endedAt shows no clock", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => ["worker-r"];
+      transcript(project, "worker-r", "2024-05-01T08:00:00.000Z");
+      state(project, "worker-r", { startedAt: "2024-05-01T09:00:00.000Z", endedAt: "2024-05-01T09:30:00.000Z" });
+      expect(by(await listAgents(project), "worker-r")).toEqual({ name: "worker-r", live: true });
+    });
+  });
+
   test("an old state file without startedAt starts at the transcript's first entry", async () => {
     await withProject(async (project) => {
       tmux.listWindows = async () => ["worker-o"];

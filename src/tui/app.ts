@@ -145,7 +145,7 @@ const TICK_MS = 33;
 /** How often a live agent view checks whether its agent has finished. */
 const LIVE_CHECK_MS = 1000;
 /** The open /agents menu redraws this often (its clocks tick in seconds) and re-reads the agent list every AGENTS_REFRESH_MS. */
-const AGENTS_TICK_MS = 1000;
+export const AGENTS_TICK_MS = 1000;
 const AGENTS_REFRESH_MS = 2000;
 
 /** The project list (Ctrl+B, /projects): every project on disk, pinned first. Takes the keys while open. */
@@ -713,6 +713,7 @@ export class App {
 
   private agentsTick(timer: AgentsTimer): void {
     if (this.agentsTimer !== timer) return;
+if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while pick runs): the draw syncs the timer off
     const now = this.clock.now();
     if (!timer.reading && now - timer.readAt >= AGENTS_REFRESH_MS) {
       timer.readAt = now;
@@ -1275,7 +1276,9 @@ export class App {
       },
       reload: async () => {
         const next = await list(page.project);
-        if (!next.length || !current() || this.menu !== menu) return;
+        if (this.menu !== menu) return;
+        if (!current()) { this.menu = null; return this.draw(); } // the view or model operation moved on: close, don't tick a stale list
+        if (!next.length) return;
         menu.index = reselect(menu.index, agents, next);
         agents = next;
         menu.items = rowsAt(this.clock.now());

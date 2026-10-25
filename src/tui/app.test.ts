@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
-import { App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
+import { AGENTS_TICK_MS, App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
 import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
@@ -518,7 +518,7 @@ describe("tui app", () => {
     const clock: Clock = {
       now: () => now,
       // The open /agents menu's own 1s clock is covered by the "/agents clocks" tests; this one counts the animation timer.
-      every: (fn, ms) => { if (ms === 1000) return () => {}; started++; ticks.push(fn); return () => { stopped++; ticks.splice(ticks.indexOf(fn), 1); }; },
+      every: (fn, ms) => { if (ms === AGENTS_TICK_MS) return () => {}; started++; ticks.push(fn); return () => { stopped++; ticks.splice(ticks.indexOf(fn), 1); }; },
     };
     let finish!: () => void;
     let write!: (t: string) => void;
@@ -3773,7 +3773,7 @@ describe("/agents clocks", () => {
     const state = { now: T0 + 192_000 };
     const timers: { fn: () => void; ms: number }[] = [];
     const clock: Clock = { now: () => state.now, every: (fn, ms) => { const t = { fn, ms }; timers.push(t); return () => { timers.splice(timers.indexOf(t), 1); }; } };
-    const menuTimers = () => timers.filter((t) => t.ms === 1000);
+    const menuTimers = () => timers.filter((t) => t.ms === AGENTS_TICK_MS);
     const app = new App({ term, clock, pollMs: 100_000, agents, watchdog: async () => {}, merges: async () => {}, openOrchestrator: fakeOrchestrators().openOrchestrator });
     const running = app.run("clocks");
     await until(() => !!app.page);
@@ -3902,6 +3902,29 @@ describe("/agents clocks", () => {
       t.app.quit();
       await t.running;
       expect(t.timers.length).toBe(0);
+    } finally { await t.stop(); }
+  });
+
+  test("a tick after the menu closed starts no list read, and a read that finds the view moved on closes the menu", async () => {
+    let reads = 0;
+    const t = await setup(async () => { reads++; return [{ name: "worker-foo", live: true, startedAt: iso(0) }]; });
+    try {
+      t.term.type("/agents\r");
+      await until(() => t.menuTimers().length === 1);
+      const tick = t.menuTimers()[0]!.fn;
+      const opened = reads;
+      t.app.menu = null; // closed, but the draw that syncs the timer off has not run yet (Enter while attach runs)
+      t.state.now += 5000;
+      tick();
+      await Bun.sleep(30);
+      expect(reads).toBe(opened);
+      expect(t.menuTimers().length).toBe(0);
+
+      t.term.type("/agents\r");
+      await until(() => t.menuTimers().length === 1);
+      (t.app as unknown as { modelGeneration: number }).modelGeneration++; // another operation superseded the menu
+      await t.tick(2000);
+      await until(() => !t.app.menu && t.menuTimers().length === 0);
     } finally { await t.stop(); }
   });
 

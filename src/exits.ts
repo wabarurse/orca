@@ -40,7 +40,12 @@ export interface RunState {
   ts: string;
   /** When this run started (ISO), set once by beginRun. Absent in files written before clocks existed. */
   startedAt?: string;
-  /** When this run was closed (ISO), for every close reason; absent while it runs, and after a hard kill that nothing observed. */
+  /**
+   * When this run was closed (ISO). Stamped by supervise (finished, reported, crashed, cancelled),
+   * the signal handler and afterExit. The TUI watchdog's sweep and merge cleanup do not stamp it:
+   * a run only they close shows the file's `ts` as an approximate end (merge cleanup relies on the
+   * agent's own SIGHUP handler). Absent while it runs.
+   */
   endedAt?: string;
 }
 
@@ -69,7 +74,11 @@ async function writeRun(project: string, id: string, s: RunState): Promise<void>
   await rename(tmp, path);
 }
 
-/** Stamp `endedAt` on the stored state of run `run` when it has none yet. False when the file is another run's, already stamped, or missing. */
+/**
+ * Stamp `endedAt` on the stored state of run `run` when it has none yet. False when the file is another run's, already stamped, or missing.
+ * This reads then rewrites the file, so a respawn's beginRun landing in between could be overwritten by
+ * the old run's state: unlikely (a few ms), and it heals on the new tracker's next write.
+ */
 export async function markEnded(project: string, id: string, run: string, at = new Date().toISOString()): Promise<boolean> {
   const s = await readRun(project, id);
   if (!s || s.run !== run || s.endedAt) return false;

@@ -55,11 +55,13 @@ async function firstEntryTs(path: string): Promise<string | undefined> {
 
 /**
  * The latest run's times for agent `name` (its run file id is its transcript id).
- * A live agent has no end. A finished one without endedAt gets the run file's
+ * A live agent has no end; if its state already has one, that state is a previous run's
+ * (a respawn before beginRun) or a run mid-close, so there is no clock. A finished one without endedAt gets the run file's
  * last update, marked approximate; without startedAt, the transcript's first entry.
  */
 async function agentTimes(project: string, name: string, live: boolean): Promise<Pick<AgentInfo, "startedAt" | "endedAt" | "approximateEnd">> {
   const state = await readRun(project, name);
+  if (live && state?.endedAt) return {};
   const startedAt = state?.startedAt ?? (await firstEntryTs(paths.transcript(project, name)));
   if (!startedAt) return {};
   if (live) return { startedAt };
