@@ -7,10 +7,13 @@ An agent harness built around an orchestrator → worker → reviewer loop, with
 | Role | Job | Done when |
 |---|---|---|
 | Orchestrator | Works on the default branch in the original checkout, splits work, spawns workers | — |
-| Worker | Implements one task on its own branch | Hands off to reviewer |
-| Reviewer | Checks the work, including cyclomatic and cognitive complexity | CI is green, then reports to orchestrator |
+| Worker | Implements one task and runs only relevant checks once per checked code state | Hands off code and check evidence |
+| Reviewer | Reads the diff and failed-check output; runs cyclomatic and cognitive complexity | Reports findings without running tests or editing code |
 
-`spawn` starts a worker-reviewer loop.
+`spawn` starts a worker-reviewer loop bounded by `maxReviewRounds`. No full test
+suites, baseline comparisons or duplicate tests. Review feedback goes to the
+worker; only changed checked code permits a rerun. Publication reuses the worker's
+evidence and observes hosted checks without a final local validation pass.
 
 ## Tools (keep the set small)
 

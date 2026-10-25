@@ -107,7 +107,7 @@ for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> r
   const page = JSON.parse(await orchestratorTask.run({ action: "read_history", entryId: original.uuid, offset: entryText(original).indexOf("[Historical image") }, f.ctx));
   expect(page.text).toContain(`attachment_id=${f.refs[0]!.id}`);
   expect(page.text).not.toContain("orca-image:"); expect(page.text).not.toContain("base64");
-  const db = new Database(archivePath(f.project), { readonly: true });
+  const db = new Database(archivePath(), { readonly: true });
   try {
     const row = db.query("SELECT raw,body FROM entries WHERE id=?").get(original.uuid) as { raw: string; body: string };
     expect(JSON.parse(row.raw)).toEqual(original); expect(row.raw).toContain("orca-image:");

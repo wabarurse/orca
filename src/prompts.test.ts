@@ -5,13 +5,14 @@ import type { Runner } from "./runner";
 import { ask } from "./tools/ask";
 import { message } from "./tools/message";
 import { makeSpawn } from "./tools/spawn";
+import { task } from "./tools/task";
 
 describe("rolePrompt", () => {
   test("fills the config values in", () => {
     const config = { ...defaults, maxReviewRounds: 3, cyclomatic: 7, cognitive: 9 };
-    expect(rolePrompt("orchestrator", config)).toContain("At most 3 review rounds: if review 3 still finds problems, spawn the worker once more");
-    expect(rolePrompt("orchestrator", config)).toContain(`then the reviewer with "watch ci" and no further review, and tell the user what was left open`);
-    expect(rolePrompt("orchestrator", { ...config, maxReviewRounds: 1 })).toContain("At most 1 review round: if review 1");
+    expect(rolePrompt("orchestrator", config)).toContain("At most 3 review rounds; stop and report unresolved findings at the limit.");
+    expect(rolePrompt("orchestrator", config)).toContain(`Approved: reviewer with "watch ci" and existing evidence`);
+    expect(rolePrompt("orchestrator", { ...config, maxReviewRounds: 1 })).toContain("At most 1 review round;");
     expect(rolePrompt("orchestrator", config)).toContain("spawn a reviewer");
     expect(rolePrompt("reviewer", config)).toContain("cyclomatic > 7, cognitive > 9");
     expect(rolePrompt("worker", config)).not.toMatch(/\{\w+\}/);
@@ -34,7 +35,7 @@ describe("rolePrompt", () => {
   });
   test("0 rounds skips review and goes straight to watch ci", () => {
     const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 });
-    expect(p).toContain(`spawn the reviewer with only the instruction "watch ci"`);
+    expect(p).toContain(`spawn the reviewer with "watch ci" and existing check evidence`);
     expect(p).not.toContain("spawn a reviewer");
     expect(p).not.toContain("review rounds");
   });
@@ -135,7 +136,7 @@ describe("rolePrompt", () => {
     expect(guidance).toContain("Never use a default, Skip or silence to authorize destructive steps");
   });
 
-  // Every prompt stays under 2000 characters: it is sent with every request
+  // Every prompt stays under 2200 characters: it is sent with every request
   // after the provider's identity line, and a short list keeps each rule in the
   // model's attention. Long guidance belongs in a tool description (spawn, ask).
   test("each role gets its own short list", () => {
@@ -147,6 +148,40 @@ describe("rolePrompt", () => {
       expect(p).not.toMatch(/\{\w+\}/);
     }
   });
+});
+
+// Prompt contracts, not a claim that arbitrary shell commands are sandboxed.
+test("check ownership survives review limits, dynamic dispatch and publication handoffs", () => {
+  for (const maxReviewRounds of [0, 1, 100]) {
+    for (const dynamicDispatch of [false, true]) {
+      const config = { ...defaults, maxReviewRounds, dynamicDispatch };
+      const orch = rolePrompt("orchestrator", config);
+      expect(orch).toContain("Never request a full suite, baseline runs or duplicate tests");
+      expect(orch).toContain("Forward check evidence on handoff");
+      expect(orch).not.toContain("spawn the worker once more");
+      const worker = rolePrompt("worker", config);
+      expect(worker).toContain("run only checks relevant to changed behavior");
+      expect(worker).toContain("Never run the full test suite or baseline comparisons");
+      expect(worker).toContain("after feedback, rerun it only if that code changed");
+      expect(worker).toContain("Never retry an unchanged failure");
+      expect(worker).toContain("tested commit/code state, result and saved failure-output path");
+      const reviewer = rolePrompt("reviewer", config);
+      expect(reviewer).toContain("Never run tests or validation commands");
+      expect(reviewer).toContain("Never edit code in either mode");
+      expect(reviewer).toContain("inspect only failed-check output");
+      expect(reviewer).toContain("focus on the new diff and prior findings");
+      expect(reviewer).toContain("Run `complexity`");
+      expect(reviewer).toContain("never rerun jobs or add a local validation pass");
+      expect(reviewer).toContain("match the current PR head to the worker's check evidence");
+      expect(reviewer).toContain("task attention for unresolved failures or missing/stale evidence");
+      expect(reviewer).not.toContain("Fix what fails");
+    }
+  }
+  const schema = makeSpawn({} as Runner).spec.input_schema as { properties: { prompt: { description: string } } };
+  expect(schema.properties.prompt.description).toContain("prior check commands, tested commit/code state, results and saved failure-output paths");
+  expect(schema.properties.prompt.description).toContain("Never request full suites, baseline comparisons or duplicate tests, including in watch-ci");
+  expect(task.spec.description).toContain("never rerun tests or add local validation");
+  expect(task.spec.description).toContain("matching the worker's relevant-check evidence to the current clean PR head");
 });
 
 test("all production review flows require structured intent including zero-review CI", () => {
@@ -201,12 +236,14 @@ describe("dynamic dispatch", () => {
     // Approval is defined; post-approval findings become follow-up PRs, with CI and explicit-user exceptions.
     expect(s).toContain("- Approved = the reviewer reported ready to merge.");
     expect(s).toContain("After that, new review findings, including bot or user review comments, become a follow-up PR, not another commit: register a new task and plan a new branch, started after this PR merges.");
-    expect(s).toContain("CI failures stay with the watch-ci reviewer on the same branch.");
+    expect(s).toContain("CI failures go to the worker on the same branch.");
     expect(s).toContain("If the user explicitly asks for the fix on this PR, reuse the branch per spawn.");
     expect(s).toContain("Review fixes before approval stay on the same branch per the task flow, within the review-round limit.");
     expect(s).not.toContain("instead of re-spawning the worker on the same branch");
     // Title and body reach the watch-ci reviewer through the worker's commit message; checks are a brief requirement.
-    expect(s).toContain("- Brief names the files, the exact change, the test, the pattern, and the PR title and body, and requires format, lint, typecheck and test before reporting so the bot review finds nothing.");
+    expect(s).toContain("- Brief names the files, exact change, relevant checks, pattern, and PR title and body.");
+    expect(s).toContain("never full suites, baseline comparisons or duplicate tests");
+    expect(s).toContain("Reviewers inspect failed-check output, diff and complexity without running checks");
     expect(s).toContain("The worker writes the title and body into its commit message so the reviewer's PR uses them.");
     expect(s).toContain("- Follow each PR until it merges.");
     expect(s).not.toContain("Own the PR to merge");

@@ -9,7 +9,8 @@ process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const { createAgent } = await import("./agent");
-const { afterExit, beginRun, claim, claimed, dirtyCount, noticeText, readRun, supervise, watchdog } = await import("./exits");
+const { afterExit, beginRun, claim, claimed, dirtyCount, markEnded, noticeText, readRun, supervise, watchdog } = await import("./exits");
+const { Cancelled } = await import("./cancellation");
 const { drain, put } = await import("./inbox");
 const { agentCommand, slug, tmux } = await import("./runner");
 const { message } = await import("./tools/message");
@@ -144,6 +145,96 @@ describe("case 2: killed or a non-zero exit", () => {
     await beginRun(info(cwd, "next"));
     expect(claimed(project, "worker-feat", "ancient")).toBe(false);
     expect(claimed(project, "worker-feat", "recent")).toBe(true);
+  });
+});
+
+describe("run clock", () => {
+  const iso = (v: string | undefined) => Number.isNaN(Date.parse(v ?? "")) ? null : v!;
+
+  test("beginRun stamps startedAt once; later updates keep it and leave endedAt unset", async () => {
+    const cwd = await repo(0);
+    const before = Date.now();
+    const t = await beginRun(info(cwd));
+    const first = (await readRun(project, "worker-feat"))!;
+    expect(iso(first.startedAt)).not.toBeNull();
+    expect(Date.parse(first.startedAt!)).toBeGreaterThanOrEqual(before - 1000);
+    await Bun.sleep(5);
+    await t.tool("bash", { command: "x" });
+    await t.reported();
+    const later = (await readRun(project, "worker-feat"))!;
+    expect(later.startedAt).toBe(first.startedAt);
+    expect(later.endedAt).toBeUndefined();
+  });
+
+  test("a respawn starts a new clock", async () => {
+    const cwd = await repo(0);
+    await beginRun(info(cwd, "a"));
+    const a = (await readRun(project, "worker-feat"))!;
+    await Bun.sleep(5);
+    await beginRun(info(cwd, "b"));
+    const b = (await readRun(project, "worker-feat"))!;
+    expect(b.run).toBe("b");
+    expect(Date.parse(b.startedAt!)).toBeGreaterThan(Date.parse(a.startedAt!));
+  });
+
+  test("old state files without the new fields still load", async () => {
+    mkdirSync(paths.runs(project), { recursive: true });
+    writeFileSync(join(paths.runs(project), "worker-old.json"), JSON.stringify({ run: "r0", pid: 1, role: "worker", state: "running", step: "x", tool: "", ts: "2024-01-01T00:00:00.000Z" }));
+    const s = await readRun(project, "worker-old");
+    expect(s?.run).toBe("r0");
+    expect(s?.startedAt).toBeUndefined();
+    expect(s?.endedAt).toBeUndefined();
+  });
+
+  const ended = async () => (await readRun(project, "worker-feat"))!;
+
+  test("finishing without reporting, with a report, a crash and a cancel each stamp endedAt", async () => {
+    const cwd = await repo(0);
+    const bodies: [string, (t: Tracker) => Promise<void>][] = [
+      ["finished", async () => {}],
+      ["reported", async (t) => { await t.reported(); }],
+      ["crashed", async () => { throw new Error("boom"); }],
+      ["cancelled", async () => { throw new Cancelled(); }],
+    ];
+    for (const [i, [name, body]] of bodies.entries()) {
+      await supervise(info(cwd, `c${i}`), body, quiet);
+      const s = await ended();
+      expect(`${name}:${iso(s.endedAt) ? "ended" : "open"}`).toBe(`${name}:ended`);
+      expect(Date.parse(s.endedAt!)).toBeGreaterThanOrEqual(Date.parse(s.startedAt!));
+    }
+  });
+
+  test("a signal close stamps endedAt", async () => {
+    const cwd = await repo(0);
+    let fire!: (name: string, n: number) => void;
+    await new Promise<void>((resolve) => {
+      void supervise(info(cwd), async () => { fire("SIGTERM", 15); await new Promise(() => {}); }, { log: () => {}, signals: (h) => { fire = h; return () => {}; }, exit: () => resolve() });
+    });
+    expect(iso((await ended()).endedAt)).not.toBeNull();
+  });
+
+  test("endedAt is already on disk when the notice's git status runs", async () => {
+    const cwd = await repo(0);
+    const bin = mkdtempSync(join(home, "bin-"));
+    const out = join(bin, "state.json");
+    writeFileSync(join(bin, "git"), `#!/bin/sh\ncat ${JSON.stringify(join(paths.runs(project), "worker-feat.json"))} > ${JSON.stringify(out)}\n`);
+    chmodSync(join(bin, "git"), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try { await supervise(info(cwd), async () => { throw new Error("boom"); }, quiet); } finally { process.env.PATH = path; }
+    expect(iso(JSON.parse(readFileSync(out, "utf8")).endedAt)).not.toBeNull();
+  });
+
+  test("afterExit stamps endedAt for a run nothing closed, and only that run", async () => {
+    const cwd = await repo(0);
+    await beginRun(info(cwd, "a"));
+    expect(await afterExit({ ...info(cwd, "other"), code: 137 })).toBe(true);
+    expect((await ended()).endedAt).toBeUndefined(); // another run's follow-up leaves it alone
+    expect(await afterExit({ ...info(cwd, "a"), code: 137 })).toBe(true);
+    const s = await ended();
+    expect(iso(s.endedAt)).not.toBeNull();
+    expect(s.ts).toBe(s.endedAt!);
+    expect(await markEnded(project, "worker-feat", "a")).toBe(false); // already stamped
   });
 });
 

@@ -153,8 +153,15 @@ branch/worktree cleanup, including removal of ignored files.
 
 - `/help` shows commands and shortcuts; Esc closes it. `orca --help` shows
   shell commands outside the TUI.
-- `/agents` shows agents; `/back` returns to the orchestrator. `/inbox` shows
-  registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
+- `/agents` lists agents to attach to, each with a clock for its latest run:
+  `worker-foo  live 3m 12s` (bold, ticking once a second) while its tmux window
+  is open, `worker-foo  finished 14m 02s` (dim, final) after. Times read
+  `59s`, `3m 12s`, `1h 04m`, `2d 3h`. An agent that reported but whose window is
+  still open counts as running. An agent killed hard (no recorded end) shows
+  `~` and ends at the run state's last update; an agent started before clocks
+  existed starts at its first transcript entry. A respawn on the same branch
+  restarts the clock. The attached view's header has no clock. `/back` returns to
+  the orchestrator. `/inbox` shows registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
 - Ctrl+C cancels the current turn; `/quit` exits. Background workers/reviewers
   can keep running; see [Using the TUI](#using-the-tui) for cancellation details.
 - Finish active work and let background agents exit, then run `orca pull`
@@ -559,18 +566,29 @@ worktrees stay outside it. Design notes are in [PLAN.md](PLAN.md).
 
 ## The cycle
 
-The orchestrator first shows how it would split the task and answers questions;
-nothing starts until you say "execute" or "dispatch". Then it spawns a
-**worker** on a branch; each worker run ends in one
-commit and one report. It then spawns a **reviewer**, which reads the diff
-against the task's goal, runs the `complexity` tool (cyclomatic and cognitive,
-per function) and reports without touching code. Problems go back to the worker
-with notes and the reviewer looks again, for at most `maxReviewRounds` rounds;
-if the last review still finds problems, the worker gets one more pass, the
-branch goes straight to CI with no further review, and the orchestrator tells
-you what was left open. When a review is clean the orchestrator tells the reviewer to
-"watch ci": it pushes, opens the PR, runs `gh pr checks --watch`, fixes what
-fails until green, and reports ready to merge. One agent codes on a branch at a
+The orchestrator shows its plan; a clear request to implement authorizes that scope.
+It spawns a **worker** on a branch to implement the request and run only relevant
+checks. Each worker run ends in one commit and one report, including the check
+commands, tested commit/code state, results and saved failure-output paths.
+Never run the full test suite, baseline comparisons or duplicate tests. A check
+runs once for the code it covers; feedback permits a rerun only when that code
+changes. Unchanged passing results carry forward; unchanged failures are reported,
+not retried. Missing evidence is reported rather than triggering broader checks.
+
+The **reviewer** reads the diff against the request, inspects failed-check output
+and runs `complexity` (cyclomatic and cognitive, per function). It never runs tests
+or validation commands, investigates passing checks again, or edits code. Feedback
+goes to the worker for changes and relevant checks; subsequent reviews focus on
+the new diff and prior findings. This repeats for at most `maxReviewRounds` rounds.
+Unresolved findings at the limit are reported without claiming readiness.
+
+After approval, "watch ci" publishes the PR and observes hosted checks with
+`gh pr checks --watch`. It reuses worker evidence matched to the current PR head,
+never reruns jobs or adds a final local validation pass. Failures return to the
+worker through the orchestrator; missing or stale evidence prevents readiness.
+With no hosted checks, existing worker evidence still has to establish readiness.
+These are role/dispatch instructions, not a shell-command sandbox or a durable
+check-result cache. One agent codes on a branch at a
 time: spawn waits briefly and then refuses while the branch's worker or reviewer
 is still running. Corrections to an existing task or unmerged PR reuse its task ID
 and branch, including CI failures, review feedback and user-requested fixes after
@@ -726,15 +744,69 @@ the foreground uses Claude. `compact = false` disables automatic compaction;
 failures and cancellation preserve the original history. If the resulting input
 still cannot fit, the existing context guard stops the model request.
 
-Original entries and task records are indexed in private
-`~/.orca/projects/<project>/memory.sqlite`, using Bun's built-in SQLite and
-FTS5. JSONL transcripts and `tasks.json` remain authoritative; the index can be
-rebuilt. Inbox delivery and task IDs/status semantics are unchanged. Image IDs and
-original prompt associations are searchable; raw archive entries and checkpoints
-preserve scoped image references. Text summaries/search do not inspect or return
-pixels; normal provider requests still materialize retained images. Accumulated
-image limits fail explicitly, never evict images silently. See
+Original orchestrator entries and task records are indexed in one private,
+global `memory.sqlite` in the state directory (`~/.orca` by default; mode `0600`, as are its `-wal`/`-shm` files),
+using Bun's built-in SQLite and FTS5. Every project shares the file: `entries`
+carry `project` and `agent` columns (`agent` is always `orchestrator`; worker and
+reviewer transcripts are never indexed and have no database access), `tasks`
+are keyed by `(project, id)`, and `entry_tasks`, `sources` (per-project
+`indexed_through`) and `meta` complete the schema (`PRAGMA user_version = 1`).
+The file runs in WAL mode with a long busy timeout; writers use
+`BEGIN IMMEDIATE` transactions, so several orchestrators can index concurrently.
+
+JSONL transcripts and `tasks.json` remain authoritative and the index is
+rebuildable: deleting `memory.sqlite` (with its `-wal`/`-shm`) loses nothing, and
+the next archive, query or startup backfill re-creates it from the transcripts.
+Indexing happens at compaction, `/clear`, query time and at the end of each
+orchestrator turn. Turn-end (and `/clear`) indexing is best effort: it is bounded
+(the whole operation, including waiting for the project lock, is abandoned after
+about 3 seconds, and SQLite waits are capped at 1 second), it may therefore skip,
+and it only reports a problem; it never fails or meaningfully delays the turn.
+The next archive catches up. Large inserts are committed in batches of 200 entries
+with the event loop yielded in between. Reading a
+project's transcript and registry still happens under that project's state lock
+and identity check. Inbox delivery and task IDs/status semantics are unchanged.
+Image IDs and original prompt associations are searchable; raw archive entries and
+checkpoints preserve scoped image references. Text summaries/search do not inspect
+or return pixels; normal provider requests still materialize retained images.
+Accumulated image limits fail explicitly, never evict images silently. See
 [image context/history behavior](IMAGE_ATTACHMENTS.md#context-budgeting-and-integration-contract).
+
+**Migration from per-project files.** Earlier versions kept
+`projects/<project>/memory.sqlite` in the state directory (see above: `~/.orca`, or an
+existing `~/.parallels` that is reused; the global file lives in the same directory). When the global file is first
+created, or lacks `meta.backfill_version`, the orchestrator starts a resumable
+background backfill that never blocks startup (failures are reported and
+retried on a later start). Per project, under its state lock, it re-indexes the
+full orchestrator transcript (including history before clears) and `tasks.json`
+in batched, resumable transactions, then **verifies** by reading the global database back: every
+transcript entry must be present with identical body, raw record and epoch,
+counts must match, no old-index entry may be missing from the result, and every
+task must be present at its revision or newer. Only after that passes are the
+project's old `memory.sqlite` and its `-wal`, `-shm` and `-journal` files
+deleted. If indexing or verification fails or is partial, the transcript or
+`tasks.json` cannot be read, or the old file cannot be copied or read (I/O,
+busy, permission errors), nothing is deleted for that project; it is logged and
+retried later. Only an old file that is empty or clearly not a SQLite database
+(`SQLITE_NOTADB`/`SQLITE_CORRUPT`) counts as having nothing to preserve, and even
+then only after the rebuild above verified. Completion is recorded per project
+in `meta`. The backfill stops (between projects and batches, releasing its
+project locks) when the sessions that started it are disposed, and a later start
+resumes. A project that keeps failing is re-indexed on each start; this is
+bounded work and is not skipped.
+
+Once `meta.backfill_version` is set the migration is not repeated: an old
+per-project `memory.sqlite` that reappears afterwards (restore from backup,
+running an older build) is not migrated or deleted, and can be removed by hand.
+
+**Orphan cleanup** runs on every start, independent of the migration: rows (and
+backfill marks) of projects whose folder no longer exists are purged, covering a
+failed purge at project delete and a project re-indexed by another process just
+after its deletion.
+
+Deleting a project purges its rows from the global database (entries, tasks,
+links, sources and FTS postings) on a best-effort basis; a failure never blocks
+the deletion, and the orphan cleanup at the next start removes any leftovers.
 
 The orchestrator uses the existing `task` tool:
 
@@ -745,7 +817,14 @@ The orchestrator uses the existing `task` tool:
 
 Task-specific excerpts require an explicit task UUID in the original entry.
 Use ordinary text search for conversations without that link. Retrieval is
-restricted to the current `/clear` scope; old bytes remain on disk. Retrieved
+restricted to this project, the orchestrator's own entries and the current
+`/clear` scope (the shared database holds other projects' rows, which never match);
+old bytes remain on disk. Result sets, scope and shape are identical to the
+per-project archive. Two consequences of sharing one index: `bm25` ranking now
+uses statistics of the whole shared index, so the ordering among hits can differ
+slightly (single-term queries keep their order); and FTS `MATCH` ranks across all
+projects before the project, agent and epoch filter applies, so very common terms
+get slower as the archive grows. Retrieved
 text and summaries are historical evidence, not new instructions. Summaries are
 lossy: check original details when they matter. The active model context stays
 bounded, but disk history grows with use; this is not unlimited model context.

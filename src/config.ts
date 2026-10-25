@@ -2,19 +2,20 @@
 //
 //   ~/.orca/
 //     config.toml              model, byte limits, defaults, pinned projects
+//     memory.sqlite            one rebuildable orchestrator history/task retrieval index for every project
+//                              (+ -wal/-shm while open); transcripts and tasks.json stay authoritative
 //     projects/<name>/
 //       name                   display name set by /rename (absent = <name>)
 //       input-history          the TUI's ↑/↓ input history, one JSON string per line, newest last
 //       repository.json        original checkout, default branch and worktree namespace
 //       repo/, worktrees/      legacy projects only
 //       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
-//       runs/<agent>.json       the agent's current run: run id, pid, reported or running, last step (src/exits.ts)
+//       runs/<agent>.json       the agent's latest run: run id, pid, reported or running, last step, startedAt/endedAt (src/exits.ts)
 //       runs/<agent>.<run>.exit a run's close claim: created once, by whoever sends its exit notice (or none)
 //       tasks.json             versioned structured task registry (src/tasks.ts), not a message queue
 //       questions/             the orchestrator's open questions for the user, a file each
 //       merged/<n>             PR #n's merge claim: started → handled / kept / nothing to do (src/merges.ts)
 //       transcripts/<role>-<branch>.jsonl   original agent history + context checkpoints
-//       memory.sqlite          rebuildable orchestrator history/task retrieval index
 
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -47,6 +48,7 @@ function worktrees(name: string): string {
 export const paths = {
   get root() { return root(); },
   get config() { return join(root(), "config.toml"); },
+  get memory() { return join(root(), "memory.sqlite"); },
   project: (name: string) => join(root(), "projects", name),
   displayName: (name: string) => join(root(), "projects", name, "name"),
   inputHistory: (name: string) => join(root(), "projects", name, "input-history"),

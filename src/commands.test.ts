@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentWindows, deleteProject, displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "./commands";
+import { listAgents, agentWindows, deleteProject, displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "./commands";
 import { DYNAMIC_DISPATCH_USAGE, dynamicDispatch, recentModels, REVIEW_ROUNDS_USAGE, reviewRounds } from "./commands";
-import { loadConfig, saveConfig } from "./config";
+import { loadConfig, paths, saveConfig } from "./config";
+import { tmux } from "./runner";
 
 describe("recentModels", () => {
   const ids = ["m6", "m5", "m4", "m3", "m2", "m1", "m0"];
@@ -222,6 +223,107 @@ describe("project list", () => {
       expect(existsSync(join(home, "projects", "busy", "repo"))).toBe(true);
       for (const bad of ["../busy", "", "a/b", "..", "."]) await expect(deleteProject(bad, { live: async () => [] })).rejects.toThrow("not a project name");
       await expect(deleteProject("nope", { live: async () => [] })).rejects.toThrow("no project named nope");
+    });
+  });
+});
+
+describe("listAgents", () => {
+  const withProject = async (fn: (project: string, home: string) => Promise<void>) => {
+    const prev = process.env.ORCA_HOME;
+    const home = mkdtempSync(join(tmpdir(), "orca-agents-"));
+    process.env.ORCA_HOME = home;
+    const windows = tmux.listWindows;
+    try { await fn("p", home); } finally {
+      tmux.listWindows = windows;
+      if (prev === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  };
+  const transcript = (project: string, name: string, firstTs?: string) => {
+    mkdirSync(join(paths.transcript(project, "x"), ".."), { recursive: true });
+    const lines = [{ uuid: "1", ts: firstTs, type: "meta" }, { uuid: "2", ts: "2030-01-01T00:00:00.000Z", type: "meta" }].map((e) => JSON.stringify(e));
+    writeFileSync(paths.transcript(project, name), lines.join("\n") + "\n");
+  };
+  const state = (project: string, name: string, patch: Record<string, unknown>) => {
+    mkdirSync(paths.runs(project), { recursive: true });
+    writeFileSync(join(paths.runs(project), `${name}.json`), JSON.stringify({ run: "r", pid: 1, role: "worker", state: "running", step: "", tool: "", ts: "2024-05-01T10:30:00.000Z", ...patch }));
+  };
+  const by = (list: Awaited<ReturnType<typeof listAgents>>, name: string) => list.find((a) => a.name === name);
+
+  test("live and finished agents carry their latest run's times; the orchestrator is not listed", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => ["shell", "worker-a"];
+      for (const n of ["orchestrator", "worker-a", "worker-b"]) transcript(project, n, "2020-01-01T00:00:00.000Z");
+      state(project, "worker-a", { startedAt: "2024-05-01T10:00:00.000Z" });
+      state(project, "worker-b", { startedAt: "2024-05-01T09:00:00.000Z", endedAt: "2024-05-01T09:14:02.000Z" });
+      const list = await listAgents(project);
+      expect(list.map((a) => a.name).sort()).toEqual(["worker-a", "worker-b"]);
+      expect(by(list, "worker-a")).toEqual({ name: "worker-a", live: true, startedAt: "2024-05-01T10:00:00.000Z" });
+      expect(by(list, "worker-b")).toEqual({ name: "worker-b", live: false, startedAt: "2024-05-01T09:00:00.000Z", endedAt: "2024-05-01T09:14:02.000Z" });
+    });
+  });
+
+  test("a live agent that reported still counts as live and has no end", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => ["worker-a"];
+      transcript(project, "worker-a");
+      state(project, "worker-a", { state: "reported", startedAt: "2024-05-01T10:00:00.000Z" });
+      expect(by(await listAgents(project), "worker-a")).toEqual({ name: "worker-a", live: true, startedAt: "2024-05-01T10:00:00.000Z" });
+    });
+  });
+
+  test("a finished agent without endedAt ends approximately at the state's last update", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => [];
+      transcript(project, "worker-k");
+      state(project, "worker-k", { startedAt: "2024-05-01T10:00:00.000Z" });
+      expect(by(await listAgents(project), "worker-k")).toEqual({ name: "worker-k", live: false, startedAt: "2024-05-01T10:00:00.000Z", endedAt: "2024-05-01T10:30:00.000Z", approximateEnd: true });
+    });
+  });
+
+  test("live window with a previous run's endedAt shows no clock", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => ["worker-r"];
+      transcript(project, "worker-r", "2024-05-01T08:00:00.000Z");
+      state(project, "worker-r", { startedAt: "2024-05-01T09:00:00.000Z", endedAt: "2024-05-01T09:30:00.000Z" });
+      expect(by(await listAgents(project), "worker-r")).toEqual({ name: "worker-r", live: true });
+    });
+  });
+
+  test("an old state file without startedAt starts at the transcript's first entry", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => ["worker-o"];
+      transcript(project, "worker-o", "2024-05-01T08:00:00.000Z");
+      transcript(project, "worker-p", "2024-05-01T08:00:00.000Z");
+      state(project, "worker-o", {});
+      state(project, "worker-p", { endedAt: "2024-05-01T09:00:00.000Z" });
+      const list = await listAgents(project);
+      expect(by(list, "worker-o")).toEqual({ name: "worker-o", live: true, startedAt: "2024-05-01T08:00:00.000Z" });
+      expect(by(list, "worker-p")).toEqual({ name: "worker-p", live: false, startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-01T09:00:00.000Z" });
+    });
+  });
+
+  test("with no state file, only the transcript start is known; with nothing usable there is no time at all", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => ["worker-l"];
+      transcript(project, "worker-l", "2024-05-01T08:00:00.000Z");
+      transcript(project, "worker-f", "2024-05-01T08:00:00.000Z");
+      transcript(project, "worker-n"); // first entry has no ts
+      writeFileSync(paths.transcript(project, "worker-e"), "");
+      writeFileSync(paths.transcript(project, "worker-g"), "not json\n");
+      const list = await listAgents(project);
+      expect(by(list, "worker-l")).toEqual({ name: "worker-l", live: true, startedAt: "2024-05-01T08:00:00.000Z" });
+      expect(by(list, "worker-f")).toEqual({ name: "worker-f", live: false, startedAt: "2024-05-01T08:00:00.000Z" });
+      for (const n of ["worker-n", "worker-e", "worker-g"]) expect(by(list, n)).toEqual({ name: n, live: false });
+    });
+  });
+
+  test("only the first transcript line is read", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => [];
+      mkdirSync(join(paths.transcript(project, "x"), ".."), { recursive: true });
+      writeFileSync(paths.transcript(project, "worker-big"), JSON.stringify({ ts: "2024-05-01T08:00:00.000Z" }) + "\n" + "x".repeat(5_000_000));
+      expect(by(await listAgents(project), "worker-big")?.startedAt).toBe("2024-05-01T08:00:00.000Z");
     });
   });
 });

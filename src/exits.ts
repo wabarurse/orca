@@ -36,7 +36,17 @@ export interface RunState {
   step: string;
   /** The last tool call, kept when the step moves on to the next model request. */
   tool: string;
+  /** Last update of this file. */
   ts: string;
+  /** When this run started (ISO), set once by beginRun. Absent in files written before clocks existed. */
+  startedAt?: string;
+  /**
+   * When this run was closed (ISO). Stamped by supervise (finished, reported, crashed, cancelled),
+   * the signal handler and afterExit. The TUI watchdog's sweep and merge cleanup do not stamp it:
+   * a run only they close shows the file's `ts` as an approximate end (merge cleanup relies on the
+   * agent's own SIGHUP handler). Absent while it runs.
+   */
+  endedAt?: string;
 }
 
 /** How long a notice waits for `git status`; a signal handler waits less. */
@@ -62,6 +72,18 @@ async function writeRun(project: string, id: string, s: RunState): Promise<void>
   const tmp = `${path}.${crypto.randomUUID().slice(0, 8)}.tmp`;
   await Bun.write(tmp, JSON.stringify(s) + "\n");
   await rename(tmp, path);
+}
+
+/**
+ * Stamp `endedAt` on the stored state of run `run` when it has none yet. False when the file is another run's, already stamped, or missing.
+ * This reads then rewrites the file, so a respawn's beginRun landing in between could be overwritten by
+ * the old run's state: unlikely (a few ms), and it heals on the new tracker's next write.
+ */
+export async function markEnded(project: string, id: string, run: string, at = new Date().toISOString()): Promise<boolean> {
+  const s = await readRun(project, id);
+  if (!s || s.run !== run || s.endedAt) return false;
+  await writeRun(project, id, { ...s, endedAt: at, ts: at });
+  return true;
 }
 
 /** Close a run: true for the one caller that gets to, false if it was already closed. */
@@ -155,10 +177,10 @@ async function pruneClaims(project: string, now = Date.now()): Promise<void> {
 }
 
 /** Start a run: write a fresh state; the returned tracker keeps it current. */
-export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracker & { state: () => RunState }> {
+export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracker & { state: () => RunState; end: () => Promise<void> }> {
   const { project, id, run } = info;
   await pruneClaims(project);
-  const s: RunState = { run, pid, role: info.role, branch: info.branch, state: "running", step: "starting", tool: "", ts: "" };
+  const s: RunState = { run, pid, role: info.role, branch: info.branch, state: "running", step: "starting", tool: "", ts: "", startedAt: new Date().toISOString() };
   const save = () => writeRun(project, id, { ...s, ts: new Date().toISOString() });
   const set = async (patch: Partial<RunState>) => {
     Object.assign(s, patch);
@@ -168,6 +190,7 @@ export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracke
   await startTaskRun(project, run);
   return {
     state: () => ({ ...s }),
+    end: async () => { s.endedAt ??= new Date().toISOString(); await save(); },
     model: () => set({ step: "model request" }),
     tool: async (name, input) => {
       if (name === "bash") await invalidateTaskBranch(project, run);
@@ -200,11 +223,21 @@ export interface SuperviseOptions {
   exit?: (code: number) => void;
 }
 
+/** What closing a run needs from its tracker. */
+type Closable = { state: () => RunState; end: () => Promise<void> };
+
+/** The run's state with its end time stamped first, so the git wait for the notice does not count as run time. */
+async function stamped(t: Closable, log: (s: string) => void): Promise<RunState> {
+  try { await t.end(); } catch (err) { log(`agent: could not record the end time: ${String(err)}`); }
+  return t.state();
+}
+
 /**
  * Close a finished run: no notice when its last act was a report, else
  * `what` with the facts from the in-memory state. Returns whether a notice went out.
  */
-async function closeRun(info: RunInfo, s: RunState, what: string, gitMs: number, log: (s: string) => void): Promise<boolean> {
+async function closeRun(info: RunInfo, t: Closable, what: string, gitMs: number, log: (s: string) => void): Promise<boolean> {
+  const s = await stamped(t, log);
   try {
     const kind = what === "cancelled by user" ? "cancelled" : what.startsWith("crashed") ? "blocked" : s.state === "reported" && what === "finished without reporting" ? "waiting" : "unknown";
     await stopTaskRun(info.project, info.run, kind, kind === "waiting" ? "agent reported; awaiting next explicit task step" : oneLine(what));
@@ -226,13 +259,13 @@ async function closeRun(info: RunInfo, s: RunState, what: string, gitMs: number,
  * SIG…", a short git timeout), then exit 128+n. `stopping()` tells whether
  * one arrived; `off()` removes the handlers.
  */
-function handleSignals(info: RunInfo, t: { state: () => RunState }, opts: SuperviseOptions, log: (s: string) => void) {
+function handleSignals(info: RunInfo, t: Closable, opts: SuperviseOptions, log: (s: string) => void) {
   let stopping = false;
   const exit = opts.exit ?? ((code: number) => process.exit(code));
   const off = (opts.signals ?? processSignals)((name, n) => {
     if (stopping) return;
     stopping = true;
-    void closeRun(info, t.state(), `killed by ${name}`, SIGNAL_GIT_TIMEOUT_MS, log).finally(() => exit(128 + n));
+    void closeRun(info, t, `killed by ${name}`, SIGNAL_GIT_TIMEOUT_MS, log).finally(() => exit(128 + n));
   });
   return { off, stopping: () => stopping };
 }
@@ -265,7 +298,7 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
   }
   // A signal handler is closing the run and will exit the process.
   if (signals.stopping()) return code;
-  await closeRun(info, t.state(), what, GIT_TIMEOUT_MS, log);
+  await closeRun(info, t, what, GIT_TIMEOUT_MS, log);
   return code && claimed(info.project, info.id, info.run) ? SETTLED_EXIT : code;
 }
 
@@ -277,6 +310,8 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
 export async function afterExit(info: RunInfo & { code: number }): Promise<boolean> {
   const s = await readRun(info.project, info.id);
   const mine = s?.run === info.run ? s : null;
+  // A hard kill never reached supervise's close; the end is about now.
+  if (mine && !mine.endedAt) await markEnded(info.project, info.id, info.run).catch(() => {});
   try { await stopTaskRun(info.project, info.run, "unknown", `agent exited with code ${info.code}; not a readiness signal`); }
   catch (err) { console.error(`agent: could not update task: ${String(err)}`); }
   if (mine?.state === "reported") {
