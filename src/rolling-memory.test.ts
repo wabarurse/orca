@@ -8,7 +8,7 @@ import { createAgent, runAgent, type AgentDeps } from "./agent";
 import { estimate } from "./compaction";
 import { paths, saveConfig } from "./config";
 import { put } from "./inbox";
-import { archivePath, queryHistory } from "./memory-archive";
+import { archivePath, purgeProject, queryHistory } from "./memory-archive";
 import { createOrchestrator } from "./orchestrator";
 import type { CompleteRequest, Provider } from "./providers";
 import { RollingCompactor, rollingCut } from "./rolling-memory";
@@ -88,7 +88,7 @@ test("foreground proceeds while Luna works; idle publication preserves newer mes
   expect(transcript.history!()).toEqual(history); expect(history.slice(0, original.length)).toEqual(original);
   expect(estimate(await transcript.chain())).toBeLessThan(estimate(before) / 5);
   expect(await open(transcript.path).chain()).toEqual(await transcript.chain());
-  const db = new Database(archivePath(project), { readonly: true });
+  const db = new Database(archivePath(), { readonly: true });
   try { expect(db.query("SELECT count(*) AS n FROM entries WHERE kind='message'").get()).toEqual({ n: history.length }); }
   finally { db.close(); }
 });
@@ -151,7 +151,7 @@ test("disabled automatic compaction does no archive or inference work; manual st
   const provider = fakeProvider([[text(JSON.stringify(memory()))]]), rolling = controller(provider);
   deps.compaction = { enabled: false };
   await rolling.boundary(deps);
-  expect(provider.calls).toHaveLength(0); expect(await Bun.file(archivePath(project)).exists()).toBe(false);
+  expect(provider.calls).toHaveLength(0); expect(await Bun.file(archivePath()).exists()).toBe(false);
   await rolling.boundary(deps, true);
   expect(provider.calls).toHaveLength(1); expect(transcript.branch()[0]?.type).toBe("summary");
 });
@@ -183,7 +183,7 @@ for (const mode of ["malformed", "incomplete", "timeout", "credentials"] as cons
 
 test("archive failure prevents replacement but a fitting foreground request can continue", async () => {
   const { project, transcript, foreground, deps, controller } = await fixture(), worker = gated(), rolling = controller(worker.provider);
-  mkdirSync(archivePath(project));
+  mkdirSync(archivePath());
   deps.compactBoundary = (d, m) => rolling.boundary(d, m);
   await createAgent(deps).run();
   expect(foreground.calls).toHaveLength(1); expect(worker.calls).toHaveLength(0);
@@ -227,13 +227,27 @@ test("the one-shot orchestrator CLI also uses Luna and joins its worker before e
   expect(worker.calls[0]!.model).toBe("gpt-6-luna");
 });
 
-test("a late worker cannot publish into a deleted/recreated project", async () => {
+test("a late worker cannot publish into a deleted/recreated project, add archive rows, or leave rows behind", async () => {
   const { project, transcript, deps, controller } = await fixture(), worker = gated(), rolling = controller(worker.provider);
   await rolling.boundary(deps); await worker.entered;
+  const state = () => {
+    const db = new Database(archivePath(), { readonly: true });
+    try {
+      return db.query(`SELECT (SELECT count(*) FROM entries WHERE project=?1) AS n, (SELECT max(rowid) FROM entries WHERE project=?1) AS top,
+        (SELECT indexed_at FROM sources WHERE project=?1) AS at`).get(project) as { n: number; top: number; at: string };
+    } finally { db.close(); }
+  };
+  const before = state();
+  expect(before.n).toBeGreaterThan(0);
   rmSync(paths.project(project), { recursive: true }); mkdirSync(paths.project(project));
   worker.release(); await settle(rolling); await rolling.boundary(deps);
   expect(await Bun.file(transcript.path).exists()).toBe(false);
-  expect(await Bun.file(archivePath(project)).exists()).toBe(false);
+  expect(transcript.branch().some(e => e.type === "summary")).toBe(false);
+  expect(state()).toEqual(before); // the late worker neither re-indexed nor changed the old rows
+  purgeProject(project);
+  expect(state()).toEqual({ n: 0, top: null, at: null } as unknown as ReturnType<typeof state>);
+  const db = new Database(archivePath(), { readonly: true });
+  try { expect(db.query("SELECT count(*) AS n FROM entry_search WHERE entry_search MATCH 'old'").get()).toEqual({ n: 0 }); } finally { db.close(); }
 });
 
 test("repeated rolling checkpoints carry user memory forward and never duplicate the tail", async () => {
@@ -285,9 +299,9 @@ test("SQLite retrieval finds merged tasks and exact original pages; rebuild is i
   const second = JSON.parse(await queryHistory(project, { action: "read_history", entryId: entry.uuid, offset: first.nextOffset }));
   expect(first.nextOffset).toBe(2048); expect(second.offset).toBe(2048);
   expect(first.text + second.text).toBe([...`[user] ${body}`].slice(0, 4096).join(""));
-  rmSync(archivePath(project));
+  rmSync(archivePath());
   expect(JSON.parse(await queryHistory(project, query))).toEqual(result);
-  const db = new Database(archivePath(project), { readonly: true });
+  const db = new Database(archivePath(), { readonly: true });
   try { expect(JSON.parse((db.query("SELECT raw FROM entries WHERE id=?").get(entry.uuid) as { raw: string }).raw)).toEqual(entry); }
   finally { db.close(); }
   expect(await task.run(query, { ...deps.ctx, role: "worker" })).toContain("only the orchestrator");
