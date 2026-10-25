@@ -85,12 +85,16 @@ export function epochsOf(entries: Entry[]): string[] {
   return entries.map(e => e.type === "context-boundary" ? (epoch = e.uuid) : epoch);
 }
 
-function insertEntries(db: Database, project: string, entries: Entry[], start: number, taskIds: Set<string>): void {
-  const epochs = epochsOf(entries);
+/** Entries per write transaction: other processes get the file between batches and the event loop between awaits. */
+export const BATCH = 200;
+/** Whole-operation limit for opportunistic indexing (turn end, /clear). */
+export const BEST_EFFORT_MS = 3_000;
+
+function insertEntries(db: Database, project: string, entries: Entry[], epochs: string[], from: number, to: number, taskIds: Set<string>): void {
   const insert = db.query("INSERT OR IGNORE INTO entries(project,agent,id,epoch,kind,ts,body,raw) VALUES(?,?,?,?,?,?,?,?)");
   const link = db.query("INSERT OR IGNORE INTO entry_tasks(project,entry_id,task_id) VALUES(?,?,?)");
   const search = db.query("INSERT INTO entry_search(rowid,body) VALUES(?,?)");
-  for (let i = start; i < entries.length; i++) {
+  for (let i = from; i < to; i++) {
     const e = entries[i]!, body = entryText(e);
     const result = insert.run(project, ARCHIVE_AGENT, e.uuid, epochs[i]!, e.type, e.ts, body, JSON.stringify(e));
     if (result.changes) search.run(result.lastInsertRowid, body);
@@ -115,41 +119,72 @@ function linkEarlierMentions(db: Database, project: string, ids: string[]): void
   for (const id of ids) link.run(id, project, ARCHIVE_AGENT, id);
 }
 
-/** Index one project's orchestrator transcript and registry in a single write transaction. Idempotent.
- * `full` re-checks every entry instead of resuming after the last one indexed (used when migrating). */
-export function sync(db: Database, project: string, entries: Entry[], tasks: Task[], full = false): void {
+function markIndexed(db: Database, project: string, through: string): void {
+  db.query("INSERT INTO sources(project,agent,indexed_through,indexed_at) VALUES(?,?,?,?) ON CONFLICT(project,agent) DO UPDATE SET indexed_through=excluded.indexed_through,indexed_at=excluded.indexed_at")
+    .run(project, ARCHIVE_AGENT, through, new Date().toISOString());
+}
+
+export interface SyncOptions {
+  /** Re-check every entry instead of resuming after the last one indexed (used when migrating). */
+  full?: boolean;
+  /** Checked between batches; every committed batch is a consistent, resumable state. */
+  signal?: AbortSignal;
+}
+
+/** Index one project's orchestrator transcript and registry. Idempotent and resumable: entries go in
+ * `BATCH`-sized `BEGIN IMMEDIATE` transactions that each advance `sources.indexed_through`, yielding
+ * the event loop between them; the registry follows in a last transaction. */
+export async function sync(db: Database, project: string, entries: Entry[], tasks: Task[], { full = false, signal }: SyncOptions = {}): Promise<void> {
+  const prior = db.query("SELECT indexed_through FROM sources WHERE project=? AND agent=?").get(project, ARCHIVE_AGENT) as { indexed_through: string } | null;
+  // Transcripts only grow; resume after the last entry indexed, or start over if it is no longer in the chain.
+  const start = prior && !full ? entries.findIndex(e => e.uuid === prior.indexed_through) + 1 : 0;
+  const epochs = epochsOf(entries), taskIds = new Set(tasks.map(t => t.id));
+  for (let from = start; from < entries.length; from += BATCH) {
+    signal?.throwIfAborted();
+    const to = Math.min(from + BATCH, entries.length);
+    db.transaction(() => { insertEntries(db, project, entries, epochs, from, to, taskIds); markIndexed(db, project, entries[to - 1]!.uuid); }).immediate();
+    if (to < entries.length) await Bun.sleep(0);
+  }
+  signal?.throwIfAborted();
   db.transaction(() => {
-    const prior = db.query("SELECT indexed_through FROM sources WHERE project=? AND agent=?").get(project, ARCHIVE_AGENT) as { indexed_through: string } | null;
-    // Transcripts only grow; resume after the last entry indexed, or start over if it is no longer in the chain.
-    const start = prior && !full ? entries.findIndex(e => e.uuid === prior.indexed_through) + 1 : 0;
-    insertEntries(db, project, entries, start, new Set(tasks.map(t => t.id)));
     const added = upsertTasks(db, project, tasks);
     if (start > 0) linkEarlierMentions(db, project, added);
-    db.query("INSERT INTO sources(project,agent,indexed_through,indexed_at) VALUES(?,?,?,?) ON CONFLICT(project,agent) DO UPDATE SET indexed_through=excluded.indexed_through,indexed_at=excluded.indexed_at")
-      .run(project, ARCHIVE_AGENT, entries.at(-1)?.uuid ?? prior?.indexed_through ?? "", new Date().toISOString());
+    markIndexed(db, project, entries.at(-1)?.uuid ?? prior?.indexed_through ?? "");
   }).immediate();
 }
 
+export interface ArchiveOptions extends Pick<SyncOptions, "signal"> { busyMs?: number }
+
 /** Archive succeeds before context can be replaced. Safe to repeat after a crash. */
-export async function archiveTranscript(project: string, transcript: Transcript, busyMs = BUSY_MS): Promise<Task[]> {
+export async function archiveTranscript(project: string, transcript: Transcript, { busyMs = BUSY_MS, signal }: ArchiveOptions = {}): Promise<Task[]> {
   const identity = projectIdentity(project);
   const tasks = await allTasks(project);
   assertProjectIdentity(project, identity);
   const entries = transcriptEntries(transcript), db = database(busyMs);
-  try { sync(db, project, entries, tasks); } finally { db.close(); }
+  try { await sync(db, project, entries, tasks, { signal }); } finally { db.close(); }
   return scopedTasks(tasks, entries);
 }
 
-/** Opportunistic indexing (turn end, /clear). Holds the project state lock while reading, waits a
- * bounded time, and reports failure to `log` instead of throwing: the transcript stays authoritative. */
-export async function archiveBestEffort(project: string, transcript: Transcript, log: (message: string) => void, inLock = false): Promise<void> {
+/** Opportunistic indexing (turn end, /clear). Reads under the project state lock with the identity check and
+ * reports failure to `log` instead of throwing: the transcript stays authoritative. The whole operation,
+ * including waiting for the lock queue, is abandoned after `BEST_EFFORT_MS`; SQLite waits are capped at 1s. */
+export async function archiveBestEffort(project: string, transcript: Transcript, log: (message: string) => void, inLock = false, limitMs = BEST_EFFORT_MS): Promise<void> {
+  const abort = new AbortController(), { signal } = abort;
+  const timer = setTimeout(() => abort.abort(new Error(`gave up after ${limitMs}ms`)), limitMs);
+  const expired = new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
   try {
     const identity = projectIdentity(project);
-    const index = () => { assertProjectIdentity(project, identity); return archiveTranscript(project, transcript, 2_000); };
-    await (inLock ? index() : withProjectStateLock(project, index));
+    const index = async () => {
+      signal.throwIfAborted(); // queued behind another holder past the limit: do nothing
+      assertProjectIdentity(project, identity);
+      await archiveTranscript(project, transcript, { busyMs: 1_000, signal });
+    };
+    const work = inLock ? index() : withProjectStateLock(project, index);
+    work.catch(() => {}); // the race below reports it; a late failure must not go unhandled
+    await Promise.race([work, expired]);
   } catch (error) {
     try { log(`memory index skipped: ${error instanceof Error ? error.message : error}`); } catch { /* logging cannot fail a turn */ }
-  }
+  } finally { clearTimeout(timer); expired.catch(() => {}); }
 }
 
 /** Remove every row of a project, including its FTS postings. No-op when no archive exists. */

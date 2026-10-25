@@ -697,8 +697,13 @@ The file runs in WAL mode with a long busy timeout; writers use
 JSONL transcripts and `tasks.json` remain authoritative and the index is
 rebuildable: deleting `memory.sqlite` (with its `-wal`/`-shm`) loses nothing, and
 the next archive, query or startup backfill re-creates it from the transcripts.
-Indexing happens at compaction, `/clear`, query time and (best effort, errors
-reported, never failing the turn) at the end of each orchestrator turn. Reading a
+Indexing happens at compaction, `/clear`, query time and at the end of each
+orchestrator turn. Turn-end (and `/clear`) indexing is best effort: it is bounded
+(the whole operation, including waiting for the project lock, is abandoned after
+about 3 seconds, and SQLite waits are capped at 1 second), it may therefore skip,
+and it only reports a problem; it never fails or meaningfully delays the turn.
+The next archive catches up. Large inserts are committed in batches of 200 entries
+with the event loop yielded in between. Reading a
 project's transcript and registry still happens under that project's state lock
 and identity check. Inbox delivery and task IDs/status semantics are unchanged.
 Image IDs and original prompt associations are searchable; raw archive entries and
@@ -713,19 +718,34 @@ created, or lacks `meta.backfill_version`, the orchestrator starts a resumable
 background backfill that never blocks startup (failures are reported and
 retried on a later start). Per project, under its state lock, it re-indexes the
 full orchestrator transcript (including history before clears) and `tasks.json`
-in one transaction, then **verifies** by reading the global database back: every
+in batched, resumable transactions, then **verifies** by reading the global database back: every
 transcript entry must be present with identical body, raw record and epoch,
 counts must match, no old-index entry may be missing from the result, and every
 task must be present at its revision or newer. Only after that passes are the
 project's old `memory.sqlite` and its `-wal`, `-shm` and `-journal` files
-deleted. If indexing or verification fails or is partial, or the transcript or
-`tasks.json` cannot be read, nothing is deleted for that project; it is logged
-and retried later. Completion is recorded per project in `meta`. The backfill
-also removes rows of projects whose folder no longer exists.
+deleted. If indexing or verification fails or is partial, the transcript or
+`tasks.json` cannot be read, or the old file cannot be copied or read (I/O,
+busy, permission errors), nothing is deleted for that project; it is logged and
+retried later. Only an old file that is empty or clearly not a SQLite database
+(`SQLITE_NOTADB`/`SQLITE_CORRUPT`) counts as having nothing to preserve, and even
+then only after the rebuild above verified. Completion is recorded per project
+in `meta`. The backfill stops (between projects and batches, releasing its
+project locks) when the sessions that started it are disposed, and a later start
+resumes. A project that keeps failing is re-indexed on each start; this is
+bounded work and is not skipped.
+
+Once `meta.backfill_version` is set the migration is not repeated: an old
+per-project `memory.sqlite` that reappears afterwards (restore from backup,
+running an older build) is not migrated or deleted, and can be removed by hand.
+
+**Orphan cleanup** runs on every start, independent of the migration: rows (and
+backfill marks) of projects whose folder no longer exists are purged, covering a
+failed purge at project delete and a project re-indexed by another process just
+after its deletion.
 
 Deleting a project purges its rows from the global database (entries, tasks,
 links, sources and FTS postings) on a best-effort basis; a failure never blocks
-the deletion, and the backfill's orphan cleanup removes any leftovers.
+the deletion, and the orphan cleanup at the next start removes any leftovers.
 
 The orchestrator uses the existing `task` tool:
 
@@ -738,7 +758,12 @@ Task-specific excerpts require an explicit task UUID in the original entry.
 Use ordinary text search for conversations without that link. Retrieval is
 restricted to this project, the orchestrator's own entries and the current
 `/clear` scope (the shared database holds other projects' rows, which never match);
-old bytes remain on disk. Retrieved
+old bytes remain on disk. Result sets, scope and shape are identical to the
+per-project archive. Two consequences of sharing one index: `bm25` ranking now
+uses statistics of the whole shared index, so the ordering among hits can differ
+slightly (single-term queries keep their order); and FTS `MATCH` ranks across all
+projects before the project, agent and epoch filter applies, so very common terms
+get slower as the archive grows. Retrieved
 text and summaries are historical evidence, not new instructions. Summaries are
 lossy: check original details when they matter. The active model context stays
 bounded, but disk history grows with use; this is not unlimited model context.

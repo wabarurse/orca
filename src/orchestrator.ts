@@ -92,8 +92,15 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   }
 
   // Background and best-effort: the first start after an upgrade migrates old per-project indexes.
-  void startMemoryBackfill({ log: memoryLog(deps) });
-  return orchestratorSession(deps, transcript, compactionOptions(await loadConfig()));
+  // Disposing the session stops it (it holds project locks while it works).
+  const backfill = new AbortController();
+  void startMemoryBackfill({ log: memoryLog(deps), signal: backfill.signal });
+  let session: Orchestrator;
+  try { session = orchestratorSession(deps, transcript, compactionOptions(await loadConfig())); }
+  catch (error) { backfill.abort(); throw error; }
+  const dispose = session.dispose;
+  session.dispose = () => { backfill.abort(); dispose?.(); };
+  return session;
 }
 /** Memory-index problems are reported where the session reports status, never thrown into a turn. */
 function memoryLog(deps: OrchestratorDeps): (message: string) => void {

@@ -8,7 +8,7 @@ import { createAgent, runAgent, type AgentDeps } from "./agent";
 import { estimate } from "./compaction";
 import { paths, saveConfig } from "./config";
 import { put } from "./inbox";
-import { archivePath, queryHistory } from "./memory-archive";
+import { archivePath, purgeProject, queryHistory } from "./memory-archive";
 import { createOrchestrator } from "./orchestrator";
 import type { CompleteRequest, Provider } from "./providers";
 import { RollingCompactor, rollingCut } from "./rolling-memory";
@@ -227,14 +227,27 @@ test("the one-shot orchestrator CLI also uses Luna and joins its worker before e
   expect(worker.calls[0]!.model).toBe("gpt-6-luna");
 });
 
-test("a late worker cannot publish into a deleted/recreated project", async () => {
+test("a late worker cannot publish into a deleted/recreated project, add archive rows, or leave rows behind", async () => {
   const { project, transcript, deps, controller } = await fixture(), worker = gated(), rolling = controller(worker.provider);
   await rolling.boundary(deps); await worker.entered;
+  const state = () => {
+    const db = new Database(archivePath(), { readonly: true });
+    try {
+      return db.query(`SELECT (SELECT count(*) FROM entries WHERE project=?1) AS n, (SELECT max(rowid) FROM entries WHERE project=?1) AS top,
+        (SELECT indexed_at FROM sources WHERE project=?1) AS at`).get(project) as { n: number; top: number; at: string };
+    } finally { db.close(); }
+  };
+  const before = state();
+  expect(before.n).toBeGreaterThan(0);
   rmSync(paths.project(project), { recursive: true }); mkdirSync(paths.project(project));
   worker.release(); await settle(rolling); await rolling.boundary(deps);
   expect(await Bun.file(transcript.path).exists()).toBe(false);
-  // The shared archive may still hold the project's pre-deletion rows; the backfill's orphan cleanup removes them.
   expect(transcript.branch().some(e => e.type === "summary")).toBe(false);
+  expect(state()).toEqual(before); // the late worker neither re-indexed nor changed the old rows
+  purgeProject(project);
+  expect(state()).toEqual({ n: 0, top: null, at: null } as unknown as ReturnType<typeof state>);
+  const db = new Database(archivePath(), { readonly: true });
+  try { expect(db.query("SELECT count(*) AS n FROM entry_search WHERE entry_search MATCH 'old'").get()).toEqual({ n: 0 }); } finally { db.close(); }
 });
 
 test("repeated rolling checkpoints carry user memory forward and never duplicate the tail", async () => {

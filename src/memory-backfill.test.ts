@@ -1,11 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "./config";
-import { archivePath, entryText, queryHistory } from "./memory-archive";
-import { backfillMemory, startMemoryBackfill } from "./memory-backfill";
+import { archiveBestEffort, archivePath, archiveTranscript, BATCH, database, entryText, queryHistory, sync } from "./memory-archive";
+import { withProjectStateLock } from "./project-state";
+import { backfillMemory, cleanOrphans, startMemoryBackfill } from "./memory-backfill";
 import { registerTask } from "./tasks";
 import { open, type Entry } from "./transcript";
 
@@ -205,4 +206,120 @@ test("startup backfill is fire-and-forget, deduplicated and never rejects", asyn
   const logs: string[] = [];
   expect(await startMemoryBackfill({ log: m => logs.push(m) })).toBe(false);
   expect(logs).toHaveLength(1);
+});
+
+test("a copy or read failure keeps the old file instead of deleting it unverified", async () => {
+  home();
+  const a = await project("alpha", ["one"]), b = await project("beta", ["two"]);
+  writeOldIndex("alpha", a.entries); writeOldIndex("beta", b.entries);
+  rmSync(oldFile("beta")); mkdirSync(oldFile("beta")); // cannot be copied as a file
+  const logs: string[] = [];
+  expect(await backfillMemory({ log: m => logs.push(m) })).toBe(false);
+  expect(existsSync(oldFile("beta"))).toBe(true); expect(logs.join()).toContain("beta");
+  expect(existsSync(oldFile("alpha"))).toBe(false);
+  rmSync(oldFile("beta"), { recursive: true }); writeOldIndex("beta", b.entries);
+  if (process.getuid?.() !== 0) {
+    chmodSync(oldFile("beta"), 0o000); // EACCES on copy
+    expect(await backfillMemory()).toBe(false);
+    expect(existsSync(oldFile("beta"))).toBe(true);
+    chmodSync(oldFile("beta"), 0o600);
+  }
+  expect(await backfillMemory()).toBe(true);
+  expect(existsSync(oldFile("beta"))).toBe(false);
+});
+
+test("garbage and zero-length old files are deleted, but only after the transcript rebuild verified", async () => {
+  home();
+  const a = await project("alpha", ["one", "two"]), b = await project("beta", ["three"]);
+  writeFileSync(oldFile("alpha"), "this is definitely not a sqlite database ".repeat(40));
+  writeFileSync(oldFile("beta"), "");
+  writeFileSync(join(paths.project("alpha"), "tasks.json"), "{not json"); // alpha cannot be verified yet
+  expect(await backfillMemory()).toBe(false);
+  expect(existsSync(oldFile("alpha"))).toBe(true);
+  expect(existsSync(oldFile("beta"))).toBe(false); // verified rebuild of beta
+  expect(globalRows("SELECT 1 FROM entries WHERE project='beta'")).toHaveLength(b.entries.length);
+  rmSync(join(paths.project("alpha"), "tasks.json"));
+  expect(await backfillMemory()).toBe(true);
+  expect(existsSync(oldFile("alpha"))).toBe(false);
+  expect(globalRows("SELECT 1 FROM entries WHERE project='alpha'")).toHaveLength(a.entries.length);
+});
+
+test("orphan cleanup runs on every start, even after the migration completed", async () => {
+  home();
+  await project("alpha", ["walrus alpha"], true); await project("ghost", ["walrus ghost"], true);
+  expect(await backfillMemory()).toBe(true);
+  expect(meta("backfill_version")).toBe("1");
+  rmSync(paths.project("ghost"), { recursive: true }); // deleted while the purge failed or was skipped
+  expect(globalRows("SELECT 1 FROM entries WHERE project='ghost'")).toHaveLength(1);
+  expect(await backfillMemory()).toBe(true);
+  for (const t of ["entries", "tasks", "entry_tasks", "sources"]) expect(globalRows(`SELECT 1 FROM ${t} WHERE project='ghost'`)).toEqual([]);
+  expect(globalRows("SELECT rowid FROM entry_search WHERE entry_search MATCH 'walrus'")).toHaveLength(1);
+  // another process re-indexes a project just after its deletion and purge
+  const db = database();
+  try { await sync(db, "late", [await open(paths.transcript("alpha", "orchestrator")).append({ type: "message", message: { role: "user", content: "stray" } })], []); } finally { db.close(); }
+  expect(globalRows("SELECT 1 FROM entries WHERE project='late'")).toHaveLength(1);
+  await startMemoryBackfill().catch(() => {}); // deduplicated within a process: use the direct call as the restart
+  cleanOrphans();
+  expect(globalRows("SELECT 1 FROM sources WHERE project='late'")).toEqual([]);
+});
+
+test("aborting stops between projects, releases every project lock and keeps unverified old files", async () => {
+  const dir = home();
+  const a = await project("alpha", ["one"]), b = await project("beta", ["two"]);
+  writeOldIndex("alpha", a.entries); writeOldIndex("beta", b.entries);
+  const stop = new AbortController();
+  await expect(backfillMemory({ signal: stop.signal, afterIndex: () => stop.abort(new Error("leaving")) })).rejects.toThrow("leaving");
+  expect(existsSync(join(dir, "project-locks", "alpha"))).toBe(false);
+  expect(existsSync(join(dir, "project-locks", "beta"))).toBe(false);
+  expect(existsSync(oldFile("alpha"))).toBe(true); expect(existsSync(oldFile("beta"))).toBe(true);
+  expect(meta("backfill_version")).toBeUndefined();
+  expect(await backfillMemory()).toBe(true); // a later start finishes
+  expect(existsSync(oldFile("alpha")) || existsSync(oldFile("beta"))).toBe(false);
+});
+
+test("the shared startup run stops once every session that started it has been disposed", async () => {
+  const dir = home();
+  const a = await project("alpha", ["one"]);
+  writeOldIndex("alpha", a.entries);
+  const one = new AbortController(), two = new AbortController();
+  const run = startMemoryBackfill({ signal: one.signal });
+  void startMemoryBackfill({ signal: two.signal });
+  one.abort(); two.abort();
+  expect(await run).toBe(false);
+  expect(existsSync(join(dir, "project-locks", "alpha"))).toBe(false);
+  expect(meta("backfill_version")).toBeUndefined();
+});
+
+test("indexing is batched and resumable: an interruption keeps whole batches and the next run completes without duplicates", async () => {
+  home();
+  mkdirSync(paths.project("big"), { recursive: true });
+  const transcript = open(paths.transcript("big", "orchestrator"));
+  for (let i = 0; i < BATCH * 2 + 50; i++) await transcript.append({ type: "message", message: { role: i % 2 ? "assistant" : "user", content: `message ${i}` } });
+  const total = transcript.all!().length;
+  let checks = 0;
+  const stopping = { throwIfAborted() { if (++checks === 3) throw new Error("interrupted"); } } as unknown as AbortSignal;
+  await expect(archiveTranscript("big", transcript, { signal: stopping })).rejects.toThrow("interrupted");
+  const partial = globalRows<{ n: number }>("SELECT count(*) AS n FROM entries WHERE project='big'")[0]!.n;
+  expect(partial).toBe(BATCH * 2);
+  expect(globalRows<{ indexed_through: string }>("SELECT indexed_through FROM sources WHERE project='big'")[0]!.indexed_through).toBe(transcript.all!()[BATCH * 2 - 1]!.uuid);
+  await archiveTranscript("big", transcript);
+  await archiveTranscript("big", transcript);
+  expect(globalRows<{ n: number }>("SELECT count(*) AS n FROM entries WHERE project='big'")[0]!.n).toBe(total);
+  expect(globalRows("SELECT rowid FROM entry_search WHERE entry_search MATCH 'message'")).toHaveLength(total);
+});
+
+test("turn-end indexing is abandoned after a fixed limit, even queued behind the project lock", async () => {
+  home();
+  await project("alpha", ["one"]);
+  const held = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+  const holder = withProjectStateLock("alpha", async () => { entered.resolve(); await held.promise; });
+  await entered.promise;
+  const logs: string[] = [];
+  const started = Date.now();
+  await archiveBestEffort("alpha", open(paths.transcript("alpha", "orchestrator")), m => logs.push(m), false, 100);
+  expect(Date.now() - started).toBeLessThan(1500);
+  expect(logs.join()).toContain("gave up");
+  held.resolve(); await holder;
+  await Bun.sleep(20);
+  expect(existsSync(archivePath()) ? globalRows("SELECT 1 FROM entries WHERE project='alpha'") : []).toEqual([]); // the abandoned job did nothing when it finally got the lock
 });
