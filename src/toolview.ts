@@ -70,6 +70,7 @@ const ARGS: Record<string, (input: Input) => string> = {
   complexity: complexityArgs,
   ask: askArgs,
   web_search: (i) => oneLine(str(i.query)),
+  history: (i) => oneLine(`${str(i.action)} ${str(i.query) || str(i.entryId)}`),
 };
 
 const asInput = (input: unknown): Input => (input && typeof input === "object" && !Array.isArray(input) ? (input as Input) : {});

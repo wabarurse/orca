@@ -143,8 +143,8 @@ describe("rolePrompt", () => {
     for (const [role, maxReviewRounds] of [["orchestrator", 0], ["orchestrator", 1], ["orchestrator", 100], ["worker", 1], ["reviewer", 1]] as const) {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
       expect(p.split("\n").filter((l) => l.startsWith("- ")).length).toBeGreaterThan(3);
-      // Includes the mandatory structured review/CI dispatch protocol.
-      expect(p.length).toBeLessThan(2200);
+      // Includes the mandatory structured review/CI dispatch protocol and the one-sentence history pointer.
+      expect(p.length).toBeLessThan(2400);
       expect(p).not.toMatch(/\{\w+\}/);
     }
   });
@@ -214,7 +214,7 @@ describe("dynamic dispatch", () => {
       expect(off).not.toContain("Splitting work into PRs");
       expect(on).toBe(`${off}\n\n${DYNAMIC_DISPATCH}`);
       // The base keeps its budget; the section sits outside it.
-      expect(off.length).toBeLessThan(2200);
+      expect(off.length).toBeLessThan(2400);
       expect(on).not.toMatch(/\{\w+\}/);
     }
   });

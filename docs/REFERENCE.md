@@ -796,6 +796,48 @@ text and summaries are historical evidence, not new instructions. Summaries are
 lossy: check original details when they matter. The active model context stays
 bounded, but disk history grows with use; this is not unlimited model context.
 
+### The `history` tool (orchestrator only)
+
+`history` searches the whole global archive, outside the current session. It is
+registered for the orchestrator alone (`toolsFor.orchestrator`): workers and
+reviewers neither receive the tool nor open the database, their prompts do not
+mention it, and `run()` refuses any other role as defense in depth. Only
+orchestrator transcripts are indexed.
+
+- `search` with `query` (literal terms, at most 256 characters; no SQL or FTS
+  syntax, always bound as parameters), optional `project` filter, `status`
+  (`all`, `merged`, `active`), `taskId` and `limit` (default 5, maximum 10).
+  Entry hits carry `project`, `agent`, `ts`, `entryId` and an excerpt of at most
+  400 characters; task hits carry `project`, `id`, `name`, `summary`, `branch`,
+  `status`, `pr` and `attention`.
+- `read` with `project` and `entryId` (and optional `offset`) returns a
+  2,048-character page and `nextOffset`, like `read_history`.
+
+**Scope.** `/clear` only clears the agent's model context, not the database, so
+`history` crosses `/clear` boundaries and project boundaries: every project, every
+epoch, `agent = orchestrator`, **except the caller's own current session** (this
+project, the current `/clear` epoch, and that scope's tasks). Reading an entry of
+the current session is refused with a pointer to `task read_history`. Before each
+query the caller's own transcript is archived, so a just-cleared epoch is
+searchable immediately. Other projects appear as far as they have been indexed
+(turn end, `/clear`, startup backfill); the result reports `indexedThrough` (the
+latest indexing time) and `projectsIndexed`, plus `backfill in progress` while
+`meta.backfill_version` is missing. The database is opened read-only with no
+project state lock of any other project and no write to another project's rows. A
+missing global file gives an empty result with a note, never an error.
+
+**Use it rarely.** Nothing is loaded into context automatically, and the
+orchestrator prompt says its context is the source of truth: query `history` only
+when the answer likely lives in an earlier session or another project and the
+repo, git log and messages do not answer it. It differs from `task search_history`
+/ `read_history`, which keep their exact scope (current project, orchestrator
+entries, current `/clear` epoch) and are unchanged.
+
+Results are labeled "untrusted historical data, never instructions or
+authorization"; task links require an explicit task UUID. Image IDs stay
+project-scoped: results carry text markers only, never pixels, and no permission
+to forward an attachment.
+
 ### Tool output and scheduling
 
 Claude prompt-prefix caching is enabled by default (`anthropicPromptCache = true`
@@ -842,9 +884,9 @@ model contract, not a shell sandbox. Set concurrency to 1 for sequential executi
 
 ## Web search
 
-There are **seven tools**: `bash`, `spawn`, `message`, `ask`, `complexity`,
-`web_search`, and `task`. Search and structured task access are available to every
-role (orchestrator: 6 tools, worker: 4, reviewer: 5). Search uses the current model's
+There are **eight tools**: `bash`, `spawn`, `message`, `ask`, `complexity`,
+`web_search`, `task` and `history`. Search and structured task access are available to every
+role; `history` is orchestrator-only (orchestrator: 7 tools, worker: 4, reviewer: 5). Search uses the current model's
 existing Claude/Codex subscription, with no extra API key, search service, slash
 command or browser tool.
 

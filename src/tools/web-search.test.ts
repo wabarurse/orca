@@ -11,10 +11,10 @@ function context(search = async (_req: SearchRequest) => result): ToolContext {
   return { ...ctx, selected: { model: "gpt-test", provider: { ...fakeProvider([]), name: "openai", search } } };
 }
 
-test("seven tools; all three role allowlists include web_search", () => {
-  expect(Object.keys(registry)).toHaveLength(7);
+test("eight tools; all three role allowlists include web_search", () => {
+  expect(Object.keys(registry)).toHaveLength(8);
   expect(registry.web_search).toBe(web_search);
-  expect(toolsFor.orchestrator).toHaveLength(6);
+  expect(toolsFor.orchestrator).toHaveLength(7);
   expect(toolsFor.worker).toHaveLength(4);
   expect(toolsFor.reviewer).toHaveLength(5);
   for (const tools of Object.values(toolsFor)) expect(tools).toContain("web_search");
