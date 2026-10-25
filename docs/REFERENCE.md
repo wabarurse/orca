@@ -60,15 +60,41 @@ review their work; this is not a shell sandbox.
 
 ### 2. Install once
 
-Keep the app separate from your work repositories. Run this in your shell to
-build from source in `~/.orca/app` and install `~/.local/bin/orca`.
-The checks refuse existing paths and symlinks instead of overwriting them; if
-installation refuses, inspect the paths and read
+After installing the prerequisites above, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wabarurse/parallels/main/install.sh | sh
+```
+
+The installer clones the app's `main` branch into `~/.orca/app`, installs frozen
+dependencies, builds it, and installs `~/.local/bin/orca`. It adds the PATH entry
+to `.bashrc` for bash, `.zshrc` (respecting `ZDOTDIR`) for zsh, or `.profile` for
+sh. Unsupported shells and unsafe startup files get manual instructions.
+Use `| sh -s -- --no-modify-path` to leave shell files alone. Open a new terminal
+afterward, or run the PATH command printed by the installer for this terminal.
+Git, Bun, and tmux must already be installed; it does not use sudo.
+
+To inspect before running, download instead of piping:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wabarurse/parallels/main/install.sh -o install.sh
+# Read install.sh, then:
+sh install.sh
+```
+
+Existing config, auth, projects and repositories stay in place. Creating the
+app directory alone does not hide existing `.parallels` state. `ORCA_HOME` and
+the legacy override continue to select runtime state independently of the app.
+Future updates use `orca pull`. An existing app is never overwritten by the
+bootstrap; for failed or partial installs, see
 [ownership and recovery](#installer-ownership-and-recovery).
+
+Alternatively, install manually without changing shell files:
 
 ```sh
 (
   set -eu
+  umask 022
   # Never replace an existing app or follow a symlink into unrelated content.
   if [ -L "$HOME/.orca" ] || [ -e "$HOME/.orca/app" ] || [ -L "$HOME/.orca/app" ]; then
     echo "Existing app or symlink: inspect it first; use the update steps for your own clone." >&2
@@ -181,9 +207,9 @@ Standard system tools (`sh` and `env`) must also remain on PATH.
 `gh` and project-specific tools may additionally be needed for the work you ask
 agents to do (for example PR publication/review).
 
-Keep the harness checkout separate from the repositories you work on. This
-local-only workflow installs the app at `~/.orca/app` and the executable at
-`~/.local/bin/orca`; it does not download or run a remote bootstrap script.
+Keep the harness checkout separate from the repositories you work on. Both the
+bootstrap and manual workflow install the app at `~/.orca/app` and the executable
+at `~/.local/bin/orca`.
 
 Follow the [quick-start installation steps](#2-install-once) above.
 
@@ -202,9 +228,10 @@ command -v orca
 orca version
 ```
 
-For future sessions, add that export to the appropriate shell startup file
-**yourself**, or use your shell's equivalent (e.g. `fish_add_path ~/.local/bin`
-in fish). Check `command -v orca` for another executable shadowing this
+The bootstrap adds that export for supported shells. After a manual install or
+`--no-modify-path`, add it to your shell startup file yourself, or use your shell's
+equivalent (e.g. `fish_add_path ~/.local/bin` in fish).
+Check `command -v orca` for another executable shadowing this
 one. You can always invoke `"$HOME/.local/bin/orca"` directly.
 
 ```sh
@@ -365,6 +392,23 @@ For a manually chosen reviewed revision, preserve any existing commits first,
 select that exact revision in the dedicated app clone, then run
 `bun install --frozen-lockfile` and `bun run install:local`; do not build from the
 unrelated project you happened to invoke `orca` in.
+
+If the bootstrap stopped after cloning, inspect `~/.orca/app` before retrying.
+For your verified clean clone of the official repository, resume with:
+
+```sh
+(
+  set -eu
+  umask 022
+  cd "$HOME/.orca/app"
+  bun install --frozen-lockfile
+  bun run install:local
+)
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The resume command leaves shell files alone. Add the PATH entry yourself if
+needed; do not delete saved state to retry installation.
 
 ### Development
 

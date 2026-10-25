@@ -4,6 +4,8 @@ A light-context agent harness: orchestrator → worker → reviewer loop, each a
 
 Bun + TypeScript. Use `bun` for everything (`bun test`, `bun run check`, `bun src/cli.ts`). No Node, npm or vite.
 
+`install.sh` bootstraps the dedicated `~/.orca/app` checkout and delegates the build/atomic binary install to `scripts/install.ts`. It preserves runtime state, refuses existing app paths, and adds PATH for supported shells unless `--no-modify-path` is passed. Bootstrap tests use temporary homes and fake downloads/builds; never run installation against the real home for validation.
+
 Layout:
 
 - `src/cli.ts` — `start [project] [directory]`, `msg`, `agent`, `agent-exit` (internal: the follow-up after a non-zero agent exit), `version` commands. `start` opens the sticky-bar TUI; run inside a git repo, it opens the `orch-xxxx` project bound to the canonical original checkout, creating one if none exists (`repoHere` / `projectFor` in `src/commands.ts`), and Ctrl+N creates another conversation in that checkout
