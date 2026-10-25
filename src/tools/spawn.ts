@@ -54,7 +54,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
         properties: {
           attachments: attachmentSchema,
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
-          prompt: { type: "string", description: "Everything the agent needs to know to do the job. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
+          prompt: { type: "string", description: "Everything the agent needs, including prior check commands, tested commit/code state, results and saved failure-output paths. Workers run only relevant checks once per checked code state. Reviewers inspect failed-check output, diff and complexity; they never run tests or validation commands. Never request full suites, baseline comparisons or duplicate tests, including in watch-ci. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
           branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects). Never use the default branch itself." },
           reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "Required when role is reviewer; explicitly identify: code review or CI-only validation. CI is not another review round." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },

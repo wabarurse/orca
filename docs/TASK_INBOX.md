@@ -152,7 +152,7 @@ After publication, the **reviewer in watch-CI mode** calls:
 
 ```json
 {"action":"pr","repository":"owner/repo","number":123}
-{"action":"ready","validated":true,"validation":"Local tests/check/build and review passed for this exact PR head"}
+{"action":"ready","validated":true,"validation":"Worker's relevant-check evidence matches this PR head; diff and complexity reviewed; hosted checks passed or absent. No tests rerun by reviewer."}
 ```
 
 `pr` verifies the project origin, repository/number/URL, non-fork PR and branch
@@ -166,12 +166,15 @@ same branch, a previously started task, explicit `validated:true`, nonempty
 validation evidence, a clean local HEAD matching the current PR head, and a
 verified open, non-draft, mergeable/CLEAN PR without review blockers or pending,
 failed or unknown checks. Missing hosted checks are recorded as `not_configured`,
-**not** inferred as readiness: explicit local validation is still required.
+**not** inferred as readiness: the worker's relevant-check evidence must still
+cover the current code. The reviewer matches that existing evidence to the PR
+head rather than rerunning tests or adding local validation. Missing or stale
+evidence and unresolved failures are reported through `task attention`.
 Skipped/neutral or unfamiliar check results conservatively do not qualify.
 Evidence is the reviewer's structured attestation, not machine execution of a
 project-specific test recipe. Report to the orchestrator in full afterwards as
 before. Code-review-only rounds never assert readiness. Zero review rounds still
-hand off to the reviewer with only “watch ci”; no publishing responsibility moved
+hand off to the reviewer with “watch ci” and worker evidence; no publishing responsibility moved
 to workers. No tool here pushes, opens PRs or merges.
 
 ## Automatic lifecycle

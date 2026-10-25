@@ -37,7 +37,7 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
   expect(task.status).toBe("queued");
   expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual(await listTasks(project));
   expect(JSON.parse(await tool.run({ action: "get", taskId: task.id }, ctx())).id).toBe(task.id);
-  expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain('spawn the reviewer with only the instruction "watch ci"');
+  expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain('spawn the reviewer with "watch ci" and existing check evidence');
   expect(rolePrompt("reviewer", defaults)).toContain("Review-only mode never asserts readiness");
 });
 
