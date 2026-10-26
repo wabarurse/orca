@@ -4,12 +4,16 @@
 // a { tool } Line, laid out at the current width (cut, never wrapped). The
 // marker is dim, red when the call failed (bold under NO_COLOR). The labels
 // and summaries come from src/toolview.ts, shared with restore.ts and the
-// agent loop, so live and restored pages match.
+// agent loop, so live and restored pages match. On screen, a run of two or
+// more finished calls with nothing else between them folds into one dim line
+// ("⏺ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed", `collapseCalls`
+// and `groupRow`) until the page is expanded (Ctrl+T); the history keeps the
+// calls themselves, so both views come from the same lines.
 
 import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../toolview";
 import type { Part } from "../view";
-import type { Line } from "./lines";
-import { dim, fit, sanitize } from "./render";
+import type { Line, Shown } from "./lines";
+import { dim, fit, sanitize, visibleLength } from "./render";
 import { shimmer } from "./shimmer";
 import { noColour } from "./style";
 
@@ -32,6 +36,46 @@ export function toolRows(v: ToolView, cols: number): string[] {
   const head = fit(`${mark(v.failed)} ${label(sanitize(v.tool))}`, cols);
   const tail = dim(fit(`${RESULT_MARK}${sanitize(v.summary)}`, cols));
   return [head, tail];
+}
+
+const plural = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+
+/** "bash ×4, read ×2, edit ×1": each tool's calls, most first, ties in the order they were first called. */
+function tally(calls: ToolView[]): string {
+  const counts = new Map<string, number>();
+  for (const c of calls) { const name = c.tool.split("(")[0]!; counts.set(name, (counts.get(name) ?? 0) + 1); }
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => `${name} ×${n}`).join(", ");
+}
+
+/**
+ * A run of finished calls as one dim row: "⏺ 7 tool calls · bash ×4, read ×2,
+ * edit ×1 · 1 failed" (no "· N failed" when none failed; the marker red when
+ * one did). When the width is short the tally is cut first, then dropped, so
+ * the count and the failures stay.
+ */
+export function groupRow(calls: ToolView[], cols: number): string {
+  const failed = calls.filter((c) => c.failed).length;
+  const head = plural(calls.length, "tool call");
+  const tail = failed ? ` · ${failed} failed` : "";
+  const room = cols - visibleLength(`${TOOL_MARK} ${head}${tail}`);
+  const names = sanitize(` · ${tally(calls)}`);
+  const list = visibleLength(names) <= room ? names : room >= 6 ? fit(names, room) : "";
+  return fit(`${mark(failed > 0)} ${dim(`${head}${list}${tail}`)}`, cols);
+}
+
+const isCall = (l: Line): l is ToolView => typeof l !== "string" && "tool" in l;
+
+/** `lines` with every run of two or more finished calls folded into one `{ calls }` line; a lone call stays as it is. */
+export function collapseCalls(lines: readonly Line[]): Shown[] {
+  const out: Shown[] = [];
+  let run: ToolView[] = [];
+  const fold = () => { if (run.length) out.push(run.length === 1 ? run[0]! : { calls: run }); run = []; };
+  for (const l of lines) {
+    if (isCall(l)) run.push(l);
+    else { fold(); out.push(l); }
+  }
+  fold();
+  return out;
 }
 
 /** A running call's row at `now`: the dim marker and its label with the shimmer. */

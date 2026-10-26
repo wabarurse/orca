@@ -552,7 +552,12 @@ conversation history with one summary line under it
 `spawned worker-feat`), its marker red when it failed. A call whose run stops
 without a result is red with an `interrupted` summary. Truncated bash output
 shows `N+ lines (truncated)`. Restored pages and the
-`/agents` view show calls the same way. Ctrl+N starts a new conversation named `orch-xxxx` in the
+`/agents` view show calls the same way. A run of two or more finished calls with
+nothing else between them (text, a user message, a report) shows as one dim line,
+`⏺ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed` (an interrupted call counts
+as failed; a lone call keeps its two lines); calls still running shimmer below it
+and fold in as they end. **Ctrl+T** expands the page to every call's own lines and
+collapses it again; the choice is per page and not saved. Ctrl+N starts a new conversation named `orch-xxxx` in the
 original checkout. `/rename <name>` renames it; `/new <name> <directory>` selects
 another local checkout (the directory may contain spaces). Ctrl+Z and Ctrl+X move between pages,
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type

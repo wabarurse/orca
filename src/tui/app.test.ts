@@ -2232,12 +2232,100 @@ describe("tool calls", () => {
     await until(() => term.screen().includes("⏺ bash(git status)\n  ⎿  2 lines"));
     expect(app.frame().running).toEqual([]);
     state.events!.onTool({ id: "c2", name: "bash", input: { command: "make" } });
+    await until(() => term.screen().includes("⏺ bash(make)"));
+    expect(term.screen()).toContain("⏺ bash(git status)\n  ⎿  2 lines\n⏺ bash(make)"); // a lone finished call keeps its lines while the next runs below
     state.events!.onToolResult({ id: "c2", ok: true, text: "x: error 1\n[exit 2]" });
-    await until(() => term.screen().includes("⏺ bash(make)\n  ⎿  exit 2: x: error 1"));
+    // Two finished calls in a row fold into one summary line; the failure is counted, and the marker is red.
+    await until(() => term.screen().includes("⏺ 2 tool calls · bash ×2 · 1 failed"));
+    expect(term.screen()).not.toContain("⎿");
+    expect(term.screen()).not.toContain("bash(make)");
     expect(term.raw()).toContain("\x1b[31m⏺");
     state.finish!();
     await until(() => !app.page!.busy);
     expect(state.ticks.length).toBe(0); // nothing runs: no timer
+    app.quit();
+    await running;
+  });
+
+  test("ctrl+t drops the scroll anchor a resize captured in the other view's line indexes, so a later resize keeps the row under the top", async () => {
+    const term = fakeTerm(60, 20);
+    const { state, clock, openOrchestrator } = scripted();
+    const app = new App({ term, clock, openOrchestrator, pollMs: 100_000 });
+    const running = app.run("anchored");
+    await until(() => !!app.page);
+    term.type("go\r");
+    await until(() => !!state.finish);
+    for (const id of ["c1", "c2", "c3"]) { state.events!.onTool({ id, name: "bash", input: { command: id } }); state.events!.onToolResult({ id, ok: true, text: "" }); }
+    state.finish!();
+    await until(() => !app.page!.busy);
+    for (let i = 0; i < 30; i++) app.say(`row ${i}`);
+    await until(() => term.screen().includes("row 29"));
+    const top = () => bodyRows(term)[0]!.trimEnd();
+    for (let i = 0; i < 30; i++) term.press({ name: "pageup" });
+    await until(() => top() === "⏺ 3 tool calls · bash ×3");
+    for (let i = 0; i < 4; i++) term.press({ name: "wheeldown" });
+    await until(() => top() === "row 11");
+    const anchored = top();
+    term.resize(50, 20); await Bun.sleep(150); // captures the anchor in the collapsed view's line indexes
+    expect(top()).toBe(anchored);
+    term.press({ name: "t", ctrl: true });
+    await until(() => top() !== anchored);
+    const expanded = top(); // the same row offset, now earlier in the history: the run above it grew by seven rows
+    expect(expanded).toBe("row 4");
+    term.resize(60, 20); await Bun.sleep(150);
+    expect(top()).toBe(expanded); // a stale anchor would have resolved to the collapsed index in the expanded lines
+    app.quit();
+    await running;
+  });
+
+  test("live: finished calls fold into the summary while the running rows stay below it; ctrl+t shows every call and folds them again; a durable sync draws the same rows", async () => {
+    const term = fakeTerm(60, 24);
+    const { state, clock, openOrchestrator } = scripted();
+    const t = openTranscript(paths.transcript("foldy", "orchestrator"));
+    await t.append({ type: "meta", role: "orchestrator", model: "m" });
+    const app = new App({ term, clock, pollMs: 100_000, openOrchestrator: async (...args) => ({ ...await openOrchestrator(...args), entries: () => t.branch() }) });
+    const running = app.run("foldy");
+    await until(() => !!app.page);
+    term.type("go\r");
+    await until(() => !!state.finish);
+    const body = () => bodyRows(term).map(row => row.trimEnd()).filter(row => /^(⏺|  ⎿)/.test(row)); // the tool rows: history, then the running ones
+    const calls = [{ id: "c1", name: "bash", input: { command: "ls" } }, { id: "c2", name: "read", input: { path: "x" } }, { id: "c3", name: "bash", input: { command: "false" } }];
+    for (const call of calls) state.events!.onTool(call);
+    await until(() => body().length === 3);
+    expect(body()).toEqual(["⏺ bash(ls)", "⏺ read(x)", "⏺ bash(false)"]); // all running
+    state.events!.onToolResult({ id: "c1", ok: true, text: "a\n" });
+    await until(() => body().includes("  ⎿  1 line"));
+    expect(body()).toEqual(["⏺ bash(ls)", "  ⎿  1 line", "⏺ read(x)", "⏺ bash(false)"]); // one finished: its own lines, the running rows below
+    state.events!.onToolResult({ id: "c3", ok: true, text: "boom\n[exit 1]" });
+    await until(() => body().includes("⏺ 2 tool calls · bash ×2 · 1 failed"));
+    expect(body()).toEqual(["⏺ 2 tool calls · bash ×2 · 1 failed", "⏺ read(x)"]); // two finished fold; the third still runs below
+    term.press({ name: "t", ctrl: true });
+    await until(() => body().includes("  ⎿  exit 1: boom"));
+    expect(body()).toEqual(["⏺ bash(ls)", "  ⎿  1 line", "⏺ bash(false)", "  ⎿  exit 1: boom", "⏺ read(x)"]); // expanded: as the page showed before folding
+    expect(app.page!.toolsExpanded).toBe(true);
+    term.press({ name: "t", ctrl: true });
+    await until(() => body().includes("⏺ 2 tool calls · bash ×2 · 1 failed"));
+    expect(body()).toEqual(["⏺ 2 tool calls · bash ×2 · 1 failed", "⏺ read(x)"]);
+    state.events!.onToolResult({ id: "c2", ok: false, text: "refused" });
+    await until(() => body().includes("⏺ 3 tool calls · bash ×2, read ×1 · 2 failed"));
+    expect(body()).toEqual(["⏺ 3 tool calls · bash ×2, read ×1 · 2 failed"]);
+    expect(app.page!.lines).toHaveLength(3); // the history keeps the calls themselves
+    expect(app.frame().running).toEqual([]);
+    // The durable record lands (the same calls, in the order they ended): the page re-renders from it to the same rows.
+    const before = term.display.screen();
+    await t.append({ type: "message", message: { role: "assistant", content: calls.map(c => ({ type: "tool_use", ...c })) } });
+    await t.append({ type: "message", message: { role: "user", content: [
+      { type: "tool_result", tool_use_id: "c1", content: "a\n" }, { type: "tool_result", tool_use_id: "c3", content: "boom\n[exit 1]" }, { type: "tool_result", tool_use_id: "c2", content: "refused", is_error: true },
+    ] } });
+    const lines = [...app.page!.lines];
+    state.events!.onRefresh!();
+    await until(() => app.page!.lines !== lines);
+    await Bun.sleep(40);
+    expect(app.page!.lines.map(l => JSON.stringify(l))).toEqual([lines[0], lines[2], lines[1]].map(l => JSON.stringify(l))); // the record's order
+    expect(term.display.screen()).toEqual(before);
+    state.finish!();
+    await until(() => !app.page!.busy);
+    expect(body()).toEqual(["⏺ 3 tool calls · bash ×2, read ×1 · 2 failed"]);
     app.quit();
     await running;
   });

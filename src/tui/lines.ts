@@ -2,7 +2,7 @@
 
 import { renderBlock, renderLabelled, renderMarkdown } from "./markdown";
 import { userRows } from "./render";
-import { toolRows } from "./tools";
+import { groupRow, toolRows } from "./tools";
 import type { ToolView } from "../toolview";
 
 /**
@@ -17,25 +17,29 @@ import type { ToolView } from "../toolview";
  */
 export type Line = string | { md: string; block?: boolean; label?: string; continuation?: true } | { user: string } | ToolView;
 
+/** A line as shown: a history line, or a run of finished calls folded into one (`calls`, tools.ts `collapseCalls`) for the collapsed view, one summary row (`groupRow`). The history itself never holds one. */
+export type Shown = Line | { calls: ToolView[] };
+
 /** A history line as screen lines at `cols` columns. */
-export function lineRows(l: Line, cols: number): string[] {
+export function lineRows(l: Shown, cols: number): string[] {
   if (typeof l === "string") return [l];
   if ("user" in l) return userRows(l.user, cols);
   if ("tool" in l) return toolRows(l, cols);
+  if ("calls" in l) return [groupRow(l.calls, cols)];
   if (l.block) return renderBlock(l.md, cols);
   return l.label ? renderLabelled(l.label, l.md, cols) : renderMarkdown(l.md, cols);
 }
 
 /** A logical boundary, not a wrapped row or a chunk of a still-streaming paragraph. */
-function startsBlock(line: Line): boolean {
+function startsBlock(line: Shown): boolean {
   if (typeof line === "string") return false;
   if ("user" in line) return line.user.startsWith("\x1b[1m>");
-  if ("tool" in line) return true;
+  if ("tool" in line || "calls" in line) return true;
   return !line.continuation && !!line.md.trim();
 }
 
 /** History at the current width; one neutral blank between logical blocks, never doubling an existing markdown blank. `previous` supports incremental commits. */
-export function historyRows(lines: Line[], cols: number, previous?: Line): string[] {
+export function historyRows(lines: readonly Shown[], cols: number, previous?: Shown): string[] {
   const out: string[] = [];
   let tail = previous === undefined ? "" : lineRows(previous, cols).at(-1) ?? "";
   for (const line of lines) {

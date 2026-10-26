@@ -14,7 +14,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ inbox 1
-help · commands & keys                                                  1–9/58
+help · commands & keys                                                  1–9/60
   conversation
   /refresh       reload shared local state; active context waits until idle;
                  never runs work
@@ -65,6 +65,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
                      answering
   pgup/pgdn / wheel  scroll conversation, help or inbox tasks (mouse reporting
                      required)
+  ctrl+t             expand or collapse runs of tool calls (one summary line
+                     each by default)
   ctrl+c             cancel selected turn/agent; twice within 2s exits,
                      keeping history
   esc                close panel, else leave agent view, else clear input
@@ -103,7 +105,7 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 inbox 1
-help                           1–8/117
+help                           1–8/121
   conversation
   /refresh
     reload shared local state; active
@@ -191,6 +193,10 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   pgup/pgdn / wheel
     scroll conversation, help or inbox
     tasks (mouse reporting required)
+  ctrl+t
+    expand or collapse runs of tool
+    calls (one summary line each by
+    default)
   ctrl+c
     cancel selected turn/agent; twice
     within 2s exits, keeping history
@@ -249,7 +255,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ inbox 1
-help · commands & keys                                                50–58/58
+help · commands & keys                                                52–60/60
   alt+d                delete next word
   home/end / ctrl+a/e  start / end of current line
   ctrl+u / ctrl+k      delete to start / end of current line
