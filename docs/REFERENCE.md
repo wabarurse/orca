@@ -270,8 +270,8 @@ sessions or logins in a different OS account/container.
 
 The orchestrator itself is a long-lived process too: `orca start` makes sure
 each open project's **orchestrator daemon** runs in the `orchestrator` window
-of that project's tmux session and starts it when it is not (you see
-`orchestrator started` on the page). The TUI is a client: your messages go to
+of that project's tmux session and starts it when it is not (a transient
+`orchestrator started` note above the composer). The TUI is a client: your messages go to
 the daemon's inbox, Ctrl+C, `/clear`, `/compact` and `/model` go to it as
 file requests it acknowledges on the page, and the conversation is read back
 from the saved transcript as the daemon appends to it. Closing the TUI (or your
@@ -567,6 +567,22 @@ or the wheel; Home/End jumps to its start/end (including advanced diagnostics).
 Esc closes it without changing your draft or leaving an agent view. Help is
 read-only while open; close it before typing. Global cancellation/page shortcuts
 still work, and Ctrl+Q replaces help with the Inbox's Questions section.
+
+Informational status notes are not conversation: `/rename <name> to rename`
+after Ctrl+N, a rename's `old → new`, `fetching models…`, `model set to …`
+and the daemon's `orchestrator: model … applies from the orchestrator's next
+request`, `/effort` and `/fast` queries and saves, `/accounts` selections and
+what the daemon keeper did (`orchestrator started`, `orchestrator was not
+running; restarted`) show as one dim row directly above the composer, cut to
+the width. A newer note for the same page replaces it; the next keypress on
+that page clears it (scrolling with the wheel or Page Up/Down and mouse
+selection do not). Each page keeps its own note,
+so a background page's shows when you switch to it. Notes are never written to
+the conversation, so `/refresh`, a reopen or an exit replay never bring them
+back. Errors, refusals (`usage: /fast [on|off]`, `effort ultra is
+unsupported`, `orchestrator is not running: …`), command output you need to
+read (`/help`, `/agents`, sign-in progress) and the orchestrator's own
+messages stay in the conversation.
 
 `/refresh` reloads **shared local persisted state**: project names/pins/list,
 saved conversation/model context, tasks/questions, agent status and model/settings.

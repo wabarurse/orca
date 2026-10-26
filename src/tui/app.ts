@@ -31,7 +31,7 @@ import { MarkdownStream } from "./mdstream";
 import { helpLines, type CommandHelp } from "./help";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./questions";
 import { replyLine, reportLine, restore, unresolvedCalls, userLines } from "./restore";
-import { bold, commit, dim, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./render";
+import { bold, commit, dim, fit, helpPanel, sanitize, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { chapterRows, headerHeight } from "./chrome";
@@ -367,6 +367,9 @@ export class App {
   /** Pages whose last rendering left out calls the running turn has not finished (they show as running rows instead); re-rendered once the turn ends. */
   private readonly hidRunning = new WeakSet<Page>();
   private readonly notices = new WeakMap<Page, Line[]>();
+  /** Each page's transient status note (one row above the composer; the next keypress on that page clears it), and the one shown while no page is open. */
+  private readonly notes = new WeakMap<Page, string>();
+  private looseNote: string | undefined;
 
   /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
   readonly questions: Questions;
@@ -476,6 +479,32 @@ export class App {
     else { this.keepNotice(page, line); this.toPage(page, [line]); }
   }
 
+  /**
+   * An informational status note ("model set to …", a rename, what the daemon
+   * keeper did): one dim row directly above the composer, replacing the page's
+   * previous note, never in the conversation or its restored history. Like the
+   * project list's status, the next keypress clears it; a mouse event does not.
+   */
+  note(text: string, page = this.page): void {
+    if (page) this.notes.set(page, text); else this.looseNote = text;
+    this.draw();
+  }
+
+  /** The next keypress on the page clears its note; scrolling (wheel, page keys) and mouse selection leave it. */
+  private clearNote(k: Key): void {
+    if (/^(?:wheel|mouse|page)/.test(k.name)) return;
+    const page = this.page;
+    if (page ? !this.notes.delete(page) : this.looseNote === undefined) return;
+    if (!page) this.looseNote = undefined;
+    this.draw();
+  }
+
+  /** The shown page's note, cut to one row. */
+  private noteRow(page: Page | undefined): string | undefined {
+    const text = page ? this.notes.get(page) : this.looseNote;
+    return text === undefined ? undefined : dim(fit(sanitize(text.replace(/\s*\n\s*/g, " ")), this.deps.term.cols));
+  }
+
   private keepNotice(page: Page, line: Line): void {
     const notes = this.notices.get(page) ?? [];
     notes.push(line); this.notices.set(page, notes);
@@ -574,11 +603,13 @@ export class App {
     const status = this.started && page ? this.status(page) : null;
     const refs = this.images(page);
     const showImages = refs.length > 0 && !page?.questions.expanded;
-    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0));
+    const note = this.noteRow(page);
+    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0) + (note ? 1 : 0));
     if (showImages) {
       area.lines.unshift(dim(`${imageLabels(refs)} · ctrl+y remove last`.slice(0, this.deps.term.cols)));
       area.row++;
     }
+    if (note) { area.lines.unshift(note); area.row++; }
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
@@ -1040,6 +1071,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.notices.set(page, [...this.looseLines]);
     page.lines.unshift(...this.looseLines);
     this.looseLines = [];
+    if (this.looseNote !== undefined) { this.notes.set(page, this.looseNote); this.looseNote = undefined; }
     page.model = await this.readModel(project);
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
@@ -1094,7 +1126,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const project = name ?? newProjectName([...shown.keys(), ...shown.values()]);
     try {
       const page = await this.openPage(project, url ?? this.deps.source ?? undefined);
-      if (!name) this.say(dim("/rename <name> to rename"), page);
+      if (!name) this.note("/rename <name> to rename", page);
     } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`); }
   }
 
@@ -1107,7 +1139,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     try {
       const from = page.name;
       page.name = await setDisplayName(page.project, to);
-      this.say(dim(`${from} → ${page.name}`), page);
+      this.note(`${from} → ${page.name}`, page);
       if (this.projectList) await this.refreshProjects();
     } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`, page); }
   }
@@ -1347,14 +1379,15 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   private async accountsMenu(): Promise<void> {
     this.modelGeneration++;
     this.openMenu("accounts: enter uses one or signs it in", await accountChoices(dim), async (account) => {
-      if (account.ok) return this.say(dim(await useAccount(account)));
+      if (account.ok) return this.note(await useAccount(account));
       await this.login(`${account.provider} ${account.id.split(":")[1]}`);
     });
   }
 
   private async modelMenu(page: Page, operation: number, identity: string): Promise<void> {
-    this.say(dim("fetching models…"));
+    this.note("fetching models…", page);
     const { choices, errors } = await (this.deps.modelChoices ?? modelChoices)(dim, page.project);
+    if (this.notes.delete(page)) this.draw();
     if (!this.modelPageCurrent(page, operation)) return;
     for (const e of errors) this.say(dim(e));
     if (!choices.length) return this.say(dim("no models available; sign in with /login first"));
@@ -1385,19 +1418,21 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     }
   }
 
-  /** Start the project's orchestrator daemon when none is alive: what it did, or why it could not, as a line to show. */
-  private async ensureDaemon(project: string): Promise<string | undefined> {
+  /** Start the project's orchestrator daemon when none is alive: what it did (a transient note), or why it could not (a line on the page). */
+  private async ensureDaemon(project: string): Promise<{ line: string; failed: boolean } | undefined> {
     if (!this.deps.ensureDaemon) return;
-    try { return await this.deps.ensureDaemon(project); }
-    catch (error) { return `orchestrator is not running: ${error instanceof Error ? error.message : String(error)}`; }
+    try { const line = await this.deps.ensureDaemon(project); return line ? { line, failed: false } : undefined; }
+    catch (error) { return { line: `orchestrator is not running: ${error instanceof Error ? error.message : String(error)}`, failed: true }; }
   }
-  /** A repeated outcome (a start that keeps failing) is shown once, not once per poll. */
+  /** A repeated failure (a start that keeps failing) is shown once, not once per poll; every (rate-limited) start or restart is noted. */
   private readonly daemonLines = new WeakMap<Page, string>();
   private async keepDaemon(project: string, page: Page): Promise<void> {
-    const line = await this.ensureDaemon(project);
-    if (!line || !this.validPage(page) || this.daemonLines.get(page) === line) return;
-    this.daemonLines.set(page, line);
-    this.say(dim(line), page);
+    const outcome = await this.ensureDaemon(project);
+    if (!outcome || !this.validPage(page)) return;
+    if (!outcome.failed) { this.daemonLines.delete(page); return this.note(outcome.line, page); }
+    if (this.daemonLines.get(page) === outcome.line) return;
+    this.daemonLines.set(page, outcome.line);
+    this.say(dim(outcome.line), page);
   }
 
   /** Start a turn on every idle page whose orchestrator has unread messages. */
@@ -1565,7 +1600,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   private async requestSetting(page: Page | undefined, args: string, command: typeof effortCommand): Promise<void> {
     if (!page) return this.say(dim("open a project before changing its model settings"));
-    this.say(dim(await command(page.project, args)), page);
+    this.note(await command(page.project, args), page);
     await this.refreshHeader(page);
   }
 
@@ -1628,10 +1663,10 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     // project even if its page closes or selection changes. Disk identity and
     // the shared project-state lock protect deletion/recreation, not selection.
     const result = await (this.deps.saveModel ?? setModel)(id, page.project, identity);
-    this.say(dim(result), page);
+    this.note(result, page);
     await this.refreshHeader(page);
-    // The daemon reads the saved model at its next request; its acknowledgement shows when it arrives.
-    void page.orch.observeModel?.(id).then(ack => this.say(dim(`orchestrator: ${ack}`), page), error => this.say(dim(`orchestrator did not acknowledge the model: ${error instanceof Error ? error.message : String(error)}`), page));
+    // The daemon reads the saved model at its next request; its acknowledgement replaces the note when it arrives.
+    void page.orch.observeModel?.(id).then(ack => this.note(`orchestrator: ${ack}`, page), error => this.say(dim(`orchestrator did not acknowledge the model: ${error instanceof Error ? error.message : String(error)}`), page));
   }
 
   /**
@@ -1774,6 +1809,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   async onKey(k: Key): Promise<void> {
     if (!this.selectionAllowed()) this.selection.clear();
     if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) return this.selectionMouse(k);
+    this.clearNote(k);
     if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
     if (k.name === "escape" && this.selection.active) { this.selection.clear(); this.draw(); return; }
     // Editing within this draft is fine. Navigation/modal/send/clear/history keys

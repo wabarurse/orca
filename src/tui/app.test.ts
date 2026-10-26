@@ -199,9 +199,11 @@ describe("tui app", () => {
     expect(orchs.opened[1]!.url).toBeUndefined();
     expect(app.page!.project).toBe(orchs.opened[1]!.project);
     await until(() => term.screen().includes("/rename <name> to rename"));
+    expect(app.page!.lines).toEqual([]); // a transient note above the composer, not conversation
 
     term.type("\x1a"); // Ctrl+Z
     expect(app.page!.project).toBe("alpha");
+    expect(strip(app.frame().inputArea!.lines.join("\n"))).not.toContain("/rename");
     term.type("\x18"); // Ctrl+X
     expect(app.page!.project).toBe(orchs.opened[1]!.project);
     term.type("\x18"); // wraps around
@@ -221,6 +223,47 @@ describe("tui app", () => {
     await running;
   });
 
+  test("status notes are one transient row above the composer: replaced by the next, cleared by the next key but not scrolling or the mouse, per page, never conversation", async () => {
+    const term = fakeTerm(40);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("notes");
+    await until(() => !!app.page);
+    const page = app.page!;
+    const above = () => app.frame().inputArea!.lines;
+    app.note("first note");
+    expect(above()[0]).toBe(dim("first note"));
+    expect(page.lines).toEqual([]);
+    await until(() => term.screen().includes("first note"));
+    app.note(`long ${"x".repeat(60)}\nsecond row`);
+    expect(above().filter(row => strip(row).includes("long"))).toHaveLength(1); // one row, cut with an ellipsis
+    expect(Bun.stringWidth(above()[0]!)).toBe(40);
+    expect(strip(above()[0]!)).toEndWith("…");
+    expect(strip(above().join("\n"))).not.toContain("first note");
+    term.press({ name: "wheelup" }); term.press({ name: "pagedown" }); term.press({ name: "mousedown", x: 1, y: 1 }); term.press({ name: "mouseup", x: 1, y: 1 });
+    expect(strip(above()[0]!)).toContain("long xxx");
+    term.type("a");
+    expect(strip(above().join("\n"))).not.toContain("long xxx");
+    expect(app.input.text).toBe("a");
+    await settle();
+    expect(term.screen()).not.toContain("long xxx");
+    expect(page.lines).toEqual([]);
+    // A background page's note waits for that page, and the active page's keys leave it alone.
+    term.press({ name: "n", ctrl: true });
+    await until(() => app.pages.length === 2 && strip(above().join("\n")).includes("/rename <name> to rename"));
+    app.note("for notes", page);
+    term.type("b");
+    expect(strip(above().join("\n"))).not.toContain("/rename");
+    term.type("\x1a"); // Ctrl+Z back to the first page
+    expect(app.page).toBe(page);
+    expect(above()[0]).toBe(dim("for notes"));
+    await app.commands.get("/refresh")!.run("", page); // a re-sync neither keeps nor clears a note: it is not a page notice
+    expect(above()[0]).toBe(dim("for notes"));
+    expect(app.pages.flatMap(p => p.lines)).toEqual([]);
+    app.quit();
+    await running;
+  });
+
   test("/rename sets a display name only, at any time, and refuses names in use", async () => {
     mkdirSync(join(home, "projects", "named", "repo"), { recursive: true });
     mkdirSync(join(home, "projects", "taken", "repo"), { recursive: true });
@@ -234,6 +277,7 @@ describe("tui app", () => {
     page.busy = true; // mid-turn
     term.type("/rename login page\r");
     await until(() => term.screen().includes("named → login page"));
+    expect(page.lines.map(raw).join("\n")).not.toContain("named → login page"); // a transient note, not conversation
     expect(page.project).toBe("named");
     expect(page.name).toBe("login page");
     expect(page.orch).toBe(orch); // not reopened
