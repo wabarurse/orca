@@ -59,3 +59,26 @@ test("offline CLI usage and owned errors are lowercase without changing supplied
     else expect(stderr).toContain("UnknownCommand");
   }
 });
+
+test("`orca stop <project>` refuses bad input, reports an idle project and stops a daemon through the channel", async () => {
+  const home = await mkdtemp(join(tmpdir(), "orca-stop-"));
+  const run = async (...args: string[]) => {
+    const proc = Bun.spawn(["bun", "src/cli.ts", ...args], { cwd: import.meta.dir + "/..", stdout: "pipe", stderr: "pipe", env: { ...process.env, ORCA_HOME: home } });
+    const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { stdout, stderr, code };
+  };
+  try {
+    expect((await run("stop")).stderr).toContain("expected stop <project>");
+    expect((await run("stop", "nope")).stderr).toContain("no project named nope");
+    await mkdir(join(home, "projects", "p", "repo"), { recursive: true });
+    expect(await run("stop", "p")).toMatchObject({ code: 0, stdout: "p: no orchestrator daemon is running\n" });
+    // A recorded live daemon (a shell standing in, which exits once the stop request lands) is asked, then waited for.
+    const commands = join(home, "projects", "p", "orchestrator", "commands");
+    const child = Bun.spawn(["sh", "-c", `while ! ls "$1"/*.json >/dev/null 2>&1; do sleep 0.1; done`, "sh", commands]);
+    await mkdir(join(home, "daemon-locks", "p"), { recursive: true });
+    await Bun.write(join(home, "daemon-locks", "p", "owner.json"), JSON.stringify({ pid: child.pid, since: new Date().toISOString(), project: "p" }));
+    try { expect(await run("stop", "p")).toMatchObject({ code: 0, stdout: `p: orchestrator daemon (pid ${child.pid}) stopped\n` }); }
+    finally { child.kill(); }
+    expect(await child.exited).toBe(0);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});

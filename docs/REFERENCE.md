@@ -193,8 +193,7 @@ branch/worktree cleanup, including removal of ignored files.
   background workers/reviewers keep running; see [Using the TUI](#using-the-tui)
   for cancellation details.
 - Finish active work and let background agents exit, including the orchestrator
-  daemons (stop one with `tmux -S ~/.orca/tmux.sock kill-window -t orca-<project>:orchestrator`,
-  or delete the project), then run `orca pull`
+  daemons (`orca stop <project>` for each, or delete the project), then run `orca pull`
   from any directory to update **only the dedicated app installation**. Git and
   Bun 1.4.2+ are required. Restart afterward; existing processes are not upgraded.
   Read [update safety and recovery](#explicit-updates-orca-pull) before updating.
@@ -283,7 +282,12 @@ completed reply or tool line as it lands; partial text is not streamed. A
 daemon that crashes leaves an `[agent-exit] orchestrator …` notice for its
 successor and is restarted by the next TUI poll (`orchestrator was not running;
 restarted`); `tmux -S ~/.orca/tmux.sock attach -t orca-<project>` shows its
-window. Only one daemon runs per project: a second start finds the first.
+window. Only one daemon runs per project: a second start finds the first. `orca stop
+<project>` stops a daemon cleanly (it asks, waits up to 10s, then kills the
+window): nothing is lost, queued input waits for the next start, and no notice
+is sent. A daemon killed by a signal instead (its window closed by hand, `tmux
+kill-server`, a logout) writes an `[agent-exit] orchestrator killed by SIGHUP …`
+notice into its own inbox, which the next daemon reads as its first message.
 
 Agents run on **orca's own tmux server**, never your default one: its socket is
 `$ORCA_HOME/tmux.sock` (`tmux -S ~/.orca/tmux.sock list-windows -t orca-<project>`
@@ -575,7 +579,9 @@ and later-compaction semantics; `/compact` remains the summarizing alternative.
 
 Ctrl+C cancels the selected page's current turn (including its provider request
 and running tools) by a request the orchestrator daemon picks up within about
-100ms and acknowledges on the page, without closing the harness or clearing your draft/history.
+100ms while a turn runs (when idle, on its next pass: at once on the file
+change, at most a second later) and acknowledges on the page, without closing
+the harness or clearing your draft/history.
 Other projects' turns and background workers/reviewers keep running. The cancelled
 orchestrator stays paused even if agent reports arrive; your next chat message
 resumes its saved conversation. While viewing a subagent, Ctrl+C instead stops

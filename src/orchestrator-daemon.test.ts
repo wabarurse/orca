@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CompleteRequest } from "./providers/index";
-import { Cancelled, cancelSession, publishLaunch } from "./cancellation";
+import { Cancelled, cancelSession, launchIdentity, publishLaunch } from "./cancellation";
+import { conversationTurnLock, projectTurnLock, turnLocksHeld } from "./project-state";
 import { paths, saveConfig } from "./config";
 import { pending, put } from "./inbox";
 import { createOrchestrator } from "./orchestrator";
@@ -11,7 +12,8 @@ import { acknowledge, awaitAck, daemonBusy, pruneAcks, readStatus, request, take
 import { orchestratorAgent, runDaemon, type DaemonOptions } from "./orchestrator-daemon";
 import { claimed, readRun } from "./exits";
 import { saveProjectModel } from "./project-model";
-import { tryStorageLock } from "./storage-lock";
+import { lockHeld, tryStorageLock } from "./storage-lock";
+import { writeFileSync } from "node:fs";
 import { fakeProvider, text } from "./test/fake-provider";
 import { open } from "./transcript";
 import { inputEpoch } from "./user-input";
@@ -20,6 +22,7 @@ const home = mkdtempSync(join(tmpdir(), "orca-daemon-"));
 process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
+function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 async function until(check: () => boolean | Promise<boolean>, ms = 3000) {
   const deadline = Date.now() + ms;
   while (!(await check()) && Date.now() < deadline) await Bun.sleep(5);
@@ -71,7 +74,7 @@ test("the loop runs turns on input, the watchers on their interval, answers requ
   await until(() => clock.sleeping() === 1);
   clock.advance(2000); clock.wake();
   await until(() => watched === 2 && merged === 2);
-  // Requests are answered in order, under their ids; a wrong model is refused, the saved one confirmed.
+  // Requests are answered in order, under their ids; a model request is answered with whatever is saved by then.
   await until(() => clock.sleeping() === 1);
   const compact = await request(p, { kind: "compact" });
   const wrong = await request(p, { kind: "model", model: "other-model" });
@@ -79,7 +82,7 @@ test("the loop runs turns on input, the watchers on their interval, answers requ
   const right = await request(p, { kind: "model", model: "claude-opus-5-5" });
   clock.wake();
   expect(await awaitAck(p, compact, { alive: async () => true })).toMatchObject({ ok: true, message: expect.stringContaining("compaction requested") });
-  expect(await awaitAck(p, wrong, { alive: async () => true })).toMatchObject({ ok: false, message: "the saved model is claude-opus-5-5, not other-model" });
+  expect(await awaitAck(p, wrong, { alive: async () => true })).toMatchObject({ ok: true, message: "model claude-opus-5-5 applies from the orchestrator's next request" });
   expect(await awaitAck(p, right, { alive: async () => true })).toMatchObject({ ok: true, message: "model claude-opus-5-5 applies from the orchestrator's next request" });
   await until(() => clock.sleeping() === 1);
   const stop = await request(p, { kind: "stop" });
@@ -111,7 +114,7 @@ test("a cancel request for this launch aborts the running turn, pauses input and
   const epoch = inputEpoch(p);
   const token = (await cancelSession(p, "orchestrator"))!;
   const ack = await awaitAck(p, token, { alive: async () => true });
-  expect(ack.ok).toBe(true);
+  expect(ack).toMatchObject({ ok: true, message: expect.stringContaining("turn cancelled") });
   expect(aborted).toBe(true);
   await until(() => readStatus(p)?.state === "idle");
   expect(inputEpoch(p)).not.toBe(epoch);
@@ -196,6 +199,9 @@ test("channel: acks are collected once, pruned when stale, and waiting fails fas
   await acknowledge(p, "old", true, "stale");
   await pruneAcks(p, Date.now() + 2 * 60 * 60 * 1000);
   await expect(awaitAck(p, "old", { alive: async () => true, timeoutMs: 20 })).rejects.toThrow("did not acknowledge");
+  // A restart while waiting: the request will never be answered, so the wait ends at once.
+  const runs = ["r1", "r1", "r2"];
+  await expect(awaitAck(p, "never", { alive: async () => true, run: async () => runs.shift() })).rejects.toThrow("orchestrator restarted");
   // A stale status from a dead process never reads as busy.
   await writeStatus(p, { pid: 2 ** 22 - 1, run: "dead", state: "turn", since: "", turns: 1 });
   expect(await daemonBusy(p)).toBe(false);
@@ -211,6 +217,7 @@ test("orchestratorAgent: supervised run record, a clean idle exit claims its run
   expect(state).toMatchObject({ run: "run-a", role: "orchestrator", pid: process.pid });
   expect(state?.endedAt).toBeString();
   expect(claimed(p, "orchestrator", "run-a")).toBe(true);
+  expect(launchIdentity(p, "orchestrator")).toBe("run-a"); // the daemon asserts its own launch once it holds the lock
   expect(await pending(p, "orchestrator")).toBe(false); // no [agent-exit] for a clean stop
   expect(provider.calls).toHaveLength(1);
 
@@ -233,4 +240,86 @@ test("orchestratorAgent: supervised run record, a clean idle exit claims its run
   await Bun.sleep(50);
   expect(existsSync(paths.project(q))).toBe(false); // nothing written back: the process is gone before supervise could close the run
   void running; // never settles here, as a process that exited
+});
+
+test("a foreign .launch (a start that lost the lock race, published last) is re-asserted by the live daemon, so a cancel still reaches it", async () => {
+  const p = await project("launch-race");
+  const session = await createOrchestrator({ project: p, provider: fakeProvider([]), tools: {}, write() {} });
+  const clock = fakeClock();
+  const release = await tryStorageLock(paths.daemonLock(p), p);
+  publishLaunch(p, "orchestrator", "loser-run");
+  const running = runDaemon({ project: p, run: "winner-run", session, sleep: clock.sleep, now: clock.now, log() {}, watchers: { watchdog: async () => {}, merges: async () => {} } });
+  await until(() => clock.sleeping() === 1);
+  expect(launchIdentity(p, "orchestrator")).toBe("winner-run");
+  publishLaunch(p, "orchestrator", "loser-run"); // a loser's publish landing after the winner's first pass
+  clock.wake();
+  await until(() => clock.sleeping() === 1);
+  expect(launchIdentity(p, "orchestrator")).toBe("winner-run");
+  const token = (await cancelSession(p, "orchestrator"))!;
+  clock.wake();
+  expect(await awaitAck(p, token)).toMatchObject({ ok: true, message: expect.stringContaining("nothing was running") });
+  await until(() => clock.sleeping() === 1);
+  const stop = await request(p, { kind: "stop" });
+  clock.wake();
+  expect(await running).toBe("stopped");
+  await awaitAck(p, stop);
+  await release!();
+  session.dispose?.();
+});
+
+test("compact and model requests are answered during a running turn; clear and stop wait for it to end", async () => {
+  const p = await project("in-turn");
+  const gate = deferred();
+  const provider = fakeProvider([[text("late reply")]]);
+  const complete = provider.complete;
+  provider.complete = async (req: CompleteRequest) => { await gate.promise; return complete(req); };
+  const session = await createOrchestrator({ project: p, provider, tools: {}, write() {} });
+  const clock = fakeClock();
+  const release = await tryStorageLock(paths.daemonLock(p), p);
+  const running = runDaemon({ project: p, run: "run-t", session, sleep: clock.sleep, now: clock.now, log() {}, watchers: { watchdog: async () => {}, merges: async () => {} } });
+  await until(() => clock.sleeping() === 1);
+  await put(p, "orchestrator", { from: "user", text: "slow" });
+  clock.wake();
+  await until(() => readStatus(p)?.state === "turn");
+  const clear = await request(p, { kind: "clear" });
+  const compact = await request(p, { kind: "compact" });
+  await saveProjectModel(p, "claude-opus-5-5");
+  const model = await request(p, { kind: "model", model: "claude-sonnet-5-5" }); // overtaken by a newer switch: still answered with what is saved
+  expect(await awaitAck(p, compact)).toMatchObject({ ok: true, message: expect.stringContaining("next safe boundary") });
+  expect(await awaitAck(p, model)).toMatchObject({ ok: true, message: "model claude-opus-5-5 applies from the orchestrator's next request" });
+  expect(readStatus(p)?.state).toBe("turn");
+  await expect(awaitAck(p, clear, { timeoutMs: 300 })).rejects.toThrow("did not acknowledge"); // not between turns yet
+  gate.resolve();
+  expect(await awaitAck(p, clear)).toMatchObject({ ok: true, message: "model context cleared" }); // answered once the turn (which consumed the compaction flag at its boundary) ended
+  expect(readStatus(p)).toMatchObject({ state: "idle", turns: 1 });
+  await until(() => clock.sleeping() === 1);
+  const stop = await request(p, { kind: "stop" });
+  clock.wake();
+  expect(await running).toBe("stopped");
+  await awaitAck(p, stop);
+  await release!();
+  session.dispose?.();
+});
+
+test("turn locks left by a dead owner (a daemon killed mid-turn) do not gate the next daemon or a clear", async () => {
+  const p = await project("stale-locks");
+  const dead = { pid: 2 ** 22 - 1, since: "2026-01-01T00:00:00.000Z", project: p };
+  for (const lock of new Set([projectTurnLock(p), conversationTurnLock(p)])) {
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(join(lock, "owner.json"), JSON.stringify(dead));
+    expect(await lockHeld(lock)).toBe(false);
+  }
+  expect(await turnLocksHeld(p)).toBe(false);
+  const live = await tryStorageLock(join(home, "some-other-lock"), p);
+  expect(await lockHeld(join(home, "some-other-lock"))).toBe(true);
+  await live!();
+  const session = await createOrchestrator({ project: p, provider: fakeProvider([[text("after takeover")]]), tools: {}, write() {} });
+  await put(p, "orchestrator", { from: "user", text: "go" });
+  expect(await session.pending()).toBe(true);
+  expect(await runDaemon({ project: p, run: "run-s", session, exitWhenIdle: true, log() {}, watchers: { watchdog: async () => {}, merges: async () => {} } })).toBe("idle");
+  expect(readStatus(p)).toMatchObject({ turns: 1 });
+  expect(readStatus(p)?.error).toBeUndefined();
+  expect(await turnLocksHeld(p)).toBe(false);
+  await session.checkClear!(); // not refused by the stale locks either
+  session.dispose?.();
 });

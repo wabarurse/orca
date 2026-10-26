@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentOptions } from "./agent";
-import { takeCancellation } from "./cancellation";
+import { delay, launchIdentity, publishLaunch, takeCancellation } from "./cancellation";
 import { exitWatchdog, mergeWatch } from "./commands";
 import { paths } from "./config";
 import { claim, supervise, type Tracker } from "./exits";
@@ -21,9 +21,11 @@ import { acknowledge, pruneAcks, takeRequests, writeStatus, type Command, type D
 import { SETTLED_EXIT } from "./runner";
 import { tryStorageLock } from "./storage-lock";
 
-/** How often the idle loop looks for input and requests when nothing woke it earlier, and how often a running turn checks for a cancel. */
+/** How often the idle loop looks for input and requests when nothing woke it earlier, and how often a running turn checks for a cancel or an in-turn request. */
 export const DAEMON_POLL_MS = 1000;
-const CANCEL_POLL_MS = 100;
+export const TURN_POLL_MS = 100;
+/** Requests a running turn can answer: compaction is a flag the turn reads at its next safe boundary, a model change is read at the next request. */
+const IN_TURN = new Set<Command["kind"]>(["compact", "model"]);
 /** The watchers' period (the merge watcher throttles itself further to MERGE_POLL_MS). */
 export const WATCH_MS = 2000;
 
@@ -97,19 +99,16 @@ async function runCommand(d: Daemon, command: Command): Promise<string> {
   switch (command.kind) {
     case "compact": await session.compact?.(); return "compaction requested; it runs at the next safe boundary";
     case "clear": await session.clear?.(); return "model context cleared";
-    case "model": {
-      const saved = await effectiveModel(project);
-      if (saved !== command.model) throw new Error(`the saved model is ${saved}, not ${command.model}`);
-      return `model ${saved} applies from the orchestrator's next request`;
-    }
+    // Confirms what is saved now: an older request overtaken by a newer switch still gets the current answer, not an error.
+    case "model": return `model ${await effectiveModel(project)} applies from the orchestrator's next request`;
     case "stop": return "stopping";
   }
 }
 
-/** Answer every queued request in order; true when one of them was a stop. */
-async function handleRequests(d: Daemon): Promise<boolean> {
+/** Answer the queued requests `accept` takes, in order; true when one of them was a stop. */
+async function handleRequests(d: Daemon, accept?: (kind: Command["kind"]) => boolean): Promise<boolean> {
   let stop = false;
-  for (const r of await takeRequests(d.o.project)) {
+  for (const r of await takeRequests(d.o.project, accept)) {
     let ok = true, message: string;
     try { message = await runCommand(d, r.command); }
     catch (error) { ok = false; message = error instanceof Error ? error.message : String(error); }
@@ -120,12 +119,28 @@ async function handleRequests(d: Daemon): Promise<boolean> {
 }
 
 /** A cancel request for this launch: abort/pause the session and answer under its token. */
-async function takeCancel(d: Daemon): Promise<boolean> {
+async function takeCancel(d: Daemon, inTurn: boolean): Promise<boolean> {
   const token = takeCancellation(d.o.project, "orchestrator", d.o.run);
   if (!token) return false;
   d.o.session.cancel?.();
-  await acknowledge(d.o.project, token, true, "turn cancelled; the orchestrator stays paused until you send a message").catch(error => d.o.log(`orchestrator: could not acknowledge the cancel: ${error}`));
+  const what = inTurn ? "turn cancelled; the orchestrator stays paused until you send a message" : "nothing was running; queued input stays paused until you send a message";
+  await acknowledge(d.o.project, token, true, what).catch(error => d.o.log(`orchestrator: could not acknowledge the cancel: ${error}`));
   return true;
+}
+
+/** This launch's identity, so a cancel from any client names this run; a concurrent start that lost the lock may have published its own after ours. */
+function assertLaunch(d: Daemon): void {
+  if (launchIdentity(d.o.project, "orchestrator") !== d.o.run) publishLaunch(d.o.project, "orchestrator", d.o.run);
+}
+
+/** While a turn runs: cancels and in-turn requests every TURN_POLL_MS, one pass at a time. */
+async function pollTurn(d: Daemon, signal: AbortSignal): Promise<void> {
+  while (!signal.aborted) {
+    if (!d.o.gone()) assertLaunch(d);
+    await takeCancel(d, true);
+    await handleRequests(d, kind => IN_TURN.has(kind));
+    await delay(TURN_POLL_MS, signal).catch(() => {});
+  }
 }
 
 async function runWatchers(d: Daemon): Promise<void> {
@@ -140,12 +155,13 @@ async function runTurn(d: Daemon): Promise<void> {
   d.turns++;
   d.error = undefined;
   await publish(d, "turn");
-  const poll = setInterval(() => { void takeCancel(d); }, CANCEL_POLL_MS);
+  const polling = new AbortController();
+  const poll = pollTurn(d, polling.signal);
   try { await d.o.session.turn(); }
   catch (error) {
     d.error = error instanceof Error ? error.message : String(error);
     d.o.log(`orchestrator: turn failed: ${d.error}; send another message to resume with retained history`);
-  } finally { clearInterval(poll); }
+  } finally { polling.abort(); await poll; }
   await contextEstimate(d);
   await publish(d, "idle");
 }
@@ -153,13 +169,18 @@ async function runTurn(d: Daemon): Promise<void> {
 /** One pass of the loop: requests, an idle cancel, the watchers, then a turn or a wait. */
 async function step(d: Daemon): Promise<DaemonOutcome | undefined> {
   if (d.o.gone()) return "deleted";
+  assertLaunch(d);
   if (await handleRequests(d)) return "stopped";
-  await takeCancel(d);
+  await takeCancel(d, false);
   await runWatchers(d);
   if (await d.o.session.pending()) { await runTurn(d); return; }
   if (d.o.exitWhenIdle) return "idle";
   await d.o.sleep(d.o.pollMs);
 }
+
+/** A deleted project: its directory, or its binding (repository.json, or a legacy clone), is gone. The daemon's own late writes (status, acks) cannot make it look present again. */
+export const projectGone = (project: string): boolean =>
+  !existsSync(paths.project(project)) || (!existsSync(paths.repository(project)) && !existsSync(join(paths.project(project), "repo")));
 
 /** Run the loop until a stop request, project deletion or (exitWhenIdle) nothing left to do. */
 export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> {
@@ -167,7 +188,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   const watched = options.sleep ? undefined : watchedSleep([join(paths.inbox(project), "orchestrator"), join(paths.orchestrator(project), "commands"), dirname(paths.transcript(project, "orchestrator"))]);
   const d: Daemon = {
     o: { pollMs: DAEMON_POLL_MS, watchMs: WATCH_MS, now: Date.now, log: text => console.error(text),
-      gone: () => !existsSync(paths.project(project)), ...options, sleep: options.sleep ?? watched!.sleep },
+      gone: () => projectGone(project), ...options, sleep: options.sleep ?? watched!.sleep },
     watchdog: options.watchers?.watchdog ?? exitWatchdog(),
     merges: options.watchers?.merges ?? mergeWatch(),
     watchedAt: -Infinity, turns: 0,
@@ -195,6 +216,7 @@ export async function orchestratorAgent(opts: AgentOptions & { run: string }, ex
   const { project, run } = opts;
   const release = await tryStorageLock(paths.daemonLock(project), project);
   if (!release) { console.error(`orca: an orchestrator is already running for ${project}`); return SETTLED_EXIT; }
+  publishLaunch(project, "orchestrator", run); // the live daemon's run is what cancel requests must name, whoever launched last
   const info = { project, id: "orchestrator", run, role: "orchestrator" as const, cwd: process.cwd() };
   try {
     return await supervise(info, async (tracker: Tracker) => {

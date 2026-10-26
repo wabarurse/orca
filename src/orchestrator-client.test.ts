@@ -66,7 +66,7 @@ test("a client round trip with a live daemon: say, follow the turn from disk, ca
   expect(await client.observeModel!("claude-opus-5-5")).toBe("model claude-opus-5-5 applies from the orchestrator's next request");
   // A cancel while idle pauses and is acknowledged under its token.
   client.cancel!();
-  await until(() => notices.some(t => t.includes("turn cancelled")));
+  await until(() => notices.some(t => t.includes("nothing was running")));
   expect(existsSync(`${paths.transcript(p, "orchestrator")}.cancel`)).toBe(false);
   await until(() => readStatus(p)?.state === "idle");
   await client.clear!();

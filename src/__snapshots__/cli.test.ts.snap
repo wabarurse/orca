@@ -5,6 +5,7 @@ exports[`offline CLI usage and owned errors are lowercase without changing suppl
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca msg <project> <text>
+  orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
   orca pull                       update ~/.orca/app from origin/main
   orca help | --help
@@ -19,6 +20,7 @@ usage:
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca msg <project> <text>
+  orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
   orca pull                       update ~/.orca/app from origin/main
   orca help | --help

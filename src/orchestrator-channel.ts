@@ -66,11 +66,15 @@ export async function daemonPid(project: string): Promise<number | undefined> {
 }
 export const daemonAlive = async (project: string): Promise<boolean> => (await daemonPid(project)) !== undefined;
 
-/** Whether a live daemon is in a turn (compaction and clearing included). A stale status from a dead daemon never counts. */
-export async function daemonBusy(project: string): Promise<boolean> {
+/** The status the live daemon wrote; a file left by a dead one (or another pid) is stale and ignored. */
+export async function liveStatus(project: string): Promise<DaemonStatus | undefined> {
   const status = readStatus(project);
-  return !!status && status.state === "turn" && status.pid === await daemonPid(project);
+  return status && status.pid === await daemonPid(project) ? status : undefined;
 }
+/** Whether a live daemon is in a turn (compaction and clearing included). */
+export const daemonBusy = async (project: string): Promise<boolean> => (await liveStatus(project))?.state === "turn";
+/** The live daemon's run id, so a waiting client notices a restart. */
+export const liveRun = async (project: string): Promise<string | undefined> => (await liveStatus(project))?.run;
 
 let seq = 0;
 /** Enqueue a request; returns its id, which the ack carries. */
@@ -82,17 +86,33 @@ export async function request(project: string, command: Command): Promise<string
   return id;
 }
 
-/** Wait for the daemon's answer to `id` (a request id or a cancel token) and remove it; throws when none arrives in time. */
-export async function awaitAck(project: string, id: string, opts: { timeoutMs?: number; signal?: AbortSignal; alive?: () => Promise<boolean> } = {}): Promise<Ack> {
+export interface AckWait { timeoutMs?: number; signal?: AbortSignal; alive?: () => Promise<boolean>; run?: () => Promise<string | undefined> }
+
+/**
+ * Wait for the daemon's answer to `id` (a request id or a cancel token) and
+ * remove it. Throws when the daemon is dead, when another daemon (a restart)
+ * has replaced the one asked (it will never see the request), or after
+ * `timeoutMs` (the daemon may still carry it out).
+ */
+export async function awaitAck(project: string, id: string, opts: AckWait = {}): Promise<Ack> {
   const deadline = Date.now() + (opts.timeoutMs ?? ACK_TIMEOUT_MS);
   const alive = opts.alive ?? (() => daemonAlive(project));
+  const run = opts.run ?? (() => liveRun(project));
+  const asked = await run();
   for (;;) {
     const ack = await takeAck(project, id);
     if (ack) return ack;
-    if (!await alive()) throw new Error("orchestrator is not running; the request was not acknowledged");
+    const gone = await unanswerable(alive, run, asked);
+    if (gone) throw new Error(gone);
     if (Date.now() >= deadline) throw new Error("orchestrator did not acknowledge the request in time (it may still carry it out)");
     await delay(ACK_POLL_MS, opts.signal);
   }
+}
+/** Why no answer will come: the daemon asked is dead, or another run replaced it. */
+async function unanswerable(alive: () => Promise<boolean>, run: () => Promise<string | undefined>, asked: string | undefined): Promise<string | undefined> {
+  if (!await alive()) return "orchestrator is not running; the request was not acknowledged";
+  const now = await run();
+  return asked && now && now !== asked ? "orchestrator restarted; the request was not acknowledged" : undefined;
 }
 async function takeAck(project: string, id: string): Promise<Ack | undefined> {
   const path = ackFile(project, id);
@@ -105,17 +125,27 @@ async function takeAck(project: string, id: string): Promise<Ack | undefined> {
 
 // --- the daemon's side ---------------------------------------------------------
 
-/** Read and remove every queued request, oldest first. A request that cannot be read is answered with an error, never retried. */
-export async function takeRequests(project: string): Promise<Request[]> {
+async function readRequest(path: string): Promise<Request | undefined> {
+  try {
+    const r = JSON.parse(await Bun.file(path).text()) as Request;
+    return typeof r?.id === "string" && typeof r.command?.kind === "string" ? r : undefined;
+  } catch { return; } // a partial or foreign file
+}
+
+/**
+ * Read and remove the queued requests `accept` takes (default: all), oldest
+ * first; the others stay for a later pass. A request that cannot be read is
+ * dropped, never retried.
+ */
+export async function takeRequests(project: string, accept: (kind: Command["kind"]) => boolean = () => true): Promise<Request[]> {
   const dir = commandsDir(project);
   const names = (await readdir(dir).catch(() => [] as string[])).filter(n => n.endsWith(".json")).sort();
   const out: Request[] = [];
   for (const name of names) {
     const path = join(dir, name);
-    try {
-      const r = JSON.parse(await Bun.file(path).text()) as Request;
-      if (typeof r?.id === "string" && typeof r.command?.kind === "string") out.push(r);
-    } catch { /* a partial or foreign file: dropped below */ }
+    const r = await readRequest(path);
+    if (r && !accept(r.command.kind)) continue;
+    if (r) out.push(r);
     await unlink(path).catch(() => {});
   }
   return out;

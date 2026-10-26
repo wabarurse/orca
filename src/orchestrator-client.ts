@@ -10,8 +10,8 @@ import { pendingImageInputs, type ImageRef } from "./images";
 import { pendingInput, put } from "./inbox";
 import { contextWindow } from "./model-context";
 import type { Orchestrator } from "./orchestrator";
-import { awaitAck, daemonPid, readStatus, request, type DaemonStatus } from "./orchestrator-channel";
-import { projectIdentity, turnLocks } from "./project-state";
+import { awaitAck, daemonPid, liveStatus, readStatus, request, type DaemonStatus } from "./orchestrator-channel";
+import { projectIdentity, turnLocksHeld } from "./project-state";
 import { local, sessionName, tmux, type Runner } from "./runner";
 import { pidAlive } from "./storage-lock";
 import { open, type Transcript } from "./transcript";
@@ -119,12 +119,6 @@ interface Client {
   disposed: boolean;
 }
 
-/** The daemon's status when its process is the live one; a dead daemon's file is ignored. */
-async function liveStatus(project: string): Promise<DaemonStatus | undefined> {
-  const status = readStatus(project);
-  return status && status.pid === await daemonPid(project) ? status : undefined;
-}
-
 const busy = async (c: Client) => (await c.status(c.project))?.state === "turn";
 
 /** Reload the transcript; a new head is handed to the TUI to re-sync from disk. */
@@ -150,11 +144,13 @@ async function observe(c: Client, f: Follow, deadline: number): Promise<"dead" |
 
 /** Wait until the daemon's turn ends (or none starts within the grace), re-syncing as the transcript grows. A turn that began and ended between two looks still counts (the turn counter). */
 async function follow(c: Client): Promise<void> {
-  const start = await c.status(c.project);
-  const f: Follow = { seen: c.transcript.head(), turnsAt: start?.turns ?? 0, engaged: start?.state === "turn", abort: new AbortController() };
-  c.following = f;
+  const f: Follow = { seen: c.transcript.head(), turnsAt: 0, engaged: false, abort: new AbortController() };
+  c.following = f; // before the first await: pending() must not schedule a second follow meanwhile
   const deadline = Date.now() + (c.deps.graceMs ?? START_GRACE_MS);
   try {
+    const start = await c.status(c.project);
+    f.turnsAt = start?.turns ?? 0;
+    f.engaged = start?.state === "turn";
     while (await observe(c, f, deadline) === "wait") await delay(c.deps.followMs ?? FOLLOW_MS, f.abort.signal);
   } catch (error) {
     if (!f.abort.signal.aborted) throw error;
@@ -176,7 +172,7 @@ async function ask(c: Client, what: string, send: () => Promise<string | undefin
 async function checkClear(c: Client): Promise<void> {
   c.checkIdentity();
   if (!await c.alive()) throw new Error("orchestrator is not running; wait for it to start before clearing context");
-  if (c.following || await busy(c) || turnLocks(c.project).some(path => existsSync(path))) throw new Error("orchestrator is running or compacting; wait before clearing context");
+  if (c.following || await busy(c) || await turnLocksHeld(c.project)) throw new Error("orchestrator is running or compacting; wait before clearing context");
   if ((await pendingImageInputs(c.project, c.transcript.consumed?.().inputs)).length) throw new Error("image input is pending; retry it before clearing context");
   if (await pendingInput(c.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
 }

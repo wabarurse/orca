@@ -5,7 +5,7 @@ import { pendingImageInputs, type ImageRef } from "./images";
 import { tryStorageLock } from "./storage-lock";
 import { inputEpoch, advanceInputEpoch } from "./user-input";
 import { Cancelled } from "./cancellation";
-import { projectIdentity, turnLocks, withProjectStateLock } from "./project-state";
+import { projectIdentity, turnLocks, turnLocksHeld, withProjectStateLock } from "./project-state";
 // The orchestrator session: one turn is: drain its inbox, hand the messages to
 // the model as one user message, run the loop until it stops calling tools,
 // then drain the user's inbox for anything addressed to them. In production
@@ -166,7 +166,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
   };
   const check = async (ownsTurn = false) => {
     checkIdentity();
-    if (state.running || state.requested || (!ownsTurn && turnLocks(deps.project).some(path => existsSync(path)))) throw new Error("orchestrator is running or compacting; wait before clearing context");
+    if (state.running || state.requested || (!ownsTurn && await turnLocksHeld(deps.project))) throw new Error("orchestrator is running or compacting; wait before clearing context");
     if ((await pendingImageInputs(deps.project, transcript.consumed?.().inputs)).length) throw new Error("image input is pending; retry it before clearing context");
     if (state.submitting || await pendingInput(deps.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
   };
@@ -226,7 +226,8 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
       try { await (deps.put ?? put)(deps.project, "orchestrator", { from: "user", text, ...(attachments?.length ? { attachments } : {}), userEpoch: submission, ...(inputId ? { inputId } : {}) }); }
       finally { state.submitting--; }
     },
-    pending: async () => !turnLocks(deps.project).some(path => existsSync(path)) && await refresh() &&
+    // A lock left by a dead owner (a daemon killed mid-turn) does not count: ownTurn moves it aside.
+    pending: async () => !await turnLocksHeld(deps.project) && await refresh() &&
       !(await state.isPaused()) && (state.requested || rolling.ready() || await pending(deps.project, "orchestrator")),
     entries: () => transcript.history?.() ?? transcript.branch(),
     consumed: () => transcript.consumed?.().inputs ?? new Set(),
