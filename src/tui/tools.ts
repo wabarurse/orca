@@ -65,17 +65,31 @@ export function groupRow(calls: ToolView[], cols: number): string {
 
 const isCall = (l: Line): l is ToolView => typeof l !== "string" && "tool" in l;
 
-/** `lines` with every run of two or more finished calls folded into one `{ calls }` line; a lone call stays as it is. */
-export function collapseCalls(lines: readonly Line[]): Shown[] {
+/** `lines` with every run of two or more finished calls folded into one `{ calls }` line (`open` when its start index is in `open`: a click opened it); a lone call stays as it is. */
+export function collapseCalls(lines: readonly Line[], open?: ReadonlySet<number>): Shown[] {
   const out: Shown[] = [];
-  let run: ToolView[] = [];
-  const fold = () => { if (run.length) out.push(run.length === 1 ? run[0]! : { calls: run }); run = []; };
-  for (const l of lines) {
-    if (isCall(l)) run.push(l);
+  let run: ToolView[] = [], start = 0;
+  const fold = () => { if (run.length) out.push(run.length === 1 ? run[0]! : open?.has(start) ? { calls: run, open: true } : { calls: run }); run = []; };
+  for (const [i, l] of lines.entries()) {
+    if (isCall(l)) { if (!run.length) start = i; run.push(l); }
     else { fold(); out.push(l); }
   }
   fold();
   return out;
+}
+
+/** Where each run of two or more finished calls starts in `lines`, in order: the identity of a folded group across re-renders of the same history. */
+export function groupStarts(lines: readonly Line[]): number[] {
+  const call = (i: number) => i >= 0 && i < lines.length && isCall(lines[i]!);
+  return lines.flatMap((_, i) => call(i) && !call(i - 1) && call(i + 1) ? [i] : []);
+}
+
+/** The group opened by a click, as its start index in `lines`, from its position among the shown lines. */
+export function groupStart(lines: readonly Line[], shown: readonly Shown[], at: number): number | undefined {
+  const line = shown[at];
+  if (!line || typeof line === "string" || !("calls" in line)) return;
+  const ordinal = shown.slice(0, at).filter((l) => typeof l !== "string" && "calls" in l).length;
+  return groupStarts(lines)[ordinal];
 }
 
 /** A running call's row at `now`: the dim marker and its label with the shimmer. */

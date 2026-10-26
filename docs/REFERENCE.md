@@ -270,8 +270,9 @@ sessions or logins in a different OS account/container.
 
 The orchestrator itself is a long-lived process too: `orca start` makes sure
 each open project's **orchestrator daemon** runs in the `orchestrator` window
-of that project's tmux session and starts it when it is not (a transient
-`orchestrator started` note above the composer). The TUI is a client: your messages go to
+of that project's tmux session and starts it when it is not (a start is silent;
+a transient `orchestrator was not running; restarted` note above the composer
+appears only when a daemon that died is brought back). The TUI is a client: your messages go to
 the daemon's inbox, Ctrl+C, `/clear`, `/compact` and `/model` go to it as
 file requests it acknowledges on the page, and the conversation is read back
 from the saved transcript as the daemon appends to it. Closing the TUI (or your
@@ -556,8 +557,11 @@ shows `N+ lines (truncated)`. Restored pages and the
 nothing else between them (text, a user message, a report) shows as one dim line,
 `⏺ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed` (an interrupted call counts
 as failed; a lone call keeps its two lines); calls still running shimmer below it
-and fold in as they end. **Ctrl+T** expands the page to every call's own lines and
-collapses it again; the choice is per page and not saved. Ctrl+N starts a new conversation named `orch-xxxx` in the
+and fold in as they end. Clicking that line opens just that group (its calls
+indented under the summary); clicking it again folds it. **Ctrl+T** expands the
+page to every call's own lines and collapses it again; the choice is per page,
+not saved, and resets what was clicked open. The conversation left in the shell
+on quit shows every call. Ctrl+N starts a new conversation named `orch-xxxx` in the
 original checkout. `/rename <name>` renames it; `/new <name> <directory>` selects
 another local checkout (the directory may contain spaces). Ctrl+Z and Ctrl+X move between pages,
 reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
@@ -573,8 +577,8 @@ after Ctrl+N, a rename's `old → new`, `fetching models…`, `model set to …`
 and the daemon's `orchestrator: model … applies from the orchestrator's next
 request`, `/effort` picker results (`fetching effort levels…`, a dropped saved
 level, the saved pick) and `/effort <level>`/`/fast` queries and saves,
-`/accounts` selections and what the daemon keeper did (`orchestrator started`, `orchestrator was not
-running; restarted`) show as one dim row directly above the composer, cut to
+`/accounts` selections and a daemon restart by the keeper (`orchestrator was not
+running; restarted`; the first start is silent) show as one dim row directly above the composer, cut to
 the width. A newer note for the same page replaces it; the next keypress on
 that page clears it (scrolling with the wheel or Page Up/Down and mouse
 selection do not). Each page keeps its own note,

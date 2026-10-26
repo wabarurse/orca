@@ -1,4 +1,4 @@
-import { ConversationSelection } from "./selection";
+import { ConversationSelection, hitRow } from "./selection";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "../clipboard";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput, type ImageRef } from "../images";
 import { contextStatus, dispatchStatus, reviewStatus } from "./context-status";
@@ -36,7 +36,7 @@ import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { chapterRows, headerHeight } from "./chrome";
 import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./anchor";
-import { Calls, collapseCalls } from "./tools";
+import { Calls, collapseCalls, groupStart, groupStarts } from "./tools";
 import { agentRow, reselect } from "./agent-clock";
 import type { ToolCall, ToolOutcome } from "../toolview";
 import { stickyRows, stickyUpdate, type StickyScreen } from "./sticky";
@@ -533,9 +533,12 @@ export class App {
     else this.pending.push(...this.rows(lines, previous));
   }
 
-  /** The lines a page shows (its agent view's, else its own): runs of finished calls folded into one line each unless the page is expanded (Ctrl+T). */
-  private shown(page: Page, lines = page.view?.lines ?? page.lines): readonly Shown[] {
-    return page.toolsExpanded ? lines : collapseCalls(lines);
+  /** Groups a click opened, by the start index of their run, per history (a page's or a view's lines); a new history (syncTranscript) carries them over by order. */
+  private readonly openGroups = new WeakMap<readonly Line[], Set<number>>();
+
+  /** The lines a page shows (its agent view's, else its own): runs of finished calls folded into one line each (open ones with their calls under it) unless the page is expanded (Ctrl+T) or `all` is asked. */
+  private shown(page: Page, lines = page.view?.lines ?? page.lines, all = false): readonly Shown[] {
+    return page.toolsExpanded || all ? lines : collapseCalls(lines, this.openGroups.get(lines));
   }
 
   /** What the screen shows for the active page: its agent view or its history. */
@@ -926,7 +929,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   private leave(): void {
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
-    const history = page ? this.shown(page) : this.looseLines;
+    // Folded groups cannot be opened once the TUI is gone: the scrollback gets every call.
+    const history = page ? this.shown(page, undefined, true) : this.looseLines;
     const lines = [...(page ? this.header(page, false) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
@@ -1013,11 +1017,21 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const saved = new Set(lines.map(line => JSON.stringify(line)));
     const notes = (this.notices.get(page) ?? []).filter(line => !saved.has(JSON.stringify(line)));
     this.notices.set(page, notes);
-    const anchor = this.relocatedAnchor(page, lines);
-    page.lines = [...lines, ...notes];
+    const next = [...lines, ...notes];
+    this.carryOpen(page.lines, next);
+    const anchor = this.relocatedAnchor(page, next);
+    page.lines = next;
     if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(this.shown(page), this.deps.term.cols, anchor); }
     this.renderedHeads.set(page, head);
     if (page === this.page && !page.view) this.reprint();
+  }
+
+  /** The groups opened in `from` stay open in `to`, its re-rendering: the same group is the same run in order. */
+  private carryOpen(from: readonly Line[], to: readonly Line[]): void {
+    const open = this.openGroups.get(from);
+    if (!open?.size) return;
+    const starts = groupStarts(to);
+    this.openGroups.set(to, new Set(groupStarts(from).flatMap((start, i) => open.has(start) && starts[i] !== undefined ? [starts[i]!] : [])));
   }
 
   /** Where the scrolled-up viewport's anchor line sits in the re-rendered `lines` (the same shown line's same occurrence), if the page is scrolled. */
@@ -1749,6 +1763,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const page = this.page;
     if (!page) return;
     page.toolsExpanded = !page.toolsExpanded;
+    this.openGroups.delete(page.view?.lines ?? page.lines); // the page-wide view starts afresh: folded, or every call
     this.selection.clear(); // the rows under it moved
     this.scrollAnchor = undefined; // captured in the other view's line indexes: a resize would resolve it there
     this.reprint();
@@ -1783,6 +1798,45 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
 
+  /** Where the mouse last went down: a release on the same cell is a click. */
+  private pressed?: { x?: number; y?: number };
+
+  /** A press and a release on the same cell: the released report, else nothing. */
+  private click(k: Key): Key | undefined {
+    if (k.name === "mousedown") { this.pressed = { x: k.x, y: k.y }; return; }
+    if (k.name !== "mouseup") return;
+    const down = this.pressed;
+    this.pressed = undefined;
+    return down && down.x === k.x && down.y === k.y ? k : undefined;
+  }
+
+  /** The painted frame is what a click hit: not while a reprint is due, nor when the frame shows another page or view than the current one. */
+  private clickable(): StickyScreen | undefined {
+    if (!this.selectionAllowed() || this.resizeTimer || this.needReprint || (this.page?.view ?? this.page) !== this.screenOwner) return;
+    return this.screen;
+  }
+
+  /** The folded group whose summary row is painted history row `index`: where its run starts in the page's (or view's) lines. */
+  private groupAt(page: Page, index: number, cols: number): number | undefined {
+    const lines = page.view?.lines ?? page.lines, shown = this.shown(page);
+    const at = captureAnchor(shown, cols, index);
+    return at.part === 0 ? groupStart(lines, shown, at.line) : undefined;
+  }
+
+  /** A click on a folded group's summary line opens it (its calls under the summary), or closes it again. Ctrl+T's page-wide view is separate. */
+  private toolClick(k: Key): void {
+    const screen = this.click(k) && this.clickable(), page = this.page;
+    const hit = screen && page && hitRow(k, screen, this.screenHistory.length);
+    const start = hit ? this.groupAt(page, hit.row, screen.cols) : undefined;
+    if (start === undefined || !page) return;
+    const lines = page.view?.lines ?? page.lines;
+    const open = this.openGroups.get(lines) ?? new Set<number>();
+    if (!open.delete(start)) open.add(start);
+    this.openGroups.set(lines, open);
+    this.scrollAnchor = undefined; // captured in the other layout's rows
+    this.reprint();
+  }
+
   private async selectionMouse(k: Key): Promise<void> {
     const screen = this.screen;
     if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) {
@@ -1809,7 +1863,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   async onKey(k: Key): Promise<void> {
     if (!this.selectionAllowed()) this.selection.clear();
-    if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) return this.selectionMouse(k);
+    if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) { this.toolClick(k); return this.selectionMouse(k); }
     this.clearNote(k);
     if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
     if (k.name === "escape" && this.selection.active) { this.selection.clear(); this.draw(); return; }

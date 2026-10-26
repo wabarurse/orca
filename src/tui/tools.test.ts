@@ -3,7 +3,7 @@ import { commit } from "./render";
 import { intensity, shimmer, SHIMMER_MS } from "./shimmer";
 import { setTerminalBackground } from "./style";
 import { FakeScreen } from "./testing";
-import { Calls, collapseCalls, groupRow, runningRow, toolRows } from "./tools";
+import { Calls, collapseCalls, groupRow, groupStart, groupStarts, runningRow, toolRows } from "./tools";
 import { historyRows, lineRows, type Line } from "./lines";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;:]*m/g, "");
@@ -68,6 +68,21 @@ describe("tool rows", () => {
     expect(lineRows({ calls: [a, b] }, 40)).toEqual([groupRow([a, b], 40)]);
     expect(historyRows(collapseCalls([{ md: "text", block: true }, a, b, { md: "more", block: true }]), 40).map(strip)).toEqual(["text", "", "⏺ 2 tool calls · bash ×1, read ×1", "", "more"]);
     expect(historyRows([{ md: "text", block: true }, a, b, { md: "more", block: true }], 40).map(strip)).toEqual(["text", "", "⏺ bash(a)", "  ⎿  1 line", "", "⏺ read(b)", "  ⎿  ok", "", "more"]); // expanded: as before
+  });
+
+  test("a group opened by a click (its run's start index) keeps its summary row with every call indented under it; groups are found by where their runs start", () => {
+    const a = { tool: "bash(a)", summary: "1 line", failed: false }, b = { tool: "read(b)", summary: "ok", failed: false }, c = { tool: "bash(c)", summary: "interrupted", failed: true };
+    const lines: Line[] = [{ user: "> go" }, a, b, c, { md: "text", block: true }, a, "note", b, c];
+    expect(groupStarts(lines)).toEqual([1, 7]);
+    expect(groupStarts([a])).toEqual([]);
+    const shown = collapseCalls(lines, new Set([7]));
+    expect(shown).toEqual([{ user: "> go" }, { calls: [a, b, c] }, { md: "text", block: true }, a, "note", { calls: [b, c], open: true }]);
+    expect(groupStart(lines, shown, 1)).toBe(1);
+    expect(groupStart(lines, shown, 5)).toBe(7);
+    expect(groupStart(lines, shown, 3)).toBeUndefined(); // a lone call is no group
+    expect(groupStart(lines, shown, 0)).toBeUndefined();
+    expect(lineRows({ calls: [a, c], open: true }, 40).map(strip)).toEqual(["⏺ 2 tool calls · bash ×2 · 1 failed", "  ⏺ bash(a)", "    ⎿  1 line", "  ⏺ bash(c)", "    ⎿  interrupted"]);
+    for (const row of lineRows({ calls: [a, c], open: true }, 12)) expect(Bun.stringWidth(strip(row))).toBeLessThanOrEqual(12);
   });
 
   test("a running call: the dim marker and its label shimmering, cut to the width", () => {

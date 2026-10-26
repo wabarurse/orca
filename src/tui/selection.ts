@@ -7,6 +7,14 @@ const plainRow = (row: string, cols: number) => Bun.stripANSI(fit(sanitize(row),
 import type { Key } from './keys';
 import type { StickyScreen } from './sticky';
 interface Point { row: number; col: number }
+/** The committed history row (index into `history`) and column under a mouse report, or nothing when it is outside the painted body. */
+export function hitRow(k: Key, screen: StickyScreen, length: number): Point | undefined {
+  const row = (k.y ?? 0) - 1 - screen.bodyTop;
+  const index = screen.start + row;
+  const col = (k.x ?? 0) - 1;
+  if (row < 0 || row >= screen.bodyHeight || index >= length || col < 0 || col >= screen.cols) return;
+  return { row: index, col };
+}
 export class ConversationSelection {
   private anchor?: Point;
   private end?: Point;
@@ -14,15 +22,8 @@ export class ConversationSelection {
   private dragging = false;
   clear(): void { this.anchor = this.end = undefined; this.snapshot = []; this.dragging = false; }
   get active(): boolean { return !!this.anchor; }
-  private hit(k: Key, screen: StickyScreen, length: number): Point | undefined {
-    const row = (k.y ?? 0) - 1 - screen.bodyTop;
-    const index = screen.start + row;
-    const col = (k.x ?? 0) - 1;
-    if (row < 0 || row >= screen.bodyHeight || index >= length || col < 0 || col >= screen.cols) return;
-    return { row: index, col };
-  }
   mouse(k: Key, screen: StickyScreen, history: string[]): boolean {
-    const point = this.hit(k, screen, history.length);
+    const point = hitRow(k, screen, history.length);
     if (k.name === 'mousedown') { this.start(point, screen.cols, history); return false; }
     if (!this.dragging) return false;
     if (k.name === 'mouseup' && (!point || point.row >= this.snapshot.length)) { this.clear(); return false; }

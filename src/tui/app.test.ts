@@ -71,6 +71,14 @@ function fakeTerm(cols = 40, rows = 24) {
 const bodyStart = (term: ReturnType<typeof fakeTerm>) => term.display.screen().findIndex(row => /^─+$/.test(row)) + 1;
 const bodyRows = (term: ReturnType<typeof fakeTerm>) => term.display.screen().slice(bodyStart(term));
 
+/** Click the screen row showing `text` (one press and release on the same cell). */
+async function clickRow(app: App, term: ReturnType<typeof fakeTerm>, text: string): Promise<void> {
+  const y = term.display.screen().findIndex(row => row.includes(text)) + 1;
+  expect(y).toBeGreaterThan(0);
+  await app.onKey({ name: "mousedown", x: 3, y });
+  await app.onKey({ name: "mouseup", x: 3, y });
+}
+
 function fakeOrchestrators() {
   const opened: { project: string; url?: string }[] = [];
   const said: Record<string, string[]> = {};
@@ -2372,6 +2380,70 @@ describe("tool calls", () => {
     expect(body()).toEqual(["⏺ 3 tool calls · bash ×2, read ×1 · 2 failed"]);
     app.quit();
     await running;
+  });
+
+  test("a click on a folded summary opens that group alone and closes it again; it survives a durable sync; ctrl+t resets it; the exit replay shows every call", async () => {
+    const term = fakeTerm(60, 40); // tall enough for the whole conversation, as a click pins the scroll like any mousedown
+    const orchs = fakeOrchestrators();
+    const t = openTranscript(paths.transcript("clicky", "orchestrator"));
+    await t.append({ type: "meta", role: "orchestrator", model: "m" });
+    const calls = [{ id: "s1", name: "bash", input: { command: "ls" } }, { id: "s2", name: "bash", input: { command: "false" } }];
+    const results = (ids: string[]) => ids.map(id => ({ type: "tool_result" as const, tool_use_id: id, content: id.startsWith("s2") ? "boom\n[exit 1]" : "a\n" }));
+    await t.append({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "first", citations: null }, ...calls.map(c => ({ type: "tool_use" as const, ...c }))] } });
+    await t.append({ type: "message", message: { role: "user", content: results(["s1", "s2"]) } });
+    await t.append({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "between", citations: null }, ...calls.map(c => ({ type: "tool_use" as const, ...c, id: `${c.id}b` }))] } });
+    await t.append({ type: "message", message: { role: "user", content: results(["s1b", "s2b"]) } });
+    let events!: ToolEvents;
+    const openOrchestrator: ConstructorParameters<typeof App>[0]["openOrchestrator"] = async (project, url, write, inbox, tools) => {
+      if (project === "clicky") events = tools!;
+      return { ...(await orchs.openOrchestrator(project, url, write, inbox)), entries: () => (project === "clicky" ? t.branch() : []) };
+    };
+    const app = new App({ term, openOrchestrator, pollMs: 100_000 });
+    const running = app.run("clicky");
+    const body = () => bodyRows(term).slice(0, -4).map(row => row.trimEnd()).filter(Boolean); // the conversation, without the composer and status
+    const summary = "⏺ 2 tool calls · bash ×2 · 1 failed";
+    const opened = [summary, "  ⏺ bash(ls)", "    ⎿  1 line", "  ⏺ bash(false)", "    ⎿  exit 1: boom"];
+    await until(() => body().join("\n") === ["first", summary, "between", summary].join("\n"));
+    // The second group opens; the first stays folded.
+    const y = term.display.screen().findLastIndex(row => row.includes("2 tool calls")) + 1;
+    await app.onKey({ name: "mousedown", x: 3, y }); await app.onKey({ name: "mouseup", x: 3, y });
+    await until(() => body().join("\n") === ["first", summary, "between", ...opened].join("\n"));
+    expect(app.page!.lines).toHaveLength(6); // the history is untouched
+    // A drag (release elsewhere) is a selection, not a click; a click on an open group's call is not on its summary.
+    await app.onKey({ name: "mousedown", x: 3, y }); await app.onKey({ name: "mouseup", x: 9, y });
+    await app.onKey({ name: "mousedown", x: 3, y: y + 1 }); await app.onKey({ name: "mouseup", x: 3, y: y + 1 });
+    await settle();
+    expect(body().join("\n")).toBe(["first", summary, "between", ...opened].join("\n"));
+    // The durable record re-renders the page (syncTranscript): the opened group stays open, matched by its run's order.
+    await t.append({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "after", citations: null }] } });
+    const lines = app.page!.lines;
+    events.onRefresh!();
+    await until(() => app.page!.lines !== lines && body().includes("after"));
+    expect(body().join("\n")).toBe(["first", summary, "between", ...opened, "after"].join("\n"));
+    // A click on the open group's summary folds it again.
+    await clickRow(app, term, "bash(ls)"); // its call: not the summary row
+    await settle();
+    expect(body()).toContain("  ⏺ bash(ls)");
+    const ys = term.display.screen().findLastIndex(row => row.includes("2 tool calls")) + 1;
+    await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
+    await until(() => body().join("\n") === ["first", summary, "between", summary, "after"].join("\n"));
+    // Ctrl+T shows every call page-wide and, folding back, forgets what was clicked open.
+    await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
+    await until(() => body().includes("  ⏺ bash(ls)"));
+    term.press({ name: "t", ctrl: true });
+    await until(() => body().join("\n") === ["first", "⏺ bash(ls)", "  ⎿  1 line", "⏺ bash(false)", "  ⎿  exit 1: boom", "between", "⏺ bash(ls)", "  ⎿  1 line", "⏺ bash(false)", "  ⎿  exit 1: boom", "after"].join("\n"));
+    term.press({ name: "t", ctrl: true });
+    await until(() => body().join("\n") === ["first", summary, "between", summary, "after"].join("\n"));
+    // A click before another page's frame is painted never reaches this page's groups.
+    await app.openPage("clicky-other");
+    await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
+    await until(() => !term.screen().includes("between"));
+    app.active = 0; app.reprint();
+    await until(() => body().join("\n") === ["first", summary, "between", summary, "after"].join("\n"));
+    app.quit();
+    await running;
+    // The exit replay cannot be clicked: it shows every call.
+    expect(term.display.screen().join("\n")).toContain("first\n\n⏺ bash(ls)\n  ⎿  1 line\n\n⏺ bash(false)\n  ⎿  exit 1: boom\n\nbetween\n\n⏺ bash(ls)\n  ⎿  1 line\n\n⏺ bash(false)\n  ⎿  exit 1: boom\n\nafter");
   });
 
   test("the /agents view shows a followed agent's running call live, then its lines when the result lands", async () => {
