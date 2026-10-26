@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deleteProject } from "./commands";
 import { paths, saveConfig } from "./config";
-import { archivePath, archiveTranscript, database, purgeProject, queryHistory } from "./memory-archive";
+import { archivePath, archiveTranscript, database, purgeProject, queryHistory, taskTimes } from "./memory-archive";
 import { createOrchestrator } from "./orchestrator";
-import { registerTask } from "./tasks";
+import { getTask, observeTaskPR, prepareTaskRun, registerTask, startTaskRun, stopTaskRun, type Task } from "./tasks";
 import { fakeProvider, text } from "./test/fake-provider";
 import { orchestratorTask } from "./tools/task";
 import { open } from "./transcript";
@@ -43,7 +43,63 @@ test("two projects share one private file with project and agent columns", async
   expect(rows<{ id: string }>("SELECT id FROM entries WHERE project='beta' AND id=?", b.uuid)).toHaveLength(1);
   expect(rows<{ project: string; id: string }>("SELECT project,id FROM tasks")).toEqual([{ project: "alpha", id: task.id }]);
   expect(rows<{ project: string; agent: string }>("SELECT project,agent FROM sources ORDER BY project")).toEqual([{ project: "alpha", agent: "orchestrator" }, { project: "beta", agent: "orchestrator" }]);
-  expect(rows<{ user_version: number }>("PRAGMA user_version")).toEqual([{ user_version: 1 }]);
+  expect(rows<{ user_version: number }>("PRAGMA user_version")).toEqual([{ user_version: 2 }]);
+});
+
+const pr = { repository: "o/r", number: 3, url: "https://github.com/o/r/pull/3", head: "a".repeat(40) };
+const times = (id: string) => rows<{ started_at: string | null; ended_at: string | null }>("SELECT started_at,ended_at FROM tasks WHERE id=?", id)[0];
+/** A registered task, a worker run (prepared, then started unless `start` is false) and optionally a merge. */
+async function lifecycle(project: string, { start = true, merge = false } = {}): Promise<Task> {
+  const t = await registerTask(project, { name: `Task ${start}${merge}`, summary: "lifecycle", branch: `feat/${start}${merge}`, authorized: true });
+  const run = crypto.randomUUID();
+  await prepareTaskRun(project, t.id, t.branch, { id: run, agent: "worker", role: "worker" });
+  if (start) { await startTaskRun(project, run); await stopTaskRun(project, run, "waiting", "reported"); }
+  else await stopTaskRun(project, run, "blocked", "launch failed", true);
+  if (merge) await observeTaskPR(project, t.id, { pr, branch: t.branch, state: "MERGED", mergedAt: "2024-05-01T10:00:00.000Z", ready: false, checks: "unknown" });
+  return getTask(project, t.id);
+}
+
+test("tasks carry started_at (first confirmed run start) and ended_at (confirmed merge), null while active or never started", async () => {
+  home(); mk("alpha");
+  const active = await lifecycle("alpha"), merged = await lifecycle("alpha", { merge: true }), unstarted = await lifecycle("alpha", { start: false });
+  await say("alpha", "user", "indexing trigger");
+  await archiveTranscript("alpha", open(paths.transcript("alpha", "orchestrator")));
+  const [a, m, u] = [times(active.id)!, times(merged.id)!, times(unstarted.id)!];
+  expect(a).toEqual({ started_at: active.runs[0]!.startedAt!, ended_at: null });
+  expect(m).toEqual({ started_at: merged.runs[0]!.startedAt!, ended_at: "2024-05-01T10:00:00.000Z" });
+  expect(u).toEqual({ started_at: null, ended_at: null });
+  expect(unstarted.runs[0]!.state).toBe("failed"); expect(unstarted.attention?.kind).toBe("blocked");
+  // A cancelled run is revocable attention, not an end.
+  const later = crypto.randomUUID();
+  await prepareTaskRun("alpha", active.id, active.branch, { id: later, agent: "worker", role: "worker" });
+  await startTaskRun("alpha", later); await stopTaskRun("alpha", later, "cancelled", "stopped by user");
+  await archiveTranscript("alpha", open(paths.transcript("alpha", "orchestrator")));
+  expect(times(active.id)).toEqual(a);
+  expect(taskTimes({ runs: [{ startedAt: "2024-02-01T00:00:00.000Z" }, { startedAt: "2024-01-01T00:00:00.000Z" }] } as Task)).toEqual({ startedAt: "2024-01-01T00:00:00.000Z", endedAt: null });
+});
+
+test("a version-1 archive gains the task time columns in place, filled from each row's raw record", async () => {
+  home(); mk("alpha");
+  const db = new Database(archivePath(), { create: true, strict: true });
+  db.exec(`CREATE TABLE tasks (project TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, name TEXT NOT NULL, summary TEXT NOT NULL, branch TEXT NOT NULL, status TEXT NOT NULL, raw TEXT NOT NULL, PRIMARY KEY(project,id)); PRAGMA user_version=1`);
+  const raw = (runs: object[], archive?: object) => JSON.stringify({ runs, ...(archive ? { archive } : {}) });
+  db.query("INSERT INTO tasks VALUES('alpha','merged',3,'n','s','b','merged',?)").run(raw([{ preparedAt: "2024-01-01T00:00:00.000Z" }, { startedAt: "2024-01-02T00:00:00.000Z" }], { reason: "merged", mergedAt: "2024-01-03T00:00:00.000Z" }));
+  db.query("INSERT INTO tasks VALUES('alpha','open',1,'n','s','b','queued',?)").run(raw([]));
+  db.query("INSERT INTO tasks VALUES('alpha','broken',1,'n','s','b','queued','not json')").run();
+  db.close();
+  database().close();
+  expect(rows<{ user_version: number }>("PRAGMA user_version")).toEqual([{ user_version: 2 }]);
+  expect(rows("SELECT id,started_at,ended_at FROM tasks ORDER BY id")).toEqual([
+    { id: "broken", started_at: null, ended_at: null },
+    { id: "merged", started_at: "2024-01-02T00:00:00.000Z", ended_at: "2024-01-03T00:00:00.000Z" },
+    { id: "open", started_at: null, ended_at: null }]);
+  // Re-indexing an existing row that gained a revision updates the times too.
+  const t = await lifecycle("alpha", { merge: true });
+  await say("alpha", "user", "hello");
+  await archiveTranscript("alpha", open(paths.transcript("alpha", "orchestrator")));
+  expect(times(t.id)).toEqual({ started_at: t.runs[0]!.startedAt!, ended_at: "2024-05-01T10:00:00.000Z" });
+  database().close(); // already current: no second upgrade
+  expect(rows("SELECT count(*) AS n FROM tasks")).toEqual([{ n: 4 }]);
 });
 
 test("the file and its WAL siblings are owner-only", async () => {
