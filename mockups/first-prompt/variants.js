@@ -51,7 +51,7 @@ function stipple(art) {
 }
 
 export const variants = [
-  { id:'a', name:'Classic cruise', idea:'The original detailed silhouette above gently rolling waves. After the first prompt, a solid fin cruises through a light wake.', art:detailed, fallback:compact, motion:'cruise', fin:['   #,','   ###','  #####'] },
+  { id:'a', name:'Classic cruise', idea:'The original silhouette with its lower ### wave gently rippling. After the first prompt, a solid fin cruises through a light wake.', art:detailed, fallback:compact, motion:'cruise', fin:['   #,','   ###','  #####'] },
   { id:'b', name:'Ink outline', idea:'An airy outline with a gentle rise and fall. The hollow fin bobs through quiet water.', art:outline(detailed), fallback:outline(compact), motion:'bob', fin:['    /|','   / |',' _/  |'] },
   { id:'c', name:'Rolling swell', idea:'A compact, bold whale with a soft body roll. Its rounded fin rides a slow wave across the bar.', art:compact, fallback:compact, motion:'swell', fin:['   ,#','  ###',' #####'] },
   { id:'d', name:'Surface & dive', idea:'A stippled whale that glides. Its fin surfaces, disappears under the water, then returns farther along.', art:stipple(detailed), fallback:stipple(compact), motion:'dive', fin:['   @,','   @@@','  @@@@@'] },
@@ -61,24 +61,19 @@ export const variants = [
 export function whaleFrame(variant, tick, cols) {
   const maxWidth = art => Math.max(...art.map(line => line.length));
   const art = maxWidth(variant.art) + 4 <= cols ? variant.art : variant.fallback;
-  const width = maxWidth(art), grid = Array.from({length:variant.motion==='cruise'?24:22}, () => Array(cols).fill(' '));
+  const width = maxWidth(art), grid = Array.from({length:22}, () => Array(cols).fill(' '));
   const bob = ['bob','swell'].includes(variant.motion) ? Math.round(Math.sin(tick / 5)) : 0;
   const drift = variant.motion === 'dive' ? Math.round(2 * Math.sin(tick / 9)) : 0;
   const offsetX = Math.floor((cols-width)/2) + drift, offsetY = Math.floor((22-art.length)/2) + bob;
   const tail = Math.round(Math.sin(tick / (variant.motion === 'little' ? 1.6 : 4)));
+  const waveStart=art.length-(art.length>12?4:2);
   art.forEach((line,y) => [...line].forEach((char,x) => {
-    const xx = offsetX + x + (y >= art.length-2 && x < width*.23 ? tail : 0), yy=offsetY+y;
+    // Ripple the lower band already drawn in the ASCII art.
+    const wave=variant.motion==='cruise' && y>=waveStart && x>=width*.25
+      ? Math.round(Math.sin(x/(width*.09)-tick/3.6)) : 0;
+    const xx = offsetX + x + (y >= art.length-2 && x < width*.23 ? tail : 0), yy=offsetY+y+wave;
     if (char !== ' ' && grid[yy]?.[xx] !== undefined) grid[yy][xx]=char;
   }));
-  if(variant.motion==='cruise') {
-    const waveWidth=Math.min(cols-4,width+14), left=Math.floor((cols-waveWidth)/2);
-    const waterline=offsetY+art.length+2;
-    for(let column=0;column<waveWidth;column++) {
-      const phase=column/3.4-tick*.22, height=Math.sin(phase);
-      const row=waterline+(height>0?0:1);
-      grid[row][left+column]=Math.abs(height)<.45?'~':'_';
-    }
-  }
   return grid.map(row => row.join('')).join('\n');
 }
 
