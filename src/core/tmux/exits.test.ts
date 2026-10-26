@@ -19,7 +19,7 @@ const { fakeProvider, text, toolUse } = await import("../../test/fake-provider")
 const { open } = await import("../data/transcripts/transcript");
 const { paths } = await import("../../config/config");
 type Tracker = import("./exits").Tracker;
-type Tool = import("../tools/index").Tool;
+type Tool = import("../tools/registry").Tool;
 
 let n = 0;
 let project = "";

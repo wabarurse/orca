@@ -10,6 +10,4 @@ import { task } from "./task";
 import { spawn } from "./spawn";
 import type { Tool } from "./registry";
 
-export { toolsFor, type Tool, type ToolContext } from "./registry";
-
 export const registry: Record<string, Tool> = { bash, spawn, message, ask, complexity, web_search, task, history };
