@@ -4,6 +4,7 @@ import type { ResponseOutputItem } from "openai/resources/responses/responses";
 import { fromResponses, openai, toResponses, toResponseTools } from "./openai";
 import { providerFor } from "./index";
 import { clearCatalogLimits, contextWindow } from "../model-context";
+import { modelCapabilities } from "../model-capabilities";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
 import { png } from "../test/image-fixture";
 
@@ -165,6 +166,14 @@ test("codex catalog context_window fills gaps; absent, null and invalid values a
   expect(contextWindow({}, "gpt-a")).toEqual({ limit: 300000, estimated: false });
   for (const m of ["gpt-b", "gpt-c", "gpt-d", "gpt-e"]) expect(contextWindow({}, m)).toEqual({ limit: 128000, estimated: true });
   expect(contextWindow({}, "gpt-5.5").limit).toBe(272000);
+});
+
+test("codex catalog supported_reasoning_levels feed modelCapabilities; models without them keep the table", async () => {
+  intercept(async () => Response.json({ models: [{ slug: "gpt-5.5", supported_reasoning_levels: [{ effort: "medium" }, { effort: "high" }] }, { slug: "gpt-6-astra" }, { slug: "gpt-x", supported_reasoning_levels: "low" }] }));
+  await openai(async () => fakeCodexTokens()).models();
+  expect(modelCapabilities("gpt-5.5").effort).toEqual(["medium", "high"]);
+  expect(modelCapabilities("gpt-6-astra").effort).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  expect(modelCapabilities("gpt-x").effort).toEqual([]);
 });
 
 test("completed streams can reconstruct output from done items in wire order", async () => {

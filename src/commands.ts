@@ -17,13 +17,16 @@ import { checkoutHere, removeProjectWorktrees } from "./workspace";
 import { purgeProject } from "./memory-archive";
 import { watchdog } from "./exits";
 import { mergeWatcher } from "./merges";
-import type { ProviderName } from "./providers/index";
+import { providerFor, type ProviderName } from "./providers/index";
+import { modelCapabilities } from "./model-capabilities";
+import { prefetchContextLimits } from "./model-context";
+import { effectiveSettings } from "./project-settings";
 import { sessionName, tmux } from "./runner";
 import { stopDaemon } from "./orchestrator-client";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }
 
-/** How many of each provider's newest models /models offers. */
+/** How many of each provider's newest models /model offers. */
 export const RECENT_MODELS = 6;
 
 /** The newest `limit` ids, keeping `current` in the list even when it is older. */
@@ -280,6 +283,16 @@ export async function modelChoices(dim: (s: string) => string, project?: string)
     }
   }
   return { choices, errors, current: model };
+}
+
+/** Effort picker choices for the project's current model: "default" plus the levels it supports, current marked.
+ * Levels come from the provider catalog (fetched once per process, like context limits) and fall back to the built-in table. */
+export async function effortChoices(project: string): Promise<{ choices: Choice<string>[]; model: string; current: string }> {
+  const model = await effectiveModel(project);
+  try { await prefetchContextLimits(await provider(providerFor(model))); } catch { /* no account/catalog: built-in levels */ }
+  const current = (await effectiveSettings(project, model)).effort ?? "default";
+  const choices = ["default", ...modelCapabilities(model).effort].map((value) => ({ value, label: value, current: value === current }));
+  return { choices, model, current };
 }
 
 export async function setModel(id: string, project?: string, identity?: string): Promise<string> {

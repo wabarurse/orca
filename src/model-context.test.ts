@@ -74,3 +74,20 @@ test("prefetch is background, cached once per provider, and falls back silently 
   expect(calls).toBe(2);
   expect(contextWindow({}, "gpt-new")).toEqual({ limit: 300000, estimated: false });
 });
+
+test("prefetch returns the shared in-flight fetch and never rejects, so a picker can wait for catalog data", async () => {
+  let calls = 0;
+  const failing = { name: "openai", async models(): Promise<string[]> { calls++; throw new Error("offline"); } };
+  await prefetchContextLimits(failing);
+  await prefetchContextLimits(failing);
+  expect(calls).toBe(2);
+  let resolve!: () => void;
+  const working = { name: "openai", models: () => { calls++; return new Promise<string[]>((r) => { resolve = () => { rememberCatalogLimits([["gpt-new", 300000]]); r(["gpt-new"]); }; }); } };
+  const first = prefetchContextLimits(working);
+  expect(prefetchContextLimits(working)).toBe(first);
+  await Bun.sleep(0);
+  resolve();
+  await first;
+  expect(calls).toBe(3);
+  expect(contextWindow({}, "gpt-new")).toEqual({ limit: 300000, estimated: false });
+});

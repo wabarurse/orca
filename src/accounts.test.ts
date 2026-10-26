@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { accounts, provider } from "./accounts";
 import { CLAUDE_BETAS, CLAUDE_TOKEN_URL, saveClaudeTokens } from "./claude-auth";
 import { saveConfig } from "./config";
+import { clearCatalogEfforts, modelCapabilities } from "./model-capabilities";
 import { saveCodexTokens } from "./codex-auth";
 import { fakeCodexTokens } from "./test/codex";
 
@@ -22,6 +23,7 @@ beforeEach(() => {
 afterEach(() => {
   mockFetch?.mockRestore();
   mockFetch = undefined;
+  clearCatalogEfforts();
   for (const key of keys) {
     if (original[key] === undefined) delete process.env[key];
     else process.env[key] = original[key];
@@ -74,7 +76,8 @@ test("subscription requests use Bearer auth, Claude Code compatibility, streamin
   const requests: Request[] = [];
   interceptFetch(async (request) => {
     requests.push(request);
-    if (request.url.endsWith("/v1/models")) return Response.json({ data: [{ id: "claude-test", type: "model", display_name: "Test", created_at: "2026-01-01T00:00:00Z" }], has_more: false, first_id: "claude-test", last_id: "claude-test" });
+    if (request.url.endsWith("/v1/models")) return Response.json({ data: [{ id: "claude-test", type: "model", display_name: "Test", created_at: "2026-01-01T00:00:00Z",
+      capabilities: { effort: { supported: true, low: { supported: true }, medium: { supported: false }, high: { supported: true }, xhigh: null, max: { supported: true } } } }], has_more: false, first_id: "claude-test", last_id: "claude-test" });
     return streamResponse();
   });
   const client = await provider("anthropic");
@@ -85,6 +88,7 @@ test("subscription requests use Bearer auth, Claude Code compatibility, streamin
   expect(result.stop).toBe("tool_use");
   expect(result.content[1]).toMatchObject({ type: "tool_use", name: "bash", id: "tool_1", input: { command: "pwd" } });
   expect(await client.models()).toEqual(["claude-test"]);
+  expect(modelCapabilities("claude-test").effort).toEqual(["low", "high", "max"]); // catalog-reported levels for an otherwise unknown id
   for (const request of requests) {
     expect(new URL(request.url).origin).toBe("https://api.anthropic.com");
     expect(request.headers.get("authorization")).toBe("Bearer subscription-access");

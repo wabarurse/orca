@@ -1,17 +1,29 @@
 # Project model, effort, and fast mode
 
-`/models [id]` selects this project's model. The picker and explicit id share a
+`/model [id]` selects this project's model. The picker and explicit id share a
 single path. Live worker/reviewer **tmux windows**, not transcript filenames,
 require confirmation; failed/unknown liveness refuses the change. A known
 missing tmux session is empty and may switch immediately. No project means an
 explanation, never an implicit new project or global-default write.
 
-`/effort` reports the effective value and supported choices.
-`/effort <level|default>` saves an explicit effort, or omits it for the backend's
-own default. `/fast` reports the effective mode; `/fast on|off` changes it.
-Fast is a speed/tier request, **not** low reasoning effort. It can increase usage
-or cost and requires provider/account entitlement. No extra menus or header
-controls are provided for these settings.
+`/effort` opens the same arrow-key menu as `/model`: `default` plus the levels
+the project's current model supports, with the effective choice marked. Enter
+saves for exactly the model the menu was opened for (a model switched meanwhile
+refuses the save); Esc cancels. `/effort <level|default>` saves an explicit
+effort directly, or omits it for the backend's own default. `/fast` reports the
+effective mode; `/fast on|off` changes it. Fast is a speed/tier request, **not**
+low reasoning effort. It can increase usage or cost and requires provider/account
+entitlement. No header controls are provided for these settings.
+
+The menu's levels come from the provider catalog when it reports them: the
+Codex `/models` entries list `supported_reasoning_levels`, and the Anthropic
+models API reports `capabilities.effort` per level. Both are recorded by the
+same once-per-process catalog fetch that supplies context windows
+(`prefetchContextLimits`; the picker waits for it, turns never do), filtered to
+the levels this harness implements, and consulted by `modelCapabilities`, so
+validation of direct `/effort <level>` uses the same list. A model the catalog
+does not list, or lists without levels, or a failed/unauthenticated fetch, keeps
+the built-in table below.
 
 ## Persistence and next-request boundary
 
@@ -82,7 +94,8 @@ plus the following official sources (no live inference/paid request was made):
   Our existing adapter calls `https://chatgpt.com/backend-api/codex/responses`;
   selected fast mode sends `service_tier: "priority"` independently of effort.
 
-`src/model-capabilities.ts` deliberately supports a **subset**, by exact id:
+`src/model-capabilities.ts` deliberately supports a **subset**, by exact id,
+when the catalog reports nothing for the model:
 
 | Models | Explicit effort | Fast |
 | --- | --- | --- |

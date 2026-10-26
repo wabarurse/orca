@@ -81,6 +81,10 @@ export async function effortCommand(project: string, arg: string): Promise<strin
     const current = await effectiveSettings(project, model);
     return `effort for ${model}: ${current.effort ?? "default (backend default)"}; supported: ${["default", ...modelCapabilities(model).effort].join(", ")}`;
   }
+  return setEffort(project, model, arg, identity);
+}
+/** Saves effort for exactly `model` (it fails if the project's model changed meanwhile), so a picker opened for one model cannot write another's. */
+export async function setEffort(project: string, model: string, arg: string, identity: string): Promise<string> {
   await saveProjectSettings(project, model, { effort: arg === "default" ? undefined : arg as Effort }, identity);
   return `effort for ${model}: ${arg}; ${SETTING_SEMANTICS}`;
 }

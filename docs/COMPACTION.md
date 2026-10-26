@@ -129,7 +129,7 @@ The fallback is a configurable **operational budget, not a claimed model limit**
 Claude snapshot IDs use their base model's entry. Opt-in long context (Codex
 `max_context_window`, Claude `[1m]` variants) is not assumed.
 
-The provider catalogs fetched for `/models` fill gaps: Anthropic `max_input_tokens`
+The provider catalogs fetched for `/model` fill gaps: Anthropic `max_input_tokens`
 and Codex `context_window` (null, absent, 0, negative or non-finite values are
 ignored). Precedence: explicit `contextLimit` > model window > `contextLimitFallback`
 > 128000. The model window is the table entry, the catalog value, or the smaller of

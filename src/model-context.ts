@@ -11,6 +11,8 @@
  * Opus 4.6 and Sonnet 4.6 reach 1M on subscriptions only through their opt-in [1m] variant, so
  * their standard window is 200k: https://code.claude.com/docs/en/model-config#extended-context
  */
+import { clearCatalogEfforts } from "./model-capabilities";
+
 const standardWindows: Readonly<Record<string, number>> = {
   "gpt-6-astra": 272000,
   "gpt-6.1-sol": 272000,
@@ -38,9 +40,9 @@ const standardWindows: Readonly<Record<string, number>> = {
   "claude-sonnet-4-5": 200000,
   "claude-haiku-4-5": 200000,
 };
-/** Context windows reported by provider model catalogs (/models), in memory per process. */
+/** Context windows reported by provider model catalogs (/models API), in memory per process. */
 const catalogLimits = new Map<string, number>();
-const prefetched = new Set<string>();
+const fetching = new Map<string, Promise<void>>();
 const validLimit = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
 
 /** Records catalog windows; null, 0, negative and non-finite values are ignored. */
@@ -48,16 +50,20 @@ export function rememberCatalogLimits(entries: Iterable<readonly [string, unknow
   for (const [model, limit] of entries) if (validLimit(limit)) catalogLimits.set(model, limit);
 }
 
-/** Fetches a provider's catalog once per process in the background; never awaited, failures are silent and retried later. */
-export function prefetchContextLimits(provider: { name: string; models(): Promise<unknown> }): void {
-  if (prefetched.has(provider.name)) return;
-  prefetched.add(provider.name);
-  Promise.resolve().then(() => provider.models()).catch(() => prefetched.delete(provider.name));
+/** Fetches a provider's catalog (windows and effort levels) once per process. Turns never await it and
+ * failures are silent and retried later; the returned promise never rejects, so a picker may wait on it. */
+export function prefetchContextLimits(provider: { name: string; models(): Promise<unknown> }): Promise<void> {
+  const known = fetching.get(provider.name);
+  if (known) return known;
+  const run = Promise.resolve().then(() => provider.models()).then(() => {}, () => { fetching.delete(provider.name); });
+  fetching.set(provider.name, run);
+  return run;
 }
 
 export function clearCatalogLimits(): void {
   catalogLimits.clear();
-  prefetched.clear();
+  fetching.clear();
+  clearCatalogEfforts();
 }
 
 /** Verified table first (dated snapshot ids use their base model's entry); catalog values

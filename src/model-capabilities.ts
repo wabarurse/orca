@@ -12,7 +12,35 @@ const codexFull = new Set([
   "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol",
   "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review",
 ]);
+const levels = new Set<string>(full);
+/** Effort levels reported by provider model catalogs, in memory per process. Empty or
+ * unrecognized lists are ignored so the hardcoded table below remains the fallback. */
+const catalogEfforts = new Map<string, Effort[]>();
+export function rememberCatalogEfforts(entries: Iterable<readonly [string, unknown]>): void {
+  for (const [model, reported] of entries) {
+    if (!Array.isArray(reported)) continue;
+    const known = full.filter((level) => reported.includes(level));
+    if (known.length) catalogEfforts.set(model, known);
+  }
+}
+export function clearCatalogEfforts(): void { catalogEfforts.clear(); }
+/** Codex catalog `supported_reasoning_levels`: [{ effort }, …]. */
+export function codexCatalogEfforts(levelList: unknown): Effort[] {
+  if (!Array.isArray(levelList)) return [];
+  return levelList.map((l) => (l as { effort?: unknown } | null)?.effort).filter((e): e is Effort => typeof e === "string" && levels.has(e));
+}
+/** Anthropic models API `capabilities.effort`: one `{ supported }` flag per level. */
+export function claudeCatalogEfforts(capability: unknown): Effort[] {
+  const effort = (capability as { effort?: Record<string, { supported?: unknown } | null> & { supported?: unknown } } | null | undefined)?.effort;
+  if (!effort || effort.supported !== true) return [];
+  return full.filter((level) => effort[level]?.supported === true);
+}
 export function modelCapabilities(model: string): { effort: Effort[]; fast: boolean } {
+  const base = hardcodedCapabilities(model);
+  const reported = catalogEfforts.get(model);
+  return reported ? { ...base, effort: [...reported] } : base;
+}
+function hardcodedCapabilities(model: string): { effort: Effort[]; fast: boolean } {
   if (claudeFull.has(model)) return { effort: [...full], fast: claudeFast.has(model) };
   if (claudeFour.has(model)) return { effort: full.filter((e) => e !== "xhigh"), fast: false };
   if (codexFull.has(model)) return { effort: [...full], fast: true };
