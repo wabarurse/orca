@@ -33,6 +33,8 @@ async function until(check: () => boolean) {
 }
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
 const text = (app: App) => (app.page?.lines ?? []).map(l => typeof l === "string" ? strip(l) : JSON.stringify(l)).join("\n");
+/** The transient status note above the composer, if any. */
+const note = (app: App) => strip(app.frame().inputArea!.lines.join("\n"));
 
 /** An orchestrator that records what the TUI asks of it; `turn` here stands for following, never a model call. */
 function clientStub(calls: string[]): Orchestrator {
@@ -73,9 +75,17 @@ test("opening a page starts ensuring its daemon without blocking the page, shows
   let line: string | undefined = "orchestrator started";
   const { app, calls } = await setup({ ensureDaemon: async project => { ensured.push(project); const l = line; line = undefined; return l; } });
   expect(ensured[0]).toBe("a");
-  await until(() => text(app).includes("orchestrator started"));
+  await until(() => note(app).includes("orchestrator started")); // a transient note, not conversation
   await until(() => ensured.length >= 3); // the poll
-  expect(text(app).match(/orchestrator started/g)).toHaveLength(1);
+  expect(text(app)).not.toContain("orchestrator started");
+  // Every restart is noted, even one that repeats the last outcome after a key cleared it (the keeper rate-limits restarts).
+  for (let i = 0; i < 2; i++) {
+    await app.onKey({ name: "char", text: "x" });
+    expect(note(app)).not.toContain("orchestrator");
+    line = "orchestrator was not running; restarted";
+    await until(() => note(app).includes("orchestrator was not running; restarted"));
+  }
+  expect(text(app)).not.toContain("restarted");
   await app.openPage("b");
   expect(ensured).toContain("b");
   expect(calls.filter(c => c === "turn")).toEqual([]); // nothing ran in-process
@@ -103,7 +113,8 @@ test("without a keeper (tests, legacy), pages open and the model acknowledgement
   const { app, calls } = await setup({ saveModel: async id => `model set to ${id}` });
   await app.commands.get("/model")!.run("claude-opus-5-5", app.page);
   await until(() => calls.includes("model claude-opus-5-5"));
-  await until(() => text(app).includes("orchestrator: model claude-opus-5-5 applies"));
+  await until(() => note(app).includes("orchestrator: model claude-opus-5-5 applies"));
+  expect(text(app)).not.toContain("model claude-opus-5-5");
 });
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }

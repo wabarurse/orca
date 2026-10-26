@@ -19,6 +19,8 @@ async function until(check: () => boolean) {
   for (let i = 0; i < 200 && !check(); i++) await Bun.sleep(5);
   expect(check()).toBe(true);
 }
+/** The transient status note above the composer, if any. */
+const note = (app: App) => Bun.stripANSI(app.frame().inputArea!.lines.join("\n"));
 async function setup(agents: { name: string; live: boolean }[], choices?: AppDeps["modelChoices"], extra: Partial<AppDeps> = {}) {
   await saveConfig({ model: "gpt-6-astra" });
   const project = `p-${crypto.randomUUID()}`;
@@ -56,7 +58,8 @@ test("direct switch counts only live subagents; Cancel and Escape never persist;
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
     await ui.app.commands.get("/model")!.run("claude-test", ui.app.page);
     ui.key({ name: "down" }); ui.type("\r");
-    await until(() => ui.app.page!.lines.some((line) => typeof line === "string" && line.includes("next model request")));
+    await until(() => note(ui.app).includes("next model request")); // a transient note above the composer, not conversation
+    expect(ui.app.page!.lines).toEqual([]);
     expect(await effectiveModel(ui.project)).toBe("claude-test");
     expect(await effectiveModel("other-project")).toBe("gpt-6-astra");
   } finally { await ui.close(); }
@@ -67,7 +70,7 @@ test("picker uses the same immediate path when no subagents run", async () => {
   try {
     await ui.app.commands.get("/model")!.run("", ui.app.page);
     ui.type("\r");
-    await until(() => ui.app.page!.lines.some((line) => typeof line === "string" && line.includes("next model request")));
+    await until(() => note(ui.app).includes("next model request"));
     expect(await effectiveModel(ui.project)).toBe("claude-test");
     expect(ui.app.menu).toBeNull();
   } finally { await ui.close(); }
@@ -121,7 +124,7 @@ for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "revi
         expect(ui.app.menu!.title).toContain("1 workers and 1 reviewers");
         expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
       } else {
-        await until(() => ui.app.page!.lines.join("").includes("next model request"));
+        await until(() => note(ui.app).includes("next model request"));
         expect(await effectiveModel(ui.project)).toBe("claude-test");
       }
     } finally { await ui.close(); windows.mockRestore(); }
@@ -207,11 +210,13 @@ test("effort/fast real command dispatch query, set, refuse and no-page feedback"
   try {
     ui.type("/effort\r"); await until(() => !!ui.app.menu); // no args: the picker, not a report
     ui.key({ name: "escape" });
-    ui.type("/effort high\r"); await until(() => lines().includes("effort for gpt-6-astra: high"));
+    // Saves are transient notes above the composer; refusals stay in the conversation.
+    ui.type("/effort high\r"); await until(() => note(ui.app).includes("effort for gpt-6-astra: high"));
     await until(() => ui.writes.some(s => s.includes("effort high · fast off")));
-    ui.type("/fast\r"); await until(() => lines().includes("fast for gpt-6-astra: off"));
-    ui.type("/fast on\r"); await until(() => lines().includes("fast for gpt-6-astra: on"));
+    ui.type("/fast\r"); await until(() => note(ui.app).includes("fast for gpt-6-astra: off"));
+    ui.type("/fast on\r"); await until(() => note(ui.app).includes("fast for gpt-6-astra: on"));
     await until(() => ui.writes.some(s => s.includes("effort high · fast on")));
+    expect(lines()).not.toContain("gpt-6-astra");
     ui.type("/effort ultra\r"); await until(() => lines().includes("effort ultra is unsupported"));
     ui.type("/fast yes\r"); await until(() => lines().includes("usage: /fast"));
     ui.app.closePage();
@@ -228,7 +233,7 @@ test("/effort with no args opens a picker of default plus supported levels for t
   const ui = await setup([]);
   const lines = () => ui.app.page!.lines.join("");
   try {
-    ui.type("/effort high\r"); await until(() => lines().includes("effort for gpt-6-astra: high"));
+    ui.type("/effort high\r"); await until(() => note(ui.app).includes("effort for gpt-6-astra: high"));
     ui.type("/effort\r"); await until(() => !!ui.app.menu);
     expect(ui.app.menu!.title).toContain("effort for gpt-6-astra");
     expect(ui.app.menu!.title).toContain("/effort <level|default>");
@@ -236,13 +241,14 @@ test("/effort with no args opens a picker of default plus supported levels for t
     expect(ui.app.menu!.items).toEqual(["  default", "  low", "  medium", "● high", "  xhigh", "  max"]);
     expect(ui.app.menu!.index).toBe(3);
     ui.key({ name: "down" }); ui.type("\r");
-    await until(() => lines().includes("effort for gpt-6-astra: xhigh"));
+    await until(() => note(ui.app).includes("effort for gpt-6-astra: xhigh")); // the pick's result is a transient note
     expect(ui.app.menu).toBeNull();
     expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBe("xhigh");
     await until(() => ui.writes.some(s => s.includes("effort xhigh · fast off")));
     ui.type("/effort\r"); await until(() => !!ui.app.menu);
     ui.key({ name: "up" }); ui.key({ name: "up" }); ui.key({ name: "up" }); ui.key({ name: "up" }); ui.type("\r");
-    await until(() => lines().includes("effort for gpt-6-astra: default;"));
+    await until(() => note(ui.app).includes("effort for gpt-6-astra: default;"));
+    expect(lines()).not.toContain("gpt-6-astra");
     expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBeUndefined();
     ui.type("/effort\r"); await until(() => !!ui.app.menu);
     expect(ui.app.menu!.items[0]).toBe("● default");
@@ -255,12 +261,16 @@ test("/effort with no args opens a picker of default plus supported levels for t
 });
 
 test("effort picker lists catalog-reported levels and cannot write a model the project no longer uses", async () => {
-  const ui = await setup([], undefined, { effortChoices: async () => ({ model: "gpt-6-astra", current: "default", note: "saved effort xhigh is not supported", choices: [{ value: "default", label: "default", current: true }, { value: "medium", label: "medium" }, { value: "high", label: "high" }] }) });
+  const catalog = deferred<void>();
+  const ui = await setup([], undefined, { effortChoices: async () => { await catalog.promise; return { model: "gpt-6-astra", current: "default", note: "saved effort xhigh is not supported", choices: [{ value: "default", label: "default", current: true }, { value: "medium", label: "medium" }, { value: "high", label: "high" }] }; } });
   const lines = () => ui.app.page!.lines.join("");
   try {
-    ui.type("/effort\r"); await until(() => !!ui.app.menu);
-    expect(lines()).toContain("fetching effort levels…");
-    expect(lines()).toContain("saved effort xhigh is not supported");
+    // The fetch and the picker's note are transient notes above the composer, the first dropped once the catalog arrives.
+    ui.type("/effort\r"); await until(() => note(ui.app).includes("fetching effort levels…"));
+    catalog.resolve(); await until(() => !!ui.app.menu);
+    expect(note(ui.app)).not.toContain("fetching effort levels…");
+    expect(note(ui.app)).toContain("saved effort xhigh is not supported");
+    expect(lines()).toBe("");
     expect(ui.app.menu!.items).toEqual(["● default", "  medium", "  high"]);
     await setModel("gpt-5.5", ui.project);
     ui.key({ name: "down" }); ui.type("\r");
@@ -282,7 +292,7 @@ test("stopped turn UI explains explicit resume, model change does not rerun it",
     await until(() => ui.app.page!.lines.join("").includes("send another message to resume with retained history"));
     await modelCommand(ui, "claude-test");
     expect(turns).toBe(1);
-    expect(ui.app.page!.lines.join("")).toContain("failed/stopped turns need another message to resume");
+    expect(note(ui.app)).toContain("failed/stopped turns need another message to resume");
   } finally { await ui.close(); }
 });
 

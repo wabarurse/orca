@@ -33,9 +33,11 @@ import type { Message } from "../inbox";
 //   kept), so quotes or `": ` in the question cannot confuse it; only a
 //   missing file falls back to parsing the message text. New silent skips only
 //   update questions/; their local dismissal notes are not transcript entries.
-// - Errors, command output (/help, /model, …), status notes ("queued; runs
+// - Errors, command output (/help, /agents, …), page notices ("queued; runs
 //   after sign-in") and anything else the app itself said are not in the
-//   transcript and are not restored.
+//   transcript and are not restored. Informational status notes ("model set
+//   to …", a rename, "orchestrator started") are not even page lines: App
+//   shows them as one transient row above the composer (`App.note`).
 
 import { parseFormatted } from "../inbox";
 import type { Entry, MessageEntry } from "../transcript";
