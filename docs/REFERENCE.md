@@ -773,7 +773,8 @@ skips review and sends the worker's branch straight to "watch ci". Each
 orchestrator turn and each worker/reviewer start reads its own project's values,
 so a change applies from that orchestrator's next turn. A malformed
 `settings.json` is refused rather than repaired: the header shows `?` for both
-values and names the file; a save fails until it is fixed or removed. Without an
+values and one line names the file (repeated only when the error changes or
+recurs after a successful read); a save fails until it is fixed or removed. Without an
 open page the commands only explain (`open a project before changing its
 settings`).
 

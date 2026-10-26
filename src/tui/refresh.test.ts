@@ -17,7 +17,7 @@ import { inputEpoch } from "../user-input";
 import { tryStorageLock } from "../storage-lock";
 import { projectTurnLock } from "../project-state";
 import { saveProjectSettings } from "../project-settings";
-import { effectiveFlow, saveProjectFlow } from "../project-flow";
+import { effectiveFlow, saveProjectFlow, type FlowSettings } from "../project-flow";
 import { Calls } from "./tools";
 
 const previous = process.env.ORCA_HOME;
@@ -374,19 +374,31 @@ test("a malformed per-project settings file shows unknown and reports the file; 
   await Bun.write(join(paths.project("a"), "settings.json"), '{"maxReviewRounds": 101}');
   await submit("/refresh");
   await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
-  expect(raw(app)).toContain("review rounds refresh failed: Error: " + join(paths.project("a"), "settings.json"));
-  expect(raw(app)).toContain("dynamic dispatch refresh failed: Error: " + join(paths.project("a"), "settings.json"));
+  const failure = "project settings refresh failed: Error: " + join(paths.project("a"), "settings.json");
+  const failures = () => app.page!.lines.filter(line => JSON.stringify(line).includes(failure)).length;
+  expect(failures()).toBe(1); // one read, one line for both values
+  await submit("/refresh"); await submit("/refresh"); await app.refreshSessions();
+  expect(failures()).toBe(1); // the same persisting error is not repeated every poll
+  await Bun.write(join(paths.project("a"), "settings.json"), '{"dynamicDispatch": "on"}');
+  await submit("/refresh");
+  await until(() => raw(app).includes("invalid dynamic dispatch"));
+  expect(failures()).toBe(2); // a different error is reported
   await expect(submit("/review-rounds 2")).rejects.toThrow("settings.json"); // never silently repaired by a save
   await Bun.write(join(paths.project("a"), "settings.json"), '{"maxReviewRounds": 2, "dynamicDispatch": true}\n');
   await submit("/refresh");
   await until(() => header(screen).includes("review rounds: 2 · dispatch: on"));
+  // After a success the same error is said again when it recurs.
+  await Bun.write(join(paths.project("a"), "settings.json"), '{"dynamicDispatch": "on"}');
+  await submit("/refresh");
+  await until(() => failures() === 3);
+  rmSync(join(paths.project("a"), "settings.json"));
 });
 
-test("review settings are read once per page per refresh, never during paint", async () => {
+test("project settings are read once per page per refresh (both values from one read), never during paint", async () => {
   let reads = 0;
-  const { app, screen } = await setup({ reviewLimit: async () => { reads++; return 8; } });
+  const { app, screen } = await setup({ flowSettings: async () => { reads++; return { maxReviewRounds: 8, dynamicDispatch: true }; } });
   await app.openPage("b");
-  await until(() => header(screen).includes("review rounds: 8"));
+  await until(() => header(screen).includes("review rounds: 8 · dispatch: on"));
   const before = reads;
   for (let i = 0; i < 100; i++) { app.frame(); app.draw(); }
   await Bun.sleep(30);
@@ -398,30 +410,31 @@ test("review settings are read once per page per refresh, never during paint", a
 
 test("unavailable or invalid review snapshots show unknown rather than an invented count, then recover", async () => {
   let state: number | Error = new Error("Fixture Read FAILED");
-  const { app, screen } = await setup({ reviewLimit: async () => { if (state instanceof Error) throw state; return state; } });
-  await until(() => header(screen).includes("review rounds: ?"));
-  expect(raw(app)).toContain("review rounds refresh failed: Error: Fixture Read FAILED");
+  const { app, screen } = await setup({ flowSettings: async () => { if (state instanceof Error) throw state; return { maxReviewRounds: state, dynamicDispatch: false }; } });
+  await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
+  expect(raw(app)).toContain("project settings refresh failed: Error: Fixture Read FAILED");
   for (const value of [9, NaN, 101, -1, 1.5, 0]) {
     state = value;
     await app.refreshSessions();
     const label = value === 9 || value === 0 ? String(value) : "?";
-    await until(() => header(screen).includes(`review rounds: ${label}`));
+    await until(() => header(screen).includes(`review rounds: ${label} · dispatch: off`)); // an invalid count never hides a valid switch
   }
   state = new Error("Later Read FAILED");
   await app.refreshSessions();
-  await until(() => header(screen).includes("review rounds: ?"));
+  await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
+  expect(raw(app)).toContain("project settings refresh failed: Error: Later Read FAILED");
   state = 1; // cleanup's refresh can succeed
 });
 
 for (const fail of [false, true]) test(`a stale pre-command review ${fail ? "failure" : "snapshot"} cannot replace a newer saved value`, async () => {
-  let delayed: Promise<number> | undefined;
+  let delayed: Promise<FlowSettings> | undefined;
   const entered = deferred();
-  const { app, screen, submit } = await setup({ reviewLimit: (project) => {
+  const { app, screen, submit } = await setup({ flowSettings: (project) => {
     if (delayed) entered.resolve();
-    return delayed ?? effectiveFlow(project).then(flow => flow.maxReviewRounds);
+    return delayed ?? effectiveFlow(project);
   } });
   let release!: () => void;
-  delayed = new Promise<number>((resolve, reject) => { release = () => fail ? reject(new Error("Old read FAILED")) : resolve(1); });
+  delayed = new Promise<FlowSettings>((resolve, reject) => { release = () => fail ? reject(new Error("Old read FAILED")) : resolve({ maxReviewRounds: 1, dynamicDispatch: false }); });
   // The getter captures the deferred read before the command starts saving.
   const refreshing = app.refreshSessions(false);
   try {
@@ -510,9 +523,9 @@ test("refresh observes external dispatch changes: a project override, then confi
 test("unavailable dispatch snapshots show unknown, read once per page per refresh, then recover", async () => {
   let state: boolean | Error = new Error("Dispatch Read FAILED");
   let reads = 0;
-  const { app, screen } = await setup({ dispatchSetting: async () => { reads++; if (state instanceof Error) throw state; return state; } });
+  const { app, screen } = await setup({ flowSettings: async () => { reads++; if (state instanceof Error) throw state; return { maxReviewRounds: 1, dynamicDispatch: state }; } });
   await until(() => header(screen).includes("dispatch: ?"));
-  expect(raw(app)).toContain("dynamic dispatch refresh failed: Error: Dispatch Read FAILED");
+  expect(raw(app)).toContain("project settings refresh failed: Error: Dispatch Read FAILED");
   state = true;
   await app.refreshSessions();
   await until(() => header(screen).includes("dispatch: on"));
@@ -527,14 +540,14 @@ test("unavailable dispatch snapshots show unknown, read once per page per refres
 });
 
 test("a stale pre-command dispatch snapshot cannot replace a newer saved value", async () => {
-  let delayed: Promise<boolean> | undefined;
+  let delayed: Promise<FlowSettings> | undefined;
   const entered = deferred();
-  const { app, screen, submit } = await setup({ dispatchSetting: (project) => {
+  const { app, screen, submit } = await setup({ flowSettings: (project) => {
     if (delayed) entered.resolve();
-    return delayed ?? effectiveFlow(project).then(flow => flow.dynamicDispatch);
+    return delayed ?? effectiveFlow(project);
   } });
   let release!: () => void;
-  delayed = new Promise<boolean>(resolve => { release = () => resolve(false); });
+  delayed = new Promise<FlowSettings>(resolve => { release = () => resolve({ maxReviewRounds: 1, dynamicDispatch: false }); });
   const refreshing = app.refreshSessions(false);
   try {
     await entered.promise;

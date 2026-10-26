@@ -76,7 +76,7 @@ export function saveProjectSettings(project: string, model: string, patch: Reque
   } catch (error) { return Promise.reject(error); }
 }
 async function commitSettings(project: string, model: string, patch: RequestSettings, identity: string): Promise<void> {
-  assertProjectIdentity(project, identity);
+  assertProjectIdentity(project, identity, "saving settings");
   if (await effectiveModel(project) !== model) throw new Error("model changed while saving settings; try again");
   const saved = await readSettings(project);
   // Merge onto the effective settings: a saved effort the current list no longer includes is not carried along.
@@ -87,7 +87,7 @@ async function commitSettings(project: string, model: string, patch: RequestSett
   const temp = `${path}.${crypto.randomUUID()}.tmp`;
   try {
     await Bun.write(temp, JSON.stringify(next) + "\n", { createPath: false });
-    assertProjectIdentity(project, identity);
+    assertProjectIdentity(project, identity, "saving settings");
     await rename(temp, path);
   } finally { await unlink(temp).catch(() => {}); }
 }

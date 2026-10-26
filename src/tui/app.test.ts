@@ -4013,7 +4013,7 @@ test("unchanged telemetry polls avoid redraw; task progress is independent of th
   const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../tasks").TaskRow[];
   const fake = fakeOrchestrators();
   let limit = 7;
-  const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks, reviewLimit: async () => limit,
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks, flowSettings: async () => ({ maxReviewRounds: limit, dynamicDispatch: false }),
     agents: async () => [], openOrchestrator: async (...args) => ({ ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]), contextUsage: () => 12500 }) });
   const running = app.run("header-poll-telemetry");
   try {
@@ -4049,7 +4049,7 @@ test("header denominator: verified claude window, unlisted model shows the sessi
   const term = fakeTerm(80, 24);
   const fake = fakeOrchestrators();
   let model = "claude-opus-5-5";
-  const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], reviewLimit: async () => 7, agents: async () => [],
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], flowSettings: async () => ({ maxReviewRounds: 7, dynamicDispatch: false }), agents: async () => [],
     openOrchestrator: async (...args) => ({ ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]), contextUsage: () => 45000,
       contextWindow: (m: string) => (m === "claude-opus-5-5" ? { limit: 1000000, estimated: false } : { limit: 64000, estimated: true }) }) });
   const running = app.run("header-denominator");

@@ -18,7 +18,7 @@ import { accountChoices, deleteProject, type AgentInfo, displayName, listAgents,
 import { paths, validRounds } from "../config";
 import { projectIdentity } from "../project-state";
 import { validateModel, effectiveModel } from "../project-model";
-import { effectiveFlow } from "../project-flow";
+import { effectiveFlow, type FlowSettings } from "../project-flow";
 import type { Message } from "../inbox";
 import type { Orchestrator } from "../orchestrator";
 import type { Entry } from "../transcript";
@@ -93,10 +93,8 @@ export interface AppDeps {
   clipboardImage?: () => Promise<ClipboardImage>;
   /** Cached header model accessor; defaults to effectiveModel(project). */
   projectModel?: (project: string) => Promise<string>;
-  /** The project's saved review limit (effectiveFlow by default); read outside paint, independent of task progress. */
-  reviewLimit?: (project: string) => Promise<number>;
-  /** The project's saved /dynamic-dispatch switch; read like reviewLimit. */
-  dispatchSetting?: (project: string) => Promise<boolean>;
+  /** The project's saved review limit and /dynamic-dispatch switch (effectiveFlow by default); read outside paint, independent of task progress. */
+  flowSettings?: (project: string) => Promise<FlowSettings>;
   term: Terminal;
   /** Bind a new project to a local checkout and build its orchestrator. */
   /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
@@ -362,8 +360,9 @@ export class App {
   private refreshAgain = false;
   private refreshForce = false;
   /** Per-page read generations for the project's review limit and dispatch switch; a slow read never replaces a newer one. */
-  private readonly reviewVersions = new WeakMap<Page, number>();
-  private readonly dispatchVersions = new WeakMap<Page, number>();
+  private readonly flowVersions = new WeakMap<Page, number>();
+  /** The last flow read failure said per page, so a poll repeats a persisting error once, not every 2 s. */
+  private readonly flowErrors = new WeakMap<Page, string>();
   private readonly deferredRefresh = new Set<Page>();
   private readonly renderedHeads = new WeakMap<Page, string | undefined>();
   private readonly refreshedTurns = new WeakSet<Page>();
@@ -678,58 +677,49 @@ export class App {
     return contextStatus(page.model, page.orch.contextUsage?.(page.model), page.orch.contextWindow?.(page.model));
   }
 
-  private bump(versions: WeakMap<Page, number>, page: Page): number {
-    const version = (versions.get(page) ?? 0) + 1;
-    versions.set(page, version);
+  private bumpFlow(page: Page): number {
+    const version = (this.flowVersions.get(page) ?? 0) + 1;
+    this.flowVersions.set(page, version);
     return version;
   }
 
-  /** The page's project's saved limit, read once per page per refresh, never during paint.
-   * A slow pre-save/pre-refresh read must never replace a newer observation. */
-  private async refreshReviewRounds(page: Page): Promise<void> {
-    const version = this.bump(this.reviewVersions, page);
-    let rounds: number | undefined;
+  /** The page's project's review limit and dispatch switch in one read per page per refresh, never during paint.
+   * A slow pre-save/pre-refresh read must never replace a newer observation; a failed or invalid read shows both as unknown. */
+  private async refreshFlow(page: Page): Promise<void> {
+    const version = this.bumpFlow(page);
+    let review: number | undefined, dispatch: boolean | undefined;
     try {
-      const saved = await (this.deps.reviewLimit?.(page.project) ?? effectiveFlow(page.project).then(flow => flow.maxReviewRounds));
-      if (validRounds(saved)) rounds = saved;
+      const saved = await (this.deps.flowSettings ?? effectiveFlow)(page.project);
+      if (validRounds(saved?.maxReviewRounds)) review = saved.maxReviewRounds;
+      if (typeof saved?.dynamicDispatch === "boolean") dispatch = saved.dynamicDispatch;
     } finally {
-      if (version === this.reviewVersions.get(page) && !this.closed && page.review !== rounds) {
-        page.review = rounds;
+      if (version === this.flowVersions.get(page) && !this.closed && (page.review !== review || page.dispatch !== dispatch)) {
+        page.review = review;
+        page.dispatch = dispatch;
         if (page === this.page) this.draw();
       }
+    }
+  }
+
+  /** A poll's flow read failure is said once per distinct error per page; success clears it so a recurrence is reported again. */
+  private async pollFlow(page: Page): Promise<void> {
+    try { await this.refreshFlow(page); this.flowErrors.delete(page); }
+    catch (err) {
+      const line = `project settings refresh failed: ${err}`;
+      if (this.flowErrors.get(page) === line) return;
+      this.flowErrors.set(page, line);
+      this.say(dim(line), page);
     }
   }
 
   /** Saves show as a transient note; usage refusals and the no-page explanation stay in the conversation. */
-  private async reviewRoundsCommand(args: string, page = this.page): Promise<void> {
+  private flowCommand(page: Page | undefined, args: string, command: typeof reviewRounds, usage: string): Promise<void> | void {
     if (!page) return this.say(dim(NO_PAGE_FOR_SETTINGS));
-    this.bump(this.reviewVersions, page); // invalidate observations started before this save
-    const result = await reviewRounds(page.project, args);
-    if (result === REVIEW_ROUNDS_USAGE) this.say(dim(result), page); else this.note(result, page);
-    await this.refreshReviewRounds(page); // read the saved value, never infer success from input
-  }
-
-  /** Same snapshot, race and failure rules as refreshReviewRounds. */
-  private async refreshDynamicDispatch(page: Page): Promise<void> {
-    const version = this.bump(this.dispatchVersions, page);
-    let on: boolean | undefined;
-    try {
-      const saved = await (this.deps.dispatchSetting?.(page.project) ?? effectiveFlow(page.project).then(flow => flow.dynamicDispatch));
-      if (typeof saved === "boolean") on = saved;
-    } finally {
-      if (version === this.dispatchVersions.get(page) && !this.closed && page.dispatch !== on) {
-        page.dispatch = on;
-        if (page === this.page) this.draw();
-      }
-    }
-  }
-
-  private async dynamicDispatchCommand(args: string, page = this.page): Promise<void> {
-    if (!page) return this.say(dim(NO_PAGE_FOR_SETTINGS));
-    this.bump(this.dispatchVersions, page); // invalidate observations started before this save
-    const result = await dynamicDispatch(page.project, args);
-    if (result === DYNAMIC_DISPATCH_USAGE) this.say(dim(result), page); else this.note(result, page);
-    await this.refreshDynamicDispatch(page); // read the saved value, never infer success from input
+    this.bumpFlow(page); // invalidate observations started before this save
+    return command(page.project, args).then(async result => {
+      if (result === usage) this.say(dim(result), page); else this.note(result, page);
+      await this.refreshFlow(page); // read the saved value, never infer success from input
+    });
   }
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
@@ -966,10 +956,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
         this.refreshForce = false;
         await Promise.all([
           ...this.pages.map(page => this.refreshPage(page, forced)),
-          ...this.pages.flatMap(page => [
-            this.refreshReviewRounds(page).catch(err => this.say(dim(`review rounds refresh failed: ${err}`), page)),
-            this.refreshDynamicDispatch(page).catch(err => this.say(dim(`dynamic dispatch refresh failed: ${err}`), page)),
-          ]),
+          ...this.pages.map(page => this.pollFlow(page)),
         ]);
         await this.refreshProjects().catch(err => this.say(dim(`refresh projects failed: ${err}`)));
         await this.refreshTaskInbox();
@@ -1106,8 +1093,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
     catch (error) { this.say(dim(`image recovery failed: ${error}`), page); }
-    await this.refreshReviewRounds(page).catch(err => this.say(dim(`review rounds refresh failed: ${err}`), page));
-    await this.refreshDynamicDispatch(page).catch(err => this.say(dim(`dynamic dispatch refresh failed: ${err}`), page));
+    await this.pollFlow(page);
     this.pages.push(page);
     this.active = this.pages.length - 1;
     void this.keepDaemon(project, page); // the daemon starts in the background; the page shows what happened
@@ -1530,8 +1516,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [id]", description: "choose or set the project model" } }],
     ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
-    ["/review-rounds", { args: true, run: (args, page) => this.reviewRoundsCommand(args, page), help: { group: "advanced", label: "/review-rounds [n]", description: "project review rounds before ci; 0 goes straight to ci" } }],
-    ["/dynamic-dispatch", { args: true, run: (args, page) => this.dynamicDispatchCommand(args, page), help: { group: "settings", label: "/dynamic-dispatch [on|off]", description: "show or set the project's dynamic dispatch" } }],
+    ["/review-rounds", { args: true, run: (args, page) => this.flowCommand(page, args, reviewRounds, REVIEW_ROUNDS_USAGE), help: { group: "advanced", label: "/review-rounds [n]", description: "project review rounds before ci; 0 goes straight to ci" } }],
+    ["/dynamic-dispatch", { args: true, run: (args, page) => this.flowCommand(page, args, dynamicDispatch, DYNAMIC_DISPATCH_USAGE), help: { group: "settings", label: "/dynamic-dispatch [on|off]", description: "show or set the project's dynamic dispatch" } }],
     ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "inbox questions (ctrl+q); enter answers or picks skip; shift+tab tasks" } }],
     ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "return from agent view (also esc)", viewOnly: true } }],
     ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "commands and keyboard shortcuts; esc closes" } }],

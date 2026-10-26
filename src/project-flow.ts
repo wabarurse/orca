@@ -62,13 +62,13 @@ export function saveProjectFlow(project: string, patch: FlowOverride, identity?:
 }
 
 async function commitFlow(project: string, patch: FlowOverride, identity: string): Promise<void> {
-  assertProjectIdentity(project, identity);
+  assertProjectIdentity(project, identity, "saving project settings");
   const next = { ...(await readOverride(project)), ...patch };
   const path = flowSettingsPath(project);
   const temp = `${path}.${crypto.randomUUID()}.tmp`;
   try {
     await Bun.write(temp, JSON.stringify(next) + "\n", { createPath: false });
-    assertProjectIdentity(project, identity);
+    assertProjectIdentity(project, identity, "saving project settings");
     await rename(temp, path);
   } finally { await unlink(temp).catch(() => {}); }
 }
