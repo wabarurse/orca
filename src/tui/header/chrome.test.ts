@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { chapterRows, tabRow, headerHeight, type Chapter } from "./chrome";
-import { commit, statusRows } from "../components/render";
+import { commit, statusRows } from "../footer/render";
 import { toolRows, runningRow } from "../conversation/tools";
 import { FakeScreen } from "../components/testing";
 import { finRows, whaleRows } from "./whale";

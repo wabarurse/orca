@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { loadConfig, paths, saveConfig } from "../../../config/config";
 import { put } from "../../data/inbox/inbox";
 import { createOrchestrator, ensureProject } from "./orchestrator";
-import { DYNAMIC_DISPATCH } from "../../prompt/prompts";
+import { DYNAMIC_DISPATCH } from "../../prompt/shared";
 import type { Runner, StartOptions } from "../../tmux/runner";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { message } from "../../tools/message";

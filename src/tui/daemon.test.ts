@@ -7,7 +7,7 @@ import { FakeScreen } from "./components/testing";
 import type { Terminal } from "./components/term";
 import { createOrchestrator, type Orchestrator } from "../core/agent-loop/orc/orchestrator";
 import { paths, saveConfig } from "../config/config";
-import type { CompleteRequest } from "../providers/index";
+import type { CompleteRequest } from "../providers/provider";
 import { publishLaunch } from "../core/tmux/cancellation";
 import { createClientOrchestrator } from "../core/agent-loop/orc/client";
 import { readStatus, request } from "../core/agent-loop/orc/channel";
@@ -15,7 +15,7 @@ import { runDaemon, windowHooks } from "../core/agent-loop/orc/daemon";
 import { liveWriter } from "../core/agent-loop/orc/live";
 import { tryStorageLock } from "../core/data/storage-lock";
 import { fakeProvider, text as textBlock, toolUse } from "../test/fake-provider";
-import type { Tool } from "../core/tools/index";
+import type { Tool } from "../core/tools/registry";
 import { open } from "../core/data/transcripts/transcript";
 
 // The TUI as a client: it keeps each open project's orchestrator daemon alive

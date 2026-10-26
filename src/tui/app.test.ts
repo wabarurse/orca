@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Orchestrator } from "../core/agent-loop/orc/orchestrator";
-import { displayName, newProjectName, setDisplayName } from "./commands/commands";
+import { displayName, newProjectName, setDisplayName } from "../core/data/projects/registry";
 import { loadConfig, paths } from "../config/config";
 import { effectiveFlow } from "../core/data/projects/flow";
 import { AGENTS_TICK_MS, App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
@@ -23,7 +23,8 @@ import { open as openTranscript } from "../core/data/transcripts/transcript";
 import { ESC_DELAY_MS, parseKeys, type Key } from "./components/keys";
 import { realTerminal, type Terminal } from "./components/term";
 import { FakeScreen } from "./components/testing";
-import { bold, dim, live as renderLive } from "./components/render";
+import { bold, dim } from "./components/text";
+import { live as renderLive } from "./footer/render";
 import { setUserFill } from "./components/style";
 import { Calls } from "./conversation/tools";
 
@@ -2862,7 +2863,7 @@ test("current-view resize anchoring ignores unrelated sessions, and tail activit
 });
 
 test("boxed input and question vertical editing share rendered geometry across resize, retaining the chat draft", async () => {
-  const { inputGeometry } = await import("./components/render");
+  const { inputGeometry } = await import("./footer/render");
   const { vertical } = await import("./footer/editor");
   const term = fakeTerm(40, 24);
   const orchs = fakeOrchestrators();

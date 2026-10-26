@@ -5,10 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../config/config";
 import { archivePath, archiveTranscript, database, queryHistory } from "../data/memory/archive";
-import { ORCHESTRATOR, REVIEWER, WORKER, rolePrompt } from "../prompt/prompts";
+import { ORCHESTRATOR } from "../prompt/orchestrator";
+import { REVIEWER } from "../prompt/reviewer";
+import { WORKER } from "../prompt/worker";
+import { rolePrompt } from "../prompt/shared";
 import { observeTaskPR, registerTask } from "../data/tasks/tasks";
 import { open } from "../data/transcripts/transcript";
-import { registry, toolsFor, type ToolContext } from "./index";
+import { registry } from "./index";
+import { toolsFor, type ToolContext } from "./registry";
 import { history } from "./history";
 
 const previous = process.env.ORCA_HOME, dirs: string[] = [];

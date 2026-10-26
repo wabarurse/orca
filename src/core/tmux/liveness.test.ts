@@ -13,8 +13,8 @@ for (const error of ["can't find session: missing", "no server running", "permis
     const executable = join(bin, "tmux");
     await Bun.write(executable, `#!/bin/sh\nprintf '%s\\n' "$FAKE_TMUX_ERROR" >&2\nexit 1\n`);
     chmodSync(executable, 0o755);
-    const commands = join(import.meta.dir, "commands.ts");
-    const child = Bun.spawn([process.execPath, "-e", `import {liveAgentsOrNull} from ${JSON.stringify(commands)}; console.log(JSON.stringify(await liveAgentsOrNull("missing")));`], {
+    const liveness = join(import.meta.dir, "liveness.ts");
+    const child = Bun.spawn([process.execPath, "-e", `import {liveAgentsOrNull} from ${JSON.stringify(liveness)}; console.log(JSON.stringify(await liveAgentsOrNull("missing")));`], {
       env: { ...process.env, PATH: bin, ORCA_HOME: home, FAKE_TMUX_ERROR: error }, stdout: "pipe", stderr: "pipe",
     });
     expect(await child.exited).toBe(0);

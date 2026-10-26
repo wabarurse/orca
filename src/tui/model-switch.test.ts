@@ -6,7 +6,7 @@ import { App, type AppDeps } from "./app";
 import { parseKeys, type Key } from "./components/keys";
 import type { Terminal } from "./components/term";
 import { tmux } from "../core/tmux/runner";
-import { setModel } from "./commands/commands";
+import { setModel } from "./commands/model";
 import { withProjectStateLock } from "../core/data/projects/state";
 import { effectiveModel } from "../core/data/projects/project-model";
 import { effectiveSettings } from "../core/data/projects/project-settings";

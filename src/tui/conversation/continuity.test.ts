@@ -5,7 +5,8 @@ import { Calls } from "./tools";
 import { MarkdownStream } from "./mdstream";
 import { historyRows, type Line } from "./lines";
 import { restore, earlier } from "./restore";
-import { commit, fit, live, liveRows, type Frame } from "../components/render";
+import { commit, live, liveRows, type Frame } from "../footer/render";
+import { fit } from "../components/text";
 import { FakeScreen } from "../components/testing";
 
 const assistant = (text: string, id: string): Entry => ({ type: "message", uuid: id, parentUuid: null, ts: "", message: { role: "assistant", content: [{ type: "text", text }] } });

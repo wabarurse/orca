@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { commit, live, liveRows, type Frame } from "./render";
+import { commit, live, liveRows, type Frame } from "../footer/render";
 import { userLines } from "../conversation/restore";
 import { lineRows } from "../conversation/lines";
 import { fillRow, nearest256, parseBgReply, pickFill, setUserFill, shade, useTerminalBackground, userFill } from "./style";

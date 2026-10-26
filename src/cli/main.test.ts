@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pkg from "../../package.json";
 import { accounts } from "../login/accounts";
-import { login } from "../tui/commands/commands";
+import { login } from "../tui/commands/accounts";
 
 test("`orca version` prints the package.json version", async () => {
   const proc = Bun.spawn(["bun", "src/cli/main.ts", "version"], {

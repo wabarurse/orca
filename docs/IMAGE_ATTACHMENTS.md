@@ -121,7 +121,7 @@ Responses receives equivalent ordered **`input_image` data URLs**, alongside
 references, unsupported/nested tool-result image inputs and assistant image inputs
 fail explicitly rather than disappearing in a text serializer.
 
-`requireVision` in `src/core/data/images/images.ts` contains explicit model-ID admission lists,
+`requireVision` in `src/providers/images.ts` contains explicit model-ID admission lists,
 **independent of effort/fast settings**. Unknown IDs fail closed with instructions
 to select a supported vision model. Known local defaults (`claude-sonnet-5-5`,
 `gpt-5.5`) and the enumerated Claude 3+/4+/5 and GPT-4o/4.1/5/6 IDs are admitted;

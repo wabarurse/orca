@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { defaults } from "../../config/config";
-import { DYNAMIC_DISPATCH, ORCHESTRATOR, rolePrompt } from "./prompts";
+import { DYNAMIC_DISPATCH, rolePrompt } from "./shared";
+import { ORCHESTRATOR } from "./orchestrator";
 import type { Runner } from "../tmux/runner";
 import { ask } from "../tools/ask";
 import { message } from "../tools/message";

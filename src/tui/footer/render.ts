@@ -4,12 +4,9 @@
 // The legacy inline helpers remain useful for isolated renderer tests; they do
 // not drive the application's terminal lifecycle or conversation viewport.
 
-import { cells, layout, scrollWindow } from "../footer/editor";
-import { wordWrap } from "../conversation/markdown";
-import { fillRow, userFill } from "./style";
-
-export const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-export const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
+import { bold, dim, fit, plainText, sanitize, visibleLength, wordWrap, wrap } from "../components/text";
+import { fillRow, userFill } from "../components/style";
+import { layout, scrollWindow } from "./editor";
 
 /** Scrollable footer content is already wrapped to the current width; its viewport is transient. */
 export interface Help { lines: string[]; top: number; heading?: string }
@@ -88,114 +85,6 @@ export interface Frame {
 /** What the last `live` left on screen: its height and the row (from its top) the cursor sits on. */
 export interface Shown { height: number; cursor: number }
 export const NOTHING: Shown = { height: 0, cursor: 0 };
-/** Escape codes that take no columns, as Bun.stringWidth skips them: CSI (with ':' params, as in 38:2:r:g:b) and OSC (hyperlinks, titles). */
-const ESCAPE = /^(?:\x1b\[[0-9;:?<>]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))/;
-/** Display columns, ignoring escape codes; CJK and emoji count two. Expand tabs first. */
-export const visibleLength = (s: string) => Bun.stringWidth(s);
-
-/** A styled line as escape codes and the text between them. */
-function* tokens(line: string): Generator<{ esc: string } | { text: string }> {
-  let i = 0;
-  while (i < line.length) {
-    const m = line[i] === "\x1b" ? ESCAPE.exec(line.slice(i)) : null;
-    if (m) { yield { esc: m[0] }; i += m[0].length; continue; }
-    let j = line.indexOf("\x1b", i + 1);
-    if (j === -1) j = line.length;
-    yield { text: line.slice(i, j) };
-    i = j;
-  }
-}
-
-/**
- * One escape sequence (CSI, OSC, DCS/SOS/PM/APC strings, two-byte ESC
- * sequences, a bare ESC) or one C0/C1 control other than the tab (expanded
- * later): \r, \b, BEL, \v, \f, \n and the rest.
- */
-const UNSAFE = /\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[PX^_][^\x1b]*(?:\x1b\\)?|[ -\/]*[0-~])?|[\x00-\x08\x0a-\x1a\x1c-\x1f\x7f-\x9f]/g;
-/** What stays: SGR styling and OSC 8 hyperlinks. */
-const KEPT = /^(?:\x1b\[[0-9;:]*m|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\))$/;
-
-/**
- * Text that is safe to put on screen: only SGR styling and OSC 8 links stay;
- * every other escape (cursor moves, clears, titles…) and control character
- * goes, so stray tool output cannot move the cursor and break the live
- * region's erase. Split at newlines first: this drops them.
- */
-export function sanitize(line: string): string {
-  return line.replace(UNSAFE, (m) => (KEPT.test(m) ? m : ""));
-}
-
-/** Untrusted plain fields: no terminal styling, hyperlinks, controls or bidi overrides. */
-export function plainText(text: string): string {
-  return Bun.stripANSI(sanitize(text.replace(/\r\n?|\n|\t|\u2028|\u2029/g, " ")))
-    .replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
-}
-
-/** Replace tabs with spaces up to the next 8-column stop (stringWidth counts a tab as nothing). */
-export function expandTabs(line: string): string {
-  if (!line.includes("\t")) return line;
-  let out = "";
-  let col = 0;
-  for (const t of tokens(line)) {
-    if ("esc" in t) { out += t.esc; continue; }
-    t.text.split("\t").forEach((part, n) => {
-      if (n > 0) { const pad = 8 - (col % 8); out += " ".repeat(pad); col += pad; }
-      out += part;
-      col += Bun.stringWidth(part);
-    });
-  }
-  return out;
-}
-
-/** Replay the SGR state on a soft wrap; a full reset discards its predecessors. */
-function continuedStyle(style: string, esc: string): string {
-  if (!/^\x1b\[[0-9;:]*m$/.test(esc)) return style;
-  return /^\x1b\[(?:0)?m$/.test(esc) ? "" : style + esc;
-}
-
-/** A two-column glyph cannot fit a one-column screen: show an ellipsis without corrupting geometry. */
-const fittingCell = (c: { text: string; width: number }, cols: number) => c.width > cols ? { text: "…", width: 1 } : c;
-
-/** Split a styled line into pieces at most `cols` display columns wide. */
-export function wrap(line: string, cols: number): string[] {
-  if (cols <= 0) return [line];
-  const out: string[] = [];
-  let piece = "";
-  let width = 0;
-  let style = "";
-  for (const t of tokens(expandTabs(line))) {
-    if ("esc" in t) {
-      piece += t.esc;
-      style = continuedStyle(style, t.esc);
-      continue;
-    }
-    for (const source of cells(t.text)) {
-      const c = fittingCell(source, cols);
-      if (width > 0 && width + c.width > cols) { out.push(piece + "\x1b[0m"); piece = style; width = 0; }
-      piece += c.text;
-      width += c.width;
-    }
-  }
-  out.push(piece);
-  return out;
-}
-
-/** A user message line ("> …" or its indented continuation) at `cols`: wrapped, every row on the user background, full width. */
-export function userRows(line: string, cols: number): string[] {
-  const rows = wrap(sanitize(line), cols);
-  const fill = userFill();
-  return fill ? rows.map((r) => fillRow(r, cols, fill)) : rows;
-}
-
-/** One row: cut with an ellipsis rather than wrapped. */
-export function fit(raw: string, cols: number): string {
-  if (cols <= 0) return "";
-  const line = expandTabs(raw);
-  if (visibleLength(line) <= cols) return line;
-  if (cols === 1) return "…";
-  return wrap(line, Math.max(1, cols - 1))[0]!.replace(/\x1b\[0m$/, "") + "…\x1b[0m";
-}
-
 /** The input area as laid out on screen: its rows (prompt on the first, indented after), the cursor within them, and the first text row shown. */
 export interface InputArea { lines: string[]; row: number; col: number; top: number }
 

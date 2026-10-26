@@ -12,7 +12,7 @@ import { drain, pending, put } from "../core/data/inbox/inbox";
 import { fakeProvider, text, toolUse } from "../test/fake-provider";
 import { ask, skip, answer, all } from "../core/data/inbox/questions";
 import { registerTask, setTaskAttention } from "../core/data/tasks/tasks";
-import { setDisplayName, togglePin } from "./commands/commands";
+import { setDisplayName, togglePin } from "../core/data/projects/registry";
 import { inputEpoch } from "../core/data/inbox/user-input";
 import { tryStorageLock } from "../core/data/storage-lock";
 import { projectTurnLock } from "../core/data/projects/state";

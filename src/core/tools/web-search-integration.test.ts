@@ -13,7 +13,8 @@ import { fakeProvider, text, toolUse } from "../../test/fake-provider";
 import { claudeSearchFixture, codexSearchFixture } from "../../test/web-search";
 import { open, type Role } from "../data/transcripts/transcript";
 import { restore } from "../../tui/conversation/restore";
-import { registry, toolsFor } from "./index";
+import { registry } from "./index";
+import { toolsFor } from "./registry";
 import { web_search } from "./web-search";
 
 const oldHome = process.env.ORCA_HOME;

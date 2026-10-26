@@ -1,12 +1,12 @@
-import { requireVision, validatedBase64 } from "../core/data/images/images";
+import { requireVision, validatedBase64 } from "./images";
 import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./search/web-search";
 import { codexSearchItemSources, codexSearchResults } from "./search/search-results";
-import { validateSettings, type RequestSettings } from "../core/data/projects/project-settings";
+import { validateSettings, type RequestSettings } from "./catalog/settings";
 import OpenAI from "openai";
 import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../login/codex";
-import type { Provider, Turn } from "./index";
+import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog/context-window";
 import { codexCatalogEfforts, rememberCatalogEfforts } from "./catalog/capabilities";
 

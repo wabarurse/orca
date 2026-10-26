@@ -1,8 +1,8 @@
 // Selection belongs to rendered, committed conversation rows, never the chrome or
 // transient tool/activity tail. Reflow/context replacement cancels it rather than
 // silently copying different text. Soft wraps are copied as displayed newlines.
-import { cells } from '../footer/editor';
-import { fit, sanitize } from '../components/render';
+import { cells } from "../components/text";
+import { fit, sanitize } from "../components/text";
 const plainRow = (row: string, cols: number) => Bun.stripANSI(fit(sanitize(row), cols));
 import type { Key } from '../components/keys';
 import type { StickyScreen } from './sticky';

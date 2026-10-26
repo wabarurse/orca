@@ -6,7 +6,7 @@
 // opposite (white on dark, black on light); otherwise it steps dim → normal →
 // bold, as Codex does without truecolor. NO_COLOR: plain bold, no sweep.
 
-import { cells } from "../footer/editor";
+import { cells } from "./text";
 import { noColour, terminalBackground, truecolor, isLight, type Rgb } from "./style";
 
 /** One sweep across the text. */

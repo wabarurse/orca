@@ -1,9 +1,14 @@
-import { killGroup } from "./tmux/cancellation";
 // Run a short-lived command with a hard timeout: spawn, read its output,
 // SIGKILL it when it takes too long. Shared by exit notices (git status) and
 // the merge watcher (gh, git).
 
 export interface ProcResult { code: number; out: string; err: string }
+
+/** A shell and its ordinary descendants share a detached process group. */
+export function killGroup(proc: { pid: number; kill(signal: "SIGKILL"): void }): void {
+  try { process.kill(-proc.pid, "SIGKILL"); }
+  catch { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
+}
 
 /** Run argv in cwd; null when it could not start, failed to read, or was killed after `timeoutMs`. */
 export async function run(argv: string[], opts: { cwd: string; timeoutMs: number; env?: Record<string, string | undefined>; signal?: AbortSignal }): Promise<ProcResult | null> {

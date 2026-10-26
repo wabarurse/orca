@@ -1,5 +1,5 @@
 import { searchInput, searchOperation, searchText, SearchError } from "../../providers/search/web-search";
-import type { Tool } from "./index";
+import type { Tool } from "./registry";
 
 export const web_search: Tool = {
   spec: {

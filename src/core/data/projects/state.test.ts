@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, saveConfig } from "../../../config/config";
-import { deleteProject } from "../../../tui/commands/commands";
+import { deleteProject } from "../../../tui/commands/project";
 import { projectIdentity, withProjectStateLock } from "./state";
 import { effectiveModel, saveProjectModel } from "./project-model";
 

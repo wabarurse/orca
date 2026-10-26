@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { append, commit, live, liveRows, queuedRows, type Frame } from "../components/render";
+import { append, commit, live, liveRows, queuedRows, type Frame } from "../footer/render";
 import { stickyRows, stickyUpdate } from "./sticky";
 import { chapterRows } from "../header/chrome";
 import { historyRows, type Line } from "../conversation/lines";
@@ -126,7 +126,7 @@ test("queued layout is bounded at every small size without changing composer geo
 });
 
 test("pending previews reserve the same help viewport used by its scroll keys", async () => {
-  const { helpPanel } = await import("../components/render");
+  const { helpPanel } = await import("../footer/render");
   const f: Frame = { ...frame(60, 20), menu: null, queued: { project: "demo", texts: ["one", "two"] }, help: { lines: Array.from({ length: 60 }, (_, i) => `help ${i}`), top: 50 } };
   const help = helpPanel(f), drawn = liveRows(f);
   expect(drawn.rows.length).toBeLessThanOrEqual(18); // help retains two conversation rows too

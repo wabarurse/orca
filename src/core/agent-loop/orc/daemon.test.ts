@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CompleteRequest } from "../../../providers/index";
+import type { CompleteRequest } from "../../../providers/provider";
 import { Cancelled, cancelSession, launchIdentity, publishLaunch } from "../../tmux/cancellation";
 import { conversationTurnLock, projectTurnLock, turnLocksHeld } from "../../data/projects/state";
 import { paths, saveConfig } from "../../../config/config";
@@ -16,7 +16,7 @@ import { saveProjectModel } from "../../data/projects/project-model";
 import { lockHeld, tryStorageLock } from "../../data/storage-lock";
 import { writeFileSync } from "node:fs";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import type { Tool } from "../../tools/index";
+import type { Tool } from "../../tools/registry";
 import { open } from "../../data/transcripts/transcript";
 import { inputEpoch } from "../../data/inbox/user-input";
 

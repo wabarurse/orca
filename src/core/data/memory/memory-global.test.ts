@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deleteProject } from "../../../tui/commands/commands";
+import { deleteProject } from "../../../tui/commands/project";
 import { paths, saveConfig } from "../../../config/config";
 import { archivePath, archiveTranscript, database, purgeProject, queryHistory, taskTimes } from "./archive";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";

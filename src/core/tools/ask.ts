@@ -1,5 +1,5 @@
 import { cleanQuestions, ask as enqueue } from "../data/inbox/questions";
-import type { Tool } from "./index";
+import type { Tool } from "./registry";
 
 // Orchestrator-only. Queues questions for the user and returns at once; the
 // answers arrive later in the inbox from "user".

@@ -1,7 +1,6 @@
 import { imageContent, validateRefs, type ImageRef } from "../images/images";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { withStorageLock } from "../storage-lock";
-import type { Transcript } from "../transcripts/transcript";
 import { projectIdentity, assertProjectIdentity, withProjectStateLock } from "../projects/state";
 import { inputEpoch } from "./user-input";
 // Every agent has its own inbox: a durable FIFO queue of files under
@@ -151,11 +150,19 @@ export function parseFormatted(text: string): Pick<Message, "from" | "text">[] {
   return out;
 }
 
+/** What consume() needs of a transcript (transcripts/transcript.ts `Transcript` satisfies it): a refreshed snapshot and its receipts. */
+export interface ConsumeTarget {
+  /** Read-only snapshot replacement. Call only at a safe context boundary. */
+  refresh?(): Promise<void>;
+  /** Includes compacted/cleared/branched-away records: durable consumption never expires. */
+  consumed?(): { deliveries: Set<string>; inputs: Set<string>; epochs: Set<string> };
+}
+
 /** Commit inbox payload AND exact delivery evidence before deleting any files.
  * An interrupted cleanup is retried without resending already committed input.
  * The consumer owns its turn separately; this lock protects the inbox transaction.
  */
-export async function consume(project: string, agent: string, transcript: Transcript,
+export async function consume(project: string, agent: string, transcript: ConsumeTarget,
   commit: (messages: (Message & { deliveryId: string })[]) => Promise<unknown>): Promise<Message[]> {
   const d = dir(project, agent);
   return withStorageLock(`${d}.lock`, async () => {

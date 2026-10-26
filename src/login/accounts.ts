@@ -1,11 +1,9 @@
 // Every account is a Claude Code or Codex subscription login.
-import Anthropic from "@anthropic-ai/sdk";
-import { CLAUDE_BETAS, claudeCredentials, claudeProfiles, readClaudeTokens, validateProfile } from "./claude";
-import { codexCredentials, codexProfiles, readCodexTokens } from "./codex";
+import { claudeProfiles, readClaudeTokens, validateProfile } from "./claude";
+import { codexProfiles, readCodexTokens } from "./codex";
 import { loadConfig } from "../config/config";
-import { anthropic } from "../providers/anthropic";
-import type { Provider, ProviderName } from "../providers/index";
-import { openai } from "../providers/openai";
+
+export type ProviderName = "anthropic" | "openai";
 
 export interface Account {
   /** "anthropic:<profile>" or "openai:<profile>". */
@@ -34,24 +32,4 @@ export async function accounts(): Promise<Account[]> {
     }
   }
   return out;
-}
-
-export async function provider(name: ProviderName, options: { promptCache?: boolean } = {}): Promise<Provider> {
-  const config = await loadConfig();
-  const profile = activeProfile(name === "anthropic" ? config.account : config.openaiAccount);
-  if (name === "anthropic") {
-    // The SDK otherwise lets this legacy environment hook replace OAuth auth.
-    if (process.env.ANTHROPIC_CUSTOM_HEADERS?.split("\n").some((line) => /^\s*authorization\s*:/i.test(line))) {
-      throw new Error("custom anthropic authorization headers are unsupported; use /login anthropic for claude code subscription access.");
-    }
-    if (!(await readClaudeTokens(profile))) throw new Error(`claude profile '${profile}' is not signed in; run /login anthropic ${profile}.`);
-    return anthropic(new Anthropic({
-      apiKey: null, authToken: null, baseURL: "https://api.anthropic.com",
-      credentials: claudeCredentials(profile),
-      defaultHeaders: { "anthropic-beta": CLAUDE_BETAS, "x-api-key": null },
-      fetchOptions: { redirect: "error" },
-    }), { promptCache: options.promptCache ?? (config.anthropicPromptCache === true) });
-  }
-  if (!(await readCodexTokens(profile))) throw new Error(`codex profile '${profile}' is not signed in; run /login openai ${profile}.`);
-  return openai(codexCredentials(profile));
 }

@@ -1,16 +1,11 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { provider as accountProvider } from "../../../login/accounts";
+import { provider as accountProvider } from "../../../providers/account";
 import { estimate, requireFits } from "./compaction";
 import { historicalMessages } from "../images/history";
-import type { Provider } from "../../../providers";
+import type { Provider } from "../../../providers/provider";
 import type { Task } from "../tasks/tasks";
+import type { RollingMemory } from "../transcripts/transcript";
 
-export interface RollingMemory {
-  user: string[];
-  project: string[];
-  pending: string[];
-  tasks: { id: string; notes: string }[];
-}
 export const SUMMARY_MODEL = "gpt-6-luna";
 const empty = (): RollingMemory => ({ user: [], project: [], pending: [], tasks: [] });
 export const taskSnapshot = (tasks: Task[]) => tasks.map(t => ({ id: t.id, name: t.name, summary: t.summary, branch: t.branch,
@@ -65,7 +60,7 @@ export async function summarizeOlder(messages: MessageParam[], tasks: Task[], si
   for (const part of chunks(source)) {
     signal.throwIfAborted();
     const input: MessageParam[] = [{ role: "user", content: JSON.stringify({ registry: taskSnapshot(relevant), previousMemory: memory, sourcePart: part }) }];
-    requireFits({ model: SUMMARY_MODEL, tools: {}, system: instruction, compaction: {}, transcript: null!, ctx: null! }, input, 4096, "rolling summary source");
+    requireFits({ model: SUMMARY_MODEL, tools: {}, system: instruction, compaction: {}, transcript: null! }, input, 4096, "rolling summary source");
     const result = await provider.complete({ signal, model: SUMMARY_MODEL, settings: { effort: "low", fast: false }, system: instruction, messages: input, tools: [], maxTokens: 4096, onText() {} });
     signal.throwIfAborted();
     if (result.stop !== "end" || !["completed", "end_turn"].includes(result.completion ?? "")) throw new Error(`summary did not complete (${result.completion ?? "unknown"})`);

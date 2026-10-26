@@ -6,7 +6,7 @@ import { paths } from "../../config/config";
 import { drain } from "../data/inbox/inbox";
 import type { Runner, StartOptions } from "../tmux/runner";
 import { open } from "../data/transcripts/transcript";
-import type { ToolContext } from "./index";
+import type { ToolContext } from "./registry";
 import { message } from "./message";
 import { makeSpawn as realSpawn } from "./spawn";
 import { registerTask, stopTaskRun, taskForRun } from "../data/tasks/tasks";

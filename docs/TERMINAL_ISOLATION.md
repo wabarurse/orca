@@ -325,7 +325,7 @@ was modified. No model requests were made.
   row erasure, not line-feed scrolling of the primary buffer. Header/footer and
   composer remain pinned. The app's active drawing path does not call the legacy
   `render.reprint()` helper that contains a screen/scrollback clear.
-- `src/tui/components/render.ts`: visible content is sanitized to remove screen-switching,
+- `src/tui/components/text.ts`: visible content is sanitized to remove screen-switching,
   scrolling and clearing escapes; only styling and hyperlinks remain. Normal
   `App.run()` cleanup deliberately restores the primary screen **before**
   printing the active transcript. Shell content becoming available after exit

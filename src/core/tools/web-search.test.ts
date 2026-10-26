@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { registry, toolsFor, type ToolContext } from "./index";
+import { registry } from "./index";
+import { toolsFor, type ToolContext } from "./registry";
 import { web_search } from "./web-search";
 import { fakeProvider } from "../../test/fake-provider";
 import { SEARCH_OUTPUT_BYTES, searchInput, searchOperation, searchText, type SearchRequest } from "../../providers/search/web-search";

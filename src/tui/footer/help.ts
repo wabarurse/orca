@@ -1,7 +1,7 @@
 // Explicit help content, separate from conversation history. Commands supply
 // their own metadata so every handler stays discoverable without a second list.
-import { wordWrap } from "../conversation/markdown";
-import { bold, dim, visibleLength, wrap } from "../components/render";
+import { wordWrap } from "../components/text";
+import { bold, dim, visibleLength, wrap } from "../components/text";
 
 export type HelpGroup = "conversation" | "projects" | "settings" | "advanced";
 export interface HelpEntry { label: string; description: string }

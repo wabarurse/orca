@@ -8,7 +8,8 @@ import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { content, consume, pending, put } from "../inbox/inbox";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
-import { imageBlock, imageContent, loadImage, materializeImages, MAX_IMAGE_BYTES, pendingImageInputs, requireVision, saveImage, saveImageInput, validatedBase64, validateImage, validateRefs } from "./images";
+import { imageBlock, imageContent, loadImage, materializeImages, pendingImageInputs, saveImage, saveImageInput, validateRefs } from "./images";
+import { MAX_IMAGE_BYTES, requireVision, validatedBase64, validateImage } from "../../../providers/images";
 import { forwardImages } from "../../tools/attachments";
 import { message } from "../../tools/message";
 import { makeSpawn } from "../../tools/spawn";
@@ -190,7 +191,7 @@ test("compaction budgets pixels rather than base64, retains inspectable image bl
   await t.append({ type: "message", message: { role: "assistant", content: "long history ".repeat(8000) } });
   await t.append({ type: "message", message: { role: "user", content: "next" } });
   const provider = fakeProvider([[text("summarized history")]]);
-  expect(await compact({ transcript: t, provider, model: "claude-sonnet-4-6", tools: {}, ctx: ctx(p), write() {}, compaction: { contextLimit: 128000 } }, true)).toBe(true);
+  expect(await compact({ transcript: t, provider, model: "claude-sonnet-4-6", tools: {}, write() {}, compaction: { contextLimit: 128000 } }, true)).toBe(true);
   const chain = await t.chain();
   expect(imageCount(chain)).toBe(1);
   expect(imageCount(await materializeImages(p, chain))).toBe(1);

@@ -1,5 +1,5 @@
 import { queryGlobalHistory } from "../data/memory/archive";
-import type { Tool } from "./index";
+import type { Tool } from "./registry";
 
 /** Orchestrator-only retrieval across the whole global archive, outside the current session. Workers and reviewers
  * never receive this tool (see toolsFor); run() refuses any other role as defense in depth. */

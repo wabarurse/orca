@@ -7,7 +7,7 @@ import { compact, budget, outputCap } from "./compaction";
 import { paired } from "./tool-pairs";
 import { open, type Transcript } from "../transcripts/transcript";
 import { text, toolUse } from "../../../test/fake-provider";
-import type { CompleteRequest, Provider, Turn } from "../../../providers/index";
+import type { CompleteRequest, Provider, Turn } from "../../../providers/provider";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { put } from "../inbox/inbox";
 const dirs: string[] = [];

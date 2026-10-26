@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { App } from "../app";
 import { chapterRows, headerHeight } from "../header/chrome";
 import { helpLines } from "./help";
-import { helpPanel, liveRows, type Frame } from "../components/render";
+import { helpPanel, liveRows, type Frame } from "./render";
 import { stickyRows, stickyUpdate } from "../screen/sticky";
 import { setUserFill } from "../components/style";
 import type { Terminal } from "../components/term";

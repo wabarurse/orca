@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../config/config";
 import { getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, startTaskRun, stopTaskRun, type PRObservation } from "../data/tasks/tasks";
-import { rolePrompt } from "../prompt/prompts";
+import { rolePrompt } from "../prompt/shared";
 import { defaults } from "../../config/config";
 import { makeTaskTool } from "./task";
-import { registry, toolsFor, type ToolContext } from "./index";
+import { registry } from "./index";
+import { toolsFor, type ToolContext } from "./registry";
 
 const home = mkdtempSync(join(tmpdir(), "task-tool-"));
 process.env.ORCA_HOME = home;

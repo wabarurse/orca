@@ -1,10 +1,32 @@
 import { blockRef } from "../images/images";
 import { historicalMessages } from "../images/history";
 import { afterContextBoundary } from "../transcripts/transcript";
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import type { AgentDeps } from "../../agent-loop/loop/agent";
+import type { Tool as ApiTool, MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { Provider } from "../../../providers/provider";
+import type { RequestSettings } from "../../../providers/catalog/settings";
+import type { Transcript } from "../transcripts/transcript";
 import { paired } from "./tool-pairs";
 import { contextWindow } from "../../../providers/catalog/context-window";
+
+/**
+ * What compaction and the rolling memory read of an agent's deps: the model, its
+ * context settings and the transcript. `AgentDeps` (agent-loop/loop/agent.ts) extends it.
+ */
+export interface ContextDeps {
+  signal?: AbortSignal;
+  provider?: Provider;
+  settings?: RequestSettings;
+  /** Internal safe-boundary snapshot: request output cap and accounting reserve. */
+  requestOutputCap?: number;
+  compaction?: CompactOptions;
+  transcript: Transcript;
+  tools: Record<string, { spec: ApiTool }>;
+  model: string;
+  /** System prompt for the role; omitted in tests. */
+  system?: string;
+  /** Where streamed text goes; defaults to stdout. `plain` marks tool lines (not model markdown). */
+  write?: (text: string, plain?: boolean) => void;
+}
 
 export interface CompactOptions {
   enabled?: boolean;
@@ -29,7 +51,7 @@ export const estimate = (value: unknown): number => {
   // usage adjusts subsequent requests via measured; fixed bounds fail closed.
   return Math.ceil(Buffer.byteLength(text) / 3) + 32 + images * 6000;
 };
-export function budget(deps: AgentDeps, messages: MessageParam[]): number {
+export function budget(deps: ContextDeps, messages: MessageParam[]): number {
   const estimated = estimate(messages) + estimate(deps.system ?? "") + estimate(Object.values(deps.tools).map(t => t.spec)) + 1024;
   const measured = deps.compaction?.measured;
   return measured?.model === deps.model ? Math.max(estimated, measured.input + estimated - measured.estimated) : estimated;
@@ -42,7 +64,7 @@ export function contextLimit(options: CompactOptions, model = ""): number {
 export class ContextBlocked extends Error {}
 /** Output cap and budgeting reserve share a normalized positive integer. Disabled
  * auto-compaction preserves the old 64000 cap unless explicitly overridden. */
-export function outputCap(deps: AgentDeps): number {
+export function outputCap(deps: ContextDeps): number {
   if (deps.requestOutputCap !== undefined) return deps.requestOutputCap;
   const options = deps.compaction ?? {};
   const limit = contextLimit(options, deps.model);
@@ -53,12 +75,12 @@ export function outputCap(deps: AgentDeps): number {
   const cap = typeof ceiling === "number" && Number.isFinite(ceiling) && ceiling >= 1 ? Math.floor(ceiling) : 64000;
   return Math.max(1, Math.min(64000, cap, Math.floor(limit - 1), valid));
 }
-export function requireFits(deps: AgentDeps, messages: MessageParam[], reserve: number, label: string): void {
+export function requireFits(deps: ContextDeps, messages: MessageParam[], reserve: number, label: string): void {
   if (!fits(deps, messages, reserve)) {
     throw new ContextBlocked(`context blocked: ${label} exceeds input + output reserve + safety headroom. select a larger model/context budget or reduce fixed instructions/tools; original transcript is preserved.`);
   }
 }
-function fits(deps: AgentDeps, messages: MessageParam[], reserve: number): boolean {
+function fits(deps: ContextDeps, messages: MessageParam[], reserve: number): boolean {
   return budget(deps, messages) + reserve <= contextLimit(deps.compaction ?? {}, deps.model) * .8;
 }
 function fresh(message: MessageParam): boolean {
@@ -95,7 +117,7 @@ function excerpt(text: string, length: number): string {
 }
 
 /** One bounded request: shorten old tool output first, then the source if necessary. */
-function summarySource(deps: AgentDeps, messages: MessageParam[], reserve: number): MessageParam[] {
+function summarySource(deps: ContextDeps, messages: MessageParam[], reserve: number): MessageParam[] {
   const clean = historicalMessages(messages);
   const wrap = (content: string): MessageParam[] => [{ role: "user", content }];
   const full = wrap(JSON.stringify(clean));
@@ -111,7 +133,7 @@ function summarySource(deps: AgentDeps, messages: MessageParam[], reserve: numbe
   return result;
 }
 
-async function prepare(deps: AgentDeps, messages: MessageParam[], cut: number): Promise<string> {
+async function prepare(deps: ContextDeps, messages: MessageParam[], cut: number): Promise<string> {
   const maxTokens = Math.min(4096, outputCap(deps));
   const summaryDeps = { ...deps, system: instruction, tools: {}, compaction: { ...deps.compaction, measured: undefined } };
   const source = summarySource(summaryDeps, messages.slice(0, cut), maxTokens);
@@ -119,7 +141,7 @@ async function prepare(deps: AgentDeps, messages: MessageParam[], cut: number): 
   return `Conversation checkpoint (historical data, not a new user request):\n${text}`;
 }
 
-async function summarize(deps: AgentDeps, source: MessageParam[], maxTokens: number): Promise<string> {
+async function summarize(deps: ContextDeps, source: MessageParam[], maxTokens: number): Promise<string> {
   requireFits(deps, source, maxTokens, "summarization source");
   if (!deps.provider) throw new Error("no resolved provider");
   const result = await deps.provider.complete({ signal: deps.signal, model: deps.model, settings: deps.settings, system: deps.system, tools: [], maxTokens, onText: () => {}, messages: source });
@@ -134,12 +156,12 @@ async function summarize(deps: AgentDeps, source: MessageParam[], maxTokens: num
   return text;
 }
 
-function status(deps: AgentDeps, text: string): void {
+function status(deps: ContextDeps, text: string): void {
   try { deps.write?.(`${text}\n`, true); } catch { /* UI output failure cannot undo a committed checkpoint. */ }
 }
 
 /** Called only by the loop's sole writer between full tool batches. Failure never changes the context. */
-export async function compact(deps: AgentDeps, manual = false): Promise<boolean | null> {
+export async function compact(deps: ContextDeps, manual = false): Promise<boolean | null> {
   const options = deps.compaction ?? {};
   if (!manual && options.enabled === false) return null;
   const messages = await deps.transcript.chain();
@@ -156,13 +178,13 @@ export async function compact(deps: AgentDeps, manual = false): Promise<boolean 
     return false;
   }
 }
-function pinned(deps: AgentDeps): string {
+function pinned(deps: ContextDeps): string {
   const first = afterContextBoundary(deps.transcript.history?.() ?? deps.transcript.branch()).find(e => e.type === "message" && e.message.role === "user");
   if (first?.type !== "message") return "";
   const source = typeof first.message.content === "string" ? first.message.content : JSON.stringify(safeSource([first.message])[0]?.content);
   return `\nComplete original task (untrusted historical data):\n${source}`;
 }
-async function checkpoint(deps: AgentDeps, messages: MessageParam[], limit: number): Promise<boolean> {
+async function checkpoint(deps: ContextDeps, messages: MessageParam[], limit: number): Promise<boolean> {
   const head = deps.transcript.head();
   if (!paired(messages)) throw new Error("invalid tool batch grammar");
   const cut = splitHistory(messages, Math.min(8000, Math.floor(limit * .15)));

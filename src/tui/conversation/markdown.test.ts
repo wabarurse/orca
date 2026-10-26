@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { fitColumns, inline, renderBlock, renderLabelled, renderMarkdown, sourceLines, takeBlocks, wordWrap } from "./markdown";
+import { fitColumns, inline, renderBlock, renderLabelled, renderMarkdown, sourceLines, takeBlocks } from "./markdown";
+import { wordWrap } from "../components/text";
 import { MarkdownStream } from "./mdstream";
-import { commit } from "../components/render";
+import { commit } from "../footer/render";
 import { FakeScreen } from "../components/testing";
 
 /** What the lines look like committed to a real terminal `cols` wide (FakeScreen throws on any escape it does not model). */

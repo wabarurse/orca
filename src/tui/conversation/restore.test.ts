@@ -7,7 +7,7 @@ import { open, type Entry } from "../../core/data/transcripts/transcript";
 import { historyRows, lineRows, type Line } from "./lines";
 import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, unresolvedCalls } from "./restore";
 import { toolView } from "../../core/agent-loop/loop/toolview";
-import { bold, dim } from "../components/render";
+import { bold, dim } from "../components/text";
 import { collapseCalls } from "./tools";
 
 const dir = mkdtempSync(join(tmpdir(), "orca-restore-"));

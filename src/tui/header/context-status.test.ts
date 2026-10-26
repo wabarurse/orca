@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { contextStatus, dispatchStatus, reviewStatus } from "./context-status";
 import { reviewProgress, type TaskRun } from "../../core/data/tasks/tasks";
 import { chapterRows } from "./chrome";
-import { visibleLength } from "../components/render";
+import { visibleLength } from "../components/text";
 
 test("context uses k units, honest estimates and unknown limits/counts", () => {
   expect(contextStatus("gpt-5.5", 12345)).toBe("ctx ~12.3k/272k");
