@@ -11,7 +11,7 @@ const template = `
       </div>
     </header>
     <div class="conversation">
-      <div class="welcome"><div role="img" aria-label="Animated ASCII orca"><pre class="whale" aria-hidden="true"></pre></div><div class="welcome-label"><strong>orca</strong>what are we working on?</div></div>
+      <div class="welcome"><div role="img" aria-label="ASCII orca"><pre class="whale" aria-hidden="true"></pre></div></div>
       <div class="chat" hidden><div class="prompt"></div><div class="reply"></div><div class="activity">⏺ looking through the project…</div></div>
     </div>
     <div class="composer-area">

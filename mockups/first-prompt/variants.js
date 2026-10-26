@@ -51,7 +51,7 @@ function stipple(art) {
 }
 
 export const variants = [
-  { id:'a', name:'Classic cruise', idea:'The original silhouette with its lower ### wave gently rippling. After the first prompt, a solid fin cruises through a light wake.', art:detailed, fallback:compact, motion:'cruise', fin:['   #,','   ###','  #####'] },
+  { id:'a', name:'Classic cruise', idea:'The original orca stays still. After the first prompt, the fin swims through the top bar.', art:detailed, fallback:compact, staticWhale:true, motion:'cruise', fin:['   #,','   ###','  #####'] },
   { id:'b', name:'Ink outline', idea:'An airy outline with a gentle rise and fall. The hollow fin bobs through quiet water.', art:outline(detailed), fallback:outline(compact), motion:'bob', fin:['    /|','   / |',' _/  |'] },
   { id:'c', name:'Rolling swell', idea:'A compact, bold whale with a soft body roll. Its rounded fin rides a slow wave across the bar.', art:compact, fallback:compact, motion:'swell', fin:['   ,#','  ###',' #####'] },
   { id:'d', name:'Surface & dive', idea:'A stippled whale that glides. Its fin surfaces, disappears under the water, then returns farther along.', art:stipple(detailed), fallback:stipple(compact), motion:'dive', fin:['   @,','   @@@','  @@@@@'] },
@@ -65,13 +65,9 @@ export function whaleFrame(variant, tick, cols) {
   const bob = ['bob','swell'].includes(variant.motion) ? Math.round(Math.sin(tick / 5)) : 0;
   const drift = variant.motion === 'dive' ? Math.round(2 * Math.sin(tick / 9)) : 0;
   const offsetX = Math.floor((cols-width)/2) + drift, offsetY = Math.floor((22-art.length)/2) + bob;
-  const tail = Math.round(Math.sin(tick / (variant.motion === 'little' ? 1.6 : 4)));
-  const waveStart=art.length-(art.length>12?4:2);
+  const tail = variant.staticWhale ? 0 : Math.round(Math.sin(tick / (variant.motion === 'little' ? 1.6 : 4)));
   art.forEach((line,y) => [...line].forEach((char,x) => {
-    // Ripple the lower band already drawn in the ASCII art.
-    const wave=variant.motion==='cruise' && y>=waveStart && x>=width*.25
-      ? Math.round(Math.sin(x/(width*.09)-tick/3.6)) : 0;
-    const xx = offsetX + x + (y >= art.length-2 && x < width*.23 ? tail : 0), yy=offsetY+y+wave;
+    const xx = offsetX + x + (y >= art.length-2 && x < width*.23 ? tail : 0), yy=offsetY+y;
     if (char !== ' ' && grid[yy]?.[xx] !== undefined) grid[yy][xx]=char;
   }));
   return grid.map(row => row.join('')).join('\n');

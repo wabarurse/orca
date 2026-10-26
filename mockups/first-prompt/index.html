@@ -3,33 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>orca · mockup pick</title>
+  <title>orca · final preview</title>
   <link rel="stylesheet" href="/mockup-pick/styles.css">
 </head>
 <body>
   <nav aria-label="Jump to a mockup">
-    <a class="nav-brand" href="#top">orca / mockup pick</a>
+    <a class="nav-brand" href="#top">orca / final preview</a>
     <div id="letters"></div>
     <button id="motion" type="button">pause motion</button>
   </nav>
   <main id="top">
     <header class="intro">
       <p class="eyebrow">new chat → first prompt</p>
-      <h1>One orca. Five personalities.</h1>
-      <p>Different whale designs, different swimming fins. Send the sample prompt in any mockup to see it move to the top bar.</p>
+      <h1>Static orca. Swimming fin.</h1>
+      <p>Send the sample prompt to switch from the orca in the conversation to the animated fin in the top bar.</p>
       <div class="all-controls" aria-label="Preview every mockup">
-        <span>show all:</span>
+        <span>preview:</span>
         <button id="all-new" type="button">new chat</button>
         <button id="all-sent" type="button">first prompt sent</button>
       </div>
     </header>
     <div id="gallery"></div>
-    <p class="closing">Pick a letter, or mix the whale from one with the fin from another.</p>
   </main>
   <script type="module">
     import { variants } from '/mockup-pick/variants.js';
     import { mountGallery } from '/mockup-pick/shared.js';
-    mountGallery(variants);
+    mountGallery([variants[0]]);
   </script>
 </body>
 </html>
