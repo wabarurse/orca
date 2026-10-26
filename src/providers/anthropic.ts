@@ -1,17 +1,18 @@
+import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
 import { requireVision, validatedBase64 } from "./images";
 import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { claudeSearchResults } from "./search";
 import { CLAUDE_BETAS } from "../login";
 import { validateSettings, type RequestSettings } from "./catalog";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { type MiddlewareNext } from "@anthropic-ai/sdk";
 import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { claudeCatalogEfforts, rememberCatalogEfforts } from "./catalog";
-import { exhaustedQuota, withTransientRetries, type RetryOptions } from "./retry";
+import { exhaustedQuota, type RetryOptions } from "./retry";
 
 // account.ts supplies Claude Code subscription credentials. There is no API-key mode.
-export function anthropic(client: Anthropic, options: { promptCache?: boolean; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
+export function anthropic(client: Anthropic, options: { recovery?: RecoveryPolicy; promptCache?: boolean; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
   return {
     name: "anthropic",
     async complete(req) {
@@ -31,27 +32,44 @@ export function anthropic(client: Anthropic, options: { promptCache?: boolean; r
         ],
         ...(req.tools.length ? { tools: req.tools } : {}),
       };
-      // Retries are ours (./retry), on the initial request only. The SDK keeps one: its credentials refresh on a
-      // 401 is a retry (login/claude.ts's forceRefresh), so that single attempt stays, and may also answer one
-      // transient failure before ours do.
-      return withTransientRetries(async started => {
-        const stream = client.messages.stream(params, { maxRetries: 1,
-          // Stop the SDK's own transient retry too, retaining its 401 refresh.
-          middleware: [async (request, next, context) => {
-            const response = await next(request);
-            if (!response.ok && exhaustedQuota(await context.parse(response).catch(() => undefined))) {
-              const headers = new Headers(response.headers);
-              headers.set("x-should-retry", "false");
-              return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-            }
-            return response;
-          }], ...(req.signal ? { signal: req.signal } : {}),
-          ...(req.settings?.fast && req.model !== "claude-opus-5-5" ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
-        stream.on("streamEvent", started);
-        stream.on("text", req.onText);
-        const message = await stream.finalMessage();
-        return completedTurn(message);
-      }, { signal: req.signal, what: "claude", model: req.model, notice: req.onNotice, ...options.retry });
+      // With recovery the SDK gets zero retries (including transport failures).
+      // Its 401 handler still invalidates the shared credential cache at zero retries;
+      // a single explicit retry below obtains the refreshed token within this scope.
+      let refreshed = false;
+      let send: ((input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response>) | undefined;
+      return providerRequest(options.recovery, async (started, scope) => {
+        const active = scope ? client.withOptions({ maxRetries: 0, logLevel: "off" }) : client;
+        const complete = async () => {
+          const stream = active.messages.stream(params, { maxRetries: scope ? 0 : 1,
+            // Legacy path suppresses quota retries; recovery disables all SDK retries.
+            middleware: [async (request, next, context) => {
+              // Adapt the SDK middleware transport without accessing private client fetch
+              // or losing the configured transport, headers, URL, or response metadata.
+              send = (_, init) => next({ ...request, ...init } as Parameters<MiddlewareNext>[0]);
+              // SDK iterator cleanup aborts its private signal even on success/error.
+              // The helper owns transport cancellation; caller abort is already linked.
+              const response = scope ? await scope.fetch(request.url, { ...request, signal: scope.signal }) : await next(request);
+              if (!response.ok && exhaustedQuota(await context.parse(response).catch(() => undefined))) {
+                const headers = new Headers(response.headers);
+                headers.set("x-should-retry", "false");
+                return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+              }
+              return response;
+            }], signal: scope?.signal ?? req.signal,
+            ...(req.settings?.fast && req.model !== "claude-opus-5-5" ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
+          stream.on("streamEvent", started);
+          stream.on("text", req.onText);
+          const message = await stream.finalMessage();
+          return completedTurn(message);
+        };
+        try { return await complete(); }
+        catch (error) {
+          if (!scope || refreshed || !(error instanceof Anthropic.APIError) || error.status !== 401) throw error;
+          scope.signal.throwIfAborted();
+          refreshed = true;
+          return complete();
+        }
+      }, { signal: req.signal, what: "claude", model: req.model, notice: req.onNotice, ...options.retry }, (input, init) => send!(input, init));
     },
     async search(req) {
       req.signal.throwIfAborted();
