@@ -26,7 +26,8 @@ orchestrator-only `history` tool searches earlier sessions and other projects, s
 ## Orchestrator rolling memory and history
 
 `rolling-memory.ts` starts one background `gpt-6-luna` summarizer per session at
-about 100,000 input tokens, earlier for a smaller usable selected-model context.
+about 40% of the selected model's context window (~400,000 input tokens on a 1M
+model), earlier when the usable context after the output reserve is smaller.
 It keeps roughly 20,000 recent tokens, never splitting a tool exchange, and always
 keeps the newest whole exchange even if oversized. Summarization uses low effort,
 no tools, bounded UTF-8 source chunks, a two-minute deadline and a 30-second

@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { createAgent, runAgent, type AgentDeps } from "./agent";
-import { estimate } from "./compaction";
+import { budget, estimate } from "./compaction";
 import { paths, saveConfig } from "./config";
 import { put } from "./inbox";
 import { archivePath, purgeProject, queryHistory } from "./memory-archive";
 import { createOrchestrator } from "./orchestrator";
 import type { CompleteRequest, Provider } from "./providers";
-import { RollingCompactor, rollingCut } from "./rolling-memory";
+import { RollingCompactor, rollingCut, type RollingOptions } from "./rolling-memory";
 import { parseMemory, summarizeOlder, type RollingMemory } from "./rolling-summary";
 import { observeTaskPR, registerTask, setTaskAttention } from "./tasks";
 import { fakeProvider, text, toolUse } from "./test/fake-provider";
@@ -125,9 +125,37 @@ test("hard-limit boundary waits for one worker and never sends an oversized fore
   expect(estimate(foreground.calls[0]!.messages)).toBeLessThan(5000);
 });
 
-test("default 100k trigger retains about 20k verbatim through repeated cycles and restart", async () => {
+test("default trigger is 40% of the model window, capped by safe input; explicit triggerTokens wins", async () => {
+  const { deps, transcript } = await fixture();
+  let calls = 0;
+  const provider: Provider = { name: "openai", models: async () => [], complete: async () => { calls++; return answer(); } };
+  const probe = async (model: string, compaction: NonNullable<AgentDeps["compaction"]>, input: number, options: RollingOptions = {}) => {
+    const rolling = new RollingCompactor("p", transcript, { tailTokens: 200, loadProvider: async () => provider, ...options }); compacters.push(rolling);
+    const probed = { ...deps, model, compaction: { ...compaction } };
+    const estimated = budget(probed, await transcript.chain());
+    probed.compaction.measured = { model, input, estimated };
+    const before = calls;
+    await rolling.boundary(probed);
+    for (let i = 0; i < 100 && rolling.ready() !== (calls > before); i++) await Bun.sleep(1);
+    rolling.reset();
+    return calls > before;
+  };
+  // 1M window: 400k by default, well above the old fixed 100k.
+  expect(await probe("claude-opus-5-5", {}, 150000)).toBe(false);
+  expect(await probe("claude-opus-5-5", {}, 399000)).toBe(false);
+  expect(await probe("claude-opus-5-5", {}, 401000)).toBe(true);
+  // Small usable context: .8 * (.8 * 100k - 40k) = 32k caps the 40k default.
+  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 31000)).toBe(false);
+  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 33000)).toBe(true);
+  // An explicit absolute trigger replaces the percentage in both directions.
+  expect(await probe("claude-opus-5-5", {}, 150000, { triggerTokens: 100000 })).toBe(true);
+  expect(await probe("claude-opus-5-5", {}, 450000, { triggerTokens: 600000 })).toBe(false);
+});
+
+test("default trigger retains about 20k verbatim through repeated cycles and restart", async () => {
   const { project, deps } = await fixture();
   deps.transcript = open(paths.transcript(project, "long-orchestrator"));
+  deps.compaction = { contextLimit: 250000 }; // 40% default trigger = 100k input tokens
   let calls = 0;
   const provider: Provider = { name: "openai", models: async () => [], complete: async () => { calls++; return answer(); } };
   for (let cycle = 0; cycle < 3; cycle++) {
