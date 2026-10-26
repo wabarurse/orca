@@ -24,9 +24,9 @@
 
 import { originRepo } from "./github";
 export { githubRepo, originRepo } from "./github";
-import { archiveMergedTasks, allTasks, observeTaskPR, setTaskAttention, taskPR } from "./tasks";
+import { archiveMergedTasks, allTasks, blockConflictingTask, observeTaskPR, setTaskAttention, taskPR } from "./tasks";
 import { ghTaskPR } from "./github";
-import type { PRObservation, TaskPR } from "./tasks";
+import type { PRObservation, Task, TaskPR } from "./tasks";
 import { existsSync, linkSync, mkdirSync, statSync } from "node:fs";
 import { readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -360,10 +360,47 @@ async function cleanTail(project: string, pr: MergedPR, s: string, gone: boolean
   return problems.length ? `cleaned up, except: ${problems.join("; ")}` : "cleaned up";
 }
 
-/** The notice for one merged branch. */
-export function mergeNotice(pr: MergedPR, running: string[], stopped: boolean, tail: string): string {
+/** The notice for one merged branch; `conflicts` is the other open PRs' state after the merge (see `conflictsAfterMerge`), "" when there are none. */
+export function mergeNotice(pr: MergedPR, running: string[], stopped: boolean, tail: string, conflicts = ""): string {
   const who = running.length ? `${running.join(", ")} ${stopped ? "stopped" : "left running"}` : "no agents running";
-  return `[agent-exit] ${who}: pr #${pr.number} (${pr.headRefName}) merged (${pr.url}); ${tail}`;
+  return `[agent-exit] ${who}: pr #${pr.number} (${pr.headRefName}) merged (${pr.url}); ${tail}${conflicts ? `; ${conflicts}` : ""}`;
+}
+
+// --- the other open PRs after a merge ------------------------------------------
+
+/**
+ * Main moved: observe every other active task's PR (one `gh pr view` each,
+ * tasks sharing a PR share the lookup). A PR GitHub now reports as conflicting
+ * blocks its tasks (readiness invalidated) and is listed; one it has not
+ * judged yet (mergeable UNKNOWN, or the lookup failed) is listed as unknown,
+ * never as a conflict. Returns the notice's line, "" when no other task has a PR.
+ */
+async function conflictsAfterMerge(project: string, repository: string, merged: MergedPR, d: Deps): Promise<string> {
+  const byPR = new Map<number, Task[]>();
+  for (const t of await allTasks(project)) {
+    if (t.archive || !t.pr || t.pr.repository !== repository.toLowerCase() || t.pr.number === merged.number) continue;
+    byPR.set(t.pr.number, [...(byPR.get(t.pr.number) ?? []), t]);
+  }
+  if (!byPR.size) return "";
+  const reason = `conflicts with main after PR #${merged.number} merged; rebase needed`;
+  const conflicting: string[] = [], unknown: string[] = [];
+  for (const [n, tasks] of byPR) {
+    const o = await d.pr(project, tasks[0]!.pr!).catch(() => null);
+    const label = `#${n} (${o?.branch ?? tasks[0]!.branch})`;
+    if (o && o.state !== "OPEN") continue;
+    if (!o || o.mergeable === "unknown" || o.mergeable === undefined) { unknown.push(label); continue; }
+    if (o.mergeable !== "conflicting") continue;
+    conflicting.push(label);
+    for (const t of tasks) {
+      // Block first: the observation alone would drop readiness without saying why.
+      await blockConflictingTask(project, t.id, reason).catch(() => {});
+      await observeTaskPR(project, t.id, o).catch(() => {});
+    }
+  }
+  const parts: string[] = [];
+  if (conflicting.length) parts.push(`conflicts with main now: ${conflicting.join(", ")}`);
+  if (unknown.length) parts.push(`conflict state unknown (github has not computed it yet): ${unknown.join(", ")}`);
+  return parts.length ? parts.join("; ") : "no open PRs conflict";
 }
 
 // --- one PR, one project ------------------------------------------------------
@@ -387,7 +424,7 @@ async function claimPR(project: string, pr: MergedPR, prev: Claim | null, live: 
 }
 
 /** Handle one merged PR: check, stop, clean up, notify. False when there was nothing to do or another watcher has it. */
-async function handleMerge(project: string, pr: MergedPR, prev: Claim | null, live: string[], d: Deps): Promise<boolean> {
+async function handleMerge(project: string, repo: string, pr: MergedPR, prev: Claim | null, live: string[], d: Deps): Promise<boolean> {
   const running = await claimPR(project, pr, prev, live);
   if (!running) return false;
   const s = slug(pr.headRefName);
@@ -396,7 +433,8 @@ async function handleMerge(project: string, pr: MergedPR, prev: Claim | null, li
     const why = await notThePR(project, pr, s);
     stopping = !why;
     const tail = why ? `kept: ${why}` : await stopAndClean(project, pr, s, live, d);
-    await put(project, "orchestrator", { from: running[0] ?? `worker-${s}`, text: mergeNotice(pr, running, !why, tail) });
+    const conflicts = await conflictsAfterMerge(project, repo, pr, d).catch(() => "");
+    await put(project, "orchestrator", { from: running[0] ?? `worker-${s}`, text: mergeNotice(pr, running, !why, tail, conflicts) });
     await writeClaim(claimPath(project, pr.number), claimOf(pr, why ? `kept: ${why}` : "handled", running), "replace");
     return true;
   } catch (err) {
@@ -425,7 +463,7 @@ async function handleProject(project: string, w: Watcher): Promise<number[]> {
   const live = await w.d.live(project).catch(() => null);
   if (live === null) return [];
   const done: number[] = [];
-  for (const { pr, claim: c } of todo) if (await handleMerge(project, pr, c, live, w.d).catch(() => false)) done.push(pr.number);
+  for (const { pr, claim: c } of todo) if (await handleMerge(project, repo, pr, c, live, w.d).catch(() => false)) done.push(pr.number);
   return done;
 }
 

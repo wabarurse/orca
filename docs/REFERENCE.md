@@ -736,7 +736,17 @@ When a branch's PR is merged, the TUI notices within about 30 seconds (it asks
 is on GitHub; without `gh` nothing happens): it stops that branch's worker and
 reviewer, removes the worktree and the local and remote branch, deletes their
 transcripts, and tells the orchestrator, which tells you and starts whatever was
-waiting on that branch.
+waiting on that branch. Because main moved, the same notice reports the other
+registered tasks' open PRs: each is looked up once (`gh pr view`), and the ones
+GitHub now reports as conflicting (`mergeable` CONFLICTING or `mergeStateStatus`
+DIRTY) are listed, "conflicts with main now: #115 (collapse-tool-calls)", and
+their tasks become blocked ("conflicts with main after PR #N merged; rebase
+needed"; a ready-to-merge task loses its readiness). The orchestrator has each
+listed branch's worker rebase onto main before anything else, then runs the task
+flow again. PRs GitHub has not judged yet (`mergeable` UNKNOWN, or a failed
+lookup) are listed as "conflict state unknown", never as conflicts; otherwise the
+notice says "no open PRs conflict". Without any other registered PR the notice is
+unchanged.
 For original-checkout projects, cleanup never pulls or changes that checkout;
 update its default branch yourself. Legacy clone-based projects still fast-forward
 their managed checkout. The worktree is removed with `git worktree remove --force`,
