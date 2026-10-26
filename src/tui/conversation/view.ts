@@ -3,8 +3,8 @@
 
 import { existsSync, statSync } from "node:fs";
 import { open as openFile } from "node:fs/promises";
-import type { Entry } from "../../protocol/transcript";
-import { callText, resultText as summaryText, type ToolCall, type ToolOutcome } from "../../protocol/toolview";
+import type { Entry } from "../../protocol";
+import { callText, resultText as summaryText, type ToolCall, type ToolOutcome } from "../../protocol";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;

@@ -3,11 +3,11 @@
 // daemon's exit-watchdog / merge-watch wrappers over that answer.
 
 import { readdir } from "node:fs/promises";
-import { paths } from "../../config/config";
+import { paths } from "../../config";
 import { readRun, watchdog } from "./exits";
 import { mergeWatcher } from "./merges";
 import { sessionName, tmux } from "./runner";
-import type { AgentInfo } from "../../protocol/agents";
+import type { AgentInfo } from "../../protocol";
 
 /** The first transcript entry's ts: read from the file's first line only. */
 async function firstEntryTs(path: string): Promise<string | undefined> {

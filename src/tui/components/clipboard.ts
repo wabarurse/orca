@@ -1,6 +1,6 @@
 /** On-demand only. Embedded JXA uses system AppKit; no desktop automation,
  * Swift compilation, helper download, Bun runtime or native addon at runtime. */
-import { MAX_IMAGE_BYTES, validateImage } from "../../providers/images";
+import { MAX_IMAGE_BYTES, validateImage } from "../../providers";
 export interface ClipboardImage { bytes: Uint8Array; mime: string }
 export interface ClipboardAdapter {
   platform: string;

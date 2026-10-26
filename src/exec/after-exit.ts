@@ -1,8 +1,8 @@
 // The `orca agent-exit` follow-up: what the shell wrapper runs after an agent
 // process ended with a non-zero code, over the run records in core/tmux/exits.ts.
 
-import { stopTaskRun } from "../core/data/tasks/tasks";
-import { claim, dirtyCount, markEnded, noticeText, readRun, sendNotice, type RunInfo } from "../core/tmux/exits";
+import { stopTaskRun } from "../core/data/tasks";
+import { claim, dirtyCount, markEnded, noticeText, readRun, sendNotice, type RunInfo } from "../core/tmux";
 
 /**
  * The shell follow-up after a non-zero exit (`orca agent-exit`): a signal,

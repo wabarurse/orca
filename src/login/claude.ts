@@ -2,7 +2,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { paths } from "../config/config";
+import { paths } from "../config";
 import { loginOAuth, validateProfile, withCredentialLock, writeTokens, type Fetch, type LoginOptions, type OAuthTokens as ClaudeTokens } from "./oauth";
 export { validateProfile } from "./oauth";
 

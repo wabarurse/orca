@@ -4,23 +4,23 @@
 // calls a model or appends to the orchestrator's transcript.
 
 import { existsSync } from "node:fs";
-import { cancelSession, delay } from "../../tmux/cancellation";
-import { loadConfig, paths } from "../../../config/config";
-import { pendingImageInputs } from "../../data/images/images";
-import type { ImageRef } from "../../../protocol/images";
-import { pendingInput, put } from "../../data/inbox/inbox";
-import { contextWindow } from "../../../providers/catalog/context-window";
+import { cancelSession, delay } from "../../tmux";
+import { loadConfig, paths } from "../../../config";
+import { pendingImageInputs } from "../../data/images";
+import type { ImageRef } from "../../../protocol";
+import { pendingInput, put } from "../../data/inbox";
+import { contextWindow } from "../../../providers/catalog";
 import type { Orchestrator } from "./orchestrator";
 import { awaitAck, daemonPid, liveStatus, readStatus, request } from "./channel";
-import type { DaemonStatus } from "../../../protocol/daemon";
+import type { DaemonStatus } from "../../../protocol";
 import { liveReader, type LiveReader } from "./live";
-import type { LiveEvent } from "../../../protocol/daemon";
-import { projectIdentity, turnLocksHeld } from "../../data/projects/state";
-import { local, sessionName, tmux, type Runner } from "../../tmux/runner";
-import { pidAlive } from "../../data/storage-lock";
-import type { ToolCall, ToolOutcome } from "../../../protocol/toolview";
-import { open, type Transcript } from "../../data/transcripts/transcript";
-import { inputEpoch } from "../../data/inbox/user-input";
+import type { LiveEvent } from "../../../protocol";
+import { projectIdentity, turnLocksHeld } from "../../data/projects";
+import { local, sessionName, tmux, type Runner } from "../../tmux";
+import { pidAlive } from "../../data";
+import type { ToolCall, ToolOutcome } from "../../../protocol";
+import { open, type Transcript } from "../../data/transcripts";
+import { inputEpoch } from "../../data/inbox";
 
 /** How often a following client looks at the status and transcript. */
 export const FOLLOW_MS = 250;

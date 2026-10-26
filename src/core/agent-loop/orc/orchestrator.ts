@@ -1,12 +1,12 @@
-import { budget, type CompactOptions } from "../../data/memory/compaction";
-import { contextWindow, type ContextWindow } from "../../../providers/catalog/context-window";
-import { contextMessages } from "../../data/transcripts/transcript";
-import { pendingImageInputs } from "../../data/images/images";
-import type { ImageRef } from "../../../protocol/images";
-import { tryStorageLock } from "../../data/storage-lock";
-import { inputEpoch, advanceInputEpoch } from "../../data/inbox/user-input";
-import { Cancelled } from "../../tmux/cancellation";
-import { projectIdentity, turnLocks, turnLocksHeld, withProjectStateLock } from "../../data/projects/state";
+import { budget, type CompactOptions } from "../../data/memory";
+import { contextWindow, type ContextWindow } from "../../../providers/catalog";
+import { contextMessages } from "../../data/transcripts";
+import { pendingImageInputs } from "../../data/images";
+import type { ImageRef } from "../../../protocol";
+import { tryStorageLock } from "../../data";
+import { inputEpoch, advanceInputEpoch } from "../../data/inbox";
+import { Cancelled } from "../../tmux";
+import { projectIdentity, turnLocks, turnLocksHeld, withProjectStateLock } from "../../data/projects";
 // The orchestrator session: one turn is: drain its inbox, hand the messages to
 // the model as one user message, run the loop until it stops calling tools,
 // then drain the user's inbox for anything addressed to them. In production
@@ -14,24 +14,24 @@ import { projectIdentity, turnLocks, turnLocksHeld, withProjectStateLock } from 
 // tmux session; the TUI is a client of its files (src/core/agent-loop/orc/client.ts).
 
 import { existsSync } from "node:fs";
-import { assertMainCheckout, initializeWorkspace } from "../../data/projects/workspace";
-import { effectiveModel, projectModelResolver } from "../../data/projects/project-model";
-import { createAgent, type AgentDeps } from "../loop/agent";
-import type { Tracker } from "../../tmux/exits";
-import { loadConfig, paths, type Config } from "../../../config/config";
-import { consume, pending, pendingInput, put, userInEpoch } from "../../data/inbox/inbox";
-import type { Message } from "../../../protocol/inbox";
-import { rolePrompt } from "../../prompt/shared";
-import { effectiveFlow } from "../../data/projects/flow";
-import type { Provider } from "../../../providers/provider";
-import { registry } from "../../tools/index";
-import { toolsFor, type Tool } from "../../tools/registry";
-import { open, type Transcript } from "../../data/transcripts/transcript";
-import type { Entry } from "../../../protocol/transcript";
-import { RollingCompactor, type RollingOptions } from "../../data/memory/rolling-memory";
-import { orchestratorTask } from "../../tools/task";
-import { archiveBestEffort } from "../../data/memory/archive";
-import { startMemoryBackfill } from "../../data/memory/backfill";
+import { assertMainCheckout, initializeWorkspace } from "../../data/projects";
+import { effectiveModel, projectModelResolver } from "../../data/projects";
+import { createAgent, type AgentDeps } from "../loop";
+import type { Tracker } from "../../tmux";
+import { loadConfig, paths, type Config } from "../../../config";
+import { consume, pending, pendingInput, put, userInEpoch } from "../../data/inbox";
+import type { Message } from "../../../protocol";
+import { rolePrompt } from "../../prompt";
+import { effectiveFlow } from "../../data/projects";
+import type { Provider } from "../../../providers";
+import { registry } from "../../tools";
+import { toolsFor, type Tool } from "../../tools";
+import { open, type Transcript } from "../../data/transcripts";
+import type { Entry } from "../../../protocol";
+import { RollingCompactor, type RollingOptions } from "../../data/memory";
+import { orchestratorTask } from "../../tools";
+import { archiveBestEffort } from "../../data/memory";
+import { startMemoryBackfill } from "../../data/memory";
 
 export interface OrchestratorDeps {
   project: string;

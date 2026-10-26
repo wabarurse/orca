@@ -1,10 +1,10 @@
 // What a page's history holds, and how one entry is laid out on screen.
 
 import { renderBlock, renderLabelled, renderMarkdown } from "./markdown";
-import { sanitize, wrap } from "../components/text";
-import { fillRow, userFill } from "../components/style";
+import { sanitize, wrap } from "../components";
+import { fillRow, userFill } from "../components";
 import { groupRow, toolRows } from "./tools";
-import type { ToolView } from "../../protocol/toolview";
+import type { ToolView } from "../../protocol";
 
 /** A user message line ("> …" or its indented continuation) at `cols`: wrapped, every row on the user background, full width. */
 export function userRows(line: string, cols: number): string[] {

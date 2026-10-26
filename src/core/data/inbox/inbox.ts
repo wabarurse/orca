@@ -1,8 +1,8 @@
-import { imageContent, validateRefs } from "../images/images";
-import { format, type Message } from "../../../protocol/inbox";
+import { imageContent, validateRefs } from "../images";
+import { format, type Message } from "../../../protocol";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { withStorageLock } from "../storage-lock";
-import { projectIdentity, assertProjectIdentity, withProjectStateLock } from "../projects/state";
+import { projectIdentity, assertProjectIdentity, withProjectStateLock } from "../projects";
 import { inputEpoch } from "./user-input";
 // Every agent has its own inbox: a durable FIFO queue of files under
 // inbox/<agent>/. Anyone can put a message in anyone's inbox; only the owner
@@ -16,7 +16,7 @@ import { inputEpoch } from "./user-input";
 import { mkdirSync } from "node:fs";
 import { readdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../../config/config";
+import { paths } from "../../../config";
 
 const dir = (project: string, agent: string) => join(paths.inbox(project), agent);
 

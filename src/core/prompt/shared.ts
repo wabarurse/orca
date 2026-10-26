@@ -3,8 +3,8 @@
 // identity. Thresholds come from config and the review limit / dispatch switch
 // from the agent's project (project-flow.ts), so the prompt and the tools agree.
 
-import type { Config } from "../../config/config";
-import type { Role } from "../../protocol/transcript";
+import type { Config } from "../../config";
+import type { Role } from "../../protocol";
 import { ORCHESTRATOR } from "./orchestrator";
 import { REVIEWER } from "./reviewer";
 import { WORKER } from "./worker";

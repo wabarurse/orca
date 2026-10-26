@@ -2,7 +2,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readdir, rename, rm, rmdir } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
-import { paths, repositoryBinding, type RepositoryBinding } from "../../../config/config";
+import { paths, repositoryBinding, type RepositoryBinding } from "../../../config";
 import { command } from "../../proc";
 
 /** Canonical checkout root, retaining local config and files even when origin exists. */

@@ -2,7 +2,7 @@
 // launch environment without exposing credentials in process arguments or tmux options.
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../config/config";
+import { paths } from "../../config";
 
 const WINDOW_ENV = new Set(["TMUX", "TMUX_PANE", "PWD", "OLDPWD", "SHLVL", "_"]);
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;

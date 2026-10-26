@@ -1,5 +1,5 @@
-import { allTasks, startTaskRun, stopTaskRun, invalidateTaskBranch } from "../data/tasks/tasks";
-import type { Task, TaskRun } from "../../protocol/tasks";
+import { allTasks, startTaskRun, stopTaskRun, invalidateTaskBranch } from "../data/tasks";
+import type { Task, TaskRun } from "../../protocol";
 import { Cancelled } from "./cancellation";
 // Exit notices: when a worker or reviewer stops without reporting, the
 // orchestrator hears about it through its inbox, at most once per run.
@@ -16,12 +16,12 @@ import { Cancelled } from "./cancellation";
 import { existsSync, mkdirSync } from "node:fs";
 import { open as openFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../config/config";
-import { pidAlive } from "../data/storage-lock";
-import { put } from "../data/inbox/inbox";
+import { paths } from "../../config";
+import { pidAlive } from "../data";
+import { put } from "../data/inbox";
 import { run } from "../proc";
 import { SETTLED_EXIT, slug } from "./runner";
-import type { Role } from "../../protocol/transcript";
+import type { Role } from "../../protocol";
 
 export interface RunState {
   run: string;

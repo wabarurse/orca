@@ -14,16 +14,16 @@
 // A local answer's history line waits behind any streaming partial in app.ts.
 
 import { stat } from "node:fs/promises";
-import { paths } from "../../config/config";
-import * as store from "../../core/data/inbox/questions";
+import { paths } from "../../config";
+import { questions as store } from "../../core/data/inbox";
 import * as ed from "./editor";
 import type { EditState } from "./editor";
-import type { Key } from "../components/keys";
-import type { Line } from "../conversation/lines";
-import { dim, plainText } from "../components/text";
+import type { Key } from "../components";
+import type { Line } from "../conversation";
+import { dim, plainText } from "../components";
 import type { QuestionMode, QuestionView } from "./render";
-import { answeredLine, questionReply, type AskedLookup } from "../conversation/restore";
-import { limits, type Question } from "../../protocol/questions";
+import { answeredLine, questionReply, type AskedLookup } from "../conversation";
+import { limits, type Question } from "../../protocol";
 
 /** What the TUI reads and closes questions with; tests stub it. `stamp` changes whenever the questions dir does. */
 export interface QuestionStore {

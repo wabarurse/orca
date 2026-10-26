@@ -5,7 +5,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { paths, repositoryBinding } from "../../../config/config";
+import { paths, repositoryBinding } from "../../../config";
 import { lockHeld } from "../storage-lock";
 
 // Separate conversations using one original checkout must never run overlapping turns.

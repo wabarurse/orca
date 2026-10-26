@@ -8,7 +8,7 @@
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { withStorageLock } from "../storage-lock";
-import type { AppendGuard, Entry, NewEntry } from "../../../protocol/transcript";
+import type { AppendGuard, Entry, NewEntry } from "../../../protocol";
 import { publish, disk, type Storage } from "./transcript-storage";
 import { dirname } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";

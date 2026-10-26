@@ -1,11 +1,11 @@
 import { attachmentSchema, forwardImages } from "./attachments";
-import { imageContent } from "../data/images/images";
-import type { ImageRef } from "../../protocol/images";
-import { delay, publishLaunch } from "../tmux/cancellation";
-import { prepareTaskRun, stopTaskRun, taskForRun } from "../data/tasks/tasks";
-import { paths } from "../../config/config";
-import { local, sessionId, type Runner } from "../tmux/runner";
-import { open } from "../data/transcripts/transcript";
+import { imageContent } from "../data/images";
+import type { ImageRef } from "../../protocol";
+import { delay, publishLaunch } from "../tmux";
+import { prepareTaskRun, stopTaskRun, taskForRun } from "../data/tasks";
+import { paths } from "../../config";
+import { local, sessionId, type Runner } from "../tmux";
+import { open } from "../data/transcripts";
 import type { Tool, ToolContext } from "./registry";
 
 // Orchestrator-only. Seeds the agent's transcript with the prompt, then starts

@@ -1,8 +1,8 @@
 // /review-rounds and /dynamic-dispatch: the project's task-flow settings.
 
-import { validRounds, MAX_REVIEW_ROUNDS } from "../../config/config";
-import { projectIdentity } from "../../core/data/projects/state";
-import { effectiveFlow, saveProjectFlow } from "../../core/data/projects/flow";
+import { validRounds, MAX_REVIEW_ROUNDS } from "../../config";
+import { projectIdentity } from "../../core/data/projects";
+import { effectiveFlow, saveProjectFlow } from "../../core/data/projects";
 
 export const REVIEW_ROUNDS_USAGE = `usage: /review-rounds [n]  (n = 0 to ${MAX_REVIEW_ROUNDS}; 0 skips review and goes straight to ci)`;
 

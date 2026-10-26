@@ -1,6 +1,6 @@
 import { mkdir, open, readdir, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../../config/config";
+import { paths } from "../../../config";
 
 const RETENTION_MS = 7 * 86400_000;
 const STORED_BYTES = 256 * 1024 * 1024;

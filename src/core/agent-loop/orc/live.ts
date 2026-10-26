@@ -13,10 +13,10 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { appendFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { delay } from "../../tmux/cancellation";
-import { paths } from "../../../config/config";
-import type { ToolCall, ToolOutcome } from "../../../protocol/toolview";
-import type { LiveEvent, LiveKey, TurnEvent } from "../../../protocol/daemon";
+import { delay } from "../../tmux";
+import { paths } from "../../../config";
+import type { ToolCall, ToolOutcome } from "../../../protocol";
+import type { LiveEvent, LiveKey, TurnEvent } from "../../../protocol";
 
 /** Bytes of live events per turn before text stops streaming (tools are still logged). */
 export const LIVE_CAP_BYTES = 1 << 20;

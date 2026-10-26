@@ -2,10 +2,10 @@
 // behind the Anthropic SDK, or Codex tokens behind the OpenAI client.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { loadConfig } from "../config/config";
-import { activeProfile, type ProviderName } from "../login/accounts";
-import { CLAUDE_BETAS, claudeCredentials, readClaudeTokens } from "../login/claude";
-import { codexCredentials, readCodexTokens } from "../login/codex";
+import { loadConfig } from "../config";
+import { activeProfile, type ProviderName } from "../login";
+import { CLAUDE_BETAS, claudeCredentials, readClaudeTokens } from "../login";
+import { codexCredentials, readCodexTokens } from "../login";
 import { anthropic } from "./anthropic";
 import { openai } from "./openai";
 import type { Provider } from "./provider";

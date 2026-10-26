@@ -2,14 +2,14 @@
 
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { loadConfig, paths, saveConfig } from "../../config/config";
-import { describeOwner, lockOwner, tryStorageLock } from "../../core/data/storage-lock";
-import { conversationTurnLock, withProjectStateLock } from "../../core/data/projects/state";
-import { validProjectName } from "../../core/data/projects/registry";
-import { removeProjectWorktrees } from "../../core/data/projects/workspace";
-import { purgeProject } from "../../core/data/memory/archive";
-import { killProjectSession, liveAgentsOrNull } from "../../core/tmux/liveness";
-import { stopDaemon } from "../../core/agent-loop/orc/client";
+import { loadConfig, paths, saveConfig } from "../../config";
+import { describeOwner, lockOwner, tryStorageLock } from "../../core/data";
+import { conversationTurnLock, withProjectStateLock } from "../../core/data/projects";
+import { validProjectName } from "../../core/data/projects";
+import { removeProjectWorktrees } from "../../core/data/projects";
+import { purgeProject } from "../../core/data/memory";
+import { killProjectSession, liveAgentsOrNull } from "../../core/tmux";
+import { stopDaemon } from "../../core/agent-loop/orc";
 
 export interface DeleteOptions {
   /** Live agent windows; defaults to the tmux session's. Tests replace it. */

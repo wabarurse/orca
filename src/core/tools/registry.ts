@@ -1,10 +1,10 @@
 // What a tool is and which tools each role gets. The implementations are
-// mounted in index.ts; every tool file imports its types from here.
+// mounted in mount.ts; every tool file imports its types from here.
 
 import type { Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
-import type { Provider } from "../../providers/provider";
-import type { RequestSettings } from "../../providers/catalog/settings";
-import type { Role } from "../../protocol/transcript";
+import type { Provider } from "../../providers";
+import type { RequestSettings } from "../../providers/catalog";
+import type { Role } from "../../protocol";
 
 export interface ToolContext {
   signal?: AbortSignal;

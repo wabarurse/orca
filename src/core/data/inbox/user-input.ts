@@ -1,7 +1,7 @@
 // Submission ordering, not wall-clock/persistence ordering. The barrier is
 // published synchronously so same-tick UI, CLI and question sends see it.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { paths } from "../../../config/config";
+import { paths } from "../../../config";
 
 export function inputEpoch(project: string): string {
   try { return readFileSync(`${paths.project(project)}/input-epoch`, "utf8"); }

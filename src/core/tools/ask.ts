@@ -1,4 +1,4 @@
-import { cleanQuestions, ask as enqueue } from "../data/inbox/questions";
+import { cleanQuestions, ask as enqueue } from "../data/inbox";
 import type { Tool } from "./registry";
 
 // Orchestrator-only. Queues questions for the user and returns at once; the

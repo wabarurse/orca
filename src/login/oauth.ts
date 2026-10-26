@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { paths } from "../config/config";
+import { paths } from "../config";
 
 export interface OAuthTokens {
   accessToken: string;

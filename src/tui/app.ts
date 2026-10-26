@@ -1,13 +1,13 @@
-import { ConversationSelection, hitRow } from "./screen/selection";
-import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./components/clipboard";
-import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images/images";
-import type { ImageRef } from "../protocol/images";
-import { contextStatus, dispatchStatus, reviewStatus } from "./header/context-status";
-import { listTasks } from "../core/data/tasks/tasks";
-import { taskInboxLines, type TaskInboxData } from "./footer/task-inbox";
-import { cancelSession } from "../core/tmux/cancellation";
-import { effortCommand, fastCommand, effectiveSettings, setEffort } from "../core/data/projects/project-settings";
-import type { RequestSettings } from "../providers/catalog/settings";
+import { ConversationSelection, hitRow } from "./screen";
+import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./components";
+import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
+import type { ImageRef } from "../protocol";
+import { contextStatus, dispatchStatus, reviewStatus } from "./header";
+import { listTasks } from "../core/data/tasks";
+import { taskInboxLines, type TaskInboxData } from "./footer";
+import { cancelSession } from "../core/tmux";
+import { effortCommand, fastCommand, effectiveSettings, setEffort } from "../core/data/projects";
+import type { RequestSettings } from "../providers/catalog";
 // Sticky top and bottom bars around a scrollable conversation. Only changed
 // screen rows are redrawn; on exit the active transcript is printed back to
 // the terminal's normal scrollback. One page per orchestrator: Ctrl+N starts one named
@@ -16,44 +16,44 @@ import type { RequestSettings } from "../providers/catalog/settings";
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, login, useAccount } from "./commands/accounts";
-import { deleteProject, type DeleteOptions } from "./commands/project";
-import { listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux/liveness";
-import type { AgentInfo } from "../protocol/agents";
-import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects/registry";
-import type { ProjectEntry } from "../protocol/projects";
-import { effortChoices, modelChoices, setModel, type Choice } from "./commands/model";
-import { reviewRounds, dynamicDispatch, DYNAMIC_DISPATCH_USAGE, REVIEW_ROUNDS_USAGE } from "./commands/settings";
-import { paths, validRounds } from "../config/config";
-import { projectIdentity } from "../core/data/projects/state";
-import { validateModel, effectiveModel } from "../core/data/projects/project-model";
-import { effectiveFlow, type FlowSettings } from "../core/data/projects/flow";
-import type { Message } from "../protocol/inbox";
-import type { Orchestrator } from "../core/agent-loop/orc/orchestrator";
-import type { Entry } from "../protocol/transcript";
+import { accountChoices, login, useAccount } from "./commands";
+import { deleteProject, type DeleteOptions } from "./commands";
+import { listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
+import type { AgentInfo } from "../protocol";
+import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
+import type { ProjectEntry } from "../protocol";
+import { effortChoices, modelChoices, setModel, type Choice } from "./commands";
+import { reviewRounds, dynamicDispatch, DYNAMIC_DISPATCH_USAGE, REVIEW_ROUNDS_USAGE } from "./commands";
+import { paths, validRounds } from "../config";
+import { projectIdentity } from "../core/data/projects";
+import { validateModel, effectiveModel } from "../core/data/projects";
+import { effectiveFlow, type FlowSettings } from "../core/data/projects";
+import type { Message } from "../protocol";
+import type { Orchestrator } from "../core/agent-loop/orc";
+import type { Entry } from "../protocol";
 import { format } from "node:util";
-import { follow, parts } from "./conversation/view";
-import * as ed from "./footer/editor";
-import type { Key } from "./components/keys";
-import { historyRows, type Line, type Shown } from "./conversation/lines";
+import { follow, parts } from "./conversation";
+import { editor as ed } from "./footer";
+import type { Key } from "./components";
+import { historyRows, type Line, type Shown } from "./conversation";
 import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } from "./history";
-import { MarkdownStream } from "./conversation/mdstream";
-import { helpLines, type CommandHelp } from "./footer/help";
-import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer/questions";
-import { replyLine, reportLine, restore, unresolvedCalls, userLines } from "./conversation/restore";
-import { bold, dim, fit, sanitize } from "./components/text";
-import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer/render";
-import type { Terminal } from "./components/term";
-import { shimmer } from "./components/shimmer";
-import { chapterRows, headerHeight } from "./header/chrome";
-import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./conversation/anchor";
-import { Calls, collapseCalls, groupStart, groupStarts } from "./conversation/tools";
-import { agentRow, reselect } from "./header/agent-clock";
-import type { ToolCall, ToolOutcome } from "../protocol/toolview";
-import { stickyRows, stickyUpdate, type StickyScreen } from "./screen/sticky";
+import { MarkdownStream } from "./conversation";
+import { helpLines, type CommandHelp } from "./footer";
+import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
+import { replyLine, reportLine, restore, unresolvedCalls, userLines } from "./conversation";
+import { bold, dim, fit, sanitize } from "./components";
+import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
+import type { Terminal } from "./components";
+import { shimmer } from "./components";
+import { chapterRows, headerHeight } from "./header";
+import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./conversation";
+import { Calls, collapseCalls, groupStart, groupStarts } from "./conversation";
+import { agentRow, reselect } from "./header";
+import type { ToolCall, ToolOutcome } from "../protocol";
+import { stickyRows, stickyUpdate, type StickyScreen } from "./screen";
 
-export { helpLines } from "./footer/help";
-export { lineRows, type Line } from "./conversation/lines";
+export { helpLines } from "./footer";
+export { lineRows, type Line } from "./conversation";
 
 export interface Page {
   /** The project id: its folder under ~/.orca/projects. Never changes. */
@@ -1060,13 +1060,13 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   /** The record as lines. While the turn runs (`running`), the newest entry's calls without a result are left out: the live view shows them running, and the record says how they ended once it does. */
-  private restored(page: Page, entries: Entry[], running: boolean, asked: import("./conversation/restore").AskedLookup): Line[] {
+  private restored(page: Page, entries: Entry[], running: boolean, asked: import("./conversation").AskedLookup): Line[] {
     const omit = running ? unresolvedCalls(entries) : undefined;
     if (omit?.size) this.hidRunning.add(page); else this.hidRunning.delete(page);
     return restore(entries, this.deps.term.cols, Infinity, asked, omit);
   }
 
-  private restorePage(page: Page, asked: import("./conversation/restore").AskedLookup, running: boolean): void {
+  private restorePage(page: Page, asked: import("./conversation").AskedLookup, running: boolean): void {
     const entries = page.orch.entries?.() ?? [];
     // All saved conversation must be scrollable before exit, including originals
     // before model compaction. Cache rendered rows in viewport(); only the visible

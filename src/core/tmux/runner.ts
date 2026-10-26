@@ -11,10 +11,10 @@ import { command, run } from "../proc";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { $ } from "bun";
-import { paths, repositoryBinding } from "../../config/config";
-import { assertMainCheckout, assertWorktree } from "../data/projects/workspace";
+import { paths, repositoryBinding } from "../../config";
+import { assertMainCheckout, assertWorktree } from "../data/projects";
 import { launchEnvironment } from "./launch-environment";
-import type { Role } from "../../protocol/transcript";
+import type { Role } from "../../protocol";
 
 export interface StartOptions {
   /** Exact launch, published before this session becomes selectable. */

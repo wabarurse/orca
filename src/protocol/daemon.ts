@@ -3,7 +3,7 @@
 // running turn): the daemon's published status, the request/ack messages and the
 // live-file events.
 
-import type { ContextWindow } from "../providers/catalog/context-window";
+import type { ContextWindow } from "../providers/catalog";
 import type { ToolCall, ToolOutcome } from "./toolview";
 
 export type DaemonState = "idle" | "turn" | "stopped";

@@ -1,14 +1,14 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { budget, contextLimit, estimate, outputCap, retainedImages, type ContextDeps } from "./compaction";
 import { archiveTranscript, contextEpoch, transcriptEntries } from "./archive";
-import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
-import type { Provider } from "../../../providers/provider";
+import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
+import type { Provider } from "../../../providers";
 import { summarizeOlder, taskSnapshot } from "./rolling-summary";
-import type { Task } from "../../../protocol/tasks";
+import type { Task } from "../../../protocol";
 import { paired } from "./tool-pairs";
-import type { Transcript } from "../transcripts/transcript";
-import type { RollingMemory } from "../../../protocol/transcript";
-import { inputEpoch } from "../inbox/user-input";
+import type { Transcript } from "../transcripts";
+import type { RollingMemory } from "../../../protocol";
+import { inputEpoch } from "../inbox";
 
 export interface RollingOptions {
   loadProvider?: () => Promise<Provider>;

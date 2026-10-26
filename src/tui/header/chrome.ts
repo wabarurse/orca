@@ -1,6 +1,6 @@
 // Chapter rules for the pinned header. Labels are display-only; navigation and
 // storage continue to use the immutable project IDs held by App.
-import { bold, dim, fit, sanitize, visibleLength, wrap } from "../components/text";
+import { bold, dim, fit, sanitize, visibleLength, wrap } from "../components";
 import { finRows } from "./whale";
 
 export interface Tab { name: string; busy?: boolean }

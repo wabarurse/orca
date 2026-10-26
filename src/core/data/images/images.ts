@@ -6,11 +6,11 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ImageBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { paths } from "../../../config/config";
-import { legacy } from "../../../config/legacy";
-import { MAX_IMAGE_BYTES, validateImage } from "../../../providers/images";
-import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
-import type { ImageInput, ImageRef } from "../../../protocol/images";
+import { paths } from "../../../config";
+import { legacy } from "../../../config";
+import { MAX_IMAGE_BYTES, validateImage } from "../../../providers";
+import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
+import type { ImageInput, ImageRef } from "../../../protocol";
 
 export const MAX_IMAGES = 4;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;

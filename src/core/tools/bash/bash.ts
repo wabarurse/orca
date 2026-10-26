@@ -1,5 +1,5 @@
 import { killGroup } from "../../proc";
-import { loadConfig } from "../../../config/config";
+import { loadConfig } from "../../../config";
 import { outputArtifact, OutputPreview } from "./output";
 import type { Tool } from "../registry";
 

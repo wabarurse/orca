@@ -2,8 +2,8 @@
 // a branch (which can have both a worker and a reviewer).
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { stopTaskRun } from "../data/tasks/tasks";
-import { paths } from "../../config/config";
+import { stopTaskRun } from "../data/tasks";
+import { paths } from "../../config";
 
 export class Cancelled extends Error {
   constructor() { super("cancelled by user"); }

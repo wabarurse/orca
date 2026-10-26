@@ -217,9 +217,11 @@ mergeability), so unknown is not clean.
 
 ## TypeScript / UI contract
 
-Import the operations from `src/core/data/tasks/tasks.ts`; the record types
-(`TaskRow`, `TaskStatus`/`taskStatuses`/`taskStatusLabels`, `TaskPR`, `Task`,
-`PRObservation`) and `taskPR` are `src/protocol/tasks.ts`:
+The operations live in `src/core/data/tasks/tasks.ts` (imported through the
+`src/core/data/tasks` barrel); the record types (`TaskRow`,
+`TaskStatus`/`taskStatuses`/`taskStatusLabels`, `TaskPR`, `Task`,
+`PRObservation`) and `taskPR` are `src/protocol/tasks.ts` (the `src/protocol`
+barrel). The layout and the barrel rule are enforced by `src/organization.test.ts`:
 
 * `listTasks(project): Promise<TaskRow[]>` — active rows, registration order.
   `TaskRow` contains only `id`, `name`, `summary`, `branch`, `status`, optional

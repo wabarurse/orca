@@ -1,5 +1,5 @@
-import { contextWindow, type ContextWindow } from "../../providers/catalog/context-window";
-import { validRounds } from "../../config/config";
+import { contextWindow, type ContextWindow } from "../../providers/catalog";
+import { validRounds } from "../../config";
 /** One-decimal trimmed k below 1M; M from 1M, including values that would round to 1000k. */
 const k = (n: number) => {
   const thousands = Number((n / 1000).toFixed(1));

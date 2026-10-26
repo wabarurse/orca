@@ -1,5 +1,5 @@
-import { imageLabels } from "../../core/data/images/images";
-import type { Message } from "../../protocol/inbox";
+import { imageLabels } from "../../core/data/images";
+import type { Message } from "../../protocol";
 // Rebuild a page's history from its orchestrator's transcript, like
 // `claude --continue` or `codex resume`: what the page showed live, in the
 // same form. User messages as "> …", agents' messages as "From <id>: …", the
@@ -39,12 +39,12 @@ import type { Message } from "../../protocol/inbox";
 //   to …", a rename, "orchestrator was not running; restarted") are not even page lines: App
 //   shows them as one transient row above the composer (`App.note`).
 
-import { parseFormatted } from "../../protocol/inbox";
-import type { Entry, MessageEntry } from "../../protocol/transcript";
-import { interruptedView, toolView, type ToolOutcome } from "../../protocol/toolview";
+import { parseFormatted } from "../../protocol";
+import type { Entry, MessageEntry } from "../../protocol";
+import { interruptedView, toolView, type ToolOutcome } from "../../protocol";
 import { historyRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
-import { plainText, bold, dim, wrap } from "../components/text";
+import { plainText, bold, dim, wrap } from "../components";
 
 /** Default budget for bounded previews; the live page explicitly restores all rows. */
 export const MAX_RESTORED_ROWS = 200;
