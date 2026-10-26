@@ -143,8 +143,8 @@ describe("rolePrompt", () => {
     for (const [role, maxReviewRounds] of [["orchestrator", 0], ["orchestrator", 1], ["orchestrator", 100], ["worker", 1], ["reviewer", 1]] as const) {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
       expect(p.split("\n").filter((l) => l.startsWith("- ")).length).toBeGreaterThan(3);
-      // Includes the mandatory structured review/CI dispatch protocol; the orchestrator also carries the one-sentence history pointer.
-      expect(p.length).toBeLessThan(role === "orchestrator" ? 2400 : 2200);
+      // Includes the mandatory structured review/CI dispatch protocol; the orchestrator also carries the one-sentence history and web_search pointers.
+      expect(p.length).toBeLessThan(role === "orchestrator" ? 2500 : 2200);
       expect(p).not.toMatch(/\{\w+\}/);
     }
   });
@@ -184,6 +184,15 @@ test("check ownership survives review limits, dynamic dispatch and publication h
   expect(task.spec.description).toContain("matching the worker's relevant-check evidence to the current clean PR head");
 });
 
+test("every role is pointed at web_search for finding sources and curl only for a known URL", () => {
+  for (const role of ["orchestrator", "worker", "reviewer"] as const) {
+    const p = rolePrompt(role, defaults);
+    const lines = p.split("\n").filter((l) => l.includes("web_search"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe("- Use `web_search` to find documentation, sources or current facts; use curl only to fetch a specific, already-known URL.");
+  }
+});
+
 test("all production review flows require structured intent including zero-review CI", () => {
   for (const maxReviewRounds of [0, 1, 2]) {
     const prompt = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
@@ -214,7 +223,7 @@ describe("dynamic dispatch", () => {
       expect(off).not.toContain("Splitting work into PRs");
       expect(on).toBe(`${off}\n\n${DYNAMIC_DISPATCH}`);
       // The base keeps its budget; the section sits outside it.
-      expect(off.length).toBeLessThan(2400);
+      expect(off.length).toBeLessThan(2500);
       expect(on).not.toMatch(/\{\w+\}/);
     }
   });
