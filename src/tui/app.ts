@@ -4,7 +4,7 @@ import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput 
 import type { ImageRef } from "../protocol";
 import { contextStatus, dispatchStatus, reviewStatus } from "./header";
 import { listTasks } from "../core/data/tasks";
-import { taskInboxLines, type TaskInboxData } from "./footer";
+import { refreshTaskInboxData, taskInboxLines, type TaskInboxData } from "./footer";
 import { cancelSession } from "../core/tmux";
 import { effortCommand, fastCommand, effectiveSettings, setEffort } from "../core/data/projects";
 import type { RequestSettings } from "../providers/catalog";
@@ -179,7 +179,6 @@ interface AgentsTimer { menu: ActiveMenu; readAt: number; reading: boolean; stop
 interface TaskInboxState extends TaskInboxData {
   page: Page;
   top: number;
-  pending?: Promise<void>;
   content?: { cols: number; lines: string[]; heading?: string };
 }
 
@@ -1436,7 +1435,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     void this.refreshTaskInbox();
     for (const p of this.pages) {
       void this.keepDaemon(p.project, p);
-      void Promise.all(watchers.map(w => w(p.project).catch(() => {}))).then(() => this.refreshTaskInbox(p));
+      if (watchers.length) void Promise.all(watchers.map(w => w(p.project).catch(() => {}))).then(() => this.refreshTaskInbox(p));
     }
   }
 
@@ -1940,25 +1939,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   private refreshTaskInbox(page = this.page): Promise<void> {
     const view = this.taskInbox;
     if (!view || view.page !== page || !this.taskInboxCurrent(view)) return Promise.resolve();
-    if (view.pending) return view.pending;
-    view.loading = true;
-    view.content = undefined;
-    // Promise boundary also catches synchronous failures in an injected store.
-    view.pending = Promise.resolve().then(() => (this.deps.tasks ?? listTasks)(view.page.project))
-      .then(rows => {
-        if (!this.taskInboxCurrent(view)) return;
-        view.rows = rows;
-        view.error = undefined;
-      }, err => {
-        if (this.taskInboxCurrent(view)) view.error = err instanceof Error ? err.message : String(err);
-      }).finally(() => {
-        view.pending = undefined;
-        view.loading = false;
-        view.content = undefined;
-        if (this.taskInboxCurrent(view)) this.draw();
-      });
-    this.draw();
-    return view.pending;
+    return refreshTaskInboxData(view, () => (this.deps.tasks ?? listTasks)(page.project),
+      () => this.taskInboxCurrent(view), () => { view.content = undefined; this.draw(); });
   }
 
   private taskInboxView(): TaskInboxView | null {

@@ -18,7 +18,7 @@ import { fileStore, type QuestionStore } from "./questions";
 import { paths, saveConfig } from "../../config/config";
 import { ask, all as allQuestions } from "../../core/data/inbox/questions";
 import type { Question } from "../../protocol/questions";
-import { archiveMergedTasks, getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, startTaskRun, stopTaskRun } from "../../core/data/tasks/tasks";
+import { archiveMergedTasks, getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun } from "../../core/data/tasks/tasks";
 import { taskStatuses, type TaskPR, type TaskRow } from "../../protocol/tasks";
 
 const pr: TaskPR = { repository: "owner/repo", number: 62, url: "https://github.com/owner/repo/pull/62", head: "a".repeat(40) };
@@ -293,6 +293,49 @@ test("late refresh success/failure after closing or switching cannot repopulate 
   expect(app.frame().inbox?.state).toBe("ready");
 });
 
+test("automatic polls publish external registry changes while Inbox stays open, including an in-flight snapshot", async () => {
+  const held = deferred<void>();
+  let hold = false, captured = false;
+  const ui = await setup({ pollMs: 20, watchdog: undefined, merges: undefined, tasks: async project => {
+    const rows = await listTasks(project);
+    if (hold && project === "a") { hold = false; captured = true; await held.promise; }
+    return rows;
+  } }), { app, screen } = ui;
+  await app.openPage("b");
+  await registerTask("b", { name: "Background only", summary: "Hidden", branch: "feat/b", authorized: true });
+  await app.onKey({ name: "z", ctrl: true });
+  const page = app.page!;
+  const task = await registerTask("a", { name: "Live task", summary: "External registry", branch: "feat/a", authorized: true });
+  app.input = { text: "keep draft", cursor: 3 };
+  await ui.command();
+  await until(() => screen.text().includes("Live task"));
+  hold = true;
+  await until(() => captured);
+  await setTaskAttention("a", task.id, { kind: "blocked", reason: "External update" });
+  // Simulate the next poll arriving while a pre-update snapshot is still pending.
+  ui.poll();
+  held.resolve();
+  await until(() => screen.text().includes("blocked"));
+  expect(app.page).toBe(page);
+  expect(app.frame().inbox?.section).toBe("tasks");
+  expect(screen.text()).not.toContain("Background only");
+  expect(app.input).toEqual({ text: "keep draft", cursor: 3 });
+  expect(ui.calls().turns).toBe(0);
+});
+
+test("poll invalidations during a snapshot trigger one trailing read without another poll or reopening", async () => {
+  const held = deferred<TaskRow[]>();
+  let reads = 0;
+  const ui = await setup({ watchdog: undefined, merges: undefined, tasks: async () => ++reads === 1 ? held.promise : [row("External update", "working")] });
+  await ui.command(); await until(() => reads === 1);
+  ui.poll(); ui.poll();
+  expect(reads).toBe(1);
+  held.resolve([row("Old snapshot")]);
+  await until(() => ui.screen.text().includes("External update"));
+  expect(reads).toBe(2);
+  expect(text(ui.app)).not.toContain("Old snapshot");
+});
+
 test("query errors are visible even scrolled, refresh is single-flight, and retries recover without writes", async () => {
   const reads: ReturnType<typeof deferred<TaskRow[]>>[] = [];
   const ui = await setup({ tasks: () => { const read = deferred<TaskRow[]>(); reads.push(read); return read.promise; } }), { app } = ui;
@@ -301,7 +344,7 @@ test("query errors are visible even scrolled, refresh is single-flight, and retr
   ui.poll(); await app.onKey({ name: "char", text: "r" }); await Bun.sleep(0); expect(reads).toHaveLength(1);
   reads[0]!.reject(new Error("corrupt registry")); await until(() => text(app).includes("corrupt registry"));
   expect(text(app)).not.toContain("No active registered tasks");
-  await app.onKey({ name: "char", text: "r" }); await until(() => reads.length === 2);
+  await until(() => reads.length === 2); // the invalidation during the failed read was retained
   reads[1]!.resolve(Array.from({ length: 30 }, (_, i) => row(`retained ${i}`)));
   await until(() => app.frame().inbox?.state === "ready");
   await app.onKey({ name: "end" });
