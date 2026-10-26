@@ -65,8 +65,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
                      answering
   pgup/pgdn / wheel  scroll conversation, help or inbox tasks (mouse reporting
                      required)
-  ctrl+t             expand or collapse runs of tool calls (one summary line
-                     each by default)
+  click ▸            open a run of tool calls (▾ when open); click again to
+                     fold it
   ctrl+c             cancel selected turn/agent; twice within 2s exits,
                      keeping history
   esc                close panel, else leave agent view, else clear input
@@ -105,7 +105,7 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 inbox 1
-help                           1–8/121
+help                           1–8/120
   conversation
   /refresh
     reload shared local state; active
@@ -193,10 +193,9 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   pgup/pgdn / wheel
     scroll conversation, help or inbox
     tasks (mouse reporting required)
-  ctrl+t
-    expand or collapse runs of tool
-    calls (one summary line each by
-    default)
+  click ▸
+    open a run of tool calls (▾ when
+    open); click again to fold it
   ctrl+c
     cancel selected turn/agent; twice
     within 2s exits, keeping history

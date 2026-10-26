@@ -77,8 +77,6 @@ export interface Page {
   view: { name: string; lines: Line[]; leave: () => void; live: boolean; calls: Calls } | null;
   /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
   calls: Calls;
-  /** Ctrl+T: runs of finished calls show call by call instead of folded into one summary line (tools.ts `collapseCalls`). Per page, not saved. */
-  toolsExpanded?: boolean;
   model?: string;
   settings?: RequestSettings;
   agentCount?: number;
@@ -529,16 +527,16 @@ export class App {
   /** New lines onto the screen: appended rows, unless they fold into the run of calls already drawn (its summary row changes), which needs a reprint. */
   private append(page: Page, lines: Line[], previous?: Line): void {
     const run = previous === undefined ? lines : [previous, ...lines];
-    if (!page.toolsExpanded && collapseCalls(run).length !== run.length) this.needReprint = true;
+    if (collapseCalls(run).length !== run.length) this.needReprint = true;
     else this.pending.push(...this.rows(lines, previous));
   }
 
   /** Groups a click opened, by the start index of their run, per history (a page's or a view's lines); a new history (syncTranscript) carries them over by order. */
   private readonly openGroups = new WeakMap<readonly Line[], Set<number>>();
 
-  /** The lines a page shows (its agent view's, else its own): runs of finished calls folded into one line each (open ones with their calls under it) unless the page is expanded (Ctrl+T) or `all` is asked. */
+  /** The lines a page shows (its agent view's, else its own): runs of finished calls folded into one line each, the clicked-open ones with their calls under it; `all` leaves every call as it is (the quit replay). */
   private shown(page: Page, lines = page.view?.lines ?? page.lines, all = false): readonly Shown[] {
-    return page.toolsExpanded || all ? lines : collapseCalls(lines, this.openGroups.get(lines));
+    return all ? lines : collapseCalls(lines, this.openGroups.get(lines));
   }
 
   /** What the screen shows for the active page: its agent view or its history. */
@@ -1755,25 +1753,13 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
     ["x", () => this.switchPage(1)],
-    ["t", () => this.toggleTools()],
   ]);
-
-  /** Ctrl+T: the page's runs of finished tool calls call by call, or folded back into one summary line each (the default). */
-  private toggleTools(): void {
-    const page = this.page;
-    if (!page) return;
-    page.toolsExpanded = !page.toolsExpanded;
-    this.openGroups.delete(page.view?.lines ?? page.lines); // the page-wide view starts afresh: folded, or every call
-    this.selection.clear(); // the rows under it moved
-    this.scrollAnchor = undefined; // captured in the other view's line indexes: a resize would resolve it there
-    this.reprint();
-  }
 
   /**
    * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
    * 0. clear: local Cancel-default confirmation owns all keys; navigation cancels it first;
    * 1. keyEcho: /keys echoes every key except Ctrl+C until Esc;
-   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys, Ctrl+T expands/collapses tool calls;
+   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/model, /agents, /accounts) is open;
    * 5. help: scroll or dismiss the explicit help panel, preserving the composer;
@@ -1823,7 +1809,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     return at.part === 0 ? groupStart(lines, shown, at.line) : undefined;
   }
 
-  /** A click on a folded group's summary line opens it (its calls under the summary), or closes it again. Ctrl+T's page-wide view is separate. */
+  /** A click on a folded group's summary line opens it (its calls under the summary), or closes it again: the only way to see a run's calls. */
   private toolClick(k: Key): void {
     const screen = this.click(k) && this.clickable(), page = this.page;
     const hit = screen && page && hitRow(k, screen, this.screenHistory.length);
@@ -1833,7 +1819,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const open = this.openGroups.get(lines) ?? new Set<number>();
     if (!open.delete(start)) open.add(start);
     this.openGroups.set(lines, open);
-    this.scrollAnchor = undefined; // captured in the other layout's rows
+    this.selection.clear(); // the rows under it moved
     this.reprint();
   }
 

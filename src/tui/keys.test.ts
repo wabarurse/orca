@@ -24,7 +24,6 @@ describe("parseKeys", () => {
   test("control bytes become ctrl chords and named keys", () => {
     expect(parseKeys("\x0e")).toEqual([{ name: "n", ctrl: true }]);
     expect(parseKeys("\x03")).toEqual([{ name: "c", ctrl: true }]);
-    expect(parseKeys("\x14")).toEqual([{ name: "t", ctrl: true }]); // the tool-call fold toggle
     expect(parseKeys("\r")).toEqual([{ name: "enter" }]);
     expect(parseKeys("\x7f")).toEqual([{ name: "backspace" }]);
     expect(parseKeys("\t")).toEqual([{ name: "tab" }]);

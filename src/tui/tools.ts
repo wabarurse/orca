@@ -6,9 +6,9 @@
 // and summaries come from src/toolview.ts, shared with restore.ts and the
 // agent loop, so live and restored pages match. On screen, a run of two or
 // more finished calls with nothing else between them folds into one dim line
-// ("⏺ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed", `collapseCalls`
-// and `groupRow`) until the page is expanded (Ctrl+T); the history keeps the
-// calls themselves, so both views come from the same lines.
+// ("▸ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed", `collapseCalls`
+// and `groupRow`) until a click opens it (▾, its calls indented under it); the
+// history keeps the calls themselves, so both views come from the same lines.
 
 import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../toolview";
 import type { Part } from "../view";
@@ -20,9 +20,9 @@ import { noColour } from "./style";
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 
 /** The marker before a call: dim, or red when it failed (bold without colour). */
-function mark(failed: boolean): string {
-  if (!failed) return dim(TOOL_MARK);
-  return noColour() ? bold(TOOL_MARK) : `\x1b[31m${TOOL_MARK}\x1b[0m`;
+function mark(failed: boolean, glyph = TOOL_MARK): string {
+  if (!failed) return dim(glyph);
+  return noColour() ? bold(glyph) : `\x1b[31m${glyph}\x1b[0m`;
 }
 
 /** "Bash(git status)" with the tool's name in bold. */
@@ -47,20 +47,24 @@ function tally(calls: ToolView[]): string {
   return [...counts].sort((a, b) => b[1] - a[1]).map(([name, n]) => `${name} ×${n}`).join(", ");
 }
 
+/** The marker of a run's summary row: it can be clicked open (▸) or folded again (▾). */
+const CLOSED = "▸", OPEN = "▾";
+
 /**
- * A run of finished calls as one dim row: "⏺ 7 tool calls · bash ×4, read ×2,
+ * A run of finished calls as one dim row: "▸ 7 tool calls · bash ×4, read ×2,
  * edit ×1 · 1 failed" (no "· N failed" when none failed; the marker red when
- * one did). When the width is short the tally is cut first, then dropped, so
- * the count and the failures stay.
+ * one did; ▾ once a click opened it). When the width is short the tally is
+ * cut first, then dropped, so the count and the failures stay.
  */
-export function groupRow(calls: ToolView[], cols: number): string {
+export function groupRow(calls: ToolView[], cols: number, open = false): string {
   const failed = calls.filter((c) => c.failed).length;
+  const glyph = open ? OPEN : CLOSED;
   const head = plural(calls.length, "tool call");
   const tail = failed ? ` · ${failed} failed` : "";
-  const room = cols - visibleLength(`${TOOL_MARK} ${head}${tail}`);
+  const room = cols - visibleLength(`${glyph} ${head}${tail}`);
   const names = sanitize(` · ${tally(calls)}`);
   const list = visibleLength(names) <= room ? names : room >= 6 ? fit(names, room) : "";
-  return fit(`${mark(failed > 0)} ${dim(`${head}${list}${tail}`)}`, cols);
+  return fit(`${mark(failed > 0, glyph)} ${dim(`${head}${list}${tail}`)}`, cols);
 }
 
 const isCall = (l: Line): l is ToolView => typeof l !== "string" && "tool" in l;

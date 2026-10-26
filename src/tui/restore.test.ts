@@ -100,9 +100,9 @@ test("collapsed: a restored run of calls across assistant entries and their tool
   const text = (shown: ReturnType<typeof collapseCalls>) => historyRows(shown, 60).map(row => Bun.stripANSI(row).trimEnd()).filter(Boolean);
   expect(text(collapseCalls(lines))).toEqual([
     "> go", "Looking",
-    "⏺ 5 tool calls · bash ×4, read ×1 · 3 failed",
+    "▸ 5 tool calls · bash ×4, read ×1 · 3 failed",
     "from worker-a: done",
-    "⏺ 2 tool calls · bash ×2",
+    "▸ 2 tool calls · bash ×2",
     "Done.", "⏺ bash(true)", "  ⎿  no output",
   ]);
   expect(text(lines)).toEqual([
@@ -114,10 +114,10 @@ test("collapsed: a restored run of calls across assistant entries and their tool
   ]);
   // A run of calls still running is left out of the fold too: what remains folds, or stands alone.
   const mid = transcript(meta, assistant([bash("c1", "a"), bash("c2", "b"), bash("c3", "c")]), user([result("c1", ""), result("c2", "")]));
-  expect(text(collapseCalls(restore(mid, 60, Infinity, undefined, unresolvedCalls(mid))))).toEqual(["⏺ 2 tool calls · bash ×2"]);
+  expect(text(collapseCalls(restore(mid, 60, Infinity, undefined, unresolvedCalls(mid))))).toEqual(["▸ 2 tool calls · bash ×2"]);
   const one = transcript(meta, assistant([bash("c1", "a"), bash("c2", "b")]), user([result("c1", "")]));
   expect(text(collapseCalls(restore(one, 60, Infinity, undefined, unresolvedCalls(one))))).toEqual(["⏺ bash(a)", "  ⎿  no output"]);
-  expect(text(collapseCalls(restore(one, 60)))).toEqual(["⏺ 2 tool calls · bash ×2 · 1 failed"]); // once the turn is over, the lost call is interrupted
+  expect(text(collapseCalls(restore(one, 60)))).toEqual(["▸ 2 tool calls · bash ×2 · 1 failed"]); // once the turn is over, the lost call is interrupted
 });
 
 test("while a turn runs, the newest entry's calls without a result are left out (the live view shows them running) instead of interrupted; earlier ones and finished ones are untouched", () => {

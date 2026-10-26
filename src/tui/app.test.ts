@@ -2288,10 +2288,10 @@ describe("tool calls", () => {
     expect(term.screen()).toContain("⏺ bash(git status)\n  ⎿  2 lines\n⏺ bash(make)"); // a lone finished call keeps its lines while the next runs below
     state.events!.onToolResult({ id: "c2", ok: true, text: "x: error 1\n[exit 2]" });
     // Two finished calls in a row fold into one summary line; the failure is counted, and the marker is red.
-    await until(() => term.screen().includes("⏺ 2 tool calls · bash ×2 · 1 failed"));
+    await until(() => term.screen().includes("▸ 2 tool calls · bash ×2 · 1 failed"));
     expect(term.screen()).not.toContain("⎿");
     expect(term.screen()).not.toContain("bash(make)");
-    expect(term.raw()).toContain("\x1b[31m⏺");
+    expect(term.raw()).toContain("\x1b[31m▸");
     state.finish!();
     await until(() => !app.page!.busy);
     expect(state.ticks.length).toBe(0); // nothing runs: no timer
@@ -2299,38 +2299,7 @@ describe("tool calls", () => {
     await running;
   });
 
-  test("ctrl+t drops the scroll anchor a resize captured in the other view's line indexes, so a later resize keeps the row under the top", async () => {
-    const term = fakeTerm(60, 20);
-    const { state, clock, openOrchestrator } = scripted();
-    const app = new App({ term, clock, openOrchestrator, pollMs: 100_000 });
-    const running = app.run("anchored");
-    await until(() => !!app.page);
-    term.type("go\r");
-    await until(() => !!state.finish);
-    for (const id of ["c1", "c2", "c3"]) { state.events!.onTool({ id, name: "bash", input: { command: id } }); state.events!.onToolResult({ id, ok: true, text: "" }); }
-    state.finish!();
-    await until(() => !app.page!.busy);
-    for (let i = 0; i < 30; i++) app.say(`row ${i}`);
-    await until(() => term.screen().includes("row 29"));
-    const top = () => bodyRows(term)[0]!.trimEnd();
-    for (let i = 0; i < 30; i++) term.press({ name: "pageup" });
-    await until(() => top() === "⏺ 3 tool calls · bash ×3");
-    for (let i = 0; i < 4; i++) term.press({ name: "wheeldown" });
-    await until(() => top() === "row 11");
-    const anchored = top();
-    term.resize(50, 20); await Bun.sleep(150); // captures the anchor in the collapsed view's line indexes
-    expect(top()).toBe(anchored);
-    term.press({ name: "t", ctrl: true });
-    await until(() => top() !== anchored);
-    const expanded = top(); // the same row offset, now earlier in the history: the run above it grew by seven rows
-    expect(expanded).toBe("row 4");
-    term.resize(60, 20); await Bun.sleep(150);
-    expect(top()).toBe(expanded); // a stale anchor would have resolved to the collapsed index in the expanded lines
-    app.quit();
-    await running;
-  });
-
-  test("live: finished calls fold into the summary while the running rows stay below it; ctrl+t shows every call and folds them again; a durable sync draws the same rows", async () => {
+  test("live: finished calls fold into the summary while the running rows stay below it; a durable sync draws the same rows", async () => {
     const term = fakeTerm(60, 24);
     const { state, clock, openOrchestrator } = scripted();
     const t = openTranscript(paths.transcript("foldy", "orchestrator"));
@@ -2340,7 +2309,7 @@ describe("tool calls", () => {
     await until(() => !!app.page);
     term.type("go\r");
     await until(() => !!state.finish);
-    const body = () => bodyRows(term).map(row => row.trimEnd()).filter(row => /^(⏺|  ⎿)/.test(row)); // the tool rows: history, then the running ones
+    const body = () => bodyRows(term).map(row => row.trimEnd()).filter(row => /^(⏺|▸|  ⎿)/.test(row)); // the tool rows: history, then the running ones
     const calls = [{ id: "c1", name: "bash", input: { command: "ls" } }, { id: "c2", name: "read", input: { path: "x" } }, { id: "c3", name: "bash", input: { command: "false" } }];
     for (const call of calls) state.events!.onTool(call);
     await until(() => body().length === 3);
@@ -2349,18 +2318,11 @@ describe("tool calls", () => {
     await until(() => body().includes("  ⎿  1 line"));
     expect(body()).toEqual(["⏺ bash(ls)", "  ⎿  1 line", "⏺ read(x)", "⏺ bash(false)"]); // one finished: its own lines, the running rows below
     state.events!.onToolResult({ id: "c3", ok: true, text: "boom\n[exit 1]" });
-    await until(() => body().includes("⏺ 2 tool calls · bash ×2 · 1 failed"));
-    expect(body()).toEqual(["⏺ 2 tool calls · bash ×2 · 1 failed", "⏺ read(x)"]); // two finished fold; the third still runs below
-    term.press({ name: "t", ctrl: true });
-    await until(() => body().includes("  ⎿  exit 1: boom"));
-    expect(body()).toEqual(["⏺ bash(ls)", "  ⎿  1 line", "⏺ bash(false)", "  ⎿  exit 1: boom", "⏺ read(x)"]); // expanded: as the page showed before folding
-    expect(app.page!.toolsExpanded).toBe(true);
-    term.press({ name: "t", ctrl: true });
-    await until(() => body().includes("⏺ 2 tool calls · bash ×2 · 1 failed"));
-    expect(body()).toEqual(["⏺ 2 tool calls · bash ×2 · 1 failed", "⏺ read(x)"]);
+    await until(() => body().includes("▸ 2 tool calls · bash ×2 · 1 failed"));
+    expect(body()).toEqual(["▸ 2 tool calls · bash ×2 · 1 failed", "⏺ read(x)"]); // two finished fold; the third still runs below
     state.events!.onToolResult({ id: "c2", ok: false, text: "refused" });
-    await until(() => body().includes("⏺ 3 tool calls · bash ×2, read ×1 · 2 failed"));
-    expect(body()).toEqual(["⏺ 3 tool calls · bash ×2, read ×1 · 2 failed"]);
+    await until(() => body().includes("▸ 3 tool calls · bash ×2, read ×1 · 2 failed"));
+    expect(body()).toEqual(["▸ 3 tool calls · bash ×2, read ×1 · 2 failed"]);
     expect(app.page!.lines).toHaveLength(3); // the history keeps the calls themselves
     expect(app.frame().running).toEqual([]);
     // The durable record lands (the same calls, in the order they ended): the page re-renders from it to the same rows.
@@ -2377,12 +2339,12 @@ describe("tool calls", () => {
     expect(term.display.screen()).toEqual(before);
     state.finish!();
     await until(() => !app.page!.busy);
-    expect(body()).toEqual(["⏺ 3 tool calls · bash ×2, read ×1 · 2 failed"]);
+    expect(body()).toEqual(["▸ 3 tool calls · bash ×2, read ×1 · 2 failed"]);
     app.quit();
     await running;
   });
 
-  test("a click on a folded summary opens that group alone and closes it again; it survives a durable sync; ctrl+t resets it; the exit replay shows every call", async () => {
+  test("a click on a folded summary opens that group alone and closes it again; it survives a durable sync; the exit replay shows every call", async () => {
     const term = fakeTerm(60, 40); // tall enough for the whole conversation, as a click pins the scroll like any mousedown
     const orchs = fakeOrchestrators();
     const t = openTranscript(paths.transcript("clicky", "orchestrator"));
@@ -2401,8 +2363,8 @@ describe("tool calls", () => {
     const app = new App({ term, openOrchestrator, pollMs: 100_000 });
     const running = app.run("clicky");
     const body = () => bodyRows(term).slice(0, -4).map(row => row.trimEnd()).filter(Boolean); // the conversation, without the composer and status
-    const summary = "⏺ 2 tool calls · bash ×2 · 1 failed";
-    const opened = [summary, "  ⏺ bash(ls)", "    ⎿  1 line", "  ⏺ bash(false)", "    ⎿  exit 1: boom"];
+    const summary = "▸ 2 tool calls · bash ×2 · 1 failed";
+    const opened = ["▾ 2 tool calls · bash ×2 · 1 failed", "  ⏺ bash(ls)", "    ⎿  1 line", "  ⏺ bash(false)", "    ⎿  exit 1: boom"];
     await until(() => body().join("\n") === ["first", summary, "between", summary].join("\n"));
     // The second group opens; the first stays folded.
     const y = term.display.screen().findLastIndex(row => row.includes("2 tool calls")) + 1;
@@ -2427,13 +2389,7 @@ describe("tool calls", () => {
     const ys = term.display.screen().findLastIndex(row => row.includes("2 tool calls")) + 1;
     await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
     await until(() => body().join("\n") === ["first", summary, "between", summary, "after"].join("\n"));
-    // Ctrl+T shows every call page-wide and, folding back, forgets what was clicked open.
-    await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
-    await until(() => body().includes("  ⏺ bash(ls)"));
-    term.press({ name: "t", ctrl: true });
-    await until(() => body().join("\n") === ["first", "⏺ bash(ls)", "  ⎿  1 line", "⏺ bash(false)", "  ⎿  exit 1: boom", "between", "⏺ bash(ls)", "  ⎿  1 line", "⏺ bash(false)", "  ⎿  exit 1: boom", "after"].join("\n"));
-    term.press({ name: "t", ctrl: true });
-    await until(() => body().join("\n") === ["first", summary, "between", summary, "after"].join("\n"));
+    expect(term.raw()).toContain("\x1b[31m▸"); // the marker red: a call failed
     // A click before another page's frame is painted never reaches this page's groups.
     await app.openPage("clicky-other");
     await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });

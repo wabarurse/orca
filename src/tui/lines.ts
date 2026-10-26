@@ -25,7 +25,7 @@ export function lineRows(l: Shown, cols: number): string[] {
   if (typeof l === "string") return [l];
   if ("user" in l) return userRows(l.user, cols);
   if ("tool" in l) return toolRows(l, cols);
-  if ("calls" in l) return [groupRow(l.calls, cols), ...(l.open ? l.calls.flatMap((c) => toolRows(c, Math.max(1, cols - 2)).map((r) => `  ${r}`)) : [])];
+  if ("calls" in l) return [groupRow(l.calls, cols, l.open), ...(l.open ? l.calls.flatMap((c) => toolRows(c, Math.max(1, cols - 2)).map((r) => `  ${r}`)) : [])];
   if (l.block) return renderBlock(l.md, cols);
   return l.label ? renderLabelled(l.label, l.md, cols) : renderMarkdown(l.md, cols);
 }
