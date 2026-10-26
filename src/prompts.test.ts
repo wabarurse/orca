@@ -45,6 +45,14 @@ describe("rolePrompt", () => {
     expect(p).toContain("Otherwise respawn that agent once on the same branch with its last task");
     expect(p).toContain("if it exits the same way again, tell the user and stop.");
   });
+  test("a merge notice listing conflicting PRs sends their workers to rebase onto main first, then the task flow reruns", () => {
+    for (const maxReviewRounds of [0, 1, 100]) {
+      const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
+      const line = p.split("\n").find((l) => l.includes("`[agent-exit]`"))!;
+      expect(line).toContain("If it lists conflicting PRs, their workers rebase onto main first, then rerun the task flow.");
+      expect(line.indexOf("tell the user and stop.")).toBeLessThan(line.indexOf("conflicting PRs"));
+    }
+  });
   test("a merged PR's [agent-exit] is not respawned; what waited on the branch starts, and nothing is cleaned up by hand", () => {
     for (const maxReviewRounds of [0, 1, 100]) {
       const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });

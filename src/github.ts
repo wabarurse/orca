@@ -43,8 +43,10 @@ export function parseTaskPR(repository: string, number: number, raw: unknown): P
   const state = raw.state as PRObservation["state"];
   if (state === "MERGED" && (typeof raw.mergedAt !== "string" || !Number.isFinite(Date.parse(raw.mergedAt)))) throw new Error("merge is not confirmed");
   const result = checks(raw.statusCheckRollup);
+  // GitHub computes mergeability lazily: UNKNOWN (or a missing field) is "not yet", never a conflict.
+  const mergeable = raw.mergeable === "CONFLICTING" || raw.mergeStateStatus === "DIRTY" ? "conflicting" : raw.mergeable === "MERGEABLE" ? "mergeable" : "unknown";
   return {
-    pr, branch: raw.headRefName, state, ...(state === "MERGED" ? { mergedAt: raw.mergedAt as string } : {}), checks: result,
+    pr, branch: raw.headRefName, state, ...(state === "MERGED" ? { mergedAt: raw.mergedAt as string } : {}), checks: result, mergeable,
     ready: state === "OPEN" && raw.isDraft === false && raw.mergeable === "MERGEABLE" && raw.mergeStateStatus === "CLEAN"
       && (raw.reviewDecision === "APPROVED" || raw.reviewDecision === "") && ["passed", "not_configured"].includes(result),
   };

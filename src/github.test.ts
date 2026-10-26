@@ -20,6 +20,12 @@ test("GitHub parsing distinguishes eligibility from explicit readiness; no check
   for (const extra of [{ isDraft: true }, { mergeable: "UNKNOWN" }, { mergeStateStatus: "BLOCKED" }, { reviewDecision: "CHANGES_REQUESTED" }, { reviewDecision: "REVIEW_REQUIRED" }, { state: "CLOSED" }]) expect(parseTaskPR("o/r", 7, raw(extra)).ready).toBe(false);
 });
 
+test("mergeability: CONFLICTING or DIRTY is a conflict; UNKNOWN or a missing field is not computed yet, never a conflict", () => {
+  expect(parseTaskPR("o/r", 7, raw()).mergeable).toBe("mergeable");
+  for (const extra of [{ mergeable: "CONFLICTING" }, { mergeStateStatus: "DIRTY" }, { mergeable: "UNKNOWN", mergeStateStatus: "DIRTY" }]) expect(parseTaskPR("o/r", 7, raw(extra)).mergeable).toBe("conflicting");
+  for (const extra of [{ mergeable: "UNKNOWN" }, { mergeable: undefined }, { mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED" }]) expect(parseTaskPR("o/r", 7, raw(extra)).mergeable).toBe(extra.mergeable === "MERGEABLE" ? "mergeable" : "unknown");
+});
+
 test("PR parser rejects wrong repo/number, unsafe links, forks and unknown or unconfirmed merge states", () => {
   for (const extra of [{ number: 8 }, { url: "https://github.com/other/r/pull/7" }, { url: "javascript:alert(1)" }, { isCrossRepository: true }, { isCrossRepository: undefined }, { headRefOid: "main" }, { state: "UNKNOWN" }, { state: "MERGED", mergedAt: null }]) expect(() => parseTaskPR("o/r", 7, raw(extra))).toThrow();
   const mergedAt = new Date().toISOString();

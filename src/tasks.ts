@@ -233,6 +233,8 @@ export async function setTaskAttention(project: string, id: string, note: TaskAt
 export interface PRObservation {
   pr: TaskPR; branch: string; state: "OPEN" | "CLOSED" | "MERGED"; mergedAt?: string;
   ready: boolean; checks: "passed" | "not_configured" | "pending" | "failed" | "unknown";
+  /** Whether it merges cleanly into its base; "unknown" (or absent) while GitHub has not computed it. */
+  mergeable?: "mergeable" | "conflicting" | "unknown";
 }
 export async function observeTaskPR(project: string, id: string, observation: PRObservation, expectedRevision?: number): Promise<Task> {
   const pr = taskPR(observation.pr);
@@ -253,6 +255,16 @@ export async function observeTaskPR(project: string, id: string, observation: PR
     else if (before !== JSON.stringify(t) && !t.readiness && (!t.attention || t.attention.kind === "waiting")) t.attention = { kind: "waiting", reason: "pr observed; readiness needs explicit validation" };
     if (before !== JSON.stringify(t)) event(t, t.archive ? "merged" : "pr_observed");
     return t;
+  });
+}
+/** The merge watcher found the PR conflicting with main after another merge: blocked, and no longer ready. Idempotent. */
+export async function blockConflictingTask(project: string, id: string, reason: string): Promise<Task> {
+  const note = attention({ kind: "blocked", reason });
+  return update(project, s => {
+    const t = find(s, id); active(t);
+    if (JSON.stringify(t.attention) === JSON.stringify(note) && !t.readiness) return t;
+    const ready = !!t.readiness;
+    unready(t); t.attention = note; event(t, ready ? "readiness_invalidated" : "attention"); return t;
   });
 }
 /** Only a currently started reviewer can attest readiness, after validating this exact PR head. */

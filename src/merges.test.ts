@@ -529,3 +529,60 @@ test("malformed/foreign merged lookup never removes task rows; unassociated newe
   await watch([pr(903, task.branch)], { live: async () => null, pr: async () => null })(project);
   expect((await listTasks(project)).map(t => t.id)).toEqual([next.id]);
 });
+
+describe("the other open PRs after a merge", () => {
+  type Obs = import("./tasks").PRObservation;
+  const open = (num: number, b: string, mergeable?: Obs["mergeable"], state: Obs["state"] = "OPEN"): Obs =>
+    ({ pr: { repository: "o/r", number: num, url: url(num), head: NO_OID }, branch: b, state, ready: false, checks: "unknown", ...(mergeable ? { mergeable } : {}) });
+  /** A task with PR #num on branch b, observed as `o`. */
+  async function taskWithPR(num: number, b: string, o: Obs): Promise<string> {
+    const { registerTask, observeTaskPR } = await import("./tasks");
+    const t = await registerTask(project, { name: `t${num}`, summary: `Task ${num}`, branch: b, authorized: true });
+    await observeTaskPR(project, t.id, { ...o, pr: { ...o.pr, head: NO_OID }, state: "OPEN", ready: false, checks: "unknown" });
+    return t.id;
+  }
+
+  test("conflicting PRs block their tasks and are listed in the notice; unknown is reported, not treated as a conflict", async () => {
+    const { getTask } = await import("./tasks");
+    const { oid } = await branch("feat/done");
+    const done = await taskWithPR(950, "feat/done", open(950, "feat/done", "mergeable"));
+    const obs: Record<number, Obs | null> = {
+      951: open(951, "feat/a", "conflicting"), 952: open(952, "feat/b", "mergeable"), 953: open(953, "feat/c", "unknown"),
+      954: null, 955: open(955, "feat/e", "conflicting", "CLOSED"), 956: open(956, "feat/f"),
+    };
+    const ids: Record<number, string> = {};
+    for (const [n, b] of [[951, "feat/a"], [952, "feat/b"], [953, "feat/c"], [954, "feat/d"], [955, "feat/e"], [956, "feat/f"]] as const) ids[n] = await taskWithPR(n, b, open(n, b));
+    const calls: number[] = [];
+    const check = watch([pr(950, "feat/done", oid)], { pr: async (_p, p) => { calls.push(p.number); return obs[p.number] ?? null; } });
+    expect(await check(project)).toEqual([950]);
+    expect((await inbox()).map((m) => m.text)).toEqual([
+      `[agent-exit] no agents running: pr #950 (feat/done) merged (${url(950)}); cleaned up; conflicts with main now: #951 (feat/a); conflict state unknown (not computed yet or lookup failed): #953 (feat/c), #954 (feat/d), #956 (feat/f)`,
+    ]);
+    // The merged PR's task is archived first and never looked up; each other PR: the per-poll refresh plus one lookup for the merge.
+    expect(calls.filter((n) => n === 950)).toEqual([]);
+    for (const n of [951, 952, 953, 954, 955, 956]) expect(calls.filter((c) => c === n)).toHaveLength(2);
+    expect((await getTask(project, done)).archive?.reason).toBe("merged");
+    const a = await getTask(project, ids[951]!);
+    expect(a.attention).toEqual({ kind: "blocked", reason: "conflicts with main after PR #950 merged; rebase needed" });
+    expect(a.status).toBe("queued");
+    for (const n of [952, 953, 954, 956]) expect((await getTask(project, ids[n]!)).attention?.kind).toBe("waiting");
+    expect((await getTask(project, ids[955]!)).attention?.kind).toBe("closed");
+  });
+
+  test("no conflicts says so; without any other task PR the notice is unchanged", async () => {
+    const { oid } = await branch("feat/one");
+    await taskWithPR(960, "feat/one", open(960, "feat/one"));
+    expect(await watch([pr(960, "feat/one", oid)], { pr: async (_p, p) => (p.number === 960 ? null : open(p.number, "feat/two", "mergeable")) })(project)).toEqual([960]);
+    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] no agents running: pr #960 (feat/one) merged (${url(960)}); cleaned up`]);
+    await taskWithPR(961, "feat/two", open(961, "feat/two"));
+    const { oid: two } = await branch("feat/three");
+    expect(await watch([pr(962, "feat/three", two)], { pr: async (_p, p) => open(p.number, "feat/two", "mergeable") })(project)).toEqual([962]);
+    expect((await inbox()).map((m) => m.text)).toEqual([`[agent-exit] no agents running: pr #962 (feat/three) merged (${url(962)}); cleaned up; no open PRs conflict`]);
+  });
+
+  test("mergeNotice appends the conflict line only when given", () => {
+    const p = pr(1, "b");
+    expect(mergeNotice(p, [], true, "cleaned up", "")).toBe(`[agent-exit] no agents running: pr #1 (b) merged (${p.url}); cleaned up`);
+    expect(mergeNotice(p, ["worker-b"], true, "cleaned up", "conflicts with main now: #2 (c)")).toBe(`[agent-exit] worker-b stopped: pr #1 (b) merged (${p.url}); cleaned up; conflicts with main now: #2 (c)`);
+  });
+});

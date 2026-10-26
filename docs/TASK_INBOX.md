@@ -205,7 +205,15 @@ also handles registered PRs older than the newest-100 merged list, once per
 unique active PR per polling interval (normally 30s). Failed lookups never remove
 rows. Forks, unsafe/mismatched links and missing merge timestamps are rejected.
 Duplicate observations are idempotent. A newer unassociated task on an old branch
-is not archived by that branch's old merge.
+is not archived by that branch's old merge. When it handles a merge, the watcher
+also looks up every other active task's PR once and, where GitHub reports it
+conflicting (`PRObservation.mergeable` "conflicting": `mergeable` CONFLICTING or
+`mergeStateStatus` DIRTY), `blockConflictingTask` sets attention blocked
+("conflicts with main after PR #N merged; rebase needed") and invalidates
+readiness (`readiness_invalidated`); "unknown" mergeability (not computed yet,
+or the lookup failed) is reported as unknown, never as a conflict. Later polls
+do not recheck a PR reported unknown (the per-poll refresh does not act on
+mergeability), so unknown is not clean.
 
 ## TypeScript / UI contract
 

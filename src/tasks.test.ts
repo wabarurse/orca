@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { paths } from "./config";
-import { allTasks, archiveMergedTasks, getTask, invalidateTaskBranch, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun, taskPR, taskStatusLabels, validateTaskReadiness, type PRObservation, type Task } from "./tasks";
+import { allTasks, archiveMergedTasks, blockConflictingTask, getTask, invalidateTaskBranch, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun, taskPR, taskStatusLabels, validateTaskReadiness, type PRObservation, type Task } from "./tasks";
 import { afterExit, beginRun, recoverTaskRuns, supervise } from "./exits";
 import { cancelSession, Cancelled, publishLaunch } from "./cancellation";
 import { makeSpawn } from "./tools/spawn";
@@ -130,6 +130,23 @@ test("explicit validation is head/revision bound; new changes/runs invalidate re
   await validateTaskReadiness(project, t.id, { run: "reviewer", revision: current.revision, observation: observation(), validated: true, validation: "Revalidated" });
   await stopTaskRun(project, "reviewer", "waiting", "Ready report"); expect((await getTask(project, t.id)).status).toBe("ready_to_merge");
   await prepare(t, "fix"); expect((await getTask(project, t.id)).status).toBe("queued"); expect((await getTask(project, t.id)).readiness).toBeUndefined();
+});
+
+test("a conflict found after another merge blocks the task and invalidates readiness once; repeats are no-ops", async () => {
+  const t = await ready();
+  const reason = "conflicts with main after PR #9 merged; rebase needed";
+  const blocked = await blockConflictingTask(project, t.id, reason);
+  expect(blocked).toMatchObject({ status: "reviewing", attention: { kind: "blocked", reason } });
+  expect(blocked.readiness).toBeUndefined();
+  expect(blocked.history.at(-1)).toMatchObject({ kind: "readiness_invalidated", attention: { kind: "blocked", reason } });
+  expect(await blockConflictingTask(project, t.id, reason)).toEqual(blocked);
+  // The PR observation that follows keeps the block (it only overwrites waiting attention).
+  await observeTaskPR(project, t.id, { ...observation(), ready: false, mergeable: "conflicting" });
+  expect((await getTask(project, t.id)).attention).toEqual({ kind: "blocked", reason });
+  const other = await registerTask(project, input("feat/y"));
+  expect((await blockConflictingTask(project, other.id, reason)).history.at(-1)?.kind).toBe("attention");
+  await archiveMergedTasks(project, observation().pr, new Date().toISOString());
+  await expect(blockConflictingTask(project, t.id, reason)).rejects.toThrow("archived");
 });
 
 for (const wasReady of [false, true]) test(`same-PR correction after ${wasReady ? "a ready report" : "CI failure"} reuses the task and branch through spawn and revalidation`, async () => {
