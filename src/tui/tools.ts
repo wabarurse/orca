@@ -48,6 +48,9 @@ export class Calls {
 
   start(call: ToolCall): void { this.running.set(call.id, call); }
 
+  /** Forget the running calls without a line: the durable record now shows them. */
+  clear(): void { this.running.clear(); }
+
   interrupt(): Line[] {
     const lines = [...this.running.values()].map((c) => interruptedView(c.name, c.input));
     this.running.clear();

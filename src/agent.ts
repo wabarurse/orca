@@ -65,7 +65,7 @@ export interface AgentDeps {
   onInbox?: (msgs: Message[]) => void;
   /** A tool call starting and ending (the TUI shows it running, then its line and summary). Without them, `write` gets the "⏺" line and its "⎿" summary as plain lines. */
   onTool?: (call: ToolCall) => void;
-  onToolResult?: (outcome: ToolOutcome) => void;
+  onToolResult?: (outcome: ToolOutcome, call: ToolCall) => void;
 }
 
 
@@ -105,7 +105,7 @@ function echo(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   return {
     start: (call: ToolCall) => (deps.onTool ? deps.onTool(call) : write(`${callText(call)}\n`, true)),
     end: (call: ToolCall, outcome: ToolOutcome) =>
-      deps.onToolResult ? deps.onToolResult(outcome) : write(`${resultText(call.name, outcome)}\n`, true),
+      deps.onToolResult ? deps.onToolResult(outcome, call) : write(`${resultText(call.name, outcome)}\n`, true),
   };
 }
 

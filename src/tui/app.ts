@@ -20,6 +20,7 @@ import { projectIdentity } from "../project-state";
 import { validateModel, effectiveModel } from "../project-model";
 import type { Message } from "../inbox";
 import type { Orchestrator } from "../orchestrator";
+import type { Entry } from "../transcript";
 import { format } from "node:util";
 import { follow, parts } from "../view";
 import * as ed from "./editor";
@@ -29,7 +30,7 @@ import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } fro
 import { MarkdownStream } from "./mdstream";
 import { helpLines, type CommandHelp } from "./help";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./questions";
-import { replyLine, reportLine, restore, userLines } from "./restore";
+import { replyLine, reportLine, restore, unresolvedCalls, userLines } from "./restore";
 import { bold, commit, dim, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./render";
 import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
@@ -360,6 +361,8 @@ export class App {
   private readonly deferredRefresh = new Set<Page>();
   private readonly renderedHeads = new WeakMap<Page, string | undefined>();
   private readonly refreshedTurns = new WeakSet<Page>();
+  /** Pages whose last rendering left out calls the running turn has not finished (they show as running rows instead); re-rendered once the turn ends. */
+  private readonly hidRunning = new WeakSet<Page>();
   private readonly notices = new WeakMap<Page, Line[]>();
 
   /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
@@ -946,7 +949,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   /** Only durable exact IDs acknowledge pending input. Re-rendering saved tool
-   * entries is presentation, never tool execution. Called idle or pre-stream. */
+   * entries is presentation, never tool execution. Called idle, pre-stream, or
+   * mid-turn by a daemon client when an entry lands: the durable entries then
+   * supersede what the live events showed, so the stream's partial text and
+   * running calls are dropped with the old rendering (the events still ahead of
+   * the record follow again through the same hooks). */
   private syncTranscript(page: Page): void {
     const consumed = page.orch.consumed?.();
     if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
@@ -954,31 +961,43 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!entries) return;
     const head = entries.at(-1)?.uuid;
     if (this.renderedHeads.get(page) === head) return;
-    const lines = restore(entries, this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
+    page.md.reset(); page.calls.clear(); page.held.length = 0;
+    const lines = this.restored(page, entries, page.busy, id => page.questions.seen.get(id));
     // Keep local diagnostics/skip feedback, but don't duplicate persisted answers.
     const saved = new Set(lines.map(line => JSON.stringify(line)));
     const notes = (this.notices.get(page) ?? []).filter(line => !saved.has(JSON.stringify(line)));
     this.notices.set(page, notes);
-    const anchor = page === this.page && !page.view && this.scrollTop !== null
-      ? captureAnchor(page.lines, this.deps.term.cols, this.scrollTop) : undefined;
-    if (anchor) {
-      const source = JSON.stringify(page.lines[anchor.line]);
-      const occurrence = page.lines.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
-      const matches = lines.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
-      anchor.line = matches[occurrence] ?? Math.min(anchor.line, lines.length);
-    }
+    const anchor = this.relocatedAnchor(page, lines);
     page.lines = [...lines, ...notes];
     if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(page.lines, this.deps.term.cols, anchor); }
     this.renderedHeads.set(page, head);
     if (page === this.page && !page.view) this.reprint();
   }
 
-  private restorePage(page: Page, asked: import("./restore").AskedLookup): void {
+  /** Where the scrolled-up viewport's anchor line sits in the re-rendered `lines` (the same line's same occurrence), if the page is scrolled. */
+  private relocatedAnchor(page: Page, lines: Line[]): HistoryAnchor | undefined {
+    if (page !== this.page || page.view || this.scrollTop === null) return;
+    const anchor = captureAnchor(page.lines, this.deps.term.cols, this.scrollTop);
+    const source = JSON.stringify(page.lines[anchor.line]);
+    const occurrence = page.lines.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
+    const matches = lines.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
+    anchor.line = matches[occurrence] ?? Math.min(anchor.line, lines.length);
+    return anchor;
+  }
+
+  /** The record as lines. While the turn runs (`running`), the newest entry's calls without a result are left out: the live view shows them running, and the record says how they ended once it does. */
+  private restored(page: Page, entries: Entry[], running: boolean, asked: import("./restore").AskedLookup): Line[] {
+    const omit = running ? unresolvedCalls(entries) : undefined;
+    if (omit?.size) this.hidRunning.add(page); else this.hidRunning.delete(page);
+    return restore(entries, this.deps.term.cols, Infinity, asked, omit);
+  }
+
+  private restorePage(page: Page, asked: import("./restore").AskedLookup, running: boolean): void {
     const entries = page.orch.entries?.() ?? [];
     // All saved conversation must be scrollable before exit, including originals
     // before model compaction. Cache rendered rows in viewport(); only the visible
     // slice is drawn on keys/ticks, rather than capping access to older messages.
-    page.lines = [...restore(entries, this.deps.term.cols, Infinity, asked), ...page.lines];
+    page.lines = [...this.restored(page, entries, running, asked), ...page.lines];
   }
 
   async openPage(project: string, url?: string): Promise<Page> {
@@ -994,7 +1013,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     const asked = await this.questions.load(page);
-    this.restorePage(page, asked);
+    // A turn already running elsewhere (the daemon's) shows its unfinished calls live, not as interrupted.
+    this.restorePage(page, asked, await page.orch.pending().catch(() => false));
     this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
     const saved = await loadHistory(project);
     page.inputHistory = saved.entries;
@@ -1216,21 +1236,29 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       failed = true;
       this.endPartial(page);
       this.say(`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. send another message to resume with retained history; changing model alone does not retry. exited agents require restart.`, page);
-    } finally {
-      this.endPartial(page);
-      page.busy = false;
-      // Only a turn that rendered its initial shared snapshot can claim its
-      // subsequent streamed head. Losing turn ownership renders nothing.
-      if (this.refreshedTurns.delete(page)) this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
-      this.toPage(page, page.calls.interrupt());
-      if (failed) {
-        const saved = restore(page.orch.entries?.() ?? [], this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
-        const known = new Set([...saved, ...(this.notices.get(page) ?? [])].map(line => JSON.stringify(line)));
-        for (const line of page.lines) if (!known.has(JSON.stringify(line))) this.keepNotice(page, line);
-      }
-      if (this.deferredRefresh.has(page) || page.sent.length) void this.refreshSessions();
-      this.draw();
-    }
+    } finally { this.endTurn(page, failed); }
+  }
+
+  /** A failed turn's lines that the record does not hold stay on the page as notices. */
+  private keepUnsaved(page: Page): void {
+    const saved = restore(page.orch.entries?.() ?? [], this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
+    const known = new Set([...saved, ...(this.notices.get(page) ?? [])].map(line => JSON.stringify(line)));
+    for (const line of page.lines) if (!known.has(JSON.stringify(line))) this.keepNotice(page, line);
+  }
+
+  /** The turn is over: settle what it showed, keep a failed turn's lines as notices, and show the record's view of what it left running. */
+  private endTurn(page: Page, failed: boolean): void {
+    this.endPartial(page);
+    page.busy = false;
+    // Only a turn that rendered its initial shared snapshot can claim its
+    // subsequent streamed head. Losing turn ownership renders nothing.
+    if (this.refreshedTurns.delete(page)) this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
+    this.toPage(page, page.calls.interrupt());
+    if (failed) this.keepUnsaved(page);
+    // Calls left out as running get their marker from the record now that nothing runs (interrupted, or how they ended).
+    if (this.hidRunning.delete(page)) { this.renderedHeads.delete(page); this.syncTranscript(page); }
+    if (this.deferredRefresh.has(page) || page.sent.length) void this.refreshSessions();
+    this.draw();
   }
 
   // --- menus ------------------------------------------------------------------

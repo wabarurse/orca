@@ -146,10 +146,23 @@ function outcomes(chain: Entry[]): Map<string, ToolOutcome> {
   return new Map(chain.flatMap(toolResults).map((b) => [b.tool_use_id, { id: b.tool_use_id, ok: !b.is_error, text: resultText(b) }]));
 }
 
-/** A call as it ended, or failed "interrupted" when it never got one (the run stopped mid-call). */
-function callLine(b: Extract<Block, { type: "tool_use" }>, results: Map<string, ToolOutcome>): Line {
+/** A call as it ended, or failed "interrupted" when it never got one (the run stopped mid-call); none while the turn still runs it (`omit`: the live view shows it running). */
+function callLine(b: Extract<Block, { type: "tool_use" }>, results: Map<string, ToolOutcome>, omit?: Set<string>): Line | null {
   const outcome = results.get(b.id);
+  if (!outcome && omit?.has(b.id)) return null;
   return outcome ? toolView(b.name, b.input, outcome) : interruptedView(b.name, b.input);
+}
+
+/**
+ * The newest assistant entry's calls without a result. While the turn runs
+ * they are running (the daemon appends their results when the batch ends);
+ * once it does not, they were interrupted.
+ */
+export function unresolvedCalls(chain: Entry[]): Set<string> {
+  const last = chain.findLast((e) => e.type === "message" && e.message.role === "assistant");
+  if (last?.type !== "message" || typeof last.message.content === "string") return new Set();
+  const results = outcomes(chain);
+  return new Set(last.message.content.flatMap((b) => (b.type === "tool_use" && !results.has(b.id) ? [b.id] : [])));
 }
 
 /** Tool results by tool_use id: whether a `message` call was really sent. */
@@ -175,11 +188,14 @@ function userEntry(content: MessageEntry["message"]["content"], asked?: AskedLoo
 }
 
 /** An assistant entry's lines: its text through a fresh stream (every entry ends flushed live), then its tool calls as they ended. */
-function assistantLines(parts: Content, results: Map<string, ToolOutcome>): Line[] {
+function assistantLines(parts: Content, state: Pick<Fold, "results" | "omit">): Line[] {
   const md = new MarkdownStream();
   const said = parts.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
   const lines: Line[] = said ? [...md.feedLines(`${said}\n`), ...md.flushLines()] : [];
-  for (const b of parts) if (b.type === "tool_use") lines.push(callLine(b, results));
+  for (const b of parts) {
+    const line = b.type === "tool_use" ? callLine(b, state.results, state.omit) : null;
+    if (line) lines.push(line);
+  }
   return lines;
 }
 
@@ -191,11 +207,11 @@ function sentReply(b: Block, sent: Set<string>): Item | null {
 }
 
 /** An assistant entry as an item (none when it holds only thinking), and its sent `message` calls to the user. */
-function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<string>, results: Map<string, ToolOutcome>): { item: Item | null; replies: Item[] } {
+function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<string>, state: Pick<Fold, "results" | "omit">): { item: Item | null; replies: Item[] } {
   const parts: Content = typeof content === "string" ? [{ type: "text", text: content }] : content;
-  const shows = parts.some((b) => (b.type === "text" && b.text) || b.type === "tool_use");
+  const shows = parts.some((b) => (b.type === "text" && b.text) || (b.type === "tool_use" && !state.omit?.has(b.id)));
   const replies = parts.map((b) => sentReply(b, sent)).filter((r): r is Item => r !== null);
-  return { item: shows ? { lines: () => assistantLines(parts, results) } : null, replies };
+  return { item: shows ? { lines: () => assistantLines(parts, state) } : null, replies };
 }
 
 /**
@@ -203,19 +219,20 @@ function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<s
  * as the page's messages, oldest first, none laid out yet. Turns record what
  * they sent the user in `replies` entries; before the first one (older
  * transcripts) the orchestrator's sent `message` calls to the user stand in,
- * held until the user next speaks.
+ * held until the user next speaks. Calls in `omit` with no result yet are
+ * left out (the turn is still running them) instead of showing interrupted.
  */
-export function restoreItems(chain: Entry[], asked?: AskedLookup): Item[] {
+export function restoreItems(chain: Entry[], asked?: AskedLookup, omit?: Set<string>): Item[] {
   const firstReplies = chain.findIndex((e) => e.type === "replies");
   const legacy = firstReplies === -1 ? chain.length : firstReplies;
   const sent = sentIds(chain.slice(0, legacy));
-  const state: Fold = { items: [], held: [], results: outcomes(chain) };
+  const state: Fold = { items: [], held: [], results: outcomes(chain), omit };
   chain.forEach((e, i) => step(state, e, i < legacy ? sent : new Set(), asked));
   return release(state).items;
 }
 
-/** The items so far, the stand-in replies waiting for the user to speak, and every call's outcome. */
-interface Fold { items: Item[]; held: Item[]; results: Map<string, ToolOutcome> }
+/** The items so far, the stand-in replies waiting for the user to speak, every call's outcome, and the running calls to leave out. */
+interface Fold { items: Item[]; held: Item[]; results: Map<string, ToolOutcome>; omit?: Set<string> }
 
 function release(state: Fold): Fold {
   state.items.push(...state.held);
@@ -238,7 +255,7 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
     state.items.push(...items);
     return;
   }
-  const { item, replies } = assistantEntry(e.message.content, sent, state.results);
+  const { item, replies } = assistantEntry(e.message.content, sent, state);
   if (item) state.items.push(item);
   state.held.push(...replies);
 }
@@ -249,8 +266,8 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
  * one), led by a dim count of the messages left out. The budget includes neutral separators and the omission note, but not the
  * page header. The newest whole message is retained even when it alone exceeds it.
  */
-export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS, asked?: AskedLookup): Line[] {
-  const items = restoreItems(chain, asked);
+export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS, asked?: AskedLookup, omit?: Set<string>): Line[] {
+  const items = restoreItems(chain, asked, omit);
   if (maxRows === Infinity) return items.flatMap(item => item.lines());
   const shown: Line[][] = [];
   let from = items.length;

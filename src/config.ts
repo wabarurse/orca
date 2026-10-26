@@ -22,6 +22,8 @@
 //         status.json            pid, run, idle|turn|stopped since when, turn count, context estimate (daemon writes, clients read)
 //         commands/<ts>-<id>.json a client's clear / compact / model / stop request (cancel uses transcripts/orchestrator.jsonl.cancel)
 //         acks/<id>.json         the daemon's reply to a request or cancel token; the waiting client removes it, stale ones are pruned
+//         live.jsonl             the running turn's streamed text and tool events (src/orchestrator-live.ts), each tagged with the
+//                                transcript head it followed; replaced at turn start, removed at turn end; TUIs tail it, never the daemon
 //       transcripts/<role>-<branch>.jsonl   original agent history + context checkpoints
 
 import { homedir } from "node:os";

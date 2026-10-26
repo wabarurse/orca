@@ -35,6 +35,11 @@ export class MarkdownStream {
     return blocks;
   }
 
+  /** Drop what is held without emitting it: the durable record now shows the message it belonged to. */
+  reset(): void {
+    this.lines = []; this.partial = ""; this.started = false; this.emitted = false;
+  }
+
   /** Renderable history with explicit message continuity, independent of parser blocks/chunks. */
   feedLines(chunk: string): Line[] { return this.history(this.feed(chunk)); }
 
