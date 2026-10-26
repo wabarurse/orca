@@ -60,7 +60,7 @@ describe("agent loop", () => {
     const provider = fakeProvider([[text("hello")]]);
     const { calls } = provider;
     let out = "";
-    await createAgent({ provider, transcript, tools: {}, model: "m", ctx, write: (t) => (out += t) }).run();
+    await createAgent({ provider, transcript, tools: {}, model: "m", ctx, write: (t, plain) => { if (!plain) out += t; } }).run();
 
     expect(calls.length).toBe(1);
     expect(calls[0]!.tools).toEqual([]);
@@ -188,4 +188,99 @@ test("cancelled provider request retains input but never appends incomplete tool
   } };
   await expect(createAgent({ provider, transcript, tools: { echo }, model: "m", ctx, signal: controller.signal, write() {} }).run()).rejects.toThrow("cancelled");
   expect(await transcript.chain()).toEqual([{ role: "user", content: "keep this" }]);
+});
+
+
+/** Shared wiring only; each test supplies its failure at the relevant boundary. */
+async function lifecycleScenario(name: string) {
+  const { beginRun, readRun } = await import("../../tmux/exits");
+  const project = `lifecycle-${name}`;
+  const tracker = await beginRun({ project, id: "worker", run: "r", role: "worker", cwd: "/" });
+  const transcript = fakeTranscript();
+  await transcript.append(user("private prompt"));
+  const controller = new AbortController();
+  const secret = new Error("sensitive provider error");
+  const stages: string[] = [];
+  const lines: string[] = [];
+  const behavior = {
+    prepare: () => {},
+    complete: async (): Promise<Awaited<ReturnType<Provider["complete"]>>> => ({ content: [text("private output")], stop: "end" }),
+  };
+  const request = tracker.request!;
+  tracker.request = async (state) => {
+    stages.push(state.stage);
+    await request(state);
+    if (state.stage === "preparing") behavior.prepare();
+  };
+  let calls = 0;
+  const latest = async () => (await readRun(project, "worker"))!.modelRequest!;
+  const provider: Provider = { ...fakeProvider([]), name: "openai", async complete(req) {
+    calls++;
+    expect(stages).toEqual(["preparing", "provider-wait"]);
+    expect(req.model).toBe("selected-model");
+    expect((await latest()).stage).toBe("provider-wait");
+    return behavior.complete();
+  } };
+  const agent = createAgent({ provider: fakeProvider([]), model: "old-model", resolveModel: async () => ({ model: "selected-model", provider }),
+    transcript, tools: {}, ctx, tracker, signal: controller.signal,
+    write: (t, plain) => { if (plain) lines.push(t); } });
+  return { agent, behavior, transcript, controller, secret, stages, lines, tracker, latest, calls: () => calls };
+}
+
+async function expectLifecycle(scenario: Awaited<ReturnType<typeof lifecycleScenario>>, stages: string[], calls: number) {
+  expect(scenario.calls()).toBe(calls);
+  expect(scenario.stages).toEqual(stages);
+  const saved = await scenario.latest();
+  expect(saved).toEqual({ model: "selected-model", provider: "openai", stage: stages.at(-1), startedAt: expect.any(String), updatedAt: expect.any(String) });
+  expect(Number.isNaN(Date.parse(saved.startedAt))).toBe(false);
+  for (const line of scenario.lines) {
+    expect(line).toContain("openai/selected-model");
+    expect(line).toContain(`started ${saved.startedAt}`);
+  }
+  const evidence = JSON.stringify(saved) + scenario.lines.join("");
+  for (const sensitive of ["private prompt", "private output", scenario.secret.message]) expect(evidence).not.toContain(sensitive);
+  await scenario.tracker.request!({ ...saved, stage: "preparing", startedAt: "next" });
+  expect((await scenario.latest()).startedAt).toBe("next");
+}
+
+describe("model request lifecycle", () => {
+  test("completion keeps safe latest evidence for the selected model", async () => {
+    const scenario = await lifecycleScenario("completed");
+    await scenario.agent.run();
+    await expectLifecycle(scenario, ["preparing", "provider-wait", "completed"], 1);
+    console.info("Captured existing plain status writer (not a TUI rendering):\n" + scenario.lines.join(""));
+  });
+
+  test("provider error preserves the thrown error without retry", async () => {
+    const scenario = await lifecycleScenario("error");
+    scenario.behavior.complete = async () => { throw scenario.secret; };
+    await expect(scenario.agent.run()).rejects.toBe(scenario.secret);
+    await expectLifecycle(scenario, ["preparing", "provider-wait", "error"], 1);
+  });
+
+  test("abort keeps safe evidence and preserves the thrown error", async () => {
+    const scenario = await lifecycleScenario("aborted");
+    scenario.behavior.complete = async () => { scenario.controller.abort(scenario.secret); throw scenario.secret; };
+    await expect(scenario.agent.run()).rejects.toBe(scenario.secret);
+    await expectLifecycle(scenario, ["preparing", "provider-wait", "aborted"], 1);
+  });
+
+  test("preparation error never invokes the provider", async () => {
+    const scenario = await lifecycleScenario("preparation-error");
+    // Fail only the chain inside ask, not the earlier context/budget boundaries.
+    scenario.behavior.prepare = () => { scenario.transcript.chain = async () => { throw scenario.secret; }; };
+    await expect(scenario.agent.run()).rejects.toBe(scenario.secret);
+    await expectLifecycle(scenario, ["preparing", "error"], 0);
+  });
+
+  test("diagnostic write failures do not prevent a request", async () => {
+    const transcript = fakeTranscript();
+    await transcript.append(user("hi"));
+    const provider = fakeProvider([[text("ok")]]);
+    await createAgent({ transcript, provider, model: "m", tools: {}, ctx,
+      tracker: { model: async () => {}, request: async () => { throw new Error("disk"); }, tool: async () => {}, instructed: async () => {}, reported: async () => {} },
+      write: (_t, plain) => { if (plain) throw new Error("display"); },
+    }).run();
+    expect(provider.calls).toHaveLength(1);
+  });
 });

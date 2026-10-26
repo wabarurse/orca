@@ -9,6 +9,7 @@ import type { ContentBlock, ToolResultBlockParam } from "@anthropic-ai/sdk/resou
 import type { projectModelResolver } from "../../data/projects";
 import { budget, compact, outputCap, requireFits, type CompactOptions, type ContextDeps } from "../../data/memory";
 import type { Tracker } from "../../tmux";
+import type { ModelRequestState } from "../../tmux/exits";
 import { consume, content } from "../../data/inbox";
 import type { Message } from "../../../protocol";
 import type { Provider } from "../../../providers";
@@ -146,28 +147,46 @@ async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Pro
 /** One model request, streamed and appended to the transcript. */
 async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   await deps.tracker?.model();
-  const messages = await deps.transcript.chain();
-  const estimated = budget({ ...deps, compaction: undefined }, messages);
-  if (!deps.provider) throw new Error("agent: no provider or resolver");
-  requireVision(deps.model, messages);
-  const delivered = await materializeImages(deps.ctx.project, messages);
-  const message = await deps.provider.complete({
-    signal: deps.signal,
-    model: deps.model,
-    settings: deps.settings,
-    system: deps.system,
-    maxTokens: outputCap(deps),
-    messages: delivered,
-    tools: Object.values(deps.tools).map((t) => t.spec),
-    onText: (t) => write(t),
-    onNotice: (t) => write(`${t}\n`, true),
+  const startedAt = new Date().toISOString();
+  const observe = async (stage: ModelRequestState["stage"]) => {
+    const state: ModelRequestState = { model: deps.model, provider: deps.provider?.name ?? "unknown",
+      stage, startedAt, updatedAt: new Date().toISOString() };
+    // Observability must not introduce a new failure/retry boundary.
+    try { await deps.tracker?.request?.(state); } catch {}
+    try { write(`[model request] ${state.provider}/${state.model} ${stage}; started ${startedAt}\n`, true); } catch {}
+  };
+  await observe("preparing");
+  const { message, estimated } = await (async () => {
+    const messages = await deps.transcript.chain();
+    const estimated = budget({ ...deps, compaction: undefined }, messages);
+    if (!deps.provider) throw new Error("agent: no provider or resolver");
+    requireVision(deps.model, messages);
+    const delivered = await materializeImages(deps.ctx.project, messages);
+    const request = {
+      signal: deps.signal,
+      model: deps.model,
+      settings: deps.settings,
+      system: deps.system,
+      maxTokens: outputCap(deps),
+      messages: delivered,
+      tools: Object.values(deps.tools).map((t) => t.spec),
+      onText: (t: string) => write(t),
+      onNotice: (t: string) => write(`${t}\n`, true),
+    };
+    await observe("provider-wait");
+    const message = await deps.provider.complete(request);
+    deps.signal?.throwIfAborted();
+    if (message.content.some((b) => b.type === "text")) write("\n");
+    await observe("completed");
+    return { message, estimated };
+  })().catch(async (error: unknown) => {
+    await observe(deps.signal?.aborted ? "aborted" : "error");
+    throw error;
   });
-  deps.signal?.throwIfAborted();
   if (message.inputTokens !== undefined) {
     deps.compaction ??= {};
     deps.compaction.measured = { input: message.inputTokens, estimated, model: deps.model };
   }
-  if (message.content.some((b) => b.type === "text")) write("\n");
   await deps.transcript.append({ type: "message", message: { role: "assistant", content: message.content } });
   return message;
 }
