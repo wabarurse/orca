@@ -983,7 +983,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.notices.set(page, notes);
     const anchor = this.relocatedAnchor(page, lines);
     page.lines = [...lines, ...notes];
-    if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(this.shown(page, page.lines), this.deps.term.cols, anchor); }
+    if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(this.shown(page), this.deps.term.cols, anchor); }
     this.renderedHeads.set(page, head);
     if (page === this.page && !page.view) this.reprint();
   }
@@ -1694,6 +1694,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!page) return;
     page.toolsExpanded = !page.toolsExpanded;
     this.selection.clear(); // the rows under it moved
+    this.scrollAnchor = undefined; // captured in the other view's line indexes: a resize would resolve it there
     this.reprint();
   }
 

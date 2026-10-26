@@ -2247,6 +2247,37 @@ describe("tool calls", () => {
     await running;
   });
 
+  test("ctrl+t drops the scroll anchor a resize captured in the other view's line indexes, so a later resize keeps the row under the top", async () => {
+    const term = fakeTerm(60, 20);
+    const { state, clock, openOrchestrator } = scripted();
+    const app = new App({ term, clock, openOrchestrator, pollMs: 100_000 });
+    const running = app.run("anchored");
+    await until(() => !!app.page);
+    term.type("go\r");
+    await until(() => !!state.finish);
+    for (const id of ["c1", "c2", "c3"]) { state.events!.onTool({ id, name: "bash", input: { command: id } }); state.events!.onToolResult({ id, ok: true, text: "" }); }
+    state.finish!();
+    await until(() => !app.page!.busy);
+    for (let i = 0; i < 30; i++) app.say(`row ${i}`);
+    await until(() => term.screen().includes("row 29"));
+    const top = () => bodyRows(term)[0]!.trimEnd();
+    for (let i = 0; i < 30; i++) term.press({ name: "pageup" });
+    await until(() => top() === "⏺ 3 tool calls · bash ×3");
+    for (let i = 0; i < 4; i++) term.press({ name: "wheeldown" });
+    await until(() => top() === "row 11");
+    const anchored = top();
+    term.resize(50, 20); await Bun.sleep(150); // captures the anchor in the collapsed view's line indexes
+    expect(top()).toBe(anchored);
+    term.press({ name: "t", ctrl: true });
+    await until(() => top() !== anchored);
+    const expanded = top(); // the same row offset, now earlier in the history: the run above it grew by seven rows
+    expect(expanded).toBe("row 4");
+    term.resize(60, 20); await Bun.sleep(150);
+    expect(top()).toBe(expanded); // a stale anchor would have resolved to the collapsed index in the expanded lines
+    app.quit();
+    await running;
+  });
+
   test("live: finished calls fold into the summary while the running rows stay below it; ctrl+t shows every call and folds them again; a durable sync draws the same rows", async () => {
     const term = fakeTerm(60, 24);
     const { state, clock, openOrchestrator } = scripted();
