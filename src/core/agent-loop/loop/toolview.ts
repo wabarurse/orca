@@ -7,6 +7,8 @@
 // a command or a result is stripped here, at the source (`plain`), so neither a
 // tmux pane nor the TUI's shimmer ever gets one.
 
+import { plain, textLines } from "../../../providers/sanitize";
+
 /** A tool call as it starts. */
 export interface ToolCall { id: string; name: string; input: unknown }
 /** How it ended: `ok` is false for an is_error result; `text` is the result as the model got it. */
@@ -16,23 +18,6 @@ export interface ToolOutcome { id: string; ok: boolean; text: string }
 export interface ToolView { tool: string; summary: string; failed: boolean }
 
 type Input = Record<string, unknown>;
-
-/**
- * Every escape sequence: CSI (7- and 8-bit), OSC (7- and 8-bit, to BEL or ST,
- * or to the end when cut off), DCS/SOS/PM/APC strings, any other ESC sequence,
- * and a bare ESC.
- */
-const ESCAPES = /\x1b\[[0-?]*[ -\/]*[@-~]?|\x9b[0-?]*[ -\/]*[@-~]?|\x1b\][^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x9d[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[PX^_][^\x1b\x9c]*(?:\x1b\\|\x9c)?|[\x90\x98\x9e\x9f][^\x1b\x9c]*(?:\x1b\\|\x9c)?|\x1b[ -\/]*[0-~]?/g;
-/** Every C0 and C1 control but the newline (tabs and CRs are handled first). */
-const CONTROLS = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/g;
-
-/** Text with no escape sequences and no controls but newlines: CRLF and lone CR as \n, tabs as a space. */
-function textLines(s: string): string {
-  return s.replace(ESCAPES, "").replace(/\r\n?/g, "\n").replace(/\t/g, " ").replace(CONTROLS, "");
-}
-
-/** A printable single line: no escapes and no C0/C1 controls, including newlines. */
-export const plain = (s: string): string => textLines(s).replace(/\n/g, " ");
 
 const str = (v: unknown) => (typeof v === "string" ? plain(v) : "");
 /** Text on one line: newlines and runs of spaces as single spaces. */

@@ -1,9 +1,9 @@
 // Stable reading positions, independent of rendered block heights. Separators
 // have their own identity; markdown parts expose content before repeated gutters.
-import { cells } from "../footer/editor";
+import { cells } from "../components/text";
 import { historyRows, lineRows, type Shown } from "./lines";
 import { renderBlock, renderLabelled, renderMarkdown, type RowTrace } from "./markdown";
-import { sanitize, wrap } from "../components/render";
+import { sanitize, wrap } from "../components/text";
 
 interface Position { part: number; offset: number }
 export interface HistoryAnchor extends Position { line: number }

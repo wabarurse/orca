@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
-import type { CompleteRequest } from "./index";
+import type { CompleteRequest } from "./provider";
 
 function client() {
   const sent: any[] = [];

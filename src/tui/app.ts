@@ -5,7 +5,8 @@ import { contextStatus, dispatchStatus, reviewStatus } from "./header/context-st
 import { listTasks } from "../core/data/tasks/tasks";
 import { taskInboxLines, type TaskInboxData } from "./footer/task-inbox";
 import { cancelSession } from "../core/tmux/cancellation";
-import { effortCommand, fastCommand, effectiveSettings, setEffort, type RequestSettings } from "../core/data/projects/project-settings";
+import { effortCommand, fastCommand, effectiveSettings, setEffort } from "../core/data/projects/project-settings";
+import type { RequestSettings } from "../providers/catalog/settings";
 // Sticky top and bottom bars around a scrollable conversation. Only changed
 // screen rows are redrawn; on exit the active transcript is printed back to
 // the terminal's normal scrollback. One page per orchestrator: Ctrl+N starts one named
@@ -14,7 +15,12 @@ import { effortCommand, fastCommand, effectiveSettings, setEffort, type RequestS
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deleteProject, type AgentInfo, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, effortChoices, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, dynamicDispatch, DYNAMIC_DISPATCH_USAGE, REVIEW_ROUNDS_USAGE, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "./commands/commands";
+import { accountChoices, login, useAccount } from "./commands/accounts";
+import { deleteProject, type DeleteOptions } from "./commands/project";
+import { type AgentInfo, listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux/liveness";
+import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName, type ProjectEntry } from "../core/data/projects/registry";
+import { effortChoices, modelChoices, setModel, type Choice } from "./commands/model";
+import { reviewRounds, dynamicDispatch, DYNAMIC_DISPATCH_USAGE, REVIEW_ROUNDS_USAGE } from "./commands/settings";
 import { paths, validRounds } from "../config/config";
 import { projectIdentity } from "../core/data/projects/state";
 import { validateModel, effectiveModel } from "../core/data/projects/project-model";
@@ -32,7 +38,8 @@ import { MarkdownStream } from "./conversation/mdstream";
 import { helpLines, type CommandHelp } from "./footer/help";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer/questions";
 import { replyLine, reportLine, restore, unresolvedCalls, userLines } from "./conversation/restore";
-import { bold, commit, dim, fit, helpPanel, sanitize, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./components/render";
+import { bold, dim, fit, sanitize } from "./components/text";
+import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer/render";
 import type { Terminal } from "./components/term";
 import { shimmer } from "./components/shimmer";
 import { chapterRows, headerHeight } from "./header/chrome";

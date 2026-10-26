@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { append, commit, erase, sanitize, expandTabs, inputArea, live, liveRows, menuRows, NOTHING, projectRows, questionRows, reprint, visibleLength, windowStart, wrap, type Frame, type ProjectList, type QuestionView } from "./render";
-import { FakeScreen } from "./testing";
-import { setUserFill } from "./style";
+import { append, commit, erase, inputArea, live, liveRows, menuRows, NOTHING, projectRows, questionRows, reprint, windowStart, type Frame, type ProjectList, type QuestionView } from "./render";
+import { sanitize, expandTabs, visibleLength, wrap } from "../components/text";
+import { FakeScreen } from "../components/testing";
+import { setUserFill } from "../components/style";
 
 // These tests lay out text without the user background; style.test.ts draws it.
 beforeEach(() => setUserFill(null));

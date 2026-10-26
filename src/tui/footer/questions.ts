@@ -20,7 +20,8 @@ import * as ed from "./editor";
 import type { EditState } from "./editor";
 import type { Key } from "../components/keys";
 import type { Line } from "../conversation/lines";
-import { dim, plainText, type QuestionMode, type QuestionView } from "../components/render";
+import { dim, plainText } from "../components/text";
+import type { QuestionMode, QuestionView } from "./render";
 import { answeredLine, questionReply, type AskedLookup } from "../conversation/restore";
 
 type Question = store.Question;

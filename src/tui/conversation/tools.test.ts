@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { commit } from "../components/render";
+import { commit } from "../footer/render";
 import { intensity, shimmer, SHIMMER_MS } from "../components/shimmer";
 import { setTerminalBackground } from "../components/style";
 import { FakeScreen } from "../components/testing";

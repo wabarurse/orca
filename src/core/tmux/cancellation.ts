@@ -73,12 +73,6 @@ export function watchCancellation(project: string, id: string, controller: Abort
   return () => clearInterval(timer);
 }
 
-/** A shell and its ordinary descendants share a detached process group. */
-export function killGroup(proc: { pid: number; kill(signal: "SIGKILL"): void }): void {
-  try { process.kill(-proc.pid, "SIGKILL"); }
-  catch { try { proc.kill("SIGKILL"); } catch { /* already exited */ } }
-}
-
 export function delay(ms: number, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
   return new Promise((resolve, reject) => {

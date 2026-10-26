@@ -9,7 +9,8 @@ import { saveProjectSettings } from "../../data/projects/project-settings";
 import { saveProjectModel } from "../../data/projects/project-model";
 import { open } from "../../data/transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import type { ProviderName, CompleteRequest } from "../../../providers";
+import type { ProviderName } from "../../../login/accounts";
+import type { CompleteRequest } from "../../../providers/provider";
 
 const home = mkdtempSync(join(tmpdir(), "model-startup-"));
 process.env.ORCA_HOME = home;

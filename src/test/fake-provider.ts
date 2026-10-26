@@ -2,7 +2,7 @@
 // records what it was asked. stop is inferred from tool_use blocks.
 
 import type { ContentBlock, MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import type { CompleteRequest, Provider } from "../providers/index";
+import type { CompleteRequest, Provider } from "../providers/provider";
 
 export const text = (t: string): ContentBlock => ({ type: "text", text: t, citations: null });
 export const toolUse = (id: string, name: string, input: unknown): ContentBlock =>

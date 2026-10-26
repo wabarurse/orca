@@ -13,7 +13,7 @@
 import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../../core/agent-loop/loop/toolview";
 import type { Part } from "./view";
 import type { Line, Shown } from "./lines";
-import { dim, fit, sanitize, visibleLength } from "../components/render";
+import { dim, fit, sanitize, visibleLength } from "../components/text";
 import { shimmer } from "../components/shimmer";
 import { noColour } from "../components/style";
 

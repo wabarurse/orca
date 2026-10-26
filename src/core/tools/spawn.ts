@@ -5,7 +5,7 @@ import { prepareTaskRun, stopTaskRun, taskForRun } from "../data/tasks/tasks";
 import { paths } from "../../config/config";
 import { local, sessionId, type Runner } from "../tmux/runner";
 import { open } from "../data/transcripts/transcript";
-import type { Tool, ToolContext } from "./index";
+import type { Tool, ToolContext } from "./registry";
 
 // Orchestrator-only. Seeds the agent's transcript with the prompt, then starts
 // it in a worktree on `branch`. Spawning again on the same branch and role

@@ -7,7 +7,8 @@ import { drain, pending, pendingInput, userInEpoch } from "./inbox";
 import { advanceInputEpoch } from "./user-input";
 import { all, answer, ask, cleanQuestions, list, skip } from "./questions";
 import { ask as askTool } from "../../tools/ask";
-import { registry, toolsFor } from "../../tools/index";
+import { registry } from "../../tools/index";
+import { toolsFor } from "../../tools/registry";
 
 const home = mkdtempSync(join(tmpdir(), "orca-questions-"));
 process.env.ORCA_HOME = home;

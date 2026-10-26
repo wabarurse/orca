@@ -1,13 +1,12 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import type { AgentDeps } from "../../agent-loop/loop/agent";
-import { budget, contextLimit, estimate, outputCap, retainedImages } from "./compaction";
+import { budget, contextLimit, estimate, outputCap, retainedImages, type ContextDeps } from "./compaction";
 import { archiveTranscript, contextEpoch, transcriptEntries } from "./archive";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
-import type { Provider } from "../../../providers";
-import { summarizeOlder, taskSnapshot, type RollingMemory } from "./rolling-summary";
+import type { Provider } from "../../../providers/provider";
+import { summarizeOlder, taskSnapshot } from "./rolling-summary";
 import type { Task } from "../tasks/tasks";
 import { paired } from "./tool-pairs";
-import type { Transcript } from "../transcripts/transcript";
+import type { RollingMemory, Transcript } from "../transcripts/transcript";
 import { inputEpoch } from "../inbox/user-input";
 
 export interface RollingOptions {
@@ -48,10 +47,10 @@ export function rollingCut(messages: MessageParam[], tailTokens: number): number
 }
 
 const checkpoint = (t: Transcript) => t.branch().find(e => e.type === "summary")?.uuid;
-function status(deps: AgentDeps, text: string): void {
+function status(deps: ContextDeps, text: string): void {
   try { deps.write?.(`${text}\n`, true); } catch { /* Reporting cannot undo a committed checkpoint. */ }
 }
-function fits(deps: AgentDeps, messages: MessageParam[]): boolean {
+function fits(deps: ContextDeps, messages: MessageParam[]): boolean {
   return budget(deps, messages) + outputCap(deps) <= .8 * contextLimit(deps.compaction ?? {}, deps.model);
 }
 function memoryText(memory: RollingMemory, tasks: Task[]): string {
@@ -84,7 +83,7 @@ export class RollingCompactor {
     return this.ready();
   }
 
-  async boundary(deps: AgentDeps, manual = false, maintenance = false): Promise<void> {
+  async boundary(deps: ContextDeps, manual = false, maintenance = false): Promise<void> {
     try { await this.prepare(deps, manual, maintenance); }
     catch (error) {
       deps.signal?.throwIfAborted();
@@ -93,7 +92,7 @@ export class RollingCompactor {
     }
   }
 
-  private async prepare(deps: AgentDeps, manual: boolean, maintenance: boolean): Promise<void> {
+  private async prepare(deps: ContextDeps, manual: boolean, maintenance: boolean): Promise<void> {
     deps.signal?.throwIfAborted();
     if (this.disposed) return;
     if (!manual && deps.compaction?.enabled === false) { this.reset(); return; }
@@ -126,7 +125,7 @@ export class RollingCompactor {
     finally { signal?.removeEventListener("abort", cancel); }
   }
 
-  private async start(deps: AgentDeps, messages: MessageParam[]): Promise<void> {
+  private async start(deps: ContextDeps, messages: MessageParam[]): Promise<void> {
     const cut = rollingCut(messages, this.options.tailTokens ?? 20000);
     if (!cut) { this.retryAfter = Date.now() + 30000; return; }
     const identity = projectIdentity(this.project), generation = this.generation;
@@ -151,12 +150,12 @@ export class RollingCompactor {
     status(deps, "compacting older conversation in the background…");
   }
 
-  private async apply(deps: AgentDeps, job: Job): Promise<void> {
+  private async apply(deps: ContextDeps, job: Job): Promise<void> {
     try { await this.publish(deps, job); }
     finally { if (this.job === job) this.job = undefined; }
   }
 
-  private async publish(deps: AgentDeps, job: Job): Promise<void> {
+  private async publish(deps: ContextDeps, job: Job): Promise<void> {
     this.retryAfter = Date.now() + 30000;
     if (job.error || !job.memory) { status(deps, `background compaction failed; original history kept: ${job.error instanceof Error ? job.error.message : job.error}`); return; }
     const identity = job.identity;

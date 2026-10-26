@@ -13,7 +13,7 @@ import pkg from "../../package.json";
 import { runAgent } from "../core/agent-loop/loop/agent";
 import { afterExit } from "../core/tmux/exits";
 import { put } from "../core/data/inbox/inbox";
-import { repoHere, validProjectName } from "../tui/commands/commands";
+import { repoHere, validProjectName } from "../core/data/projects/registry";
 import { existsSync } from "node:fs";
 import { paths } from "../config/config";
 import { daemonPid } from "../core/agent-loop/orc/channel";

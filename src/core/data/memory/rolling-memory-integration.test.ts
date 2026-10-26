@@ -8,7 +8,7 @@ import { pending, put } from "../inbox/inbox";
 import { queryHistory } from "./archive";
 import { createOrchestrator, type Orchestrator } from "../../agent-loop/orc/orchestrator";
 import { RollingCompactor } from "./rolling-memory";
-import type { CompleteRequest, Provider } from "../../../providers";
+import type { CompleteRequest, Provider } from "../../../providers/provider";
 import { fakeProvider, text } from "../../../test/fake-provider";
 import { open, type Transcript } from "../transcripts/transcript";
 import { disk } from "../transcripts/transcript-storage";

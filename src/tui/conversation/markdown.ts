@@ -1,5 +1,5 @@
 // Markdown → styled terminal lines, pure. Only SGR styling and OSC 8 links
-// are written, so the output passes render.ts `sanitize` untouched.
+// are written, so the output passes text.ts `sanitize` untouched.
 //
 // The text is cut into blocks (`takeBlocks`) and each block renders on its
 // own (`renderBlock`): a blank run, one line (paragraph, heading, list item,
@@ -7,13 +7,10 @@
 // the source stays a line break, so a reply can be committed line by line as
 // it streams (see mdstream.ts) and render the same as all at once.
 
-import { cells } from "../footer/editor";
+import { cells, LINK_CLOSE, linkOpen, RESET, wordWrap } from "../components/text";
 
 const SGR = { bold: "\x1b[1m", dim: "\x1b[2m", italic: "\x1b[3m", underline: "\x1b[4m", strike: "\x1b[9m", code: "\x1b[36m" };
-const RESET = "\x1b[0m";
 const dim = (s: string) => `${SGR.dim}${s}${RESET}`;
-const linkOpen = (url: string) => `\x1b]8;;${url}\x1b\\`;
-const LINK_CLOSE = "\x1b]8;;\x1b\\";
 
 // --- inline -----------------------------------------------------------------
 
@@ -198,110 +195,6 @@ export function inline(s: string, outer = "", links = true): string {
     else { out += s[i]; i++; }
   }
   return out;
-}
-
-// --- wrapping ---------------------------------------------------------------
-
-const ESC = /\x1b\[[0-9;:]*m|\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/y;
-
-/** A styled string as escapes and breakable words: a run of spaces, one wide character, or a run of narrow ones. */
-function* pieces(s: string): Generator<{ esc: string } | { space: number } | { word: string; width: number }> {
-  let i = 0;
-  while (i < s.length) {
-    ESC.lastIndex = i;
-    const m = s[i] === "\x1b" ? ESC.exec(s) : null;
-    if (m) { yield { esc: m[0] }; i += m[0].length; continue; }
-    let j = i;
-    while (j < s.length && s[j] !== "\x1b") j++;
-    yield* words(s.slice(i, j));
-    i = j;
-  }
-}
-
-function* words(text: string): Generator<{ space: number } | { word: string; width: number }> {
-  let word = "";
-  let width = 0;
-  for (const c of cells(text)) {
-    const space = c.text === " ";
-    if (word && (space || c.width > 1)) { yield { word, width }; word = ""; width = 0; }
-    if (space) yield { space: 1 };
-    else if (c.width > 1) yield { word: c.text, width: c.width };
-    else { word += c.text; width += c.width; }
-  }
-  if (word) yield { word, width };
-}
-
-/** Styles in force at a point of a styled string, to close a line and reopen them on the next. */
-class Pen {
-  sgr: string[] = [];
-  url = "";
-  apply(esc: string): void {
-    if (esc.startsWith("\x1b]")) this.url = /^\x1b\]8;[^;]*;([^\x07\x1b]*)/.exec(esc)?.[1] ?? "";
-    else if (esc === RESET || esc === "\x1b[m") this.sgr = [];
-    else this.sgr.push(esc);
-  }
-  close(): string { return `${this.url ? LINK_CLOSE : ""}${this.sgr.length ? RESET : ""}`; }
-  open(): string { return `${this.sgr.join("")}${this.url ? linkOpen(this.url) : ""}`; }
-}
-
-/** Lines being filled to a width; styles and links in force carry over a break. */
-class Filler {
-  readonly lines: string[] = [];
-  private line = "";
-  private used = 0;
-  /** Spaces since the last word, written only if another word follows on the line. */
-  gap = 0;
-  /** Escapes after a space: they go with the next word, so a style never starts on the line before. */
-  private held: string[] = [];
-  private readonly pen = new Pen();
-  constructor(private readonly w: number) {}
-
-  esc(e: string): void {
-    if (this.gap) { this.held.push(e); return; }
-    this.line += e;
-    this.pen.apply(e);
-  }
-
-  word(text: string, tw: number): void {
-    if (this.used && this.used + this.gap + tw > this.w) this.newLine();
-    if (this.used) { this.line += " ".repeat(this.gap); this.used += this.gap; }
-    this.gap = 0;
-    for (const e of this.held.splice(0)) this.esc(e);
-    this.line += text;
-    this.used += tw;
-  }
-
-  /** A word wider than a line: from a fresh line, cut a cell at a time. */
-  long(word: string): void {
-    if (this.used) this.newLine();
-    for (const c of cells(word)) this.word(c.text, c.width);
-  }
-
-  private newLine(): void {
-    this.lines.push(this.line + this.pen.close());
-    this.line = this.pen.open();
-    this.used = 0;
-  }
-
-  end(): string[] {
-    this.gap = 0;
-    for (const e of this.held.splice(0)) this.esc(e);
-    this.lines.push(this.line);
-    return this.lines;
-  }
-}
-
-/** Word-wrap a styled string to `width` columns; styles and links carry over to the next line, and a word too long for a line is cut, starting on a line of its own. */
-export function wordWrap(s: string, width: number): string[] {
-  const w = Math.max(1, width);
-  const f = new Filler(w);
-  for (const p of pieces(s)) {
-    if ("esc" in p) f.esc(p.esc);
-    else if ("space" in p) f.gap += p.space;
-    else if (p.width <= w) f.word(p.word, p.width);
-    else f.long(p.word);
-  }
-  return f.end();
 }
 
 const width = (s: string) => Bun.stringWidth(s);

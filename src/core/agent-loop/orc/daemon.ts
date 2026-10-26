@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentOptions } from "../loop/agent";
 import { delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux/cancellation";
-import { exitWatchdog, mergeWatch } from "../../../tui/commands/commands";
+import { exitWatchdog, mergeWatch } from "../../tmux/liveness";
 import { paths } from "../../../config/config";
 import { claim, supervise, type Tracker } from "../../tmux/exits";
 import { contextWindow } from "../../../providers/catalog/context-window";
@@ -36,7 +36,7 @@ export interface DaemonOptions {
   project: string;
   run: string;
   session: Orchestrator;
-  /** Exit watchdog and merge watcher; production uses commands.ts's. */
+  /** Exit watchdog and merge watcher; production uses liveness.ts's. */
   watchers?: { watchdog?: (project: string) => Promise<unknown>; merges?: (project: string) => Promise<unknown> };
   pollMs?: number;
   watchMs?: number;

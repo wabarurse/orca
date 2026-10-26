@@ -44,7 +44,7 @@ import type { Entry, MessageEntry } from "../../core/data/transcripts/transcript
 import { interruptedView, toolView, type ToolOutcome } from "../../core/agent-loop/loop/toolview";
 import { historyRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
-import { plainText, bold, dim, wrap } from "../components/render";
+import { plainText, bold, dim, wrap } from "../components/text";
 
 /** Default budget for bounded previews; the live page explicitly restores all rows. */
 export const MAX_RESTORED_ROWS = 200;

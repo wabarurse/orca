@@ -1,9 +1,9 @@
 /** Real production orchestrator; only credentials, measurements and benchmark isolation are injected. */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { provider as accountProvider } from "../../src/login/accounts";
+import { provider as accountProvider } from "../../src/providers/account";
 import { providerFor, type Provider, type Turn } from "../../src/providers";
-import type { Tool } from "../../src/core/tools";
+import type { Tool } from "../../src/core/tools/registry";
 import { paths } from "../../src/config/config";
 import { legacy } from "../../src/config/legacy";
 const spec = await Bun.file(process.argv[2]!).json();

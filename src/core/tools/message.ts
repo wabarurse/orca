@@ -1,7 +1,7 @@
 import { attachmentSchema, forwardImages } from "./attachments";
 import { put } from "../data/inbox/inbox";
 import { sessionId } from "../tmux/runner";
-import type { Tool } from "./index";
+import type { Tool } from "./registry";
 
 // Every agent has an inbox. Addresses: "orchestrator", "user", or an agent id
 // such as "worker-feat-login". Messages wait in the queue until the receiver

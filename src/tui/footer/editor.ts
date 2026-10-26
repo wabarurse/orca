@@ -4,21 +4,11 @@
 // prompt; CJK and emoji count two); a logical line whose last row is full gets
 // an empty row after it so the cursor has somewhere to sit.
 
+import { cells } from "../components/text";
+
 export interface EditState { text: string; cursor: number }
 
-/** One grapheme cluster: text[at, end), `width` columns wide. */
-export interface Cell { at: number; end: number; text: string; width: number }
-
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-/** The grapheme clusters of text[start, end). */
-export function cells(text: string, start = 0, end = text.length): Cell[] {
-  const out: Cell[] = [];
-  for (const { segment, index } of segmenter.segment(text.slice(start, end))) {
-    out.push({ at: start + index, end: start + index + segment.length, text: segment, width: Bun.stringWidth(segment) });
-  }
-  return out;
-}
 
 const isWord = (g: string) => /[\p{L}\p{N}_]/u.test(g);
 const isSpace = (g: string) => /^\s+$/u.test(g);

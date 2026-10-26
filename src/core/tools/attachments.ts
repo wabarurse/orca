@@ -2,7 +2,7 @@ import { paths } from "../../config/config";
 import { blockRef, validateRefs, type ImageRef } from "../data/images/images";
 import { sessionId } from "../tmux/runner";
 import { afterContextBoundary, open } from "../data/transcripts/transcript";
-import type { ToolContext } from "./";
+import type { ToolContext } from "./registry";
 export const attachmentSchema = { type: "array", maxItems: 4, items: { type: "string" }, description: "Explicit attachment_id UUIDs from images you received in this project/context. Omitted means no images. Sends actual image content, not filenames. Forward relevant images when delegating visual work/review." };
 /** Possession of a guessed UUID is not permission: it must occur as a real image
  * block in the sender's own context epoch (not in arbitrary tool/user prose). */

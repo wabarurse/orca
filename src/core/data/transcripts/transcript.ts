@@ -12,7 +12,6 @@ import type { Message } from "../inbox/inbox";
 import { publish, disk, type Storage } from "./transcript-storage";
 import { dirname } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import type { RollingMemory } from "../memory/rolling-summary";
 
 export type Role = "orchestrator" | "worker" | "reviewer";
 
@@ -27,6 +26,14 @@ export interface BaseEntry {
 export interface MessageEntry extends BaseEntry {
   type: "message";
   message: MessageParam;
+}
+
+/** The orchestrator's rolling memory, as a summary entry carries it (memory/rolling-summary.ts maintains it). */
+export interface RollingMemory {
+  user: string[];
+  project: string[];
+  pending: string[];
+  tasks: { id: string; notes: string }[];
 }
 
 export interface SummaryEntry extends BaseEntry {

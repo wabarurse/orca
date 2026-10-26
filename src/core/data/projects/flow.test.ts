@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { defaults, loadConfig, paths, saveConfig } from "../../../config/config";
 import { effectiveFlow, flowSettingsPath, saveProjectFlow, validateFlow } from "./flow";
 import { projectIdentity, withProjectStateLock } from "./state";
-import { rolePrompt, DYNAMIC_DISPATCH } from "../../prompt/prompts";
+import { rolePrompt, DYNAMIC_DISPATCH } from "../../prompt/shared";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { fakeProvider, text } from "../../../test/fake-provider";
 

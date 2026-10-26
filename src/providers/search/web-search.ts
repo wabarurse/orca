@@ -1,5 +1,5 @@
-import type { RequestSettings } from "../../core/data/projects/project-settings";
-import { plain } from "../../core/agent-loop/loop/toolview";
+import type { RequestSettings } from "../catalog/settings";
+import { plain } from "../sanitize";
 
 export interface SearchRequest {
   model: string;

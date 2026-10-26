@@ -1,9 +1,17 @@
 // What a page's history holds, and how one entry is laid out on screen.
 
 import { renderBlock, renderLabelled, renderMarkdown } from "./markdown";
-import { userRows } from "../components/render";
+import { sanitize, wrap } from "../components/text";
+import { fillRow, userFill } from "../components/style";
 import { groupRow, toolRows } from "./tools";
 import type { ToolView } from "../../core/agent-loop/loop/toolview";
+
+/** A user message line ("> …" or its indented continuation) at `cols`: wrapped, every row on the user background, full width. */
+export function userRows(line: string, cols: number): string[] {
+  const rows = wrap(sanitize(line), cols);
+  const fill = userFill();
+  return fill ? rows.map((r) => fillRow(r, cols, fill)) : rows;
+}
 
 /**
  * A line of history. Plain text stays as it is; the orchestrator's markdown is
@@ -11,7 +19,7 @@ import type { ToolView } from "../../core/agent-loop/loop/toolview";
  * and laid out at the current width whenever it is drawn, so a reprint after a
  * resize fits tables to the new width. A line of the user's own message
  * (`user`, "> …" or its indented continuation) is drawn on the user
- * background, full width (render.ts `userRows`). A finished tool call
+ * background, full width (`userRows`). A finished tool call
  * (`tool`, its `summary`, `failed`) shows as its "⏺" line and "⎿" summary,
  * cut to the width (tools.ts `toolRows`).
  */

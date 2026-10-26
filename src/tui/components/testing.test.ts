@@ -98,7 +98,7 @@ describe("FakeScreen", () => {
 });
 
 test("SGR dim, bold and foreground survive soft wraps but not the block reset", async () => {
-  const { commit } = await import("./render");
+  const { commit } = await import("../footer/render");
   const s = new FakeScreen(4, 8);
   s.write(commit(["\x1b[2mgraygray\x1b[31;1mredred\x1b[0m", "normal"], 4));
   const attrs = s.attributes();

@@ -69,7 +69,7 @@ test("clear -> fresh request -> repeated compaction -> reload never pins or summ
   for (let i = 0; i < 2; i++) {
     await transcript.append({ type: "message", message: { role: "user", content: "next task " + i } });
     const summary = fakeProvider([[text("Fresh progress only.")]]);
-    expect(await compact({ transcript, provider: summary, model: "unknown", tools: {}, ctx: { project, role: "orchestrator", cwd: paths.repo(project) }, compaction: { fallback: 30000 } }, true)).toBe(true);
+    expect(await compact({ transcript, provider: summary, model: "unknown", tools: {}, compaction: { fallback: 30000 } }, true)).toBe(true);
     expect(JSON.stringify(summary.calls)).not.toContain("OLD_SECRET");
     const loaded = open(transcript.path);
     expect(JSON.stringify(await loaded.chain())).not.toContain("OLD_SECRET");

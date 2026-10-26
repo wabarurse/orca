@@ -5,10 +5,10 @@ import { join } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { createAgent } from "./agent";
 import { put } from "../../data/inbox/inbox";
-import type { Provider } from "../../../providers/index";
+import type { Provider } from "../../../providers/provider";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import type { Entry, NewEntry, Transcript } from "../../data/transcripts/transcript";
-import type { Tool, ToolContext } from "../../tools/index";
+import type { Tool, ToolContext } from "../../tools/registry";
 
 const home = mkdtempSync(join(tmpdir(), "orca-agent-"));
 process.env.ORCA_HOME = home;

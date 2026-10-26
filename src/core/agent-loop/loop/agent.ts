@@ -1,22 +1,24 @@
-import { materializeImages, requireVision } from "../../data/images/images";
+import { materializeImages } from "../../data/images/images";
+import { requireVision } from "../../../providers/images";
 import { publishLaunch, watchCancellation } from "../../tmux/cancellation";
-import type { RequestSettings } from "../../data/projects/project-settings";
+import type { RequestSettings } from "../../../providers/catalog/settings";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
-// a different tool set and a short role prompt (src/core/prompt/prompts.ts). The task
+// a different tool set and a short role prompt (src/core/prompt/shared.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).
 
 import type { ContentBlock, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { effectiveModel, projectModelResolver } from "../../data/projects/project-model";
-import { budget, compact, outputCap, requireFits, type CompactOptions } from "../../data/memory/compaction";
+import { budget, compact, outputCap, requireFits, type CompactOptions, type ContextDeps } from "../../data/memory/compaction";
 import { loadConfig, paths } from "../../../config/config";
 import { supervise, type Tracker } from "../../tmux/exits";
 import { consume, content, type Message } from "../../data/inbox/inbox";
-import { rolePrompt } from "../../prompt/prompts";
+import { rolePrompt } from "../../prompt/shared";
 import { effectiveFlow } from "../../data/projects/flow";
-import { type Provider } from "../../../providers/index";
+import type { Provider } from "../../../providers/provider";
 import { sessionId } from "../../tmux/runner";
 import { open, type Role, type Transcript } from "../../data/transcripts/transcript";
-import { registry, toolsFor, type Tool, type ToolContext } from "../../tools/index";
+import { registry } from "../../tools/index";
+import { toolsFor, type Tool, type ToolContext } from "../../tools/registry";
 import { callText, resultText, type ToolCall, type ToolOutcome } from "./toolview";
 import { scheduleTools } from "./tool-scheduler";
 import type { RollingOptions } from "../../data/memory/rolling-memory";
@@ -34,7 +36,7 @@ export interface AgentOptions {
   exitWhenIdle?: boolean;
 }
 
-export interface AgentDeps {
+export interface AgentDeps extends ContextDeps {
   /** UI observer of the actual safe-boundary request configuration. */
   onContext?: (deps: AgentDeps) => void;
   /** Maximum overlap of calls explicitly marked independent. Other tools are barriers. */

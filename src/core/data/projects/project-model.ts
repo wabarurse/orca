@@ -1,12 +1,13 @@
-import { effectiveSettings, type RequestSettings } from "./project-settings";
+import { effectiveSettings } from "./project-settings";
+import type { RequestSettings } from "../../../providers/catalog/settings";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";
 // A project override never changes the default used by other projects.
 import { rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig, paths } from "../../../config/config";
-import { provider } from "../../../login/accounts";
+import { provider } from "../../../providers/account";
 import { prefetchContextLimits } from "../../../providers/catalog/context-window";
-import { providerFor, type Provider } from "../../../providers";
+import { providerFor, type Provider } from "../../../providers/provider";
 
 function modelPath(project: string): string {
   if (!/^[a-zA-Z0-9._-]+$/.test(project) || project === "." || project === "..") throw new Error("invalid project id");

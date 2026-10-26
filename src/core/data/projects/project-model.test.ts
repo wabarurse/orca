@@ -8,7 +8,7 @@ import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { clearCatalogLimits } from "../../../providers/catalog/context-window";
-import type { Provider } from "../../../providers";
+import type { Provider } from "../../../providers/provider";
 
 const home = mkdtempSync(join(tmpdir(), "project-model-"));
 process.env.ORCA_HOME = home;

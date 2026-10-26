@@ -15,7 +15,7 @@ import { archivePath, entryText, queryHistory } from "../memory/archive";
 import { createOrchestrator, type Orchestrator } from "../../agent-loop/orc/orchestrator";
 import { claudeMessages } from "../../../providers/anthropic";
 import { toResponses } from "../../../providers/openai";
-import type { CompleteRequest, Provider } from "../../../providers";
+import type { CompleteRequest, Provider } from "../../../providers/provider";
 import { RollingCompactor } from "../memory/rolling-memory";
 import { summarizeOlder } from "../memory/rolling-summary";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
