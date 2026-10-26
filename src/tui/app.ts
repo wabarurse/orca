@@ -564,6 +564,7 @@ export class App {
       partial: page && !page.view ? page.md.pending : "",
       running: page ? (page.view?.calls ?? page.calls).rows(this.clock.now(), this.deps.term.cols) : [],
       activity: !this.started ? dim("opening…") : page ? this.activity(page) : undefined,
+      welcome: this.started && !!page && this.newChat(page),
       status, input, inputArea: area,
       // Project-owned submitted text only: never reconstruct from conversation
       // user lines or from the chat/answer draft. This is presentation, not delivery.
@@ -582,10 +583,15 @@ export class App {
     };
   }
 
-  private header(page: Page): string[] {
+  private header(page: Page, decorate = true): string[] {
     const settings = page.settings;
     const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(this.maxReviewRounds), dispatch: dispatchStatus(this.dynamicDispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, whale: { time: this.clock.now(), active: page.view ? page.view.live : page.busy } }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(this.maxReviewRounds), dispatch: dispatchStatus(this.dynamicDispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+  }
+
+  /** Submission hides the welcome immediately, even before inbox consumption. */
+  private newChat(page: Page): boolean {
+    return !page.view && !page.lines.length && !page.md.pending && !page.busy && !page.calls.size && !page.sent.length && !this.queued.get(page)?.length;
   }
 
   /** Independent read generations for captured page objects. */
@@ -870,7 +876,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
     const history = page?.view?.lines ?? page?.lines ?? this.looseLines;
-    const lines = [...(page ? this.header(page) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
+    const lines = [...(page ? this.header(page, false) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
   }

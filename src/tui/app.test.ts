@@ -108,6 +108,52 @@ async function until(cond: () => boolean): Promise<void> {
 }
 
 describe("tui app", () => {
+  test("orca welcome stays static until submission, then only the header fin animates", async () => {
+    const term = fakeTerm(100, 40), fake = fakeOrchestrators();
+    let now = 0, publish!: () => void, finish!: () => void;
+    const publishing = new Promise<void>(resolve => { publish = resolve; });
+    const finishing = new Promise<void>(resolve => { finish = resolve; });
+    const ticks = new Set<() => void>();
+    const clock: Clock = { now: () => now, every: fn => { ticks.add(fn); return () => { ticks.delete(fn); }; } };
+    const app = new App({ term, clock, pollMs: 100_000, agents: async () => [], watchdog: async () => {}, merges: async () => {},
+      openOrchestrator: async (...args) => {
+        const orch = await fake.openOrchestrator(args[0], args[1], args[2], args[3]);
+        return { ...orch, say: async (...input) => { await publishing; await orch.say(...input); }, turn: async () => { await orch.turn(); await finishing; return []; } };
+      },
+    });
+    const running = app.run("orca-welcome");
+    const header = () => term.display.screen().slice(0, bodyStart(term)).join("\n");
+    try {
+      await until(() => app.frame().welcome === true && term.screen().includes("########"));
+      expect(header()).not.toContain("#");
+      expect(app.page!.lines).toEqual([]);
+      expect(ticks.size).toBe(0);
+      const art = bodyRows(term).filter(row => /#/.test(row));
+      term.type("first prompt"); now = 1200; app.draw();
+      await settle();
+      expect(bodyRows(term).filter(row => /#/.test(row))).toEqual(art);
+      term.type("\r");
+      await until(() => app.page!.sent.length === 1 && header().includes("~"));
+      expect(app.frame().welcome).toBe(false);
+      expect(bodyRows(term).join("\n")).not.toContain("#");
+      expect(app.page!.lines).toEqual([]); // still waiting for inbox publication
+      publish();
+      await until(() => app.page!.busy && app.page!.lines.length > 0);
+      await settle();
+      const before = header(); now = 2400; ticks.forEach(tick => tick());
+      await until(() => header() !== before);
+      expect(bodyRows(term).join("\n")).not.toContain("#");
+      finish();
+      await until(() => !app.page!.busy && ticks.size === 0);
+      await app.openPage("orca-fresh");
+      await until(() => app.frame().welcome === true);
+      app.active = 0; app.reprint();
+      await until(() => app.frame().welcome === false && header().includes("~"));
+      expect(app.page!.lines.map(raw).join("\n")).not.toContain("#");
+    } finally { publish(); finish(); app.quit(); await running; }
+    expect(term.display.screen().join("\n")).not.toContain("#"); // no decoration in exit replay
+  });
+
   test("closing pages and quitting dispose idle background memory without cancelling idle projects", async () => {
     const term = fakeTerm(), fake = fakeOrchestrators(), disposed: string[] = [], cancelled: string[] = [];
     const app = new App({ term, pollMs: 100_000, openOrchestrator: async (...args) => ({

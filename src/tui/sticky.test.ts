@@ -8,10 +8,32 @@ import { fit, liveRows, type Frame } from "./render";
 import { FakeScreen } from "./testing";
 import { setUserFill, userFill } from "./style";
 import { parseKeys } from "./keys";
+import { whaleRows } from "./whale";
 
 const frame = (cols = 80, rows = 24): Frame => ({ cols, rows, input: { prompt: "> ", text: "draft", cursor: 5 }, status: "2 agents running", menu: null });
 const chrome = ["[alpha] beta", "alpha · model · effort high · fast on", "/working/directory", "github.com/example/repo"];
 const history = Array.from({ length: 100 }, (_, i) => `message ${i}`);
+
+test("welcome whale is centered viewport decoration without history or scroll extent", () => {
+  for (const [cols, rows] of [[100, 40], [80, 24], [40, 20], [20, 8]]) {
+    const f = { ...frame(cols!, rows!), welcome: true };
+    const empty: string[] = [];
+    const screen = stickyRows(f, empty, chrome);
+    const art = whaleRows(cols!, screen.bodyHeight);
+    const offset = screen.bodyTop + Math.floor((screen.bodyHeight - art.length) / 2);
+    expect(screen.rows.slice(offset, offset + art.length)).toEqual(art);
+    expect(screen.rows).toHaveLength(rows!);
+    expect(screen.rows.every(row => Bun.stringWidth(row) <= cols!)).toBe(true);
+    expect(screen.maxStart).toBe(0);
+    expect(empty).toEqual([]);
+    const without = stickyRows({ ...f, welcome: false }, empty, chrome);
+    expect([screen.cursor, screen.col, screen.bodyHeight]).toEqual([without.cursor, without.col, without.bodyHeight]);
+  }
+  for (const [saved, tail] of [[["a prompt"], {}], [[], { partial: "a reply" }], [[], { running: ["tool"] }], [[], { activity: "working" }]] as [string[], Partial<Frame>][]) {
+    const screen = stickyRows({ ...frame(), welcome: true, ...tail }, saved, chrome);
+    expect(screen.rows.join("\n")).not.toContain("#");
+  }
+});
 
 test("both bars stay at screen edges while streaming and scrolling; only changed rows repaint", () => {
   const f = frame(), terminal = new FakeScreen(f.cols, f.rows);
