@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { expect, spyOn, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bindingOption, interruptBinding, interruptClient, interruptExactRun, type InterruptTarget } from "./interrupt";
+import { bindingOption, interruptBinding, interruptClient, interruptExactRun, type InterruptTarget, type TmuxQuery } from "./interrupt";
 
 const target = (): InterruptTarget => ({ project: "test", task: "task", branch: "feat/exact", agent: "worker-feat-exact", run: crypto.randomUUID(), token: crypto.randomUUID(), pane: "%1", pid: 123 });
 
@@ -25,11 +25,51 @@ test("exact identity, uncertain transport, and bounded observation", async () =>
   expect(() => interruptBinding({ ...t, pane: "%1 ; kill-server" })).toThrow();
 });
 
+test("wall-clock jumps do not change observation deadline or clipped query budget", async () => {
+  const wall = spyOn(Date, "now").mockReturnValue(1_000_000);
+  const monotonic = spyOn(performance, "now").mockReturnValueOnce(100).mockReturnValueOnce(105).mockReturnValueOnce(140);
+  const budgets: number[] = [];
+  try {
+    const result = await interruptExactRun(target(), async (args, budget) => {
+      budgets.push(budget);
+      wall.mockReturnValue(args[0] === "if-shell" ? -1_000_000 : 9_000_000);
+      return args[0] === "if-shell" ? "sent" : "running";
+    }, 50);
+    expect(result.status).toBe("still-running");
+    expect(budgets).toEqual([1000, 45]);
+    expect(wall).not.toHaveBeenCalled();
+  } finally { wall.mockRestore(); monotonic.mockRestore(); }
+});
+
+async function teardown(query: TmuxQuery, dir: string): Promise<void> {
+  // A failed/ambiguous kill must leave the socket and recovery metadata intact.
+  if (await query(["kill-server"], 2000).catch(() => null) === null) {
+    throw Error(`fixture kill-server unconfirmed; recovery directory retained: ${dir}`);
+  }
+  rmSync(dir, { recursive: true, force: true });
+}
+
+test("fixture teardown retains recovery data on null/error and removes only on success", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "orca-int-teardown-"));
+  const recovery = join(dir, "recovery.json");
+  writeFileSync(recovery, "no server; simulated teardown");
+  try {
+    for (const query of [async () => null, async () => { throw Error("transport failure"); }]) {
+      await expect(teardown(query, dir)).rejects.toThrow(`recovery directory retained: ${dir}`);
+      expect(existsSync(recovery)).toBe(true);
+    }
+    await teardown(async () => "", dir);
+    expect(existsSync(dir)).toBe(false);
+  } finally { rmSync(dir, { recursive: true, force: true }); } // no real server in this test
+});
+
 test("isolated tmux: Ctrl+C exit, ignored INT, stale run/PID, missing pane and respawn", async () => {
   // Never attach to or discover a real agent session. No default socket fallback.
   if (!Bun.which("tmux")) throw Error("tmux required for disposable interrupt fixture");
   const dir = mkdtempSync(join(tmpdir(), "orca-int-"));
-  const query = interruptClient(["tmux", "-S", join(dir, "s"), "-f", "/dev/null"]);
+  const argv = ["tmux", "-S", join(dir, "s"), "-f", "/dev/null"];
+  writeFileSync(join(dir, "recovery.json"), JSON.stringify({ argv, session: "fixture" }));
+  const query = interruptClient(argv);
   const cmd = async (...args: string[]) => {
     const out = await query(args, 2000);
     if (out === null) throw Error(`fixture tmux failed: ${args[0]}`);
@@ -67,7 +107,6 @@ test("isolated tmux: Ctrl+C exit, ignored INT, stale run/PID, missing pane and r
     expect((await interruptExactRun({ ...fresh.t, pane: "%999999" }, query)).status).toBe("unknown");
   } finally {
     // Teardown only disposable test processes; not implementation escalation.
-    await query(["kill-server"], 2000);
-    rmSync(dir, { recursive: true, force: true });
+    await teardown(query, dir);
   }
 }, 15_000);

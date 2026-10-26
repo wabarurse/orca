@@ -66,14 +66,19 @@ export async function interruptExactRun(target: InterruptTarget, query: TmuxQuer
     `display-message -p -t ${t.pane} '${state}'`], 1000).catch(() => null);
   if (dispatch === "exited") return result("agent-exited-cleanup-unverified");
   if (dispatch !== "sent") return result("unknown");
-  const deadline = Date.now() + waitMs;
+  return result(await observeExit(t.pane, state, query, waitMs));
+}
+
+async function observeExit(pane: string, state: string, query: TmuxQuery, waitMs: number): Promise<InterruptStatus> {
+  const deadline = performance.now() + waitMs;
   for (;;) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) return result("unknown"); // sent is not liveness evidence
-    const observed = await query(["display-message", "-p", "-t", t.pane, state], Math.min(1000, remaining)).catch(() => null);
-    if (observed === "exited") return result("agent-exited-cleanup-unverified");
-    if (observed !== "running") return result("unknown");
-    if (deadline - Date.now() <= 25) return result("still-running");
-    await Bun.sleep(Math.min(25, deadline - Date.now()));
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return "unknown"; // sent is not liveness evidence
+    const observed = await query(["display-message", "-p", "-t", pane, state], Math.min(1000, remaining)).catch(() => null);
+    if (observed === "exited") return "agent-exited-cleanup-unverified";
+    if (observed !== "running") return "unknown";
+    const left = deadline - performance.now();
+    if (left <= 25) return "still-running";
+    await Bun.sleep(Math.min(25, left));
   }
 }

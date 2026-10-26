@@ -204,3 +204,26 @@ with four diagnostics in existing provider bounded-request/transport files;
 none in this slice. Provider fixes are separate work, not modified here. Logs:
 `/tmp/feat-subagent-graceful-stop-{install,tests,check}.log`. No full suite,
 baseline or duplicate checks. Only this documentation changed after checks.
+
+Review correction: observation now uses a monotonic `performance.now()` deadline
+in a separate helper, clipping each query timeout to the remaining budget. A
+focused regression changes wall time backwards/forwards while checking the exact
+monotonic query budget. Fixture teardown now requires successful `kill-server`;
+null/errors fail the test and retain the private socket directory and
+`recovery.json` argv/session metadata, rather than unlinking recovery information.
+A deterministic teardown regression covers both failure paths and success.
+`bun test src/core/tmux/interrupt.test.ts` passed once on corrected code: 4 tests,
+32 expectations, including the disposable real tmux fixture with confirmed
+teardown. Log: `/tmp/feat-subagent-graceful-stop-review-tests.log`.
+The previous repository typecheck failure remains the blocked gate pending the
+separate provider corrections merging; no provider edits/cherry-picks or
+unchanged typecheck retry here. Dormant activation gates above are unchanged.
+
+Integrated gate cleared after provider #140 merged at
+`b4b17a2fce9410fe5776552dca4c5f8dcca8377f`. The interrupt branch rebased without
+conflicts; interrupt implementation/tests are byte-for-byte unchanged from
+`ac8800fc875219ff0d968453f76bb3a6246b27a8`, so the 4-test/32-expectation evidence
+above carries forward without rerunning. `bun run check` passed once on rebased
+head `d1edf5fcebcd117a60dc504fc3133011da82f22d`; log:
+`/tmp/feat-subagent-graceful-stop-integrated-check.log`. Only this evidence note
+and commit metadata changed afterward. No live activation or publication.
