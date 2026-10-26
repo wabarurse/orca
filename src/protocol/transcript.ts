@@ -56,7 +56,26 @@ export interface ContextBoundaryEntry extends BaseEntry {
   type: "context-boundary";
 }
 
-export type Entry = MessageEntry | SummaryEntry | MetaEntry | RepliesEntry | ContextBoundaryEntry;
+/** Metadata only, never conversational content. One event per request transition.
+ * provider-wait covers complete(), including any SDK-internal retries.
+ * A missing terminal event means interrupted/unknown, not a successful request.
+ */
+export interface ModelRequestEntry extends BaseEntry {
+  type: "model-request";
+  requestId: string;
+  model: string;
+  provider: string;
+  stage: "preparing" | "provider-wait" | "completed" | "error" | "aborted";
+  startedAt: string;
+  updatedAt: string;
+}
+
+/** Shared plain diagnostic line for live output and both history viewers. */
+export function modelRequestText(event: Pick<ModelRequestEntry, "provider" | "model" | "stage" | "startedAt" | "updatedAt">): string {
+  return `[model request] ${event.provider}/${event.model} ${event.stage}; started ${event.startedAt}; updated ${event.updatedAt}`;
+}
+
+export type Entry = MessageEntry | SummaryEntry | MetaEntry | RepliesEntry | ContextBoundaryEntry | ModelRequestEntry;
 
 /** An entry as passed to append(): uuid/ts are filled in, parentUuid defaults to head(). */
 export type NewEntry = Entry extends infer E

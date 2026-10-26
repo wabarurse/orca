@@ -1,3 +1,9 @@
+import { open } from "../../data/transcripts/transcript";
+import { budget } from "../../data/memory/compaction";
+import { entryText } from "../../data/memory/archive";
+import { restore } from "../../../tui/conversation/restore";
+import { render } from "../../../tui/conversation/view";
+import { historyRows } from "../../../tui/conversation/lines";
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -65,9 +71,8 @@ describe("agent loop", () => {
     expect(calls.length).toBe(1);
     expect(calls[0]!.tools).toEqual([]);
     expect(out).toBe("hello\n");
-    expect(transcript.entries.length).toBe(2);
-    expect(transcript.entries[1]!.type).toBe("message");
-    expect((transcript.entries[1] as { message: MessageParam }).message.role).toBe("assistant");
+    expect(transcript.entries.filter(e => e.type === "message")).toHaveLength(2);
+    expect(transcript.entries.at(-1)).toMatchObject({ type: "message", message: { role: "assistant" } });
   });
 
   test("tool call round-trips its result", async () => {
@@ -82,7 +87,7 @@ describe("agent loop", () => {
     const second = calls[1]!.messages;
     expect(second.length).toBe(3);
     expect(second[2]!.content).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "echo:x" }]);
-    expect(transcript.entries.length).toBe(4);
+    expect(transcript.entries.filter(e => e.type === "message")).toHaveLength(4);
   });
 
   test("tool error becomes is_error, not a crash", async () => {
@@ -196,7 +201,7 @@ async function lifecycleScenario(name: string) {
   const { beginRun, readRun } = await import("../../tmux/exits");
   const project = `lifecycle-${name}`;
   const tracker = await beginRun({ project, id: "worker", run: "r", role: "worker", cwd: "/" });
-  const transcript = fakeTranscript();
+  const transcript = open(join(home, `${name}.jsonl`));
   await transcript.append(user("private prompt"));
   const controller = new AbortController();
   const secret = new Error("sensitive provider error");
@@ -227,17 +232,27 @@ async function lifecycleScenario(name: string) {
   return { agent, behavior, transcript, controller, secret, stages, lines, tracker, latest, calls: () => calls };
 }
 
-async function expectLifecycle(scenario: Awaited<ReturnType<typeof lifecycleScenario>>, stages: string[], calls: number) {
+async function expectLifecycle(scenario: Awaited<ReturnType<typeof lifecycleScenario>>, stages: import("../../../protocol/transcript").ModelRequestEntry["stage"][], calls: number) {
   expect(scenario.calls()).toBe(calls);
   expect(scenario.stages).toEqual(stages);
   const saved = await scenario.latest();
-  expect(saved).toEqual({ model: "selected-model", provider: "openai", stage: stages.at(-1), startedAt: expect.any(String), updatedAt: expect.any(String) });
+  expect(saved).toEqual({ model: "selected-model", provider: "openai", stage: stages.at(-1)!, startedAt: expect.any(String), updatedAt: expect.any(String) });
   expect(Number.isNaN(Date.parse(saved.startedAt))).toBe(false);
   for (const line of scenario.lines) {
     expect(line).toContain("openai/selected-model");
     expect(line).toContain(`started ${saved.startedAt}`);
   }
-  const evidence = JSON.stringify(saved) + scenario.lines.join("");
+  const events = open(scenario.transcript.path).history!().filter(e => e.type === "model-request");
+  expect(events.map(e => e.stage)).toEqual(stages);
+  expect(new Set(events.map(e => e.requestId)).size).toBe(1);
+  for (const event of events) {
+    expect(event).toMatchObject({ provider: saved.provider, model: saved.model, startedAt: saved.startedAt });
+    expect(Number.isNaN(Date.parse(event.ts))).toBe(false);
+    expect(Number.isNaN(Date.parse(event.updatedAt))).toBe(false);
+    expect(entryText(event)).toBe("");
+    expect(render(event)).toContain(`${event.provider}/${event.model} ${event.stage}`);
+  }
+  const evidence = JSON.stringify(saved) + JSON.stringify(events) + scenario.lines.join("");
   for (const sensitive of ["private prompt", "private output", scenario.secret.message]) expect(evidence).not.toContain(sensitive);
   await scenario.tracker.request!({ ...saved, stage: "preparing", startedAt: "next" });
   expect((await scenario.latest()).startedAt).toBe("next");
@@ -276,6 +291,8 @@ describe("model request lifecycle", () => {
   test("diagnostic write failures do not prevent a request", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("hi"));
+    const append = transcript.append.bind(transcript);
+    transcript.append = async e => { if (e.type === "model-request") throw new Error("disk"); return append(e); };
     const provider = fakeProvider([[text("ok")]]);
     await createAgent({ transcript, provider, model: "m", tools: {}, ctx,
       tracker: { model: async () => {}, request: async () => { throw new Error("disk"); }, tool: async () => {}, instructed: async () => {}, reported: async () => {} },
@@ -283,4 +300,33 @@ describe("model request lifecycle", () => {
     }).run();
     expect(provider.calls).toHaveLength(1);
   });
+});
+
+
+test("durable requests survive later runs, checkpoints and resets without entering context", async () => {
+  const transcript = open(join(home, "durable.jsonl"));
+  await transcript.append(user("hi"));
+  const provider = fakeProvider([[text("one")], [text("two")]]);
+  const deps = { transcript, provider, model: "m", tools: {}, ctx, write: () => {} };
+  await createAgent(deps).run();
+  await createAgent(deps).run();
+  const restored = open(transcript.path);
+  const events = restored.history!().filter(e => e.type === "model-request");
+  expect(events.map(e => e.stage)).toEqual(["preparing", "provider-wait", "completed", "preparing", "provider-wait", "completed"]);
+  expect(new Set(events.map(e => e.requestId)).size).toBe(2);
+  expect(provider.calls[0]!.messages).toEqual([{ role: "user", content: "hi" }]);
+  expect(provider.calls[1]!.messages).toHaveLength(2);
+  const messages = restored.history!().flatMap(e => e.type === "message" ? [e.message] : []);
+  expect(await restored.chain()).toEqual(messages);
+  expect(budget(deps, await restored.chain())).toBe(budget(deps, messages));
+  await restored.append({ type: "summary", text: "memory", retained: messages.slice(-1) });
+  expect(await restored.chain()).toEqual([{ role: "user", content: "memory" }, ...messages.slice(-1)]);
+  await restored.append({ type: "context-boundary" });
+  const reopened = open(transcript.path);
+  expect(await reopened.chain()).toEqual([]);
+  expect(reopened.history!().filter(e => e.type === "model-request")).toEqual(events);
+  const lines = restore(reopened.history!(), 160, Infinity);
+  const diagnostics = lines.filter(l => typeof l === "string" && l.includes("[model request]"));
+  expect(diagnostics).toEqual(events.map(e => render(e)!));
+  console.info("Captured restored terminal historyRows renderer (not an interactive TUI session):\n" + historyRows(diagnostics, 160).join("\n"));
 });
