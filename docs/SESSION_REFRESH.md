@@ -117,8 +117,11 @@ preview is local to the submitting window; it is not a global inbox inventory.
   events, each tagged with the transcript head it followed, replaced when a
   turn starts and removed once the turn's entries are durable. Clients only
   read it (keyed by the status's run and turn count, so a dead daemon's or an
-  earlier turn's file is ignored) and show an event only while its head is the
-  transcript's; a durable entry supersedes the events behind it. Nothing is
+  earlier turn's file is ignored, and a replaced file is noticed by its header
+  line, not its size) and show an event only while its head is the
+  transcript's; a durable entry supersedes the events behind it, and a call
+  the record has no result for yet is drawn from the live events (running),
+  not from the record (interrupted), while the turn runs. Nothing is
   consumed, acknowledged or retried through it, and a client that misses events
   loses nothing but the live view, since the transcript shows the turn when it ends.
 - Inbox locks (`inbox/<recipient>.lock`) protect consumption transactions.

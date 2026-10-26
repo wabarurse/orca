@@ -13,11 +13,14 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { appendFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { delay } from "./cancellation";
 import { paths } from "./config";
 import type { ToolCall, ToolOutcome } from "./toolview";
 
 /** Bytes of live events per turn before text stops streaming (tools are still logged). */
 export const LIVE_CAP_BYTES = 1 << 20;
+/** How long `end` waits for pending appends before removing the file anyway. */
+export const LIVE_END_WAIT_MS = 2000;
 
 /** What happened during the turn, after the transcript entry `head` (the daemon's head when it happened). */
 export type TurnEvent =
@@ -68,10 +71,11 @@ function firstFailure(log?: (text: string) => void): (error: unknown) => void {
 }
 
 /**
- * Appends go one after another on a promise chain, never awaited by the turn,
- * so a slow or failing disk delays nothing and the first error is logged once.
- * Text past `capBytes` is replaced by a single `truncated` event; tool events
- * are still appended (the transcript bounds them).
+ * Appends go one after another on a promise chain the turn never awaits, so a
+ * slow or failing disk delays no turn; the first error is logged once. Text
+ * past `capBytes` is replaced by a single `truncated` event; tool events are
+ * still appended (the transcript bounds them). `end` waits at most
+ * LIVE_END_WAIT_MS for the chain before removing the file regardless.
  */
 export function liveWriter(o: LiveWriterOptions): LiveWriter {
   const path = liveFile(o.project), cap = o.capBytes ?? LIVE_CAP_BYTES;
@@ -80,13 +84,13 @@ export function liveWriter(o: LiveWriterOptions): LiveWriter {
   const queue = (op: () => Promise<void>) => { chain = chain.then(op).catch(fail); };
   const append = (event: object) => {
     const line = JSON.stringify(event) + "\n";
-    bytes += line.length;
+    bytes += Buffer.byteLength(line);
     queue(() => appendFile(path, line));
   };
   const tagged = (event: TurnEvent) => { if (open) append({ seq: ++seq, head: o.head(), ...event }); };
   const text = (kind: "text" | "status", text: string) => {
     if (!open || truncated) return;
-    if (bytes + text.length > cap) { truncated = true; tagged({ kind: "truncated" }); return; }
+    if (bytes + Buffer.byteLength(text) > cap) { truncated = true; tagged({ kind: "truncated" }); return; }
     tagged({ kind, text });
   };
   return {
@@ -96,8 +100,8 @@ export function liveWriter(o: LiveWriterOptions): LiveWriter {
     },
     async end() {
       open = false;
-      queue(() => rm(path, { force: true }));
-      await chain;
+      await Promise.race([chain, delay(LIVE_END_WAIT_MS)]);
+      await rm(path, { force: true }).catch(fail); // a straggling append may recreate a headerless file: never read, replaced by the next begin
     },
     write: (t, plain) => text(plain ? "status" : "text", t),
     onTool: call => tagged({ kind: "tool_start", call }),
@@ -112,17 +116,19 @@ export interface LiveReader {
   read(expect: LiveKey): LiveEvent[];
 }
 
-/** The file's bytes from `offset`; empty when it does not exist. */
-function readFrom(path: string, offset: number): { data: string; size: number } {
+/** The file's first `headerLength` bytes and its bytes from `offset`; empty when it does not exist. */
+function readFrom(path: string, offset: number, headerLength: number): { header: Buffer; data: Buffer; size: number } {
   let fd: number;
   try { fd = openSync(path, "r"); }
-  catch { return { data: "", size: 0 }; }
+  catch { return { header: Buffer.alloc(0), data: Buffer.alloc(0), size: 0 }; }
   try {
     const size = fstatSync(fd).size;
-    if (size <= offset) return { data: "", size };
-    const buffer = Buffer.alloc(size - offset);
-    const n = readSync(fd, buffer, 0, buffer.length, offset);
-    return { data: buffer.subarray(0, n).toString("utf8"), size };
+    const slice = (from: number, length: number) => {
+      const buffer = Buffer.alloc(Math.max(0, Math.min(length, size - from)));
+      const n = buffer.length ? readSync(fd, buffer, 0, buffer.length, from) : 0;
+      return buffer.subarray(0, n);
+    };
+    return { header: slice(0, headerLength), data: slice(offset, size - offset), size };
   } finally { closeSync(fd); }
 }
 
@@ -133,34 +139,66 @@ function parseEvent(line: string): LiveEvent | undefined {
   } catch { return; }
 }
 
+/** The complete lines of `rest` + `data` (bytes: a multibyte character split across reads is decoded whole), and what is left over. */
+function completeLines(rest: Buffer, data: Buffer): { lines: string[]; rest: Buffer } {
+  const all = Buffer.concat([rest, data]);
+  const end = all.lastIndexOf(0x0a);
+  if (end === -1) return { lines: [], rest: all };
+  return { lines: all.subarray(0, end).toString("utf8").split("\n"), rest: Buffer.from(all.subarray(end + 1)) };
+}
+
+/** What a reader keeps between reads: where it is in the file, and whose file it is (its header line, the last seq seen). */
+interface Cursor { offset: number; rest: Buffer; header?: { line: Buffer; key: LiveKey; seq: number; gapped: boolean } }
+const fresh = (): Cursor => ({ offset: 0, rest: Buffer.alloc(0) });
+const same = (a: LiveKey, b: LiveKey) => a.run === b.run && a.turn === b.turn;
+
+/** The events after the last seq seen, in order: a re-read event is skipped, a gap is reported once per file. */
+function inOrder(c: Cursor, events: LiveEvent[], log?: (text: string) => void): LiveEvent[] {
+  const out: LiveEvent[] = [];
+  const h = c.header!;
+  for (const e of events) {
+    if (e.seq <= h.seq) continue;
+    if (e.seq > h.seq + 1 && !h.gapped) { h.gapped = true; log?.(`orchestrator: live output skipped ${e.seq - h.seq - 1} event(s)`); }
+    h.seq = e.seq;
+    out.push(e);
+  }
+  return out;
+}
+
 /**
  * Tail the live file: complete lines only (a line still being written waits),
- * and from the start again when the file shrank or names another turn (a new
- * turn replaced it). Nothing is consumed until the first line is the `start`
- * of the expected run and turn: a late client, or a file a dead daemon left
- * behind, reads from the beginning once the current turn's header is there.
+ * and from the start again when the file was replaced (its header line is
+ * re-read each time: a new turn has a new one; a file that shrank, too) or
+ * names another turn than expected. Nothing is consumed until the first line
+ * is the `start` of the expected run and turn: a late client, or a file a dead
+ * daemon left behind, reads from the beginning once the current turn's header
+ * is there.
  */
-export function liveReader(project: string): LiveReader {
+export function liveReader(project: string, log?: (text: string) => void): LiveReader {
   const path = liveFile(project);
-  let offset = 0, rest = "", key: LiveKey | undefined;
-  const same = (a: LiveKey, b: LiveKey) => a.run === b.run && a.turn === b.turn;
-  const reset = () => { offset = 0; rest = ""; key = undefined; };
+  let c = fresh();
   return {
     read(expect) {
-      if (key && !same(key, expect)) reset();
-      let got = readFrom(path, offset);
-      if (got.size < offset) { reset(); got = readFrom(path, 0); }
-      const lines = (rest + got.data).split("\n");
-      const tail = lines.pop()!;
-      const events = lines.flatMap(line => parseEvent(line) ?? []);
-      if (!key) {
-        const first = events[0];
-        if (first?.kind !== "start" || !same(first, expect)) return [];
-        key = { run: first.run, turn: first.turn };
-      }
-      rest = tail;
-      offset = got.size;
-      return events;
+      if (c.header && !same(c.header.key, expect)) c = fresh();
+      let got = readFrom(path, c.offset, c.header?.line.length ?? 0);
+      if (replaced(c, got)) { c = fresh(); got = readFrom(path, 0, 0); }
+      const split = completeLines(c.rest, got.data);
+      const events = split.lines.flatMap(line => parseEvent(line) ?? []);
+      if (!c.header && !accept(c, split.lines[0], events[0], expect)) return [];
+      c.rest = split.rest;
+      c.offset = got.size;
+      return inOrder(c, events, log);
     },
   };
+}
+
+/** Whether the file under the cursor is no longer the one it was reading: it shrank, or its header line changed. */
+const replaced = (c: Cursor, got: ReturnType<typeof readFrom>): boolean =>
+  got.size < c.offset || (!!c.header && !got.header.equals(c.header.line));
+
+/** Take the file as `expect`'s when its first line is that turn's `start`. */
+function accept(c: Cursor, line: string | undefined, first: LiveEvent | undefined, expect: LiveKey): boolean {
+  if (first?.kind !== "start" || !same(first, expect)) return false;
+  c.header = { line: Buffer.from(`${line}\n`), key: { run: first.run, turn: first.turn }, seq: -1, gapped: false };
+  return true;
 }

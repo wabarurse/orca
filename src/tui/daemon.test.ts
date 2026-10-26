@@ -149,18 +149,26 @@ test("a page following a daemon turn shows its streamed text, running and finish
   await until(() => app.frame().partial === "Looking closely");
   expect(occurrences(text(app), "Looking closely")).toBe(0);
   gates.ing.resolve();
-  // The reply is durable and the call runs: the text moved from the live region into history once; the call's row shimmers below.
+  // The reply is durable and the call runs: the text moved from the live region into history once; the call's row shimmers below,
+  // and the record's call without a result is not drawn as interrupted above it.
   await until(() => page.calls.size === 1);
   expect(app.frame().partial).toBe("");
   expect(occurrences(text(app), "Looking closely")).toBe(1);
-  expect(strip((app.frame().running ?? []).join("\n"))).toContain("echo(it)");
-  // A second TUI opens on the project now: it restores the durable record (the reply), then replays the live file (the running call) and tails it.
+  const midTool = (a: App) => {
+    expect(strip((a.frame().running ?? []).join("\n"))).toContain("echo(it)");
+    expect(occurrences(text(a), "echo(")).toBe(0);
+    expect(text(a)).not.toContain("interrupted");
+  };
+  midTool(app);
+  // A second TUI opens on the project now: it restores the durable record (the reply, the call left out as running), then replays the live file (the running call) and tails it.
   const { app: again } = await openApp({ openOrchestrator: asClient });
   const reopened = again.page!;
+  expect(text(again)).not.toContain("interrupted"); // from the first paint: the daemon's turn is running
   await until(() => reopened.busy && reopened.calls.size === 1);
   expect(occurrences(text(again), "Looking closely")).toBe(1);
   expect(text(again)).toContain("hello");
   expect(again.frame().partial).toBe("");
+  midTool(again);
   gates.tool.resolve();
   // The finished call's line and summary appear once, whether the live event or the durable result drew them.
   await until(() => app.frame().partial === "All done" && again.frame().partial === "All done");

@@ -21,8 +21,8 @@ import { inputEpoch } from "./user-input";
 
 /** How often a following client looks at the status and transcript. */
 export const FOLLOW_MS = 250;
-/** How often it tails the live file between those looks while a turn runs. */
-export const LIVE_MS = 100;
+/** How often it tails the live file between those looks while a turn runs (twice per look). */
+export const LIVE_MS = 125;
 /** How long a turn started by this client's own send waits for the daemon to pick the input up. */
 export const START_GRACE_MS = 5000;
 /** After a dead daemon is restarted, how long before the keeper tries again. */
@@ -137,14 +137,14 @@ async function sync(c: Client, f: Follow): Promise<void> {
   if (head !== f.seen) { f.seen = head; c.deps.onRefresh?.(); }
 }
 
-/** One live event to the view, through the hooks the in-process turn used. */
+/** One live event to the view, through the hooks the in-process turn used. Status lines (memory-index warnings and the like) are page notices: they outlive the re-renders a turn's entries cause. */
 function show(c: Client, e: Exclude<LiveEvent, { kind: "start" }>): void {
   switch (e.kind) {
     case "text": c.deps.write?.(e.text); break;
-    case "status": c.deps.write?.(e.text, true); break;
+    case "status": for (const line of e.text.replace(/\n$/, "").split("\n")) c.notice(line); break;
     case "tool_start": c.deps.onTool?.(e.call); break;
     case "tool_end": c.deps.onToolResult?.(e.outcome); break;
-    case "truncated": c.deps.write?.("live output truncated; the transcript shows the rest when the turn ends\n", true); break;
+    case "truncated": c.notice("orchestrator: live output truncated (over 1 MiB this turn); the full text shows when the turn ends"); break;
   }
 }
 
@@ -164,10 +164,10 @@ async function tailLive(c: Client, f: Follow, s: DaemonStatus): Promise<void> {
   }
 }
 
-/** Between two looks: tail the live file every liveMs while a turn runs (a tick every followMs otherwise). */
+/** Between two looks: tail the live file every liveMs (followMs split evenly, 2 × 125ms by default) while a turn runs. */
 async function pause(c: Client, f: Follow): Promise<void> {
   const followMs = c.deps.followMs ?? FOLLOW_MS;
-  const ticks = Math.max(1, Math.round(followMs / Math.min(c.deps.liveMs ?? LIVE_MS, followMs)));
+  const ticks = Math.max(1, Math.floor(followMs / Math.min(c.deps.liveMs ?? LIVE_MS, followMs)));
   for (let i = 0; i < ticks; i++) {
     await delay(followMs / ticks, f.abort.signal);
     if (f.status?.state === "turn") await tailLive(c, f, f.status);
@@ -190,7 +190,7 @@ async function observe(c: Client, f: Follow, deadline: number): Promise<"dead" |
 
 /** Wait until the daemon's turn ends (or none starts within the grace), re-syncing as the transcript grows. A turn that began and ended between two looks still counts (the turn counter). */
 async function follow(c: Client): Promise<void> {
-  const f: Follow = { seen: c.transcript.head(), turnsAt: 0, engaged: false, abort: new AbortController(), live: liveReader(c.project) };
+  const f: Follow = { seen: c.transcript.head(), turnsAt: 0, engaged: false, abort: new AbortController(), live: liveReader(c.project, c.notice) };
   c.following = f; // before the first await: pending() must not schedule a second follow meanwhile
   const deadline = Date.now() + (c.deps.graceMs ?? START_GRACE_MS);
   try {

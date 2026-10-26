@@ -80,6 +80,64 @@ test("a line still being written waits for its newline; a leftover file from a d
   await w.end();
 });
 
+test("a header-only turn replaced by the next turn's longer file is noticed by its header, not its size: nothing of the new turn is read under the old key, so a stale follower never shows it twice", async () => {
+  const p = "live-replace";
+  mkdirSync(paths.orchestrator(p), { recursive: true });
+  const w = liveWriter({ project: p, run: "r", head: () => "h" });
+  w.begin(1); // a maintenance turn: header only
+  await settle();
+  const r = liveReader(p);
+  expect(kinds(r.read({ run: "r", turn: 1 }))).toEqual(["start"]);
+  await w.end();
+  w.begin(2);
+  w.write("the second turn's text, longer than the first turn's whole file\n");
+  w.onTool({ id: "t", name: "bash", input: {} });
+  await settle();
+  // The follower still expects turn 1 (its status is stale for a look): the file is another turn's, nothing is consumed.
+  expect(r.read({ run: "r", turn: 1 })).toEqual([]);
+  expect(r.read({ run: "r", turn: 1 })).toEqual([]);
+  // Once it expects turn 2 it reads that file from its start, once.
+  expect(kinds(r.read({ run: "r", turn: 2 }))).toEqual(["start", "text", "tool_start"]);
+  expect(r.read({ run: "r", turn: 2 })).toEqual([]);
+  await w.end();
+  // The same for a file rewritten in place with the same key but a new header (a daemon whose end() could not remove it): read once from the start.
+  writeFileSync(liveFile(p), JSON.stringify({ seq: 0, kind: "start", run: "r", turn: 3, at: "a" }) + "\n" + JSON.stringify({ seq: 1, kind: "text", head: "h", text: "x" }) + "\n");
+  expect(kinds(r.read({ run: "r", turn: 3 }))).toEqual(["start", "text"]);
+  writeFileSync(liveFile(p), JSON.stringify({ seq: 0, kind: "start", run: "r", turn: 3, at: "b" }) + "\n" + JSON.stringify({ seq: 1, kind: "text", head: "h", text: "y" }) + "\n" + JSON.stringify({ seq: 2, kind: "text", head: "h", text: "z" }) + "\n");
+  expect(r.read({ run: "r", turn: 3 })).toMatchObject([{ seq: 0 }, { seq: 1, text: "y" }, { seq: 2, text: "z" }]);
+});
+
+test("a multibyte character split across two reads is decoded whole; a re-read event is skipped and a gap is reported once", async () => {
+  const p = "live-utf8";
+  mkdirSync(paths.orchestrator(p), { recursive: true });
+  const notices: string[] = [];
+  const r = liveReader(p, t => { notices.push(t); });
+  const line = JSON.stringify({ seq: 1, kind: "text", head: "h", text: "déjà ☃ 🐋 vu" }) + "\n";
+  const bytes = Buffer.from(line);
+  const cut = bytes.indexOf(Buffer.from("🐋")) + 2; // inside the whale's four bytes
+  writeFileSync(liveFile(p), JSON.stringify({ seq: 0, kind: "start", run: "r", turn: 1, at: "a" }) + "\n");
+  writeFileSync(liveFile(p), bytes.subarray(0, cut), { flag: "a" });
+  expect(kinds(r.read({ run: "r", turn: 1 }))).toEqual(["start"]);
+  writeFileSync(liveFile(p), bytes.subarray(cut), { flag: "a" });
+  expect(r.read({ run: "r", turn: 1 })).toMatchObject([{ seq: 1, text: "déjà ☃ 🐋 vu" }]);
+  // Events are read once each even if a line comes back (a duplicate seq is skipped); a jump in seq is reported once.
+  writeFileSync(liveFile(p), line + JSON.stringify({ seq: 5, kind: "status", head: "h", text: "late" }) + "\n" + JSON.stringify({ seq: 9, kind: "status", head: "h", text: "later" }) + "\n", { flag: "a" });
+  expect(r.read({ run: "r", turn: 1 }).map(e => e.seq)).toEqual([5, 9]);
+  expect(notices).toEqual(["orchestrator: live output skipped 3 event(s)"]);
+});
+
+test("the cap counts bytes, not characters", async () => {
+  const p = "live-bytes";
+  mkdirSync(paths.orchestrator(p), { recursive: true });
+  const w = liveWriter({ project: p, run: "r", head: () => "h", capBytes: 200 });
+  w.begin(1);
+  w.write("🐋".repeat(30) + "\n"); // 31 characters, 121 bytes
+  w.write("🐋".repeat(30) + "\n"); // over 200 bytes with the first: truncated
+  await settle();
+  expect(kinds(liveReader(p).read({ run: "r", turn: 1 }))).toEqual(["start", "text", "truncated"]);
+  await w.end();
+});
+
 test("the cap replaces further text by one truncated event while tool events are still logged", async () => {
   const p = "live-cap";
   mkdirSync(paths.orchestrator(p), { recursive: true });

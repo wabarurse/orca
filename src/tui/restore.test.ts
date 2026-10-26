@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { format } from "../inbox";
 import { open, type Entry } from "../transcript";
 import { historyRows, lineRows, type Line } from "./lines";
-import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED } from "./restore";
+import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, unresolvedCalls } from "./restore";
 import { toolView } from "../toolview";
 import { bold, dim } from "./render";
 
@@ -76,6 +76,27 @@ test("a tool call restores as the line it showed when it ended, through the form
     { tool: "bash(false)", summary: "exit 1: boom", failed: true },
     { tool: "bash(sleep 9)", summary: "interrupted", failed: true },
   ]);
+});
+
+test("while a turn runs, the newest entry's calls without a result are left out (the live view shows them running) instead of interrupted; earlier ones and finished ones are untouched", () => {
+  const entries = transcript(
+    meta,
+    assistant([{ type: "text", text: "old" }, { type: "tool_use", id: "a1", name: "bash", input: { command: "crashed" } }]), // an earlier run died mid-call
+    user("next"),
+    assistant([{ type: "text", text: "Looking" }, { type: "tool_use", id: "b1", name: "bash", input: { command: "ls" } }, { type: "tool_use", id: "b2", name: "echo", input: { what: "it" } }]),
+    user([{ type: "tool_result", tool_use_id: "b1", content: "a\n" }]), // b2 still running
+  );
+  const running = unresolvedCalls(entries);
+  expect([...running]).toEqual(["b2"]);
+  const shown = (lines: Line[]) => lines.map(raw).map(Bun.stripANSI);
+  expect(shown(restore(entries, 60, Infinity, undefined, running))).toEqual(["old", "bash(crashed) ⎿ interrupted", "> next", "Looking", "bash(ls) ⎿ 1 line"]);
+  expect(shown(restore(entries, 60))).toEqual(["old", "bash(crashed) ⎿ interrupted", "> next", "Looking", "bash(ls) ⎿ 1 line", "echo(it) ⎿ interrupted"]);
+  // An entry holding only a running call shows nothing yet; a resolved record has nothing to leave out.
+  const only = transcript(meta, assistant([{ type: "tool_use", id: "c1", name: "bash", input: { command: "x" } }]));
+  expect(restore(only, 60, Infinity, undefined, unresolvedCalls(only))).toEqual([]);
+  expect(restoreItems(only, undefined, unresolvedCalls(only))).toEqual([]);
+  expect(unresolvedCalls(transcript(meta, assistant([{ type: "tool_use", id: "c1", name: "bash", input: {} }]), user([{ type: "tool_result", tool_use_id: "c1", content: "" }]))).size).toBe(0);
+  expect(unresolvedCalls([])).toEqual(new Set());
 });
 
 test("a summary: only the branch from the head back to it, led by a dim note", () => {
