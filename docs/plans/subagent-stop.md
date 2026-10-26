@@ -109,3 +109,48 @@ dormant ownership/control mechanism, then activation. Conservative policy is
 sufficient: no auto-force, and uncertain or escaped descendants block
 replacement. Universal containment is not required; raise only concrete narrow
 containment decisions encountered when implementing that policy.
+
+## Milestone 2: dormant exact-run ownership (after #133)
+
+Prerequisite #133 is merged at cb6484ae22dbbf4f360582a42324bf63ad959657.
+`core/data/run-ownership/ownership.ts` adds a trusted-supervisor-only API; no
+production callers, tool schema, spawn wiring or cancellation changes yet.
+The independent ledger is outside project directories, under `run-ownership`,
+serialized by the existing cross-process project state lock and atomically
+replaced. Task terminal/attention state cannot release it. Existing
+`cancelSession` still ends task bookkeeping prematurely; it is not a lifetime
+acknowledgment and must not be used as one during integration.
+
+Contract for the next stage:
+- Reserve before allowing execution, passing project filesystem incarnation,
+  full branch, task, agent, role, immutable run and supervisor host/boot/PID/OS
+  birth token. A PID or agent name alone is insufficient. Caller inputs are
+  snapshotted before waiting. Released run IDs remain tombstoned, never reused.
+- First acquisition (including a missing ledger) requires a trusted verified
+  containment inventory, not missing tmux/task-terminal evidence. Unknown blocks.
+  Exact active retries are idempotent; worker/reviewer reservations exclude one
+  another. No existing spawn path uses this admission API yet.
+- Stop intent retains ownership. Release requires an exact-owner attestation of
+  supervisor exit, all descendants gone and sealed containment (no new children
+  can start). This API validates the attestation's identity and shape, not OS
+  truth: only a later trusted verifier may produce positive evidence.
+- No time-based recovery or supervisor-PID reclamation. Crash leftovers, corrupt
+  ledgers and project recreation fail closed. Old ledgers survive recreation;
+  even a new incarnation requires separately reviewed explicit recovery. Stale
+  project locks also block. Atomic rename handles process interruption, not a
+  claim of fsync-level power-loss durability; missing data still needs inventory.
+
+Stack/merge gates: prerequisite #133 merged → **current ownership** (review
+identity/crash model and focused concurrency evidence) → graceful control
+(real-process TERM/ignored TERM/remaining-child tests and supported-host identity
+and containment verifier) → lifecycle integration (reserve before execution,
+track children before launch, seal before release, separate cancellation from
+hard abort, handle failed launches without guessing) → activation (exact-run
+schema/auth/result contract). Each remains independently reviewed. No stop
+activation, live admission, auto-force, worktree reset/removal or auto-respawn.
+
+Milestone checks: frozen dependency installation passed (no tracked dependency
+changes); `bun test src/core/data/run-ownership/ownership.test.ts` passed 8 tests,
+40 expectations, including independent-process admission; `bun run check` passed.
+Logs: `/tmp/feat-subagent-run-ownership-{install,tests,check}.log`. Checks ran once
+on final code/test state; only this documentation was appended afterward.
