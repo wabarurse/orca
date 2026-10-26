@@ -1,5 +1,6 @@
 import { attachmentSchema, forwardImages } from "./attachments";
-import { imageContent, type ImageRef } from "../data/images/images";
+import { imageContent } from "../data/images/images";
+import type { ImageRef } from "../../protocol/images";
 import { delay, publishLaunch } from "../tmux/cancellation";
 import { prepareTaskRun, stopTaskRun, taskForRun } from "../data/tasks/tasks";
 import { paths } from "../../config/config";

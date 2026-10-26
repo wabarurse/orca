@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, saveConfig } from "../../../config/config";
 import { createOrchestrator } from "./orchestrator";
-import { runAgent } from "../loop/agent";
+import { runAgent } from "../../../exec/run";
 import { saveProjectSettings } from "../../data/projects/project-settings";
 import { saveProjectModel } from "../../data/projects/project-model";
 import { open } from "../../data/transcripts/transcript";

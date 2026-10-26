@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cancelSession, publishLaunch, watchCancellation } from "./cancellation";
 import { paths } from "../../config/config";
-import { runAgent } from "../agent-loop/loop/agent";
+import { runAgent } from "../../exec/run";
 import { open } from "../data/transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../test/fake-provider";
 import { paired } from "../data/memory/tool-pairs";

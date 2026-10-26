@@ -13,7 +13,8 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 setDefaultTimeout(30_000);
 
 const { ghMerged, githubRepo, mergeNotice, mergeWatcher, originRepo, MERGE_POLL_MS, STALE_CLAIM_MS } = await import("./merges");
-const { afterExit, beginRun, readRun, watchdog } = await import("./exits");
+const { beginRun, readRun, watchdog } = await import("./exits");
+const { afterExit } = await import("../../exec/after-exit");
 const { drain, put } = await import("../data/inbox/inbox");
 const { ensureWorktree, slug } = await import("./runner");
 const { paths } = await import("../../config/config");
@@ -531,7 +532,7 @@ test("malformed/foreign merged lookup never removes task rows; unassociated newe
 });
 
 describe("the other open PRs after a merge", () => {
-  type Obs = import("../data/tasks/tasks").PRObservation;
+  type Obs = import("../../protocol/tasks").PRObservation;
   const open = (num: number, b: string, mergeable?: Obs["mergeable"], state: Obs["state"] = "OPEN"): Obs =>
     ({ pr: { repository: "o/r", number: num, url: url(num), head: NO_OID }, branch: b, state, ready: false, checks: "unknown", ...(mergeable ? { mergeable } : {}) });
   /** A task with PR #num on branch b, observed as `o`. */

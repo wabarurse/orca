@@ -1,7 +1,8 @@
 import { budget, type CompactOptions } from "../../data/memory/compaction";
 import { contextWindow, type ContextWindow } from "../../../providers/catalog/context-window";
 import { contextMessages } from "../../data/transcripts/transcript";
-import { pendingImageInputs, type ImageRef } from "../../data/images/images";
+import { pendingImageInputs } from "../../data/images/images";
+import type { ImageRef } from "../../../protocol/images";
 import { tryStorageLock } from "../../data/storage-lock";
 import { inputEpoch, advanceInputEpoch } from "../../data/inbox/user-input";
 import { Cancelled } from "../../tmux/cancellation";
@@ -18,13 +19,15 @@ import { effectiveModel, projectModelResolver } from "../../data/projects/projec
 import { createAgent, type AgentDeps } from "../loop/agent";
 import type { Tracker } from "../../tmux/exits";
 import { loadConfig, paths, type Config } from "../../../config/config";
-import { consume, pending, pendingInput, put, userInEpoch, type Message } from "../../data/inbox/inbox";
+import { consume, pending, pendingInput, put, userInEpoch } from "../../data/inbox/inbox";
+import type { Message } from "../../../protocol/inbox";
 import { rolePrompt } from "../../prompt/shared";
 import { effectiveFlow } from "../../data/projects/flow";
 import type { Provider } from "../../../providers/provider";
 import { registry } from "../../tools/index";
 import { toolsFor, type Tool } from "../../tools/registry";
-import { open, type Entry, type Transcript } from "../../data/transcripts/transcript";
+import { open, type Transcript } from "../../data/transcripts/transcript";
+import type { Entry } from "../../../protocol/transcript";
 import { RollingCompactor, type RollingOptions } from "../../data/memory/rolling-memory";
 import { orchestratorTask } from "../../tools/task";
 import { archiveBestEffort } from "../../data/memory/archive";

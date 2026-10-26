@@ -194,7 +194,7 @@ Two separate issues must not be conflated:
   daemon's streamed output reaches the TUI only through the live file it tails
   (`projects/<id>/orchestrator/live.jsonl`); no pane content, escape sequence or
   control from the tmux window is ever read by the TUI, and the tool lines it
-  shows are built from the same plain `src/core/agent-loop/loop/toolview.ts` text as the window's.
+  shows are built from the same plain `src/protocol/toolview.ts` text as the window's.
 
 ### Application change and resource use
 

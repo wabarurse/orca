@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Entry } from "../../core/data/transcripts/transcript";
+import type { Entry } from "../../protocol/transcript";
 import { parts } from "./view";
 import { Calls } from "./tools";
 import { MarkdownStream } from "./mdstream";

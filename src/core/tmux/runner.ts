@@ -14,7 +14,7 @@ import { $ } from "bun";
 import { paths, repositoryBinding } from "../../config/config";
 import { assertMainCheckout, assertWorktree } from "../data/projects/workspace";
 import { launchEnvironment } from "./launch-environment";
-import type { Role } from "../data/transcripts/transcript";
+import type { Role } from "../../protocol/transcript";
 
 export interface StartOptions {
   /** Exact launch, published before this session becomes selectable. */

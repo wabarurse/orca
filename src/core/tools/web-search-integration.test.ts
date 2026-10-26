@@ -11,7 +11,8 @@ import { claudeSearchResults, codexSearchResults } from "../../providers/search/
 import { searchText, type SearchRequest } from "../../providers/search/web-search";
 import { fakeProvider, text, toolUse } from "../../test/fake-provider";
 import { claudeSearchFixture, codexSearchFixture } from "../../test/web-search";
-import { open, type Role } from "../data/transcripts/transcript";
+import { open } from "../data/transcripts/transcript";
+import type { Role } from "../../protocol/transcript";
 import { restore } from "../../tui/conversation/restore";
 import { registry } from "./index";
 import { toolsFor } from "./registry";

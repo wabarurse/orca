@@ -2,7 +2,7 @@ import { beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { toolSummary } from "../../agent-loop/loop/toolview";
+import { toolSummary } from "../../../protocol/toolview";
 
 // Point config at a temp dir so tests never read the real ~/.orca.
 const home = mkdtempSync(join(tmpdir(), "orca-bash-"));

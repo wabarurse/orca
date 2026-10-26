@@ -1,5 +1,6 @@
 import { png } from "../test/image-fixture";
-import { pendingImageInputs, type ImageRef } from "../core/data/images/images";
+import { pendingImageInputs } from "../core/data/images/images";
+import type { ImageRef } from "../protocol/images";
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +11,8 @@ import { loadConfig, paths } from "../config/config";
 import { effectiveFlow } from "../core/data/projects/flow";
 import { AGENTS_TICK_MS, App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
 import { createOrchestrator } from "../core/agent-loop/orc/orchestrator";
-import { drain, put, type Message } from "../core/data/inbox/inbox";
+import { drain, put } from "../core/data/inbox/inbox";
+import type { Message } from "../protocol/inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../core/data/inbox/questions";
 import { fileStore, queuedAnswer, type QuestionStore } from "./footer/questions";
 import { answeredLine, MAX_RESTORED_ROWS, userLines } from "./conversation/restore";
@@ -4011,7 +4013,7 @@ test('automatic copy errors stay visible, highlight supports explicit retry; mot
 
 test("unchanged telemetry polls avoid redraw; task progress is independent of the saved limit and agent switches render honestly", async () => {
   const term = fakeTerm(80, 24);
-  const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../core/data/tasks/tasks").TaskRow[];
+  const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../protocol/tasks").TaskRow[];
   const fake = fakeOrchestrators();
   let limit = 7;
   const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks, flowSettings: async () => ({ maxReviewRounds: limit, dynamicDispatch: false }),

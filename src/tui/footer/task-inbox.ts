@@ -1,5 +1,5 @@
 // Read-only presentation of the durable registry. Never inspect agents/transcripts.
-import { taskPR, taskStatusLabels, type TaskRow } from "../../core/data/tasks/tasks";
+import { taskPR, taskStatusLabels, type TaskRow } from "../../protocol/tasks";
 import { wordWrap } from "../components/text";
 import { bold, plainText, visibleLength, wrap } from "../components/text";
 

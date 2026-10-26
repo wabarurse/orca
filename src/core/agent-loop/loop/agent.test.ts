@@ -7,7 +7,8 @@ import { createAgent } from "./agent";
 import { put } from "../../data/inbox/inbox";
 import type { Provider } from "../../../providers/provider";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import type { Entry, NewEntry, Transcript } from "../../data/transcripts/transcript";
+import type { Transcript } from "../../data/transcripts/transcript";
+import type { Entry, NewEntry } from "../../../protocol/transcript";
 import type { Tool, ToolContext } from "../../tools/registry";
 
 const home = mkdtempSync(join(tmpdir(), "orca-agent-"));

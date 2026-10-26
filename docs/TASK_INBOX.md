@@ -217,7 +217,9 @@ mergeability), so unknown is not clean.
 
 ## TypeScript / UI contract
 
-Import from `src/core/data/tasks/tasks.ts`:
+Import the operations from `src/core/data/tasks/tasks.ts`; the record types
+(`TaskRow`, `TaskStatus`/`taskStatuses`/`taskStatusLabels`, `TaskPR`, `Task`,
+`PRObservation`) and `taskPR` are `src/protocol/tasks.ts`:
 
 * `listTasks(project): Promise<TaskRow[]>` — active rows, registration order.
   `TaskRow` contains only `id`, `name`, `summary`, `branch`, `status`, optional

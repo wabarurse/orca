@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { $ } from "bun";
 import { loadConfig, paths, saveConfig } from "../../../config/config";
 import { checkoutHere } from "./workspace";
+import type { ProjectEntry } from "../../../protocol/projects";
 
 /** A fresh orchestrator name, orch-xxxx, that no project uses yet. */
 export function newProjectName(taken: string[], random: () => number = Math.random): string {
@@ -75,9 +76,6 @@ export async function listProjects(): Promise<string[]> {
 }
 
 // --- the project list ------------------------------------------------------------
-
-/** A project in the list: its id (folder, pins, delete) and the label it shows (its display name). */
-export interface ProjectEntry { name: string; label: string; pinned: boolean }
 
 /** Pinned projects first, then the rest, each sorted by label (then id). Pins without a project are dropped. */
 export function orderProjects(projects: { name: string; label: string }[], pinned: string[]): ProjectEntry[] {

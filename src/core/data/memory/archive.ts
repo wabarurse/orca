@@ -5,8 +5,10 @@ import { dirname } from "node:path";
 import { paths } from "../../../config/config";
 import { historicalMessages } from "../images/history";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
-import { allTasks, type Task } from "../tasks/tasks";
-import { open, type Entry, type Transcript } from "../transcripts/transcript";
+import { allTasks } from "../tasks/tasks";
+import type { Task } from "../../../protocol/tasks";
+import { open, type Transcript } from "../transcripts/transcript";
+import type { Entry } from "../../../protocol/transcript";
 
 /** One archive for every project, shared by all orchestrator processes. */
 export const archivePath = () => paths.memory;

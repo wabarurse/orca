@@ -3,8 +3,8 @@ import { provider as accountProvider } from "../../../providers/account";
 import { estimate, requireFits } from "./compaction";
 import { historicalMessages } from "../images/history";
 import type { Provider } from "../../../providers/provider";
-import type { Task } from "../tasks/tasks";
-import type { RollingMemory } from "../transcripts/transcript";
+import type { Task } from "../../../protocol/tasks";
+import type { RollingMemory } from "../../../protocol/transcript";
 
 export const SUMMARY_MODEL = "gpt-6-luna";
 const empty = (): RollingMemory => ({ user: [], project: [], pending: [], tasks: [] });

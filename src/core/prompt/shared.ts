@@ -4,7 +4,7 @@
 // from the agent's project (project-flow.ts), so the prompt and the tools agree.
 
 import type { Config } from "../../config/config";
-import type { Role } from "../data/transcripts/transcript";
+import type { Role } from "../../protocol/transcript";
 import { ORCHESTRATOR } from "./orchestrator";
 import { REVIEWER } from "./reviewer";
 import { WORKER } from "./worker";

@@ -3,7 +3,8 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../../config/config";
-import { drain, format, parseFormatted, pending, put } from "./inbox";
+import { drain, pending, put } from "./inbox";
+import { format, parseFormatted } from "../../../protocol/inbox";
 
 const home = mkdtempSync(join(tmpdir(), "orca-inbox-"));
 process.env.ORCA_HOME = home;

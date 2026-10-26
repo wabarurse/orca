@@ -3,8 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { paths } from "../../../config/config";
-import { allTasks, archiveMergedTasks, blockConflictingTask, getTask, invalidateTaskBranch, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun, taskPR, taskStatusLabels, validateTaskReadiness, type PRObservation, type Task } from "./tasks";
-import { afterExit, beginRun, recoverTaskRuns, supervise } from "../../tmux/exits";
+import { allTasks, archiveMergedTasks, blockConflictingTask, getTask, invalidateTaskBranch, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun, validateTaskReadiness } from "./tasks";
+import { taskPR, taskStatusLabels, type PRObservation, type Task } from "../../../protocol/tasks";
+import { beginRun, recoverTaskRuns, supervise } from "../../tmux/exits";
+import { afterExit } from "../../../exec/after-exit";
 import { cancelSession, Cancelled, publishLaunch } from "../../tmux/cancellation";
 import { makeSpawn } from "../../tools/spawn";
 import { withProjectStateLock } from "../projects/state";

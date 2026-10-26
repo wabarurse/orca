@@ -10,8 +10,10 @@ import { dirname, join } from "node:path";
 import { paths } from "../../../config/config";
 import { ARCHIVE_AGENT, BATCH, database, entryText, epochsOf, purgeProject, sync, transcriptEntries } from "./archive";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
-import { allTasks, type Task } from "../tasks/tasks";
-import { open, type Entry } from "../transcripts/transcript";
+import { allTasks } from "../tasks/tasks";
+import type { Task } from "../../../protocol/tasks";
+import { open } from "../transcripts/transcript";
+import type { Entry } from "../../../protocol/transcript";
 
 export const BACKFILL_VERSION = "1";
 const VALID_PROJECT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
