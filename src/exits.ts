@@ -9,7 +9,7 @@ import { Cancelled } from "./cancellation";
 // act was a report, its last step and tool. A run is closed by creating
 // runs/<id>.<run>.exit exclusively: whoever creates it sends the notice, or
 // none when the run ended on a report. So the senders (crash, signal, clean
-// exit, shell follow-up, TUI watchdog, startup sweep, a failed launch in
+// exit, shell follow-up, the daemon's watchdog, startup sweep, a failed launch in
 // runner.ts and the never-started recovery below) never duplicate.
 
 import { existsSync, mkdirSync } from "node:fs";
@@ -44,7 +44,7 @@ export interface RunState {
   startedAt?: string;
   /**
    * When this run was closed (ISO). Stamped by supervise (finished, reported, crashed, cancelled),
-   * the signal handler and afterExit. The TUI watchdog's sweep and merge cleanup do not stamp it:
+   * the signal handler and afterExit. The watchdog's sweep and merge cleanup do not stamp it:
    * a run only they close shows the file's `ts` as an approximate end (merge cleanup relies on the
    * agent's own SIGHUP handler). Absent while it runs.
    */
@@ -310,7 +310,7 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
  * the run is already closed or its last act was a report. Nothing either when
  * no run record carries this run id: the process died before beginRun, which
  * the launch check reports (runner.ts confirmLaunch, within its wait) or, past
- * that, the TUI watchdog once the launch grace is over (recoverTaskRuns, the
+ * that, the daemon's watchdog once the launch grace is over (recoverTaskRuns, the
  * run stays "prepared" until then); a second sender here would double them.
  */
 export async function afterExit(info: RunInfo & { code: number }): Promise<boolean> {
@@ -381,7 +381,7 @@ async function sweep(project: string, live: Set<string>, before: Set<string> | u
 }
 
 /**
- * The TUI's watchdog. Each check lists a project's live agent windows.
+ * The exit watchdog, run by the orchestrator daemon's poll. Each check lists a project's live agent windows.
  * The first check per project sweeps every run on disk ("stopped while the
  * TUI was not watching"); later ones look at agents seen live before whose
  * window is gone ("'s window is gone"). Either way a notice goes out only

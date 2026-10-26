@@ -29,6 +29,8 @@ export interface AgentOptions {
   /** Injectable credentials boundary; production defaults to accounts.provider. */
   loadProvider?: Parameters<typeof projectModelResolver>[1];
   rolling?: RollingOptions;
+  /** Orchestrator only: stop the daemon once nothing is pending instead of waiting for more (probes and tests). */
+  exitWhenIdle?: boolean;
 }
 
 export interface AgentDeps {
@@ -235,7 +237,12 @@ export async function runAgent(opts: AgentOptions): Promise<number> {
   const run = opts.run ?? crypto.randomUUID();
   if (!opts.run) publishLaunch(opts.project, sessionId(opts.role, opts.branch), run);
   opts = { ...opts, run };
-  if (opts.role === "orchestrator" || !opts.branch) {
+  if (opts.role === "orchestrator") {
+    // The long-lived daemon loop; imported lazily because orchestrator.ts imports this module.
+    const { orchestratorAgent } = await import("./orchestrator-daemon");
+    return orchestratorAgent({ ...opts, run });
+  }
+  if (!opts.branch) {
     await startAgent(opts);
     return 0;
   }
@@ -259,15 +266,6 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
 }
 
 async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: Tracker): Promise<void> {
-  if (opts.role === "orchestrator") {
-    // The one-shot CLI must share the TUI's whole-turn lock, cancellation gate
-    // and exact-input requirement, including while joining background memory.
-    const { createOrchestrator } = await import("./orchestrator");
-    const orch = await createOrchestrator({ project: opts.project, loadProvider: opts.loadProvider,
-      rolling: opts.rolling, signal, joinRolling: true });
-    try { await orch.turn(); signal.throwIfAborted(); } finally { orch.dispose?.(); }
-    return;
-  }
   const config = await loadConfig();
   const model = await effectiveModel(opts.project);
   // One transcript per role per branch, so a restart resumes it. spawn seeds

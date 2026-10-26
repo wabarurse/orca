@@ -9,7 +9,11 @@ const home = mkdtempSync(join(tmpdir(), "orca-runner-"));
 process.env.ORCA_HOME = home;
 const { paths } = await import("./config");
 const { local, ensureWorktree, removeWorktree, tmux, tmuxSocket, confirmLaunch, LaunchFailed, sessionName, agentCommand, slug } = await import("./runner");
-const { beginRun, claim, claimed } = await import("./exits");
+const { beginRun, claim, claimed, readRun } = await import("./exits");
+const { launchIdentity } = await import("./cancellation");
+const { pending } = await import("./inbox");
+const { daemonPid, readStatus } = await import("./orchestrator-channel");
+const { ensureDaemon, stopDaemon } = await import("./orchestrator-client");
 
 const project = `rt-${process.pid}`;
 const repo = paths.repo(project);
@@ -76,8 +80,10 @@ test("agentCommand is an argv: workers run the fixed sh -c wrapper with values a
   expect(cmd[2]).toContain("0|70) ;;");
   expect(cmd[2]).not.toContain(home);
   expect(slug("feat/b c")).toBe("feat-b-c");
+  // The orchestrator daemon runs under the same wrapper with an empty branch and the launch's run id, so it is supervised like a worker.
   const orch = agentCommand({ project: "p", role: "orchestrator" }, "r1");
-  expect(orch).toEqual(["env", `ORCA_HOME=${home}`, process.execPath, expect.stringMatching(/cli\.ts$/), "agent", "--project", "p", "--role", "orchestrator"]);
+  expect(orch.slice(0, 2)).toEqual(["sh", "-c"]);
+  expect(orch.slice(3)).toEqual(["sh", home, "p", "orchestrator", "", "r1", process.execPath, expect.stringMatching(/cli\.ts$/)]);
 });
 
 describe.skipIf(!hasTmux)("tmux", () => {
@@ -101,13 +107,23 @@ describe.skipIf(!hasTmux)("tmux", () => {
     expect(await tmux.hasSession(session)).toBe(true);
   });
 
-  test("start for the orchestrator (unsupervised, no transcript) fails when its window dies first, with the pane's output, and leaves no dead pane", async () => {
-    const error = await local.start({ project, role: "orchestrator" }).catch((e) => e);
-    expect(error).toBeInstanceOf(LaunchFailed);
-    expect(error.message).toMatch(/^orchestrator exited \(code \d+\) before the agent started; last output:\n/);
-    expect(error.message).toContain("error"); // Bun's uncaught-error report, from the pane's screen
+  test("start for the orchestrator launches the supervised daemon, confirmed by its run record; stopDaemon ends it cleanly without a notice", async () => {
+    await local.start({ project, role: "orchestrator" });
+    const state = await readRun(project, "orchestrator");
+    expect(state?.role).toBe("orchestrator");
+    expect(state?.run).toBe(launchIdentity(project, "orchestrator")!);
+    expect(await tmux.listWindows(session)).toContain("orchestrator");
+    const pid = await daemonPid(project);
+    expect(pid).toBe(state!.pid);
+    expect(await ensureDaemon(project)).toBe("running"); // a second TUI finds it, never a second daemon
+    await stopDaemon(project);
+    expect(await daemonPid(project)).toBeUndefined();
+    expect(readStatus(project)?.state).toBe("stopped");
+    expect(claimed(project, "orchestrator", state!.run)).toBe(true); // its own close: no [agent-exit] notice
+    expect(await pending(project, "orchestrator")).toBe(false);
+    const deadline = Date.now() + 5000;
+    while ((await tmux.listWindows(session)).includes("orchestrator") && Date.now() < deadline) await Bun.sleep(50);
     expect(await tmux.listWindows(session)).not.toContain("orchestrator");
-    expect(existsSync(paths.worktree(project, "orchestrator"))).toBe(false);
   });
 
   test("confirmLaunch: a window that dies before writing its run record fails the launch, keeps the last output, kills the pane and closes the run", async () => {

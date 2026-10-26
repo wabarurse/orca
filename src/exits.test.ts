@@ -576,8 +576,10 @@ describe("agentCommand", () => {
     });
   }
 
-  test("the orchestrator gets no wrapper", () => {
-    expect(agentCommand({ project: "p", role: "orchestrator" }, "r")[0]).toBe("env");
+  test("the orchestrator daemon gets the wrapper too, with an empty branch", () => {
+    const cmd = agentCommand({ project: "p", role: "orchestrator" }, "r");
+    expect(cmd[0]).toBe("sh");
+    expect(cmd.slice(3, 8)).toEqual(["sh", paths.root, "p", "orchestrator", ""]);
   });
 
   test("end to end: a real agent that crashes at start sends exactly one notice and exits 70", async () => {

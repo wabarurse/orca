@@ -19,6 +19,7 @@ import { watchdog } from "./exits";
 import { mergeWatcher } from "./merges";
 import type { ProviderName } from "./providers/index";
 import { sessionName, tmux } from "./runner";
+import { stopDaemon } from "./orchestrator-client";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }
 
@@ -171,8 +172,8 @@ export async function togglePin(name: string): Promise<boolean> {
   return on;
 }
 
-/** The agent windows among a tmux session's windows: all but the session's idle shell. */
-export const agentWindows = (windows: string[]) => windows.filter((w) => w !== "shell");
+/** The worker/reviewer windows among a tmux session's windows: all but the idle shell and the orchestrator daemon's. */
+export const agentWindows = (windows: string[]) => windows.filter((w) => w !== "shell" && w !== "orchestrator");
 
 /** Agent windows still open in a project's tmux session; read from tmux alone, without transcripts. */
 export async function liveAgents(project: string): Promise<string[]> {
@@ -186,15 +187,15 @@ export async function liveAgentsOrNull(project: string): Promise<string[] | null
 }
 
 /**
- * The TUI's exit watchdog (src/exits.ts), checked for every open page on each
- * inbox poll: agents that stopped without reporting or sending their own
+ * The exit watchdog (src/exits.ts), run by the orchestrator daemon on its
+ * poll: agents that stopped without reporting or sending their own
  * notice get an `[agent-exit]` notice. `live` is stubbed in tests.
  */
 export const exitWatchdog = (live: (project: string) => Promise<string[] | null> = liveAgentsOrNull) => watchdog({ live });
 
 /**
- * The TUI's merge watcher (src/merges.ts), checked for every open page on each
- * inbox poll next to the exit watchdog; it asks gh about every 30s per project.
+ * The merge watcher (src/merges.ts), run by the orchestrator daemon on its
+ * poll next to the exit watchdog; it asks gh about every 30s per project.
  */
 export const mergeWatch = (live: (project: string) => Promise<string[] | null> = liveAgentsOrNull) => mergeWatcher({ live });
 
@@ -206,6 +207,8 @@ export async function killProjectSession(project: string): Promise<void> {
 export interface DeleteOptions {
   /** Live agent windows; defaults to the tmux session's. Tests replace it. */
   live?: (project: string) => Promise<string[] | null>;
+  /** Stop the project's orchestrator daemon and wait for it (orchestrator-client.ts stopDaemon); tests replace it. */
+  stop?: (project: string) => Promise<void>;
   /** Close the project's idle tmux session; defaults to killProjectSession. Tests replace it. */
   kill?: (project: string) => Promise<void>;
   /** Runs once the checks pass, before anything is removed (the TUI closes the project's page here). */
@@ -214,10 +217,10 @@ export interface DeleteOptions {
 
 /**
  * Delete project state and clean managed worktrees, preserving an original
- * checkout. Legacy clones retain their old deletion behavior. Refused while agents run. Also
- * drops it from the pins and closes its idle tmux session.
+ * checkout. Legacy clones retain their old deletion behavior. Refused while agents run. Stops
+ * the orchestrator daemon, then drops the project from the pins and closes its tmux session.
  */
-export async function deleteProject(name: string, opts: DeleteOptions = {}): Promise<void> {
+export async function deleteProject(name: string, { live = liveAgentsOrNull, stop = stopDaemon, kill = killProjectSession, beforeRemove }: DeleteOptions = {}): Promise<void> {
   if (!validProjectName(name)) throw new Error(`not a project name: ${name}`);
   if (!existsSync(paths.project(name))) throw new Error(`no project named ${name}`);
   // Only this conversation's own turn must be excluded, not the checkout-wide one a
@@ -234,13 +237,14 @@ export async function deleteProject(name: string, opts: DeleteOptions = {}): Pro
       : `${name} turn lock ${lock} is held by an unknown owner; verify no orca process is using ${name}, remove the lock, then delete`);
   }
   try {
-    const live = await (opts.live ?? liveAgentsOrNull)(name);
-    if (live === null) throw new Error("cannot check live agents; project was not deleted");
-    if (live.length) throw new Error(`${name} still has live agents (${live.join(", ")}); wait for them or stop them first`);
-    await (opts.kill ?? killProjectSession)(name);
+    const agents = await live(name);
+    if (agents === null) throw new Error("cannot check live agents; project was not deleted");
+    if (agents.length) throw new Error(`${name} still has live agents (${agents.join(", ")}); wait for them or stop them first`);
+    await stop(name); // the daemon must be gone before its files are, or it writes them back
+    await kill(name);
     await withProjectStateLock(name, async () => {
       await removeProjectWorktrees(name);
-      await opts.beforeRemove?.();
+      await beforeRemove?.();
       await rm(paths.project(name), { recursive: true, force: true });
       // Best effort: the project is already gone, and the backfill's orphan cleanup removes leftovers.
       try { purgeProject(name); } catch { /* rebuildable index */ }

@@ -269,17 +269,15 @@ const WRAPPER = [
 
 /**
  * The tmux window's command as an argv, which tmux execs directly without the
- * user's default shell (fish, zsh, ...). Workers and reviewers run under a
- * fixed `sh -c` script: if the agent exits non-zero and not SETTLED_EXIT (a
- * signal, OOM, an uncaught error), `orca agent-exit` sends the
- * orchestrator an `[agent-exit]` notice unless the run is already closed
+ * user's default shell (fish, zsh, ...). Every agent, the orchestrator daemon
+ * included, runs under a fixed `sh -c` script: if the agent exits non-zero and
+ * not SETTLED_EXIT (a signal, OOM, an uncaught error), `orca agent-exit` sends
+ * the orchestrator an `[agent-exit]` notice unless the run is already closed
  * (src/exits.ts). Both share one run id.
  */
 export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID().slice(0, 8), cli: string[] = cliCommand()): string[] {
-  if (opts.role === "orchestrator" || !opts.branch) {
-    return ["env", `ORCA_HOME=${paths.root}`, ...cli, "agent", "--project", opts.project, "--role", opts.role];
-  }
-  return ["sh", "-c", WRAPPER, "sh", paths.root, opts.project, opts.role, opts.branch, run, ...cli];
+  // The orchestrator daemon takes the same wrapper with an empty branch: it is supervised like a worker.
+  return ["sh", "-c", WRAPPER, "sh", paths.root, opts.project, opts.role, opts.branch ?? "", run, ...cli];
 }
 
 /** How long start waits for evidence that the agent process is up, and how often it looks. */
@@ -352,8 +350,8 @@ async function awaitLaunch(project: string, id: string, run: string, pane: strin
 /**
  * Wait up to LAUNCH_WAIT_MS for the agent behind `pane` to be up. Evidence:
  * runs/<id>.json carrying this run (beginRun writes it first thing in a
- * supervised agent), or, for the orchestrator (never supervised, so no run
- * record), the pane having exited 0 or still running at the deadline. A pane
+ * supervised agent, the orchestrator daemon included), or, when not
+ * supervised, the pane having exited 0 or still running at the deadline. A pane
  * that died without it fails the launch (failLaunch). A pane still running at
  * the deadline passes: a slow start is not a failure (a crash after that but
  * before beginRun is the watchdog's to report, src/exits.ts recoverTaskRuns).
@@ -395,7 +393,7 @@ export const local: Runner = {
     let pane: string;
     try { pane = await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, launch.argv, opts.signal); }
     catch (error) { await launch.cleanup(); throw error; }
-    await confirmLaunch(opts.project, id, run, pane, opts.role !== "orchestrator" && !!opts.branch, opts.signal);
+    await confirmLaunch(opts.project, id, run, pane, true, opts.signal);
   },
 
   async stop(project, branch) {

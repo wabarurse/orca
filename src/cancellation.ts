@@ -22,7 +22,8 @@ export function launchIdentity(project: string, id: string): string | undefined 
   try { return readFileSync(`${paths.transcript(project, id)}.launch`, "utf8") || undefined; }
   catch { return undefined; }
 }
-export async function cancelSession(project: string, id: string): Promise<void> {
+/** Request cancellation of `id`'s current launch; returns the request's token (the orchestrator daemon acknowledges it under that id, src/orchestrator-channel.ts). */
+export async function cancelSession(project: string, id: string): Promise<string | undefined> {
   const run = launchIdentity(project, id);
   if (!run) return; // historical transcript, not a launch; never wildcard a future run
   const path = `${paths.transcript(project, id)}.cancel`;
@@ -33,6 +34,29 @@ export async function cancelSession(project: string, id: string): Promise<void> 
     renameSync(tmp, path);
   } finally { rmSync(tmp, { force: true }); }
   await stopTaskRun(project, run, "cancelled", "cancelled by user; leave stopped until explicitly authorized to continue");
+  return token;
+}
+
+/**
+ * Consume a pending request for this exact run: the file is moved aside atomically
+ * first, so a request published meanwhile stays for the next check. Returns its
+ * token, or undefined when there is none (or it names another run, which stays).
+ * The orchestrator daemon takes requests this way because it outlives its turns.
+ */
+export function takeCancellation(project: string, id: string, run: string): string | undefined {
+  const path = `${paths.transcript(project, id)}.cancel`;
+  let request: { token?: string; run?: string };
+  try { request = JSON.parse(readFileSync(path, "utf8")); }
+  catch { return; }
+  if (!run || request.run !== run || typeof request.token !== "string") return;
+  const taken = `${path}.${request.token}.taken`;
+  try { renameSync(path, taken); }
+  catch { return; } // gone or replaced meanwhile
+  try {
+    const moved = JSON.parse(readFileSync(taken, "utf8")) as { token?: string; run?: string };
+    return moved.run === run && typeof moved.token === "string" ? moved.token : undefined;
+  } catch { return; }
+  finally { rmSync(taken, { force: true }); }
 }
 
 /** Only the exact launch can accept its request, including requests before startup. */

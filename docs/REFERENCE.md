@@ -10,8 +10,9 @@ ordinary terminals, and metadata alone when space is tight. Only the selected
 working conversation animates; idle headers stay still. Artwork never enters
 model context or saved conversation history.
 
-Finish active runs before upgrading, including background workers: new tmux
-sessions use the `orca-` prefix. From your updated harness checkout, run
+Finish active runs before upgrading, including background workers and each
+project's orchestrator daemon (the `orchestrator` window of `orca-<project>`;
+it keeps running after the TUI closes): new tmux sessions use the `orca-` prefix. From your updated harness checkout, run
 `bun run install:local` once to install `~/.local/bin/orca`, then use `orca`.
 The installer leaves the old executable and its receipt in place, rather than
 overwriting an unrelated command or changing a running process.
@@ -188,9 +189,12 @@ branch/worktree cleanup, including removal of ignored files.
   existed starts at its first transcript entry. A respawn on the same branch
   restarts the clock. The attached view's header has no clock. `/back` returns to
   the orchestrator. `/inbox` shows registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
-- Ctrl+C cancels the current turn; `/quit` exits. Background workers/reviewers
-  can keep running; see [Using the TUI](#using-the-tui) for cancellation details.
-- Finish active work and let background agents exit, then run `orca pull`
+- Ctrl+C cancels the current turn; `/quit` exits. The orchestrator daemon and
+  background workers/reviewers keep running; see [Using the TUI](#using-the-tui)
+  for cancellation details.
+- Finish active work and let background agents exit, including the orchestrator
+  daemons (stop one with `tmux -S ~/.orca/tmux.sock kill-window -t orca-<project>:orchestrator`,
+  or delete the project), then run `orca pull`
   from any directory to update **only the dedicated app installation**. Git and
   Bun 1.4.2+ are required. Restart afterward; existing processes are not upgraded.
   Read [update safety and recovery](#explicit-updates-orca-pull) before updating.
@@ -265,6 +269,22 @@ environment handoffs delete themselves before starting the agent; values are
 not placed in command arguments or tmux options. This does not transfer browser
 sessions or logins in a different OS account/container.
 
+The orchestrator itself is a long-lived process too: `orca start` makes sure
+each open project's **orchestrator daemon** runs in the `orchestrator` window
+of that project's tmux session and starts it when it is not (you see
+`orchestrator started` on the page). The TUI is a client: your messages go to
+the daemon's inbox, Ctrl+C, `/clear`, `/compact` and `/models` go to it as
+file requests it acknowledges on the page, and the conversation is read back
+from the saved transcript as the daemon appends to it. Closing the TUI (or your
+terminal) leaves the orchestrator's turn, its background workers, the exit
+watchdog and merge cleanup running; the next `orca start` attaches to them
+again. The page shows a `thinking…` indicator while a daemon turn runs and each
+completed reply or tool line as it lands; partial text is not streamed. A
+daemon that crashes leaves an `[agent-exit] orchestrator …` notice for its
+successor and is restarted by the next TUI poll (`orchestrator was not running;
+restarted`); `tmux -S ~/.orca/tmux.sock attach -t orca-<project>` shows its
+window. Only one daemon runs per project: a second start finds the first.
+
 Agents run on **orca's own tmux server**, never your default one: its socket is
 `$ORCA_HOME/tmux.sock` (`tmux -S ~/.orca/tmux.sock list-windows -t orca-<project>`
 lists a project's agent windows and `tmux -S ~/.orca/tmux.sock attach -t orca-<project>`
@@ -281,7 +301,7 @@ output, the dead pane is removed and the task run is recorded as failed (launch
 failed), so the orchestrator learns about it from the tool result rather than
 from nothing, and from nothing else: that death gets no second `[agent-exit]`
 notice. If an agent dies before writing its run record later than that, the
-TUI's watchdog sends one `[agent-exit] <agent> never started; task "<name>" needs
+orchestrator daemon's watchdog sends one `[agent-exit] <agent> never started; task "<name>" needs
 reconciliation` notice about 30 seconds after the launch. Agents started by an
 earlier orca version keep running on your default tmux server; let them report,
 or kill their windows there (`tmux kill-window -t orca-<project>:<agent>`).
@@ -554,7 +574,8 @@ and resize cancel the confirmation. See [COMPACTION.md](COMPACTION.md) for persi
 and later-compaction semantics; `/compact` remains the summarizing alternative.
 
 Ctrl+C cancels the selected page's current turn (including its provider request
-and running tools), without closing the harness or clearing your draft/history.
+and running tools) by a request the orchestrator daemon picks up within about
+100ms and acknowledges on the page, without closing the harness or clearing your draft/history.
 Other projects' turns and background workers/reviewers keep running. The cancelled
 orchestrator stays paused even if agent reports arrive; your next chat message
 resumes its saved conversation. While viewing a subagent, Ctrl+C instead stops
@@ -562,7 +583,7 @@ only that worker/reviewer, preserving its transcript and worktree; the existing
 `spawn` continuation path can restart it with that conversation. Agent views remain
 read-only (`/back` to talk to the orchestrator). A hint appears on the first press;
 a second Ctrl+C within two seconds exits the harness (`/quit` also exits). Exiting
-cancels in-process orchestrator turns but leaves background agents alone.
+leaves the orchestrator daemon, its current turn and background agents alone.
 
 Cancellation notices use `[agent-cancelled]`, not crash recovery's `[agent-exit]`:
 the orchestrator must leave the agent stopped until the user explicitly authorizes
@@ -806,9 +827,10 @@ summary. Idle maintenance publishes only work already requested by a turn.
 
 Checkpoint publication holds the project/turn locks, reloads shared history and
 conditionally appends against that exact transcript head. Original inbox receipts
-survive both checkpoints and clears. The internal one-shot orchestrator command
-uses the same turn owner and fresh-input requirement as the TUI, and joins its
-outstanding worker before releasing the lock. Saved history or already-consumed
+survive both checkpoints and clears. The orchestrator daemon owns the turn and
+keeps the rolling worker alive between turns; its idle maintenance publishes
+work already requested, and the compiled one-shot probe joins its outstanding
+worker before exiting. Saved history or already-consumed
 inbox residue alone never starts another model turn.
 
 This requires a configured OpenAI subscription login (`/login openai`) even when

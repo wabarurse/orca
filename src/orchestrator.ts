@@ -6,15 +6,17 @@ import { tryStorageLock } from "./storage-lock";
 import { inputEpoch, advanceInputEpoch } from "./user-input";
 import { Cancelled } from "./cancellation";
 import { projectIdentity, turnLocks, withProjectStateLock } from "./project-state";
-// The orchestrator runs in the `start` process, not in tmux. One turn is:
-// drain its inbox, hand the messages to the model as one user message, run
-// the loop until it stops calling tools, then drain the user's inbox for
-// anything addressed to them.
+// The orchestrator session: one turn is: drain its inbox, hand the messages to
+// the model as one user message, run the loop until it stops calling tools,
+// then drain the user's inbox for anything addressed to them. In production
+// the daemon (src/orchestrator-daemon.ts) owns the session in the project's
+// tmux session; the TUI is a client of its files (src/orchestrator-client.ts).
 
 import { existsSync } from "node:fs";
 import { assertMainCheckout, initializeWorkspace } from "./workspace";
 import { effectiveModel, projectModelResolver } from "./project-model";
 import { createAgent, type AgentDeps } from "./agent";
+import type { Tracker } from "./exits";
 import { loadConfig, paths, type Config } from "./config";
 import { consume, pending, pendingInput, put, userInEpoch, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
@@ -28,7 +30,7 @@ import { startMemoryBackfill } from "./memory-backfill";
 
 export interface OrchestratorDeps {
   project: string;
-  /** One-shot CLI cancellation and joining use the same whole-turn owner as TUI. */
+  /** Process-level cancellation, joined with each turn's own; the daemon cancels per turn instead. */
   signal?: AbortSignal;
   joinRolling?: boolean;
   /** Injectable persistence boundary; submission identity is captured before this call. */
@@ -41,6 +43,8 @@ export interface OrchestratorDeps {
   rolling?: RollingOptions;
   /** Streamed model text; `plain` marks tool lines, which are not markdown. */
   write?: (text: string, plain?: boolean) => void;
+  /** The daemon's run record (src/exits.ts), so a crash notice names its last step. */
+  tracker?: Tracker;
   /** Each batch of inbox messages (the user's and agents') as the orchestrator reads it. */
   onInbox?: (msgs: Message[]) => void;
   /** Each tool call as it starts and ends (the TUI shows it running, then its line and summary). */
@@ -64,6 +68,8 @@ export interface Orchestrator {
   /** Release the background summarizer when its page closes. */
   dispose?(): void;
   compact?(): Promise<void>;
+  /** After a saved model change: the daemon confirms which model its next request uses (clients only). */
+  observeModel?(model: string): Promise<string>;
   /** Refuse unless this session is idle and its raw durable inbox is empty (even paused input). */
   checkClear?(): Promise<void>;
   /** Locally confirmed reset; no provider calls, input draining, retries or restarts. */
@@ -297,7 +303,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
     },
     system: rolePrompt("orchestrator", config),
     ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project) },
-    write: deps.write, onInbox: deps.onInbox,
+    write: deps.write, onInbox: deps.onInbox, tracker: deps.tracker,
     onTool: deps.onTool, onToolResult: deps.onToolResult,
   });
 }

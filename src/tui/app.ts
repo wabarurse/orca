@@ -14,7 +14,7 @@ import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } f
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deleteProject, type AgentInfo, exitWatchdog, mergeWatch, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, dynamicDispatch, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
+import { accountChoices, deleteProject, type AgentInfo, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, dynamicDispatch, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { loadConfig, paths, validRounds } from "../config";
 import { projectIdentity } from "../project-state";
 import { validateModel, effectiveModel } from "../project-model";
@@ -111,11 +111,12 @@ export interface AppDeps {
   modelChoices?: typeof modelChoices;
   modelAgents?: (project: string) => Promise<string[] | null>;
   saveModel?: typeof setModel;
-  /** How the project list checks for live agents and closes a deleted project's tmux session; tests stub them. */
-  projects?: Pick<DeleteOptions, "live" | "kill">;
-  /** Exit watchdog run with each inbox poll (commands.ts exitWatchdog); tests stub it. */
+  /** How the project list checks for live agents, stops a deleted project's orchestrator daemon and closes its tmux session; tests stub them. */
+  projects?: Pick<DeleteOptions, "live" | "stop" | "kill">;
+  /** Keeps each open project's orchestrator daemon running: called on open and each poll; returns a line to show when it did something (orchestrator-client.ts daemonKeeper). Absent in tests. */
+  ensureDaemon?: (project: string) => Promise<string | undefined>;
+  /** Extra per-poll watchers for every open page; production runs none here (the exit watchdog and merge watcher run in the orchestrator daemon). Tests inject them. */
   watchdog?: (project: string) => Promise<unknown>;
-  /** Merged-PR watcher run with each inbox poll (commands.ts mergeWatch); tests stub it. */
   merges?: (project: string) => Promise<unknown>;
   /** Where questions are read and answered (questions.ts on disk by default); tests stub it. */
   questions?: QuestionStore;
@@ -125,7 +126,7 @@ export interface AppDeps {
   questionDelayMs?: number;
 }
 
-export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void }
+export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void; /** A retained status line for the page (the daemon's acknowledgements). */ notice?(text: string): void }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
 
@@ -421,7 +422,8 @@ export class App {
       this.stopSpinner = null;
       this.syncAgentsTimer();
       this.loginAbort.abort();
-      for (const p of this.pages) { if (p.busy) p.orch.cancel?.(); p.orch.dispose?.(); p.view?.leave(); }
+      // Closing the TUI leaves the orchestrator daemon and its turn running; dispose only stops following.
+      for (const p of this.pages) { p.orch.dispose?.(); p.view?.leave(); }
       restoreConsole();
       term.close();
       this.leave();
@@ -988,7 +990,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       return this.pages[existing]!;
     }
     const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), held: [], view: null, calls: new Calls() };
-    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]) };
+    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => this.say(dim(text), page) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     const asked = await this.questions.load(page);
@@ -1010,6 +1012,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     await this.refreshDynamicDispatch().catch(err => this.say(dim(`dynamic dispatch refresh failed: ${err}`), page));
     this.pages.push(page);
     this.active = this.pages.length - 1;
+    void this.keepDaemon(project, page); // the daemon starts in the background; the page shows what happened
     this.checkLive(project);
     this.questions.poll([page]);
     this.reprint();
@@ -1328,20 +1331,29 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.draw();
   }
 
-  private watch?: (project: string) => Promise<unknown>;
-  private merges?: (project: string) => Promise<unknown>;
-
-  /** Exit watchdog and merged-PR watcher for every open page (commands.ts); notices land in the orchestrator's inbox. */
+  /** The injected per-poll watchers for every open page, then the task inbox (so rows archived by the daemon's watchers disappear without another interval); each page's daemon is kept alive. */
   private watchPages(): void {
-    this.watch ??= this.deps.watchdog ?? exitWatchdog();
-    this.merges ??= this.deps.merges ?? mergeWatch();
-    // Reuse the existing poll, including an after-watch read so newly archived
-    // rows disappear without waiting for another interval. No overlapping reads.
+    const watchers = [this.deps.watchdog, this.deps.merges].filter((w): w is NonNullable<typeof w> => !!w);
     void this.refreshTaskInbox();
     for (const p of this.pages) {
-      void Promise.all([this.watch, this.merges].map(w => w(p.project).catch(() => {})))
-        .then(() => this.refreshTaskInbox(p));
+      void this.keepDaemon(p.project, p);
+      void Promise.all(watchers.map(w => w(p.project).catch(() => {}))).then(() => this.refreshTaskInbox(p));
     }
+  }
+
+  /** Start the project's orchestrator daemon when none is alive: what it did, or why it could not, as a line to show. */
+  private async ensureDaemon(project: string): Promise<string | undefined> {
+    if (!this.deps.ensureDaemon) return;
+    try { return await this.deps.ensureDaemon(project); }
+    catch (error) { return `orchestrator is not running: ${error instanceof Error ? error.message : String(error)}`; }
+  }
+  /** A repeated outcome (a start that keeps failing) is shown once, not once per poll. */
+  private readonly daemonLines = new WeakMap<Page, string>();
+  private async keepDaemon(project: string, page: Page): Promise<void> {
+    const line = await this.ensureDaemon(project);
+    if (!line || !this.validPage(page) || this.daemonLines.get(page) === line) return;
+    this.daemonLines.set(page, line);
+    this.say(dim(line), page);
   }
 
   /** Start a turn on every idle page whose orchestrator has unread messages. */
@@ -1555,6 +1567,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const result = await (this.deps.saveModel ?? setModel)(id, page.project, identity);
     this.say(dim(result), page);
     await this.refreshHeader(page);
+    // The daemon reads the saved model at its next request; its acknowledgement shows when it arrives.
+    void page.orch.observeModel?.(id).then(ack => this.say(dim(`orchestrator: ${ack}`), page), error => this.say(dim(`orchestrator did not acknowledge the model: ${error instanceof Error ? error.message : String(error)}`), page));
   }
 
   /**

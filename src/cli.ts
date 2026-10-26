@@ -4,8 +4,8 @@
 // orca msg <project> <text>        drop a message in the orchestrator's inbox
 // orca pull                       update the dedicated harness clone from origin/main
 // orca version                    print the package.json version
-// orca agent --project p --role r [--branch b] [--run id]   internal: what spawn runs
-// orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit
+// orca agent --project p --role r [--branch b] [--run id]   internal: what spawn (and the TUI, for the orchestrator daemon) runs
+// orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
 import { pullHarness } from "./pull";
 import pkg from "../package.json";
@@ -14,7 +14,8 @@ import { afterExit } from "./exits";
 import { put } from "./inbox";
 import { repoHere } from "./commands";
 import { sessionId } from "./runner";
-import { createOrchestrator, ensureProject } from "./orchestrator";
+import { ensureProject } from "./orchestrator";
+import { createClientOrchestrator, daemonKeeper } from "./orchestrator-client";
 import type { Role } from "./transcript";
 import { App } from "./tui/app";
 import { realTerminal } from "./tui/term";
@@ -49,15 +50,19 @@ switch (cmd) {
   case "start": {
     if (rest.length > 2 || rest.some((arg) => arg.startsWith("-"))) usage("expected start [project] [directory]");
     if (!process.stdin.isTTY || !process.stdout.isTTY) usage("start requires an interactive terminal");
+    const closing = new AbortController(); // quitting abandons a daemon launch still being confirmed
     const app = new App({
       term: realTerminal(),
       source: await repoHere(),
-      async openOrchestrator(project, url, write, onInbox, tools) {
+      ensureDaemon: daemonKeeper({ signal: closing.signal }),
+      async openOrchestrator(project, url, write, _onInbox, tools) {
         await ensureProject(project, url);
-        return createOrchestrator({ project, write, onInbox, ...tools });
+        // A client of the project's orchestrator daemon: it runs no turn itself.
+        return createClientOrchestrator({ project, onRefresh: tools?.onRefresh, notice: tools?.notice ?? (line => write(`${line}\n`, true)) });
       },
     });
-    await app.run(rest[0], rest[1]);
+    try { await app.run(rest[0], rest[1]); }
+    finally { closing.abort(); }
     break;
   }
   case "msg": {
@@ -76,8 +81,9 @@ switch (cmd) {
   case "agent-exit": {
     const project = flag("project") ?? usage("missing required internal command flag");
     const role = (flag("role") ?? usage("missing required internal command flag")) as Role;
-    if (!["worker", "reviewer"].includes(role)) usage("agent-exit requires worker or reviewer role");
+    if (!["orchestrator", "worker", "reviewer"].includes(role)) usage("invalid agent-exit role");
     const branch = flag("branch") ?? usage("missing required internal command flag");
+    if (role === "orchestrator" ? branch !== "" : !branch) usage("agent-exit takes a task branch for workers and reviewers only");
     const run = flag("run") ?? usage("missing required internal command flag");
     const code = Number(flag("code") ?? usage("missing required internal command flag"));
     if (!Number.isInteger(code) || code < 0 || code > 255) usage("invalid exit code");

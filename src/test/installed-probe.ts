@@ -43,7 +43,8 @@ if (cmd === "images") {
   else if (process.env.PROBE_EXIT) process.exit(Number(process.env.PROBE_EXIT));
   else {
     const provider = fakeProvider([[text("offline fixture response")]]);
-    process.exitCode = await runAgent({ project, role, branch: role === "orchestrator" ? undefined : branch, run: role === "orchestrator" ? undefined : run, loadProvider: async () => provider });
+    // The orchestrator daemon stops once its one fixture message is handled, as the one-shot probe needs.
+    process.exitCode = await runAgent({ project, role, branch: role === "orchestrator" ? undefined : branch, run, loadProvider: async () => provider, exitWhenIdle: role === "orchestrator" });
     record({ providerCalls: provider.calls.length, role });
   }
 } else if (cmd === "agent-exit") {
