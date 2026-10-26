@@ -160,6 +160,7 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
     messages: delivered,
     tools: Object.values(deps.tools).map((t) => t.spec),
     onText: (t) => write(t),
+    onNotice: (t) => write(`${t}\n`, true),
   });
   deps.signal?.throwIfAborted();
   if (message.inputTokens !== undefined) {
