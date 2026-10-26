@@ -1,3 +1,5 @@
+import { plain } from "./sanitize";
+
 // One retry policy for both SDK clients: a transient failure of the initial
 // request (the connection, or a 408/409/429/5xx answer) is tried again a bounded
 // number of times; a stream that has begun is never retried, since its text has
@@ -13,6 +15,7 @@ export interface RetryOptions {
   signal?: AbortSignal;
   /** Names the request in notices ("claude", "codex"). */
   what?: string;
+  model?: string;
   /** Each retry, announced: a plain transcript status line when the request has one, else a dim stderr line. */
   notice?: (text: string) => void;
   /** Tests shorten the waits. */
@@ -26,6 +29,7 @@ export interface RetryOptions {
  * context size) is final.
  */
 export function transientFailure(error: unknown): string | undefined {
+  if (exhaustedQuota(error)) return undefined;
   const status = (error as { status?: unknown })?.status;
   if (typeof status === "number") return TRANSIENT_STATUSES.has(status) || status >= 500 ? `HTTP ${status}` : undefined;
   for (let e: unknown = error, depth = 0; e instanceof Error && depth < 5; e = e.cause, depth++) {
@@ -51,6 +55,8 @@ export async function withTransientRetries<T>(attempt: (started: () => void) => 
     try { return await attempt(() => { consumed = true; }); }
     catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
+      const quota = exhaustedQuota(error);
+      if (quota) throw new Error(`${plain(what)}${options.model ? ` (${plain(options.model)})` : ""}: quota exhausted — ${quota}`);
       const wait = retryAfter(error, consumed, retries, backoffMs);
       if (wait === undefined) throw error;
       notice(retryNotice(what, transientFailure(error)!, wait, retries + 1, backoffMs.length));
@@ -79,4 +85,51 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
     signal?.addEventListener("abort", abort, { once: true });
   });
+}
+
+/** Only explicit structured provider evidence, never status or transport/message guesses.
+ * Explanations are mapped rather than echoing untrusted bodies (which can contain secrets).
+ */
+export function exhaustedQuota(error: unknown): string | undefined {
+  const evidence = quotaEvidence(error);
+  if (!evidence) return undefined;
+  const explanation = quotaExplanation(evidence);
+  return explanation ? explanation + quotaReset(evidence.resets_at) : undefined;
+}
+
+type ErrorRecord = Record<string, unknown>;
+const errorRecord = (value: unknown): ErrorRecord | undefined =>
+  value !== null && typeof value === "object" ? value as ErrorRecord : undefined;
+
+/** Prefer the nested payload over SDK-copied fields, retaining its reset timestamp.
+ * Inspect at most four envelopes, including the initial error; cycles are bounded too.
+ */
+function quotaEvidence(error: unknown): ErrorRecord | undefined {
+  let evidence = errorRecord(error);
+  for (let depth = 0; evidence && depth < 4; depth++) {
+    const nested = errorRecord(evidence.error) ?? errorRecord(errorRecord(evidence.response)?.error);
+    if (!nested) return evidence;
+    evidence = nested;
+  }
+  return undefined;
+}
+
+function quotaExplanation(evidence: ErrorRecord): string | undefined {
+  const code = typeof evidence.code === "string" ? evidence.code : evidence.type;
+  if (["insufficient_quota", "quota_exceeded", "usage_limit_reached", "usage_cap_reached"].includes(String(code)))
+    return "the provider reports that the available usage allowance is exhausted.";
+  if (["billing_hard_limit_reached", "billing_limit_reached", "credit_balance_too_low"].includes(String(code)))
+    return "the provider reports insufficient credits or a billing cap.";
+  // Anthropic reports exhausted prepaid credits as invalid_request_error, not 429.
+  if (code === "invalid_request_error" && typeof evidence.message === "string" &&
+      /^Your credit balance is too low to access the Anthropic API\b/i.test(evidence.message))
+    return "the provider reports insufficient credits.";
+  return undefined;
+}
+
+/** Codex's resets_at is Unix seconds. Never infer a reset from Retry-After. */
+function quotaReset(reset: unknown): string {
+  if (typeof reset !== "number" || !Number.isFinite(reset) || reset <= 0 || reset >= 253402300800)
+    return "";
+  return ` Reset: ${new Date(reset * 1000).toISOString()}.`;
 }

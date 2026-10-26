@@ -9,7 +9,7 @@ import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../logi
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { codexCatalogEfforts, rememberCatalogEfforts } from "./catalog";
-import { withTransientRetries, type RetryOptions } from "./retry";
+import { exhaustedQuota, withTransientRetries, type RetryOptions } from "./retry";
 
 // Protocol/catalog compatibility snapshot, matching Codex CLI 0.154.0.
 export const CODEX_CLIENT_VERSION = "0.154.0";
@@ -125,7 +125,7 @@ export function openai(credentials: ReturnType<typeof codexCredentials>, options
         const output = await completedOutput(observed(stream as AsyncIterable<CodexStreamEvent>, started), req.onText, false, value => { usage = value; });
         const content = fromResponses(output);
         return { completion: summaryCompletion(output), content, ...(usage ? { usage, inputTokens: usage.input } : {}), stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
-      }, { signal: req.signal, what: "codex", notice: req.onNotice, ...options.retry });
+      }, { signal: req.signal, what: "codex", model: req.model, notice: req.onNotice, ...options.retry });
     },
     async search(req) {
       req.signal.throwIfAborted();
@@ -194,6 +194,7 @@ async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: 
       return output;
     }
     else if (FAILED_EVENTS.has(event.type)) {
+      if (!strict && exhaustedQuota(event)) throw event; // Keep structured stream evidence for the persistent error path.
       if (strict) throw new SearchError("incomplete");
       throw new Error("codex response failed or was incomplete; no tool calls were executed.");
     }

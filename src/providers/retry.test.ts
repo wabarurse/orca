@@ -2,7 +2,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
 import { openai } from "./openai";
-import { retryNotice, transientFailure, withTransientRetries } from "./retry";
+import { exhaustedQuota, retryNotice, transientFailure, withTransientRetries } from "./retry";
 import type { CompleteRequest } from "./provider";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
 
@@ -187,4 +187,57 @@ test("Codex: a stream that fails after its first event is not retried", async ()
   const notices: string[] = [];
   await expect(openai(async () => fakeCodexTokens(), { retry: { backoffMs: [1, 1, 1] } }).complete(codexRequest({ onNotice: t => notices.push(t) }))).rejects.toThrow();
   expect(requests()).toBe(1); expect(notices).toEqual([]);
+});
+
+
+for (const code of ["insufficient_quota", "usage_limit_reached", "billing_hard_limit_reached"]) {
+  test(`Codex: structured ${code} is persistent with model, no retry or raw secrets`, async () => {
+    const requests = intercept(async () => Response.json({ error: { code, message: "Bearer SECRET\u001b[31m", resets_at: 2000000000 } }, { status: 429 }));
+    const notices: string[] = [];
+    const error = await openai(async () => fakeCodexTokens()).complete(codexRequest({ onNotice: t => notices.push(t) })).catch(e => e);
+    expect(error.message).toContain("codex (gpt-test): quota exhausted");
+    expect(error.message).toContain("Reset: 2033-05-18T03:33:20.000Z");
+    expect(error.message).not.toContain("SECRET");
+    expect(requests()).toBe(1); expect(notices).toEqual([]);
+  });
+}
+
+test("Codex: ordinary 429 retries and succeeds, even with quota words in its message", async () => {
+  const requests = intercept(async n => n === 1
+    ? Response.json({ error: { code: "rate_limit_exceeded", message: "quota" } }, { status: 429 })
+    : codexSSE([{ type: "response.completed", response: { status: "completed", output: [codexMessage] } }]));
+  await openai(async () => fakeCodexTokens(), { retry: { backoffMs: [1] } }).complete(codexRequest({ onNotice() {} }));
+  expect(requests()).toBe(2);
+});
+
+for (const event of [
+  { type: "error", code: "usage_limit_reached", message: "SECRET" },
+  { type: "response.failed", response: { error: { code: "insufficient_quota", message: "SECRET" } } },
+]) test(`Codex: ${event.type} retains structured quota evidence after partial output`, async () => {
+  const requests = intercept(async () => codexSSE([{ type: "response.output_text.delta", delta: "partial" }, event]));
+  let text = "";
+  await expect(openai(async () => fakeCodexTokens()).complete(codexRequest({ onText: t => { text += t; } })))
+    .rejects.toThrow("codex (gpt-test): quota exhausted");
+  expect(text).toBe("partial"); expect(requests()).toBe(1);
+});
+
+for (const streaming of [false, true]) test(`Claude: quota ${streaming ? "stream event" : "HTTP 429"} is not retried by either layer`, async () => {
+  const body = { type: "error", error: { type: "usage_limit_reached", message: "SECRET" } };
+  const s = await claudeServer(() => streaming
+    ? new Response(sse([body]), { headers: { "content-type": "text/event-stream" } })
+    : Response.json(body, { status: 429 }));
+  try {
+    const notices: string[] = [];
+    const error = await anthropic(s.client).complete(claudeRequest({ onNotice: t => notices.push(t) })).catch(e => e);
+    expect(error.message).toContain("claude (claude-test): quota exhausted");
+    expect(error.message).not.toContain("Reset:"); expect(error.message).not.toContain("SECRET");
+    expect(s.requests()).toBe(1); expect(notices).toEqual([]);
+  } finally { await s.stop(); }
+});
+
+test("quota evidence: Anthropic credits, no generic rate-limit, timeouts, sockets or invented resets", () => {
+  expect(exhaustedQuota({ error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } })).toContain("insufficient credits");
+  for (const error of [{ status: 429 }, { error: { type: "rate_limit_error", message: "quota exhausted" } }, new Error("quota exhausted"), { code: "ETIMEDOUT" }, { code: "ECONNRESET" }])
+    expect(exhaustedQuota(error)).toBeUndefined();
+  expect(exhaustedQuota({ code: "usage_limit_reached", resets_at: "tomorrow SECRET" })).not.toContain("Reset:");
 });
