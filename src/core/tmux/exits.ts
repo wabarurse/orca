@@ -23,7 +23,19 @@ import { run } from "../proc";
 import { SETTLED_EXIT, slug } from "./runner";
 import type { Role } from "../../protocol";
 
+/** Latest request only: bounded metadata, never payloads or raw errors.
+ * provider-wait means complete() is pending (including SDK retries), not HTTP progress.
+ */
+export interface ModelRequestState {
+  model: string;
+  provider: string;
+  stage: "preparing" | "provider-wait" | "completed" | "error" | "aborted";
+  startedAt: string;
+  updatedAt: string;
+}
+
 export interface RunState {
+  modelRequest?: ModelRequestState;
   run: string;
   /** The agent process, so the watchdog can confirm it is gone. */
   pid: number;
@@ -149,6 +161,8 @@ export async function sendNotice(project: string, id: string, run: string, text:
 export interface Tracker {
   /** About to ask the model. */
   model(): Promise<void>;
+  /** Best-effort request evidence; latest request replaces the previous one. */
+  request?(state: ModelRequestState): Promise<void>;
   /** About to run a tool: the agent is working, so any earlier report no longer counts. */
   tool(name: string, input: unknown): Promise<void>;
   /** The tool just run was a successful message to the orchestrator. */
@@ -195,6 +209,7 @@ export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracke
     state: () => ({ ...s }),
     end: async () => { s.endedAt ??= new Date().toISOString(); await save(); },
     model: () => set({ step: "model request" }),
+    request: (modelRequest) => set({ modelRequest }),
     tool: async (name, input) => {
       if (name === "bash") await invalidateTaskBranch(project, run);
       const step = describeTool(name, input);

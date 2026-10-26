@@ -60,7 +60,7 @@ describe("agent loop", () => {
     const provider = fakeProvider([[text("hello")]]);
     const { calls } = provider;
     let out = "";
-    await createAgent({ provider, transcript, tools: {}, model: "m", ctx, write: (t) => (out += t) }).run();
+    await createAgent({ provider, transcript, tools: {}, model: "m", ctx, write: (t, plain) => { if (!plain) out += t; } }).run();
 
     expect(calls.length).toBe(1);
     expect(calls[0]!.tools).toEqual([]);
@@ -188,4 +188,62 @@ test("cancelled provider request retains input but never appends incomplete tool
   } };
   await expect(createAgent({ provider, transcript, tools: { echo }, model: "m", ctx, signal: controller.signal, write() {} }).run()).rejects.toThrow("cancelled");
   expect(await transcript.chain()).toEqual([{ role: "user", content: "keep this" }]);
+});
+
+
+describe("model request lifecycle", () => {
+  test.each(["completed", "error", "aborted", "preparation-error"] as const)("%s keeps safe latest evidence and preserves outcome", async (outcome) => {
+    const { beginRun, readRun } = await import("../../tmux/exits");
+    const tracker = await beginRun({ project: `lifecycle-${outcome}`, id: "worker", run: "r", role: "worker", cwd: "/" });
+    const transcript = fakeTranscript();
+    await transcript.append(user("private prompt"));
+    const controller = new AbortController();
+    const secret = new Error("sensitive provider error");
+    const stages: string[] = [];
+    const lines: string[] = [];
+    const request = tracker.request!;
+    tracker.request = async (state) => {
+      stages.push(state.stage);
+      await request(state);
+      // Fail only the chain inside ask, not the earlier context/budget boundaries.
+      if (state.stage === "preparing" && outcome === "preparation-error") transcript.chain = async () => { throw secret; };
+    };
+    let calls = 0;
+    const provider: Provider = { ...fakeProvider([]), name: "openai", async complete(req) {
+      calls++;
+      expect(stages).toEqual(["preparing", "provider-wait"]);
+      expect(req.model).toBe("selected-model");
+      expect((await readRun(`lifecycle-${outcome}`, "worker"))?.modelRequest?.stage).toBe("provider-wait");
+      if (outcome === "aborted") controller.abort(secret);
+      if (outcome !== "completed") throw secret;
+      return { content: [text("private output")], stop: "end" };
+    } };
+    const agent = createAgent({ provider: fakeProvider([]), model: "old-model", resolveModel: async () => ({ model: "selected-model", provider }),
+      transcript, tools: {}, ctx, tracker, signal: controller.signal,
+      write: (t, plain) => { if (plain) lines.push(t); } });
+    if (outcome === "completed") await agent.run();
+    else await expect(agent.run()).rejects.toBe(secret);
+    expect(calls).toBe(outcome === "preparation-error" ? 0 : 1);
+    const stage = outcome === "preparation-error" ? "error" : outcome;
+    expect(stages).toEqual(outcome === "preparation-error" ? ["preparing", "error"] : ["preparing", "provider-wait", stage]);
+    const saved = (await readRun(`lifecycle-${outcome}`, "worker"))!.modelRequest!;
+    expect(saved).toEqual({ model: "selected-model", provider: "openai", stage, startedAt: expect.any(String), updatedAt: expect.any(String) });
+    expect(Number.isNaN(Date.parse(saved.startedAt))).toBe(false);
+    expect(lines.every(line => line.includes(`openai/selected-model`) && line.includes(`started ${saved.startedAt}`))).toBe(true);
+    const evidence = JSON.stringify(saved) + lines.join("");
+    for (const sensitive of ["private prompt", "private output", secret.message]) expect(evidence).not.toContain(sensitive);
+    await tracker.request!({ ...saved, stage: "preparing", startedAt: "next" });
+    expect((await readRun(`lifecycle-${outcome}`, "worker"))!.modelRequest!.startedAt).toBe("next");
+  });
+
+  test("diagnostic write failures do not prevent a request", async () => {
+    const transcript = fakeTranscript();
+    await transcript.append(user("hi"));
+    const provider = fakeProvider([[text("ok")]]);
+    await createAgent({ transcript, provider, model: "m", tools: {}, ctx,
+      tracker: { model: async () => {}, request: async () => { throw new Error("disk"); }, tool: async () => {}, instructed: async () => {}, reported: async () => {} },
+      write: (_t, plain) => { if (plain) throw new Error("display"); },
+    }).run();
+    expect(provider.calls).toHaveLength(1);
+  });
 });
