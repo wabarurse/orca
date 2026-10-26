@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../../config";
-import { projectIdentity } from "../projects/state";
+import { projectIdentity, withProjectStateLock } from "../projects/state";
 import { acquireRunOwnership as acquire, requestRunStop, releaseRunOwnership as release, type RunOwner, type TerminationEvidence } from "./ownership";
 
 const home = mkdtempSync(join(tmpdir(), "run-ownership-"));
@@ -55,7 +55,8 @@ test("release/admission race is serialized; stale release and stop cannot mutate
 
 test("every identity component including process birth is bound to release", async () => {
   await acquire(owner, "verified-clear");
-  for (const changed of [{ ...owner, task: "other" }, { ...owner, agent: "other" }, next(), { ...owner, branch: "other" }, { ...owner, supervisor: { ...owner.supervisor, birth: "reused-pid" } }, { ...owner, incarnation: "other" }, { ...owner, project: "other" }]) {
+  for (const changed of [{ ...owner, task: "other" }, { ...owner, agent: "other" }, { ...owner, run: "other" }, { ...owner, role: "reviewer" as const },
+    ...[{ host: "other" }, { boot: "other" }, { pid: 124 }].map(supervisor => ({ ...owner, supervisor: { ...owner.supervisor, ...supervisor } })), { ...owner, branch: "other" }, { ...owner, supervisor: { ...owner.supervisor, birth: "reused-pid" } }, { ...owner, incarnation: "other" }, { ...owner, project: "other" }]) {
     expect(await release(owner, proof(changed))).toBe(false);
   }
   expect(await acquire(next(), "verified-clear")).toBe(false);
@@ -87,4 +88,36 @@ test("independent processes contend through the persistent project lock", async 
   }));
   expect(results.filter(r => r === "true")).toHaveLength(1);
   expect(results.filter(r => r === "false")).toHaveLength(3);
+});
+
+
+test("queued operations snapshot nested owner and termination evidence before waiting", async () => {
+  const entered = Promise.withResolvers<void>(), unblock = Promise.withResolvers<void>();
+  const lock = withProjectStateLock(owner.project, async () => { entered.resolve(); await unblock.promise; });
+  await entered.promise;
+  const admissionOwner = structuredClone(owner), stopOwner = structuredClone(owner);
+  const releaseOwner = structuredClone(owner), evidence = structuredClone(proof());
+  const acquisition = acquire(admissionOwner, "verified-clear");
+  const stop = requestRunStop(stopOwner);
+  const termination = release(releaseOwner, evidence);
+  admissionOwner.supervisor.birth = "mutated";
+  stopOwner.supervisor.pid++;
+  releaseOwner.supervisor.boot = "mutated";
+  evidence.owner.supervisor.host = "mutated";
+  evidence.descendants = "unknown";
+  unblock.resolve(); await lock;
+  expect(await acquisition).toBe(true);
+  expect(await stop).toBe(true);
+  expect(await termination).toBe(true);
+  expect(JSON.parse(readFileSync(ledger(), "utf8")).records).toEqual([{ owner, state: "released" }]);
+  // Unknown evidence must not become valid by mutation while release is queued.
+  const successor = next(); await acquire(successor, "verified-clear");
+  const enteredAgain = Promise.withResolvers<void>(), unblockAgain = Promise.withResolvers<void>();
+  const lockAgain = withProjectStateLock(owner.project, async () => { enteredAgain.resolve(); await unblockAgain.promise; });
+  await enteredAgain.promise;
+  const uncertain = structuredClone(proof(successor)); uncertain.descendants = "unknown";
+  const retained = release(successor, uncertain); uncertain.descendants = "gone";
+  unblockAgain.resolve(); await lockAgain;
+  expect(await retained).toBe(false);
+  expect(await acquire(next(), "verified-clear")).toBe(false);
 });

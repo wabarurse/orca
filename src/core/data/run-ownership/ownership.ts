@@ -27,6 +27,16 @@ function validate(o: unknown): asserts o is RunOwner {
   check(object(o.supervisor) && [o.supervisor.host, o.supervisor.boot, o.supervisor.birth].every(nonempty) && Number.isSafeInteger(o.supervisor.pid) && Number(o.supervisor.pid) > 0, "invalid supervisor identity");
 }
 const key = (o: RunOwner) => JSON.stringify([o.project, o.incarnation, o.branch, o.task, o.role, o.agent, o.run, o.supervisor.host, o.supervisor.boot, o.supervisor.pid, o.supervisor.birth]);
+function validateStore(store: Store, owner: RunOwner): void {
+  check(object(store) && store.version === 1 && store.incarnation === owner.incarnation && Array.isArray(store.records), "ownership missing/corrupt or project recreated; recovery required");
+  const runs = new Set<string>(), branches = new Set<string>();
+  for (const r of store.records) {
+    check(object(r), "corrupt ownership record"); validate(r.owner);
+    check(r.owner.project === owner.project && r.owner.incarnation === owner.incarnation && ["owned", "stopping", "released"].includes(r.state), "corrupt ownership identity/state");
+    check(!runs.has(r.owner.run), "duplicate ownership run"); runs.add(r.owner.run);
+    if (r.state !== "released") { check(!branches.has(r.owner.branch), "duplicate branch owner"); branches.add(r.owner.branch); }
+  }
+}
 async function update<T>(owner: RunOwner, action: (s: Store) => T): Promise<T> {
   // Snapshot caller-owned objects before awaiting, including nested identity.
   owner = structuredClone(owner); validate(owner);
@@ -40,14 +50,7 @@ async function update<T>(owner: RunOwner, action: (s: Store) => T): Promise<T> {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
       store = { version: 1, incarnation: owner.incarnation, records: [] };
     }
-    check(object(store) && store.version === 1 && store.incarnation === owner.incarnation && Array.isArray(store.records), "ownership missing/corrupt or project recreated; recovery required");
-    const runs = new Set<string>(), branches = new Set<string>();
-    for (const r of store.records) {
-      check(object(r), "corrupt ownership record"); validate(r.owner);
-      check(r.owner.project === owner.project && r.owner.incarnation === owner.incarnation && ["owned", "stopping", "released"].includes(r.state), "corrupt ownership identity/state");
-      check(!runs.has(r.owner.run), "duplicate ownership run"); runs.add(r.owner.run);
-      if (r.state !== "released") { check(!branches.has(r.owner.branch), "duplicate branch owner"); branches.add(r.owner.branch); }
-    }
+    validateStore(store, owner);
     const before = JSON.stringify(store), result = action(store), after = JSON.stringify(store);
     if (before !== after) {
       await mkdir(dir, { recursive: true });
@@ -64,6 +67,8 @@ async function update<T>(owner: RunOwner, action: (s: Store) => T): Promise<T> {
 /** Clearance is a trusted containment inventory, never task-terminal/tmux-absent.
  * Missing ledger requires this evidence too; unknown never bootstraps ownership.
  * Reservation is durable before launch; no execution until acquisition succeeds.
+ * True also acknowledges owned/stopping retries, NOT permission to launch again.
+ * The later supervisor must enforce one launch per immutable run.
  */
 export async function acquireRunOwnership(owner: RunOwner, clearance: "verified-clear" | "unknown"): Promise<boolean> {
   owner = structuredClone(owner);
