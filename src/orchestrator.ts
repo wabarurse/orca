@@ -5,7 +5,7 @@ import { pendingImageInputs, type ImageRef } from "./images";
 import { tryStorageLock } from "./storage-lock";
 import { inputEpoch, advanceInputEpoch } from "./user-input";
 import { Cancelled } from "./cancellation";
-import { projectIdentity, projectTurnLock as turnLock, withProjectStateLock } from "./project-state";
+import { projectIdentity, turnLocks, withProjectStateLock } from "./project-state";
 // The orchestrator runs in the `start` process, not in tmux. One turn is:
 // drain its inbox, hand the messages to the model as one user message, run
 // the loop until it stops calling tools, then drain the user's inbox for
@@ -160,7 +160,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
   };
   const check = async (ownsTurn = false) => {
     checkIdentity();
-    if (state.running || state.requested || (!ownsTurn && existsSync(turnLock(deps.project)))) throw new Error("orchestrator is running or compacting; wait before clearing context");
+    if (state.running || state.requested || (!ownsTurn && turnLocks(deps.project).some(path => existsSync(path)))) throw new Error("orchestrator is running or compacting; wait before clearing context");
     if ((await pendingImageInputs(deps.project, transcript.consumed?.().inputs)).length) throw new Error("image input is pending; retry it before clearing context");
     if (state.submitting || await pendingInput(deps.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
   };
@@ -197,7 +197,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
       const authorization = signal ? AbortSignal.any([signal, clearing.signal]) : clearing.signal;
       let release: (() => Promise<void>) | undefined;
       try {
-        release = await tryStorageLock(turnLock(deps.project));
+        release = await ownTurn(deps.project);
         if (!release) throw new Error("orchestrator is running in another session; wait before clearing context");
         await state.refreshing;
         await withProjectStateLock(deps.project, async () => {
@@ -220,13 +220,24 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
       try { await (deps.put ?? put)(deps.project, "orchestrator", { from: "user", text, ...(attachments?.length ? { attachments } : {}), userEpoch: submission, ...(inputId ? { inputId } : {}) }); }
       finally { state.submitting--; }
     },
-    pending: async () => !existsSync(turnLock(deps.project)) && await refresh() &&
+    pending: async () => !turnLocks(deps.project).some(path => existsSync(path)) && await refresh() &&
       !(await state.isPaused()) && (state.requested || rolling.ready() || await pending(deps.project, "orchestrator")),
     entries: () => transcript.history?.() ?? transcript.branch(),
     consumed: () => transcript.consumed?.().inputs ?? new Set(),
     refresh,
     turn: () => orchestratorTurn(deps, transcript, state, checkIdentity, rolling),
   };
+}
+/** Own the checkout's turn, then this conversation's; on a partial win nothing stays held. */
+async function ownTurn(project: string): Promise<(() => Promise<void>) | undefined> {
+  const releases: (() => Promise<void>)[] = [];
+  const release = async () => { for (const r of releases.reverse()) await r(); };
+  for (const path of turnLocks(project)) {
+    const r = await tryStorageLock(path, project).catch(async error => { await release(); throw error; });
+    if (!r) { await release(); return; }
+    releases.push(r);
+  }
+  return release;
 }
 async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, state: TurnControl, checkIdentity: () => void, rolling: RollingCompactor): Promise<Message[]> {
   if (state.running || state.clearing) return [];
@@ -235,7 +246,7 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
   const signal = deps.signal ? AbortSignal.any([deps.signal, cancellation.signal]) : cancellation.signal;
   let release: (() => Promise<void>) | undefined;
   try {
-    release = await tryStorageLock(turnLock(deps.project));
+    release = await ownTurn(deps.project);
     if (!release) return [];
     signal.throwIfAborted();
     checkIdentity();

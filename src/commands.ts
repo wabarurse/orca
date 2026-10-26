@@ -1,6 +1,6 @@
 import { readRun } from "./exits";
-import { tryStorageLock } from "./storage-lock";
-import { projectTurnLock, withProjectStateLock } from "./project-state";
+import { describeOwner, lockOwner, tryStorageLock } from "./storage-lock";
+import { conversationTurnLock, withProjectStateLock } from "./project-state";
 import { effectiveModel, saveProjectModel, validateModel } from "./project-model";
 // What the slash commands do, apart from how they are shown. The TUI turns
 // these into menus and status lines.
@@ -220,8 +220,19 @@ export interface DeleteOptions {
 export async function deleteProject(name: string, opts: DeleteOptions = {}): Promise<void> {
   if (!validProjectName(name)) throw new Error(`not a project name: ${name}`);
   if (!existsSync(paths.project(name))) throw new Error(`no project named ${name}`);
-  const release = await tryStorageLock(projectTurnLock(name));
-  if (!release) throw new Error(`${name} orchestrator is running in another session; wait before deleting`);
+  // Only this conversation's own turn must be excluded, not the checkout-wide one a
+  // sibling conversation (Ctrl+N) holds mid-turn: deletion never touches the shared
+  // checkout's files, and the worktrees it unregisters are in this project's own
+  // namespace, serialised by git itself like the worker worktree add/remove that
+  // already runs during sibling turns without the turn lock.
+  const lock = conversationTurnLock(name);
+  const release = await tryStorageLock(lock, name);
+  if (!release) {
+    const owner = await lockOwner(lock);
+    throw new Error(owner
+      ? `${name} orchestrator is mid-turn in another session (${describeOwner(owner)}); wait for that turn to end, then delete`
+      : `${name} turn lock ${lock} is held by an unknown owner; verify no orca process is using ${name}, remove the lock, then delete`);
+  }
   try {
     const live = await (opts.live ?? liveAgentsOrNull)(name);
     if (live === null) throw new Error("cannot check live agents; project was not deleted");
