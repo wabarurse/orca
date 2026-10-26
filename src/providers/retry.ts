@@ -13,6 +13,8 @@ const TRANSPORT_MESSAGES = /socket connection was closed|unable to connect|conne
 
 export interface RetryOptions {
   signal?: AbortSignal;
+  /** Sanitized metadata only; optional observers cannot change retry behavior. */
+  onRetry?: (event: { reason: "http" | "transport"; attempt: number; nextRetryAt: number }) => void;
   /** Names the request in notices ("claude", "codex"). */
   what?: string;
   model?: string;
@@ -59,6 +61,7 @@ export async function withTransientRetries<T>(attempt: (started: () => void) => 
       if (quota) throw new Error(`${plain(what)}${options.model ? ` (${plain(options.model)})` : ""}: quota exhausted — ${quota}`);
       const wait = retryAfter(error, consumed, retries, backoffMs);
       if (wait === undefined) throw error;
+      try { options.onRetry?.({ reason: typeof (error as { status?: unknown })?.status === "number" ? "http" : "transport", attempt: retries + 2, nextRetryAt: Date.now() + wait }); } catch {}
       notice(retryNotice(what, transientFailure(error)!, wait, retries + 1, backoffMs.length));
       await sleep(wait, signal);
     }
