@@ -31,7 +31,7 @@ export interface QuestionStore {
   /** Every question, answered and skipped too (for replies the orchestrator reads, and restore). */
   all(project: string): Promise<Question[]>;
   list(project: string): Promise<Question[]>;
-  answer(project: string, id: string, text: string): Promise<unknown>;
+  answer(project: string, id: string, text: string, inputId?: string): Promise<unknown>;
   skip(project: string, id: string): Promise<unknown>;
 }
 
@@ -98,6 +98,10 @@ export interface QuestionHost {
   say(line: string, page: QuestionPage): void;
   /** A line of the page's own history (an answered question), as the orchestrator's transcript will show it. */
   record(line: string, page: QuestionPage): void;
+  /** A sent answer in the page's prompt queue, under the inbox message's inputId, until the orchestrator consumes it. */
+  queue?(page: QuestionPage, inputId: string, text: string): void;
+  /** The answer was not delivered: out of the queue. */
+  unqueue?(page: QuestionPage, inputId: string): void;
   /** Whether the text's first word is a command the app knows, and running it as if typed in chat. */
   isCommand(text: string): boolean;
   run(text: string): Promise<void>;
@@ -114,6 +118,13 @@ function closeFeedback(question: string, answer: string | null): { kind: "answer
   return answer === null
     ? { kind: "skip", line: dim(`? ${plainText(question)} → skipped, removed from inbox`) }
     : { kind: "answer", line: answeredLine(question, answer) };
+}
+
+const QUEUE_CHARS = 60;
+/** A sent answer as the prompt queue previews it: the question (cut at 60 characters) and the answer. */
+export function queuedAnswer(question: string, answer: string): string {
+  const chars = [...plainText(question)];
+  return `? ${chars.slice(0, QUEUE_CHARS).join("")}${chars.length > QUEUE_CHARS ? "…" : ""} → ${plainText(answer)}`;
 }
 
 export const pageQuestions = (): PageQuestions => ({ open: [], loaded: false, seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, expanded: false, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
@@ -415,11 +426,14 @@ export class Questions {
     if (!h || q.closing || !this.valid(page)) return;
     const feedback = closeFeedback(h.text, answer);
     q.closing = feedback.kind;
+    const inputId = crypto.randomUUID();
     this.host.draw();
     try {
       if (answer === null) await this.store.skip(page.project, h.id);
       else {
-        const sending = this.store.answer(page.project, h.id, answer);
+        // Queued like a typed prompt: consumption by inputId takes it out; a failed write below does too.
+        this.host.queue?.(page, inputId, queuedAnswer(h.text, answer));
+        const sending = this.store.answer(page.project, h.id, answer, inputId);
         this.host.submitted?.();
         await sending;
       }
@@ -429,6 +443,7 @@ export class Questions {
       this.reset(page);
     } catch (err) {
       if (!this.valid(page)) return;
+      this.host.unqueue?.(page, inputId);
       if (!closedElsewhere(err)) return this.host.say(dim(`could not ${answer === null ? "skip" : "answer"}: ${plainText(message(err))}`), page);
       this.keepTyped(page, "already closed elsewhere; your answer was not sent");
     } finally {
