@@ -10,7 +10,10 @@ function reader() {
   const r = keyReader((k) => got.push(k), 300, setTimer);
   return {
     got, feed: r.feed, close: r.close,
-    fire() { const fn = pending; pending = null; fn?.(); },
+    /** The idle period passes with nothing arriving: the timer, then the yield to pending reads it schedules (0ms). */
+    fire() { const fn = pending; pending = null; fn?.(); const again = pending as (() => void) | null; if (again && delay === 0) { pending = null; again(); } },
+    /** The timer alone: what runs when it fires late, before a read that is already waiting. */
+    fireLate() { const fn = pending; pending = null; fn?.(); },
     get timers() { return pending ? 1 : 0; },
     get delay() { return delay; },
   };
@@ -117,6 +120,57 @@ describe("parseKeys", () => {
     expect(r.got[3]).toEqual({ name: "escape" });
   });
 
+  test("a late Esc timer yields to the read it raced: Alt+Backspace and mouse reports sent as separate writes stay whole", () => {
+    // Terminal.app writes the Option prefix and the key (and each mouse report) in separate writes.
+    // When the loop was busy, the elapsed Esc timer runs before the read that already arrived:
+    // the first firing must only yield to it, never decide Escape (which clears the draft).
+    for (const [rest, want] of [["\x7f", { name: "backspace", alt: true }], ["\b", { name: "backspace", alt: true }], ["[<0;3;5M", { name: "mousedown", x: 3, y: 5 }], ["[<0;3;5m", { name: "mouseup", x: 3, y: 5 }], ["[<32;4;5M", { name: "mousemove", x: 4, y: 5 }], ["d", { name: "d", alt: true }]] as const) {
+      const r = reader();
+      r.feed("\x1b");
+      expect(r.delay).toBe(ESC_DELAY_MS);
+      r.fireLate();
+      expect(r.got).toEqual([]);
+      expect(r.timers).toBe(1);
+      expect(r.delay).toBe(0);
+      r.feed(rest);
+      expect(r.got).toEqual([want]);
+      expect(r.timers).toBe(0);
+    }
+    // A whole drag, every report its own write, with the timer racing each one.
+    const drag = reader();
+    for (const report of ["\x1b[<0;3;5M", "\x1b[<32;4;5M", "\x1b[<32;5;5M", "\x1b[<0;5;5m"]) {
+      drag.feed(report.slice(0, 1));
+      drag.fireLate();
+      drag.feed(report.slice(1));
+    }
+    expect(drag.got).toEqual([{ name: "mousedown", x: 3, y: 5 }, { name: "mousemove", x: 4, y: 5 }, { name: "mousemove", x: 5, y: 5 }, { name: "mouseup", x: 5, y: 5 }]);
+    // A read split inside a report, its idle timer late: the same yield.
+    const split = reader();
+    split.feed("\x1b[<0;3");
+    split.fireLate();
+    split.feed(";5M");
+    expect(split.got).toEqual([{ name: "mousedown", x: 3, y: 5 }]);
+    expect(split.timers).toBe(0);
+  });
+
+  test("a lone Esc still decides after the yield finds nothing, with the same bounded wait", () => {
+    const r = reader();
+    r.feed("\x1b");
+    r.fireLate();
+    expect(r.got).toEqual([]);
+    r.fireLate(); // the yield found no read
+    expect(r.got).toEqual([{ name: "escape" }]);
+    expect(r.timers).toBe(0);
+    r.feed("\x1b");
+    r.fire(); // both at once: the usual lone Escape
+    expect(r.got).toEqual([{ name: "escape" }, { name: "escape" }]);
+    r.feed("\x1b[<0;3");
+    r.fire();
+    expect(r.got).toHaveLength(2); // an incomplete report is still dropped, not typed
+    r.feed("abc");
+    expect(r.got[2]).toEqual({ name: "char", text: "abc" });
+  });
+
   test("a stalled paste stays paste text after the timeout: no Enter", () => {
     const r = reader();
     r.feed("\x1b[200~part one\r");
@@ -180,8 +234,10 @@ function replyReader() {
   const expect = { on: true };
   const got: Key[] = [];
   let pending: (() => void) | null = null;
-  const r = keyReader((k) => got.push(k), 300, (fn) => { pending = fn; return () => { pending = null; }; }, () => expect.on);
-  return { got, expect, feed: r.feed, fire() { const fn = pending; pending = null; fn?.(); }, get timers() { return pending ? 1 : 0; } };
+  let delay = 0;
+  const r = keyReader((k) => got.push(k), 300, (fn, ms) => { pending = fn; delay = ms; return () => { pending = null; }; }, () => expect.on);
+  const fire = () => { const fn = pending; pending = null; fn?.(); const again = pending as (() => void) | null; if (again && delay === 0) { pending = null; again(); } };
+  return { got, expect, feed: r.feed, fire, get timers() { return pending ? 1 : 0; } };
 }
 
 const REPLY = { name: "osc", text: "11;rgb:0000/0000/0000" };

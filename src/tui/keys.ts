@@ -133,8 +133,9 @@ export interface KeyReader {
  * stops right after an ESC or inside an OSC reply is held too, so a reply cut
  * anywhere is still one "osc" key; one still unterminated at the idle timeout
  * is dropped, and what follows is swallowed up to its BEL or ST for one more
- * idle period. Outside that window a lone ESC waits at most ESC_DELAY_MS;
- * ESC ] remains Alt+] at once. Bytes are framed before UTF-8 decoding, because
+ * idle period. Outside that window a lone ESC waits at most ESC_DELAY_MS
+ * (plus one turn of the loop for reads that arrived while it was busy, see
+ * yieldOnce); ESC ] remains Alt+] at once. Bytes are framed before UTF-8 decoding, because
  * legacy X10 mouse payloads are three raw bytes, not UTF-8 text.
  */
 export function keyReader(emit: (k: Key) => void, idleMs = 300, setTimer: SetTimer = realTimer, expectReply: () => boolean = () => false): KeyReader {
@@ -149,6 +150,8 @@ class Reader {
   private cancel: (() => void) | null = null;
   /** Dropping the rest of a reply that was cut off, up to its BEL or ST. */
   private swallowing = false;
+  /** The idle timer already yielded once to pending reads (yieldOnce). */
+  private deferred = false;
 
   constructor(private readonly emit: (k: Key) => void, private readonly idleMs: number, private readonly setTimer: SetTimer, private readonly expectReply: () => boolean) {}
 
@@ -175,12 +178,28 @@ class Reader {
 
   private startTimer(): void {
     const ms = /^\x1b{1,2}$/.test(this.held) && !this.expectReply() && !this.inPaste && !this.swallowing ? Math.min(ESC_DELAY_MS, this.idleMs) : this.idleMs;
+    this.deferred = false;
     this.cancel = this.setTimer(() => this.idle(), ms);
   }
 
   private stopTimer(): void {
     this.cancel?.();
     this.cancel = null;
+    this.deferred = false;
+  }
+
+  /**
+   * A timer that fires late (the loop was busy) runs before reads that
+   * arrived meanwhile: a terminal's ESC and the DEL (or mouse report) it
+   * sends in a separate write would be split into Escape plus garbage. So
+   * the first firing only yields to pending reads; a read cancels it
+   * (stopTimer), and only a second firing with nothing new decides.
+   */
+  private yieldOnce(): boolean {
+    if (this.deferred) return false;
+    this.deferred = true;
+    this.cancel = this.setTimer(() => this.idle(), 0);
+    return true;
   }
 
   private keys(text: string): void {
@@ -247,6 +266,7 @@ class Reader {
 
   private idle(): void {
     this.cancel = null;
+    if (this.yieldOnce()) return;
     if (this.swallowing) { this.swallowing = false; this.held = ""; return; }
     if (this.inPaste) return this.emitPaste(true);
     const tail = this.held;
