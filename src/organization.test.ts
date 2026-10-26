@@ -2,12 +2,13 @@
 // import (static, export-from, side-effect, dynamic, `import("x").T` types, directory specifiers) and asserts
 //   (a) packages point down: config < login < providers < protocol < core < exec · tui < cli, type-only included;
 //   (b) inside a package, folders/files point down in the documented order (ORDER below);
-//   (c) non-test code crossing a folder boundary imports that folder's barrel (`../../core/data/tasks`), never a deep
-//       module; intra-folder imports stay direct and never go through the folder's own index.ts (a cycle);
+//   (c) code crossing a folder boundary imports that folder's barrel (`../../core/data/tasks`), never a deep module,
+//       except that a file of an ancestor folder may be imported directly (`../sanitize`, `../../proc`); intra-folder
+//       imports stay direct; a file never imports its own folder's barrel or an ancestor's barrel (`..`), a cycle;
 //   (d) a barrel (index.ts) holds nothing but named re-exports of its own folder's files;
 //   (e) src/ holds only the package folders, test/ and this file;
 //   (f) size gates (SIZE), with DEBT listing today's offenders at their current numbers as ceilings that may only fall.
-// Tests (*.test.ts, src/test/) may import deep modules and are exempt from (c); everything else applies to them too.
+// Tests (*.test.ts, src/test/) are exempt from (a)–(c): they may import anything, deep or up. (d)–(f) apply to every file.
 import { describe, expect, test } from "bun:test";
 import { parse } from "@babel/parser";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -37,29 +38,15 @@ const ORDER: Order = {
 };
 
 const SIZE = { sourceLines: 800, testLines: 1500, params: 8, barrelExports: 40 };
-// Today's offenders: the number is a ceiling. Growth fails; shrink it here when the file shrinks; delete the row once
-// the file is within SIZE (the test fails on a stale row).
+// Today's offenders: the number is a ceiling. Growth fails; shrink the ceiling here when the file shrinks; delete the
+// row once the file is within SIZE (the test fails on a stale row).
 const DEBT: Record<string, { lines?: number; exports?: number }> = {
   "tui/app.ts": { lines: 2131 },
   "tui/app.test.ts": { lines: 4253 },
   "protocol/index.ts": { exports: 48 },
 };
 
-// ---- the source graph ----
-
-type Name = { name: string; type: boolean };
-type Import = {
-  from: string; // module id: path under src without .ts, e.g. core/data/tasks/tasks
-  to: string;
-  spec: string;
-  line: number;
-  typeOnly: boolean; // `import type`, `export type … from`, or a type-position `import("x").T`
-  names: Name[]; // empty for namespace, side-effect and dynamic value imports (the whole module)
-  whole: boolean;
-  kind: "import" | "export" | "side-effect" | "dynamic" | "import-type";
-};
-type BarrelEntry = { name: string; module: string; type: boolean; line: number };
-type Barrel = { file: string; entries: BarrelEntry[]; impure: string[] };
+// ---- the files ----
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -74,84 +61,136 @@ const files = walk(ROOT).map((f) => f.slice(ROOT.length + 1));
 const moduleOf = (file: string) => file.replace(/\.ts$/, "");
 const isTest = (file: string) => /\.test\.ts$/.test(file) || file.startsWith("test/");
 const isBarrel = (file: string) => basename(file) === "index.ts";
-const folderOf = (id: string) => dirname(id) === "." ? "" : dirname(id);
+const isBarrelModule = (id: string) => basename(id) === "index";
+const folderOf = (id: string) => (dirname(id) === "." ? "" : dirname(id));
+const isAncestorFolder = (folder: string, of: string) => folder === "" ? of !== "" : of.startsWith(folder + "/");
 const top = (id: string) => id.split("/")[0]!;
 const sources = new Map(files.map((f) => [f, readFileSync(join(ROOT, f), "utf8")]));
 const asts = new Map(files.map((f) => [f, parse(sources.get(f)!, { sourceType: "module", plugins: ["typescript"], attachComment: false })]));
 
-function resolve(from: string, spec: string): string | null {
+// A relative specifier resolved to a module id (path under src without .ts; a folder resolves to its index), null for
+// anything outside src (package.json, scripts/), or an error string when nothing is there.
+function resolve(from: string, spec: string): string | null | Error {
   if (!spec.startsWith(".")) return null; // a package or node: module
-  const base = normalize(join(folderOf(from), spec)).replace(/\/$/, "").replace(/\.ts$/, "");
+  const base = normalize(join(folderOf(from), spec)).replace(/\/$/, "").replace(/\.[jt]s$/, "");
   const id = base === "." ? "" : base;
-  if (id.startsWith("..")) return null; // outside src (package.json, scripts/)
+  if (id.startsWith("..")) return null;
   if (files.includes(id + ".ts")) return id;
-  if (files.includes((id ? id + "/" : "") + "index.ts")) return (id ? id + "/" : "") + "index";
-  return null;
+  const index = (id ? id + "/" : "") + "index";
+  if (files.includes(index + ".ts")) return index;
+  return new Error(`"${spec}" resolves to nothing under src/ (neither ${id || "."}.ts nor ${index}.ts)`);
 }
 
+// ---- the imports ----
+
+type Name = { name: string; type: boolean };
+type Import = {
+  from: string; // module id, e.g. core/data/tasks/tasks
+  to: string;
+  spec: string;
+  line: number;
+  typeOnly: boolean; // `import type`, `export type … from`, or a type-position `import("x").T`
+  names: Name[]; // empty for namespace, side-effect and dynamic value imports (the whole module)
+  whole: boolean;
+};
+type Found = { spec: string; line: number; typeOnly: boolean; names: Name[]; whole: boolean };
+
+const specifierName = (s: any): string => s.imported?.name ?? s.imported?.value ?? s.local?.name;
+const allTypes = (names: Name[], whole: boolean) => names.length > 0 && !whole && names.every((n) => n.type);
+
+function fromImport(node: any): Found {
+  const typeOnly = node.importKind === "type";
+  const specs = node.specifiers as any[];
+  const whole = specs.length === 0 || specs.some((s) => s.type !== "ImportSpecifier");
+  const names = specs.filter((s) => s.type === "ImportSpecifier").map((s) => ({ name: specifierName(s), type: typeOnly || s.importKind === "type" }));
+  return { spec: node.source.value, line: node.loc.start.line, typeOnly: typeOnly || allTypes(names, whole), names, whole };
+}
+function fromExportFrom(node: any): Found {
+  const typeOnly = node.exportKind === "type";
+  const specs = node.specifiers as any[];
+  const whole = specs.some((s) => s.type === "ExportNamespaceSpecifier");
+  const names = specs.filter((s) => s.type === "ExportSpecifier").map((s) => ({ name: s.local.name, type: typeOnly || s.exportKind === "type" }));
+  return { spec: node.source.value, line: node.loc.start.line, typeOnly: typeOnly || allTypes(names, whole), names, whole };
+}
+function fromExportAll(node: any): Found {
+  return { spec: node.source.value, line: node.loc.start.line, typeOnly: node.exportKind === "type", names: [], whole: true };
+}
+function fromDynamic(node: any): Found | null {
+  if (node.callee?.type !== "Import" || node.arguments[0]?.type !== "StringLiteral") return null;
+  return { spec: node.arguments[0].value, line: node.loc.start.line, typeOnly: false, names: [], whole: true };
+}
+function fromImportType(node: any): Found | null {
+  const arg = node.argument?.type === "TSLiteralType" ? node.argument.literal : node.argument;
+  if (arg?.type !== "StringLiteral") return null;
+  let q = node.qualifier;
+  while (q?.type === "TSQualifiedName") q = q.left;
+  const names = q?.type === "Identifier" ? [{ name: q.name, type: true }] : [];
+  return { spec: arg.value, line: node.loc.start.line, typeOnly: true, names, whole: !q };
+}
+function foundIn(node: any): Found | null {
+  switch (node.type) {
+    case "ImportDeclaration": return fromImport(node);
+    case "ExportNamedDeclaration": return node.source ? fromExportFrom(node) : null;
+    case "ExportAllDeclaration": return fromExportAll(node);
+    case "CallExpression": return fromDynamic(node);
+    case "TSImportType": return fromImportType(node);
+    default: return null;
+  }
+}
+function eachNode(node: any, visit: (node: any) => void): void {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) { for (const child of node) eachNode(child, visit); return; }
+  if (typeof node.type === "string") visit(node);
+  for (const key of Object.keys(node)) if (key !== "loc" && key !== "type") eachNode(node[key], visit);
+}
+
+const unresolved: string[] = [];
 function importsOf(file: string): Import[] {
   const from = moduleOf(file);
   const out: Import[] = [];
-  const add = (spec: string, line: number, kind: Import["kind"], typeOnly: boolean, names: Name[], whole: boolean) => {
-    const to = resolve(from, spec);
-    if (to !== null) out.push({ from, to, spec, line, typeOnly, names, whole, kind });
-  };
-  const visit = (node: any): void => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) { for (const child of node) visit(child); return; }
-    switch (node.type) {
-      case "ImportDeclaration": {
-        const typeOnly = node.importKind === "type";
-        const specs = node.specifiers as any[];
-        if (!specs.length) { add(node.source.value, node.loc.start.line, "side-effect", false, [], true); return; }
-        const whole = specs.some((s) => s.type === "ImportNamespaceSpecifier" || s.type === "ImportDefaultSpecifier");
-        const names = specs.filter((s) => s.type === "ImportSpecifier").map((s) => ({ name: s.imported.name ?? s.imported.value, type: typeOnly || s.importKind === "type" }));
-        add(node.source.value, node.loc.start.line, "import", typeOnly || (names.length > 0 && !whole && names.every((n) => n.type)), names, whole);
-        return;
-      }
-      case "ExportNamedDeclaration":
-        if (node.source) {
-          const typeOnly = node.exportKind === "type";
-          const specs = node.specifiers as any[];
-          const whole = specs.some((s) => s.type === "ExportNamespaceSpecifier");
-          const names = specs.filter((s) => s.type === "ExportSpecifier").map((s) => ({ name: s.local.name, type: typeOnly || s.exportKind === "type" }));
-          add(node.source.value, node.loc.start.line, "export", typeOnly || (names.length > 0 && !whole && names.every((n) => n.type)), names, whole);
-          return;
-        }
-        break;
-      case "ExportAllDeclaration":
-        add(node.source.value, node.loc.start.line, "export", node.exportKind === "type", [], true);
-        return;
-      case "CallExpression":
-        if (node.callee?.type === "Import" && node.arguments[0]?.type === "StringLiteral") add(node.arguments[0].value, node.loc.start.line, "dynamic", false, [], true);
-        break;
-      case "TSImportType": {
-        const arg = node.argument?.type === "TSLiteralType" ? node.argument.literal : node.argument;
-        let q = node.qualifier;
-        while (q && q.type === "TSQualifiedName") q = q.left;
-        if (arg?.type === "StringLiteral") add(arg.value, node.loc.start.line, "import-type", true, q?.type === "Identifier" ? [{ name: q.name, type: true }] : [], !q);
-        break;
-      }
-    }
-    for (const key of Object.keys(node)) if (key !== "loc" && key !== "type") visit(node[key]);
-  };
-  visit(asts.get(file)!.program.body);
+  eachNode(asts.get(file)!.program.body, (node) => {
+    const found = foundIn(node);
+    if (!found) return;
+    const to = resolve(from, found.spec);
+    if (to instanceof Error) unresolved.push(`${file}:${found.line} ${to.message}`);
+    else if (to !== null) out.push({ from, to, ...found });
+  });
   return out;
 }
 
+// ---- the barrels ----
+
+type BarrelEntry = { name: string; module: string; type: boolean; line: number };
+type Barrel = { file: string; entries: BarrelEntry[]; impure: string[] };
+
+function barrelSource(barrel: string, node: any): { module: string; impure: string | null } {
+  const spec: string = node.source.value;
+  const line = node.loc.start.line;
+  const fallback = `${folderOf(moduleOf(barrel))}/${spec.slice(2)}`;
+  const resolved = resolve(moduleOf(barrel), spec);
+  const module = typeof resolved === "string" ? resolved : fallback;
+  if (!/^\.\/[^/]+$/.test(spec) || spec === "./index") return { module, impure: `${barrel}:${line} re-exports "${spec}"; a barrel re-exports only files directly in its folder (./name), never a sub-folder, a parent or another barrel` };
+  if (isBarrelModule(module)) return { module, impure: `${barrel}:${line} re-exports the sub-folder barrel "${spec}"; a barrel covers only the files directly in its folder — callers import ${module.replace(/\/index$/, "")} themselves` };
+  return { module, impure: null };
+}
+function barrelEntries(node: any, module: string): BarrelEntry[] {
+  const line = node.loc.start.line;
+  return (node.specifiers as any[]).map((s) => ({
+    name: s.exported.name ?? s.exported.value,
+    module,
+    type: node.exportKind === "type" || (s.type === "ExportSpecifier" && s.exportKind === "type"),
+    line,
+  }));
+}
 function barrelOf(file: string): Barrel {
   const entries: BarrelEntry[] = [];
   const impure: string[] = [];
   for (const node of asts.get(file)!.program.body as any[]) {
     const line = node.loc.start.line;
     if (node.type === "ExportNamedDeclaration" && node.source) {
-      const spec: string = node.source.value;
-      if (!/^\.\/[^/]+$/.test(spec) || spec === "./index") impure.push(`${file}:${line} re-exports "${spec}"; a barrel re-exports only files directly in its folder (./name), never a sub-folder, a parent or another barrel`);
-      const module = resolve(moduleOf(file), spec) ?? `${folderOf(moduleOf(file))}/${spec.slice(2)}`;
-      for (const s of node.specifiers as any[]) {
-        if (s.type === "ExportNamespaceSpecifier") entries.push({ name: s.exported.name, module, type: node.exportKind === "type", line });
-        else entries.push({ name: s.exported.name ?? s.exported.value, module, type: node.exportKind === "type" || s.exportKind === "type", line });
-      }
+      const { module, impure: problem } = barrelSource(file, node);
+      if (problem) impure.push(problem);
+      entries.push(...barrelEntries(node, module));
     } else if (node.type === "ExportAllDeclaration") {
       impure.push(`${file}:${line} uses \`export *\`; list the names (\`export { a, type B } from "${node.source.value}"\`) so the surface is explicit and countable`);
     } else {
@@ -161,155 +200,176 @@ function barrelOf(file: string): Barrel {
   return { file, entries, impure };
 }
 
+function barrelProblems(b: Barrel): string[] {
+  const out = [...b.impure];
+  const seen = new Map<string, number>();
+  for (const e of b.entries) {
+    if (seen.has(e.name)) out.push(`${b.file}:${e.line} exports ${e.name} twice (first at line ${seen.get(e.name)})`);
+    seen.set(e.name, e.line);
+    if (!files.includes(e.module + ".ts")) out.push(`${b.file}:${e.line} re-exports from a file that does not exist: ${e.module}.ts`);
+  }
+  return out;
+}
+
 const barrels = new Map(files.filter(isBarrel).map((f) => [moduleOf(f), barrelOf(f)]));
 const imports = new Map(files.map((f) => [f, importsOf(f)]));
 
 // A file-to-file edge, barrel imports resolved to the files behind the names.
-type Edge = { from: string; to: string; line: number; typeOnly: boolean; via: string | null };
+type Edge = { from: string; to: string; line: number; typeOnly: boolean };
 function edgesOf(imp: Import): { edges: Edge[]; problems: string[] } {
   const barrel = barrels.get(imp.to);
-  if (!barrel) return { edges: [{ from: imp.from, to: imp.to, line: imp.line, typeOnly: imp.typeOnly, via: null }], problems: [] };
+  if (!barrel) return { edges: [{ from: imp.from, to: imp.to, line: imp.line, typeOnly: imp.typeOnly }], problems: [] };
+  if (imp.whole || !imp.names.length) {
+    const modules = [...new Set(barrel.entries.map((e) => e.module))];
+    return { edges: modules.map((to) => ({ from: imp.from, to, line: imp.line, typeOnly: imp.typeOnly })), problems: [] };
+  }
   const edges: Edge[] = [];
   const problems: string[] = [];
-  if (imp.whole || !imp.names.length) {
-    for (const module of new Set(barrel.entries.map((e) => e.module))) edges.push({ from: imp.from, to: module, line: imp.line, typeOnly: imp.typeOnly, via: imp.to });
-    return { edges, problems };
-  }
   for (const n of imp.names) {
     const entry = barrel.entries.find((e) => e.name === n.name);
-    if (!entry) { problems.push(`${imp.from}.ts:${imp.line} imports ${n.name} from "${imp.spec}" but ${barrel.file} does not export it; add it to that barrel`); continue; }
-    edges.push({ from: imp.from, to: entry.module, line: imp.line, typeOnly: imp.typeOnly || n.type || entry.type, via: imp.to });
+    if (entry) edges.push({ from: imp.from, to: entry.module, line: imp.line, typeOnly: imp.typeOnly || n.type || entry.type });
+    else problems.push(`${imp.from}.ts:${imp.line} imports ${n.name} from "${imp.spec}" but ${barrel.file} does not export it; add it to that barrel`);
   }
   return { edges, problems };
 }
 
 // ---- the order ----
 
+type Kind = "intra" | "down" | "up" | "side" | "unordered";
+type Classified = { kind: Kind; at: string; ca: string; cb: string; spec?: Order };
+
 function tierAt(spec: Order, child: string): number {
   const i = spec.tiers.findIndex((t) => t.includes(child));
-  if (i >= 0) return i;
-  const star = spec.tiers.findIndex((t) => t.includes("*"));
-  return star >= 0 ? star : -1;
+  return i >= 0 ? i : spec.tiers.findIndex((t) => t.includes("*"));
 }
-type Kind = "intra" | "down" | "up" | "side" | "unordered";
-function classify(a: string, b: string): { kind: Kind; at: string; ca: string; cb: string; spec?: Order } {
+function orderAt(path: string[]): Order | undefined {
+  let spec: Order | undefined = ORDER;
+  for (const seg of path) spec = spec?.children?.[seg];
+  return spec;
+}
+function kindOf(spec: Order, ca: string, cb: string): Kind {
+  const ta = tierAt(spec, ca), tb = tierAt(spec, cb);
+  if (ta < 0 || tb < 0) return "unordered";
+  if (ta === tb) return ca === cb ? "intra" : "side";
+  return ta > tb ? "down" : "up";
+}
+function classify(a: string, b: string): Classified {
   const pa = a.split("/"), pb = b.split("/");
   let i = 0;
   while (i < pa.length - 1 && i < pb.length - 1 && pa[i] === pb[i]) i++;
   const at = pa.slice(0, i).join("/");
   const ca = pa[i]!, cb = pb[i]!;
   if (pa.length - 1 === i && pb.length - 1 === i) return { kind: "intra", at, ca, cb }; // two files in one folder
-  let spec: Order | undefined = ORDER;
-  for (const seg of pa.slice(0, i)) spec = spec?.children?.[seg];
+  const spec = orderAt(pa.slice(0, i));
   if (!spec) return { kind: "intra", at, ca, cb }; // a folder without an order is one unit
-  const ta = tierAt(spec, ca), tb = tierAt(spec, cb);
-  if (ta < 0 || tb < 0) return { kind: "unordered", at, ca, cb, spec };
-  if (ta === tb) return { kind: ca === cb ? "intra" : "side", at, ca, cb, spec };
-  return { kind: ta > tb ? "down" : "up", at, ca, cb, spec };
+  return { kind: kindOf(spec, ca, cb), at, ca, cb, spec };
 }
 const showOrder = (spec: Order) => spec.tiers.map((t) => t.join("·")).join(" < ");
 
-const production = files.filter((f) => !isTest(f));
-const resolved = production.filter((f) => !isBarrel(f)).flatMap((f) => imports.get(f)!.map((imp) => ({ imp, ...edgesOf(imp) })));
+// The message for an edge that does not point down.
+function explain(e: Edge, c: Classified): string {
+  const where = c.at ? `src/${c.at}` : "the packages";
+  const why = {
+    side: `${c.ca} and ${c.cb} sit on the same tier of ${where} and never import each other`,
+    up: `${c.cb} sits above ${c.ca} in ${where}`,
+    unordered: `${c.ca} or ${c.cb} is not in the order for ${where}; add it to ORDER in organization.test.ts and CLAUDE.md`,
+  }[c.kind as "side" | "up" | "unordered"];
+  const order = c.spec ? ` The order in ${where} is ${showOrder(c.spec)}.` : "";
+  const type = e.typeOnly ? " (type-only)" : "";
+  return `${e.from}.ts:${e.line} → ${e.to}.ts${type}: ${why}.${order} Move the shared piece down or narrow the type in place (see CLAUDE.md Layout).`;
+}
+function orderProblems(edges: Edge[], across: boolean): string[] {
+  const out: string[] = [];
+  for (const e of edges) {
+    if ((top(e.from) !== top(e.to)) !== across) continue;
+    const c = classify(e.from, e.to);
+    if (c.kind !== "down" && c.kind !== "intra") out.push(explain(e, c));
+  }
+  return out;
+}
+
+// (c) for one import of a non-test, non-barrel file; null when it is fine.
+function crossingProblem(file: string, imp: Import): string | null {
+  const here = folderOf(moduleOf(file)), there = folderOf(imp.to);
+  const barrel = isBarrelModule(imp.to);
+  const folder = imp.spec.replace(/\/[^/]+$/, "") || ".";
+  if (here === there) return barrel ? `${file}:${imp.line} imports its own folder's barrel "${imp.spec}" (a cycle); import the file directly` : null;
+  if (isAncestorFolder(there, here)) return barrel ? `${file}:${imp.line} imports an ancestor folder's barrel "${imp.spec}" (a cycle: that barrel reaches back into this folder); import the file itself (${imp.spec.replace(/\/?$/, "")}/<file>)` : null;
+  if (!barrel) return `${file}:${imp.line} imports the deep module "${imp.spec}"; import from its folder's barrel instead (${folder}) and add the names to ${there}/index.ts if they are missing`;
+  if (/\/index(\.[jt]s)?$/.test(imp.spec)) return `${file}:${imp.line} spells the barrel as "${imp.spec}"; use the folder "${folder}"`;
+  return null;
+}
+
+// (f) helpers.
+type Gate = "lines" | "exports";
+function sizeProblem(file: string, what: Gate, actual: number, limit: number, fix: string): string | null {
+  const ceiling = DEBT[file]?.[what];
+  if (ceiling === undefined) return actual > limit ? `${file} has ${actual} ${what}, above the gate of ${limit}; ${fix}` : null;
+  if (actual <= limit) return `${file} is within the ${what} gate now (${actual} ≤ ${limit}); delete its ${what} row from DEBT`;
+  if (actual > ceiling) return `${file} grew to ${actual} ${what}, above its DEBT ceiling of ${ceiling} (gate ${limit}); ${fix}, the ceiling only falls`;
+  return null;
+}
+const lineCount = (src: string) => src.split("\n").length - (src.endsWith("\n") ? 1 : 0);
+const isFunctionLike = (node: any) => /Function|Method|Signature|Constructor/.test(node.type) && Array.isArray(node.params ?? node.parameters);
+const ASSIGNS = new Set(["VariableDeclarator", "ObjectProperty", "ClassProperty"]);
+const ownName = (node: any): string | undefined => node.id?.name ?? node.key?.name;
+function paramProblems(file: string): string[] {
+  const out: string[] = [];
+  const assigned = new Map<any, string>(); // the name a function was assigned to, for arrows and expressions
+  eachNode(asts.get(file)!.program.body, (node) => {
+    if (ASSIGNS.has(node.type)) assigned.set(node.init ?? node.value, ownName(node) ?? "(anonymous)");
+    if (!isFunctionLike(node)) return;
+    const count = (node.params ?? node.parameters).length;
+    const name = ownName(node) ?? assigned.get(node) ?? "(anonymous)";
+    if (count > SIZE.params) out.push(`${file}:${node.loc.start.line} ${name} takes ${count} parameters, above the gate of ${SIZE.params}; pass an options object`);
+  });
+  return out;
+}
+function rootProblem(entry: string): string | null {
+  const dir = statSync(join(ROOT, entry)).isDirectory();
+  if (dir) return PACKAGES.includes(entry) || entry === "test" ? null : `src/${entry}/ is not a package; the packages are ${PACKAGES.join(", ")} (plus test/). Put it inside one or add it to PACKAGES and ORDER here and in CLAUDE.md`;
+  return entry === "organization.test.ts" ? null : `src/${entry} is a loose file; every module lives in a package folder`;
+}
+
+const production = files.filter((f) => !isTest(f) && !isBarrel(f));
+const resolved = production.flatMap((f) => imports.get(f)!.map(edgesOf));
+const edges = resolved.flatMap((r) => r.edges);
 
 describe("layout", () => {
-  test("every import resolves to what its barrel exports", () => {
-    expect(resolved.flatMap((r) => r.problems)).toEqual([]);
+  test("every relative import resolves, and to what its barrel exports", () => {
+    expect([...unresolved, ...resolved.flatMap((r) => r.problems)]).toEqual([]);
   });
 
   test("(a) packages point down: " + showOrder(ORDER), () => {
-    const bad: string[] = [];
-    for (const { edges } of resolved) for (const e of edges) {
-      if (top(e.from) === top(e.to)) continue;
-      const c = classify(e.from, e.to);
-      if (c.kind === "down") continue;
-      const why = c.kind === "side" ? `${c.ca} and ${c.cb} sit on the same tier and never import each other` : c.kind === "up" ? `${c.cb} is above ${c.ca}` : `${c.ca} or ${c.cb} is not in the package order`;
-      bad.push(`${e.from}.ts:${e.line} → ${e.to}.ts${e.typeOnly ? " (type-only)" : ""}: ${why}. Move the shared piece into a lower package or narrow the type in place (see CLAUDE.md Layout).`);
-    }
-    expect(bad).toEqual([]);
+    expect(orderProblems(edges, true)).toEqual([]);
   });
 
   test("(b) inside a package, folders and files point down in the documented order", () => {
-    const bad: string[] = [];
-    for (const { edges } of resolved) for (const e of edges) {
-      if (top(e.from) !== top(e.to)) continue;
-      const c = classify(e.from, e.to);
-      if (c.kind === "down" || c.kind === "intra") continue;
-      const order = c.spec ? ` The order in src/${c.at} is ${showOrder(c.spec)}.` : "";
-      const why = c.kind === "side" ? `${c.ca} and ${c.cb} are on the same tier of src/${c.at}` : c.kind === "up" ? `${c.cb} sits above ${c.ca} in src/${c.at}` : `${c.ca} or ${c.cb} is not in the order for src/${c.at}; add it to ORDER in organization.test.ts and CLAUDE.md`;
-      bad.push(`${e.from}.ts:${e.line} → ${e.to}.ts${e.typeOnly ? " (type-only)" : ""}: ${why}.${order} Move the shared piece down or narrow the type in place.`);
-    }
-    expect(bad).toEqual([]);
+    expect(orderProblems(edges, false)).toEqual([]);
   });
 
   test("(c) non-test code crosses a folder boundary only through that folder's barrel", () => {
-    const bad: string[] = [];
-    for (const file of production) {
-      if (isBarrel(file)) continue;
-      const from = moduleOf(file);
-      for (const imp of imports.get(file)!) {
-        const sameFolder = folderOf(from) === folderOf(imp.to);
-        if (sameFolder && isBarrel(imp.to + ".ts")) bad.push(`${file}:${imp.line} imports its own folder's barrel "${imp.spec}" (a cycle); import the file directly`);
-        else if (!sameFolder && !isBarrel(imp.to + ".ts")) bad.push(`${file}:${imp.line} imports the deep module "${imp.spec}"; import from its folder's barrel instead (${imp.spec.replace(/\/[^/]+$/, "") || "."}) and add the names to ${folderOf(imp.to)}/index.ts if they are missing`);
-        else if (!sameFolder && /\/index$/.test(imp.spec)) bad.push(`${file}:${imp.line} spells the barrel as "${imp.spec}"; use the folder "${imp.spec.replace(/\/index$/, "")}"`);
-      }
-    }
+    const bad = production.flatMap((file) => imports.get(file)!.map((imp) => crossingProblem(file, imp)).filter((p) => p !== null));
     expect(bad).toEqual([]);
   });
 
   test("(d) a barrel holds only named re-exports of its own folder's files", () => {
-    const bad: string[] = [];
-    for (const b of barrels.values()) {
-      bad.push(...b.impure);
-      const seen = new Map<string, number>();
-      for (const e of b.entries) {
-        if (seen.has(e.name)) bad.push(`${b.file}:${e.line} exports ${e.name} twice (first at line ${seen.get(e.name)})`);
-        seen.set(e.name, e.line);
-        if (!files.includes(e.module + ".ts")) bad.push(`${b.file}:${e.line} re-exports from a file that does not exist: ${e.module}.ts`);
-      }
-    }
-    expect(bad).toEqual([]);
+    expect([...barrels.values()].flatMap(barrelProblems)).toEqual([]);
   });
 
   test("(e) src/ holds only the package folders, test/ and this test", () => {
-    const allowed = new Set([...PACKAGES, "test"]);
-    const bad: string[] = [];
-    for (const entry of readdirSync(ROOT).sort()) {
-      const dir = statSync(join(ROOT, entry)).isDirectory();
-      if (dir ? allowed.has(entry) : entry === "organization.test.ts") continue;
-      bad.push(dir ? `src/${entry}/ is not a package; the packages are ${PACKAGES.join(", ")} (plus test/). Put it inside one or add it to PACKAGES and ORDER here and in CLAUDE.md` : `src/${entry} is a loose file; every module lives in a package folder`);
-    }
-    expect(bad).toEqual([]);
+    expect(readdirSync(ROOT).sort().map(rootProblem).filter((p) => p !== null)).toEqual([]);
     for (const p of PACKAGES) expect(statSync(join(ROOT, p)).isDirectory()).toBe(true);
   });
 
   test("(f) size gates, with DEBT as the ceiling for today's offenders", () => {
-    const bad: string[] = [];
-    const over = (file: string, what: "lines" | "exports", actual: number, limit: number, fix: string) => {
-      const ceiling = DEBT[file]?.[what];
-      if (ceiling !== undefined) {
-        if (actual <= limit) bad.push(`${file} is within the ${what} gate now (${actual} ≤ ${limit}); delete its ${what} row from DEBT`);
-        else if (actual > ceiling) bad.push(`${file} grew to ${actual} ${what}, above its DEBT ceiling of ${ceiling} (gate ${limit}); ${fix}, the ceiling only falls`);
-      } else if (actual > limit) bad.push(`${file} has ${actual} ${what}, above the gate of ${limit}; ${fix}`);
-    };
-    for (const file of files) {
-      const src = sources.get(file)!;
-      const lines = src.split("\n").length - (src.endsWith("\n") ? 1 : 0);
-      over(file, "lines", lines, isTest(file) ? SIZE.testLines : SIZE.sourceLines, "split it by responsibility (a new file below it in the order, or a sub-folder with its own barrel)");
-      const visit = (node: any, name: string): void => {
-        if (!node || typeof node !== "object") return;
-        if (Array.isArray(node)) { for (const child of node) visit(child, name); return; }
-        const params = node.params ?? node.parameters;
-        if (typeof node.type === "string" && /Function|Method|Signature|Constructor/.test(node.type) && Array.isArray(params) && params.length > SIZE.params) {
-          bad.push(`${file}:${node.loc.start.line} ${node.id?.name ?? node.key?.name ?? name ?? "(anonymous)"} takes ${params.length} parameters, above the gate of ${SIZE.params}; pass an options object`);
-        }
-        const inner = node.type === "VariableDeclarator" ? node.id?.name : node.type === "ObjectProperty" || node.type === "ClassProperty" ? node.key?.name : name;
-        for (const key of Object.keys(node)) if (key !== "loc" && key !== "type") visit(node[key], inner);
-      };
-      visit(asts.get(file)!.program.body, "");
-    }
-    for (const b of barrels.values()) over(b.file, "exports", b.entries.length, SIZE.barrelExports, "the folder exposes too much: split it, or move callers' needs behind fewer entry points");
+    const split = "split it by responsibility (a new file below it in the order, or a sub-folder with its own barrel)";
+    const bad = files.flatMap((file) => [
+      sizeProblem(file, "lines", lineCount(sources.get(file)!), isTest(file) ? SIZE.testLines : SIZE.sourceLines, split),
+      ...paramProblems(file),
+    ]);
+    for (const b of barrels.values()) bad.push(sizeProblem(b.file, "exports", b.entries.length, SIZE.barrelExports, "the folder exposes too much: split it, or move callers' needs behind fewer entry points"));
     for (const file of Object.keys(DEBT)) if (!files.includes(file)) bad.push(`DEBT lists ${file}, which no longer exists; delete the row`);
-    expect(bad).toEqual([]);
+    expect(bad.filter((p) => p !== null)).toEqual([]);
   });
 });

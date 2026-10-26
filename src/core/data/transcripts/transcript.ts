@@ -7,7 +7,7 @@
 // history() walks past both for UI replay without duplicating retained turns.
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { withStorageLock } from "..";
+import { withStorageLock } from "../storage-lock";
 import type { AppendGuard, Entry, NewEntry } from "../../../protocol";
 import { publish, disk, type Storage } from "./transcript-storage";
 import { dirname } from "node:path";

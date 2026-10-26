@@ -6,7 +6,7 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { paths, repositoryBinding } from "../../../config";
-import { lockHeld } from "..";
+import { lockHeld } from "../storage-lock";
 
 // Separate conversations using one original checkout must never run overlapping turns.
 export const projectTurnLock = (project: string) => {

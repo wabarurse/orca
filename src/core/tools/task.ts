@@ -1,5 +1,5 @@
 import { originRepo, ghTaskPR } from "../data/tasks";
-import { run } from "..";
+import { run } from "../proc";
 import { getTask, listTasks, observeTaskPR, registerTask, setTaskAttention, taskForRun, validateTaskReadiness } from "../data/tasks";
 import { taskPR, type PRObservation, type Task, type TaskAttention, type TaskPR } from "../../protocol";
 import type { Tool, ToolContext } from "./registry";

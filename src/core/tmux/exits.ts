@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { paths } from "../../config";
 import { pidAlive } from "../data";
 import { put } from "../data/inbox";
-import { run } from "..";
+import { run } from "../proc";
 import { SETTLED_EXIT, slug } from "./runner";
 import type { Role } from "../../protocol";
 

@@ -1,7 +1,7 @@
 import { imageContent, validateRefs } from "../images";
 import { format, type Message } from "../../../protocol";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { withStorageLock } from "..";
+import { withStorageLock } from "../storage-lock";
 import { projectIdentity, assertProjectIdentity, withProjectStateLock } from "../projects";
 import { inputEpoch } from "./user-input";
 // Every agent has its own inbox: a durable FIFO queue of files under

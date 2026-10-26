@@ -1,5 +1,5 @@
 // What a tool is and which tools each role gets. The implementations are
-// mounted in index.ts; every tool file imports its types from here.
+// mounted in mount.ts; every tool file imports its types from here.
 
 import type { Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider } from "../../providers";

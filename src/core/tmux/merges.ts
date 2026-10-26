@@ -34,7 +34,7 @@ import { join } from "node:path";
 import { paths, repositoryBinding } from "../../config";
 import { claim, dirtyCount, pidAlive, readRun } from "./exits";
 import { put } from "../data/inbox";
-import { run, type ProcResult } from "..";
+import { run, type ProcResult } from "../proc";
 import { removeWorktree, sessionName, slug, tmux } from "./runner";
 
 export interface MergedPR {

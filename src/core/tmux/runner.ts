@@ -1,6 +1,6 @@
 import { delay, publishLaunch } from "./cancellation";
 import { claim, readRun } from "./exits";
-import { command, run } from "..";
+import { command, run } from "../proc";
 // Starts agents. v1 has one backend: a git worktree plus a tmux window on this
 // machine. A docker/container backend comes later with the same interface, so
 // agents never learn anything about the host beyond their cwd.
