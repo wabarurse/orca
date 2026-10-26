@@ -1,7 +1,7 @@
 import { attachmentSchema, forwardImages } from "../image-handoff";
 import { imageContent, type ImageRef } from "../images";
 import { delay, publishLaunch } from "../cancellation";
-import { prepareTaskRun, stopTaskRun } from "../tasks";
+import { prepareTaskRun, stopTaskRun, taskForRun } from "../tasks";
 import { paths } from "../config";
 import { local, sessionId, type Runner } from "../runner";
 import { open } from "../transcript";
@@ -100,9 +100,18 @@ async function launch(runner: Runner, prompt: string, branch: string, role: "wor
   } catch (error) {
     await stopTaskRun(ctx.project, run, ctx.signal?.aborted ? "cancelled" : "blocked", "agent launch failed; no successful start confirmed", true);
     if (ctx.signal?.aborted) throw error;
-    // The tool result is the orchestrator's only notice of a death before the agent started (runner.confirmLaunch closes the run).
-    throw new Error(`spawn: ${id} did not start: ${error instanceof Error ? error.message : String(error)}\nNothing is running on ${branch}; its task is marked blocked (launch failed). Fix the cause, then spawn again with the same taskId and branch.`);
+    // The tool result is the orchestrator's notice of a death before the agent started (runner.confirmLaunch closes the run), unless the error says one went out already.
+    throw new Error(`spawn: ${id} did not start: ${error instanceof Error ? error.message : String(error)}\nNothing is running on ${branch}; ${await taskState(ctx.project, run)}. Fix the cause, then spawn again with the same taskId and branch.`);
   }
+}
+
+/** What the registry recorded for this run after the failure: spawn's "blocked (launch failed)" unless an earlier close got there first. */
+async function taskState(project: string, run: string): Promise<string> {
+  const task = await taskForRun(project, run).catch(() => undefined);
+  const r = task?.runs.at(-1);
+  if (!task || !r) return "its task run could not be read";
+  const attention = task.attention ? `, attention ${task.attention.kind}: ${task.attention.reason}` : "";
+  return `its task run is ${r.state}${r.state === "failed" ? " (launch failed)" : ""}${attention}`;
 }
 
 export const spawn: Tool = makeSpawn(local);

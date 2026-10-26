@@ -116,7 +116,7 @@ export interface PaneState { dead: boolean; status: number | null; signal: strin
 
 /** The last non-blank lines of a dead pane's screen, without tmux's own "Pane is dead" footer. */
 function tail(screen: string, lines = 20, max = 2000): string {
-  const kept = screen.split("\n").map((l) => l.trimEnd()).filter((l) => l && !/^Pane is dead \(/.test(l));
+  const kept = screen.split("\n").map((l) => l.trimEnd()).filter((l) => l && !/^Pane is dead\b/.test(l));
   const text = kept.slice(-lines).join("\n");
   return text.length > max ? `…${text.slice(-max)}` : text;
 }
@@ -132,19 +132,28 @@ export const tmux = {
     return (await command(tmux.argv("has-session", "-t", "=" + session), process.cwd(), signal)).code === 0;
   },
 
-  /** Create the session detached if missing. Its first window is an idle shell so the session outlives agent windows. */
+  /**
+   * Create the session detached if missing. Its first window is an idle shell so the session outlives agent windows.
+   * The client that creates the session also starts orca's server, and a tmux server keeps that client's cwd for
+   * life: a checkout that is later moved or deleted would break every new pane (tmux/tmux#5473, the original
+   * incident), so the server starts in `paths.root`, which outlives any project; the window itself still opens in `cwd`.
+   * On the same (first) call, `remain-on-exit on` becomes a global window option of orca's server, so a window whose
+   * command dies at once keeps its screen for the launch check (confirmLaunch turns it off per window once confirmed).
+   */
   async ensureSession(session: string, cwd: string, signal?: AbortSignal): Promise<void> {
     if (await tmux.hasSession(session, signal)) return;
-    mkdirSync(paths.root, { recursive: true }); // the socket's directory, on a first start
-    const res = await command(tmux.argv("new-session", "-d", "-s", session, "-n", "shell", "-c", cwd), cwd, signal);
+    mkdirSync(paths.root, { recursive: true }); // the socket's directory and the server's cwd
+    const res = await command(tmux.argv("new-session", "-d", "-s", session, "-n", "shell", "-c", cwd, ";", "set-option", "-g", "remain-on-exit", "on"), paths.root, signal);
     if (res.code !== 0) throw new Error(`runner: tmux new-session failed: ${res.err.trim()}`);
   },
 
   /**
-   * The server must be able to run commands: `run-shell pwd` fails when its
-   * working directory is gone or forbidden (macOS denies ~/.Trash), and then
-   * so does every window it opens. Points at kill-server, which also stops
-   * every agent on it.
+   * The server must be able to run commands: `run-shell pwd` is expected to
+   * fail when its working directory is gone or forbidden (macOS denies
+   * ~/.Trash), as every window it opens then does. A best-effort early hint
+   * (not reproduced against the original stale server; confirmLaunch is the
+   * authoritative catch for a window that dies). Points at kill-server, which
+   * also stops every agent on it.
    */
   async checkServer(signal?: AbortSignal): Promise<void> {
     const res = await command(tmux.argv("run-shell", "pwd"), process.cwd(), signal);
@@ -155,14 +164,13 @@ export const tmux = {
 
   /**
    * Open a named window in `session` in `cwd`, running `command`: a shell string (run by tmux's default shell) or an argv (exec'd directly).
-   * The pane keeps its screen when its command exits (remain-on-exit, set in the same tmux command so an instant death cannot
-   * slip by); returns its pane id. The caller turns that off once the launch is confirmed, or captures and kills the dead pane.
+   * Returns its pane id. The pane keeps its screen when its command exits (the server's global remain-on-exit, see ensureSession);
+   * the caller turns that off once the launch is confirmed, or captures and kills the dead pane.
    */
   async openWindow(session: string, name: string, cwd: string, commandLine: string | string[], signal?: AbortSignal): Promise<string> {
     need("tmux");
     const argv = typeof commandLine === "string" ? [commandLine] : ["--", ...commandLine];
-    const target = `=${session}:=${name}`;
-    const res = await command(tmux.argv("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "=" + session, "-n", name, "-c", cwd, ...argv, ";", "set-option", "-p", "-t", target, "remain-on-exit", "on"), cwd, signal);
+    const res = await command(tmux.argv("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "=" + session, "-n", name, "-c", cwd, ...argv), cwd, signal);
     if (res.code !== 0) throw new Error(`runner: tmux new-window failed: ${res.err.trim()}`);
     const pane = res.out.trim().split("\n")[0] ?? "";
     if (!/^%\d+$/.test(pane)) throw new Error(`runner: tmux new-window did not report a pane id (${res.out.trim() || "no output"})`);
@@ -178,9 +186,9 @@ export const tmux = {
     return { dead: dead === "1", status: /^\d+$/.test(status) ? Number(status) : null, signal: sig };
   },
 
-  /** Keep or drop `pane` when its command exits. */
+  /** Keep or drop `pane` when its command exits: set on its window (one pane per agent window), which overrides the server's global. */
   async keepOnExit(pane: string, on: boolean, signal?: AbortSignal): Promise<void> {
-    await command(tmux.argv("set-option", "-p", "-t", pane, "remain-on-exit", on ? "on" : "off"), process.cwd(), signal);
+    await command(tmux.argv("set-option", "-w", "-t", pane, "remain-on-exit", on ? "on" : "off"), process.cwd(), signal);
   },
 
   /** The last lines on `pane`'s screen, history included (a window's first line can scroll off during layout); "" when it cannot be read. */
@@ -278,12 +286,66 @@ export function agentCommand(opts: StartOptions, run: string = crypto.randomUUID
 export const LAUNCH_WAIT_MS = 5000;
 const LAUNCH_POLL_MS = 100;
 
-/** The error a launch fails with when its window dies first; `output` is the pane's last lines, if any. */
+/**
+ * The error a launch fails with when its window dies first. `output` is the
+ * pane's last lines, if any; `reported` tells whether this error is the run's
+ * notice (the launch check closed the run) or someone else already sent one.
+ */
 export class LaunchFailed extends Error {
-  constructor(id: string, readonly pane: PaneState | null, readonly output: string) {
-    const how = !pane ? "exited" : pane.signal ? `exited (signal ${pane.signal})` : pane.status !== null && pane.status > 128 ? `exited (code ${pane.status}, signal ${pane.status - 128})` : `exited (code ${pane.status ?? "unknown"})`;
-    super(`${id} ${how} before the agent started${output ? `; last output:\n${output}` : pane ? "; no output" : "; its window was already gone, so no output could be captured"}`);
+  constructor(id: string, readonly pane: PaneState | null, readonly output: string, readonly reported: boolean) {
+    super(`${id} ${LaunchFailed.how(pane)} before the agent started${LaunchFailed.detail(pane, output, reported)}`);
     this.name = "LaunchFailed";
+  }
+
+  private static how(pane: PaneState | null): string {
+    if (!pane) return "exited";
+    if (pane.signal) return `exited (signal ${pane.signal})`;
+    if (pane.status !== null && pane.status > 128) return `exited (code ${pane.status}, signal ${pane.status - 128})`;
+    return `exited (code ${pane.status ?? "unknown"})`;
+  }
+
+  private static detail(pane: PaneState | null, output: string, reported: boolean): string {
+    const notice = reported ? "" : "; its exit notice is already in your inbox";
+    if (output) return `${notice}; last output:\n${output}`;
+    return `${notice}${pane ? "; no output" : "; its window was already gone, so no output could be captured"}`;
+  }
+}
+
+/** The pane is confirmed (or given up on): stop keeping it after exit; a pane that already died is removed. */
+async function settlePane(pane: string, state: PaneState | null, signal?: AbortSignal): Promise<void> {
+  if (state && !state.dead) await tmux.keepOnExit(pane, false, signal);
+  else if (state) await tmux.killPane(pane);
+}
+
+/**
+ * The window died before the agent started: close the run first (so the
+ * shell follow-up and the watchdog send nothing more; if someone else got
+ * there first, the error says so), then read and remove the dead pane.
+ */
+async function failLaunch(project: string, id: string, run: string, pane: string, state: PaneState | null, signal?: AbortSignal): Promise<never> {
+  const reported = await claim(project, id, run).catch(() => false);
+  const output = state ? await tmux.capturePane(pane, signal) : "";
+  if (state) await tmux.killPane(pane);
+  throw new LaunchFailed(id, state, output, reported);
+}
+
+/** One look at a launch: whether this run's record exists (supervised agents only) and how its pane is. */
+async function observeLaunch(project: string, id: string, run: string, pane: string, supervised: boolean, signal?: AbortSignal): Promise<{ up: boolean; state: PaneState | null }> {
+  const started = async () => supervised && (await readRun(project, id))?.run === run;
+  let up = await started();
+  const state = await tmux.pane(pane, signal);
+  if (!up && (!state || state.dead)) up = await started(); // it may have begun and died between the two reads
+  return { up, state };
+}
+
+/** Poll until the launch is confirmed (settle), the pane died first (fail) or the deadline passes with it still running (settle). */
+async function awaitLaunch(project: string, id: string, run: string, pane: string, supervised: boolean, deadline: number, signal?: AbortSignal): Promise<void> {
+  for (;;) {
+    const { up, state } = await observeLaunch(project, id, run, pane, supervised, signal);
+    const confirmed = up || (!supervised && state?.dead && state.status === 0);
+    if (!confirmed && (!state || state.dead)) await failLaunch(project, id, run, pane, state, signal);
+    if (confirmed || Date.now() >= deadline) return settlePane(pane, state, signal);
+    await delay(LAUNCH_POLL_MS, signal);
   }
 }
 
@@ -291,40 +353,20 @@ export class LaunchFailed extends Error {
  * Wait up to LAUNCH_WAIT_MS for the agent behind `pane` to be up. Evidence:
  * runs/<id>.json carrying this run (beginRun writes it first thing in a
  * supervised agent), or, for the orchestrator (never supervised, so no run
- * record), the pane having exited 0 or still running at the deadline. A pane that died without it
- * fails the launch with its last output, is killed (nothing dead stays in the
- * session) and the run is closed (`claim`), so the shell follow-up and the
- * watchdog do not report the same death again: the thrown error is its notice.
- * A pane still running at the deadline passes: a slow start is not a failure.
+ * record), the pane having exited 0 or still running at the deadline. A pane
+ * that died without it fails the launch (failLaunch). A pane still running at
+ * the deadline passes: a slow start is not a failure (a crash after that but
+ * before beginRun is the watchdog's to report, src/exits.ts recoverTaskRuns).
+ * Cancellation or tmux failing mid-check closes the run and kills the pane:
+ * a launch that did not succeed leaves nothing running.
  */
 export async function confirmLaunch(project: string, id: string, run: string, pane: string, supervised: boolean, signal?: AbortSignal, waitMs = LAUNCH_WAIT_MS): Promise<void> {
-  const deadline = Date.now() + waitMs;
-  const started = async () => supervised && (await readRun(project, id))?.run === run;
   try {
-    for (;;) {
-      let up = await started();
-      const state = await tmux.pane(pane, signal);
-      if (!up && (!state || state.dead)) up = await started(); // it may have begun and died between the two reads
-      if (up || (!supervised && state?.dead && state.status === 0)) {
-        if (state && !state.dead) await tmux.keepOnExit(pane, false, signal);
-        else if (state) await tmux.killPane(pane);
-        return;
-      }
-      if (!state || state.dead) {
-        const output = state ? await tmux.capturePane(pane, signal) : "";
-        if (state) await tmux.killPane(pane);
-        await claim(project, id, run).catch(() => false);
-        throw new LaunchFailed(id, state, output);
-      }
-      if (Date.now() >= deadline) {
-        await tmux.keepOnExit(pane, false, signal);
-        return;
-      }
-      await delay(LAUNCH_POLL_MS, signal);
-    }
+    await awaitLaunch(project, id, run, pane, supervised, Date.now() + waitMs, signal);
   } catch (error) {
-    // Cancelled or tmux failing mid-check: the window stays, but must not stay as a dead pane later.
-    if (!(error instanceof LaunchFailed)) await tmux.keepOnExit(pane, false).catch(() => {});
+    if (error instanceof LaunchFailed) throw error;
+    await claim(project, id, run).catch(() => false);
+    await tmux.killPane(pane).catch(() => {});
     throw error;
   }
 }

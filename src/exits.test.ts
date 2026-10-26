@@ -112,13 +112,16 @@ describe("case 2: killed or a non-zero exit", () => {
     expect(msgs[0]!.text).toBe(`[agent-exit] worker-feat exited (code 137, signal 9) without reporting (role worker; branch feat; last step: bash {"command":"bun test"}; uncommitted changes: 1)`);
   });
 
-  test("died before the agent wrote its run: still one notice", async () => {
+  test("died before the agent wrote its run: the follow-up sends nothing and leaves the task alone (the launch check or the watchdog reports it)", async () => {
     const cwd = await repo(0);
+    mkdirSync(paths.project(project), { recursive: true });
+    const t = await registerTask(project, { name: "Early", summary: "Dies early", branch: "feat", authorized: true });
+    await prepareTaskRun(project, t.id, "feat", { id: "new", agent: "worker-feat", role: "worker" });
     await beginRun(info(cwd, "old")); // an earlier run's state
-    expect(await afterExit({ ...info(cwd, "new"), code: 1 })).toBe(true);
-    const msgs = await inbox();
-    expect(msgs.length).toBe(1);
-    expect(msgs[0]!.text).toContain("exited (code 1) without reporting (role worker; branch feat; last step: before the agent started");
+    expect(await afterExit({ ...info(cwd, "new"), code: 1 })).toBe(false);
+    expect(await inbox()).toEqual([]);
+    expect((await getTask(project, t.id)).runs.at(-1)?.state).toBe("prepared");
+    expect(claimed(project, "worker-feat", "new")).toBe(false);
   });
 
   test("nothing when the run ended on a report", async () => {
@@ -229,7 +232,7 @@ describe("run clock", () => {
   test("afterExit stamps endedAt for a run nothing closed, and only that run", async () => {
     const cwd = await repo(0);
     await beginRun(info(cwd, "a"));
-    expect(await afterExit({ ...info(cwd, "other"), code: 137 })).toBe(true);
+    expect(await afterExit({ ...info(cwd, "other"), code: 137 })).toBe(false);
     expect((await ended()).endedAt).toBeUndefined(); // another run's follow-up leaves it alone
     expect(await afterExit({ ...info(cwd, "a"), code: 137 })).toBe(true);
     const s = await ended();

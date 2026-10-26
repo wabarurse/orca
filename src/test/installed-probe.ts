@@ -25,6 +25,7 @@ if (cmd === "images") {
   const a = args[0] === "-S" || args[0] === "-L" ? args.slice(2) : args;
   const rows = () => readFileSync(process.env.PROBE_LOG!, "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l) as { exit?: number });
   if (a[0] === "has-session") process.exit(1);
+  if (a[0] === "new-session") record({ sessionCwd: process.cwd() });
   if (a[0] === "new-window") {
     const cwd = a[a.indexOf("-c") + 1]!, end = a.indexOf(";");
     const child = Bun.spawn(a.slice(a.indexOf("--") + 1, end === -1 ? undefined : end), { cwd, env: { ...process.env, FIXTURE_LOGIN: "stale-login", STALE_FIXTURE: "old" }, stdout: "ignore", stderr: "ignore" });

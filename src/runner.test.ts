@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -9,7 +9,7 @@ const home = mkdtempSync(join(tmpdir(), "orca-runner-"));
 process.env.ORCA_HOME = home;
 const { paths } = await import("./config");
 const { local, ensureWorktree, removeWorktree, tmux, tmuxSocket, confirmLaunch, LaunchFailed, sessionName, agentCommand, slug } = await import("./runner");
-const { beginRun, claimed } = await import("./exits");
+const { beginRun, claim, claimed } = await import("./exits");
 
 const project = `rt-${process.pid}`;
 const repo = paths.repo(project);
@@ -117,9 +117,39 @@ describe.skipIf(!hasTmux)("tmux", () => {
     expect(error).toBeInstanceOf(LaunchFailed);
     expect(error.message).toBe("worker-dead exited (code 3) before the agent started; last output:\nboom\ncannot start");
     expect(error.pane).toEqual({ dead: true, status: 3, signal: "" });
+    expect(error.reported).toBe(true);
     expect(await tmux.pane(pane)).toBe(null);
     expect(await tmux.listWindows(session)).not.toContain("worker-dead");
     expect(claimed(project, "worker-dead", "run-dead")).toBe(true);
+  });
+
+  test("confirmLaunch: when the run was closed by someone else first, the failure says the notice is already in the inbox", async () => {
+    const pane = await tmux.openWindow(session, "worker-told", repo, ["sh", "-c", "exit 4"]);
+    expect(await claim(project, "worker-told", "run-told")).toBe(true);
+    const error = await confirmLaunch(project, "worker-told", "run-told", pane, true).catch((e) => e);
+    expect(error).toBeInstanceOf(LaunchFailed);
+    expect(error.reported).toBe(false);
+    expect(error.message).toBe("worker-told exited (code 4) before the agent started; its exit notice is already in your inbox; no output");
+    expect(await tmux.pane(pane)).toBe(null);
+  });
+
+  test("confirmLaunch: cancelled while waiting closes the run and kills the pane, so nothing keeps running", async () => {
+    const pane = await tmux.openWindow(session, "worker-cancel", repo, "sleep 60");
+    const controller = new AbortController();
+    const pending = confirmLaunch(project, "worker-cancel", "run-cancel", pane, true, controller.signal, 10_000);
+    await Bun.sleep(150);
+    controller.abort(new Error("cancelled by user"));
+    await expect(pending).rejects.toThrow("cancelled by user");
+    expect(await tmux.pane(pane)).toBe(null);
+    expect(await tmux.listWindows(session)).not.toContain("worker-cancel");
+    expect(claimed(project, "worker-cancel", "run-cancel")).toBe(true);
+  });
+
+  test("the server's global remain-on-exit keeps a window that dies at once, and the server runs from the state root, not a checkout", async () => {
+    expect(Bun.spawnSync(tmux.argv("show-options", "-g", "-v", "remain-on-exit")).stdout.toString().trim()).toBe("on");
+    const pid = Bun.spawnSync(tmux.argv("display-message", "-p", "#{pid}")).stdout.toString().trim();
+    const cwd = Bun.spawnSync(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"]).stdout.toString().match(/^n(.*)$/m)?.[1];
+    if (cwd !== undefined) expect(cwd).toBe(realpathSync(home));
   });
 
   test("confirmLaunch: the run record for this run id is the evidence; then the pane no longer stays on exit", async () => {

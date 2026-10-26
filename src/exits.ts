@@ -1,4 +1,4 @@
-import { allTasks, startTaskRun, stopTaskRun, invalidateTaskBranch } from "./tasks";
+import { allTasks, startTaskRun, stopTaskRun, invalidateTaskBranch, type Task, type TaskRun } from "./tasks";
 import { Cancelled } from "./cancellation";
 // Exit notices: when a worker or reviewer stops without reporting, the
 // orchestrator hears about it through its inbox, at most once per run.
@@ -306,22 +306,25 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
 /**
  * The shell follow-up after a non-zero exit (`orca agent-exit`): a signal,
  * OOM or an uncaught error the agent could not report itself. Sends nothing if
- * the run is already closed or its last act was a report.
+ * the run is already closed or its last act was a report. Nothing either when
+ * no run record carries this run id: the process died before beginRun, which
+ * the launch check reports (runner.ts confirmLaunch, within its wait) or, past
+ * that, the TUI watchdog once the launch grace is over (recoverTaskRuns, the
+ * run stays "prepared" until then); a second sender here would double them.
  */
 export async function afterExit(info: RunInfo & { code: number }): Promise<boolean> {
   const s = await readRun(info.project, info.id);
-  const mine = s?.run === info.run ? s : null;
+  if (s?.run !== info.run) return false;
   // A hard kill never reached supervise's close; the end is about now.
-  if (mine && !mine.endedAt) await markEnded(info.project, info.id, info.run).catch(() => {});
+  if (!s.endedAt) await markEnded(info.project, info.id, info.run).catch(() => {});
   try { await stopTaskRun(info.project, info.run, "unknown", `agent exited with code ${info.code}; not a readiness signal`); }
   catch (err) { console.error(`agent: could not update task: ${String(err)}`); }
-  if (mine?.state === "reported") {
+  if (s.state === "reported") {
     await claim(info.project, info.id, info.run);
     return false;
   }
   const why = info.code > 128 ? `exited (code ${info.code}, signal ${info.code - 128})` : `exited (code ${info.code})`;
-  const facts = mine ?? { role: info.role, branch: info.branch, step: "before the agent started", tool: "" };
-  return sendNotice(info.project, info.id, info.run, async () => noticeText(info.id, `${why} without reporting`, facts, await dirtyCount(info.cwd)));
+  return sendNotice(info.project, info.id, info.run, async () => noticeText(info.id, `${why} without reporting`, s, await dirtyCount(info.cwd)));
 }
 
 /** True while `pid` is a running process (EPERM still means it exists). */
@@ -419,26 +422,41 @@ export function watchdog(opts: WatchdogOptions) {
 /**
  * Restart recovery never guesses completion. A missing/stopped process leaves a visible reason.
  * Prepared launches get a grace period so a second TUI cannot race normal startup.
- * A run that never wrote its run record (the process died before beginRun, or never
- * ran: a broken tmux server, a failed exec) has no other sender, so one notice goes
- * to the orchestrator here, closed by the run's claim like every other notice.
- * Returns the agents notified.
+ * A run that never wrote its run record (the process died before beginRun after the
+ * launch check had passed, or never ran at all) has no other sender, so one notice
+ * goes to the orchestrator here (notifyNeverStarted), closed by the run's claim like
+ * every other notice. Returns the agents notified.
  */
 export async function recoverTaskRuns(project: string, live: Set<string>, alive = pidAlive, now = Date.now(), dirty: (cwd: string) => Promise<number | null> = (cwd) => dirtyCount(cwd)): Promise<string[]> {
   const sent: string[] = [];
   for (const task of await allTasks(project)) {
-    const r = task.runs.at(-1);
-    if (task.archive || !r || !["prepared", "started"].includes(r.state) || live.has(r.agent)) continue;
-    if (r.state === "prepared" && now - Date.parse(r.preparedAt) < 30_000) continue;
+    const r = lostRun(task, live, now);
+    if (!r) continue;
     const state = await readRun(project, r.agent);
     if (state?.run === r.id && alive(state.pid)) continue;
     await stopTaskRun(project, r.id, "unknown", "agent is no longer observable; task needs explicit reconciliation");
     if (state?.run === r.id) continue; // its record is there: the sweep (or its own exit path) reports it
-    const what = `${r.state === "prepared" ? "never started" : "stopped before it was observable"}; task "${task.name}" needs reconciliation`;
-    const facts = { role: r.role, branch: task.branch, step: "before the agent started", tool: "" };
-    try {
-      if (await sendNotice(project, r.agent, r.id, async () => noticeText(r.agent, what, facts, await dirty(paths.worktree(project, slug(task.branch)))))) sent.push(r.agent);
-    } catch (err) { console.error(`watchdog: could not send the never-started notice for ${r.agent}: ${String(err)}`); }
+    if (await notifyNeverStarted(project, task, r, dirty)) sent.push(r.agent);
   }
   return sent;
+}
+
+/** An active task's latest run that should be running but has no live window and is past the launch grace. */
+function lostRun(task: Task, live: Set<string>, now: number): TaskRun | undefined {
+  const r = task.runs.at(-1);
+  if (task.archive || !r || !["prepared", "started"].includes(r.state) || live.has(r.agent)) return undefined;
+  if (r.state === "prepared" && now - Date.parse(r.preparedAt) < 30_000) return undefined;
+  return r;
+}
+
+/** One notice for a task run without a run record; false when it was already closed or the send failed. */
+async function notifyNeverStarted(project: string, task: Task, r: TaskRun, dirty: (cwd: string) => Promise<number | null>): Promise<boolean> {
+  const what = `${r.state === "prepared" ? "never started" : "stopped before it was observable"}; task "${task.name}" needs reconciliation`;
+  const facts = { role: r.role, branch: task.branch, step: "before the agent started", tool: "" };
+  try {
+    return await sendNotice(project, r.agent, r.id, async () => noticeText(r.agent, what, facts, await dirty(paths.worktree(project, slug(task.branch)))));
+  } catch (err) {
+    console.error(`watchdog: could not send the never-started notice for ${r.agent}: ${String(err)}`);
+    return false;
+  }
 }

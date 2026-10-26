@@ -266,20 +266,25 @@ not placed in command arguments or tmux options. This does not transfer browser
 sessions or logins in a different OS account/container.
 
 Agents run on **orca's own tmux server**, never your default one: its socket is
-`$ORCA_HOME/tmux.sock` (`tmux -S ~/.orca/tmux.sock attach -t orca-<project>` lists
-and attaches to a project's agent windows; `tmux -L orca` replaces `-S …` when the
-state path is too long for a socket). A stale default server, started days earlier
-from a directory that has since moved or been deleted, opens every window with a
-broken working directory, and the agents in them die before they start. Each spawn
+`$ORCA_HOME/tmux.sock` (`tmux -S ~/.orca/tmux.sock list-windows -t orca-<project>`
+lists a project's agent windows and `tmux -S ~/.orca/tmux.sock attach -t orca-<project>`
+attaches to them; `tmux -L orca` replaces `-S …` when the state path is too long
+for a socket). A stale default server, started days earlier from a directory that
+has since moved or been deleted, opens every window with a broken working
+directory, and the agents in them die before they start; orca's server is
+started from the state directory, which outlives any checkout. Each spawn still
 checks that the server can run commands and, if it cannot, fails with the
 `tmux -S … kill-server` command that stops it (and every agent on it). A spawn
 then waits a few seconds for the agent to come up (its run record; a slow start
 still passes): a window that dies first fails the spawn with the pane's last
-output, the dead pane is removed and the task is marked blocked (launch failed),
-so the orchestrator learns about it from the tool result rather than from
-nothing. If an agent never produces a run record for another reason, the TUI's
-watchdog sends one `[agent-exit] <agent> never started; task "<name>" needs
-reconciliation` notice about 30 seconds after the launch.
+output, the dead pane is removed and the task run is recorded as failed (launch
+failed), so the orchestrator learns about it from the tool result rather than
+from nothing, and from nothing else: that death gets no second `[agent-exit]`
+notice. If an agent dies before writing its run record later than that, the
+TUI's watchdog sends one `[agent-exit] <agent> never started; task "<name>" needs
+reconciliation` notice about 30 seconds after the launch. Agents started by an
+earlier orca version keep running on your default tmux server; let them report,
+or kill their windows there (`tmux kill-window -t orca-<project>:<agent>`).
 
 `$ORCA_HOME/projects` (default `~/.orca/projects`) stores conversations,
 tasks and a `repository.json` reference, not a new source clone. Discovery uses

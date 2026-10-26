@@ -117,9 +117,13 @@ for (const role of ["orchestrator", "worker", "reviewer"] as const) {
     const calls = rows.filter(row => row.tmux).map(row => row.tmux as string[]);
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) expect(call.slice(0, 2)).toEqual(withState(tmuxSocket));
-    const window = calls.find(call => call[2] === "new-window")!, id = role === "orchestrator" ? role : `${role}-${slug(branch)}`;
-    expect(window).toContain("--");
-    expect(window.slice(-7)).toEqual([";", "set-option", "-p", "-t", `=orca-${project}:=${id}`, "remain-on-exit", "on"]);
+    // The server is created from the state root (never a checkout) with remain-on-exit as its global window option; the window itself opens in the agent's cwd.
+    const session = calls.find(call => call[2] === "new-session")!;
+    expect(session.slice(-5)).toEqual([";", "set-option", "-g", "remain-on-exit", "on"]);
+    expect(session.slice(session.indexOf("-c") + 1, session.indexOf("-c") + 2)).toEqual([join(root, `original-${project}`)]);
+    expect(rows.find(row => row.sessionCwd)?.sessionCwd).toBe(state);
+    const window = calls.find(call => call[2] === "new-window")!;
+    expect(window).toContain("--"); expect(window).not.toContain(";");
     // A confirmed launch (worker/reviewer: their run record; orchestrator: exited 0) removes the already dead fake pane without reading it.
     expect(calls.some(call => call[2] === "kill-pane")).toBe(true);
     expect(calls.some(call => call[2] === "capture-pane")).toBe(false);
@@ -130,29 +134,25 @@ for (const exit of ["0", "70", "19", "kill"]) {
   test(`compiled worker wrapper preserves ${exit} exit and crash follow-up, even if follow-up fails`, async () => {
     resetLog();
     const project = `exit-${exit}`, { cwd, base } = await seed(project, "worker");
-    // Dirty status must be read in the worktree, not the installation/source dir.
-    script("git", 'if [ "$1" = "--no-optional-locks" ] && [ "$2" = "status" ]; then\n  printf "%s" "$PWD" > "$HOME/git-cwd"\n  printf "?? one\\n?? two\\n"\nelse\n  exec /usr/bin/git "$@"\nfi');
-    try {
-      const result = await exec(launch(project, "worker"), root, { PROBE_EXIT: exit, PROBE_FOLLOWUP_EXIT: "23" });
-      const rows = records(), code = exit === "kill" ? 137 : Number(exit);
-      // The window died without a run record, so the launch itself fails, with the pane's last output, and the dead pane is killed.
-      expect(result.code).toBe(1);
-      expect(result.err).toContain(`worker-${slug(branch)} exited (code ${code}${code > 128 ? `, signal ${code - 128}` : ""}) before the agent started`);
-      expect(result.err).toContain("fake pane: last line of output");
-      expect(rows.filter(row => row.tmux).map(row => row.tmux[2])).toEqual(expect.arrayContaining(["capture-pane", "kill-pane"]));
-      expect(rows.find(row => row.exit !== undefined)).toMatchObject({ exit: code, cwd });
-      const followups = rows.filter(row => row.cmd === "agent-exit");
-      expect(followups).toHaveLength(code === 0 || code === 70 ? 0 : 1);
-      if (followups.length) {
-        expect(followups[0]).toMatchObject({ cwd, home: state, executable: probe });
-        expect(followups[0].args).toEqual(["--project", project, "--role", "worker", "--branch", branch, "--run", run, "--code", String(code)]);
-        const inbox = join(base, "inbox", "orchestrator"), messages = readdirSync(inbox).filter(f => f.endsWith(".json"));
-        expect(messages).toHaveLength(1);
-        const notice = JSON.parse(readFileSync(join(inbox, messages[0]!), "utf8")).text;
-        expect(notice).toContain("[agent-exit]"); expect(notice).toContain(`code ${code}`); expect(notice).toContain("2");
-        expect(readFileSync(join(home, "git-cwd"), "utf8")).toBe(cwd);
-      }
-    } finally { rmSync(join(bin, "git")); }
+    const result = await exec(launch(project, "worker"), root, { PROBE_EXIT: exit, PROBE_FOLLOWUP_EXIT: "23" });
+    const rows = records(), code = exit === "kill" ? 137 : Number(exit);
+    // The window died without a run record, so the launch itself fails, with the pane's last output, and the dead pane is killed.
+    // That error is the death's one notice: the follow-up ran but found no run record, so the inbox stays empty.
+    expect(result.code).toBe(1);
+    expect(result.err).toContain(`worker-${slug(branch)} exited (code ${code}${code > 128 ? `, signal ${code - 128}` : ""}) before the agent started; last output:`);
+    expect(result.err).not.toContain("already in your inbox");
+    expect(result.err).toContain("fake pane: last line of output");
+    expect(rows.filter(row => row.tmux).map(row => row.tmux[2])).toEqual(expect.arrayContaining(["capture-pane", "kill-pane"]));
+    expect(rows.find(row => row.exit !== undefined)).toMatchObject({ exit: code, cwd });
+    const followups = rows.filter(row => row.cmd === "agent-exit");
+    expect(followups).toHaveLength(code === 0 || code === 70 ? 0 : 1);
+    if (followups.length) {
+      expect(followups[0]).toMatchObject({ cwd, home: state, executable: probe });
+      expect(followups[0].args).toEqual(["--project", project, "--role", "worker", "--branch", branch, "--run", run, "--code", String(code)]);
+    }
+    const inbox = join(base, "inbox", "orchestrator");
+    expect(existsSync(inbox) ? readdirSync(inbox).filter(f => f.endsWith(".json")) : []).toHaveLength(0);
+    expect(existsSync(join(base, "runs", `worker-${slug(branch)}.${run}.exit`))).toBe(true);
   });
 }
 
