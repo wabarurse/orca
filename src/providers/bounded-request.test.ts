@@ -117,3 +117,82 @@ test("caller cancellation wins same-turn timeout and already-aborted never execu
   await drain(); await advance(1000);
   expect(await pending).toBe("ok"); expect(calls).toBe(2); expect(timers.size).toBe(0);
 });
+
+for (const override of [undefined, null, "live"] as const) test(`Request preabort and init precedence: ${override}`, async () => {
+  clock(); const request = new AbortController(); request.abort("request cancelled"); let calls = 0;
+  const init = override === undefined ? undefined : { signal: override === null ? null : new AbortController().signal };
+  const outcome = await result(boundedModelRequest(async scope => {
+    const response = await scope.fetch(new Request("https://mock.invalid", { signal: request.signal }), init);
+    return response.text();
+  }, {}, async () => { calls++; return new Response("ok"); }));
+  expect(outcome).toBe(override === undefined ? "request cancelled" : "ok");
+  expect(calls).toBe(override === undefined ? 0 : 1); expect(timers.size).toBe(0);
+});
+
+for (const headers of [false, true]) test(`per-fetch cancel during ${headers ? "body" : "headers"} is terminal and keeps reason`, async () => {
+  clock(); const caller = new AbortController(); let signal!: AbortSignal; let calls = 0;
+  let body!: ReadableStream<Uint8Array>;
+  const pending = result(boundedModelRequest(async scope => {
+    calls++; return (await scope.fetch("https://mock.invalid", { signal: caller.signal })).text();
+  }, {}, async (_, init) => {
+    signal = init!.signal!;
+    body = new ReadableStream();
+    return headers ? new Response(body) : new Promise<Response>(() => {});
+  }));
+  await drain(); const reason = new DOMException("intentional", "AbortError"); caller.abort(reason);
+  expect(await pending).toBe(reason); await drain();
+  expect(signal.aborted).toBe(true); expect(signal.reason).toBe(reason); expect(calls).toBe(1);
+  expect(body.locked).toBe(false); expect(timers.size).toBe(0);
+});
+
+test("delayed body cancellation settles before retry; each attempt HTTP is aborted", async () => {
+  clock(); let calls = 0; let release!: () => void; const signals: AbortSignal[] = [];
+  const body = new ReadableStream<Uint8Array>({ cancel: () => new Promise<void>(resolve => { release = resolve; }) });
+  const pending = boundedModelRequest(async scope => {
+    calls++; await scope.fetch("https://mock.invalid"); if (calls === 1) throw fail(503); return "ok";
+  }, {}, async (_, init) => { signals.push(init!.signal!); return new Response(calls === 1 ? body : null); });
+  await drain(); expect(signals[0]!.aborted).toBe(true); expect(body.locked).toBe(true);
+  await advance(2000); expect(calls).toBe(1);
+  release(); await drain(); expect(body.locked).toBe(false);
+  await advance(1000); expect(await pending).toBe("ok"); expect(calls).toBe(2);
+  expect(signals.every(signal => signal.aborted)).toBe(true); expect(timers.size).toBe(0);
+});
+
+for (const end of ["total", "caller"] as const) test(`hung cleanup ends on ${end} without replacement`, async () => {
+  clock(); const caller = new AbortController(); let calls = 0;
+  const pending = result(boundedModelRequest(async scope => {
+    calls++; await scope.fetch("https://mock.invalid"); throw fail(503);
+  }, { totalMs: 100, signal: caller.signal }, async () => new Response(new ReadableStream({ cancel: () => new Promise<void>(() => {}) }))));
+  await drain(); if (end === "caller") caller.abort("cancel cleanup");
+  await advance(100);
+  const outcome = await pending;
+  expect(end === "caller" ? outcome : outcome.kind).toBe(end === "caller" ? "cancel cleanup" : "total-timeout");
+  expect(calls).toBe(1); expect(timers.size).toBe(0);
+});
+
+for (const mode of ["read-error", "early-return", "consumer-cancel"]) test(`reader lock released on ${mode}`, async () => {
+  clock(); let signal!: AbortSignal;
+  const body = new ReadableStream<Uint8Array>({ start(c) { if (mode === "read-error") c.error(fail(400)); } });
+  await result(boundedModelRequest(async scope => {
+    const response = await scope.fetch("https://mock.invalid");
+    if (mode === "read-error") await response.text();
+    if (mode === "consumer-cancel") await response.body!.cancel();
+  }, {}, async (_, init) => { signal = init!.signal!; return new Response(body); }));
+  expect(body.locked).toBe(false); expect(signal.aborted).toBe(true); expect(timers.size).toBe(0);
+});
+
+test("response metadata and native clone/bodyUsed semantics survive wrapping", async () => {
+  clock(); const source = new Response("payload", { status: 201, statusText: "Created", headers: { "x-test": "value" } });
+  Object.defineProperties(source, { url: { value: "https://mock.invalid/final" }, redirected: { value: true }, type: { value: "cors" } });
+  await boundedModelRequest(async scope => {
+    const response = await scope.fetch("https://mock.invalid"); const clone = response.clone();
+    for (const copy of [response, clone]) {
+      expect(copy.url).toBe(source.url); expect(copy.redirected).toBe(true); expect(copy.type).toBe("cors");
+      expect(copy.status).toBe(201); expect(copy.statusText).toBe("Created"); expect(copy.headers.get("x-test")).toBe("value");
+      expect(copy.bodyUsed).toBe(false);
+    }
+    expect(await response.text()).toBe("payload"); expect(response.bodyUsed).toBe(true);
+    expect(() => response.clone()).toThrow(); expect(await clone.text()).toBe("payload");
+  }, {}, async () => source);
+  expect(source.body!.locked).toBe(false); expect(timers.size).toBe(0);
+});
