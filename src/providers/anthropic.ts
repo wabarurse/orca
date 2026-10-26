@@ -1,13 +1,13 @@
-import { requireVision, validatedBase64 } from "../images";
-import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./web-search";
-import { claudeSearchResults } from "./search-results";
-import { CLAUDE_BETAS } from "../claude-auth";
-import { validateSettings, type RequestSettings } from "../project-settings";
+import { requireVision, validatedBase64 } from "../core/data/images/images";
+import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./search/web-search";
+import { claudeSearchResults } from "./search/search-results";
+import { CLAUDE_BETAS } from "../login/claude";
+import { validateSettings, type RequestSettings } from "../core/data/projects/project-settings";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider, Turn } from "./index";
-import { rememberCatalogLimits } from "../model-context";
-import { claudeCatalogEfforts, rememberCatalogEfforts } from "../model-capabilities";
+import { rememberCatalogLimits } from "./catalog/context-window";
+import { claudeCatalogEfforts, rememberCatalogEfforts } from "./catalog/capabilities";
 
 // accounts.ts supplies Claude Code subscription credentials. There is no API-key mode.
 export function anthropic(client: Anthropic, options: { promptCache?: boolean } = {}): Provider {

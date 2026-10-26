@@ -3,14 +3,14 @@
 import { constants } from "node:fs";
 import { copyFile, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { owned, prepareArtifact } from "../src/installation";
-import { legacy } from "../src/legacy";
+import { owned, prepareArtifact } from "../src/core/install/installation";
+import { legacy } from "../src/config/legacy";
 
 const app = resolve(import.meta.dir, "..");
 const artifact = await prepareArtifact(app);
 const compatibilityArtifact = join(app, "dist", legacy.executable);
 await owned(compatibilityArtifact);
-const child = Bun.spawn([process.execPath, "build", "src/cli.ts", "--compile", "--outfile", artifact], {
+const child = Bun.spawn([process.execPath, "build", "src/cli/main.ts", "--compile", "--outfile", artifact], {
   cwd: app, stdin: "inherit", stdout: "inherit", stderr: "inherit",
 });
 const code = await child.exited;

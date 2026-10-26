@@ -1,11 +1,11 @@
 /** Real production orchestrator; only credentials, measurements and benchmark isolation are injected. */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { provider as accountProvider } from "../../src/accounts";
+import { provider as accountProvider } from "../../src/login/accounts";
 import { providerFor, type Provider, type Turn } from "../../src/providers";
-import type { Tool } from "../../src/tools";
-import { paths } from "../../src/config";
-import { legacy } from "../../src/legacy";
+import type { Tool } from "../../src/core/tools";
+import { paths } from "../../src/config/config";
+import { legacy } from "../../src/config/legacy";
 const spec = await Bun.file(process.argv[2]!).json();
 // Resolve the configured subscription before switching to a disposable project store.
 // Both arms share the instrumented adapter. Cache off reproduces the baseline request payload.
@@ -18,8 +18,8 @@ await mkdir(spec.state, { recursive: true });
 await Bun.write(join(spec.state, "config.toml"), `model = ${JSON.stringify(spec.model)}\n`);
 const project = "trial", projectRoot = join(spec.state, "projects", project);
 await Bun.write(join(projectRoot, "model-settings.json"), JSON.stringify({ [spec.model]: { effort: "medium", fast: false } }));
-const { createOrchestrator } = await import(join(spec.sourceRoot, "src/orchestrator.ts"));
-const { registry, toolsFor } = await import(join(spec.sourceRoot, "src/tools/index.ts"));
+const { createOrchestrator } = await import(join(spec.sourceRoot, "src/core/agent-loop/orc/orchestrator.ts"));
+const { registry, toolsFor } = await import(join(spec.sourceRoot, "src/core/tools/index.ts"));
 const requests: any[] = [], calls: any[] = [];
 let active = 0, maxParallel = 0, resultBytes = 0, streamed = "";
 const started = performance.now();

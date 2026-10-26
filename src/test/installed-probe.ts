@@ -2,12 +2,12 @@
 // fake provider and fake tmux boundary. No production flags or provider overrides.
 import { installedImages } from "./installed-images";
 import { appendFileSync, readFileSync } from "node:fs";
-import { local } from "../runner";
-import { runAgent } from "../agent";
-import { afterExit } from "../exits";
-import { sessionId } from "../runner";
+import { local } from "../core/tmux/runner";
+import { runAgent } from "../core/agent-loop/loop/agent";
+import { afterExit } from "../core/tmux/exits";
+import { sessionId } from "../core/tmux/runner";
 import { fakeProvider, text } from "./fake-provider";
-import type { Role } from "../transcript";
+import type { Role } from "../core/data/transcripts/transcript";
 
 const [cmd, ...args] = process.argv.slice(2);
 const record = (entry: object) => appendFileSync(process.env.PROBE_LOG!, JSON.stringify(entry) + "\n");

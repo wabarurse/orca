@@ -38,7 +38,7 @@ What was ruled out, with the evidence:
   writes goes through `sanitize` (only SGR and OSC 8 survive), and no transcript,
   live-file or tool output in the window contained a raw ESC byte. `lsof` showed
   no process but the TUI and its shell holding the tty; every child the TUI
-  spawns (`src/proc.ts`, `clipboard.ts`, `oauth.ts`) is detached with
+  spawns (`src/core/proc.ts`, `clipboard.ts`, `oauth.ts`) is detached with
   ignored/piped stdio, so nothing else could write to it. Bun 1.4.2 updates
   `columns`/`rows` and emits `resize` on SIGWINCH (verified under an owned PTY),
   and replaying the real transcript through the current source under an owned
@@ -185,7 +185,7 @@ Two separate issues must not be conflated:
 - **Not established or fixed: Apple Terminal's physical ordinary wheel/trackpad
   gesture revealing prelaunch shell history.** The user's evidence includes
   `Updating 4c3dbd8..da5cc74`, fast-forward output, and `bun run dev start` /
-  `$ bun src/cli.ts start`. That is a fresh source launch, not evidence of a stale
+  `$ bun src/cli/main.ts start`. That is a fresh source launch, not evidence of a stale
   binary. It does not tell us which bytes (if any) reached stdin, whether the
   terminal's native history viewport moved while alternate screen stayed active,
   or whether their main UI has an intermediary such as tmux. Workers (and, since
@@ -194,7 +194,7 @@ Two separate issues must not be conflated:
   daemon's streamed output reaches the TUI only through the live file it tails
   (`projects/<id>/orchestrator/live.jsonl`); no pane content, escape sequence or
   control from the tmux window is ever read by the TUI, and the tool lines it
-  shows are built from the same plain `src/toolview.ts` text as the window's.
+  shows are built from the same plain `src/core/agent-loop/loop/toolview.ts` text as the window's.
 
 ### Application change and resource use
 
@@ -306,14 +306,14 @@ was modified. No model requests were made.
 
 ## Source-path audit
 
-- `src/tui/term.ts`: `open()` enables alternate screen (`1049`), basic mouse
+- `src/tui/components/term.ts`: `open()` enables alternate screen (`1049`), basic mouse
   reporting (`1000`), SGR mouse encoding (`1006`) and bracketed paste (`2004`)
   once. Normal close disables them and restores the cursor. Rescue also ends
   synchronized updates on `SIGTERM`, `SIGHUP`, uncaught exceptions and process
   exit. A close while the background reply is pending drains input in raw mode
   before handing stdin back. These modes were already present; adding duplicate
   sequences would not address the report.
-- `src/tui/keys.ts`: ordinary delivered SGR wheel reports become `wheelup` or
+- `src/tui/components/keys.ts`: ordinary delivered SGR wheel reports become `wheelup` or
   `wheeldown`, not draft text. Incomplete CSI parameters are buffered. There are
   separate parser limitations below; this is not a universal mouse-protocol or
   fragmentation guarantee.
@@ -321,11 +321,11 @@ was modified. No model requests were made.
   offset, by three rows per event, clamped between zero and the newest viewport.
   Menus, project lists, explicit question panels and `/keys` own input instead
   when open. They do not disable reporting or exit alternate screen.
-- `src/tui/sticky.ts`: drawing uses bounded rows, absolute cursor positioning and
+- `src/tui/screen/sticky.ts`: drawing uses bounded rows, absolute cursor positioning and
   row erasure, not line-feed scrolling of the primary buffer. Header/footer and
   composer remain pinned. The app's active drawing path does not call the legacy
   `render.reprint()` helper that contains a screen/scrollback clear.
-- `src/tui/render.ts`: visible content is sanitized to remove screen-switching,
+- `src/tui/components/render.ts`: visible content is sanitized to remove screen-switching,
   scrolling and clearing escapes; only styling and hyperlinks remain. Normal
   `App.run()` cleanup deliberately restores the primary screen **before**
   printing the active transcript. Shell content becoming available after exit

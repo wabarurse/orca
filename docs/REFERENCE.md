@@ -473,7 +473,7 @@ needed; do not delete saved state to retry installation.
 ### Development
 
 From a development checkout, `bun install --frozen-lockfile` followed by
-`bun src/cli.ts` (or `bun src/cli.ts start [project] [directory]`) still works.
+`bun src/cli/main.ts` (or `bun src/cli/main.ts start [project] [directory]`) still works.
 `bun run check`, `bun test`, `bun run build`, and `git diff --check` are the local
 validation commands. The compiled/installation tests use temporary HOME/state,
 relocated executables, fake provider/tmux boundaries and an owned PTY. Updater

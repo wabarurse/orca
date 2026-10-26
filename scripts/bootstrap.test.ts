@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { stateRoot } from "../src/legacy";
+import { stateRoot } from "../src/config/legacy";
 
 const root = resolve(import.meta.dir, "..");
 const temporary: string[] = [];
@@ -12,11 +12,11 @@ async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "orca-bootstrap-"));
   temporary.push(dir);
   const home = join(dir, "user's home"), bin = join(dir, "bin"), source = join(dir, "source"), cwd = join(dir, "unrelated project");
-  for (const path of [home, bin, source, cwd, join(source, "scripts"), join(source, "src")]) {
+  for (const path of [home, bin, source, cwd, join(source, "scripts"), join(source, "src"), join(source, "src/core"), join(source, "src/core/install")]) {
     await mkdir(path, { mode: 0o755 });
   }
   await cp(join(root, "scripts/install.ts"), join(source, "scripts/install.ts"));
-  await cp(join(root, "src/installation.ts"), join(source, "src/installation.ts"));
+  await cp(join(root, "src/core/install/installation.ts"), join(source, "src/core/install/installation.ts"));
   await writeFile(join(source, "package.json"), JSON.stringify({ scripts: { "install:local": "bun scripts/install.ts", build: "bun build-fixture.ts" } }));
   await writeFile(join(source, "build-fixture.ts"), `import { chmodSync, writeFileSync } from "node:fs";
 writeFileSync("dist/orca", "#!/bin/sh\\necho fixture-orca\\n"); chmodSync("dist/orca", 0o755);`);

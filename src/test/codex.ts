@@ -1,4 +1,4 @@
-import type { CodexTokens } from "../codex-auth";
+import type { CodexTokens } from "../login/codex";
 
 /** Deliberately unsigned test token. Never valid against a real service. */
 export function fakeCodexTokens(accountId = "test-account", expiresAt = Date.now() + 3_600_000, marker = "test"): CodexTokens {

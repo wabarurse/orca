@@ -1,14 +1,14 @@
-import { requireVision, validatedBase64 } from "../images";
-import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./web-search";
-import { codexSearchItemSources, codexSearchResults } from "./search-results";
-import { validateSettings, type RequestSettings } from "../project-settings";
+import { requireVision, validatedBase64 } from "../core/data/images/images";
+import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./search/web-search";
+import { codexSearchItemSources, codexSearchResults } from "./search/search-results";
+import { validateSettings, type RequestSettings } from "../core/data/projects/project-settings";
 import OpenAI from "openai";
 import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
-import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../codex-auth";
+import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../login/codex";
 import type { Provider, Turn } from "./index";
-import { rememberCatalogLimits } from "../model-context";
-import { codexCatalogEfforts, rememberCatalogEfforts } from "../model-capabilities";
+import { rememberCatalogLimits } from "./catalog/context-window";
+import { codexCatalogEfforts, rememberCatalogEfforts } from "./catalog/capabilities";
 
 // Protocol/catalog compatibility snapshot, matching Codex CLI 0.154.0.
 export const CODEX_CLIENT_VERSION = "0.154.0";

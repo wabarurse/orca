@@ -3,9 +3,9 @@
 import { chmod, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { installBinary } from "../installation";
-import { HARNESS_ORIGIN, updateCommand, type UpdateCommand } from "../pull";
-import { legacy } from "../legacy";
+import { installBinary } from "../core/install/installation";
+import { HARNESS_ORIGIN, updateCommand, type UpdateCommand } from "../core/install/pull";
+import { legacy } from "../config/legacy";
 
 export async function pullFixture(options: { legacyApp?: boolean } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "orca-pull-")));

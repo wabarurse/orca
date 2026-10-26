@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fixture, grade } from "./fixtures";
 import { jsonLines, claudeMetrics, codexMetrics } from "./metrics";
-import { harnessEngine } from "../../src/legacy";
+import { harnessEngine } from "../../src/config/legacy";
 const input = process.argv[2] ?? join(import.meta.dir, "results/live.jsonl");
 const rows = jsonLines(await Bun.file(input).text());
 const temporary = await mkdtemp(join(tmpdir(), "efficiency-audit-"));

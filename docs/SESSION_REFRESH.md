@@ -95,10 +95,10 @@ preview is local to the submitting window; it is not a global inbox inventory.
   orchestrator model/tool turn**: the checkout-wide `checkout-locks/<sha256>`
   shared by every conversation bound to one original checkout, then the
   conversation's own `turn-locks/<project>` (one path for legacy clones). Their
-  owner is the project's **orchestrator daemon** (`src/orchestrator-daemon.ts`,
+  owner is the project's **orchestrator daemon** (`src/core/agent-loop/orc/daemon.ts`,
   the `orchestrator` tmux window), the only process that appends to the
   orchestrator's transcript; TUIs are clients that enqueue input and requests
-  and read the transcript back (`src/orchestrator-client.ts`). A losing daemon
+  and read the transcript back (`src/core/agent-loop/orc/client.ts`). A losing daemon
   (two conversations on one checkout) returns without starting a competing turn
   and holds nothing; its next poll checks again. The winner reloads shared
   context before starting. Workers retain their existing role/session
@@ -113,7 +113,7 @@ preview is local to the submitting window; it is not a global inbox inventory.
   `status.json` is advisory presentation state (idle/turn, turn count, last
   error, context estimate); durable truth stays in the transcript, inbox
   receipts, locks and run records. So is `live.jsonl`
-  (`src/orchestrator-live.ts`): the running turn's streamed text and tool
+  (`src/core/agent-loop/orc/live.ts`): the running turn's streamed text and tool
   events, each tagged with the transcript head it followed, replaced when a
   turn starts and removed once the turn's entries are durable. Clients only
   read it (keyed by the status's run and turn count, so a dead daemon's or an
@@ -210,7 +210,7 @@ Relevant local commands:
 
 ```sh
 bun install --frozen-lockfile
-bun test src/session-refresh.test.ts src/tui/refresh.test.ts
+bun test src/core/agent-loop/orc/session-refresh.test.ts src/tui/refresh.test.ts
 bun test
 bun run check
 bun run build
