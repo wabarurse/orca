@@ -11,7 +11,9 @@
 // neither buffer is silently replaced or moved to the next question.
 // Enter/digits/typing have a short guard after opening. The #45 closing guard
 // keeps polls from mistaking our own in-flight answer for an external close.
-// A local answer's history line waits behind any streaming partial in app.ts.
+// A settled question leaves no conversation line: an answer or skip here is
+// one transient note above the composer ("? <question> → <answer>"), and the
+// reply the orchestrator later reads is left out of the page (restore.ts).
 
 import { stat } from "node:fs/promises";
 import { paths } from "../../config";
@@ -19,17 +21,13 @@ import { questions as store } from "../../core/data/inbox";
 import * as ed from "./editor";
 import type { EditState } from "./editor";
 import type { Key } from "../components";
-import type { Line } from "../conversation";
 import { dim, plainText } from "../components";
 import type { QuestionMode, QuestionView } from "./render";
-import { answeredLine, questionReply, type AskedLookup } from "../conversation";
 import { limits, type Question } from "../../protocol";
 
 /** What the TUI reads and closes questions with; tests stub it. `stamp` changes whenever the questions dir does. */
 export interface QuestionStore {
   stamp(project: string): Promise<number>;
-  /** Every question, answered and skipped too (for replies the orchestrator reads, and restore). */
-  all(project: string): Promise<Question[]>;
   list(project: string): Promise<Question[]>;
   answer(project: string, id: string, text: string, inputId?: string): Promise<unknown>;
   skip(project: string, id: string): Promise<unknown>;
@@ -37,7 +35,6 @@ export interface QuestionStore {
 
 export const fileStore: QuestionStore = {
   stamp: (project) => stat(paths.questions(project)).then((s) => s.mtimeMs, err => { if (err.code === "ENOENT") return -1; throw err; }),
-  all: store.all,
   list: store.list,
   answer: store.answer,
   skip: store.skip,
@@ -56,8 +53,6 @@ export interface PageQuestions {
   /** Unknown until a successful read; errors never masquerade as zero. */
   loaded: boolean;
   error?: string;
-  /** Every question seen, by id (answered and skipped ones from the first read too), to read replies by their question's own text. */
-  seen: Map<string, Question>;
   /** The questions dir's stamp at the last read, and when that read started (wall clock). */
   stamp: number;
   readAt: number;
@@ -75,7 +70,7 @@ export interface PageQuestions {
   readyAt: number;
   /** An answer or skip in flight. */
   closing: false | "answer" | "skip";
-  /** Ids answered or skipped here: already on screen when the orchestrator reads them, and never shown again by a stale read. */
+  /** Ids answered or skipped here: never shown again by a stale read. */
   mine: Set<string>;
 }
 
@@ -96,8 +91,8 @@ export interface QuestionHost {
   now(): number;
   /** A note in the captured project conversation, never an agent transcript. */
   say(line: string, page: QuestionPage): void;
-  /** A line of the page's own history (an answered question), as the orchestrator's transcript will show it. */
-  record(line: string, page: QuestionPage): void;
+  /** The page's transient status note (an answered or skipped question's "? … → …"), never conversation. */
+  note(text: string, page: QuestionPage): void;
   /** A sent answer in the page's prompt queue, under the inbox message's inputId, until the orchestrator consumes it. */
   queue?(page: QuestionPage, inputId: string, text: string): void;
   /** The answer was not delivered: out of the queue. */
@@ -113,11 +108,12 @@ const EMPTY: EditState = { text: "", cursor: 0 };
 export const QUESTION_DELAY_MS = 500;
 export const QUESTION_PROGRESS = { answer: "sending answer…", skip: "removing from inbox…" };
 
-/** UI-only feedback: dismissal never uses the legacy delivered skip/default formatter. */
+/** An answered or skipped question as the page notes it: "? <question> → <answer>"; a skip says it was removed, never that a default applied. */
+export const answeredNote = (question: string, answer: string | null): string => `? ${plainText(question)} → ${plainText(answer ?? "skipped, removed from inbox")}`;
+
+/** UI-only feedback for the close. */
 function closeFeedback(question: string, answer: string | null): { kind: "answer" | "skip"; line: string } {
-  return answer === null
-    ? { kind: "skip", line: dim(`? ${plainText(question)} → skipped, removed from inbox`) }
-    : { kind: "answer", line: answeredLine(question, answer) };
+  return { kind: answer === null ? "skip" : "answer", line: answeredNote(question, answer) };
 }
 
 const QUEUE_CHARS = 60;
@@ -127,7 +123,7 @@ export function queuedAnswer(question: string, answer: string): string {
   return `? ${chars.slice(0, QUEUE_CHARS).join("")}${chars.length > QUEUE_CHARS ? "…" : ""} → ${plainText(answer)}`;
 }
 
-export const pageQuestions = (): PageQuestions => ({ open: [], loaded: false, seen: new Map(), stamp: NaN, readAt: 0, polling: null, hidden: null, expanded: false, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
+export const pageQuestions = (): PageQuestions => ({ open: [], loaded: false, stamp: NaN, readAt: 0, polling: null, hidden: null, expanded: false, index: 0, answer: EMPTY, shownHead: undefined, readyAt: 0, closing: false, mine: new Set() });
 
 type Mode = "chat" | QuestionMode;
 /** What the input holds in a mode: the chat draft, the question's answer, or nothing (a row is being picked). */
@@ -164,13 +160,6 @@ export class Questions {
 
   // --- polling ----------------------------------------------------------------
 
-  /** Every question of a page once, when it opens: replies are then read by their question's text. Returns the lookup for restore. */
-  async load(page: QuestionPage): Promise<AskedLookup> {
-    const seen = page.questions.seen;
-    for (const x of await this.store.all(page.project).catch(() => [])) seen.set(x.id, x);
-    return (id) => seen.get(id);
-  }
-
   /** Re-read each page's open questions when its questions dir changed; one read per page at a time. */
   poll(pages: QuestionPage[]): void {
     for (const p of pages) this.pollPage(p);
@@ -182,7 +171,6 @@ export class Questions {
     if (!this.valid(page)) return;
     page.questions.stamp = NaN;
     await this.pollPage(page);
-    await this.load(page);
   }
 
   private pollPage(page: QuestionPage): Promise<void> {
@@ -224,7 +212,6 @@ export class Questions {
     const before = head(q);
     // A read can see the head answered by the close still in flight here: it stays until that close ends.
     open = this.keepClosing(q, open);
-    for (const x of open) q.seen.set(x.id, x);
     q.open = open;
     if (before && !open.length) q.expanded = false;
     if (q.hidden && open.some((x) => !q.hidden!.has(x.id))) q.hidden = null;
@@ -289,13 +276,6 @@ export class Questions {
   /** Whether the input is the shown question's answer ("answer>"). */
   answering(): boolean {
     return this.want() === "answer";
-  }
-
-  /** A "user" message the orchestrator read: a question's answer as its dim line, or nothing when it was answered here (already shown). Null for anything else. */
-  inboxLines(page: QuestionPage, text: string): Line[] | null {
-    const reply = questionReply(text, (id) => page.questions.seen.get(id));
-    if (!reply) return null;
-    return page.questions.mine.has(reply.id) ? [] : [reply.line];
   }
 
   /**
@@ -419,7 +399,7 @@ export class Questions {
     return this.close(page, answer);
   }
 
-  /** Answer (or, with null, skip) the shown question; one dim line goes to the page. Closed elsewhere: said, and a typed answer is kept. */
+  /** Answer (or, with null, skip) the shown question; its "? … → …" is the page's transient note. Closed elsewhere: said, and a typed answer is kept. */
   private async close(page: QuestionPage, answer: string | null): Promise<void> {
     const q = page.questions;
     const h = head(q);
@@ -439,7 +419,7 @@ export class Questions {
       }
       if (!this.valid(page)) return;
       q.mine.add(h.id);
-      this.host.record(feedback.line, page);
+      this.host.note(feedback.line, page);
       this.reset(page);
     } catch (err) {
       if (!this.valid(page)) return;

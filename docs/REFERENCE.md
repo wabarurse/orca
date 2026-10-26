@@ -576,15 +576,31 @@ after Ctrl+N, a rename's `old → new`, `fetching models…`, `model set to …`
 and the daemon's `orchestrator: model … applies from the orchestrator's next
 request`, `/effort` picker results (`fetching effort levels…`, a dropped saved
 level, the saved pick), `/effort <level>`/`/fast` queries and saves,
-`/review-rounds` and `/dynamic-dispatch` queries and saves, `/accounts` selections and a daemon restart by the keeper (`orchestrator was not
-running; restarted`; the first start is silent) show as one dim row directly above the composer, cut to
+`/review-rounds` and `/dynamic-dispatch` queries and saves, `/accounts` selections, a daemon restart by the keeper (`orchestrator was not
+running; restarted`; the first start is silent), `unknown command /x`, Ctrl+C's
+`turn cancelled. send a message to resume; press ctrl+c again within 2 seconds to exit.`
+and the daemon's acknowledgement that replaces it (`orchestrator: turn cancelled;
+the orchestrator stays paused until you send a message`, or `nothing was running;
+queued input stays paused …`), `/compact`'s `compaction requested …`, compaction
+progress (`compacting…`, `compacting older conversation in the background…`) and
+its outcome (`compaction complete (best-effort; original transcript preserved)`,
+`compaction complete: ~N → ~M history tokens …`, `background summary
+did not reduce context; original history kept.`), and an answered or skipped
+question (`? <question> → <answer>`, `? <question> → skipped, removed from inbox`)
+show as one dim row directly above the composer, cut to
 the width. A newer note for the same page replaces it; the next keypress on
-that page clears it (scrolling with the wheel or Page Up/Down and mouse
-selection do not). Each page keeps its own note,
-so a background page's shows when you switch to it. Notes are never written to
+that page after the row has been drawn clears it (scrolling with the wheel or Page Up/Down and mouse
+selection do not). While the Inbox panel is open the row is held back, like the
+attached-images row: the note waits unseen, the key that closes the panel (or
+answers the next question) does not clear it, and it shows once the panel
+closes, until the next key. Each page keeps its own note,
+so a background page's shows when you switch to it (its keys there do not clear it). Notes are never written to
 the conversation, so `/refresh`, a reopen or an exit replay never bring them
 back. Errors, refusals (`usage: /fast [on|off]`, `usage: /review-rounds [n]`,
-`effort ultra is unsupported`, `orchestrator is not running: …`), command output you need to
+`effort ultra is unsupported`, `orchestrator is not running: …`), the daemon's
+failures and warnings (`orchestrator: turn failed: …`, `compaction failed: …`,
+`background compaction failed; original history kept: …`, `cancel not
+acknowledged: …`, memory-index warnings, `live output truncated …`), command output you need to
 read (`/help`, `/agents`, sign-in progress) and the orchestrator's own
 messages stay in the conversation.
 
@@ -613,14 +629,19 @@ and later-compaction semantics; `/compact` remains the summarizing alternative.
 Ctrl+C cancels the selected page's current turn (including its provider request
 and running tools) by a request the orchestrator daemon picks up within about
 100ms while a turn runs (when idle, on its next pass: at once on the file
-change, at most a second later) and acknowledges on the page, without closing
-the harness or clearing your draft/history.
+change, at most a second later) and acknowledges as the transient note above the
+composer (replacing the first press's hint), without closing
+the harness or clearing your draft/history. Neither is a conversation line; the
+paused state shows as the conversation itself: the `thinking…`/`working…` row
+goes away and the header's fin stops cruising once the turn has ended (there is
+no "paused" label).
 Other projects' turns and background workers/reviewers keep running. The cancelled
 orchestrator stays paused even if agent reports arrive; your next chat message
 resumes its saved conversation. While viewing a subagent, Ctrl+C instead stops
 only that worker/reviewer, preserving its transcript and worktree; the existing
 `spawn` continuation path can restart it with that conversation. Agent views remain
-read-only (`/back` to talk to the orchestrator). A hint appears on the first press;
+read-only (`/back` to talk to the orchestrator). A hint appears on the first press
+(the note above the composer; in an agent view, a line in that view);
 a second Ctrl+C within two seconds exits the harness (`/quit` also exits). Exiting
 leaves the orchestrator daemon, its current turn and background agents alone.
 
@@ -687,10 +708,16 @@ Menus take precedence over questions; Ctrl+Q does nothing while a menu/project
 list is open. On a one-row terminal the input takes the whole live region: a modal panel
 can be hidden while still owning keys; Esc closes it. In an agent view Questions
 shows a guard, never an answer field: close Inbox, then Esc or `/back` to the
-project orchestrator before answering. Each answer leaves a
-dim `? question → answer` line; a skip leaves only a local removed-from-inbox note,
-not a delivered reply or model input. Historical delivered skip/default messages
-still render as before. Background projects' question counts are shown too.
+project orchestrator before answering. A settled question leaves no conversation
+line: an answer is the transient `? question → answer` note above the composer
+(shown once the panel closes, however it closes) and sits in the prompt queue as `? question → answer`
+until the orchestrator reads it; a skip is the transient `? question → skipped,
+removed from inbox` note, not a delivered reply or model input. When the
+orchestrator reads an answer (yours, another window's or a historical delivered
+skip/default message), the conversation shows nothing for it, live and after a
+restart alike; the answer stays in the question's record under `questions/`.
+Questions still open are only in the Inbox panel and its count, never the
+conversation. Background projects' question counts are shown too.
 
 Harness state lives under `~/.orca` by default; your checkout and worker
 worktrees stay outside it. Design notes are in [PLAN.md](PLAN.md).

@@ -356,7 +356,7 @@ test("menu/help replacement and tiny hidden inbox keep drafts; exit transcript n
 const sectionKey = { name: "tab", shift: true };
 const syntheticQuestion = (id = "q"): Question => ({ id, text: `Question ${id}?`, status: "open", ts: "2026-01-01T00:00:00Z" });
 const fakeQuestions = (changes: Partial<QuestionStore> = {}): QuestionStore => ({
-  stamp: async () => NaN, all: async () => [], list: async () => [],
+  stamp: async () => NaN, list: async () => [],
   answer: async () => { throw new Error("unexpected answer"); }, skip: async () => { throw new Error("unexpected skip"); }, ...changes,
 });
 
@@ -499,10 +499,27 @@ for (const transition of ["close", "section", "project", "recreate"] as const) {
     delayed = false; gate.resolve([syntheticQuestion("old")]); await opening; await current.questions.polling;
     expect(app.page).toBe(current); expect(app.input).toEqual(draft);
     expect(app.frame().inbox?.section ?? null).toBe(transition === "section" ? "tasks" : null);
-    if (transition === "recreate") expect(current.questions.seen.has("old")).toBe(false);
     expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
   });
 }
+
+test("a note set while the Inbox panel has its row waits, unseen, for the panel to close: the closing key does not clear it, the next one does", async () => {
+  let open = [syntheticQuestion("q1"), syntheticQuestion("q2")];
+  const ui = await setup({ questions: fakeQuestions({ list: async () => open, answer: async (_p, id) => { open = open.filter(q => q.id !== id); } }) }), { app } = ui;
+  const page = app.page!;
+  await app.commands.get("/questions")!.run("", page);
+  app.input = { text: "first", cursor: 5 }; app.draw();
+  await app.onKey({ name: "enter" });
+  await until(() => page.questions.open.length === 1);
+  expect(app.frame().inbox?.section).toBe("questions"); // q2 keeps the panel open: no note row
+  expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q1?");
+  await app.onKey({ name: "escape" }); // closes the panel; the note was never drawn, so it survives this key
+  expect(app.frame().inbox).toBeNull();
+  expect(plain(app.frame().inputArea!.lines)).toContain("? Question q1? → first");
+  expect(page.lines).toEqual([]);
+  await app.onKey({ name: "char", text: "x" });
+  expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q1?");
+});
 
 for (const transition of ["project", "recreate"] as const) {
   test(`a late question answer remains owned by its captured page after ${transition}`, async () => {
@@ -517,7 +534,10 @@ for (const transition of ["project", "recreate"] as const) {
     gate.resolve(); await answering;
     expect(app.input).toEqual(draft); expect(next.lines).toEqual([]); expect(app.frame().inbox).toBeNull();
     expect(a.questions.mine.has("q")).toBe(transition === "project");
-    expect(a.lines.length > 0).toBe(transition === "project");
+    expect(a.lines).toEqual([]); // a settled question is never a conversation line
+    // Its "? … → …" is the captured page's transient note: shown once that page is active again, never on the new one.
+    expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q?");
+    if (transition === "project") { await app.openPage("a"); expect(plain(app.frame().inputArea!.lines)).toContain("? Question q? → answer A"); }
   });
 }
 
@@ -593,7 +613,9 @@ for (const outcome of ["answer", "error", "external"] as const) {
       await closing;
     }
     expect(page.view.lines).toEqual([]); expect(app.input).toEqual(chat);
-    expect(JSON.stringify(page.lines)).toContain(outcome === "answer" ? "answer draft" : outcome === "error" ? "answer write failed" : "unsent answer: answer draft");
+    // An answer is the project page's transient note (shown over the agent view too); failures and orphans are its history.
+    if (outcome === "answer") { expect(plain(app.frame().inputArea!.lines)).toContain("? Question q? → answer draft"); expect(page.lines).toEqual([]); }
+    else expect(JSON.stringify(page.lines)).toContain(outcome === "error" ? "answer write failed" : "unsent answer: answer draft");
     expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
   });
 }

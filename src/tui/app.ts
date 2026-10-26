@@ -40,7 +40,7 @@ import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } fro
 import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
-import { replyLine, reportLine, restore, unresolvedCalls, userLines } from "./conversation";
+import { fromUserLines, replyLine, reportLine, restore, transientNotice, unresolvedCalls, userLines } from "./conversation";
 import { bold, dim, fit, sanitize } from "./components";
 import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
 import type { Terminal } from "./components";
@@ -82,8 +82,6 @@ export interface Page {
   sent: { readonly inputId: string; text: string; attachments?: ImageRef[]; submission?: string; retry?: boolean; question?: boolean }[];
   /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
   questions: PageQuestions;
-  /** Answered-question lines waiting for the streaming reply's partial line to end, so they never split it. */
-  held: Line[];
   /** Set while an agent's transcript is showing; calling leave returns to the page. */
   view: { name: string; lines: Line[]; leave: () => void; live: boolean; calls: Calls } | null;
   /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
@@ -140,9 +138,11 @@ export interface AppDeps {
   questionDelayMs?: number;
 }
 
-export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void; /** A retained status line for the page (the daemon's acknowledgements). */ notice?(text: string): void }
+export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void; /** A status line from the daemon: an informational acknowledgement or progress (`transientNotice`) shows as the page's transient note; anything else is a retained page line. */ notice?(text: string): void }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
+/** A transient status note and whether a frame has drawn its row yet (only then does a key clear it). */
+interface Note { text: string; shown: boolean }
 
 const realClock: Clock = {
   now: () => Date.now(),
@@ -379,9 +379,9 @@ export class App {
   /** Pages whose last rendering left out calls the running turn has not finished (they show as running rows instead); re-rendered once the turn ends. */
   private readonly hidRunning = new WeakSet<Page>();
   private readonly notices = new WeakMap<Page, Line[]>();
-  /** Each page's transient status note (one row above the composer; the next keypress on that page clears it), and the one shown while no page is open. */
-  private readonly notes = new WeakMap<Page, string>();
-  private looseNote: string | undefined;
+  /** Each page's transient status note (one row above the composer; the next keypress on that page after it was drawn clears it), and the one shown while no page is open. */
+  private readonly notes = new WeakMap<Page, Note>();
+  private looseNote: Note | undefined;
 
   /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
   readonly questions: Questions;
@@ -396,7 +396,7 @@ export class App {
       get input() { return app.input; },
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
       say: (line, page) => app.toPage(page as Page, [line]),
-      record: (line, page) => app.record(page as Page, line),
+      note: (text, page) => app.note(text, page as Page),
       queue: (page, inputId, text) => { (page as Page).sent.push({ inputId, text, question: true }); app.draw(); },
       unqueue: (page, inputId) => { const sent = (page as Page).sent; const at = sent.findIndex(m => m.inputId === inputId); if (at !== -1) sent.splice(at, 1); },
       submitted: () => { void app.refreshSessions(); },
@@ -498,23 +498,27 @@ export class App {
    * project list's status, the next keypress clears it; a mouse event does not.
    */
   note(text: string, page = this.page): void {
-    if (page) this.notes.set(page, text); else this.looseNote = text;
+    const note: Note = { text, shown: false };
+    if (page) this.notes.set(page, note); else this.looseNote = note;
     this.draw();
   }
 
-  /** The next keypress on the page clears its note; scrolling (wheel, page keys) and mouse selection leave it. */
+  /** The next keypress on the page clears its note once a frame has shown it (one set while the Inbox panel had its row, or on a background page, waits for that frame); scrolling (wheel, page keys) and mouse selection leave it. */
   private clearNote(k: Key): void {
     if (/^(?:wheel|mouse|page)/.test(k.name)) return;
     const page = this.page;
-    if (page ? !this.notes.delete(page) : this.looseNote === undefined) return;
-    if (!page) this.looseNote = undefined;
+    const note = page ? this.notes.get(page) : this.looseNote;
+    if (!note?.shown) return;
+    if (page) this.notes.delete(page); else this.looseNote = undefined;
     this.draw();
   }
 
-  /** The shown page's note, cut to one row. */
+  /** The shown page's note, cut to one row; the frame that takes it marks it shown. */
   private noteRow(page: Page | undefined): string | undefined {
-    const text = page ? this.notes.get(page) : this.looseNote;
-    return text === undefined ? undefined : dim(fit(sanitize(text.replace(/\s*\n\s*/g, " ")), this.deps.term.cols));
+    const note = page ? this.notes.get(page) : this.looseNote;
+    if (!note) return undefined;
+    note.shown = true;
+    return dim(fit(sanitize(note.text.replace(/\s*\n\s*/g, " ")), this.deps.term.cols));
   }
 
   private keepNotice(page: Page, line: Line): void {
@@ -582,12 +586,12 @@ export class App {
       if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
       // Match identity, not text: an identical external message is not an acknowledgement.
       // Typed here: show only now, at the consumption boundary (answer-shaped chat stays chat).
-      // A question answered here leaves the queue the same way; its line was shown when answered.
+      // A question answered here leaves the queue the same way; settled questions leave no line.
       const at = m.inputId ? page.sent.findIndex(item => item.inputId === m.inputId) : -1;
       const item = at === -1 ? undefined : page.sent.splice(at, 1)[0];
       if (item && !item.question) { this.toPage(page, userLines([m.text, imageLabels(m.attachments)].filter(Boolean).join("\n"))); continue; }
-      // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`orca msg`) as "> …", as restore shows it.
-      this.toPage(page, this.questions.inboxLines(page, [m.text, imageLabels(m.attachments)].filter(Boolean).join("\n")) ?? userLines(m.text));
+      // Anything else from elsewhere (`orca msg`) as "> …", a question's answer as nothing: as restore shows them.
+      this.toPage(page, fromUserLines([m.text, imageLabels(m.attachments)].filter(Boolean).join("\n")));
     }
   }
 
@@ -603,14 +607,6 @@ export class App {
   private endPartial(page: Page): void {
     const blocks = page.md.flushLines();
     if (blocks.length) this.toPage(page, blocks);
-    if (page.held.length) this.toPage(page, page.held.splice(0));
-  }
-
-  /** An answered question's line: into the page's history now, or once the reply streaming there ends its partial line. */
-  private record(page: Page, line: Line): void {
-    this.keepNotice(page, line);
-    if (page.md.pending) page.held.push(line);
-    else this.toPage(page, [line]);
   }
 
   frame(): Frame {
@@ -618,7 +614,7 @@ export class App {
     const status = this.started && page ? this.status(page) : null;
     const refs = this.images(page);
     const showImages = refs.length > 0 && !page?.questions.expanded;
-    const note = this.noteRow(page);
+    const note = page?.questions.expanded ? undefined : this.noteRow(page); // like the images row: the open inbox panel has the rows
     const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0) + (note ? 1 : 0));
     if (showImages) {
       area.lines.unshift(dim(`${imageLabels(refs)} · ctrl+y remove last`.slice(0, this.deps.term.cols)));
@@ -1024,9 +1020,9 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!entries) return;
     const head = entries.at(-1)?.uuid;
     if (this.renderedHeads.get(page) === head) return;
-    page.md.reset(); page.calls.clear(); page.held.length = 0;
-    const lines = this.restored(page, entries, page.busy, id => page.questions.seen.get(id));
-    // Keep local diagnostics/skip feedback, but don't duplicate persisted answers.
+    page.md.reset(); page.calls.clear();
+    const lines = this.restored(page, entries, page.busy);
+    // Keep local diagnostics, but don't duplicate what the record holds.
     const saved = new Set(lines.map(line => JSON.stringify(line)));
     const notes = (this.notices.get(page) ?? []).filter(line => !saved.has(JSON.stringify(line)));
     this.notices.set(page, notes);
@@ -1060,18 +1056,18 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   /** The record as lines. While the turn runs (`running`), the newest entry's calls without a result are left out: the live view shows them running, and the record says how they ended once it does. */
-  private restored(page: Page, entries: Entry[], running: boolean, asked: import("./conversation").AskedLookup): Line[] {
+  private restored(page: Page, entries: Entry[], running: boolean): Line[] {
     const omit = running ? unresolvedCalls(entries) : undefined;
     if (omit?.size) this.hidRunning.add(page); else this.hidRunning.delete(page);
-    return restore(entries, this.deps.term.cols, Infinity, asked, omit);
+    return restore(entries, this.deps.term.cols, Infinity, omit);
   }
 
-  private restorePage(page: Page, asked: import("./conversation").AskedLookup, running: boolean): void {
+  private restorePage(page: Page, running: boolean): void {
     const entries = page.orch.entries?.() ?? [];
     // All saved conversation must be scrollable before exit, including originals
     // before model compaction. Cache rendered rows in viewport(); only the visible
     // slice is drawn on keys/ticks, rather than capping access to older messages.
-    page.lines = [...this.restored(page, entries, running, asked), ...page.lines];
+    page.lines = [...this.restored(page, entries, running), ...page.lines];
   }
 
   async openPage(project: string, url?: string): Promise<Page> {
@@ -1082,13 +1078,13 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       if (existing !== this.active) { this.active = existing; this.reprint(); }
       return this.pages[existing]!;
     }
-    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), held: [], view: null, calls: new Calls() };
-    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => this.say(dim(text), page) };
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null, calls: new Calls() };
+    // The daemon's informational acknowledgements and progress (a cancel, compaction) are transient notes; its errors and warnings stay on the page.
+    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => transientNotice(text) ? this.note(text, page) : this.say(dim(text), page) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
-    const asked = await this.questions.load(page);
     // A turn already running elsewhere (the daemon's) shows its unfinished calls live, not as interrupted.
-    this.restorePage(page, asked, await page.orch.pending().catch(() => false));
+    this.restorePage(page, await page.orch.pending().catch(() => false));
     this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
     const saved = await loadHistory(project);
     page.inputHistory = saved.entries;
@@ -1315,7 +1311,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   /** A failed turn's lines that the record does not hold stay on the page as notices. */
   private keepUnsaved(page: Page): void {
-    const saved = restore(page.orch.entries?.() ?? [], this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
+    const saved = restore(page.orch.entries?.() ?? [], this.deps.term.cols, Infinity);
     const known = new Set([...saved, ...(this.notices.get(page) ?? [])].map(line => JSON.stringify(line)));
     for (const line of page.lines) if (!known.has(JSON.stringify(line))) this.keepNotice(page, line);
   }
@@ -1701,7 +1697,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
    * 1. a known command that needs no page runs at once (agent view, sign-in, no page: all fine);
    * 2. with no page open, anything else (/agents, an unknown command, plain text) opens a fresh orch-xxxx and is dropped;
    * 3. a known command runs on the page;
-   * 4. an unknown one (or arguments to a command that takes none) says "unknown command /x";
+   * 4. an unknown one (or arguments to a command that takes none) notes "unknown command /x" above the composer;
    * 5. plain text goes to the orchestrator (talk), refused in an agent view and queued while signing in.
    */
   private async submit(text: string, attachments: ImageRef[] = []): Promise<void> {
@@ -1713,7 +1709,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const page = this.page;
     if (!page) return this.newPage();
     if (call?.command) return call.command.run(call.args, page);
-    if (call) return this.say(dim(`unknown command ${call.name}`));
+    if (call) return this.note(`unknown command ${call.name}`);
     return this.talk(page, text, attachments);
   }
 
@@ -1750,7 +1746,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       this.toView(page, view, [dim("stopping selected agent. press ctrl+c again within 2 seconds to exit.")]);
     } else {
       page?.orch.cancel?.();
-      this.say(dim("turn cancelled. send a message to resume; press ctrl+c again within 2 seconds to exit."), page);
+      // A transient note; the daemon's acknowledgement replaces it (same row) and the header's fin stops once the turn ends.
+      this.note("turn cancelled. send a message to resume; press ctrl+c again within 2 seconds to exit.", page);
     }
     this.draw();
   }

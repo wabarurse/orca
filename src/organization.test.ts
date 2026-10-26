@@ -41,8 +41,8 @@ const SIZE = { sourceLines: 800, testLines: 1500, params: 8, barrelExports: 40 }
 // Today's offenders: the number is a ceiling. Growth fails; shrink the ceiling here when the file shrinks; delete the
 // row once the file is within SIZE (the test fails on a stale row).
 const DEBT: Record<string, { lines?: number; exports?: number }> = {
-  "tui/app.ts": { lines: 2131 },
-  "tui/app.test.ts": { lines: 4253 },
+  "tui/app.ts": { lines: 2128 },
+  "tui/app.test.ts": { lines: 4252 },
   "protocol/index.ts": { exports: 48 },
 };
 

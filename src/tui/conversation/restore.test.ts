@@ -6,7 +6,7 @@ import { format } from "../../protocol/inbox";
 import { open } from "../../core/data/transcripts/transcript";
 import type { Entry } from "../../protocol/transcript";
 import { historyRows, lineRows, type Line } from "./lines";
-import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, unresolvedCalls } from "./restore";
+import { earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, unresolvedCalls } from "./restore";
 import { toolView } from "../../protocol/toolview";
 import { bold, dim } from "../components/text";
 import { collapseCalls } from "./tools";
@@ -115,9 +115,9 @@ test("collapsed: a restored run of calls across assistant entries and their tool
   ]);
   // A run of calls still running is left out of the fold too: what remains folds, or stands alone.
   const mid = transcript(meta, assistant([bash("c1", "a"), bash("c2", "b"), bash("c3", "c")]), user([result("c1", ""), result("c2", "")]));
-  expect(text(collapseCalls(restore(mid, 60, Infinity, undefined, unresolvedCalls(mid))))).toEqual(["▸ 2 tool calls · bash ×2"]);
+  expect(text(collapseCalls(restore(mid, 60, Infinity, unresolvedCalls(mid))))).toEqual(["▸ 2 tool calls · bash ×2"]);
   const one = transcript(meta, assistant([bash("c1", "a"), bash("c2", "b")]), user([result("c1", "")]));
-  expect(text(collapseCalls(restore(one, 60, Infinity, undefined, unresolvedCalls(one))))).toEqual(["⏺ bash(a)", "  ⎿  no output"]);
+  expect(text(collapseCalls(restore(one, 60, Infinity, unresolvedCalls(one))))).toEqual(["⏺ bash(a)", "  ⎿  no output"]);
   expect(text(collapseCalls(restore(one, 60)))).toEqual(["▸ 2 tool calls · bash ×2 · 1 failed"]); // once the turn is over, the lost call is interrupted
 });
 
@@ -132,12 +132,12 @@ test("while a turn runs, the newest entry's calls without a result are left out 
   const running = unresolvedCalls(entries);
   expect([...running]).toEqual(["b2"]);
   const shown = (lines: Line[]) => lines.map(raw).map(Bun.stripANSI);
-  expect(shown(restore(entries, 60, Infinity, undefined, running))).toEqual(["old", "bash(crashed) ⎿ interrupted", "> next", "Looking", "bash(ls) ⎿ 1 line"]);
+  expect(shown(restore(entries, 60, Infinity, running))).toEqual(["old", "bash(crashed) ⎿ interrupted", "> next", "Looking", "bash(ls) ⎿ 1 line"]);
   expect(shown(restore(entries, 60))).toEqual(["old", "bash(crashed) ⎿ interrupted", "> next", "Looking", "bash(ls) ⎿ 1 line", "echo(it) ⎿ interrupted"]);
   // An entry holding only a running call shows nothing yet; a resolved record has nothing to leave out.
   const only = transcript(meta, assistant([{ type: "tool_use", id: "c1", name: "bash", input: { command: "x" } }]));
-  expect(restore(only, 60, Infinity, undefined, unresolvedCalls(only))).toEqual([]);
-  expect(restoreItems(only, undefined, unresolvedCalls(only))).toEqual([]);
+  expect(restore(only, 60, Infinity, unresolvedCalls(only))).toEqual([]);
+  expect(restoreItems(only, unresolvedCalls(only))).toEqual([]);
   expect(unresolvedCalls(transcript(meta, assistant([{ type: "tool_use", id: "c1", name: "bash", input: {} }]), user([{ type: "tool_result", tool_use_id: "c1", content: "" }]))).size).toBe(0);
   expect(unresolvedCalls([])).toEqual(new Set());
 });
@@ -266,54 +266,33 @@ test("tags inside a report or a user message are not senders", () => {
   expect(restore(entries, 60)).toEqual([...[`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item"].map((user) => ({ user })), dim("from worker-a: Report…")]);
 });
 
-test("question answers and legacy delivered skips restore as the dim line the page showed live, not as '> …'", () => {
+test("settled questions leave no line: answers and legacy delivered skips are left out of the restored page, chat that merely looks like one is not", () => {
+  const id = "2026-01-02T03-04-05.678Z-000007-0123abcd";
   const entries = transcript(
     meta,
+    user("go"),
+    assistant("Which db?"),
     user(inbox(
-      ["user", '[2026-01-01T00-00-00.000Z-000001-abcd1234] answer to "Which db?": postgres'],
+      ["user", `[${id}] answer to "Use \"a\": or (b)?": say "x": y`],
       ["user", '[2026-01-01T00-00-00.000Z-000002-abcd1234] skipped "Port?"; use your default (8080)'],
       ["user", '[2026-01-01T00-00-00.000Z-000003-abcd1234] skipped "Name?" (no default given); decide yourself'],
       ["user", "[not a question] hello"],
+      ["worker-a", "done"],
     )),
+    assistant("Noted."),
   );
-  expect(restore(entries, 80).map(raw)).toEqual([
-    answeredLine("Which db?", "postgres"),
-    answeredLine("Port?", null, "8080"),
-    answeredLine("Name?", null),
-    `${bold(">")} [not a question] hello`,
-  ]);
-  expect(answeredLine("Port?", null, "8080")).toBe(dim("? Port? → skipped, default: 8080"));
-  expect(questionReply("plain")).toBeNull();
-});
-
-test("question replies: the question is looked up by id, so quotes, `\": ` and parens survive; the regex is only a fallback", () => {
-  const id = "2026-01-02T03-04-05.678Z-000007-0123abcd";
-  const text = 'Use "a": or "b"?';
-  const answered = `[${id}] answer to "${text}": say "x": y`;
-  const asked = new Map([[id, { text, default: "b (fast)", status: "answered", answer: 'say "x": y' }]]);
-  expect(questionReply(answered, (i) => asked.get(i))).toEqual({ id, line: answeredLine(text, 'say "x": y') });
-  // Still open in the file (read before it closed): the prefix is the known text.
-  const open = new Map([[id, { text }]]);
-  expect(questionReply(answered, (i) => open.get(i))!.line).toBe(answeredLine(text, 'say "x": y'));
-  const skipped = `[${id}] skipped "${text}"; use your default (b (fast))`;
-  expect(questionReply(skipped, (i) => asked.get(i))!.line).toBe(answeredLine(text, null, "b (fast)"));
-  // No file: the fallback keeps parens in the default and cuts an answer at the first `": `.
-  expect(questionReply(skipped)!.line).toBe(answeredLine(text, null, "b (fast)"));
-  expect(questionReply(`[${id}] answer to "Port?": 80 "or": 81`)!.line).toBe(answeredLine("Port?", '80 "or": 81'));
+  expect(restore(entries, 80).map(raw)).toEqual([`${bold(">")} go`, "Which db?", `${bold(">")} [not a question] hello`, dim("from worker-a: done"), "Noted."]);
+  // The reply still counts as the user speaking: a held legacy reply to the user is released by it, and it is not an omitted "earlier message".
+  const replyOnly = transcript(meta, user(inbox(["user", `[${id}] answer to "Which db?": postgres`])), assistant("Noted."));
+  expect(restoreItems(replyOnly).map(item => item.lines().map(raw))).toEqual([["Noted."]]);
+  expect(restore(replyOnly, 80, 1).map(raw)).toEqual(["Noted."]);
   // Only questions.ts's id shape counts, and only one line.
-  expect(questionReply('[q1] answer to "a": b')).toBeNull();
-  expect(questionReply(`[${id}] answer to "a": b\nmore`)).toBeNull();
-  // restore() takes the lookup.
-  const entries = transcript(meta, user(inbox(["user", answered])));
-  expect(restore(entries, 80, MAX_RESTORED_ROWS, (i) => asked.get(i)).map(raw)).toEqual([answeredLine(text, 'say "x": y')]);
-});
-
-
-test("a skipped record alone never synthesizes a delivered reply/default during restore", () => {
-  const id = "2026-01-02T03-04-05.678Z-000007-0123abcd";
-  const lookup = (key: string) => key === id ? { text: "Approval?", status: "skipped", default: "yes" } : undefined;
-  expect(restore(transcript(meta), 80, MAX_RESTORED_ROWS, lookup)).toEqual([]);
-  expect(questionReply("? Approval? → skipped, removed from inbox", lookup)).toBeNull();
+  expect(questionReply(`[${id}] answer to "a": b`)).toBe(true);
+  expect(questionReply(`[${id}] skipped "a" (no default given); decide yourself`)).toBe(true);
+  expect(questionReply('[q1] answer to "a": b')).toBe(false);
+  expect(questionReply(`[${id}] answer to "a": b\nmore`)).toBe(false);
+  expect(questionReply("plain")).toBe(false);
+  expect(questionReply("? Approval? → skipped, removed from inbox")).toBe(false);
 });
 
 test("live and replay keep mixed-case user, assistant/code, paths, URLs, tool arguments and raw results", () => {
