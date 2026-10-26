@@ -98,7 +98,8 @@ test("ensureDaemon starts through the runner only when none is alive; a lost sta
   let now = 0;
   alive = false; fail = false; started.length = 0;
   const keep = daemonKeeper({ runner, alive: isAlive, now: () => now });
-  expect(await keep("k")).toBe("orchestrator started");
+  expect(await keep("k")).toBeUndefined(); // the first start is routine: no line
+  expect(started).toHaveLength(1);
   expect(await keep("k")).toBeUndefined(); // alive now
   alive = false;
   expect(await keep("k")).toBeUndefined(); // dead again, but inside the backoff

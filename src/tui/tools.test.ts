@@ -3,7 +3,7 @@ import { commit } from "./render";
 import { intensity, shimmer, SHIMMER_MS } from "./shimmer";
 import { setTerminalBackground } from "./style";
 import { FakeScreen } from "./testing";
-import { Calls, collapseCalls, groupRow, runningRow, toolRows } from "./tools";
+import { Calls, collapseCalls, groupRow, groupStart, groupStarts, runningRow, toolRows } from "./tools";
 import { historyRows, lineRows, type Line } from "./lines";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;:]*m/g, "");
@@ -44,19 +44,20 @@ describe("tool rows", () => {
   test("a run of finished calls folds into one dim summary line: count, per-tool tally (most first, ties in call order), failures; the tally gives way first on narrow widths", () => {
     const call = (tool: string, failed = false) => ({ tool, summary: failed ? "exit 1" : "ok", failed });
     const seven = [call("bash(a)"), call("read(x)"), call("bash(b)", true), call("edit(y)"), call("bash(c)"), call("read(z)"), call("bash(d)")];
-    expect(strip(groupRow(seven, 80))).toBe("⏺ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed");
-    expect(groupRow(seven, 80)).toBe(`\x1b[31m⏺\x1b[0m \x1b[2m7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed\x1b[0m`);
-    expect(groupRow([call("bash(a)"), call("bash(b)")], 80)).toBe(`\x1b[2m⏺\x1b[0m \x1b[2m2 tool calls · bash ×2\x1b[0m`);
-    expect(strip(groupRow([call("read(a)"), call("bash(b)")], 80))).toBe("⏺ 2 tool calls · read ×1, bash ×1"); // a tie keeps the first call's tool first
-    expect(strip(groupRow([call("bash(a)", true)], 80))).toBe("⏺ 1 tool call · bash ×1 · 1 failed");
-    expect(strip(groupRow(seven, 40))).toBe("⏺ 7 tool calls · bash ×4, re… · 1 failed");
-    expect(strip(groupRow(seven, 25))).toBe("⏺ 7 tool calls · 1 failed"); // no room for a useful tally: dropped, the failures kept
-    expect(strip(groupRow(seven, 10))).toBe("⏺ 7 tool …");
+    expect(strip(groupRow(seven, 80))).toBe("▸ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed");
+    expect(groupRow(seven, 80)).toBe(`\x1b[31m▸\x1b[0m \x1b[2m7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed\x1b[0m`);
+    expect(groupRow([call("bash(a)"), call("bash(b)")], 80)).toBe(`\x1b[2m▸\x1b[0m \x1b[2m2 tool calls · bash ×2\x1b[0m`);
+    expect(groupRow([call("bash(a)"), call("bash(b)")], 80, true)).toBe(`\x1b[2m▾\x1b[0m \x1b[2m2 tool calls · bash ×2\x1b[0m`); // opened by a click
+    expect(strip(groupRow([call("read(a)"), call("bash(b)")], 80))).toBe("▸ 2 tool calls · read ×1, bash ×1"); // a tie keeps the first call's tool first
+    expect(strip(groupRow([call("bash(a)", true)], 80))).toBe("▸ 1 tool call · bash ×1 · 1 failed");
+    expect(strip(groupRow(seven, 40))).toBe("▸ 7 tool calls · bash ×4, re… · 1 failed");
+    expect(strip(groupRow(seven, 25))).toBe("▸ 7 tool calls · 1 failed"); // no room for a useful tally: dropped, the failures kept
+    expect(strip(groupRow(seven, 10))).toBe("▸ 7 tool …");
     for (const cols of [80, 40, 24, 10, 3]) expect(Bun.stringWidth(strip(groupRow(seven, cols)))).toBeLessThanOrEqual(cols);
-    expect(shown([groupRow(seven, 60)], 60)).toBe("⏺ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed");
-    expect(strip(groupRow([call("bash(a\x1b[2Jb)"), call("x\x07(y)")], 80))).toBe("⏺ 2 tool calls · bash ×1, x ×1");
+    expect(shown([groupRow(seven, 60)], 60)).toBe("▸ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed");
+    expect(strip(groupRow([call("bash(a\x1b[2Jb)"), call("x\x07(y)")], 80))).toBe("▸ 2 tool calls · bash ×1, x ×1");
     process.env.NO_COLOR = "1";
-    expect(groupRow(seven, 80).startsWith("\x1b[1m⏺\x1b[0m ")).toBe(true);
+    expect(groupRow(seven, 80).startsWith("\x1b[1m▸\x1b[0m ")).toBe(true);
   });
 
   test("collapseCalls folds runs of two or more calls into { calls } lines, leaves lone calls and everything else alone; one summary row with a blank before and after", () => {
@@ -66,8 +67,23 @@ describe("tool rows", () => {
     expect(collapseCalls([])).toEqual([]);
     expect(collapseCalls([a])).toEqual([a]);
     expect(lineRows({ calls: [a, b] }, 40)).toEqual([groupRow([a, b], 40)]);
-    expect(historyRows(collapseCalls([{ md: "text", block: true }, a, b, { md: "more", block: true }]), 40).map(strip)).toEqual(["text", "", "⏺ 2 tool calls · bash ×1, read ×1", "", "more"]);
+    expect(historyRows(collapseCalls([{ md: "text", block: true }, a, b, { md: "more", block: true }]), 40).map(strip)).toEqual(["text", "", "▸ 2 tool calls · bash ×1, read ×1", "", "more"]);
     expect(historyRows([{ md: "text", block: true }, a, b, { md: "more", block: true }], 40).map(strip)).toEqual(["text", "", "⏺ bash(a)", "  ⎿  1 line", "", "⏺ read(b)", "  ⎿  ok", "", "more"]); // expanded: as before
+  });
+
+  test("a group opened by a click (its run's start index) keeps its summary row with every call indented under it; groups are found by where their runs start", () => {
+    const a = { tool: "bash(a)", summary: "1 line", failed: false }, b = { tool: "read(b)", summary: "ok", failed: false }, c = { tool: "bash(c)", summary: "interrupted", failed: true };
+    const lines: Line[] = [{ user: "> go" }, a, b, c, { md: "text", block: true }, a, "note", b, c];
+    expect(groupStarts(lines)).toEqual([1, 7]);
+    expect(groupStarts([a])).toEqual([]);
+    const shown = collapseCalls(lines, new Set([7]));
+    expect(shown).toEqual([{ user: "> go" }, { calls: [a, b, c] }, { md: "text", block: true }, a, "note", { calls: [b, c], open: true }]);
+    expect(groupStart(lines, shown, 1)).toBe(1);
+    expect(groupStart(lines, shown, 5)).toBe(7);
+    expect(groupStart(lines, shown, 3)).toBeUndefined(); // a lone call is no group
+    expect(groupStart(lines, shown, 0)).toBeUndefined();
+    expect(lineRows({ calls: [a, c], open: true }, 40).map(strip)).toEqual(["▾ 2 tool calls · bash ×2 · 1 failed", "  ⏺ bash(a)", "    ⎿  1 line", "  ⏺ bash(c)", "    ⎿  interrupted"]);
+    for (const row of lineRows({ calls: [a, c], open: true }, 12)) expect(Bun.stringWidth(strip(row))).toBeLessThanOrEqual(12);
   });
 
   test("a running call: the dim marker and its label shimmering, cut to the width", () => {

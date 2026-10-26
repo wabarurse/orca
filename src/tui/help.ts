@@ -14,7 +14,7 @@ const NAVIGATION: HelpEntry[] = [
   { label: "ctrl+q", description: "inbox questions toggle; arrivals never open inbox" },
   { label: "shift+tab (inbox)", description: "switch tasks / questions; esc or tab closes without answering" },
   { label: "pgup/pgdn / wheel", description: "scroll conversation, help or inbox tasks (mouse reporting required)" },
-  { label: "ctrl+t", description: "expand or collapse runs of tool calls (one summary line each by default)" },
+  { label: "click ▸", description: "open a run of tool calls (▾ when open); click again to fold it" },
   { label: "ctrl+c", description: "cancel selected turn/agent; twice within 2s exits, keeping history" },
   { label: "esc", description: "close panel, else leave agent view, else clear input" },
 ];

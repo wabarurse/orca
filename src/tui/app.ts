@@ -1,4 +1,4 @@
-import { ConversationSelection } from "./selection";
+import { ConversationSelection, hitRow } from "./selection";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "../clipboard";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput, type ImageRef } from "../images";
 import { contextStatus, dispatchStatus, reviewStatus } from "./context-status";
@@ -36,7 +36,7 @@ import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { chapterRows, headerHeight } from "./chrome";
 import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./anchor";
-import { Calls, collapseCalls } from "./tools";
+import { Calls, collapseCalls, groupStart, groupStarts } from "./tools";
 import { agentRow, reselect } from "./agent-clock";
 import type { ToolCall, ToolOutcome } from "../toolview";
 import { stickyRows, stickyUpdate, type StickyScreen } from "./sticky";
@@ -77,8 +77,6 @@ export interface Page {
   view: { name: string; lines: Line[]; leave: () => void; live: boolean; calls: Calls } | null;
   /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
   calls: Calls;
-  /** Ctrl+T: runs of finished calls show call by call instead of folded into one summary line (tools.ts `collapseCalls`). Per page, not saved. */
-  toolsExpanded?: boolean;
   model?: string;
   settings?: RequestSettings;
   agentCount?: number;
@@ -529,13 +527,16 @@ export class App {
   /** New lines onto the screen: appended rows, unless they fold into the run of calls already drawn (its summary row changes), which needs a reprint. */
   private append(page: Page, lines: Line[], previous?: Line): void {
     const run = previous === undefined ? lines : [previous, ...lines];
-    if (!page.toolsExpanded && collapseCalls(run).length !== run.length) this.needReprint = true;
+    if (collapseCalls(run).length !== run.length) this.needReprint = true;
     else this.pending.push(...this.rows(lines, previous));
   }
 
-  /** The lines a page shows (its agent view's, else its own): runs of finished calls folded into one line each unless the page is expanded (Ctrl+T). */
-  private shown(page: Page, lines = page.view?.lines ?? page.lines): readonly Shown[] {
-    return page.toolsExpanded ? lines : collapseCalls(lines);
+  /** Groups a click opened, by the start index of their run, per history (a page's or a view's lines); a new history (syncTranscript) carries them over by order. */
+  private readonly openGroups = new WeakMap<readonly Line[], Set<number>>();
+
+  /** The lines a page shows (its agent view's, else its own): runs of finished calls folded into one line each, the clicked-open ones with their calls under it; `all` leaves every call as it is (the quit replay). */
+  private shown(page: Page, lines = page.view?.lines ?? page.lines, all = false): readonly Shown[] {
+    return all ? lines : collapseCalls(lines, this.openGroups.get(lines));
   }
 
   /** What the screen shows for the active page: its agent view or its history. */
@@ -926,7 +927,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   private leave(): void {
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
-    const history = page ? this.shown(page) : this.looseLines;
+    // Folded groups cannot be opened once the TUI is gone: the scrollback gets every call.
+    const history = page ? this.shown(page, undefined, true) : this.looseLines;
     const lines = [...(page ? this.header(page, false) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
@@ -1013,11 +1015,21 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const saved = new Set(lines.map(line => JSON.stringify(line)));
     const notes = (this.notices.get(page) ?? []).filter(line => !saved.has(JSON.stringify(line)));
     this.notices.set(page, notes);
-    const anchor = this.relocatedAnchor(page, lines);
-    page.lines = [...lines, ...notes];
+    const next = [...lines, ...notes];
+    this.carryOpen(page.lines, next);
+    const anchor = this.relocatedAnchor(page, next);
+    page.lines = next;
     if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(this.shown(page), this.deps.term.cols, anchor); }
     this.renderedHeads.set(page, head);
     if (page === this.page && !page.view) this.reprint();
+  }
+
+  /** The groups opened in `from` stay open in `to`, its re-rendering: the same group is the same run in order. */
+  private carryOpen(from: readonly Line[], to: readonly Line[]): void {
+    const open = this.openGroups.get(from);
+    if (!open?.size) return;
+    const starts = groupStarts(to);
+    this.openGroups.set(to, new Set(groupStarts(from).flatMap((start, i) => open.has(start) && starts[i] !== undefined ? [starts[i]!] : [])));
   }
 
   /** Where the scrolled-up viewport's anchor line sits in the re-rendered `lines` (the same shown line's same occurrence), if the page is scrolled. */
@@ -1741,24 +1753,13 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
     ["x", () => this.switchPage(1)],
-    ["t", () => this.toggleTools()],
   ]);
-
-  /** Ctrl+T: the page's runs of finished tool calls call by call, or folded back into one summary line each (the default). */
-  private toggleTools(): void {
-    const page = this.page;
-    if (!page) return;
-    page.toolsExpanded = !page.toolsExpanded;
-    this.selection.clear(); // the rows under it moved
-    this.scrollAnchor = undefined; // captured in the other view's line indexes: a resize would resolve it there
-    this.reprint();
-  }
 
   /**
    * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
    * 0. clear: local Cancel-default confirmation owns all keys; navigation cancels it first;
    * 1. keyEcho: /keys echoes every key except Ctrl+C until Esc;
-   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys, Ctrl+T expands/collapses tool calls;
+   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/model, /agents, /accounts) is open;
    * 5. help: scroll or dismiss the explicit help panel, preserving the composer;
@@ -1782,6 +1783,45 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     { name: "enter", takes: (k) => k.name === "enter" && !k.shift && !k.alt, handle: () => this.enterKey() },
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
+
+  /** Where the mouse last went down: a release on the same cell is a click. */
+  private pressed?: { x?: number; y?: number };
+
+  /** A press and a release on the same cell: the released report, else nothing. */
+  private click(k: Key): Key | undefined {
+    if (k.name === "mousedown") { this.pressed = { x: k.x, y: k.y }; return; }
+    if (k.name !== "mouseup") return;
+    const down = this.pressed;
+    this.pressed = undefined;
+    return down && down.x === k.x && down.y === k.y ? k : undefined;
+  }
+
+  /** The painted frame is what a click hit: not while a reprint is due, nor when the frame shows another page or view than the current one. */
+  private clickable(): StickyScreen | undefined {
+    if (!this.selectionAllowed() || this.resizeTimer || this.needReprint || (this.page?.view ?? this.page) !== this.screenOwner) return;
+    return this.screen;
+  }
+
+  /** The folded group whose summary row is painted history row `index`: where its run starts in the page's (or view's) lines. */
+  private groupAt(page: Page, index: number, cols: number): number | undefined {
+    const lines = page.view?.lines ?? page.lines, shown = this.shown(page);
+    const at = captureAnchor(shown, cols, index);
+    return at.part === 0 ? groupStart(lines, shown, at.line) : undefined;
+  }
+
+  /** A click on a folded group's summary line opens it (its calls under the summary), or closes it again: the only way to see a run's calls. */
+  private toolClick(k: Key): void {
+    const screen = this.click(k) && this.clickable(), page = this.page;
+    const hit = screen && page && hitRow(k, screen, this.screenHistory.length);
+    const start = hit ? this.groupAt(page, hit.row, screen.cols) : undefined;
+    if (start === undefined || !page) return;
+    const lines = page.view?.lines ?? page.lines;
+    const open = this.openGroups.get(lines) ?? new Set<number>();
+    if (!open.delete(start)) open.add(start);
+    this.openGroups.set(lines, open);
+    this.selection.clear(); // the rows under it moved
+    this.reprint();
+  }
 
   private async selectionMouse(k: Key): Promise<void> {
     const screen = this.screen;
@@ -1809,7 +1849,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   async onKey(k: Key): Promise<void> {
     if (!this.selectionAllowed()) this.selection.clear();
-    if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) return this.selectionMouse(k);
+    if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) { this.toolClick(k); return this.selectionMouse(k); }
     this.clearNote(k);
     if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
     if (k.name === "escape" && this.selection.active) { this.selection.clear(); this.draw(); return; }

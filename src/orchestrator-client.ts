@@ -48,7 +48,7 @@ export async function ensureDaemon(project: string, opts: EnsureOptions = {}): P
 /**
  * The TUI's per-poll check: a dead daemon is restarted at most once per
  * RESTART_BACKOFF_MS per project. Returns a line to show when something
- * happened; throws when a start failed (the next poll tries again after the backoff).
+ * happened (a restart, not the first start); throws when a start failed (the next poll tries again after the backoff).
  */
 export function daemonKeeper(opts: EnsureOptions & { now?: () => number } = {}): (project: string) => Promise<string | undefined> {
   const now = opts.now ?? Date.now;
@@ -64,7 +64,7 @@ export function daemonKeeper(opts: EnsureOptions & { now?: () => number } = {}):
       if (await alive(project)) return;
       started.set(project, now());
       await ensureDaemon(project, opts);
-      return last === undefined ? "orchestrator started" : "orchestrator was not running; restarted";
+      return last === undefined ? undefined : "orchestrator was not running; restarted"; // the first start is routine: nothing to show
     })().finally(() => checking.delete(project));
     checking.set(project, check);
     return check;

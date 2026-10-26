@@ -17,15 +17,15 @@ import type { ToolView } from "../toolview";
  */
 export type Line = string | { md: string; block?: boolean; label?: string; continuation?: true } | { user: string } | ToolView;
 
-/** A line as shown: a history line, or a run of finished calls folded into one (`calls`, tools.ts `collapseCalls`) for the collapsed view, one summary row (`groupRow`). The history itself never holds one. */
-export type Shown = Line | { calls: ToolView[] };
+/** A line as shown: a history line, or a run of finished calls folded into one (`calls`, tools.ts `collapseCalls`) for the collapsed view, one summary row (`groupRow`), with every call indented under it once a click opened it (`open`). The history itself never holds one. */
+export type Shown = Line | { calls: ToolView[]; open?: true };
 
 /** A history line as screen lines at `cols` columns. */
 export function lineRows(l: Shown, cols: number): string[] {
   if (typeof l === "string") return [l];
   if ("user" in l) return userRows(l.user, cols);
   if ("tool" in l) return toolRows(l, cols);
-  if ("calls" in l) return [groupRow(l.calls, cols)];
+  if ("calls" in l) return [groupRow(l.calls, cols, l.open), ...(l.open ? l.calls.flatMap((c) => toolRows(c, Math.max(1, cols - 2)).map((r) => `  ${r}`)) : [])];
   if (l.block) return renderBlock(l.md, cols);
   return l.label ? renderLabelled(l.label, l.md, cols) : renderMarkdown(l.md, cols);
 }
