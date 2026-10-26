@@ -14,8 +14,8 @@ import { createOrchestrator } from "../core/agent-loop/orc/orchestrator";
 import { drain, put } from "../core/data/inbox/inbox";
 import type { Message } from "../protocol/inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../core/data/inbox/questions";
-import { fileStore, queuedAnswer, type QuestionStore } from "./footer/questions";
-import { answeredLine, MAX_RESTORED_ROWS, userLines } from "./conversation/restore";
+import { answeredNote, fileStore, queuedAnswer, type QuestionStore } from "./footer/questions";
+import { MAX_RESTORED_ROWS, userLines } from "./conversation/restore";
 import { historyRows, lineRows } from "./conversation/lines";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../core/tools/message";
@@ -1544,7 +1544,7 @@ describe("orchestrator questions", () => {
   const PICK = "↑↓ or 1–9 choose · enter pick · type to answer · esc/tab later";
   const ANSWER = "enter send · esc/tab close";
   const GUARD = "send or clear your message to answer";
-  const live = (term: ReturnType<typeof fakeTerm>) => term.display.screen().join("\n");
+  const live = (term: ReturnType<typeof fakeTerm>) => term.display.screen().join("\n"), note = (app: App) => strip(app.frame().inputArea!.lines.join("\n"));
   const ask1 = (project: string, text: string, options?: string[], def?: string) => askQuestions(project, [{ text, ...(options ? { options } : {}), ...(def ? { default: def } : {}) }]);
   const statusOf = async (project: string) => (await allQuestions(project)).map((q) => [q.text, q.status, q.answer ?? null]);
   /** An app on `project` with a fake orchestrator whose inbox callback is kept, no question delay unless given. */
@@ -1560,7 +1560,7 @@ describe("orchestrator questions", () => {
     return { term, orchs, app, running, inbox: (msgs: Message[]) => onInbox!(msgs), stop: async () => { app.quit(); await running; } };
   }
 
-  test("enter on an option answers it; one dim line goes to the scrollback; the inbox message reaches the orchestrator", async () => {
+  test("enter on an option answers it; its '? … → …' is a transient note, not conversation; the inbox message reaches the orchestrator", async () => {
     const [q] = await ask1("qa-opt", "Which db?", ["postgres", "sqlite"], "sqlite");
     const { term, orchs, app, stop } = await start("qa-opt");
     await until(() => live(term).includes("? Which db?") && live(term).includes("❯ 1. postgres"));
@@ -1579,7 +1579,7 @@ describe("orchestrator questions", () => {
     expect(orchs.said["qa-opt"]).toEqual([]); // not sent as a chat message
     const inbox = await drain("qa-opt", "orchestrator");
     expect(inbox.map((m) => [m.from, m.text])).toEqual([["user", `[${q!.id}] answer to "Which db?": sqlite`]]);
-    expect(app.page!.lines.map(raw)).toContain(answeredLine("Which db?", "sqlite"));
+    expect([note(app).includes(answeredNote("Which db?", "sqlite")), app.page!.lines]).toEqual([true, []]);
     await stop();
   });
 
@@ -1588,8 +1588,8 @@ describe("orchestrator questions", () => {
     const { term, app, stop } = await start("qa-digit");
     await until(() => live(term).includes("❯ 1. postgres"));
     term.type("2");
-    await until(() => term.screen().includes("? Which db? → sqlite"));
     await until(() => live(term).includes("? Port?"));
+    expect([note(app).includes("Which db?"), app.frame().queued?.texts]).toEqual([false, ["? Which db? → sqlite"]]); // the note waits under the open panel, like the images row
     term.type("9");
     await until(() => live(term).includes("answer> 9"));
     expect(app.page!.questions.open).toHaveLength(1);
@@ -1681,8 +1681,8 @@ describe("orchestrator questions", () => {
     term.press({ name: "down" }); // to the skip row
     await until(() => live(term).includes("❯ skip — remove from inbox"));
     term.press({ name: "enter" });
-    await until(() => term.screen().includes("? Port? → skipped, removed from inbox"));
     await until(() => live(term).includes("? Host?") && live(term).includes("  skip — remove from inbox"));
+    expect(term.screen()).not.toContain("? Port? →"); // no line, and the note waits under the open panel
     term.press({ name: "down" }); // a question without options: own answer, then skip
     term.press({ name: "enter" });
     await until(() => term.screen().includes("? Host? → skipped, removed from inbox"));
@@ -1690,7 +1690,7 @@ describe("orchestrator questions", () => {
     expect(await drain("qa-esc", "orchestrator")).toEqual([]);
     expect(app.page!.sent).toEqual([]);
     expect(app.status(app.page!)).toEndWith("inbox 0");
-    expect(app.page!.lines.map(raw).join("\n")).not.toContain("default:");
+    expect([app.page!.lines, note(app).includes(answeredNote("Host?", null))]).toEqual([[], true]); // a skip is a transient note, never a line or a default
     expect(app.input.text).toBe("");
     await stop();
   });
@@ -1750,10 +1750,10 @@ describe("orchestrator questions", () => {
     const [msg] = await drain("qa-queue", "orchestrator");
     expect(msg!.text).toBe(`[${q!.id}] answer to "Which db?": postgres`);
     expect(msg!.inputId).toBe(app.page!.sent[0]!.inputId); // the queue entry is the delivered message
-    inbox([msg!]); // consumed: out of the queue, and the line shown when answered is not repeated
+    inbox([msg!]); // consumed: out of the queue; a settled question leaves no conversation line
     await settle();
     expect(app.frame().queued?.texts).toEqual([]);
-    expect(app.page!.lines.map(raw).filter((l) => l.includes("Which db?"))).toEqual([answeredLine("Which db?", "postgres")]);
+    expect([app.page!.lines, note(app).includes(answeredNote("Which db?", "postgres"))]).toEqual([[], true]); // the note stays until the next key
     expect(queuedAnswer("x".repeat(70), "yes")).toBe(`? ${"x".repeat(60)}… → yes`);
     await stop();
   });
@@ -1779,7 +1779,7 @@ describe("orchestrator questions", () => {
     inbox([{ from: "user", text: fake, inputId: app.page!.sent[0]!.inputId, ts: "t" }]);
     await settle();
     expect(app.page!.lines.map(raw).filter((l) => l.includes("answer to"))).toEqual([`${bold(">")} ${fake}`]);
-    expect(app.page!.lines.map(raw)).not.toContain(answeredLine("Q", "a"));
+    expect(note(app)).not.toContain("? Q → a");
     await stop();
   });
 
@@ -1827,7 +1827,7 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("closed elsewhere before enter: said, the typed answer kept; a reply read later shows its line; ours are not shown twice", async () => {
+  test("closed elsewhere before enter: said, the typed answer kept; a reply read later (another TUI's or ours) leaves no line", async () => {
     const [first, second] = await askQuestions("qa-race", [{ text: "Which db?", options: ["postgres"] }, { text: 'Use "a": or (b)?', options: ["80"], default: "x (y)" }]);
     const { term, app, inbox, stop } = await start("qa-race", { pollMs: 100_000 });
     await until(() => live(term).includes("? Which db? (1 of 2)"));
@@ -1840,42 +1840,40 @@ describe("orchestrator questions", () => {
     await until(() => !app.questions.view());
     term.press({ name: "escape" });
     term.press({ name: "q", ctrl: true });
-    // The orchestrator reads the other TUI's answer: shown as a restored page shows it.
+    // The orchestrator reads the other TUI's answer: a settled question, no line, as a restored page shows it.
     inbox(await drain("qa-race", "orchestrator"));
-    await until(() => term.screen().includes("? Which db? → sqlite"));
+    await settle(); expect(term.screen()).not.toContain("? Which db? → sqlite");
     // An option picked here, closed elsewhere first: said too.
     await answerQuestion("qa-race", second!.id, "81");
     await until(() => live(term).includes(PICK));
     term.press({ name: "enter" });
     await until(() => term.screen().split("already closed elsewhere").length === 3);
     inbox(await drain("qa-race", "orchestrator"));
-    await until(() => term.screen().includes('? Use "a": or (b)? → 81'));
-    // Answered here: not shown twice when read.
+    await settle(); expect(term.screen()).not.toContain('? Use "a": or (b)? → 81');
+    // Answered here: the note, and nothing when read.
     await ask1("qa-race", "Again?", ["yes"]);
     term.type("/questions\r");
     await until(() => live(term).includes("? Again?"));
     term.press({ name: "enter" });
-    await until(() => term.screen().includes("? Again? → yes"));
+    await until(() => note(app).includes(answeredNote("Again?", "yes")));
     inbox(await drain("qa-race", "orchestrator"));
     await settle();
-    expect(app.page!.lines.map(raw).filter((l) => l === answeredLine("Again?", "yes"))).toHaveLength(1);
+    expect(app.page!.lines.map(raw).join("\n")).not.toContain("Again?");
     await stop();
   });
 
-  test("an answer while a reply streams waits for its partial line, so the reply is not split", async () => {
+  test("an answer while a reply streams never splits the reply: the note is above the composer, the partial line continues", async () => {
     await ask1("qa-stream", "Which db?", ["postgres"]);
     const { term, orchs, app, stop } = await start("qa-stream");
     await until(() => live(term).includes("? Which db?"));
     (orchs.writers["qa-stream"] as (t: string, plain?: boolean) => void)("half a rep");
     await until(() => app.page!.md.pending === "half a rep");
     term.press({ name: "enter" });
-    await until(() => (app.page!.held.length as number) === 1);
-    expect(app.page!.lines.map(raw)).not.toContain(answeredLine("Which db?", "postgres"));
+    await until(() => note(app).includes(answeredNote("Which db?", "postgres")));
+    expect(app.page!.md.pending).toBe("half a rep");
     (orchs.writers["qa-stream"] as (t: string, plain?: boolean) => void)("ly\n");
     (orchs.writers["qa-stream"] as (t: string, plain?: boolean) => void)("▸ tool\n", true); // ends the markdown
-    await until(() => app.page!.lines.map(raw).includes(answeredLine("Which db?", "postgres")));
-    const lines = app.page!.lines.map(raw);
-    expect(lines.indexOf("half a reply")).toBeLessThan(lines.indexOf(answeredLine("Which db?", "postgres")));
+    await until(() => app.page!.lines.map(raw).join("|") === "half a reply|▸ tool");
     await stop();
   });
 
@@ -1946,7 +1944,6 @@ describe("orchestrator questions", () => {
     let stamp = 0;
     const store: QuestionStore = {
       stamp: async () => ++stamp, // always changed
-      all: async () => [],
       list: async () => { lists++; inFlight++; most = Math.max(most, inFlight); await gate; inFlight--; return []; },
       answer: async () => {}, skip: async () => {},
     };
@@ -2005,7 +2002,7 @@ describe("orchestrator questions", () => {
     await stop();
   });
 
-  test("a restored page shows an answer the way it showed live: real orchestrator, scripted model", async () => {
+  test("a restored page shows a settled question the way the live page did, without its line: real orchestrator, scripted model", async () => {
     await ask1("qa-restore", 'Use "a": or (b)?', ["postgres", "sqlite"], "sqlite");
     const provider = fakeProvider([[said("Noted, sqlite.")]]);
     const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void) =>
@@ -2017,11 +2014,12 @@ describe("orchestrator questions", () => {
     await until(() => term.screen().includes("Noted, sqlite."));
     await until(() => !app.page!.busy);
     const shown = app.page!.lines;
-    expect(shown.map(raw)).toEqual([answeredLine('Use "a": or (b)?', "sqlite"), "Noted, sqlite."]);
+    expect([shown.map(raw), note(app).includes(answeredNote('Use "a": or (b)?', "sqlite"))]).toEqual([["Noted, sqlite."], true]);
     await stop();
 
     const again = await start("qa-restore", { openOrchestrator: open, pollMs: 100_000 });
     expect(again.app.page!.lines).toEqual(shown);
+    expect(note(again.app)).not.toContain("→");
     await again.stop();
   });
 });
@@ -2056,16 +2054,16 @@ describe("command and key tables", () => {
     for (const [name, c] of commands) if (c.needsPage) expect(["/agents", "/compact"]).toContain(name);
   });
 
-  test("unknown commands say 'unknown command /x' (the name only), as before", async () => {
+  test("unknown commands note 'unknown command /x' (the name only) above the composer, never in the conversation", async () => {
     const term = fakeTerm(80);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
     await until(() => !!app.page);
-    for (const t of ["/nope", "/nope with args", "/quit now", "/help me"]) term.type(`${t}\r`);
-    const unknown = () => app.page!.lines.map(raw).filter((l) => l.includes("unknown command"));
-    await until(() => unknown().length === 4);
-    expect(unknown()).toEqual(["unknown command /nope", "unknown command /nope", "unknown command /quit", "unknown command /help"].map(dim));
+    const notes: string[] = [];
+    for (const t of ["/nope", "/nope with args", "/quit now", "/help me"]) { term.type(`${t}\r`); await settle(); notes.push(app.frame().inputArea!.lines[0]!); }
+    expect(notes).toEqual(["unknown command /nope", "unknown command /nope", "unknown command /quit", "unknown command /help"].map(dim));
+    expect(app.page!.lines).toEqual([]);
     expect(orchs.said.alpha).toEqual([]);
     app.quit();
     await running;
@@ -2111,9 +2109,10 @@ describe("command and key tables", () => {
     term.type("/keys\r");
     await until(() => app.keyEcho);
     term.press({ name: "escape" });
-    term.type("/review-rounds 2\r/nope\rhello\r");
+    term.type("/review-rounds 2\r/nope\r");
+    await until(() => app.frame().inputArea!.lines[0] === dim("unknown command /nope")); term.type("hello\r"); // a note, shown over the view too
     await until(() => view.lines.join("\n").includes("/back first to talk to the orchestrator"));
-    expect(view.lines.join("\n")).toContain("unknown command /nope");
+    expect([view.lines.join("\n").includes("unknown command"), app.page!.lines]).toEqual([false, []]);
     expect(orchs.said.viewer).toEqual([]);
     app.quit();
     await running;
@@ -2783,7 +2782,7 @@ test("real App login-held pre-cancel input stays paused, retains FIFO, and does 
     term.type("held one\rheld two\r");
     await until(() => cancelled.lines.filter(l => raw(l).includes("queued; runs after sign-in")).length === 2);
     term.type("\x03");
-    await until(() => cancelled.lines.some(l => raw(l).includes("turn cancelled")));
+    await until(() => strip(app.frame().inputArea!.lines[0]!).startsWith("turn cancelled.") && !cancelled.lines.some(l => raw(l).includes("turn cancelled"))); // a note, not a line
     await app.openPage("login-cancel-other");
     term.type("unrelated input\r");
     await until(() => app.page!.lines.some(l => raw(l).includes("queued; runs after sign-in")));

@@ -24,27 +24,27 @@ import type { Message } from "../../protocol";
 //   reviewer messages to "user" (not in the orchestrator's transcript) are lost.
 // - "user" messages that did not come from the TUI (`orca msg`) show as
 //   "> …" both live and restored.
-// - An explicit answer (or a legacy delivered skip) showed live as its dim
-//   "? <question> → <answer>" line when it was answered; restored, the same
-//   line sits where the orchestrator read the answer from its inbox (answers
-//   from another TUI show there live too). Questions still open are not in the
-//   transcript: the queue shows them again from questions/. A reply is read
-//   by its question's id against questions/ (answered and skipped files are
-//   kept), so quotes or `": ` in the question cannot confuse it; only a
-//   missing file falls back to parsing the message text. New silent skips only
-//   update questions/; their local dismissal notes are not transcript entries.
+// - A settled question leaves no line. An answer (or a legacy delivered skip)
+//   is a "user" message in the transcript (questions.ts: `[<id>] answer to
+//   "…": …`), recognized by its question id and left out, live (when the
+//   orchestrator reads it) and restored alike; the page showed it as a
+//   transient note when it was answered here, and the prompt queue showed the
+//   answer until the orchestrator read it. Questions still open are not in the
+//   transcript: the Ctrl+Q queue shows them from questions/, where answered
+//   and skipped files are kept too. Silent skips only update questions/.
 // - Errors, command output (/help, /agents, …), page notices ("queued; runs
 //   after sign-in") and anything else the app itself said are not in the
 //   transcript and are not restored. Informational status notes ("model set
-//   to …", a rename, "orchestrator was not running; restarted") are not even page lines: App
-//   shows them as one transient row above the composer (`App.note`).
+//   to …", a rename, "orchestrator was not running; restarted", an answered or
+//   skipped question) are not even page lines: App shows them as one transient
+//   row above the composer (`App.note`).
 
 import { parseFormatted } from "../../protocol";
 import type { Entry, MessageEntry } from "../../protocol";
 import { interruptedView, toolView, type ToolOutcome } from "../../protocol";
 import { historyRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
-import { plainText, bold, dim, wrap } from "../components";
+import { bold, dim, wrap } from "../components";
 
 /** Default budget for bounded previews; the live page explicitly restores all rows. */
 export const MAX_RESTORED_ROWS = 200;
@@ -61,57 +61,16 @@ export function userLines(text: string): Line[] {
   return [`${bold(">")} ${first}`, ...rest.map((l) => `  ${l}`)].map((user) => ({ user }));
 }
 
-/** An explicit answer or historical delivered skip. The default tail is legacy
- * transcript compatibility only; new silent dismissals never use this path. */
-export function answeredLine(question: string, answer: string | null, def?: string): string {
-  const tail = answer ?? (def ? `skipped, default: ${def}` : "skipped");
-  return dim(`? ${plainText(question)} → ${plainText(tail)}`);
-}
-
 /** A question id as questions.ts makes them: its ask time, a sequence number and a random suffix. */
 const QUESTION_ID = String.raw`\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d\.\d{3}Z-\d{6}-[0-9a-f]{8}`;
-/** The start of a delivered answer or legacy skip message. */
-const REPLY_HEAD = new RegExp(`^\\[(${QUESTION_ID})\\] (answer to|skipped) "`);
-/** Fallbacks for a question whose file is gone: the text is cut at the last `": ` (answers) or matched against the skip's tail. */
-const ANSWERED = new RegExp(`^\\[${QUESTION_ID}\\] answer to "([^\\n]*?)": ([^\\n]*)$`);
-const SKIPPED = new RegExp(`^\\[${QUESTION_ID}\\] skipped "([^\\n]*)"(?:; use your default \\(([^\\n]*)\\)| \\(no default given\\); decide yourself)$`);
+/** A delivered answer or legacy skip (questions.ts): one line, led by the question's id. */
+const REPLY = new RegExp(`^\\[${QUESTION_ID}\\] (?:answer to|skipped) "[^\\n]*$`);
 
-/** What a reply needs of its question (questions.ts `Question`): its text, default and, once answered, the answer. */
-export interface AskedQuestion { text: string; default?: string; status?: string; answer?: string }
-/** Questions by id, answered and skipped ones included (questions/ keeps them). */
-export type AskedLookup = (id: string) => AskedQuestion | undefined;
+/** Whether a "user" message is a question's answer or skip (questions.ts), by its id; chat text is never one. */
+export const questionReply = (text: string): boolean => REPLY.test(text);
 
-/** The line for a reply whose question is known: the question's own text, so quotes or `": ` in it cannot confuse the parse. */
-function knownReply(text: string, id: string, kind: string, q: AskedQuestion): string | null {
-  if (kind === "skipped") return answeredLine(q.text, null, q.default);
-  if (q.status === "answered" && q.answer !== undefined) return answeredLine(q.text, q.answer);
-  const prefix = `[${id}] answer to "${q.text}": `;
-  return text.startsWith(prefix) ? answeredLine(q.text, text.slice(prefix.length)) : null;
-}
-
-/**
- * A "user" message that is a question's answer or skip (questions.ts): its id
- * and its line, else null. The question is looked up by id (`asked`); only
- * when it is unknown is the text parsed alone.
- */
-export function questionReply(text: string, asked?: AskedLookup): { id: string; line: string } | null {
-  const head = REPLY_HEAD.exec(text);
-  if (!head) return null;
-  const id = head[1]!;
-  const q = asked?.(id);
-  const known = q ? knownReply(text, id, head[2]!, q) : null;
-  if (known) return { id, line: known };
-  const a = ANSWERED.exec(text);
-  if (a) return { id, line: answeredLine(a[1]!, a[2]!) };
-  const s = SKIPPED.exec(text);
-  return s ? { id, line: answeredLine(s[1]!, null, s[2]) } : null;
-}
-
-/** A message from the user as the page shows it: a question's answer as its dim line, anything else as "> …". */
-export const fromUserLines = (text: string, asked?: AskedLookup): Line[] => {
-  const reply = questionReply(text, asked);
-  return reply ? [reply.line] : userLines(text);
-};
+/** A message from the user as the page shows it: "> …", or nothing for a settled question's reply. */
+export const fromUserLines = (text: string): Line[] => (questionReply(text) ? [] : userLines(text));
 
 const REPORT_CHARS = 100;
 
@@ -182,10 +141,10 @@ function inboxMessages(content: MessageEntry["message"]["content"]) {
 const fromUser = (m: { from: string }) => m.from === "user" || m.from === "";
 
 /** A user entry: the user's lines first (they showed when typed), then each agent's message. Says whether the user spoke. */
-function userEntry(content: MessageEntry["message"]["content"], asked?: AskedLookup, inbox?: Message[]): { items: Item[]; user: boolean } {
+function userEntry(content: MessageEntry["message"]["content"], inbox?: Message[]): { items: Item[]; user: boolean } {
   const msgs = inbox?.some(m => m.attachments?.length) ? inbox.map(m => ({ from: m.from, text: [m.text, imageLabels(m.attachments)].filter(Boolean).join("\n") })) : inboxMessages(content);
   const mine = msgs.filter(fromUser);
-  const items = [...mine.map((m) => now(fromUserLines(m.text, asked))), ...msgs.filter((m) => !fromUser(m)).map((m) => now([reportLine(m.from, m.text)]))];
+  const items = [...mine.flatMap((m) => { const lines = fromUserLines(m.text); return lines.length ? [now(lines)] : []; }), ...msgs.filter((m) => !fromUser(m)).map((m) => now([reportLine(m.from, m.text)]))];
   return { items, user: mine.length > 0 };
 }
 
@@ -224,12 +183,12 @@ function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<s
  * held until the user next speaks. Calls in `omit` with no result yet are
  * left out (the turn is still running them) instead of showing interrupted.
  */
-export function restoreItems(chain: Entry[], asked?: AskedLookup, omit?: Set<string>): Item[] {
+export function restoreItems(chain: Entry[], omit?: Set<string>): Item[] {
   const firstReplies = chain.findIndex((e) => e.type === "replies");
   const legacy = firstReplies === -1 ? chain.length : firstReplies;
   const sent = sentIds(chain.slice(0, legacy));
   const state: Fold = { items: [], held: [], results: outcomes(chain), omit };
-  chain.forEach((e, i) => step(state, e, i < legacy ? sent : new Set(), asked));
+  chain.forEach((e, i) => step(state, e, i < legacy ? sent : new Set()));
   return release(state).items;
 }
 
@@ -243,7 +202,7 @@ function release(state: Fold): Fold {
 }
 
 /** One entry of the branch into the items. `sent` is empty past the first `replies` entry: from there they hold the replies. */
-function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): void {
+function step(state: Fold, e: Entry, sent: Set<string>): void {
   if (e.type === "summary") state.items.push({ lines: () => [SUMMARIZED], summary: true });
   // The run that recorded these also made the held message calls: the entry has them, so they are not shown twice.
   if (e.type === "replies") {
@@ -252,7 +211,7 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
   }
   if (e.type !== "message") return;
   if (e.message.role === "user") {
-    const { items, user } = userEntry(e.message.content, asked, e.inbox);
+    const { items, user } = userEntry(e.message.content, e.inbox);
     if (user) release(state);
     state.items.push(...items);
     return;
@@ -265,11 +224,11 @@ function step(state: Fold, e: Entry, sent: Set<string>, asked?: AskedLookup): vo
 /**
  * The page history for the current branch at `cols` columns: the newest
  * whole messages that fit in `maxRows` rendered rows (at least the newest
- * one), led by a dim count of the messages left out. The budget includes neutral separators and the omission note, but not the
+ * one), led by a dim count of the messages left out (settled questions' replies are not messages here). The budget includes neutral separators and the omission note, but not the
  * page header. The newest whole message is retained even when it alone exceeds it.
  */
-export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS, asked?: AskedLookup, omit?: Set<string>): Line[] {
-  const items = restoreItems(chain, asked, omit);
+export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROWS, omit?: Set<string>): Line[] {
+  const items = restoreItems(chain, omit);
   if (maxRows === Infinity) return items.flatMap(item => item.lines());
   const shown: Line[][] = [];
   let from = items.length;

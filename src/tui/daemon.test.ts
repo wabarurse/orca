@@ -117,6 +117,50 @@ test("without a keeper (tests, legacy), pages open and the model acknowledgement
   expect(text(app)).not.toContain("model claude-opus-5-5");
 });
 
+test("the daemon's cancel acknowledgement and compaction progress are transient notes (the ack replaces ctrl+c's hint); its failures stay on the page; a second ctrl+c still exits", async () => {
+  let notice!: (text: string) => void;
+  let closed = false;
+  const calls: string[] = [];
+  const screen = new FakeScreen(90, 28);
+  const term: Terminal = { cols: 90, rows: 28, open() {}, close() { closed = true; }, eraseOnExit() {}, onKey() {}, onResize() {}, write(s) { screen.write(s); } };
+  let now = 1000;
+  const { app } = await setup({ term, clock: { now: () => now, every: () => () => {} }, openOrchestrator: async (project, _url, _write, _inbox, tools) => {
+    mkdirSync(paths.repo(project), { recursive: true });
+    notice = tools!.notice!;
+    const stub = clientStub(calls);
+    // As the client does: the request goes out at once, the daemon's answer comes later.
+    return { ...stub, cancel() { stub.cancel!(); setTimeout(() => notice("orchestrator: turn cancelled; the orchestrator stays paused until you send a message"), 10); } };
+  } });
+  const page = app.page!;
+  await app.onKey({ name: "c", ctrl: true });
+  expect(calls).toContain("cancel");
+  expect(note(app)).toContain("turn cancelled. send a message to resume; press ctrl+c again within 2 seconds to exit.");
+  await until(() => note(app).includes("orchestrator: turn cancelled; the orchestrator stays paused until you send a message"));
+  expect(note(app)).not.toContain("press ctrl+c again"); // replaced, one row
+  expect(page.lines).toEqual([]);
+  for (const line of ["compacting…", "compacting older conversation in the background…", "compaction complete: ~9000 → ~2000 history tokens; recent messages unchanged.", "background summary did not reduce context; original history kept.", "orchestrator: compaction requested; it runs at the next safe boundary"]) {
+    notice(line);
+    expect(note(app)).toContain(line);
+    expect(page.lines).toEqual([]);
+  }
+  await app.onKey({ name: "char", text: "x" }); // the next key clears the note
+  expect(note(app)).not.toContain("compaction");
+  for (const line of ["compaction failed: summary exceeds output budget", "background compaction failed; original history kept: rolling summary timed out", "orchestrator: turn failed: boom; send another message to resume with retained history", "cancel not acknowledged: daemon gone"]) notice(line);
+  expect(note(app)).not.toContain("compaction"); // not notes
+  expect(text(app).split("\n")).toEqual(["compaction failed: summary exceeds output budget", "background compaction failed; original history kept: rolling summary timed out", "orchestrator: turn failed: boom; send another message to resume with retained history", "cancel not acknowledged: daemon gone"]);
+  await app.commands.get("/refresh")!.run("", page);
+  expect(text(app)).toContain("compaction failed"); // retained page notices survive a re-sync
+  expect(closed).toBe(false);
+  now += 5000;
+  await app.onKey({ name: "c", ctrl: true }); // long after the last press: the first press again
+  expect(note(app)).toContain("press ctrl+c again");
+  expect(closed).toBe(false);
+  now += 1999;
+  await app.onKey({ name: "c", ctrl: true });
+  await until(() => closed);
+  expect(calls.filter(c => c === "cancel")).toHaveLength(2);
+});
+
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 const occurrences = (s: string, needle: string) => s.split(needle).length - 1;
 

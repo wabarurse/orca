@@ -85,7 +85,8 @@ test("no arguments, no page creation, and worker/reviewer transcript views refus
   app.input = { text: "/clear yes", cursor: 10 };
   await app.onKey({ name: "enter" });
   expect(app.menu).toBeNull();
-  expect(uiText(app)).toContain("unknown command /clear");
+  expect(app.frame().inputArea!.lines[0]).toContain("unknown command /clear"); // a transient note, not conversation
+  expect(uiText(app)).not.toContain("unknown command");
   expect(app.page!.inputHistory).not.toContain("/clear yes");
   for (const name of ["worker-a", "reviewer-a"]) {
     app.page!.view = { name, lines: [], leave() {}, live: false, calls: new Calls() };
