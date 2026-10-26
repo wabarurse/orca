@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -8,7 +8,8 @@ import { $ } from "bun";
 const home = mkdtempSync(join(tmpdir(), "orca-runner-"));
 process.env.ORCA_HOME = home;
 const { paths } = await import("./config");
-const { local, ensureWorktree, removeWorktree, tmux, sessionName, agentCommand, slug } = await import("./runner");
+const { local, ensureWorktree, removeWorktree, tmux, tmuxSocket, confirmLaunch, LaunchFailed, sessionName, agentCommand, slug } = await import("./runner");
+const { beginRun, claimed } = await import("./exits");
 
 const project = `rt-${process.pid}`;
 const repo = paths.repo(project);
@@ -20,11 +21,12 @@ beforeAll(async () => {
   await $`git -C ${repo} -c user.name=t -c user.email=t@t commit -q --allow-empty -m init`.quiet();
 });
 
-/** Wait until no agent process of this test's project is left (sh wrapper, agent, agent-exit), so nothing writes into home after it is removed. */
+/** Wait until no agent process of this test's project is left (sh wrapper, agent, agent-exit), so nothing writes into home after it is removed.
+ * The project id follows a space in their argv; orca's tmux server (started by `new-session -s orca-<project>`) is not an agent. */
 async function agentsGone(): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if ((await $`pgrep -f -- ${project}`.quiet().nothrow()).exitCode !== 0) return;
+    if ((await $`pgrep -f -- ${" " + project}`.quiet().nothrow()).exitCode !== 0) return;
     await Bun.sleep(50);
   }
   throw new Error("agent processes still running");
@@ -99,11 +101,75 @@ describe.skipIf(!hasTmux)("tmux", () => {
     expect(await tmux.hasSession(session)).toBe(true);
   });
 
-  test("start for the orchestrator runs in repo/ and reuses the session", async () => {
-    await local.start({ project, role: "orchestrator" });
-    expect(await tmux.hasSession(session)).toBe(true);
+  test("start for the orchestrator (unsupervised, no transcript) fails when its window dies first, with the pane's output, and leaves no dead pane", async () => {
+    const error = await local.start({ project, role: "orchestrator" }).catch((e) => e);
+    expect(error).toBeInstanceOf(LaunchFailed);
+    expect(error.message).toMatch(/^orchestrator exited \(code \d+\) before the agent started; last output:\n/);
+    expect(error.message).toContain("error"); // Bun's uncaught-error report, from the pane's screen
+    expect(await tmux.listWindows(session)).not.toContain("orchestrator");
     expect(existsSync(paths.worktree(project, "orchestrator"))).toBe(false);
   });
+
+  test("confirmLaunch: a window that dies before writing its run record fails the launch, keeps the last output, kills the pane and closes the run", async () => {
+    const pane = await tmux.openWindow(session, "worker-dead", repo, ["sh", "-c", "echo boom; echo 'cannot start' >&2; exit 3"]);
+    expect(pane).toMatch(/^%\d+$/);
+    const error = await confirmLaunch(project, "worker-dead", "run-dead", pane, true).catch((e) => e);
+    expect(error).toBeInstanceOf(LaunchFailed);
+    expect(error.message).toBe("worker-dead exited (code 3) before the agent started; last output:\nboom\ncannot start");
+    expect(error.pane).toEqual({ dead: true, status: 3, signal: "" });
+    expect(await tmux.pane(pane)).toBe(null);
+    expect(await tmux.listWindows(session)).not.toContain("worker-dead");
+    expect(claimed(project, "worker-dead", "run-dead")).toBe(true);
+  });
+
+  test("confirmLaunch: the run record for this run id is the evidence; then the pane no longer stays on exit", async () => {
+    const pane = await tmux.openWindow(session, "worker-ok", repo, "sleep 60");
+    const show = () => Bun.spawnSync(tmux.argv("display-message", "-p", "-t", pane, "#{remain-on-exit}")).stdout.toString().trim();
+    expect(show()).toBe("on");
+    await beginRun({ project, id: "worker-ok", run: "old-run", role: "worker", branch: "ok", cwd: repo }, 1);
+    const pending = confirmLaunch(project, "worker-ok", "new-run", pane, true, undefined, 3000);
+    await Bun.sleep(300);
+    expect(show()).toBe("on"); // another run's record is not evidence
+    await beginRun({ project, id: "worker-ok", run: "new-run", role: "worker", branch: "ok", cwd: repo }, process.pid);
+    await pending;
+    expect(show()).toBe("off");
+    expect(await tmux.pane(pane)).toEqual({ dead: false, status: null, signal: "" });
+    await tmux.killWindow(session, "worker-ok");
+  });
+
+  test("confirmLaunch: a pane still running at the deadline passes (a slow start is not a failure)", async () => {
+    const pane = await tmux.openWindow(session, "worker-slow", repo, "sleep 60");
+    await confirmLaunch(project, "worker-slow", "r", pane, true, undefined, 200);
+    expect(await tmux.listWindows(session)).toContain("worker-slow");
+    await tmux.killWindow(session, "worker-slow");
+  });
+
+  test("checkServer passes on a working server", async () => {
+    await tmux.checkServer();
+  });
+});
+
+test("every tmux call uses orca's own socket under ORCA_HOME, or -L orca when that path is too long", () => {
+  expect(tmuxSocket()).toEqual(["-S", join(home, "tmux.sock")]);
+  expect(tmux.argv("list-windows", "-t", "=s")).toEqual(["tmux", "-S", join(home, "tmux.sock"), "list-windows", "-t", "=s"]);
+  const previous = process.env.ORCA_HOME;
+  process.env.ORCA_HOME = join(tmpdir(), "x".repeat(120));
+  try { expect(tmuxSocket()).toEqual(["-L", "orca"]); }
+  finally { process.env.ORCA_HOME = previous; }
+});
+
+test("checkServer explains a server that cannot run commands and points at kill-server", async () => {
+  const bin = mkdtempSync(join(home, "bin-"));
+  writeFileSync(join(bin, "tmux"), `#!/bin/sh\necho "pwd: Operation not permitted" >&2\nexit 1\n`);
+  chmodSync(join(bin, "tmux"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    const error = await tmux.checkServer().catch((e) => e);
+    expect(error.message).toBe(`runner: the orca tmux server cannot run commands (pwd: Operation not permitted); its working directory is probably gone or not permitted. Stop it with \`tmux -S ${join(home, "tmux.sock")} kill-server\` (this also stops every agent on it) and spawn again`);
+  } finally {
+    process.env.PATH = path;
+  }
 });
 
 test("local.running is null when tmux cannot be asked", async () => {

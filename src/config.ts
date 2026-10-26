@@ -4,6 +4,7 @@
 //     config.toml              model, byte limits, defaults, pinned projects
 //     memory.sqlite            one rebuildable orchestrator history/task retrieval index for every project
 //                              (+ -wal/-shm while open); transcripts and tasks.json stay authoritative
+//     tmux.sock                orca's own tmux server (src/runner.ts), never the user's default one
 //     projects/<name>/
 //       name                   display name set by /rename (absent = <name>)
 //       input-history          the TUI's ↑/↓ input history, one JSON string per line, newest last
@@ -49,6 +50,8 @@ export const paths = {
   get root() { return root(); },
   get config() { return join(root(), "config.toml"); },
   get memory() { return join(root(), "memory.sqlite"); },
+  /** The socket of orca's own tmux server, so a stale user server (started from a since-moved directory) cannot break agent windows. */
+  get tmuxSocket() { return join(root(), "tmux.sock"); },
   project: (name: string) => join(root(), "projects", name),
   displayName: (name: string) => join(root(), "projects", name, "name"),
   inputHistory: (name: string) => join(root(), "projects", name, "input-history"),

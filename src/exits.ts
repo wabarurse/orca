@@ -9,7 +9,8 @@ import { Cancelled } from "./cancellation";
 // act was a report, its last step and tool. A run is closed by creating
 // runs/<id>.<run>.exit exclusively: whoever creates it sends the notice, or
 // none when the run ended on a report. So the senders (crash, signal, clean
-// exit, shell follow-up, TUI watchdog and startup sweep) never duplicate.
+// exit, shell follow-up, TUI watchdog, startup sweep, a failed launch in
+// runner.ts and the never-started recovery below) never duplicate.
 
 import { existsSync, mkdirSync } from "node:fs";
 import { open as openFile, readdir, rename, stat, unlink } from "node:fs/promises";
@@ -403,20 +404,28 @@ export function watchdog(opts: WatchdogOptions) {
     try {
       const now = await opts.live(project);
       if (now === null) return [];
-      try { await recoverTaskRuns(project, new Set(now), probe.alive); }
+      let recovered: string[] = [];
+      try { recovered = await recoverTaskRuns(project, new Set(now), probe.alive, Date.now(), probe.dirty); }
       catch (err) { console.error(`watchdog: could not recover tasks: ${String(err)}`); }
       const { sent, keep } = await sweep(project, new Set(now), seen.get(project), probe);
       seen.set(project, keep);
-      return sent;
+      return [...recovered, ...sent];
     } finally {
       busy.delete(project);
     }
   };
 }
 
-/** Restart recovery never guesses completion. A missing/stopped process leaves a visible reason.
- * Prepared launches get a grace period so a second TUI cannot race normal startup. */
-export async function recoverTaskRuns(project: string, live: Set<string>, alive = pidAlive, now = Date.now()): Promise<void> {
+/**
+ * Restart recovery never guesses completion. A missing/stopped process leaves a visible reason.
+ * Prepared launches get a grace period so a second TUI cannot race normal startup.
+ * A run that never wrote its run record (the process died before beginRun, or never
+ * ran: a broken tmux server, a failed exec) has no other sender, so one notice goes
+ * to the orchestrator here, closed by the run's claim like every other notice.
+ * Returns the agents notified.
+ */
+export async function recoverTaskRuns(project: string, live: Set<string>, alive = pidAlive, now = Date.now(), dirty: (cwd: string) => Promise<number | null> = (cwd) => dirtyCount(cwd)): Promise<string[]> {
+  const sent: string[] = [];
   for (const task of await allTasks(project)) {
     const r = task.runs.at(-1);
     if (task.archive || !r || !["prepared", "started"].includes(r.state) || live.has(r.agent)) continue;
@@ -424,5 +433,12 @@ export async function recoverTaskRuns(project: string, live: Set<string>, alive 
     const state = await readRun(project, r.agent);
     if (state?.run === r.id && alive(state.pid)) continue;
     await stopTaskRun(project, r.id, "unknown", "agent is no longer observable; task needs explicit reconciliation");
+    if (state?.run === r.id) continue; // its record is there: the sweep (or its own exit path) reports it
+    const what = `${r.state === "prepared" ? "never started" : "stopped before it was observable"}; task "${task.name}" needs reconciliation`;
+    const facts = { role: r.role, branch: task.branch, step: "before the agent started", tool: "" };
+    try {
+      if (await sendNotice(project, r.agent, r.id, async () => noticeText(r.agent, what, facts, await dirty(paths.worktree(project, slug(task.branch)))))) sent.push(r.agent);
+    } catch (err) { console.error(`watchdog: could not send the never-started notice for ${r.agent}: ${String(err)}`); }
   }
+  return sent;
 }

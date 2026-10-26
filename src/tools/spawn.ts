@@ -99,7 +99,9 @@ async function launch(runner: Runner, prompt: string, branch: string, role: "wor
     return id;
   } catch (error) {
     await stopTaskRun(ctx.project, run, ctx.signal?.aborted ? "cancelled" : "blocked", "agent launch failed; no successful start confirmed", true);
-    throw error;
+    if (ctx.signal?.aborted) throw error;
+    // The tool result is the orchestrator's only notice of a death before the agent started (runner.confirmLaunch closes the run).
+    throw new Error(`spawn: ${id} did not start: ${error instanceof Error ? error.message : String(error)}\nNothing is running on ${branch}; its task is marked blocked (launch failed). Fix the cause, then spawn again with the same taskId and branch.`);
   }
 }
 

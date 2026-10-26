@@ -69,6 +69,20 @@ test("spawn refuses missing input and non-orchestrators", async () => {
   expect(started).toHaveLength(3);
 });
 
+test("a launch that fails becomes a tool error naming the agent, the cause and the blocked task; nothing is left as started", async () => {
+  const failing: Runner = {
+    async start() { throw new Error("worker-feat-dead exited (code 3) before the agent started; last output:\nboom"); },
+    async stop() {}, async running() { return []; },
+  };
+  const error = await makeSpawn(failing).run({ prompt: "Try", branch: "feat/dead" }, ctx("orchestrator")).catch((e) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message).toBe("spawn: worker-feat-dead did not start: worker-feat-dead exited (code 3) before the agent started; last output:\nboom\nNothing is running on feat/dead; its task is marked blocked (launch failed). Fix the cause, then spawn again with the same taskId and branch.");
+  const { launchIdentity } = await import("../cancellation");
+  const task = await taskForRun("p", launchIdentity("p", "worker-feat-dead")!);
+  expect(task?.attention).toEqual({ kind: "blocked", reason: "agent launch failed; no successful start confirmed" });
+  expect(task?.runs.at(-1)?.state).toBe("failed");
+});
+
 describe("one agent per branch", () => {
   const wait = { waitMs: 300, pollMs: 20 };
   /** A runner whose `running` answers from `answers` in turn (the last one repeats), counting its starts. */

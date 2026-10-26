@@ -9,7 +9,8 @@ process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const { createAgent } = await import("./agent");
-const { afterExit, beginRun, claim, claimed, dirtyCount, markEnded, noticeText, readRun, supervise, watchdog } = await import("./exits");
+const { afterExit, beginRun, claim, claimed, dirtyCount, markEnded, noticeText, readRun, recoverTaskRuns, supervise, watchdog } = await import("./exits");
+const { getTask, prepareTaskRun, registerTask } = await import("./tasks");
 const { Cancelled } = await import("./cancellation");
 const { drain, put } = await import("./inbox");
 const { agentCommand, slug, tmux } = await import("./runner");
@@ -388,6 +389,41 @@ describe("case 4: the watchdog", () => {
     expect(await check(project)).toEqual([]);
     const msgs = await inbox();
     expect(msgs.map((m) => m.text)).toEqual([`[agent-exit] worker-dead stopped while the tui was not watching (role worker; branch feat; last step: starting; uncommitted changes: unknown)`]);
+  });
+
+  test("a task run that never started (no run record after the grace period) gets one notice naming the task; a run with its record is left to the sweep", async () => {
+    mkdirSync(paths.project(project), { recursive: true });
+    const t = await registerTask(project, { name: "Login page", summary: "Add it", branch: "feat/login", authorized: true });
+    await prepareTaskRun(project, t.id, t.branch, { id: "never", agent: "worker-feat-login", role: "worker" });
+    const later = Date.now() + 31_000;
+    expect(await recoverTaskRuns(project, new Set(), alive, Date.now())).toEqual([]); // still within the launch grace period
+    expect(await recoverTaskRuns(project, new Set(["worker-feat-login"]), alive, later)).toEqual([]); // window live: not ours to judge
+    expect(await recoverTaskRuns(project, new Set(), alive, later, async () => 2)).toEqual(["worker-feat-login"]);
+    expect((await getTask(project, t.id)).attention?.kind).toBe("unknown");
+    expect(await recoverTaskRuns(project, new Set(), alive, later)).toEqual([]); // stopped already: nothing more
+    expect((await inbox()).map((m) => [m.from, m.text])).toEqual([["worker-feat-login", `[agent-exit] worker-feat-login never started; task "Login page" needs reconciliation (role worker; branch feat/login; last step: before the agent started; uncommitted changes: 2)`]]);
+    expect(claimed(project, "worker-feat-login", "never")).toBe(true);
+
+    // Started and recorded, then died: recovery marks the task but the sweep sends the notice (once), from the run record.
+    const t2 = await registerTask(project, { name: "Signup", summary: "Add it", branch: "feat/signup", authorized: true });
+    await prepareTaskRun(project, t2.id, t2.branch, { id: "r1", agent: "worker-feat-signup", role: "worker" });
+    await beginRun({ ...info("/", "r1"), id: "worker-feat-signup", branch: "feat/signup" }, DEAD_PID);
+    const check = watchdog({ live: async () => [], alive, dirty: async () => null });
+    expect(await check(project)).toEqual(["worker-feat-signup"]);
+    expect(await check(project)).toEqual([]);
+    const msgs = await inbox();
+    expect(msgs.length).toBe(1);
+    expect(msgs[0]!.text).toStartWith("[agent-exit] worker-feat-signup stopped while the tui was not watching");
+    expect((await getTask(project, t2.id)).attention?.kind).toBe("unknown");
+  });
+
+  test("a launch the runner already reported as failed (its claim) stays silent here", async () => {
+    mkdirSync(paths.project(project), { recursive: true });
+    const t = await registerTask(project, { name: "Quiet", summary: "Add it", branch: "feat/quiet", authorized: true });
+    await prepareTaskRun(project, t.id, t.branch, { id: "failed", agent: "worker-feat-quiet", role: "worker" });
+    expect(await claim(project, "worker-feat-quiet", "failed")).toBe(true);
+    expect(await recoverTaskRuns(project, new Set(), alive, Date.now() + 31_000)).toEqual([]);
+    expect(await inbox()).toEqual([]);
   });
 
   test("the first check never sweeps when tmux could not be asked", async () => {
