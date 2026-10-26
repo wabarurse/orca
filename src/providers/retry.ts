@@ -91,30 +91,45 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * Explanations are mapped rather than echoing untrusted bodies (which can contain secrets).
  */
 export function exhaustedQuota(error: unknown): string | undefined {
-  const record = (value: unknown): Record<string, unknown> | undefined =>
-    value !== null && typeof value === "object" ? value as Record<string, unknown> : undefined;
-  let e = record(error);
-  for (let depth = 0; e && depth < 4; depth++) {
-    const nested = record(e.error) ?? record(record(e.response)?.error);
-    if (nested) { e = nested; continue; }
-    const code = typeof e.code === "string" ? e.code : e.type;
-    let explanation: string | undefined;
-    if (["insufficient_quota", "quota_exceeded", "usage_limit_reached", "usage_cap_reached"].includes(String(code)))
-      explanation = "the provider reports that the available usage allowance is exhausted.";
-    if (["billing_hard_limit_reached", "billing_limit_reached", "credit_balance_too_low"].includes(String(code)))
-      explanation = "the provider reports insufficient credits or a billing cap.";
-    // Anthropic reports exhausted prepaid credits as invalid_request_error, not 429.
-    if (code === "invalid_request_error" && typeof e.message === "string" &&
-        /^Your credit balance is too low to access the Anthropic API\b/i.test(e.message))
-      explanation = "the provider reports insufficient credits.";
-    if (explanation) {
-      // Codex's resets_at is Unix seconds. Never infer a reset from Retry-After.
-      const reset = e.resets_at;
-      if (typeof reset === "number" && Number.isFinite(reset) && reset > 0 && reset < 253402300800)
-        explanation += ` Reset: ${new Date(reset * 1000).toISOString()}.`;
-      return explanation;
-    }
-    e = record(e.error) ?? record(record(e.response)?.error);
+  const evidence = quotaEvidence(error);
+  if (!evidence) return undefined;
+  const explanation = quotaExplanation(evidence);
+  return explanation ? explanation + quotaReset(evidence.resets_at) : undefined;
+}
+
+type ErrorRecord = Record<string, unknown>;
+const errorRecord = (value: unknown): ErrorRecord | undefined =>
+  value !== null && typeof value === "object" ? value as ErrorRecord : undefined;
+
+/** Prefer the nested payload over SDK-copied fields, retaining its reset timestamp.
+ * Inspect at most four envelopes, including the initial error; cycles are bounded too.
+ */
+function quotaEvidence(error: unknown): ErrorRecord | undefined {
+  let evidence = errorRecord(error);
+  for (let depth = 0; evidence && depth < 4; depth++) {
+    const nested = errorRecord(evidence.error) ?? errorRecord(errorRecord(evidence.response)?.error);
+    if (!nested) return evidence;
+    evidence = nested;
   }
   return undefined;
+}
+
+function quotaExplanation(evidence: ErrorRecord): string | undefined {
+  const code = typeof evidence.code === "string" ? evidence.code : evidence.type;
+  if (["insufficient_quota", "quota_exceeded", "usage_limit_reached", "usage_cap_reached"].includes(String(code)))
+    return "the provider reports that the available usage allowance is exhausted.";
+  if (["billing_hard_limit_reached", "billing_limit_reached", "credit_balance_too_low"].includes(String(code)))
+    return "the provider reports insufficient credits or a billing cap.";
+  // Anthropic reports exhausted prepaid credits as invalid_request_error, not 429.
+  if (code === "invalid_request_error" && typeof evidence.message === "string" &&
+      /^Your credit balance is too low to access the Anthropic API\b/i.test(evidence.message))
+    return "the provider reports insufficient credits.";
+  return undefined;
+}
+
+/** Codex's resets_at is Unix seconds. Never infer a reset from Retry-After. */
+function quotaReset(reset: unknown): string {
+  if (typeof reset !== "number" || !Number.isFinite(reset) || reset <= 0 || reset >= 253402300800)
+    return "";
+  return ` Reset: ${new Date(reset * 1000).toISOString()}.`;
 }
