@@ -9,6 +9,7 @@ import { tmux } from "../runner";
 import { setModel } from "../commands";
 import { withProjectStateLock } from "../project-state";
 import { effectiveModel } from "../project-model";
+import { effectiveSettings } from "../project-settings";
 import { paths, saveConfig } from "../config";
 
 const home = mkdtempSync(join(tmpdir(), "model-ui-"));
@@ -43,17 +44,17 @@ async function setup(agents: { name: string; live: boolean }[], choices?: AppDep
 test("direct switch counts only live subagents; Cancel and Escape never persist; Switch all saves project only", async () => {
   const ui = await setup([{ name: "worker-a", live: true }, { name: "worker-b", live: false }, { name: "reviewer-a", live: true }]);
   try {
-    await ui.app.commands.get("/models")!.run("claude-test", ui.app.page);
+    await ui.app.commands.get("/model")!.run("claude-test", ui.app.page);
     expect(ui.app.menu!.title).toContain("1 workers and 1 reviewers");
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
     ui.type("\r"); // safe default Cancel
     await until(() => !ui.app.menu);
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    await ui.app.commands.get("/models")!.run("claude-test", ui.app.page);
+    await ui.app.commands.get("/model")!.run("claude-test", ui.app.page);
     ui.key({ name: "escape" });
     await until(() => !ui.app.menu);
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    await ui.app.commands.get("/models")!.run("claude-test", ui.app.page);
+    await ui.app.commands.get("/model")!.run("claude-test", ui.app.page);
     ui.key({ name: "down" }); ui.type("\r");
     await until(() => ui.app.page!.lines.some((line) => typeof line === "string" && line.includes("next model request")));
     expect(await effectiveModel(ui.project)).toBe("claude-test");
@@ -64,7 +65,7 @@ test("direct switch counts only live subagents; Cancel and Escape never persist;
 test("picker uses the same immediate path when no subagents run", async () => {
   const ui = await setup([{ name: "worker-old", live: false }], async () => ({ choices: [{ value: "claude-test", label: "Claude" }], errors: [], current: "gpt-6-astra" }));
   try {
-    await ui.app.commands.get("/models")!.run("", ui.app.page);
+    await ui.app.commands.get("/model")!.run("", ui.app.page);
     ui.type("\r");
     await until(() => ui.app.page!.lines.some((line) => typeof line === "string" && line.includes("next model request")));
     expect(await effectiveModel(ui.project)).toBe("claude-test");
@@ -77,13 +78,13 @@ test("async picker and stale confirmation cannot switch a different selected pag
   const ui = await setup([{ name: "worker-a", live: true }], () => new Promise((r) => { release = r; }));
   try {
     const original = ui.app.page!;
-    const fetching = ui.app.commands.get("/models")!.run("", original);
+    const fetching = ui.app.commands.get("/model")!.run("", original);
     ui.app.pages.push({ ...original, project: "other" }); ui.app.active = 1;
     release({ choices: [{ value: "claude-test", label: "Claude" }], errors: [], current: "gpt-6-astra" });
     await fetching;
     expect(ui.app.menu).toBeNull();
     ui.app.active = 0;
-    await ui.app.commands.get("/models")!.run("claude-test", original);
+    await ui.app.commands.get("/model")!.run("claude-test", original);
     ui.app.active = 1;
     ui.key({ name: "down" }); ui.type("\r");
     await until(() => !ui.app.menu);
@@ -99,7 +100,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const catalog = (id: string) => ({ choices: [{ value: id, label: id }], errors: [], current: "gpt-6-astra" });
-const modelCommand = (ui: Awaited<ReturnType<typeof setup>>, id = "") => ui.app.commands.get("/models")!.run(id, ui.app.page);
+const modelCommand = (ui: Awaited<ReturnType<typeof setup>>, id = "") => ui.app.commands.get("/model")!.run(id, ui.app.page);
 
 for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "reviewer-no-transcript"]] as const) {
   test(`production liveness boundary ${JSON.stringify(result)} ignores unreadable transcripts`, async () => {
@@ -111,7 +112,7 @@ for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "revi
     try {
       // ENOTDIR is an unreadable transcript directory, regardless of uid.
       await Bun.write(join(paths.project(ui.project), "transcripts"), "not a directory");
-      ui.type("/models claude-test\r");
+      ui.type("/model claude-test\r");
       if (result === null || result === "throw") {
         await until(() => ui.app.page!.lines.join("").includes("could not determine running agents; try again"));
         expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
@@ -127,11 +128,11 @@ for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "revi
   });
 }
 
-test("no-page /models real dispatch refuses without creating project/global write; survives reprint", async () => {
+test("no-page /model real dispatch refuses without creating project/global write; survives reprint", async () => {
   const ui = await setup([]);
   try {
     ui.app.closePage();
-    for (const command of ["/models", "/models claude-test"]) {
+    for (const command of ["/model", "/model claude-test"]) {
       ui.type(command + "\r");
       await until(() => ui.writes.join("").includes("open a project before changing its model"));
       expect(ui.app.pages).toHaveLength(0);
@@ -204,7 +205,8 @@ test("effort/fast real command dispatch query, set, refuse and no-page feedback"
   const ui = await setup([]);
   const lines = () => ui.app.page!.lines.join("");
   try {
-    ui.type("/effort\r"); await until(() => lines().includes("supported: default, low, medium, high, xhigh, max"));
+    ui.type("/effort\r"); await until(() => !!ui.app.menu); // no args: the picker, not a report
+    ui.key({ name: "escape" });
     ui.type("/effort high\r"); await until(() => lines().includes("effort for gpt-6-astra: high"));
     await until(() => ui.writes.some(s => s.includes("effort high · fast off")));
     ui.type("/fast\r"); await until(() => lines().includes("fast for gpt-6-astra: off"));
@@ -219,6 +221,52 @@ test("effort/fast real command dispatch query, set, refuse and no-page feedback"
       expect(ui.app.pages).toHaveLength(0);
       expect(ui.opened).toHaveLength(1);
     }
+  } finally { await ui.close(); }
+});
+
+test("/effort with no args opens a picker of default plus supported levels for the current model and saves the pick", async () => {
+  const ui = await setup([]);
+  const lines = () => ui.app.page!.lines.join("");
+  try {
+    ui.type("/effort high\r"); await until(() => lines().includes("effort for gpt-6-astra: high"));
+    ui.type("/effort\r"); await until(() => !!ui.app.menu);
+    expect(ui.app.menu!.title).toContain("effort for gpt-6-astra");
+    expect(ui.app.menu!.title).toContain("/effort <level|default>");
+    // No account is signed in: the catalog is unavailable, so the built-in levels apply.
+    expect(ui.app.menu!.items).toEqual(["  default", "  low", "  medium", "● high", "  xhigh", "  max"]);
+    expect(ui.app.menu!.index).toBe(3);
+    ui.key({ name: "down" }); ui.type("\r");
+    await until(() => lines().includes("effort for gpt-6-astra: xhigh"));
+    expect(ui.app.menu).toBeNull();
+    expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBe("xhigh");
+    await until(() => ui.writes.some(s => s.includes("effort xhigh · fast off")));
+    ui.type("/effort\r"); await until(() => !!ui.app.menu);
+    ui.key({ name: "up" }); ui.key({ name: "up" }); ui.key({ name: "up" }); ui.key({ name: "up" }); ui.type("\r");
+    await until(() => lines().includes("effort for gpt-6-astra: default;"));
+    expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBeUndefined();
+    ui.type("/effort\r"); await until(() => !!ui.app.menu);
+    expect(ui.app.menu!.items[0]).toBe("● default");
+    ui.key({ name: "escape" }); expect(ui.app.menu).toBeNull();
+    ui.app.closePage();
+    ui.type("/effort\r");
+    await until(() => ui.writes.join("").includes("open a project before changing its model settings"));
+    expect(ui.app.pages).toHaveLength(0);
+  } finally { await ui.close(); }
+});
+
+test("effort picker lists catalog-reported levels and cannot write a model the project no longer uses", async () => {
+  const ui = await setup([], undefined, { effortChoices: async () => ({ model: "gpt-6-astra", current: "default", note: "saved effort xhigh is not supported", choices: [{ value: "default", label: "default", current: true }, { value: "medium", label: "medium" }, { value: "high", label: "high" }] }) });
+  const lines = () => ui.app.page!.lines.join("");
+  try {
+    ui.type("/effort\r"); await until(() => !!ui.app.menu);
+    expect(lines()).toContain("fetching effort levels…");
+    expect(lines()).toContain("saved effort xhigh is not supported");
+    expect(ui.app.menu!.items).toEqual(["● default", "  medium", "  high"]);
+    await setModel("gpt-5.5", ui.project);
+    ui.key({ name: "down" }); ui.type("\r");
+    await until(() => lines().includes("model changed while saving settings"));
+    expect((await effectiveSettings(ui.project, "gpt-5.5")).effort).toBeUndefined();
+    expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBeUndefined();
   } finally { await ui.close(); }
 });
 
@@ -251,7 +299,7 @@ test("confirmed UI save queued behind directory replacement refuses the new proj
   });
   try {
     await entered.promise;
-    ui.type("/models claude-stale\r"); await started;
+    ui.type("/model claude-stale\r"); await started;
     release.resolve(); await replacement;
     await until(() => ui.app.page!.lines.join("").includes("project changed while switching model"));
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");

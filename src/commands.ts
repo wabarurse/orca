@@ -17,13 +17,16 @@ import { checkoutHere, removeProjectWorktrees } from "./workspace";
 import { purgeProject } from "./memory-archive";
 import { watchdog } from "./exits";
 import { mergeWatcher } from "./merges";
-import type { ProviderName } from "./providers/index";
+import { providerFor, type ProviderName } from "./providers/index";
+import { modelCapabilities } from "./model-capabilities";
+import { prefetchContextLimits } from "./model-context";
+import { effectiveSettingsReport } from "./project-settings";
 import { sessionName, tmux } from "./runner";
 import { stopDaemon } from "./orchestrator-client";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }
 
-/** How many of each provider's newest models /models offers. */
+/** How many of each provider's newest models /model offers. */
 export const RECENT_MODELS = 6;
 
 /** The newest `limit` ids, keeping `current` in the list even when it is older. */
@@ -280,6 +283,18 @@ export async function modelChoices(dim: (s: string) => string, project?: string)
     }
   }
   return { choices, errors, current: model };
+}
+
+/** Effort picker choices for the project's current model: "default" plus the levels it supports, current marked.
+ * Levels come from the provider catalog (fetched once per process, like context limits) and fall back to the
+ * built-in table. `note` explains a saved effort the current list lacks (used as default, kept on disk). */
+export async function effortChoices(project: string, load: typeof provider = provider): Promise<{ choices: Choice<string>[]; model: string; current: string; note?: string }> {
+  const model = await effectiveModel(project);
+  try { await prefetchContextLimits(await load(providerFor(model))); } catch { /* no account/catalog: built-in levels */ }
+  const { settings, dropped } = await effectiveSettingsReport(project, model);
+  const current = settings.effort ?? "default";
+  const choices = ["default", ...modelCapabilities(model).effort].map((value) => ({ value, label: value, current: value === current }));
+  return { choices, model, current, ...(dropped ? { note: `saved effort ${dropped} is not supported for ${model} by the current capability list; requests use the default until another level is chosen` } : {}) };
 }
 
 export async function setModel(id: string, project?: string, identity?: string): Promise<string> {

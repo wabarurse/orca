@@ -5,7 +5,7 @@ import { contextStatus, dispatchStatus, reviewStatus } from "./context-status";
 import { listTasks } from "../tasks";
 import { taskInboxLines, type TaskInboxData } from "./task-inbox";
 import { cancelSession } from "../cancellation";
-import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } from "../project-settings";
+import { effortCommand, fastCommand, effectiveSettings, setEffort, type RequestSettings } from "../project-settings";
 // Sticky top and bottom bars around a scrollable conversation. Only changed
 // screen rows are redrawn; on exit the active transcript is printed back to
 // the terminal's normal scrollback. One page per orchestrator: Ctrl+N starts one named
@@ -14,7 +14,7 @@ import { effortCommand, fastCommand, effectiveSettings, type RequestSettings } f
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deleteProject, type AgentInfo, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, dynamicDispatch, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
+import { accountChoices, deleteProject, type AgentInfo, displayName, listAgents, liveAgents, liveAgentsOrNull, listProjects, login, effortChoices, modelChoices, newProjectName, orderedProjects, projectFor, remoteOf, reviewRounds, dynamicDispatch, setDisplayName, setModel, shortRemote, togglePin, useAccount, validProjectName, type Choice, type DeleteOptions, type ProjectEntry } from "../commands";
 import { loadConfig, paths, validRounds } from "../config";
 import { projectIdentity } from "../project-state";
 import { validateModel, effectiveModel } from "../project-model";
@@ -112,6 +112,7 @@ export interface AppDeps {
   /** Sign-in; tests replace it. */
   login?: typeof login;
   modelChoices?: typeof modelChoices;
+  effortChoices?: typeof effortChoices;
   modelAgents?: (project: string) => Promise<string[] | null>;
   saveModel?: typeof setModel;
   /** How the project list checks for live agents, stops a deleted project's orchestrator daemon and closes its tmux session; tests stub them. */
@@ -1351,13 +1352,13 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     });
   }
 
-  private async modelsMenu(page: Page, operation: number, identity: string): Promise<void> {
+  private async modelMenu(page: Page, operation: number, identity: string): Promise<void> {
     this.say(dim("fetching models…"));
     const { choices, errors } = await (this.deps.modelChoices ?? modelChoices)(dim, page.project);
     if (!this.modelPageCurrent(page, operation)) return;
     for (const e of errors) this.say(dim(e));
     if (!choices.length) return this.say(dim("no models available; sign in with /login first"));
-    this.openMenu("switch model   (/models <id> for any other id)", choices, async (id) => this.switchModel(page, id, operation, identity), operation);
+    this.openMenu("switch model   (/model <id> for any other id)", choices, async (id) => this.switchModel(page, id, operation, identity), operation);
   }
 
   private async attach(page: Page, name: string, live: boolean): Promise<void> {
@@ -1457,11 +1458,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "user inbox: tasks / questions; shift+tab switches sections, esc/tab closes" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "browse and follow agent conversations" } }],
-    ["/effort", { args: true, run: (args, page) => this.requestSetting(page, args, effortCommand), help: { group: "settings", label: "/effort [level|default]", description: "show or set project/model reasoning effort" } }],
+    ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, effortCommand) : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear model context after confirmation; keep full history" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
-    ["/models", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { group: "settings", label: "/models [id]", description: "choose or set the project model" } }],
+    ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [id]", description: "choose or set the project model" } }],
     ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
     ["/review-rounds", { args: true, run: (args, page) => this.reviewRoundsCommand(args, page), help: { group: "advanced", label: "/review-rounds [n]", description: "review rounds before ci; 0 goes straight to ci" } }],
@@ -1562,18 +1563,37 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     return this.newPage(name, directory);
   }
 
-  /** /models opens the menu; /models <id> sets any id. */
   private async requestSetting(page: Page | undefined, args: string, command: typeof effortCommand): Promise<void> {
     if (!page) return this.say(dim("open a project before changing its model settings"));
     this.say(dim(await command(page.project, args)), page);
     await this.refreshHeader(page);
   }
 
-  private async modelsCommand(id: string, page?: Page): Promise<void> {
+  /** /effort opens the picker for the project's current model; it saves for exactly that model. */
+  private async effortMenu(page?: Page): Promise<void> {
+    const operation = ++this.modelGeneration;
+    if (!page) return this.say(dim("open a project before changing its model settings"));
+    const identity = projectIdentity(page.project);
+    this.say(dim("fetching effort levels…"));
+    let picker: Awaited<ReturnType<typeof effortChoices>>;
+    try { picker = await (this.deps.effortChoices ?? effortChoices)(page.project); }
+    catch (err) { return this.say(dim(err instanceof Error ? err.message : String(err)), page); }
+    if (!this.modelPageCurrent(page, operation)) return;
+    if (picker.note) this.say(dim(picker.note), page);
+    this.openMenu(`effort for ${picker.model}   (/effort <level|default> sets directly)`, picker.choices, async (level) => {
+      if (!this.modelPageCurrent(page, operation)) return;
+      try { this.say(dim(await setEffort(page.project, picker.model, level, identity)), page); }
+      catch (err) { return this.say(dim(err instanceof Error ? err.message : String(err)), page); }
+      await this.refreshHeader(page);
+    }, operation);
+  }
+
+  /** /model opens the menu; /model <id> sets any id. */
+  private async modelCommand(id: string, page?: Page): Promise<void> {
     const operation = ++this.modelGeneration;
     if (!page) return this.say(dim("open a project before changing its model"));
     const identity = projectIdentity(page.project);
-    if (!id) return this.modelsMenu(page, operation, identity);
+    if (!id) return this.modelMenu(page, operation, identity);
     await this.switchModel(page, id, operation, identity);
   }
 
@@ -1626,7 +1646,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.clipboardGeneration++;
     this.cancelClear();
     const call = parseCommand(text, this.commands);
-    if (call && call.name !== "/models") this.modelGeneration++;
+    if (call && call.name !== "/model") this.modelGeneration++;
     if (call?.command && !call.command.needsPage) return call.command.run(call.args, this.page);
     const page = this.page;
     if (!page) return this.newPage();
@@ -1704,7 +1724,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
    * 1. keyEcho: /keys echoes every key except Ctrl+C until Esc;
    * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys, Ctrl+T expands/collapses tool calls;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
-   * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
+   * 4. menu: every key while a menu (/model, /agents, /accounts) is open;
    * 5. help: scroll or dismiss the explicit help panel, preserving the composer;
    * 6. inbox: section navigation/dismissal; tasks and empty/agent-view questions own input;
    * 7. questions: the keys the shown question takes (questions.ts `takes`), before Esc/Enter;

@@ -1,9 +1,13 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, saveConfig } from "./config";
-import { effectiveSettings, effortCommand, fastCommand, saveProjectSettings } from "./project-settings";
+import { effectiveSettings, effectiveSettingsReport, effortCommand, fastCommand, saveProjectSettings, validateSettings } from "./project-settings";
+import { clearCatalogEfforts, rememberCatalogEfforts } from "./model-capabilities";
+import { clearCatalogLimits } from "./model-context";
+import { codexRequestSettings } from "./providers/openai";
+import { effortChoices } from "./commands";
 import { saveProjectModel, projectModelResolver } from "./project-model";
 import { createAgent } from "./agent";
 import { open } from "./transcript";
@@ -12,6 +16,7 @@ import type { CompleteRequest } from "./providers";
 const home = mkdtempSync(join(tmpdir(), "project-settings-"));
 process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
+afterEach(clearCatalogLimits);
 
 async function setup(project: string, model = "gpt-6-astra") {
   mkdirSync(paths.project(project), { recursive: true });
@@ -59,6 +64,52 @@ test("switching incompatible models omits options and switching back restores ex
   await effortCommand("switch", "medium");
   await saveProjectModel("switch", "gpt-6-astra");
   expect((await resolve()).settings).toEqual({ effort: "xhigh", fast: true });
+});
+
+test("a catalog that drops a saved effort mid-run omits it from requests instead of failing the turn", async () => {
+  await setup("catalog-shrink");
+  await effortCommand("catalog-shrink", "xhigh"); await fastCommand("catalog-shrink", "on");
+  const provider = fakeProvider([]);
+  const resolve = projectModelResolver("catalog-shrink", async () => provider);
+  expect((await resolve()).settings).toEqual({ effort: "xhigh", fast: true }); // first request: built-in table
+  try {
+    rememberCatalogEfforts([["gpt-6-astra", ["low", "medium", "high"]]]); // the background prefetch lands with fewer levels
+    expect((await resolve()).settings).toEqual({ fast: true });
+    expect(await effectiveSettingsReport("catalog-shrink", "gpt-6-astra")).toEqual({ settings: { fast: true }, dropped: "xhigh" });
+    expect(await effortCommand("catalog-shrink", "")).toContain("default (backend default)");
+    // The provider-side check accepts any level the table or the catalog ever reported, so a request resolved just before the catalog landed still goes out.
+    expect(codexRequestSettings("gpt-6-astra", { effort: "xhigh" }).reasoning.effort).toBe("xhigh");
+    expect(() => validateSettings("gpt-6-astra", { effort: "max" })).not.toThrow();
+    // Saves follow the current list; the picker marks default and explains.
+    await expect(effortCommand("catalog-shrink", "xhigh")).rejects.toThrow("supported: default, low, medium, high");
+    const picker = await effortChoices("catalog-shrink", async () => provider);
+    expect(picker.choices).toEqual([{ value: "default", label: "default", current: true }, { value: "low", label: "low", current: false }, { value: "medium", label: "medium", current: false }, { value: "high", label: "high", current: false }]);
+    expect(picker.note).toContain("saved effort xhigh is not supported");
+    // Patching another field does not carry the dead effort along; the file keeps it until then.
+    expect(JSON.parse(await Bun.file(join(paths.project("catalog-shrink"), "model-settings.json")).text())["gpt-6-astra"]).toEqual({ effort: "xhigh", fast: true });
+    await fastCommand("catalog-shrink", "off");
+    expect(JSON.parse(await Bun.file(join(paths.project("catalog-shrink"), "model-settings.json")).text())["gpt-6-astra"]).toEqual({ fast: false });
+  } finally { clearCatalogEfforts(); }
+  await effortCommand("catalog-shrink", "xhigh");
+  clearCatalogEfforts();
+  expect((await resolve()).settings).toEqual({ effort: "xhigh", fast: false }); // another process without the catalog: the table applies again
+  await expect(effectiveSettings("catalog-shrink", "gpt-5.5")).resolves.toEqual({}); // unrelated models unaffected
+});
+
+test("effortChoices waits for the provider catalog, lists its levels and falls back without an account", async () => {
+  await setup("choices", "gpt-5.5");
+  await effortCommand("choices", "high");
+  let fetches = 0;
+  const catalog = { ...fakeProvider([]), name: "openai" as const, async models() { fetches++; rememberCatalogEfforts([["gpt-5.5", ["medium", "high", "max"]]]); return ["gpt-5.5"]; } };
+  try {
+    const first = await effortChoices("choices", async () => catalog);
+    expect(first).toEqual({ model: "gpt-5.5", current: "high", choices: [{ value: "default", label: "default", current: false }, { value: "medium", label: "medium", current: false }, { value: "high", label: "high", current: true }, { value: "max", label: "max", current: false }] });
+    await effortChoices("choices", async () => catalog);
+    expect(fetches).toBe(1); // once per process, shared with the context-limit prefetch
+  } finally { clearCatalogEfforts(); }
+  const none = await effortChoices("choices", async () => { throw new Error("no account"); });
+  expect(none.choices.map((c) => c.value)).toEqual(["default", "low", "medium", "high", "xhigh"]);
+  expect(none.choices.find((c) => c.current)?.value).toBe("high");
 });
 
 for (const role of ["orchestrator", "worker", "reviewer"] as const) {

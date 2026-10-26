@@ -101,7 +101,7 @@ test("a keeper failure is reported on the page and retried on later polls; quitt
 
 test("without a keeper (tests, legacy), pages open and the model acknowledgement still goes through the client", async () => {
   const { app, calls } = await setup({ saveModel: async id => `model set to ${id}` });
-  await app.commands.get("/models")!.run("claude-opus-5-5", app.page);
+  await app.commands.get("/model")!.run("claude-opus-5-5", app.page);
   await until(() => calls.includes("model claude-opus-5-5"));
   await until(() => text(app).includes("orchestrator: model claude-opus-5-5 applies"));
 });

@@ -152,7 +152,7 @@ Or, for ChatGPT/Codex:
 /login codex
 ```
 
-Complete browser sign-in, then use `/accounts` to check the account and `/models`
+Complete browser sign-in, then use `/accounts` to check the account and `/model`
 to select a model from that provider (↑/↓, Enter; Esc cancels). Login selects an
 account, not a model; catalog entries may require an entitlement you do not have.
 See [subscription login](#subscription-login) for profiles and
@@ -272,7 +272,7 @@ The orchestrator itself is a long-lived process too: `orca start` makes sure
 each open project's **orchestrator daemon** runs in the `orchestrator` window
 of that project's tmux session and starts it when it is not (you see
 `orchestrator started` on the page). The TUI is a client: your messages go to
-the daemon's inbox, Ctrl+C, `/clear`, `/compact` and `/models` go to it as
+the daemon's inbox, Ctrl+C, `/clear`, `/compact` and `/model` go to it as
 file requests it acknowledges on the page, and the conversation is read back
 from the saved transcript as the daemon appends to it. Closing the TUI (or your
 terminal) leaves the orchestrator's turn, its background workers, the exit
@@ -749,15 +749,16 @@ In the TUI:
 open the provider's subscription sign-in page. Omit the profile name to use
 `default`, or use different names for multiple accounts.
 
-`/accounts` and `/models` open arrow-key menus: ↑↓ then Enter picks an account
-(a signed-out one starts its login) or a model, Esc cancels. Each provider's
-account is selected independently. `/models <model-id>` sets a model the menu
-does not list.
+`/accounts`, `/model` and `/effort` open arrow-key menus: ↑↓ then Enter picks an
+account (a signed-out one starts its login), a model, or a reasoning effort for
+the current model; Esc cancels. Each provider's account is selected
+independently. `/model <model-id>` sets a model the menu does not list;
+`/effort <level|default>` sets an effort directly.
 
 Claude models use the selected Claude subscription. Other models use the selected
 ChatGPT/Codex subscription. Account and model changes take effect on the next
 orchestrator turn; running workers keep their selection and refresh its tokens
-automatically. `/models` reads the providers' catalogs; a listed model can still
+automatically. `/model` reads the providers' catalogs; a listed model can still
 require an entitlement your account does not have.
 
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, developer-platform profiles, and keys from
