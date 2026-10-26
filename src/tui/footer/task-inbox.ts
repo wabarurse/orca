@@ -9,6 +9,40 @@ export interface TaskInboxData {
   error?: string;
 }
 
+interface RefreshableTaskInbox extends TaskInboxData {
+  pending?: Promise<void>;
+  refreshAgain?: boolean;
+}
+
+/** Coalesce reads, not invalidations: a poll arriving during a snapshot needs a
+ * trailing read. The captured panel/page must still own every published result. */
+export function refreshTaskInboxData(data: RefreshableTaskInbox, read: () => Promise<TaskRow[]>, current: () => boolean, changed: () => void): Promise<void> {
+  data.refreshAgain = true;
+  if (data.pending) return data.pending;
+  data.loading = true;
+  data.pending = Promise.resolve().then(async () => {
+    do {
+      data.refreshAgain = false;
+      try {
+        const rows = await read();
+        if (!current()) return;
+        data.rows = rows;
+        data.error = undefined;
+      } catch (err) {
+        if (!current()) return;
+        data.error = err instanceof Error ? err.message : String(err);
+      }
+      changed();
+    } while (data.refreshAgain && current());
+  }).finally(() => {
+    data.pending = undefined;
+    data.loading = false;
+    if (current()) changed();
+  });
+  changed();
+  return data.pending;
+}
+
 /** Registry text is untrusted, even when it passed storage validation. No SGR,
  * OSC links, C0/C1 or bidi controls from fields/errors may reach the terminal. */
 export const inboxText = plainText;
