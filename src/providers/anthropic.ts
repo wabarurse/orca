@@ -8,7 +8,7 @@ import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sd
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { claudeCatalogEfforts, rememberCatalogEfforts } from "./catalog";
-import { withTransientRetries, type RetryOptions } from "./retry";
+import { exhaustedQuota, withTransientRetries, type RetryOptions } from "./retry";
 
 // account.ts supplies Claude Code subscription credentials. There is no API-key mode.
 export function anthropic(client: Anthropic, options: { promptCache?: boolean; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
@@ -35,13 +35,23 @@ export function anthropic(client: Anthropic, options: { promptCache?: boolean; r
       // 401 is a retry (login/claude.ts's forceRefresh), so that single attempt stays, and may also answer one
       // transient failure before ours do.
       return withTransientRetries(async started => {
-        const stream = client.messages.stream(params, { maxRetries: 1, ...(req.signal ? { signal: req.signal } : {}),
+        const stream = client.messages.stream(params, { maxRetries: 1,
+          // Stop the SDK's own transient retry too, retaining its 401 refresh.
+          middleware: [async (request, next, context) => {
+            const response = await next(request);
+            if (!response.ok && exhaustedQuota(await context.parse(response).catch(() => undefined))) {
+              const headers = new Headers(response.headers);
+              headers.set("x-should-retry", "false");
+              return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+            }
+            return response;
+          }], ...(req.signal ? { signal: req.signal } : {}),
           ...(req.settings?.fast && req.model !== "claude-opus-5-5" ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
         stream.on("streamEvent", started);
         stream.on("text", req.onText);
         const message = await stream.finalMessage();
         return completedTurn(message);
-      }, { signal: req.signal, what: "claude", notice: req.onNotice, ...options.retry });
+      }, { signal: req.signal, what: "claude", model: req.model, notice: req.onNotice, ...options.retry });
     },
     async search(req) {
       req.signal.throwIfAborted();
