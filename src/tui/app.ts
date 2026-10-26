@@ -1609,15 +1609,16 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const operation = ++this.modelGeneration;
     if (!page) return this.say(dim("open a project before changing its model settings"));
     const identity = projectIdentity(page.project);
-    this.say(dim("fetching effort levels…"));
+    this.note("fetching effort levels…", page);
     let picker: Awaited<ReturnType<typeof effortChoices>>;
     try { picker = await (this.deps.effortChoices ?? effortChoices)(page.project); }
-    catch (err) { return this.say(dim(err instanceof Error ? err.message : String(err)), page); }
+    catch (err) { this.notes.delete(page); return this.say(dim(err instanceof Error ? err.message : String(err)), page); }
+    if (this.notes.delete(page)) this.draw();
     if (!this.modelPageCurrent(page, operation)) return;
-    if (picker.note) this.say(dim(picker.note), page);
+    if (picker.note) this.note(picker.note, page);
     this.openMenu(`effort for ${picker.model}   (/effort <level|default> sets directly)`, picker.choices, async (level) => {
       if (!this.modelPageCurrent(page, operation)) return;
-      try { this.say(dim(await setEffort(page.project, picker.model, level, identity)), page); }
+      try { this.note(await setEffort(page.project, picker.model, level, identity), page); }
       catch (err) { return this.say(dim(err instanceof Error ? err.message : String(err)), page); }
       await this.refreshHeader(page);
     }, operation);

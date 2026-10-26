@@ -571,8 +571,9 @@ still work, and Ctrl+Q replaces help with the Inbox's Questions section.
 Informational status notes are not conversation: `/rename <name> to rename`
 after Ctrl+N, a rename's `old → new`, `fetching models…`, `model set to …`
 and the daemon's `orchestrator: model … applies from the orchestrator's next
-request`, `/effort` and `/fast` queries and saves, `/accounts` selections and
-what the daemon keeper did (`orchestrator started`, `orchestrator was not
+request`, `/effort` picker results (`fetching effort levels…`, a dropped saved
+level, the saved pick) and `/effort <level>`/`/fast` queries and saves,
+`/accounts` selections and what the daemon keeper did (`orchestrator started`, `orchestrator was not
 running; restarted`) show as one dim row directly above the composer, cut to
 the width. A newer note for the same page replaces it; the next keypress on
 that page clears it (scrolling with the wheel or Page Up/Down and mouse

@@ -233,7 +233,7 @@ test("/effort with no args opens a picker of default plus supported levels for t
   const ui = await setup([]);
   const lines = () => ui.app.page!.lines.join("");
   try {
-    ui.type("/effort high\r"); await until(() => lines().includes("effort for gpt-6-astra: high"));
+    ui.type("/effort high\r"); await until(() => note(ui.app).includes("effort for gpt-6-astra: high"));
     ui.type("/effort\r"); await until(() => !!ui.app.menu);
     expect(ui.app.menu!.title).toContain("effort for gpt-6-astra");
     expect(ui.app.menu!.title).toContain("/effort <level|default>");
@@ -241,13 +241,14 @@ test("/effort with no args opens a picker of default plus supported levels for t
     expect(ui.app.menu!.items).toEqual(["  default", "  low", "  medium", "● high", "  xhigh", "  max"]);
     expect(ui.app.menu!.index).toBe(3);
     ui.key({ name: "down" }); ui.type("\r");
-    await until(() => lines().includes("effort for gpt-6-astra: xhigh"));
+    await until(() => note(ui.app).includes("effort for gpt-6-astra: xhigh")); // the pick's result is a transient note
     expect(ui.app.menu).toBeNull();
     expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBe("xhigh");
     await until(() => ui.writes.some(s => s.includes("effort xhigh · fast off")));
     ui.type("/effort\r"); await until(() => !!ui.app.menu);
     ui.key({ name: "up" }); ui.key({ name: "up" }); ui.key({ name: "up" }); ui.key({ name: "up" }); ui.type("\r");
-    await until(() => lines().includes("effort for gpt-6-astra: default;"));
+    await until(() => note(ui.app).includes("effort for gpt-6-astra: default;"));
+    expect(lines()).not.toContain("gpt-6-astra");
     expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBeUndefined();
     ui.type("/effort\r"); await until(() => !!ui.app.menu);
     expect(ui.app.menu!.items[0]).toBe("● default");
@@ -260,12 +261,16 @@ test("/effort with no args opens a picker of default plus supported levels for t
 });
 
 test("effort picker lists catalog-reported levels and cannot write a model the project no longer uses", async () => {
-  const ui = await setup([], undefined, { effortChoices: async () => ({ model: "gpt-6-astra", current: "default", note: "saved effort xhigh is not supported", choices: [{ value: "default", label: "default", current: true }, { value: "medium", label: "medium" }, { value: "high", label: "high" }] }) });
+  const catalog = deferred<void>();
+  const ui = await setup([], undefined, { effortChoices: async () => { await catalog.promise; return { model: "gpt-6-astra", current: "default", note: "saved effort xhigh is not supported", choices: [{ value: "default", label: "default", current: true }, { value: "medium", label: "medium" }, { value: "high", label: "high" }] }; } });
   const lines = () => ui.app.page!.lines.join("");
   try {
-    ui.type("/effort\r"); await until(() => !!ui.app.menu);
-    expect(lines()).toContain("fetching effort levels…");
-    expect(lines()).toContain("saved effort xhigh is not supported");
+    // The fetch and the picker's note are transient notes above the composer, the first dropped once the catalog arrives.
+    ui.type("/effort\r"); await until(() => note(ui.app).includes("fetching effort levels…"));
+    catalog.resolve(); await until(() => !!ui.app.menu);
+    expect(note(ui.app)).not.toContain("fetching effort levels…");
+    expect(note(ui.app)).toContain("saved effort xhigh is not supported");
+    expect(lines()).toBe("");
     expect(ui.app.menu!.items).toEqual(["● default", "  medium", "  high"]);
     await setModel("gpt-5.5", ui.project);
     ui.key({ name: "down" }); ui.type("\r");
