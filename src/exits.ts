@@ -325,7 +325,7 @@ export async function afterExit(info: RunInfo & { code: number }): Promise<boole
 }
 
 /** True while `pid` is a running process (EPERM still means it exists). */
-export { pidAlive } from "./storage-lock";
+export { pidAlive };
 
 export interface WatchdogOptions {
   /** Live agent windows, or null when tmux could not be asked (then the check is skipped). */

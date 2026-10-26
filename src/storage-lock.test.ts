@@ -47,19 +47,21 @@ test("a live owner, an unreadable owner and a lock without metadata are never ta
 
 test("two contenders for a dead owner's lock cannot both win", async () => {
   const path = join(home, "contested");
-  const pid = await deadPid();
-  plant(path, { pid, since: "2024-01-01T00:00:00.000Z" });
+  let pid = await deadPid();
   for (let round = 0; round < 20; round++) {
+    if (pidAlive(pid)) pid = await deadPid(); // The pid was reused meanwhile.
+    plant(path, { pid, since: "2024-01-01T00:00:00.000Z" });
     const results = await Promise.all(Array.from({ length: 6 }, () => tryStorageLock(path)));
     const winners = results.filter(Boolean);
     expect(winners).toHaveLength(1);
     expect((await lockOwner(path))?.pid).toBe(process.pid);
     expect(await tryStorageLock(path)).toBeUndefined();
     await winners[0]!();
-    expect(readdirSync(home).filter(n => n.startsWith("contested"))).toEqual([]);
-    plant(path, { pid, since: "2024-01-01T00:00:00.000Z" });
+    expect(existsSync(path)).toBe(false);
   }
-  rmSync(path, { recursive: true });
+  // Moving the stale directory aside is what matters; its removal is best effort.
+  for (let wait = 0; readdirSync(home).some(n => n.startsWith("contested")) && wait < 50; wait++) await Bun.sleep(10);
+  expect(readdirSync(home).filter(n => n.startsWith("contested"))).toEqual([]);
 });
 
 test("owner metadata is pid and time, plus the project when given", async () => {

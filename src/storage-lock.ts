@@ -34,13 +34,7 @@ export const describeOwner = (owner: LockOwner | undefined): string =>
 
 export async function tryStorageLock(path: string, project?: string): Promise<(() => Promise<void>) | undefined> {
   await mkdir(dirname(path), { recursive: true });
-  for (let attempt = 0; ; attempt++) {
-    try { await mkdir(path); break; }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (attempt || !await takeOverDead(path)) return;
-    }
-  }
+  if (!await createLockDir(path)) return;
   try { await writeFile(`${path}/owner.json`, JSON.stringify({ pid: process.pid, since: new Date().toISOString(), ...(project ? { project } : {}) }) + "\n"); }
   catch (error) { await rm(path, { recursive: true, force: true }); throw error; }
   return async () => {
@@ -53,36 +47,56 @@ export async function tryStorageLock(path: string, project?: string): Promise<((
   };
 }
 
+const errorCode = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
+
+/** Create the lock directory, retrying once after a dead owner's was moved aside; false when it stays held. */
+async function createLockDir(path: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { await mkdir(path); return true; }
+    catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+      if (attempt || !await takeOverDead(path)) return false;
+    }
+  }
+  return false;
+}
+
 /**
  * Move a dead owner's lock directory aside so the caller can create a fresh one.
  * Contenders first claim the directory itself by creating `takeover` inside it,
  * then confirm it still holds the dead owner they read: a fresh directory (owner
  * written or not yet) is never moved, and two contenders cannot both win.
+ * True when the caller should retry its mkdir (moved aside, or gone meanwhile).
  */
 async function takeOverDead(path: string): Promise<boolean> {
-  const dead = await lockOwner(path);
-  if (!dead || pidAlive(dead.pid)) return false;
-  const claim = `${path}/takeover`;
-  try { await mkdir(claim); }
-  catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return true; // Released or taken meanwhile; the caller retries once.
-    if (code === "EEXIST") return false; // Another taker is at work (or died mid-takeover: operator).
-    throw error;
-  }
-  const now = await lockOwner(path);
-  if (!now || now.pid !== dead.pid || now.since !== dead.since || pidAlive(now.pid)) {
-    await rmdir(claim).catch(() => {});
-    return false;
-  }
+  const claimed = await claimDead(path);
+  if (claimed !== "claimed") return claimed === "gone";
   const aside = `${path}.stale-${randomUUID()}`;
   try { await rename(path, aside); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (errorCode(error) !== "ENOENT") throw error;
     return true;
   }
   await rm(aside, { recursive: true, force: true }).catch(() => {});
   return true;
+}
+
+/** Claim the lock directory for takeover if its recorded owner is dead, confirming it after the claim. */
+async function claimDead(path: string): Promise<"claimed" | "held" | "gone"> {
+  const dead = await lockOwner(path);
+  if (!dead || pidAlive(dead.pid)) return "held";
+  const claim = `${path}/takeover`;
+  try { await mkdir(claim); }
+  catch (error) {
+    const code = errorCode(error);
+    if (code === "ENOENT") return "gone"; // Released or taken meanwhile; the caller retries once.
+    if (code === "EEXIST") return "held"; // Another taker is at work (or died mid-takeover: operator).
+    throw error;
+  }
+  const now = await lockOwner(path);
+  if (now && now.pid === dead.pid && now.since === dead.since && !pidAlive(now.pid)) return "claimed";
+  await rmdir(claim).catch(() => {});
+  return "held";
 }
 
 const queues = new Map<string, Promise<unknown>>();

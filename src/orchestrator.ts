@@ -231,7 +231,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
 /** Own the checkout's turn, then this conversation's; on a partial win nothing stays held. */
 async function ownTurn(project: string): Promise<(() => Promise<void>) | undefined> {
   const releases: (() => Promise<void>)[] = [];
-  const release = async () => { for (const r of releases.reverse()) await r(); };
+  const release = async () => { for (const r of [...releases].reverse()) await r(); };
   for (const path of turnLocks(project)) {
     const r = await tryStorageLock(path, project).catch(async error => { await release(); throw error; });
     if (!r) { await release(); return; }

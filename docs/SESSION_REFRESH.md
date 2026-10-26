@@ -84,7 +84,9 @@ preview is local to the submitting window; it is not a global inbox inventory.
   lock is taken over only when its recorded owner PID is verifiably gone
   (`ESRCH`), via a claim marker inside the orphan and a rename aside so two
   contenders cannot both win. Live, unsignalable (`EPERM`, which covers PID
-  reuse) or unreadable owners are never taken over.
+  reuse) or unreadable owners are never taken over. Processes in another PID
+  namespace (containers sharing one ORCA_HOME) look dead to `kill(pid, 0)`, so
+  takeover is only safe when every orca process shares the host's PID namespace.
 - Transcript reload, parent selection and staged/fsync/rename publication share
   a per-file lock (`transcripts/<session>.jsonl.lock`). Publication preserves the
   exact old byte prefix. Refresh replaces its snapshot only after successful
