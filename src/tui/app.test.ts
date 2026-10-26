@@ -3681,22 +3681,31 @@ test("Option+Backspace and a drag arriving as separate writes through realTermin
     openOrchestrator: async () => ({ async say() { throw new Error("input must not submit"); }, async pending() { return false; }, async turn() { return []; } }),
   });
   const running = app.run("split-writes");
-  // The terminal's writes reach stdin as real reads (a pipe): what Terminal.app sends as separate
-  // writes (the Option prefix, then the key; each mouse report) arrives as separate reads. A
-  // `stall` makes the read that delivered the ESC keep the loop busy past the Esc window, so the
-  // expired Esc timer runs before the read that already arrived, as under a slow frame.
-  const pipe = Bun.spawn(["cat"], { stdin: "pipe", stdout: "pipe" });
-  let stall = 0, arrived = 0;
-  const reading = (async () => { for await (const chunk of pipe.stdout) { input?.(chunk); arrived += chunk.length; if (stall) { const end = performance.now() + stall; stall = 0; while (performance.now() < end) { /* busy */ } } } })();
-  const write = async (s: string) => { const want = arrived + Buffer.byteLength(s, "latin1"); pipe.stdin.write(Buffer.from(s, "latin1")); pipe.stdin.flush(); await until(() => arrived >= want); };
-  const split = async (prefix: string, rest: string) => { stall = ESC_DELAY_MS + 10; await write(prefix); await write(rest); await Bun.sleep(ESC_DELAY_MS); };
+  // The terminal's writes reach stdin as real reads: a child process writes `prefix`, then `rest`
+  // 5ms later on its own clock (as Terminal.app writes the Option prefix and the key, and each
+  // mouse report, separately). With `stall`, the read that delivered the prefix keeps the loop
+  // busy past the Esc window while the rest lands in the pipe, so the expired Esc timer runs
+  // before the read that is already waiting, as under a slow frame.
+  const write = async (prefix: string, rest = "", stall = 0) => {
+    const source = Bun.spawn(["/bin/sh", "-c", 'printf "%s" "$1"; if [ -n "$2" ]; then sleep 0.005; printf "%s" "$2"; fi', "writes", prefix, rest], { stdin: "ignore", stdout: "pipe" });
+    const chunks: string[] = [];
+    for await (const chunk of source.stdout) {
+      chunks.push(Buffer.from(chunk).toString("latin1"));
+      input!(chunk);
+      if (chunks.length === 1 && stall) { const end = performance.now() + stall; while (performance.now() < end) { /* busy */ } }
+    }
+    await source.exited;
+    expect(chunks.join("")).toBe(prefix + rest);
+    if (rest) expect(chunks[0]).toBe(prefix); // the race did happen: the prefix was read on its own
+  };
+  const split = (prefix: string, rest: string) => write(prefix, rest, ESC_DELAY_MS + 10);
   try {
     await until(() => !!app.page);
     app.page!.lines.push("SELECT-ME please", ...Array.from({ length: 30 }, (_, i) => `row-${i}`));
     app.reprint();
     await until(() => display.screen().some(row => row.includes("row-29")));
     await write("hello big wide world");
-    await write("\x1b"); await write("\x7f"); // Terminal.app: ESC, then DEL, two writes
+    await write("\x1b", "\x7f"); // Terminal.app: ESC, then DEL, two writes
     expect(app.input).toEqual({ text: "hello big wide ", cursor: 15 });
     await split("\x1b", "\x7f"); // the Esc timer ran before the DEL read: still one chord, never Escape (which clears the draft)
     expect(app.input).toEqual({ text: "hello big ", cursor: 10 });
@@ -3714,7 +3723,7 @@ test("Option+Backspace and a drag arriving as separate writes through realTermin
     await until(() => copied.length === 1);
     expect(copied).toEqual(["SELECT-ME"]);
     expect(app.input.text).toBe(""); // no report text typed into the draft
-  } finally { app.quit(); await running; pipe.kill(); await reading; }
+  } finally { app.quit(); await running; }
 });
 
 test("ctrl+g enters /keys without replacing chat, answer, or no-page drafts and input history", async () => {

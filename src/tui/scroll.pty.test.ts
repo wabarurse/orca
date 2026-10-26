@@ -105,6 +105,9 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
   }
 }, 15_000);
 
+// An integration guard for the separate-writes input path through a real PTY. The child is
+// never stalled here, so the late-Esc-timer race itself is not exercised: app.test.ts ("even when
+// the Esc timer fires first") and keys.test.ts cover that.
 test("owned PTY: Option+Backspace and a drag sent as separate writes (Terminal.app's way) delete the word and auto-copy on release", async () => {
   const home = mkdtempSync(join(tmpdir(), "orca-split-pty-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
@@ -130,7 +133,8 @@ test("owned PTY: Option+Backspace and a drag sent as separate writes (Terminal.a
     await until(() => output.includes("PTY-SELECT-ME"));
     child.terminal!.write("hello big world");
     await until(() => input() === "│> hello big world");
-    // Terminal.app sends Option+Backspace as two writes: ESC, then DEL.
+    // Terminal.app sends Option+Backspace as two writes: ESC, then DEL. (The DEL goes in once the
+    // app is in raw mode; before that it is the line discipline's ICANON erase character.)
     child.terminal!.write("\x1b"); child.terminal!.write("\x7f");
     await until(() => input() === "│> hello big");
     child.terminal!.write("\x1b"); await Bun.sleep(5); child.terminal!.write("\x7f");
