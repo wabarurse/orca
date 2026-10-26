@@ -11,7 +11,7 @@ import { AGENTS_TICK_MS, App, helpLines, parseCommand, type Clock, type Line, ty
 import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
-import { fileStore, type QuestionStore } from "./questions";
+import { fileStore, queuedAnswer, type QuestionStore } from "./questions";
 import { answeredLine, MAX_RESTORED_ROWS, userLines } from "./restore";
 import { historyRows, lineRows } from "./lines";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
@@ -1629,6 +1629,38 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("answer>") && live(term).includes("? Name?"));
     term.type("/srv/data\r");
     await until(() => term.screen().includes("? Name? → /srv/data"));
+    await stop();
+  });
+
+  test("an answer sent here waits in the prompt queue, as its question and answer, until the orchestrator reads it", async () => {
+    const [q] = await ask1("qa-queue", "Which db?", ["postgres", "sqlite"]);
+    const { term, app, inbox, stop } = await start("qa-queue");
+    await until(() => live(term).includes("❯ 1. postgres"));
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("? Which db? → postgres"));
+    expect(app.frame().queued?.texts).toEqual(["? Which db? → postgres"]);
+    await until(() => live(term).includes("queued 1/1") && live(term).includes("1. ? Which db? → postgres"));
+    const [msg] = await drain("qa-queue", "orchestrator");
+    expect(msg!.text).toBe(`[${q!.id}] answer to "Which db?": postgres`);
+    expect(msg!.inputId).toBe(app.page!.sent[0]!.inputId); // the queue entry is the delivered message
+    inbox([msg!]); // consumed: out of the queue, and the line shown when answered is not repeated
+    await settle();
+    expect(app.frame().queued?.texts).toEqual([]);
+    expect(app.page!.lines.map(raw).filter((l) => l.includes("Which db?"))).toEqual([answeredLine("Which db?", "postgres")]);
+    expect(queuedAnswer("x".repeat(70), "yes")).toBe(`? ${"x".repeat(60)}… → yes`);
+    await stop();
+  });
+
+  test("an answer the store refuses leaves the prompt queue", async () => {
+    await ask1("qa-queue-fail", "Which db?", ["postgres"]);
+    const questions: QuestionStore = { ...fileStore, answer: async () => { throw new Error("disk full"); } };
+    const { term, app, stop } = await start("qa-queue-fail", { questions });
+    await app.questions.command(app.page);
+    await until(() => live(term).includes("❯ 1. postgres"));
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("could not answer: disk full"));
+    expect(app.frame().queued?.texts).toEqual([]);
+    expect(app.page!.sent).toEqual([]);
     await stop();
   });
 

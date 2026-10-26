@@ -136,7 +136,7 @@ async function claim(project: string, id: string): Promise<string> {
  * delivery payload; dismissal must not touch inboxes or input epochs. On write
  * or delivery failure restore the open record before releasing the claim. If
  * rollback itself fails, retain the claim rather than allow duplicate delivery. */
-async function close(project: string, id: string, reply?: { answer: string; userEpoch: string }): Promise<Question> {
+async function close(project: string, id: string, reply?: { answer: string; userEpoch: string; inputId?: string }): Promise<Question> {
   if (!/^[\w.-]+$/.test(id) || id.includes("..")) throw new Error(`bad question id ${id}`);
   const f = Bun.file(file(project, id));
   if (!(await f.exists())) throw new Error(`no question ${id}`);
@@ -151,6 +151,7 @@ async function close(project: string, id: string, reply?: { answer: string; user
     written = true;
     if (reply) await put(project, "orchestrator", {
       from: "user", text: `[${q.id}] answer to "${q.text}": ${reply.answer}`, userEpoch: reply.userEpoch,
+      ...(reply.inputId ? { inputId: reply.inputId } : {}),
     });
   } catch (e) {
     if (written) await write(project, q);
@@ -160,11 +161,12 @@ async function close(project: string, id: string, reply?: { answer: string; user
   return next;
 }
 
-/** Answer an open question and tell the orchestrator. */
-export async function answer(project: string, id: string, text: string): Promise<Question> {
+/** Answer an open question and tell the orchestrator. An optional inputId
+ * identifies the delivered message at consumption, like a typed prompt's. */
+export async function answer(project: string, id: string, text: string, inputId?: string): Promise<Question> {
   const a = clean(text, limits.answer, "answer");
   if (!a) throw new Error("empty answer");
-  return close(project, id, { answer: a, userEpoch: inputEpoch(project) });
+  return close(project, id, { answer: a, userEpoch: inputEpoch(project), inputId });
 }
 
 /** Silently remove an open question from Inbox, retaining its skipped history.

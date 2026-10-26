@@ -67,7 +67,7 @@ export interface Page {
   historyLines: number;
   savingHistory: Promise<void>;
   /** Submitted inbox prompts, previewed in the footer but not yet in history; removed by identity at onInbox. */
-  sent: { readonly inputId: string; text: string; attachments?: ImageRef[]; submission?: string; retry?: boolean }[];
+  sent: { readonly inputId: string; text: string; attachments?: ImageRef[]; submission?: string; retry?: boolean; question?: boolean }[];
   /** The orchestrator's open questions for the user, polled from questions/ (questions.ts). */
   questions: PageQuestions;
   /** Answered-question lines waiting for the streaming reply's partial line to end, so they never split it. */
@@ -375,6 +375,8 @@ export class App {
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
       say: (line, page) => app.toPage(page as Page, [line]),
       record: (line, page) => app.record(page as Page, line),
+      queue: (page, inputId, text) => { (page as Page).sent.push({ inputId, text, question: true }); app.draw(); },
+      unqueue: (page, inputId) => { const sent = (page as Page).sent; const at = sent.findIndex(m => m.inputId === inputId); if (at !== -1) sent.splice(at, 1); },
       submitted: () => { void app.refreshSessions(); },
       width: () => app.inputWidth("answer> "),
       now: () => app.clock.now(),
@@ -516,8 +518,10 @@ export class App {
       if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
       // Match identity, not text: an identical external message is not an acknowledgement.
       // Typed here: show only now, at the consumption boundary (answer-shaped chat stays chat).
+      // A question answered here leaves the queue the same way; its line was shown when answered.
       const at = m.inputId ? page.sent.findIndex(item => item.inputId === m.inputId) : -1;
-      if (at !== -1) { page.sent.splice(at, 1); this.toPage(page, userLines([m.text, imageLabels(m.attachments)].filter(Boolean).join("\n"))); continue; }
+      const item = at === -1 ? undefined : page.sent.splice(at, 1)[0];
+      if (item && !item.question) { this.toPage(page, userLines([m.text, imageLabels(m.attachments)].filter(Boolean).join("\n"))); continue; }
       // A question's answer: its dim line, unless answered here (shown then); anything else from elsewhere (`orca msg`) as "> …", as restore shows it.
       this.toPage(page, this.questions.inboxLines(page, [m.text, imageLabels(m.attachments)].filter(Boolean).join("\n")) ?? userLines(m.text));
     }
