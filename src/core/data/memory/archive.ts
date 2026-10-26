@@ -35,7 +35,7 @@ export function scopedTasks(tasks: Task[], entries: Entry[]): Task[] {
 /** The only agent whose transcript is ever indexed. Workers and reviewers never reach the database. */
 export const ARCHIVE_AGENT = "orchestrator";
 /** 2: tasks.started_at/ended_at, filled from the rows' own raw registry records. */
-const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 2;
 const BUSY_MS = 10_000;
 const TASK_ID = /[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi;
 
@@ -357,19 +357,37 @@ function searchHistory(db: Database, project: string, epoch: string, tasks: Task
 // ---- Global archive search (the orchestrator-only `history` tool) -------------------------------------------
 
 /** Read-only handle on the global archive, or undefined when it is missing or not initialized (e.g. 0 bytes). Takes no
- * project state lock. The connection never modifies the database file or any row, but SQLite may create empty
- * `-wal`/`-shm` siblings to read a WAL database. The caller's own transcript is archived (a write to its own
- * project's rows only) before this is opened; other projects' rows are never touched. */
+ * project state lock. The connection never modifies the database file or any row, but reading a WAL database needs
+ * its `-wal`/`-shm` siblings, which may be (re)created empty. The caller's own transcript is archived (a write to its
+ * own project's rows only) before this is opened; other projects' rows are never touched. */
 function readonlyDatabase(): Database | undefined {
-  if (!existsSync(archivePath())) return undefined;
-  const db = new Database(archivePath(), { readonly: true, strict: true });
-  try {
-    db.exec("PRAGMA busy_timeout=2000");
-    const version = userVersion(db);
-    if (version > SCHEMA_VERSION) throw new Error("memory archive was written by a newer version");
-    if (version >= SCHEMA_VERSION) return db;
-  } catch (error) { db.close(); throw error; }
+  const file = archivePath();
+  if (!existsSync(file)) return undefined;
+  const opened = (): [Database, number] => {
+    const db = new Database(file, { readonly: true, strict: true });
+    try { db.exec("PRAGMA busy_timeout=2000"); return [db, userVersion(db)]; }
+    catch (error) { db.close(); throw error; }
+  };
+  let db: Database, version: number;
+  try { [db, version] = opened(); }
+  catch (error) {
+    // A read-only connection cannot create the siblings (SQLite reads a WAL database without them only when it
+    // may create them); after a close that removed them, one read on a read-write connection brings them back,
+    // empty, without writing the main file.
+    if ((error as { code?: string }).code !== "SQLITE_CANTOPEN" || existsSync(`${file}-wal`)) throw error;
+    primeWal(file);
+    [db, version] = opened();
+  }
+  if (version > SCHEMA_VERSION) { db.close(); throw new Error("memory archive was written by a newer version"); }
+  if (version >= SCHEMA_VERSION) return db;
   db.close();
+}
+
+/** Recreate a WAL database's missing `-wal`/`-shm` siblings: a read-write connection's first read creates them. */
+function primeWal(file: string): void {
+  const db = new Database(file, { readwrite: true, create: false, strict: true });
+  try { db.exec("PRAGMA busy_timeout=2000"); userVersion(db); } finally { db.close(); }
+  secure(file);
 }
 
 /** Backfill state of the archive: other projects may be missing from it until the migration completed. */

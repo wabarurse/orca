@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../config/config";
-import { archivePath, archiveTranscript, database, queryHistory } from "../data/memory/archive";
+import { SCHEMA_VERSION, archivePath, archiveTranscript, database, queryHistory } from "../data/memory/archive";
 import { ORCHESTRATOR } from "../prompt/orchestrator";
 import { REVIEWER } from "../prompt/reviewer";
 import { WORKER } from "../prompt/worker";
@@ -247,7 +247,7 @@ test("abort during the archive step rejects instead of returning a refusal", asy
 
 test("a newer-schema archive is refused, whether or not the caller has a transcript", async () => {
   home(); mk("alpha");
-  const db = new Database(archivePath(), { create: true }); db.exec("PRAGMA user_version=2"); db.close();
+  const db = new Database(archivePath(), { create: true }); db.exec(`PRAGMA user_version=${SCHEMA_VERSION + 1}`); db.close();
   expect(await call("alpha", { action: "search", query: "x" })).toMatch(/^refused: .*newer version/);
   await open(paths.transcript("alpha", "orchestrator")).append({ type: "message", message: { role: "user", content: "hello" } });
   expect(await call("alpha", { action: "search", query: "x" })).toMatch(/^refused: .*newer version/);
@@ -263,12 +263,16 @@ test("a 0-byte or uninitialized archive file gives the 'no global archive yet' n
 test("an archive without -wal/-shm siblings is read without changing the main file", async () => {
   home(); mk("alpha", "beta");
   await say("beta", "beta marmot note");
-  for (const suffix of ["-wal", "-shm"]) expect(existsSync(archivePath() + suffix)).toBe(false);
+  // A closed writer leaves the checkpointed siblings behind (empty) or removes them, depending on the SQLite build;
+  // the reader must cope with either, and a read-only connection cannot create a missing -wal itself.
+  for (const suffix of ["-wal", "-shm"]) rmSync(archivePath() + suffix, { force: true });
   const before = statSync(archivePath());
   const r = await search("alpha", "marmot");
   expect(r.entries).toHaveLength(1);
   const after = statSync(archivePath());
   expect([after.size, after.mtimeMs]).toEqual([before.size, before.mtimeMs]);
+  for (const suffix of ["-wal", "-shm"]) expect(statSync(archivePath() + suffix).mode & 0o777).toBe(0o600); // recreated, owner-only
+  expect((await search("alpha", "marmot")).entries).toHaveLength(1); // and readable again with the siblings present
 });
 
 test("task search_history output has the same shape as before for every status/taskId combination: no project or agent keys", async () => {
