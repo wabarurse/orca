@@ -210,8 +210,10 @@ also looks up every other active task's PR once and, where GitHub reports it
 conflicting (`PRObservation.mergeable` "conflicting": `mergeable` CONFLICTING or
 `mergeStateStatus` DIRTY), `blockConflictingTask` sets attention blocked
 ("conflicts with main after PR #N merged; rebase needed") and invalidates
-readiness (`readiness_invalidated`); "unknown" mergeability is reported as
-unknown, never as a conflict.
+readiness (`readiness_invalidated`); "unknown" mergeability (not computed yet,
+or the lookup failed) is reported as unknown, never as a conflict. Later polls
+do not recheck a PR reported unknown (the per-poll refresh does not act on
+mergeability), so unknown is not clean.
 
 ## TypeScript / UI contract
 

@@ -368,39 +368,56 @@ export function mergeNotice(pr: MergedPR, running: string[], stopped: boolean, t
 
 // --- the other open PRs after a merge ------------------------------------------
 
-/**
- * Main moved: observe every other active task's PR (one `gh pr view` each,
- * tasks sharing a PR share the lookup). A PR GitHub now reports as conflicting
- * blocks its tasks (readiness invalidated) and is listed; one it has not
- * judged yet (mergeable UNKNOWN, or the lookup failed) is listed as unknown,
- * never as a conflict. Returns the notice's line, "" when no other task has a PR.
- */
-async function conflictsAfterMerge(project: string, repository: string, merged: MergedPR, d: Deps): Promise<string> {
+/** Active tasks' PRs in `repository` other than the merged one, grouped by number (tasks sharing a PR share one lookup). */
+function otherTaskPRs(tasks: Task[], repository: string, mergedNumber: number): Map<number, Task[]> {
   const byPR = new Map<number, Task[]>();
-  for (const t of await allTasks(project)) {
-    if (t.archive || !t.pr || t.pr.repository !== repository.toLowerCase() || t.pr.number === merged.number) continue;
+  for (const t of tasks) {
+    if (t.archive || !t.pr || t.pr.repository !== repository.toLowerCase() || t.pr.number === mergedNumber) continue;
     byPR.set(t.pr.number, [...(byPR.get(t.pr.number) ?? []), t]);
   }
+  return byPR;
+}
+
+/** What an observation says after main moved: closed/merged PRs are skipped; a failed lookup or mergeable UNKNOWN is unknown, never a conflict. */
+function conflictState(o: PRObservation | null): "skip" | "unknown" | "conflicting" | "clean" {
+  if (!o) return "unknown";
+  if (o.state !== "OPEN") return "skip";
+  if (o.mergeable === "conflicting") return "conflicting";
+  return o.mergeable === "mergeable" ? "clean" : "unknown";
+}
+
+/** The notice's line for the other open PRs. */
+function conflictLine(conflicting: string[], unknown: string[]): string {
+  const parts: string[] = [];
+  if (conflicting.length) parts.push(`conflicts with main now: ${conflicting.join(", ")}`);
+  if (unknown.length) parts.push(`conflict state unknown (not computed yet or lookup failed): ${unknown.join(", ")}`);
+  return parts.length ? parts.join("; ") : "no open PRs conflict";
+}
+
+/**
+ * Main moved: observe every other active task's PR (one `gh pr view` each).
+ * A PR GitHub now reports as conflicting blocks its tasks (readiness
+ * invalidated) and is listed; one it has not judged yet, or the lookup failed,
+ * is listed as unknown. Returns the notice's line, "" when no other task has a PR.
+ */
+async function conflictsAfterMerge(project: string, repository: string, merged: MergedPR, d: Deps): Promise<string> {
+  const byPR = otherTaskPRs(await allTasks(project), repository, merged.number);
   if (!byPR.size) return "";
   const reason = `conflicts with main after PR #${merged.number} merged; rebase needed`;
-  const conflicting: string[] = [], unknown: string[] = [];
+  const listed: Record<"conflicting" | "unknown", string[]> = { conflicting: [], unknown: [] };
   for (const [n, tasks] of byPR) {
     const o = await d.pr(project, tasks[0]!.pr!).catch(() => null);
-    const label = `#${n} (${o?.branch ?? tasks[0]!.branch})`;
-    if (o && o.state !== "OPEN") continue;
-    if (!o || o.mergeable === "unknown" || o.mergeable === undefined) { unknown.push(label); continue; }
-    if (o.mergeable !== "conflicting") continue;
-    conflicting.push(label);
+    const state = conflictState(o);
+    if (state === "skip" || state === "clean") continue;
+    listed[state].push(`#${n} (${o?.branch ?? tasks[0]!.branch})`);
+    if (state !== "conflicting") continue;
     for (const t of tasks) {
       // Block first: the observation alone would drop readiness without saying why.
       await blockConflictingTask(project, t.id, reason).catch(() => {});
-      await observeTaskPR(project, t.id, o).catch(() => {});
+      await observeTaskPR(project, t.id, o!).catch(() => {});
     }
   }
-  const parts: string[] = [];
-  if (conflicting.length) parts.push(`conflicts with main now: ${conflicting.join(", ")}`);
-  if (unknown.length) parts.push(`conflict state unknown (github has not computed it yet): ${unknown.join(", ")}`);
-  return parts.length ? parts.join("; ") : "no open PRs conflict";
+  return conflictLine(listed.conflicting, listed.unknown);
 }
 
 // --- one PR, one project ------------------------------------------------------

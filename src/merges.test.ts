@@ -556,7 +556,7 @@ describe("the other open PRs after a merge", () => {
     const check = watch([pr(950, "feat/done", oid)], { pr: async (_p, p) => { calls.push(p.number); return obs[p.number] ?? null; } });
     expect(await check(project)).toEqual([950]);
     expect((await inbox()).map((m) => m.text)).toEqual([
-      `[agent-exit] no agents running: pr #950 (feat/done) merged (${url(950)}); cleaned up; conflicts with main now: #951 (feat/a); conflict state unknown (github has not computed it yet): #953 (feat/c), #954 (feat/d), #956 (feat/f)`,
+      `[agent-exit] no agents running: pr #950 (feat/done) merged (${url(950)}); cleaned up; conflicts with main now: #951 (feat/a); conflict state unknown (not computed yet or lookup failed): #953 (feat/c), #954 (feat/d), #956 (feat/f)`,
     ]);
     // The merged PR's task is archived first and never looked up; each other PR: the per-poll refresh plus one lookup for the merge.
     expect(calls.filter((n) => n === 950)).toEqual([]);
