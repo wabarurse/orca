@@ -19,7 +19,7 @@ import { message } from "../tools/message";
 import { registerTask } from "../tasks";
 import { makeSpawn } from "../tools/spawn";
 import { open as openTranscript } from "../transcript";
-import { parseKeys, type Key } from "./keys";
+import { ESC_DELAY_MS, parseKeys, type Key } from "./keys";
 import { realTerminal, type Terminal } from "./term";
 import { FakeScreen } from "./testing";
 import { bold, dim, live as renderLive } from "./render";
@@ -3667,6 +3667,62 @@ test("raw SGR/X10 input through realTerminal only scrolls the body: draft, queue
     await until(() => !app.keyEcho);
     expect(app.input).toEqual(draft);
     expect(JSON.stringify(page.sent)).toBe(queue);
+  } finally { app.quit(); await running; }
+});
+
+test("Option+Backspace and a drag arriving as separate writes through realTerminal: the word goes, the drag auto-copies, even when the Esc timer fires first", async () => {
+  const display = new FakeScreen(60, 24), copied: string[] = [];
+  let input: ((chunk: Uint8Array) => void) | undefined;
+  const stdin = { isTTY: true, setRawMode() {}, on(_e: string, fn: typeof input) { input = fn; }, off() { input = undefined; }, resume() {}, pause() {} };
+  const stdout = { isTTY: true, columns: 60, rows: 24, on() {}, write(s: string) { display.write(s); return true; } };
+  const proc = { on() {}, off() {}, exit() {}, stderr: { write() {} } };
+  const term = realTerminal(stdin as never, stdout as never, proc, NO_REPLY_WINDOW);
+  const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {}, projectModel: async () => "synthetic", clipboardText: async text => { copied.push(text); },
+    openOrchestrator: async () => ({ async say() { throw new Error("input must not submit"); }, async pending() { return false; }, async turn() { return []; } }),
+  });
+  const running = app.run("split-writes");
+  // The terminal's writes reach stdin as real reads: a child process writes `prefix`, then `rest`
+  // 5ms later on its own clock (as Terminal.app writes the Option prefix and the key, and each
+  // mouse report, separately). With `stall`, the read that delivered the prefix keeps the loop
+  // busy past the Esc window while the rest lands in the pipe, so the expired Esc timer runs
+  // before the read that is already waiting, as under a slow frame.
+  const write = async (prefix: string, rest = "", stall = 0) => {
+    const source = Bun.spawn(["/bin/sh", "-c", 'printf "%s" "$1"; if [ -n "$2" ]; then sleep 0.005; printf "%s" "$2"; fi', "writes", prefix, rest], { stdin: "ignore", stdout: "pipe" });
+    const chunks: string[] = [];
+    for await (const chunk of source.stdout) {
+      chunks.push(Buffer.from(chunk).toString("latin1"));
+      input!(chunk);
+      if (chunks.length === 1 && stall) { const end = performance.now() + stall; while (performance.now() < end) { /* busy */ } }
+    }
+    await source.exited;
+    expect(chunks.join("")).toBe(prefix + rest);
+    if (rest) expect(chunks[0]).toBe(prefix); // the race did happen: the prefix was read on its own
+  };
+  const split = (prefix: string, rest: string) => write(prefix, rest, ESC_DELAY_MS + 10);
+  try {
+    await until(() => !!app.page);
+    app.page!.lines.push("SELECT-ME please", ...Array.from({ length: 30 }, (_, i) => `row-${i}`));
+    app.reprint();
+    await until(() => display.screen().some(row => row.includes("row-29")));
+    await write("hello big wide world");
+    await write("\x1b", "\x7f"); // Terminal.app: ESC, then DEL, two writes
+    expect(app.input).toEqual({ text: "hello big wide ", cursor: 15 });
+    await split("\x1b", "\x7f"); // the Esc timer ran before the DEL read: still one chord, never Escape (which clears the draft)
+    expect(app.input).toEqual({ text: "hello big ", cursor: 10 });
+    await split("\x1b", "\b");
+    expect(app.input).toEqual({ text: "hello ", cursor: 6 });
+    await split("\x1b", "d"); // any Alt chord
+    expect(app.input).toEqual({ text: "hello ", cursor: 6 });
+    await write("\x1b"); await Bun.sleep(ESC_DELAY_MS * 3); // a real lone Escape still clears, after the bounded wait
+    expect(app.input.text).toBe("");
+    for (let i = 0; i < 3; i++) { await write("\x1b[5~"); await Bun.sleep(25); }
+    await until(() => display.screen().some(row => row.includes("SELECT-ME")));
+    const y = display.screen().findIndex(row => row.includes("SELECT-ME")) + 1;
+    // Every report its own write; the ESC of each read before its rest with the timer racing it; the release last.
+    for (const report of [`\x1b[<0;1;${y}M`, `\x1b[<32;5;${y}M`, `\x1b[<32;9;${y}M`, `\x1b[<0;9;${y}m`]) await split(report.slice(0, 1), report.slice(1));
+    await until(() => copied.length === 1);
+    expect(copied).toEqual(["SELECT-ME"]);
+    expect(app.input.text).toBe(""); // no report text typed into the draft
   } finally { app.quit(); await running; }
 });
 

@@ -104,3 +104,61 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
     rmSync(home, { recursive: true, force: true });
   }
 }, 15_000);
+
+// An integration guard for the separate-writes input path through a real PTY. The child is
+// never stalled here, so the late-Esc-timer race itself is not exercised: app.test.ts ("even when
+// the Esc timer fires first") and keys.test.ts cover that.
+test("owned PTY: Option+Backspace and a drag sent as separate writes (Terminal.app's way) delete the word and auto-copy on release", async () => {
+  const home = mkdtempSync(join(tmpdir(), "orca-split-pty-"));
+  let child: ReturnType<typeof Bun.spawn> | undefined;
+  try {
+    mkdirSync(join(home, "projects", "probe", "repo"), { recursive: true });
+    const t = open(join(home, "projects", "probe", "transcripts", "orchestrator.jsonl"));
+    await t.append({ type: "meta", role: "orchestrator", model: "m" });
+    await t.append({ type: "message", message: { role: "assistant", content: "PTY-SELECT-ME here" } });
+    let output = "";
+    const decoder = new TextDecoder();
+    child = Bun.spawn(["/bin/sh", "-c", `"$1" "$2" start probe <&0`, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli.ts")], {
+      cwd: home,
+      // No inherited auth, tmux server/socket, git config, or user's project; the SSH guard keeps the host clipboard untouched.
+      env: { HOME: home, ORCA_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      terminal: { cols: 100, rows: 24, data(_terminal, data) { output += decoder.decode(data, { stream: true }); } },
+    });
+    const screen = () => {
+      const s = new FakeScreen(100, 24);
+      s.write(output.slice(0, output.lastIndexOf(END_FRAME) + END_FRAME.length));
+      return s.screen();
+    };
+    const input = () => screen().find(row => row.startsWith("│>"))?.replace(/\s+│$/, "") ?? "";
+    await until(() => output.includes("PTY-SELECT-ME"));
+    child.terminal!.write("hello big world");
+    await until(() => input() === "│> hello big world");
+    // Terminal.app sends Option+Backspace as two writes: ESC, then DEL. (The DEL goes in once the
+    // app is in raw mode; before that it is the line discipline's ICANON erase character.)
+    child.terminal!.write("\x1b"); child.terminal!.write("\x7f");
+    await until(() => input() === "│> hello big");
+    child.terminal!.write("\x1b"); await Bun.sleep(5); child.terminal!.write("\x7f");
+    await until(() => input() === "│> hello");
+    const y = screen().findIndex(row => row.includes("PTY-SELECT-ME")) + 1;
+    expect(y).toBeGreaterThan(0);
+    // Every mouse report its own write, the release last: the drag completes and copies (through the SSH-guarded backend).
+    for (const report of [`\x1b[<0;5;${y}M`, `\x1b[<32;9;${y}M`, `\x1b[<32;13;${y}M`, `\x1b[<0;13;${y}m`]) { child.terminal!.write(report); await Bun.sleep(5); }
+    await until(() => output.includes("\x1b[7mSELECT-ME\x1b[0m"));
+    await until(() => screen().some(row => row.includes("copy failed:")));
+    expect(screen().join("\n")).toContain("unavailable over ssh");
+    expect(input()).toBe("│> hello"); // no report text typed, no draft cleared
+    // Esc clears the highlight, a second the draft (each a lone Escape after its bounded wait), then exit through the real command.
+    for (const esc of [1, 2]) { child.terminal!.write("\x1b"); await Bun.sleep(40 * esc); }
+    await until(() => input() === "│>");
+    child.terminal!.write("/quit\r");
+    expect(await child.exited).toBe(0);
+    expect(output.split("\x1b[?1049l")).toHaveLength(2);
+  } finally {
+    if (child) {
+      if (child.exitCode === null) child.kill("SIGTERM");
+      await child.exited;
+      child.terminal?.close();
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 15_000);
