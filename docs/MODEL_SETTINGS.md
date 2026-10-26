@@ -44,6 +44,12 @@ the model does not support remains an error as before.
 
 - `projects/<id>/model` overrides global `config.model`; absence preserves the
   existing global default, including `gpt-6-astra`. Other projects never change.
+- `projects/<id>/settings.json` saves the project's review-round limit and
+  dynamic-dispatch switch (`/review-rounds`, `/dynamic-dispatch`); absence or a
+  missing key keeps `config.toml`'s `maxReviewRounds` / `dynamicDispatch`. Values
+  are validated on read and save (integer 0–100, boolean, no other keys); a
+  malformed file is refused, never repaired by a save. Agents read them when
+  building their prompt (orchestrator: every turn; worker/reviewer: at start).
 - `projects/<id>/model-settings.json` saves effort/fast **by exact model id**.
   Switching models uses that model's saved preference, or backend-default effort
   and fast off. Switching back restores its preference. Values do not carry
@@ -66,8 +72,8 @@ the model does not support remains an error as before.
   project even if selection changes or its page closes.**
 - Model/settings saves use a per-project invocation-order queue and exclusive
   `project-locks/<id>` directory lock outside the project. Ordering begins when
-  `saveProjectModel` / `saveProjectSettings` is invoked, not before an effort/fast
-  command finishes its asynchronous model read. A settings save queued behind a
+  `saveProjectModel` / `saveProjectSettings` / `saveProjectFlow` is invoked, not
+  before an effort/fast command finishes its asynchronous model read. A settings save queued behind a
   model switch rejects its old-model target without updating either preference.
   Successive effort/fast patches merge under the lock and retain both fields.
   Managed project

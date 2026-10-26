@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
+import { effectiveFlow } from "../project-flow";
 import { AGENTS_TICK_MS, App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
 import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
@@ -393,23 +394,28 @@ describe("tui app", () => {
     let finish!: () => void;
     const login = async () => { await new Promise<void>((r) => (finish = r)); return "signed in"; };
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, login });
+    mkdirSync(paths.project("rounds"), { recursive: true }); // the setting lives in the project's directory
     const running = app.run("rounds");
     await until(() => !!app.page);
     const page = app.page!;
     const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false, calls: new Calls() };
     page.view = view;
+    const note = () => strip(app.frame().inputArea!.lines.join("\n"));
     term.type("/review-rounds 3\r");
-    await until(() => view.lines.join("\n").includes("review rounds set to 3"));
-    expect((await loadConfig()).maxReviewRounds).toBe(3);
+    await until(() => note().includes("review rounds set to 3")); // a transient note (cut to the width), even in an agent view
+    expect(view.lines.join("\n")).not.toContain("review rounds set to 3");
+    expect((await effectiveFlow("rounds")).maxReviewRounds).toBe(3);
+    expect((await loadConfig()).maxReviewRounds).toBe(1); // the project's setting, not config.toml's
     page.view = null;
     term.type("/login claude\r");
     await until(() => app.loggingIn);
     term.type("/review-rounds 0\r");
-    await until(() => page.lines.join("\n").includes("review rounds set to 0"));
-    expect((await loadConfig()).maxReviewRounds).toBe(0);
+    await until(() => note().includes("review rounds set to 0"));
+    expect((await effectiveFlow("rounds")).maxReviewRounds).toBe(0);
     term.type("/review-rounds\r");
-    await until(() => page.lines.join("\n").includes("review rounds: 0"));
+    await until(() => note().includes("review rounds: 0"));
     expect(page.lines.join("\n")).not.toContain("queued");
+    expect(page.lines.join("\n")).not.toContain("review rounds");
     finish();
     await until(() => !app.loggingIn);
     await Bun.sleep(20);

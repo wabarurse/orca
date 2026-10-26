@@ -12,6 +12,7 @@ import { loadConfig, paths } from "./config";
 import { supervise, type Tracker } from "./exits";
 import { consume, content, type Message } from "./inbox";
 import { rolePrompt } from "./prompts";
+import { effectiveFlow } from "./project-flow";
 import { type Provider } from "./providers/index";
 import { sessionId } from "./runner";
 import { open, type Role, type Transcript } from "./transcript";
@@ -290,7 +291,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: T
     tools,
     model,
     compaction: { enabled: config.compact, fallback: config.contextLimitFallback },
-    system: rolePrompt(opts.role, config),
+    system: rolePrompt(opts.role, { ...config, ...await effectiveFlow(opts.project, config) }), // this project's review rounds and dispatch, not config.toml's
     ctx: { run: opts.run, project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
     tracker,
   });

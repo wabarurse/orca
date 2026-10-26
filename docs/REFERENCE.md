@@ -529,8 +529,9 @@ when it is resized). Run it inside a git repository and you get an orchestrator 
 repository: an `orch-xxxx` project referencing the original checkout (reused next time you
 start there). With no project named it also reopens every project under
 `~/.orca/projects`. The ruled, pinned header shows bracketed project/display names (the active one
-marked `>`), cached model, effort, fast mode, directory and remote, and refreshes
-when settings change.
+marked `>`), cached model, effort, fast mode, the project's review-round limit
+and dynamic-dispatch switch, directory and remote, and refreshes when settings
+change (on a page switch it shows that page's project's values).
 Short terminals collapse header details to keep the input usable. A blank row
 separates the conversation (including streaming output) from the entire footer,
 above any queued previews. It is omitted below eight terminal rows or when it
@@ -574,16 +575,16 @@ Informational status notes are not conversation: `/rename <name> to rename`
 after Ctrl+N, a rename's `old → new`, `fetching models…`, `model set to …`
 and the daemon's `orchestrator: model … applies from the orchestrator's next
 request`, `/effort` picker results (`fetching effort levels…`, a dropped saved
-level, the saved pick) and `/effort <level>`/`/fast` queries and saves,
-`/accounts` selections and a daemon restart by the keeper (`orchestrator was not
+level, the saved pick), `/effort <level>`/`/fast` queries and saves,
+`/review-rounds` and `/dynamic-dispatch` queries and saves, `/accounts` selections and a daemon restart by the keeper (`orchestrator was not
 running; restarted`; the first start is silent) show as one dim row directly above the composer, cut to
 the width. A newer note for the same page replaces it; the next keypress on
 that page clears it (scrolling with the wheel or Page Up/Down and mouse
 selection do not). Each page keeps its own note,
 so a background page's shows when you switch to it. Notes are never written to
 the conversation, so `/refresh`, a reopen or an exit replay never bring them
-back. Errors, refusals (`usage: /fast [on|off]`, `effort ultra is
-unsupported`, `orchestrator is not running: …`), command output you need to
+back. Errors, refusals (`usage: /fast [on|off]`, `usage: /review-rounds [n]`,
+`effort ultra is unsupported`, `orchestrator is not running: …`), command output you need to
 read (`/help`, `/agents`, sign-in progress) and the orchestrator's own
 messages stay in the conversation.
 
@@ -759,10 +760,22 @@ branch has commits that are not in the merged PR, or when an agent does not
 stop. PRs from forks, closed-unmerged PRs, branches without a PR, main and
 origin's default branch are never touched.
 
-`config.toml` holds `maxReviewRounds` (1), `cyclomatic` (10) and
-`cognitive` (15). `/review-rounds [n]` shows or sets the round count (0 to 100;
-a config value outside that, or a `config.toml` that does not parse, falls back
-to the defaults); 0 skips review and sends the worker's branch straight to "watch ci".
+`config.toml` holds `maxReviewRounds` (1), `dynamicDispatch` (false),
+`cyclomatic` (10) and `cognitive` (15). The review-round limit and the
+dynamic-dispatch switch are **per project**: `/review-rounds [n]` shows or sets
+the round count (0 to 100) and `/dynamic-dispatch [on|off]` the switch for the
+current page's project, saved in `projects/<id>/settings.json` under the same
+project-state lock as the model. `config.toml`'s values are the defaults for
+every project without an override (a config value outside the range, or a
+`config.toml` that does not parse, falls back to the built-in defaults); the
+commands never write `config.toml`, and other projects are unaffected. 0 rounds
+skips review and sends the worker's branch straight to "watch ci". Each
+orchestrator turn and each worker/reviewer start reads its own project's values,
+so a change applies from that orchestrator's next turn. A malformed
+`settings.json` is refused rather than repaired: the header shows `?` for both
+values and names the file; a save fails until it is fixed or removed. Without an
+open page the commands only explain (`open a project before changing its
+settings`).
 
 ## Subscription login
 
