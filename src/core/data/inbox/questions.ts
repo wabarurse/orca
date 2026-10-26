@@ -9,9 +9,9 @@ import { inputEpoch } from "./user-input";
 import { mkdirSync } from "node:fs";
 import { open, readdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../../config/config";
+import { paths } from "../../../config";
 import { put } from "./inbox";
-import { limits, type NewQuestion, type Question } from "../../../protocol/questions";
+import { limits, type NewQuestion, type Question } from "../../../protocol";
 
 /** Trim, turn newlines and tabs into spaces, refuse control, line-separator and bidi characters and over-long text. */
 export function clean(value: string, max: number, what: string): string {

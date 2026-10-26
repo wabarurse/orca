@@ -1,7 +1,7 @@
-import { command } from "../../proc";
+import { command } from "../..";
 import { formatScores, SCORED_EXTENSIONS, scoreSource, type FunctionScore } from "./scoring";
-import { loadConfig } from "../../../config/config";
-import type { Tool } from "../registry";
+import { loadConfig } from "../../../config";
+import type { Tool } from "..";
 
 // Reviewer-only. Scores the JavaScript/TypeScript files the branch changed
 // (or the ones named) and reports a table against the config thresholds.

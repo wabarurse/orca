@@ -4,8 +4,8 @@
 // The legacy inline helpers remain useful for isolated renderer tests; they do
 // not drive the application's terminal lifecycle or conversation viewport.
 
-import { bold, dim, fit, plainText, sanitize, visibleLength, wordWrap, wrap } from "../components/text";
-import { fillRow, userFill } from "../components/style";
+import { bold, dim, fit, plainText, sanitize, visibleLength, wordWrap, wrap } from "../components";
+import { fillRow, userFill } from "../components";
 import { layout, scrollWindow } from "./editor";
 
 /** Scrollable footer content is already wrapped to the current width; its viewport is transient. */

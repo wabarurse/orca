@@ -1,24 +1,24 @@
-import { materializeImages } from "../../data/images/images";
-import { requireVision } from "../../../providers/images";
-import type { RequestSettings } from "../../../providers/catalog/settings";
+import { materializeImages } from "../../data/images";
+import { requireVision } from "../../../providers";
+import type { RequestSettings } from "../../../providers/catalog";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/core/prompt/shared.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).
 
 import type { ContentBlock, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
-import type { projectModelResolver } from "../../data/projects/project-model";
-import { budget, compact, outputCap, requireFits, type CompactOptions, type ContextDeps } from "../../data/memory/compaction";
-import type { Tracker } from "../../tmux/exits";
-import { consume, content } from "../../data/inbox/inbox";
-import type { Message } from "../../../protocol/inbox";
-import type { Provider } from "../../../providers/provider";
-import { sessionId } from "../../tmux/runner";
-import type { Transcript } from "../../data/transcripts/transcript";
-import type { Role } from "../../../protocol/transcript";
-import type { Tool, ToolContext } from "../../tools/registry";
-import { callText, resultText, type ToolCall, type ToolOutcome } from "../../../protocol/toolview";
+import type { projectModelResolver } from "../../data/projects";
+import { budget, compact, outputCap, requireFits, type CompactOptions, type ContextDeps } from "../../data/memory";
+import type { Tracker } from "../../tmux";
+import { consume, content } from "../../data/inbox";
+import type { Message } from "../../../protocol";
+import type { Provider } from "../../../providers";
+import { sessionId } from "../../tmux";
+import type { Transcript } from "../../data/transcripts";
+import type { Role } from "../../../protocol";
+import type { Tool, ToolContext } from "../../tools";
+import { callText, resultText, type ToolCall, type ToolOutcome } from "../../../protocol";
 import { scheduleTools } from "./tool-scheduler";
-import type { RollingOptions } from "../../data/memory/rolling-memory";
+import type { RollingOptions } from "../../data/memory";
 
 export interface AgentOptions {
   project: string;

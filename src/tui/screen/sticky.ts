@@ -1,9 +1,9 @@
-import { headerHeight } from "../header/chrome";
-import type { Line } from "../conversation/lines";
-import { captureAnchor, resolveAnchor } from "../conversation/anchor";
-import { fit, sanitize, wrap } from "../components/text";
-import { liveRows, type Frame } from "../footer/render";
-import { whaleRows } from "../header/whale";
+import { headerHeight } from "../header";
+import type { Line } from "../conversation";
+import { captureAnchor, resolveAnchor } from "../conversation";
+import { fit, sanitize, wrap } from "../components";
+import { liveRows, type Frame } from "../footer";
+import { whaleRows } from "../header";
 
 export interface StickyScreen {
   rows: string[];

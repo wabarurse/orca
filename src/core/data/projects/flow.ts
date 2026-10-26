@@ -5,7 +5,7 @@
 // project model (project-model.ts).
 import { rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { loadConfig, MAX_REVIEW_ROUNDS, paths, validRounds, type Config } from "../../../config/config";
+import { loadConfig, MAX_REVIEW_ROUNDS, paths, validRounds, type Config } from "../../../config";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";
 
 export interface FlowSettings { maxReviewRounds: number; dynamicDispatch: boolean }

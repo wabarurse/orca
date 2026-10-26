@@ -4,7 +4,7 @@
 // prompt; CJK and emoji count two); a logical line whose last row is full gets
 // an empty row after it so the cursor has somewhere to sit.
 
-import { cells } from "../components/text";
+import { cells } from "../components";
 
 export interface EditState { text: string; cursor: number }
 

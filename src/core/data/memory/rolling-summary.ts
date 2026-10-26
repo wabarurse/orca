@@ -1,10 +1,10 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { provider as accountProvider } from "../../../providers/account";
+import { provider as accountProvider } from "../../../providers";
 import { estimate, requireFits } from "./compaction";
-import { historicalMessages } from "../images/history";
-import type { Provider } from "../../../providers/provider";
-import type { Task } from "../../../protocol/tasks";
-import type { RollingMemory } from "../../../protocol/transcript";
+import { historicalMessages } from "../images";
+import type { Provider } from "../../../providers";
+import type { Task } from "../../../protocol";
+import type { RollingMemory } from "../../../protocol";
 
 export const SUMMARY_MODEL = "gpt-6-luna";
 const empty = (): RollingMemory => ({ user: [], project: [], pending: [], tasks: [] });

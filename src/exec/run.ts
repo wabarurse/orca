@@ -3,17 +3,17 @@
 // the loop in core/agent-loop/loop/agent.ts. The orchestrator role hands over to
 // the daemon entry (./daemon).
 
-import { loadConfig, paths } from "../config/config";
-import { createAgent, type AgentOptions } from "../core/agent-loop/loop/agent";
-import { effectiveFlow } from "../core/data/projects/flow";
-import { effectiveModel, projectModelResolver } from "../core/data/projects/project-model";
-import { open } from "../core/data/transcripts/transcript";
-import { rolePrompt } from "../core/prompt/shared";
-import { publishLaunch, watchCancellation } from "../core/tmux/cancellation";
-import { supervise, type Tracker } from "../core/tmux/exits";
-import { sessionId } from "../core/tmux/runner";
-import { registry } from "../core/tools/index";
-import { toolsFor, type Tool } from "../core/tools/registry";
+import { loadConfig, paths } from "../config";
+import { createAgent, type AgentOptions } from "../core/agent-loop/loop";
+import { effectiveFlow } from "../core/data/projects";
+import { effectiveModel, projectModelResolver } from "../core/data/projects";
+import { open } from "../core/data/transcripts";
+import { rolePrompt } from "../core/prompt";
+import { publishLaunch, watchCancellation } from "../core/tmux";
+import { supervise, type Tracker } from "../core/tmux";
+import { sessionId } from "../core/tmux";
+import { registry } from "../core/tools";
+import { toolsFor, type Tool } from "../core/tools";
 
 /**
  * Run an agent process. Workers and reviewers are supervised: a crash or an

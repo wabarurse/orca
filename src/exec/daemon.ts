@@ -2,16 +2,16 @@
 // (exec/run.ts hands over here) takes the project's daemon lock, runs the poll
 // loop in core/agent-loop/orc/daemon.ts under supervision and releases the lock.
 
-import { paths } from "../config/config";
-import type { AgentOptions } from "../core/agent-loop/loop/agent";
-import { runDaemon, windowHooks, type DaemonOutcome } from "../core/agent-loop/orc/daemon";
-import { liveWriter } from "../core/agent-loop/orc/live";
-import { createOrchestrator } from "../core/agent-loop/orc/orchestrator";
-import { tryStorageLock } from "../core/data/storage-lock";
-import { open } from "../core/data/transcripts/transcript";
-import { publishLaunch } from "../core/tmux/cancellation";
-import { claim, supervise, type Tracker } from "../core/tmux/exits";
-import { SETTLED_EXIT } from "../core/tmux/runner";
+import { paths } from "../config";
+import type { AgentOptions } from "../core/agent-loop/loop";
+import { runDaemon, windowHooks, type DaemonOutcome } from "../core/agent-loop/orc";
+import { liveWriter } from "../core/agent-loop/orc";
+import { createOrchestrator } from "../core/agent-loop/orc";
+import { tryStorageLock } from "../core/data";
+import { open } from "../core/data/transcripts";
+import { publishLaunch } from "../core/tmux";
+import { claim, supervise, type Tracker } from "../core/tmux";
+import { SETTLED_EXIT } from "../core/tmux";
 
 /**
  * `orca agent --role orchestrator`: one daemon per project, supervised like a

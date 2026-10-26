@@ -9,16 +9,16 @@
 
 import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
-import { delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux/cancellation";
-import { exitWatchdog, mergeWatch } from "../../tmux/liveness";
-import { paths } from "../../../config/config";
-import { contextWindow } from "../../../providers/catalog/context-window";
-import { effectiveModel } from "../../data/projects/project-model";
+import { delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux";
+import { exitWatchdog, mergeWatch } from "../../tmux";
+import { paths } from "../../../config";
+import { contextWindow } from "../../../providers/catalog";
+import { effectiveModel } from "../../data/projects";
 import type { Orchestrator, OrchestratorDeps } from "./orchestrator";
 import { acknowledge, pruneAcks, takeRequests, writeStatus } from "./channel";
-import type { Command, DaemonState, Request } from "../../../protocol/daemon";
+import type { Command, DaemonState, Request } from "../../../protocol";
 import type { LiveWriter } from "./live";
-import { callText, resultText } from "../../../protocol/toolview";
+import { callText, resultText } from "../../../protocol";
 
 /** How often the idle loop looks for input and requests when nothing woke it earlier, and how often a running turn checks for a cancel or an in-turn request. */
 export const DAEMON_POLL_MS = 1000;

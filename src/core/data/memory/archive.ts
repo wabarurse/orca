@@ -2,13 +2,13 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
-import { paths } from "../../../config/config";
-import { historicalMessages } from "../images/history";
-import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
-import { allTasks } from "../tasks/tasks";
-import type { Task } from "../../../protocol/tasks";
-import { open, type Transcript } from "../transcripts/transcript";
-import type { Entry } from "../../../protocol/transcript";
+import { paths } from "../../../config";
+import { historicalMessages } from "../images";
+import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
+import { allTasks } from "../tasks";
+import type { Task } from "../../../protocol";
+import { open, type Transcript } from "../transcripts";
+import type { Entry } from "../../../protocol";
 
 /** One archive for every project, shared by all orchestrator processes. */
 export const archivePath = () => paths.memory;

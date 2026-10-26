@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { owned, prepareArtifact, withInstallation } from "./installation";
 import { withGitCredentials } from "./git-credentials";
-import { installedApp, legacy } from "../../config/legacy";
+import { installedApp, legacy } from "../../config";
 
 export const HARNESS_ORIGIN = "https://github.com/wabarurse/parallels.git";
 export interface CommandResult { code: number; out: string; err: string }

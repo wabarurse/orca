@@ -7,7 +7,7 @@
 // the source stays a line break, so a reply can be committed line by line as
 // it streams (see mdstream.ts) and render the same as all at once.
 
-import { cells, LINK_CLOSE, linkOpen, RESET, wordWrap } from "../components/text";
+import { cells, LINK_CLOSE, linkOpen, RESET, wordWrap } from "../components";
 
 const SGR = { bold: "\x1b[1m", dim: "\x1b[2m", italic: "\x1b[3m", underline: "\x1b[4m", strike: "\x1b[9m", code: "\x1b[36m" };
 const dim = (s: string) => `${SGR.dim}${s}${RESET}`;

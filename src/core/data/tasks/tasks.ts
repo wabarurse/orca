@@ -1,9 +1,9 @@
 // Structured task records, not a scheduler or any of the message/question queues.
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
-import { paths } from "../../../config/config";
-import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
-import { clean } from "../inbox/questions";
-import { check, object, sha, taskPR, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol/tasks";
+import { paths } from "../../../config";
+import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
+import { clean } from "../inbox";
+import { check, object, sha, taskPR, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol";
 
 interface Store { version: 1; tasks: Task[] }
 const file = (project: string) => `${paths.project(project)}/tasks.json`;

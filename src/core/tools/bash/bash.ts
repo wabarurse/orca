@@ -1,7 +1,7 @@
-import { killGroup } from "../../proc";
-import { loadConfig } from "../../../config/config";
+import { killGroup } from "../..";
+import { loadConfig } from "../../../config";
 import { outputArtifact, OutputPreview } from "./output";
-import type { Tool } from "../registry";
+import type { Tool } from "..";
 
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 // A model nudge, not a security boundary. Shell commands retain the user's privileges.

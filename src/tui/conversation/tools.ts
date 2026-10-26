@@ -10,12 +10,12 @@
 // and `groupRow`) until a click opens it (▾, its calls indented under it); the
 // history keeps the calls themselves, so both views come from the same lines.
 
-import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../../protocol/toolview";
+import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../../protocol";
 import type { Part } from "./view";
 import type { Line, Shown } from "./lines";
-import { dim, fit, sanitize, visibleLength } from "../components/text";
-import { shimmer } from "../components/shimmer";
-import { noColour } from "../components/style";
+import { dim, fit, sanitize, visibleLength } from "../components";
+import { shimmer } from "../components";
+import { noColour } from "../components";
 
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 

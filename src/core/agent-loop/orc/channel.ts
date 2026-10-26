@@ -9,10 +9,10 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../../config/config";
-import type { Ack, Command, DaemonState, DaemonStatus, Request } from "../../../protocol/daemon";
-import { lockOwner, pidAlive } from "../../data/storage-lock";
-import { delay } from "../../tmux/cancellation";
+import { paths } from "../../../config";
+import type { Ack, Command, DaemonState, DaemonStatus, Request } from "../../../protocol";
+import { lockOwner, pidAlive } from "../../data";
+import { delay } from "../../tmux";
 
 /** How long a client waits for the daemon to answer before giving up on a request (the daemon may still run it). */
 export const ACK_TIMEOUT_MS = 15_000;

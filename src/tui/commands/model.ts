@@ -1,13 +1,13 @@
 // /model and /effort: the choices they offer and what picking one saves.
 
-import { accounts, type ProviderName } from "../../login/accounts";
-import { provider } from "../../providers/account";
-import { providerFor } from "../../providers/provider";
-import { modelCapabilities } from "../../providers/catalog/capabilities";
-import { prefetchContextLimits } from "../../providers/catalog/context-window";
-import { loadConfig, saveConfig } from "../../config/config";
-import { effectiveModel, saveProjectModel, validateModel } from "../../core/data/projects/project-model";
-import { effectiveSettingsReport } from "../../core/data/projects/project-settings";
+import { accounts, type ProviderName } from "../../login";
+import { provider } from "../../providers";
+import { providerFor } from "../../providers";
+import { modelCapabilities } from "../../providers/catalog";
+import { prefetchContextLimits } from "../../providers/catalog";
+import { loadConfig, saveConfig } from "../../config";
+import { effectiveModel, saveProjectModel, validateModel } from "../../core/data/projects";
+import { effectiveSettingsReport } from "../../core/data/projects";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }
 

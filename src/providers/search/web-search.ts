@@ -1,5 +1,5 @@
-import type { RequestSettings } from "../catalog/settings";
-import { plain } from "../sanitize";
+import type { RequestSettings } from "../catalog";
+import { plain } from "..";
 
 export interface SearchRequest {
   model: string;

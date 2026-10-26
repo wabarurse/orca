@@ -5,9 +5,9 @@ import { existsSync, realpathSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { $ } from "bun";
-import { loadConfig, paths, saveConfig } from "../../../config/config";
+import { loadConfig, paths, saveConfig } from "../../../config";
 import { checkoutHere } from "./workspace";
-import type { ProjectEntry } from "../../../protocol/projects";
+import type { ProjectEntry } from "../../../protocol";
 
 /** A fresh orchestrator name, orch-xxxx, that no project uses yet. */
 export function newProjectName(taken: string[], random: () => number = Math.random): string {

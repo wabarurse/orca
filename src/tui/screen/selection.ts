@@ -1,10 +1,10 @@
 // Selection belongs to rendered, committed conversation rows, never the chrome or
 // transient tool/activity tail. Reflow/context replacement cancels it rather than
 // silently copying different text. Soft wraps are copied as displayed newlines.
-import { cells } from "../components/text";
-import { fit, sanitize } from "../components/text";
+import { cells } from "../components";
+import { fit, sanitize } from "../components";
 const plainRow = (row: string, cols: number) => Bun.stripANSI(fit(sanitize(row), cols));
-import type { Key } from '../components/keys';
+import type { Key } from "../components";
 import type { StickyScreen } from './sticky';
 interface Point { row: number; col: number }
 /** The committed history row (index into `history`) and column under a mouse report, or nothing when it is outside the painted body. */

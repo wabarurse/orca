@@ -1,6 +1,6 @@
 import { attachmentSchema, forwardImages } from "./attachments";
-import { put } from "../data/inbox/inbox";
-import { sessionId } from "../tmux/runner";
+import { put } from "../data/inbox";
+import { sessionId } from "../tmux";
 import type { Tool } from "./registry";
 
 // Every agent has an inbox. Addresses: "orchestrator", "user", or an agent id

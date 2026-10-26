@@ -1,6 +1,6 @@
 import { delay, publishLaunch } from "./cancellation";
 import { claim, readRun } from "./exits";
-import { command, run } from "../proc";
+import { command, run } from "..";
 // Starts agents. v1 has one backend: a git worktree plus a tmux window on this
 // machine. A docker/container backend comes later with the same interface, so
 // agents never learn anything about the host beyond their cwd.
@@ -11,10 +11,10 @@ import { command, run } from "../proc";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { $ } from "bun";
-import { paths, repositoryBinding } from "../../config/config";
-import { assertMainCheckout, assertWorktree } from "../data/projects/workspace";
+import { paths, repositoryBinding } from "../../config";
+import { assertMainCheckout, assertWorktree } from "../data/projects";
 import { launchEnvironment } from "./launch-environment";
-import type { Role } from "../../protocol/transcript";
+import type { Role } from "../../protocol";
 
 export interface StartOptions {
   /** Exact launch, published before this session becomes selectable. */

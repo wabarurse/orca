@@ -1,9 +1,9 @@
-import { originRepo, ghTaskPR } from "../data/tasks/github";
-import { run } from "../proc";
-import { getTask, listTasks, observeTaskPR, registerTask, setTaskAttention, taskForRun, validateTaskReadiness } from "../data/tasks/tasks";
-import { taskPR, type PRObservation, type Task, type TaskAttention, type TaskPR } from "../../protocol/tasks";
+import { originRepo, ghTaskPR } from "../data/tasks";
+import { run } from "..";
+import { getTask, listTasks, observeTaskPR, registerTask, setTaskAttention, taskForRun, validateTaskReadiness } from "../data/tasks";
+import { taskPR, type PRObservation, type Task, type TaskAttention, type TaskPR } from "../../protocol";
 import type { Tool, ToolContext } from "./registry";
-import { queryHistory } from "../data/memory/archive";
+import { queryHistory } from "../data/memory";
 
 export interface TaskToolOptions {
   history?: boolean;

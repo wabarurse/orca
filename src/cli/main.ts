@@ -8,21 +8,21 @@
 // orca agent --project p --role r [--branch b] [--run id]   internal: what spawn (and the TUI, for the orchestrator daemon) runs
 // orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
-import { pullHarness } from "../core/install/pull";
+import { pullHarness } from "../core/install";
 import pkg from "../../package.json";
-import { runAgent } from "../exec/run";
-import { afterExit } from "../exec/after-exit";
-import { put } from "../core/data/inbox/inbox";
-import { repoHere, validProjectName } from "../core/data/projects/registry";
+import { runAgent } from "../exec";
+import { afterExit } from "../exec";
+import { put } from "../core/data/inbox";
+import { repoHere, validProjectName } from "../core/data/projects";
 import { existsSync } from "node:fs";
-import { paths } from "../config/config";
-import { daemonPid } from "../core/agent-loop/orc/channel";
-import { sessionId } from "../core/tmux/runner";
-import { ensureProject } from "../core/agent-loop/orc/orchestrator";
-import { createClientOrchestrator, daemonKeeper, stopDaemon } from "../core/agent-loop/orc/client";
-import type { Role } from "../protocol/transcript";
-import { App } from "../tui/app";
-import { realTerminal } from "../tui/components/term";
+import { paths } from "../config";
+import { daemonPid } from "../core/agent-loop/orc";
+import { sessionId } from "../core/tmux";
+import { ensureProject } from "../core/agent-loop/orc";
+import { createClientOrchestrator, daemonKeeper, stopDaemon } from "../core/agent-loop/orc";
+import type { Role } from "../protocol";
+import { App } from "../tui";
+import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
 

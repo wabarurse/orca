@@ -22,19 +22,19 @@
 // inboxes and runs/ files go. `git worktree remove --force` also deletes
 // ignored files in the worktree, such as .env.
 
-import { originRepo } from "../data/tasks/github";
-export { githubRepo, originRepo } from "../data/tasks/github";
-import { archiveMergedTasks, allTasks, blockConflictingTask, observeTaskPR, setTaskAttention } from "../data/tasks/tasks";
-import { taskPR } from "../../protocol/tasks";
-import { ghTaskPR } from "../data/tasks/github";
-import type { PRObservation, Task, TaskPR } from "../../protocol/tasks";
+import { originRepo } from "../data/tasks";
+export { githubRepo, originRepo } from "../data/tasks";
+import { archiveMergedTasks, allTasks, blockConflictingTask, observeTaskPR, setTaskAttention } from "../data/tasks";
+import { taskPR } from "../../protocol";
+import { ghTaskPR } from "../data/tasks";
+import type { PRObservation, Task, TaskPR } from "../../protocol";
 import { existsSync, linkSync, mkdirSync, statSync } from "node:fs";
 import { readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { paths, repositoryBinding } from "../../config/config";
+import { paths, repositoryBinding } from "../../config";
 import { claim, dirtyCount, pidAlive, readRun } from "./exits";
-import { put } from "../data/inbox/inbox";
-import { run, type ProcResult } from "../proc";
+import { put } from "../data/inbox";
+import { run, type ProcResult } from "..";
 import { removeWorktree, sessionName, slug, tmux } from "./runner";
 
 export interface MergedPR {

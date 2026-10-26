@@ -10,7 +10,7 @@
 import { existsSync } from "node:fs";
 import { appendFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { paths } from "../config/config";
+import { paths } from "../config";
 
 export const MAX_INPUT_HISTORY = 500;
 /** The file is trimmed back to MAX_INPUT_HISTORY entries once it holds this many lines. */

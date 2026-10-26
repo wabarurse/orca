@@ -1,8 +1,8 @@
 // Read-only GitHub identity and task PR validation. No publishing or merging here.
 import { existsSync } from "node:fs";
-import { paths } from "../../../config/config";
-import { run } from "../../proc";
-import { taskPR, type TaskPR, type PRObservation } from "../../../protocol/tasks";
+import { paths } from "../../../config";
+import { run } from "../..";
+import { taskPR, type TaskPR, type PRObservation } from "../../../protocol";
 const quietEnv = () => ({ ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1", GIT_TERMINAL_PROMPT: "0" });
 const git = (cwd: string, args: string[]) => run(["git", "-C", cwd, ...args], { cwd, timeoutMs: 10_000, env: quietEnv() });
 const ok = (r: { code: number } | null) => r?.code === 0;

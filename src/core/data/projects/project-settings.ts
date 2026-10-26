@@ -1,8 +1,8 @@
 import { rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../../config/config";
-import { modelCapabilities, type Effort } from "../../../providers/catalog/capabilities";
-import { assertSettingsShape, validateSettings, type RequestSettings } from "../../../providers/catalog/settings";
+import { paths } from "../../../config";
+import { modelCapabilities, type Effort } from "../../../providers/catalog";
+import { assertSettingsShape, validateSettings, type RequestSettings } from "../../../providers/catalog";
 import { effectiveModel } from "./project-model";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";
 

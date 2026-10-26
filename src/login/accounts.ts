@@ -1,7 +1,7 @@
 // Every account is a Claude Code or Codex subscription login.
 import { claudeProfiles, readClaudeTokens, validateProfile } from "./claude";
 import { codexProfiles, readCodexTokens } from "./codex";
-import { loadConfig } from "../config/config";
+import { loadConfig } from "../config";
 
 export type ProviderName = "anthropic" | "openai";
 

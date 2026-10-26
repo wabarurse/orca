@@ -3,9 +3,9 @@
 // provider; OpenAI is translated on the way in and out.
 
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
-import type { ProviderName } from "../login/accounts";
-import type { RequestSettings } from "./catalog/settings";
-import type { SearchRequest, SearchResult } from "./search/web-search";
+import type { ProviderName } from "../login";
+import type { RequestSettings } from "./catalog";
+import type { SearchRequest, SearchResult } from "./search";
 
 export interface Turn {
   usage?: { input: number; cachedInput?: number; cacheWriteInput?: number; output: number; reasoning?: number };

@@ -1,9 +1,9 @@
 // /accounts and /login: listing, switching and signing in to subscription accounts.
 
-import { accounts, type Account } from "../../login/accounts";
-import { importClaudeCode, loginClaude } from "../../login/claude";
-import { importCodex, loginCodex } from "../../login/codex";
-import { saveConfig } from "../../config/config";
+import { accounts, type Account } from "../../login";
+import { importClaudeCode, loginClaude } from "../../login";
+import { importCodex, loginCodex } from "../../login";
+import { saveConfig } from "../../config";
 import type { Choice } from "./model";
 
 export async function accountChoices(dim: (s: string) => string): Promise<Choice<Account>[]> {

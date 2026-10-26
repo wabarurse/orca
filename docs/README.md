@@ -24,3 +24,7 @@ subscription login, provider implementation and tool guidance.
 
 Unless a link says otherwise, source paths written in these documents (such as
 `src/` or `scripts/`) are relative to the repository root, not this directory.
+The source layout (packages, the import order inside them, the barrel rule and
+the size gates) is described in the Layout section of [CLAUDE.md](../CLAUDE.md)
+and enforced by `src/organization.test.ts`; when a document names a deep file,
+code outside that folder imports it through the folder's `index.ts` barrel.
