@@ -19,7 +19,7 @@ export const bash: Tool = {
   parallel: input => input.independent === true,
   spec: {
     name: "bash",
-    description: "Run a non-interactive shell command in the working directory, inheriting the harness PATH. No sudo. Set timeout_ms to 10000–30000 for connection probes and other short network/database checks; also use the client's connection and query timeouts. Full output is saved outside the repository; large results include a preview and path to inspect with shell tools. Normal-sized output is returned intact. Set max_output_bytes to adjust the preview (up to the configured cap). Issue independent read-only commands together with independent=true; never use it for edits, shared writes, or commands requiring another call's result. All other calls run in order.",
+    description: "Run a non-interactive shell command in the working directory, inheriting the harness PATH. No sudo. Set timeout_ms to 10000–30000 for short checks that may stall (a database or service connection), and use the client's own timeouts. For looking things up on the web use web_search, not curl; use curl only to fetch a specific, already-known URL. Full output is saved outside the repository; large results include a preview and path to inspect with shell tools. Normal-sized output is returned intact. Set max_output_bytes to adjust the preview (up to the configured cap). Issue independent read-only commands together with independent=true; never use it for edits, shared writes, or commands requiring another call's result. All other calls run in order.",
     input_schema: {
       type: "object",
       properties: {

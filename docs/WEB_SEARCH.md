@@ -12,6 +12,16 @@ There is no search slash command, separate fetch/browser tool, new dependency,
 API key, search-service account or configuration option. Existing subscription
 login and model/settings selection apply.
 
+## When to use it
+
+The tool description leads with purpose and preference, and each role prompt
+carries one sentence: use `web_search` to find documentation, sources or
+current facts; use `curl` only to fetch a specific, already-known URL. Searching
+through `bash` (curl-ing a search engine or guessing URLs) is discouraged; the
+bash description points web lookups at `web_search` and reserves its short
+timeout hint for checks that may stall, such as a database or service connection.
+Since there is no fetch tool, reading a known URL with `curl` remains legitimate.
+
 ## Contract and privacy
 
 ```json
