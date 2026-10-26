@@ -36,7 +36,7 @@ import type { Message } from "../inbox";
 // - Errors, command output (/help, /agents, …), page notices ("queued; runs
 //   after sign-in") and anything else the app itself said are not in the
 //   transcript and are not restored. Informational status notes ("model set
-//   to …", a rename, "orchestrator started") are not even page lines: App
+//   to …", a rename, "orchestrator was not running; restarted") are not even page lines: App
 //   shows them as one transient row above the composer (`App.note`).
 
 import { parseFormatted } from "../inbox";
