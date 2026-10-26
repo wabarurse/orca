@@ -2884,7 +2884,10 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
   const { bash } = await import("../tools/bash");
   const { paired } = await import("../tool-pairs");
   const term = fakeTerm(100, 24);
-  const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {},
+  // The header's fin cruises on App's clock while the page is busy and parks (tick 0) once idle; the header rows compared
+  // below span its body, so freeze the clock at 0 to put the cruising fin where the parked one sits. Timers stay real.
+  const clock: Clock = { now: () => 0, every: (fn, ms) => { const t = setInterval(fn, ms); return () => clearInterval(t); } };
+  const app = new App({ term, clock, pollMs: 100_000, watchdog: async () => {}, merges: async () => {},
     openOrchestrator: async (project, _url, write, onInbox, events) => createOrchestrator({ project, transcript: t, provider, tools: { bash }, write, onInbox, ...events }),
   });
   const running = app.run(project);
