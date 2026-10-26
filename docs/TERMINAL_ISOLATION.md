@@ -19,6 +19,60 @@ they do not touch the user's clipboard or prove native mouse gestures.
 
 ---
 
+# "The TUI just broke out of full screen" (2026-10-26): not the alternate screen
+
+Reported mid-session by the user of a running `orca start` (Apple Terminal,
+compiled binary at `8550331`, #113). Investigated read-only against the live
+machine state and `~/.orca` transcripts; **no orca code path was involved and
+nothing was changed in `src/`**. Retained as evidence for the next such report.
+
+What was ruled out, with the evidence:
+
+- **The TUI did not leave the alternate screen or raw mode.** `\x1b[?1049l` is
+  written only by `RealTerminal.close()` (the `App.run` finally block) and
+  `rescue()` (exit/SIGTERM/SIGHUP/uncaughtException), and both end by releasing
+  raw mode. `stty -f /dev/ttysNNN -a` on the TUI's tty showed `-icanon -isig
+  -echo` (raw) at 10:32, 10:41, 10:42 and after; the process (started 09:59)
+  stayed alive and kept accruing CPU; Apple Terminal's own tab contents, read by
+  another agent at 10:19, showed the intact sticky layout. Every row the renderer
+  writes goes through `sanitize` (only SGR and OSC 8 survive), and no transcript,
+  live-file or tool output in the window contained a raw ESC byte. `lsof` showed
+  no process but the TUI and its shell holding the tty; every child the TUI
+  spawns (`src/proc.ts`, `clipboard.ts`, `oauth.ts`) is detached with
+  ignored/piped stdio, so nothing else could write to it. Bun 1.4.2 updates
+  `columns`/`rows` and emits `resize` on SIGWINCH (verified under an owned PTY),
+  and replaying the real transcript through the current source under an owned
+  132×71 PTY produced one `?1049h`, no `?1049l`, and no scroll of the alternate
+  buffer. Existing tests pin these invariants: `term.test.ts` (modes and raw mode
+  restored only on close/crash), `app.test.ts` ("no `?1049l`" across resize,
+  scroll and project switches), `scroll.pty.test.ts` (owned PTY, exactly one
+  enter/leave).
+- **What did happen (unified log, local time):** between the user's last normal
+  input (10:33:50) and the report (10:36:46), Apple Terminal logged an
+  `NSTearOffTabWindow` at 10:35:12.6: a tab of the window group holding the two
+  TUI tabs was dragged out into its own window (tab switches at 10:35:11.6 and
+  10:35:12.2, drag image created 10:35:12.6, dropped 10:35:13.1, Mission Control
+  at 10:35:14.5). Both ttys went from 132×68 to 132×71 between 10:32 and 10:41,
+  i.e. each TUI resized once, which the app handled (debounced reprint). No agent
+  was driving the GUI at that moment; the gesture came from the pointer.
+- **Agents did drive the user's desktop around that session**, which is what
+  made the report plausible: a worker in another project ran `osascript`
+  `tell application "Terminal" to activate` / `do script` at 10:18–10:21 (new
+  Terminal windows running the installed `orca` binary, then closed, and read the
+  user's own TUI tab contents), and a worker in this project ran
+  `Terminal.doScript` + System Events / CGEvent keystrokes at 10:37:42–10:42.
+  Both pull focus and create windows outside a full-screen space; neither can
+  touch the TUI's tty. Agents must test terminals through the owned PTY
+  (`Bun.spawn({ terminal })`, see `scroll.pty.test.ts`) or a detached tmux pane,
+  never through the user's Terminal.app, clipboard or credentials.
+
+No `SIGTSTP`/`SIGCONT` handling exists (raw mode disables ISIG, so Ctrl+Z never
+reaches the TUI as a signal); re-entering the alternate screen after an external
+stop would be the hardening to consider if a report ever shows cooked mode or a
+`?1049l` with the process still alive. This one showed neither.
+
+---
+
 # Wheel scrolling: screen-isolation investigation
 
 ## Parser compatibility follow-up from `001954519bea7a16665c99a3cfa71cddc988a028`
