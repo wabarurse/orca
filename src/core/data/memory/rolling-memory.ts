@@ -4,9 +4,10 @@ import { archiveTranscript, contextEpoch, transcriptEntries } from "./archive";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
 import type { Provider } from "../../../providers/provider";
 import { summarizeOlder, taskSnapshot } from "./rolling-summary";
-import type { Task } from "../tasks/tasks";
+import type { Task } from "../../../protocol/tasks";
 import { paired } from "./tool-pairs";
-import type { RollingMemory, Transcript } from "../transcripts/transcript";
+import type { Transcript } from "../transcripts/transcript";
+import type { RollingMemory } from "../../../protocol/transcript";
 import { inputEpoch } from "../inbox/user-input";
 
 export interface RollingOptions {

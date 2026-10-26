@@ -3,11 +3,11 @@
 import { installedImages } from "./installed-images";
 import { appendFileSync, readFileSync } from "node:fs";
 import { local } from "../core/tmux/runner";
-import { runAgent } from "../core/agent-loop/loop/agent";
-import { afterExit } from "../core/tmux/exits";
+import { runAgent } from "../exec/run";
+import { afterExit } from "../exec/after-exit";
 import { sessionId } from "../core/tmux/runner";
 import { fakeProvider, text } from "./fake-provider";
-import type { Role } from "../core/data/transcripts/transcript";
+import type { Role } from "../protocol/transcript";
 
 const [cmd, ...args] = process.argv.slice(2);
 const record = (entry: object) => appendFileSync(process.env.PROBE_LOG!, JSON.stringify(entry) + "\n");

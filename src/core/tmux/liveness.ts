@@ -7,18 +7,7 @@ import { paths } from "../../config/config";
 import { readRun, watchdog } from "./exits";
 import { mergeWatcher } from "./merges";
 import { sessionName, tmux } from "./runner";
-
-/** One /agents row: the agent, whether its window is live, and its latest run's times. */
-export interface AgentInfo {
-  name: string;
-  live: boolean;
-  /** ISO start of the latest run. */
-  startedAt?: string;
-  /** ISO end of that run; absent while it is live. */
-  endedAt?: string;
-  /** endedAt is the run state's last update, not a recorded end (the agent was killed hard). */
-  approximateEnd?: boolean;
-}
+import type { AgentInfo } from "../../protocol/agents";
 
 /** The first transcript entry's ts: read from the file's first line only. */
 async function firstEntryTs(path: string): Promise<string | undefined> {

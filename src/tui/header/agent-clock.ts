@@ -1,7 +1,7 @@
 // The clock beside each agent in /agents: how long its latest run has gone
 // (live, ticking) or went (finished, final).
 
-import type { AgentInfo } from "../../core/tmux/liveness";
+import type { AgentInfo } from "../../protocol/agents";
 import { bold, dim } from "../components/text";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");

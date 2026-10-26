@@ -9,7 +9,8 @@ process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const { createAgent } = await import("../agent-loop/loop/agent");
-const { afterExit, beginRun, claim, claimed, dirtyCount, markEnded, noticeText, readRun, recoverTaskRuns, supervise, watchdog } = await import("./exits");
+const { beginRun, claim, claimed, dirtyCount, markEnded, noticeText, readRun, recoverTaskRuns, supervise, watchdog } = await import("./exits");
+const { afterExit } = await import("../../exec/after-exit");
 const { getTask, prepareTaskRun, registerTask } = await import("../data/tasks/tasks");
 const { Cancelled } = await import("./cancellation");
 const { drain, put } = await import("../data/inbox/inbox");

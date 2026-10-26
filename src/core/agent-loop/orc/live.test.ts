@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../../config/config";
-import { liveFile, liveReader, liveWriter, type LiveEvent } from "./live";
+import { liveFile, liveReader, liveWriter } from "./live";
+import type { LiveEvent } from "../../../protocol/daemon";
 
 const home = mkdtempSync(join(tmpdir(), "orca-live-"));
 process.env.ORCA_HOME = home;

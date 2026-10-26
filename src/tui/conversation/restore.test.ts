@@ -2,11 +2,12 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { format } from "../../core/data/inbox/inbox";
-import { open, type Entry } from "../../core/data/transcripts/transcript";
+import { format } from "../../protocol/inbox";
+import { open } from "../../core/data/transcripts/transcript";
+import type { Entry } from "../../protocol/transcript";
 import { historyRows, lineRows, type Line } from "./lines";
 import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, unresolvedCalls } from "./restore";
-import { toolView } from "../../core/agent-loop/loop/toolview";
+import { toolView } from "../../protocol/toolview";
 import { bold, dim } from "../components/text";
 import { collapseCalls } from "./tools";
 

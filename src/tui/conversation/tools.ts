@@ -3,14 +3,14 @@
 // line and one summary line under it ("  ⎿  12 lines") go into the history as
 // a { tool } Line, laid out at the current width (cut, never wrapped). The
 // marker is dim, red when the call failed (bold under NO_COLOR). The labels
-// and summaries come from src/core/agent-loop/loop/toolview.ts, shared with restore.ts and the
+// and summaries come from src/protocol/toolview.ts, shared with restore.ts and the
 // agent loop, so live and restored pages match. On screen, a run of two or
 // more finished calls with nothing else between them folds into one dim line
 // ("▸ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed", `collapseCalls`
 // and `groupRow`) until a click opens it (▾, its calls indented under it); the
 // history keeps the calls themselves, so both views come from the same lines.
 
-import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../../core/agent-loop/loop/toolview";
+import { RESULT_MARK, TOOL_MARK, toolView, interruptedView, type ToolCall, type ToolOutcome, type ToolView } from "../../protocol/toolview";
 import type { Part } from "./view";
 import type { Line, Shown } from "./lines";
 import { dim, fit, sanitize, visibleLength } from "../components/text";

@@ -4,7 +4,7 @@
 import type { Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider } from "../../providers/provider";
 import type { RequestSettings } from "../../providers/catalog/settings";
-import type { Role } from "../data/transcripts/transcript";
+import type { Role } from "../../protocol/transcript";
 
 export interface ToolContext {
   signal?: AbortSignal;

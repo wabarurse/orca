@@ -6,16 +6,19 @@
 import { existsSync } from "node:fs";
 import { cancelSession, delay } from "../../tmux/cancellation";
 import { loadConfig, paths } from "../../../config/config";
-import { pendingImageInputs, type ImageRef } from "../../data/images/images";
+import { pendingImageInputs } from "../../data/images/images";
+import type { ImageRef } from "../../../protocol/images";
 import { pendingInput, put } from "../../data/inbox/inbox";
 import { contextWindow } from "../../../providers/catalog/context-window";
 import type { Orchestrator } from "./orchestrator";
-import { awaitAck, daemonPid, liveStatus, readStatus, request, type DaemonStatus } from "./channel";
-import { liveReader, type LiveEvent, type LiveReader } from "./live";
+import { awaitAck, daemonPid, liveStatus, readStatus, request } from "./channel";
+import type { DaemonStatus } from "../../../protocol/daemon";
+import { liveReader, type LiveReader } from "./live";
+import type { LiveEvent } from "../../../protocol/daemon";
 import { projectIdentity, turnLocksHeld } from "../../data/projects/state";
 import { local, sessionName, tmux, type Runner } from "../../tmux/runner";
 import { pidAlive } from "../../data/storage-lock";
-import type { ToolCall, ToolOutcome } from "../loop/toolview";
+import type { ToolCall, ToolOutcome } from "../../../protocol/toolview";
 import { open, type Transcript } from "../../data/transcripts/transcript";
 import { inputEpoch } from "../../data/inbox/user-input";
 

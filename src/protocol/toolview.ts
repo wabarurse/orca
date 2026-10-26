@@ -7,7 +7,7 @@
 // a command or a result is stripped here, at the source (`plain`), so neither a
 // tmux pane nor the TUI's shimmer ever gets one.
 
-import { plain, textLines } from "../../../providers/sanitize";
+import { plain, textLines } from "../providers/sanitize";
 
 /** A tool call as it starts. */
 export interface ToolCall { id: string; name: string; input: unknown }

@@ -10,8 +10,8 @@
 
 import { pullHarness } from "../core/install/pull";
 import pkg from "../../package.json";
-import { runAgent } from "../core/agent-loop/loop/agent";
-import { afterExit } from "../core/tmux/exits";
+import { runAgent } from "../exec/run";
+import { afterExit } from "../exec/after-exit";
 import { put } from "../core/data/inbox/inbox";
 import { repoHere, validProjectName } from "../core/data/projects/registry";
 import { existsSync } from "node:fs";
@@ -20,7 +20,7 @@ import { daemonPid } from "../core/agent-loop/orc/channel";
 import { sessionId } from "../core/tmux/runner";
 import { ensureProject } from "../core/agent-loop/orc/orchestrator";
 import { createClientOrchestrator, daemonKeeper, stopDaemon } from "../core/agent-loop/orc/client";
-import type { Role } from "../core/data/transcripts/transcript";
+import type { Role } from "../protocol/transcript";
 import { App } from "../tui/app";
 import { realTerminal } from "../tui/components/term";
 

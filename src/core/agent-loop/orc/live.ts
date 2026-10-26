@@ -15,25 +15,13 @@ import { appendFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { delay } from "../../tmux/cancellation";
 import { paths } from "../../../config/config";
-import type { ToolCall, ToolOutcome } from "../loop/toolview";
+import type { ToolCall, ToolOutcome } from "../../../protocol/toolview";
+import type { LiveEvent, LiveKey, TurnEvent } from "../../../protocol/daemon";
 
 /** Bytes of live events per turn before text stops streaming (tools are still logged). */
 export const LIVE_CAP_BYTES = 1 << 20;
 /** How long `end` waits for pending appends before removing the file anyway. */
 export const LIVE_END_WAIT_MS = 2000;
-
-/** What happened during the turn, after the transcript entry `head` (the daemon's head when it happened). */
-export type TurnEvent =
-  | { kind: "text"; text: string }
-  | { kind: "status"; text: string }
-  | { kind: "tool_start"; call: ToolCall }
-  | { kind: "tool_end"; outcome: ToolOutcome }
-  | { kind: "truncated" };
-export type LiveEvent =
-  | { seq: 0; kind: "start"; run: string; turn: number; at: string }
-  | (TurnEvent & { seq: number; head: string | null });
-/** Which turn a live file belongs to: the daemon's run and its status.json turn counter. */
-export interface LiveKey { run: string; turn: number }
 
 export const liveFile = (project: string): string => join(paths.orchestrator(project), "live.jsonl");
 

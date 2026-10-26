@@ -1,87 +1,22 @@
 // Logically append-only JSONL, atomically published byte-preserving file images.
-// One line per entry. Entries form a tree via parentUuid;
-// the conversation sent to the model is the chain from the latest leaf back
-// to the root. Compaction appends a `summary` entry whose parent is the last
-// message; its retained tail and the chain forward are the new context.
+// One line per entry (the entry types are protocol/transcript.ts). Entries form a
+// tree via parentUuid; the conversation sent to the model is the chain from the
+// latest leaf back to the root. Compaction appends a `summary` entry whose parent
+// is the last message; its retained tail and the chain forward are the new context.
 // Explicit context-boundary entries reset model context without cutting parent links.
 // history() walks past both for UI replay without duplicating retained turns.
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { withStorageLock } from "../storage-lock";
-import type { Message } from "../inbox/inbox";
+import type { AppendGuard, Entry, NewEntry } from "../../../protocol/transcript";
 import { publish, disk, type Storage } from "./transcript-storage";
 import { dirname } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-
-export type Role = "orchestrator" | "worker" | "reviewer";
-
-export interface BaseEntry {
-  uuid: string;
-  parentUuid: string | null;
-  ts: string;
-  /** Inbox file identities committed atomically with context/replies, never model-visible. */
-  inbox?: (Message & { deliveryId: string })[];
-}
-
-export interface MessageEntry extends BaseEntry {
-  type: "message";
-  message: MessageParam;
-}
-
-/** The orchestrator's rolling memory, as a summary entry carries it (memory/rolling-summary.ts maintains it). */
-export interface RollingMemory {
-  user: string[];
-  project: string[];
-  pending: string[];
-  tasks: { id: string; notes: string }[];
-}
-
-export interface SummaryEntry extends BaseEntry {
-  type: "summary";
-  text: string;
-  /** Atomic context checkpoint; originals remain in the parent chain. */
-  retained?: MessageParam[];
-  boundary?: string | null;
-  /** Reusable structured memory, distinct from the verbatim recent tail. */
-  memory?: RollingMemory;
-}
-
-export interface MetaEntry extends BaseEntry {
-  type: "meta";
-  role: Role;
-  branch?: string;
-  model: string;
-}
-
-/** What a turn sent the user (drained from the user's inbox when it ended), so a page can show it again where it showed live. */
-export interface RepliesEntry extends BaseEntry {
-  type: "replies";
-  messages: { from: string; text: string }[];
-}
-
-/** Explicit reset of model context, not a message or summary. Parent preserves full history. */
-export interface ContextBoundaryEntry extends BaseEntry {
-  type: "context-boundary";
-}
-
-export type Entry = MessageEntry | SummaryEntry | MetaEntry | RepliesEntry | ContextBoundaryEntry;
 
 /** Original entries in the current context epoch, including turns hidden by compaction. */
 export function afterContextBoundary(entries: Entry[]): Entry[] {
   return entries.slice(entries.findLastIndex(e => e.type === "context-boundary") + 1);
 }
-
-/** An entry as passed to append(): uuid/ts are filled in, parentUuid defaults to head(). */
-export type NewEntry = Entry extends infer E
-  ? E extends Entry
-    ? Omit<E, "uuid" | "ts" | "parentUuid"> & { parentUuid?: string | null }
-    : never
-  : never;
-
-/** Checkpoints are conditional on the snapshot used to build their retained tail.
- * check runs again immediately before publication (e.g. shared cancellation epoch).
- */
-export interface AppendGuard { head: string | null; check?(): void }
 
 export interface Transcript {
   path: string;

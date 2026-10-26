@@ -4,7 +4,7 @@ import { toolsFor, type ToolContext } from "./registry";
 import { web_search } from "./web-search";
 import { fakeProvider } from "../../test/fake-provider";
 import { SEARCH_OUTPUT_BYTES, searchInput, searchOperation, searchText, type SearchRequest } from "../../providers/search/web-search";
-import { toolLabel, toolSummary } from "../agent-loop/loop/toolview";
+import { toolLabel, toolSummary } from "../../protocol/toolview";
 
 const ctx: ToolContext = { project: "never-read-project", role: "worker", cwd: "/never-read-cwd" };
 const result = { sources: [{ title: "Public docs", url: "https://example.com/docs", excerpt: "Actual excerpt" }] };

@@ -10,11 +10,10 @@ import { paths } from "../../../config/config";
 import { legacy } from "../../../config/legacy";
 import { MAX_IMAGE_BYTES, validateImage } from "../../../providers/images";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects/state";
+import type { ImageInput, ImageRef } from "../../../protocol/images";
 
 export const MAX_IMAGES = 4;
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
-export interface ImageRef { readonly id: string; readonly scope: string; readonly sha256: string }
-export interface ImageInput { readonly inputId: string; text: string; submission?: string; attachments: ImageRef[] }
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 function scope(project: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project)) throw new Error("invalid image project");

@@ -23,8 +23,7 @@ import type { Line } from "../conversation/lines";
 import { dim, plainText } from "../components/text";
 import type { QuestionMode, QuestionView } from "./render";
 import { answeredLine, questionReply, type AskedLookup } from "../conversation/restore";
-
-type Question = store.Question;
+import { limits, type Question } from "../../protocol/questions";
 
 /** What the TUI reads and closes questions with; tests stub it. `stamp` changes whenever the questions dir does. */
 export interface QuestionStore {
@@ -412,7 +411,7 @@ export class Questions {
     if (this.host.isCommand(text)) { this.host.input = EMPTY; return this.host.run(text); }
     let answer: string;
     try {
-      answer = store.clean(text, store.limits.answer, "answer");
+      answer = store.clean(text, limits.answer, "answer");
     } catch (err) {
       return this.host.say(dim(`not sent: ${plainText(message(err))}`), page);
     }

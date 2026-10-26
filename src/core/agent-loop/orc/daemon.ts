@@ -1,28 +1,24 @@
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
-// runs this loop in the `orchestrator` window of the project's tmux session,
-// so turns, rolling memory, the exit watchdog and the merge watcher go on when
-// no TUI is open. TUIs are clients (src/core/agent-loop/orc/client.ts): they enqueue
-// input and requests through files (src/core/agent-loop/orc/channel.ts) and follow
-// the transcript from disk. Only this process appends to the orchestrator's
-// transcript; it owns the turn locks while it does. One daemon per project:
-// the daemon lock (paths.daemonLock) is held for the process's lifetime.
+// (exec/daemon.ts) runs this loop in the `orchestrator` window of the project's
+// tmux session, so turns, rolling memory, the exit watchdog and the merge watcher
+// go on when no TUI is open. TUIs are clients (src/core/agent-loop/orc/client.ts):
+// they enqueue input and requests through files (src/core/agent-loop/orc/channel.ts)
+// and follow the transcript from disk. Only this process appends to the
+// orchestrator's transcript; it owns the turn locks while it does. One daemon per
+// project: the daemon lock (paths.daemonLock) is held for the process's lifetime.
 
 import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AgentOptions } from "../loop/agent";
 import { delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux/cancellation";
 import { exitWatchdog, mergeWatch } from "../../tmux/liveness";
 import { paths } from "../../../config/config";
-import { claim, supervise, type Tracker } from "../../tmux/exits";
 import { contextWindow } from "../../../providers/catalog/context-window";
 import { effectiveModel } from "../../data/projects/project-model";
-import { createOrchestrator, type Orchestrator, type OrchestratorDeps } from "./orchestrator";
-import { acknowledge, pruneAcks, takeRequests, writeStatus, type Command, type DaemonState, type Request } from "./channel";
-import { liveWriter, type LiveWriter } from "./live";
-import { SETTLED_EXIT } from "../../tmux/runner";
-import { tryStorageLock } from "../../data/storage-lock";
-import { callText, resultText } from "../loop/toolview";
-import { open } from "../../data/transcripts/transcript";
+import type { Orchestrator, OrchestratorDeps } from "./orchestrator";
+import { acknowledge, pruneAcks, takeRequests, writeStatus } from "./channel";
+import type { Command, DaemonState, Request } from "../../../protocol/daemon";
+import type { LiveWriter } from "./live";
+import { callText, resultText } from "../../../protocol/toolview";
 
 /** How often the idle loop looks for input and requests when nothing woke it earlier, and how often a running turn checks for a cancel or an in-turn request. */
 export const DAEMON_POLL_MS = 1000;
@@ -220,30 +216,4 @@ export function windowHooks(live: LiveWriter, out: (text: string) => void = text
     onTool: call => { out(`${callText(call)}\n`); live.onTool(call); },
     onToolResult: (outcome, call) => { out(`${resultText(call.name, outcome)}\n`); live.onToolResult(outcome); },
   };
-}
-
-/**
- * `orca agent --role orchestrator`: one daemon per project, supervised like a
- * worker (run record, exit notice on a crash or a signal). A clean stop closes
- * its own run first, so no notice follows it; a project deleted underneath ends
- * the process at once, so nothing writes its files back. Returns the exit code.
- */
-export async function orchestratorAgent(opts: AgentOptions & { run: string }, exit: (code: number) => void = code => process.exit(code)): Promise<number> {
-  const { project, run } = opts;
-  const release = await tryStorageLock(paths.daemonLock(project), project);
-  if (!release) { console.error(`orca: an orchestrator is already running for ${project}`); return SETTLED_EXIT; }
-  publishLaunch(project, "orchestrator", run); // the live daemon's run is what cancel requests must name, whoever launched last
-  const info = { project, id: "orchestrator", run, role: "orchestrator" as const, cwd: process.cwd() };
-  try {
-    return await supervise(info, async (tracker: Tracker) => {
-      const transcript = open(paths.transcript(project, "orchestrator"));
-      const live = liveWriter({ project, run, head: () => transcript.head(), log: text => console.error(text) });
-      const session = await createOrchestrator({ project, transcript, loadProvider: opts.loadProvider, rolling: opts.rolling, tracker, joinRolling: opts.exitWhenIdle, ...windowHooks(live) });
-      let outcome: DaemonOutcome;
-      try { outcome = await runDaemon({ project, run, session, live, exitWhenIdle: opts.exitWhenIdle }); }
-      finally { session.dispose?.(); }
-      if (outcome === "deleted") { await release(); exit(0); return new Promise<never>(() => {}); } // nothing after a real exit
-      await claim(project, "orchestrator", run); // a clean stop is not an exit to report
-    });
-  } finally { await release(); }
 }

@@ -4,7 +4,7 @@ import { renderBlock, renderLabelled, renderMarkdown } from "./markdown";
 import { sanitize, wrap } from "../components/text";
 import { fillRow, userFill } from "../components/style";
 import { groupRow, toolRows } from "./tools";
-import type { ToolView } from "../../core/agent-loop/loop/toolview";
+import type { ToolView } from "../../protocol/toolview";
 
 /** A user message line ("> …" or its indented continuation) at `cols`: wrapped, every row on the user background, full width. */
 export function userRows(line: string, cols: number): string[] {

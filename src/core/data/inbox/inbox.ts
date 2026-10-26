@@ -1,4 +1,5 @@
-import { imageContent, validateRefs, type ImageRef } from "../images/images";
+import { imageContent, validateRefs } from "../images/images";
+import { format, type Message } from "../../../protocol/inbox";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { withStorageLock } from "../storage-lock";
 import { projectIdentity, assertProjectIdentity, withProjectStateLock } from "../projects/state";
@@ -16,17 +17,6 @@ import { mkdirSync } from "node:fs";
 import { readdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config/config";
-
-export interface Message {
-  /** Optional immutable identity of a locally submitted prompt; echoed unchanged at consumption. */
-  inputId?: string;
-  attachments?: ImageRef[];
-  /** Captured when submitted, never when the asynchronous write finishes. */
-  userEpoch?: string;
-  from: string;
-  text: string;
-  ts: string;
-}
 
 const dir = (project: string, agent: string) => join(paths.inbox(project), agent);
 
@@ -113,11 +103,6 @@ export async function drain(project: string, agent: string): Promise<Message[]> 
   });
 }
 
-/** Messages as one user turn, each tagged with its sender. */
-export function format(msgs: Message[]): string {
-  return msgs.map((m) => `[${m.from}] ${m.text}`).join("\n\n");
-}
-
 /** Preserve prompt/image association in inbox order; legacy text stays byte-identical. */
 export function content(msgs: Message[]): MessageParam["content"] {
   if (!msgs.some(m => m.attachments?.length)) return format(msgs);
@@ -125,29 +110,6 @@ export function content(msgs: Message[]): MessageParam["content"] {
     const blocks = imageContent(`[${m.from}] ${m.text}`, m.attachments);
     return typeof blocks === "string" ? [{ type: "text" as const, text: blocks }] : blocks;
   });
-}
-
-/** A real sender id, as `format` tags it: "user", "orchestrator" or an agent's session id. */
-const SENDER = String.raw`(?:user|orchestrator|(?:worker|reviewer)(?:-[\w.-]+)?)`;
-const TAGGED = new RegExp(String.raw`^\[(${SENDER})\] ([\s\S]*)$`);
-const NEXT = new RegExp(String.raw`\n\n(?=\[${SENDER}\] )`);
-
-/**
- * The messages a `format`ted turn holds, in order: the inverse of `format`.
- * Only real sender ids count as tags, so "[x] done" or "[1] item" inside a
- * message stays part of it. Text that is not a formatted turn comes back as
- * one message from nobody (""). For reading old turns back (the TUI's
- * restore); live code gets the messages themselves.
- */
-export function parseFormatted(text: string): Pick<Message, "from" | "text">[] {
-  if (!TAGGED.test(text)) return [{ from: "", text }];
-  const out: Pick<Message, "from" | "text">[] = [];
-  for (const chunk of text.split(NEXT)) {
-    const m = TAGGED.exec(chunk);
-    // A split only happens before a tag, so every chunk is tagged.
-    if (m) out.push({ from: m[1]!, text: m[2]! });
-  }
-  return out;
 }
 
 /** What consume() needs of a transcript (transcripts/transcript.ts `Transcript` satisfies it): a refreshed snapshot and its receipts. */

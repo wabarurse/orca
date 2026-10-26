@@ -250,7 +250,7 @@ test("the real CLI send resumes a cancelled orchestrator across processes", asyn
 
 
 test("local prompt identities survive persistence unchanged and are reported only at consumption", async () => {
-  const project = "input-identity", seen: import("../../data/inbox/inbox").Message[] = [];
+  const project = "input-identity", seen: import("../../../protocol/inbox").Message[] = [];
   const provider = fakeProvider([[text("received")]]);
   const orch = await createOrchestrator({ project, provider, tools: {}, onInbox: messages => seen.push(...messages) });
   await orch.say("identical", undefined, "local-first");

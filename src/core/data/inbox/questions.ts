@@ -11,22 +11,7 @@ import { open, readdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config/config";
 import { put } from "./inbox";
-
-export type Status = "open" | "answered" | "skipped";
-
-export interface Question {
-  id: string;
-  text: string;
-  options?: string[];
-  default?: string;
-  status: Status;
-  answer?: string;
-  ts: string;
-}
-
-export type NewQuestion = Pick<Question, "text" | "options" | "default">;
-
-export const limits = { text: 500, option: 100, options: 8, questions: 10, answer: 2000 };
+import { limits, type NewQuestion, type Question } from "../../../protocol/questions";
 
 /** Trim, turn newlines and tabs into spaces, refuse control, line-separator and bidi characters and over-long text. */
 export function clean(value: string, max: number, what: string): string {

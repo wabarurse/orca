@@ -10,27 +10,9 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config/config";
-import type { ContextWindow } from "../../../providers/catalog/context-window";
+import type { Ack, Command, DaemonState, DaemonStatus, Request } from "../../../protocol/daemon";
 import { lockOwner, pidAlive } from "../../data/storage-lock";
 import { delay } from "../../tmux/cancellation";
-
-export type DaemonState = "idle" | "turn" | "stopped";
-export interface DaemonStatus {
-  pid: number;
-  run: string;
-  state: DaemonState;
-  /** When `state` began (ISO). */
-  since: string;
-  /** Turns started by this daemon, so a client can tell a turn began and ended between two reads. */
-  turns: number;
-  /** The last turn's context estimate for the header; absent until a turn ran. */
-  context?: { model: string; used?: number; window: ContextWindow };
-  /** The last turn's failure, until the next turn. */
-  error?: string;
-}
-export type Command = { kind: "clear" } | { kind: "compact" } | { kind: "model"; model: string } | { kind: "stop" };
-export interface Request { id: string; ts: string; command: Command }
-export interface Ack { id: string; ok: boolean; message: string; at: string }
 
 /** How long a client waits for the daemon to answer before giving up on a request (the daemon may still run it). */
 export const ACK_TIMEOUT_MS = 15_000;

@@ -8,7 +8,8 @@ import { archiveBestEffort, archivePath, archiveTranscript, BATCH, database, ent
 import { withProjectStateLock } from "../projects/state";
 import { backfillMemory, cleanOrphans, startMemoryBackfill } from "./backfill";
 import { prepareTaskRun, registerTask, startTaskRun } from "../tasks/tasks";
-import { open, type Entry } from "../transcripts/transcript";
+import { open } from "../transcripts/transcript";
+import type { Entry } from "../../../protocol/transcript";
 
 const previous = process.env.ORCA_HOME, dirs: string[] = [];
 afterEach(() => {
