@@ -95,7 +95,7 @@ switch (cmd) {
     const project = flag("project") ?? usage("missing required internal command flag");
     const role = (flag("role") ?? usage("missing required internal command flag")) as Role;
     if (!["orchestrator", "worker", "reviewer"].includes(role)) usage("invalid agent role");
-    process.exitCode = await runAgent({ project, role, branch: flag("branch"), run: flag("run") });
+    process.exitCode = await runAgent({ project, role, branch: flag("branch"), run: flag("run") }, code => process.exit(code));
     break;
   }
   case "agent-exit": {

@@ -8,15 +8,16 @@ import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sd
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { claudeCatalogEfforts, rememberCatalogEfforts } from "./catalog";
+import { withTransientRetries, type RetryOptions } from "./retry";
 
 // account.ts supplies Claude Code subscription credentials. There is no API-key mode.
-export function anthropic(client: Anthropic, options: { promptCache?: boolean } = {}): Provider {
+export function anthropic(client: Anthropic, options: { promptCache?: boolean; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
   return {
     name: "anthropic",
     async complete(req) {
       requireVision(req.model, req.messages);
       const settings = claudeRequestSettings(req.model, req.settings);
-      const stream = client.messages.stream({
+      const params = {
         ...settings,
         model: req.model,
         max_tokens: req.maxTokens,
@@ -25,15 +26,22 @@ export function anthropic(client: Anthropic, options: { promptCache?: boolean } 
         messages: claudeMessages(req.messages),
         // The identity line is required by the Claude Code OAuth path; the role prompt follows it.
         system: [
-          { type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." },
+          { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
           ...(req.system ? [{ type: "text" as const, text: req.system }] : []),
         ],
         ...(req.tools.length ? { tools: req.tools } : {}),
-      }, { ...(req.signal ? { signal: req.signal } : {}), ...(req.settings?.fast && req.model !== "claude-opus-5-5"
-        ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
-      stream.on("text", req.onText);
-      const message = await stream.finalMessage();
-      return completedTurn(message);
+      };
+      // Retries are ours (./retry), on the initial request only. The SDK keeps one: its credentials refresh on a
+      // 401 is a retry (login/claude.ts's forceRefresh), so that single attempt stays, and may also answer one
+      // transient failure before ours do.
+      return withTransientRetries(async started => {
+        const stream = client.messages.stream(params, { maxRetries: 1, ...(req.signal ? { signal: req.signal } : {}),
+          ...(req.settings?.fast && req.model !== "claude-opus-5-5" ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
+        stream.on("streamEvent", started);
+        stream.on("text", req.onText);
+        const message = await stream.finalMessage();
+        return completedTurn(message);
+      }, { signal: req.signal, what: "claude", notice: req.onNotice, ...options.retry });
     },
     async search(req) {
       req.signal.throwIfAborted();

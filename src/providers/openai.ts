@@ -9,6 +9,7 @@ import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../logi
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { codexCatalogEfforts, rememberCatalogEfforts } from "./catalog";
+import { withTransientRetries, type RetryOptions } from "./retry";
 
 // Protocol/catalog compatibility snapshot, matching Codex CLI 0.154.0.
 export const CODEX_CLIENT_VERSION = "0.154.0";
@@ -103,24 +104,28 @@ function clientFor(tokens: CodexTokens): OpenAI {
 }
 
 /** OpenAI models always use the Codex subscription endpoint. */
-export function openai(credentials: ReturnType<typeof codexCredentials>): Provider {
+export function openai(credentials: ReturnType<typeof codexCredentials>, options: { retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
   const request = <T>(run: (client: OpenAI) => Promise<T>) => authorizedRequest(credentials, run);
   return {
     name: "openai",
     async complete(req) {
       requireVision(req.model, req.messages);
-      const stream = await request((client) => client.responses.create({
-        // The SDK's platform type requires server IDs that Codex's stateless history omits.
-        model: req.model, input: toResponses(req.messages) as ResponseInputItem[], instructions: req.system ? `You are Codex, an AI coding agent.\n\n${req.system}` : "You are Codex, an AI coding agent.",
-        store: false, stream: true, parallel_tool_calls: true,
-        ...codexRequestSettings(req.model, req.settings), include: ["reasoning.encrypted_content"],
-        ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
-        // Codex manages its output budget; the backend rejects max_output_tokens.
-      }, { signal: req.signal }));
-      let usage: Turn["usage"];
-      const output = await completedOutput(stream as AsyncIterable<CodexStreamEvent>, req.onText, false, value => { usage = value; });
-      const content = fromResponses(output);
-      return { completion: summaryCompletion(output), content, ...(usage ? { usage, inputTokens: usage.input } : {}), stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
+      const input = toResponses(req.messages) as ResponseInputItem[], settings = codexRequestSettings(req.model, req.settings);
+      // Retries are ours (./retry), on the initial request only: the SDK's own are off.
+      return withTransientRetries(async started => {
+        const stream = await request((client) => client.responses.create({
+          // The SDK's platform type requires server IDs that Codex's stateless history omits.
+          model: req.model, input, instructions: req.system ? `You are Codex, an AI coding agent.\n\n${req.system}` : "You are Codex, an AI coding agent.",
+          store: false, stream: true, parallel_tool_calls: true,
+          ...settings, include: ["reasoning.encrypted_content"],
+          ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
+          // Codex manages its output budget; the backend rejects max_output_tokens.
+        }, { signal: req.signal, maxRetries: 0 }));
+        let usage: Turn["usage"];
+        const output = await completedOutput(observed(stream as AsyncIterable<CodexStreamEvent>, started), req.onText, false, value => { usage = value; });
+        const content = fromResponses(output);
+        return { completion: summaryCompletion(output), content, ...(usage ? { usage, inputTokens: usage.input } : {}), stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
+      }, { signal: req.signal, what: "codex", notice: req.onNotice, ...options.retry });
     },
     async search(req) {
       req.signal.throwIfAborted();
@@ -162,6 +167,11 @@ export function codexRequestSettings(model: string, settings: RequestSettings = 
     reasoning: { summary: "auto" as const, ...(settings.effort ? { effort: settings.effort } : {}) },
     ...(settings.fast ? { service_tier: "priority" as const } : {}),
   };
+}
+
+/** The stream with `started` called at its first event: from then on a failure is the stream's, not the request's. */
+async function* observed<T>(stream: AsyncIterable<T>, started: () => void): AsyncIterable<T> {
+  for await (const event of stream) { started(); yield event; }
 }
 
 const FAILED_EVENTS = new Set(["response.failed", "response.incomplete", "error"]);

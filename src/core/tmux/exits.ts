@@ -273,36 +273,45 @@ function handleSignals(info: RunInfo, t: Closable, opts: SuperviseOptions, log: 
   return { off, stopping: () => stopping };
 }
 
+/** A body's return value when its project is gone: the run is left as it is, nothing is written back. */
+export const ABANDONED: unique symbol = Symbol("abandoned");
+
 /**
  * Run an agent and close its run when it stops:
  * - throws: "crashed: <error>", exit SETTLED_EXIT (1 if the run could not be closed)
  * - ends without a final report: "finished without reporting", exit 0
+ * - returns ABANDONED (the project was deleted underneath): exit 0, the run is not closed
  * - SIGHUP/SIGTERM/SIGINT: "killed by SIG…", exit 128+n
  * Returns the exit code.
  */
-export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<void>, opts: SuperviseOptions = {}): Promise<number> {
+export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<void | typeof ABANDONED>, opts: SuperviseOptions = {}): Promise<number> {
   const log = opts.log ?? ((s: string) => console.error(s));
   const t = await beginRun(info);
   const signals = handleSignals(info, t, opts, log);
   let what = "finished without reporting";
   let code = 0;
+  let abandoned = false;
   try {
-    await body(t);
+    abandoned = await body(t) === ABANDONED;
   } catch (err) {
-    if (err instanceof Cancelled) what = "cancelled by user";
-    else {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`agent crashed: ${err instanceof Error && err.stack ? err.stack : msg}`);
-      what = `crashed: ${msg}`;
-      code = 1;
-    }
+    what = crashText(err, log);
+    code = what === "cancelled by user" ? 0 : 1;
   } finally {
     signals.off();
   }
   // A signal handler is closing the run and will exit the process.
   if (signals.stopping()) return code;
+  if (abandoned) return code; // nothing to close: the project's files are gone and must not come back
   await closeRun(info, t, what, GIT_TIMEOUT_MS, log);
   return code && claimed(info.project, info.id, info.run) ? SETTLED_EXIT : code;
+}
+
+/** How a body's throw closes the run: a cancellation by name, anything else as a logged crash. */
+function crashText(err: unknown, log: (s: string) => void): string {
+  if (err instanceof Cancelled) return "cancelled by user";
+  const msg = err instanceof Error ? err.message : String(err);
+  log(`agent crashed: ${err instanceof Error && err.stack ? err.stack : msg}`);
+  return `crashed: ${msg}`;
 }
 
 /** True while `pid` is a running process (EPERM still means it exists). */

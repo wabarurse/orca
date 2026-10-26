@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cancelSession, publishLaunch, watchCancellation } from "./cancellation";
+import { Cancelled, cancelSession, delay, publishLaunch, watchCancellation } from "./cancellation";
 import { paths } from "../../config/config";
 import { runAgent } from "../../exec/run";
 import { open } from "../data/transcripts/transcript";
@@ -124,4 +124,19 @@ test("cancelled notice reaches orchestrator with non-recovery policy; only user 
   await orch.say("Continue worker-x");
   await orch.turn();
   expect(starts).toBe(1);
+});
+
+test("delay with an already-aborted signal rejects, never throws synchronously", async () => {
+  const controller = new AbortController();
+  controller.abort(new Cancelled());
+  let swallowed: Promise<void>;
+  // The daemon's turn poll chains `.catch` on the promise; a synchronous throw would bypass it.
+  expect(() => { swallowed = delay(10, controller.signal).catch(() => {}); }).not.toThrow();
+  await swallowed!;
+  await expect(delay(10, controller.signal)).rejects.toBeInstanceOf(Cancelled);
+  const later = new AbortController();
+  const pending = delay(1000, later.signal);
+  later.abort(new Cancelled());
+  await expect(pending).rejects.toBeInstanceOf(Cancelled);
+  await expect(delay(1)).resolves.toBeUndefined();
 });

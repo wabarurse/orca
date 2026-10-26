@@ -241,9 +241,16 @@ test("orchestratorAgent: supervised run record, a clean idle exit claims its run
   rmSync(paths.project(q), { recursive: true, force: true });
   await until(() => exits.length === 1, 4000);
   expect(exits).toEqual([0]);
+  expect(await running).toBe(0); // in-process the outcome comes back; the CLI's `exit` is process.exit and never returns
   await Bun.sleep(50);
-  expect(existsSync(paths.project(q))).toBe(false); // nothing written back: the process is gone before supervise could close the run
-  void running; // never settles here, as a process that exited
+  expect(existsSync(paths.project(q))).toBe(false); // nothing written back: the run is abandoned, never closed
+  const silent = await project("vanishing-silently");
+  const silently = orchestratorAgent({ project: silent, role: "orchestrator", run: "run-w", loadProvider: async () => provider });
+  await until(() => readStatus(silent)?.state === "idle");
+  rmSync(paths.project(silent), { recursive: true, force: true });
+  expect(await silently).toBe(0); // no injected exit: the process (a test runner, say) goes on
+  await Bun.sleep(50);
+  expect(existsSync(paths.project(silent))).toBe(false);
 });
 
 test("a foreign .launch (a start that lost the lock race, published last) is re-asserted by the live daemon, so a cancel still reaches it", async () => {

@@ -35,7 +35,7 @@ export function scopedTasks(tasks: Task[], entries: Entry[]): Task[] {
 /** The only agent whose transcript is ever indexed. Workers and reviewers never reach the database. */
 export const ARCHIVE_AGENT = "orchestrator";
 /** 2: tasks.started_at/ended_at, filled from the rows' own raw registry records. */
-const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 2;
 const BUSY_MS = 10_000;
 const TASK_ID = /[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi;
 
@@ -51,7 +51,14 @@ const SCHEMA = `
 
 /** The main file and its WAL siblings hold conversation text: owner-only, always. */
 function secure(file: string): void {
-  for (const path of [file, `${file}-wal`, `${file}-shm`]) {
+  chmodAll([file, `${file}-wal`, `${file}-shm`]);
+}
+/** The siblings alone, for a read path that must leave the main file as it is. */
+function secureSiblings(file: string): void {
+  chmodAll([`${file}-wal`, `${file}-shm`]);
+}
+function chmodAll(paths: string[]): void {
+  for (const path of paths) {
     try { chmodSync(path, 0o600); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
 }
@@ -91,6 +98,22 @@ function initialize(db: Database): void {
   if (userVersion(db) > SCHEMA_VERSION) throw new Error("memory archive was written by a newer version");
 }
 
+/** Put the connection in WAL mode. A mode change needs an exclusive lock that SQLite takes without invoking
+ * the busy handler, so with several processes opening the archive at once the first switcher makes the others
+ * fail with SQLITE_BUSY: they wait briefly and look again, finding it already in WAL mode, for up to `busyMs`. */
+function walMode(db: Database, busyMs: number): void {
+  const mode = () => (db.query("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode;
+  const deadline = Date.now() + busyMs;
+  for (;;) {
+    if (mode() === "wal") return;
+    try { db.exec("PRAGMA journal_mode=WAL"); return; }
+    catch (error) {
+      if ((error as { code?: string }).code !== "SQLITE_BUSY" || Date.now() >= deadline) throw error;
+      Bun.sleepSync(5 + Math.random() * 20);
+    }
+  }
+}
+
 /** Open (creating if needed) the one global archive. Many processes share it: WAL plus a long busy timeout. */
 export function database(busyMs = BUSY_MS): Database {
   const file = archivePath();
@@ -99,7 +122,7 @@ export function database(busyMs = BUSY_MS): Database {
   const db = new Database(file, { create: true, strict: true });
   try {
     db.exec(`PRAGMA busy_timeout=${busyMs}`);
-    db.exec("PRAGMA journal_mode=WAL");
+    walMode(db, busyMs);
     initialize(db);
     secure(file);
     return db;
@@ -357,19 +380,40 @@ function searchHistory(db: Database, project: string, epoch: string, tasks: Task
 // ---- Global archive search (the orchestrator-only `history` tool) -------------------------------------------
 
 /** Read-only handle on the global archive, or undefined when it is missing or not initialized (e.g. 0 bytes). Takes no
- * project state lock. The connection never modifies the database file or any row, but SQLite may create empty
- * `-wal`/`-shm` siblings to read a WAL database. The caller's own transcript is archived (a write to its own
- * project's rows only) before this is opened; other projects' rows are never touched. */
+ * project state lock. The connection never modifies the database file or any row, but reading a WAL database needs
+ * its `-wal`/`-shm` siblings, which may be (re)created empty. The caller's own transcript is archived (a write to its
+ * own project's rows only) before this is opened; other projects' rows are never touched. */
 function readonlyDatabase(): Database | undefined {
-  if (!existsSync(archivePath())) return undefined;
-  const db = new Database(archivePath(), { readonly: true, strict: true });
-  try {
-    db.exec("PRAGMA busy_timeout=2000");
-    const version = userVersion(db);
-    if (version > SCHEMA_VERSION) throw new Error("memory archive was written by a newer version");
-    if (version >= SCHEMA_VERSION) return db;
-  } catch (error) { db.close(); throw error; }
+  const file = archivePath();
+  if (!existsSync(file)) return undefined;
+  const opened = (): [Database, number] => {
+    const db = new Database(file, { readonly: true, strict: true });
+    try { db.exec("PRAGMA busy_timeout=2000"); return [db, userVersion(db)]; }
+    catch (error) { db.close(); throw error; }
+  };
+  let db: Database, version: number;
+  try { [db, version] = opened(); }
+  catch (error) {
+    // A read-only connection cannot create the siblings (SQLite reads a WAL database without them only when it
+    // may create them); after a close that removed them, a read-write connection's read brings them back, empty,
+    // without writing the main file. It stays open until the read-only one is: SQLite removes the siblings again
+    // when the last connection closes, on the builds that do.
+    if ((error as { code?: string }).code !== "SQLITE_CANTOPEN" || existsSync(`${file}-wal`)) throw error;
+    const primer = primeWal(file);
+    try { [db, version] = opened(); } finally { primer.close(); }
+  }
+  if (version > SCHEMA_VERSION) { db.close(); throw new Error("memory archive was written by a newer version"); }
+  if (version >= SCHEMA_VERSION) return db;
   db.close();
+}
+
+/** Recreate a WAL database's missing `-wal`/`-shm` siblings: a read-write connection's first read creates them.
+ * Returns that connection open; the caller closes it once its own read-only connection holds the database. */
+function primeWal(file: string): Database {
+  const db = new Database(file, { readwrite: true, create: false, strict: true });
+  try { db.exec("PRAGMA busy_timeout=2000"); userVersion(db); secureSiblings(file); }
+  catch (error) { db.close(); throw error; }
+  return db;
 }
 
 /** Backfill state of the archive: other projects may be missing from it until the migration completed. */

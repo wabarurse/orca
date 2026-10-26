@@ -28,6 +28,8 @@ export interface CompleteRequest {
   tools: ApiTool[];
   maxTokens: number;
   onText: (delta: string) => void;
+  /** A provider-side note that is not model text (a transient failure being retried); shown as a plain status line. */
+  onNotice?: (text: string) => void;
 }
 
 export interface Provider {

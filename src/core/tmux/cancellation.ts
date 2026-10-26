@@ -73,9 +73,11 @@ export function watchCancellation(project: string, id: string, controller: Abort
   return () => clearInterval(timer);
 }
 
+/** Resolves after `ms`, or rejects with the signal's reason. An already-aborted signal rejects too, never
+ * throws synchronously: callers chain `.catch` on the returned promise and a throw would bypass it. */
 export function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
     const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
     const abort = () => { cleanup(); reject(signal!.reason); };
     const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
