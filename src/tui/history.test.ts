@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import * as fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { paths } from "../config";
+import { paths } from "../config/config";
 import { appendHistory, COMPACT_AT, keepable, loadHistory, MAX_INPUT_HISTORY, remember } from "./history";
 
 const home = mkdtempSync(join(tmpdir(), "orca-history-"));

@@ -189,8 +189,8 @@ generic paid-API SDK examples:
   specifies native result/citation blocks, encrypted continuation content, errors
   and `pause_turn`. It establishes response semantics, not OAuth entitlement.
 
-Tests in `src/tools/web-search*.test.ts` and
-`src/providers/web-search.test.ts` cover role counts, real SDK request construction
+Tests in `src/core/tools/web-search*.test.ts` and
+`src/providers/search/web-search.test.ts` cover role counts, real SDK request construction
 against intercepted transports, source extraction, validation, limits,
 cancellation/deadlines, errors, persistence, provider switching and compaction.
 These include empty-terminal-output reconstruction and failures, malformed

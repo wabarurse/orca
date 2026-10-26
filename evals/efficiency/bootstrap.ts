@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../src/config";
+import { paths } from "../../src/config/config";
 await mkdir(join(paths.root, "evals"), { recursive: true });
 const root = await mkdtemp(join(paths.root, "evals", "efficiency-"));
 const baseline = join(root, "baseline"); await mkdir(baseline);

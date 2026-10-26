@@ -1,8 +1,8 @@
 /** Compiled-only fixture: no real pasteboard/provider access, no source helpers at runtime. */
 import { mkdirSync } from "node:fs";
-import { paths } from "../config";
-import { clipboardCommand, MAC_CLIPBOARD_SCRIPT, readClipboardImage } from "../clipboard";
-import { imageContent, materializeImages, saveImage } from "../images";
+import { paths } from "../config/config";
+import { clipboardCommand, MAC_CLIPBOARD_SCRIPT, readClipboardImage } from "../tui/components/clipboard";
+import { imageContent, materializeImages, saveImage } from "../core/data/images/images";
 import { claudeMessages } from "../providers/anthropic";
 import { toResponses } from "../providers/openai";
 import { png } from "./image-fixture";

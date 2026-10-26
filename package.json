@@ -4,10 +4,10 @@
   "type": "module",
   "private": true,
   "bin": {
-    "orca": "src/cli.ts"
+    "orca": "src/cli/main.ts"
   },
   "scripts": {
-    "dev": "bun src/cli.ts",
+    "dev": "bun src/cli/main.ts",
     "check": "tsc --noEmit",
     "test": "bun test",
     "build": "bun scripts/build.ts",

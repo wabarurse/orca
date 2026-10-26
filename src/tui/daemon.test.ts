@@ -3,20 +3,20 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App, type AppDeps } from "./app";
-import { FakeScreen } from "./testing";
-import type { Terminal } from "./term";
-import { createOrchestrator, type Orchestrator } from "../orchestrator";
-import { paths, saveConfig } from "../config";
+import { FakeScreen } from "./components/testing";
+import type { Terminal } from "./components/term";
+import { createOrchestrator, type Orchestrator } from "../core/agent-loop/orc/orchestrator";
+import { paths, saveConfig } from "../config/config";
 import type { CompleteRequest } from "../providers/index";
-import { publishLaunch } from "../cancellation";
-import { createClientOrchestrator } from "../orchestrator-client";
-import { readStatus, request } from "../orchestrator-channel";
-import { runDaemon, windowHooks } from "../orchestrator-daemon";
-import { liveWriter } from "../orchestrator-live";
-import { tryStorageLock } from "../storage-lock";
+import { publishLaunch } from "../core/tmux/cancellation";
+import { createClientOrchestrator } from "../core/agent-loop/orc/client";
+import { readStatus, request } from "../core/agent-loop/orc/channel";
+import { runDaemon, windowHooks } from "../core/agent-loop/orc/daemon";
+import { liveWriter } from "../core/agent-loop/orc/live";
+import { tryStorageLock } from "../core/data/storage-lock";
 import { fakeProvider, text as textBlock, toolUse } from "../test/fake-provider";
-import type { Tool } from "../tools/index";
-import { open } from "../transcript";
+import type { Tool } from "../core/tools/index";
+import { open } from "../core/data/transcripts/transcript";
 
 // The TUI as a client: it keeps each open project's orchestrator daemon alive
 // through the injected keeper, and never runs a turn itself.

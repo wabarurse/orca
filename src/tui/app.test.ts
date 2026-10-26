@@ -1,31 +1,31 @@
 import { png } from "../test/image-fixture";
-import { pendingImageInputs, type ImageRef } from "../images";
+import { pendingImageInputs, type ImageRef } from "../core/data/images/images";
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Orchestrator } from "../orchestrator";
-import { displayName, newProjectName, setDisplayName } from "../commands";
-import { loadConfig, paths } from "../config";
-import { effectiveFlow } from "../project-flow";
+import type { Orchestrator } from "../core/agent-loop/orc/orchestrator";
+import { displayName, newProjectName, setDisplayName } from "./commands/commands";
+import { loadConfig, paths } from "../config/config";
+import { effectiveFlow } from "../core/data/projects/flow";
 import { AGENTS_TICK_MS, App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
-import { createOrchestrator } from "../orchestrator";
-import { drain, put, type Message } from "../inbox";
-import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../questions";
-import { fileStore, queuedAnswer, type QuestionStore } from "./questions";
-import { answeredLine, MAX_RESTORED_ROWS, userLines } from "./restore";
-import { historyRows, lineRows } from "./lines";
+import { createOrchestrator } from "../core/agent-loop/orc/orchestrator";
+import { drain, put, type Message } from "../core/data/inbox/inbox";
+import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../core/data/inbox/questions";
+import { fileStore, queuedAnswer, type QuestionStore } from "./footer/questions";
+import { answeredLine, MAX_RESTORED_ROWS, userLines } from "./conversation/restore";
+import { historyRows, lineRows } from "./conversation/lines";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
-import { message } from "../tools/message";
-import { registerTask } from "../tasks";
-import { makeSpawn } from "../tools/spawn";
-import { open as openTranscript } from "../transcript";
-import { ESC_DELAY_MS, parseKeys, type Key } from "./keys";
-import { realTerminal, type Terminal } from "./term";
-import { FakeScreen } from "./testing";
-import { bold, dim, live as renderLive } from "./render";
-import { setUserFill } from "./style";
-import { Calls } from "./tools";
+import { message } from "../core/tools/message";
+import { registerTask } from "../core/data/tasks/tasks";
+import { makeSpawn } from "../core/tools/spawn";
+import { open as openTranscript } from "../core/data/transcripts/transcript";
+import { ESC_DELAY_MS, parseKeys, type Key } from "./components/keys";
+import { realTerminal, type Terminal } from "./components/term";
+import { FakeScreen } from "./components/testing";
+import { bold, dim, live as renderLive } from "./components/render";
+import { setUserFill } from "./components/style";
+import { Calls } from "./conversation/tools";
 
 const home = mkdtempSync(join(tmpdir(), "orca-tui-"));
 process.env.ORCA_HOME = home;
@@ -2862,8 +2862,8 @@ test("current-view resize anchoring ignores unrelated sessions, and tail activit
 });
 
 test("boxed input and question vertical editing share rendered geometry across resize, retaining the chat draft", async () => {
-  const { inputGeometry } = await import("./render");
-  const { vertical } = await import("./editor");
+  const { inputGeometry } = await import("./components/render");
+  const { vertical } = await import("./footer/editor");
   const term = fakeTerm(40, 24);
   const orchs = fakeOrchestrators();
   const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 20, questionDelayMs: 0, watchdog: async () => {}, merges: async () => {} });
@@ -2959,8 +2959,8 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     [toolUse("cancel-real", "bash", { command: `echo started > '${marker}'; sleep 60` }), toolUse("never", "bash", { command: "echo NEVER-EXECUTED" })],
     [said("authorized continuation")],
   ]);
-  const { bash } = await import("../tools/bash");
-  const { paired } = await import("../tool-pairs");
+  const { bash } = await import("../core/tools/bash/bash");
+  const { paired } = await import("../core/data/memory/tool-pairs");
   const term = fakeTerm(100, 24);
   // The header's fin cruises on App's clock while the page is busy and parks (tick 0) once idle; the header rows compared
   // below span its body, so freeze the clock at 0 to put the cruising fin where the parked one sits. Timers stay real.
@@ -4010,7 +4010,7 @@ test('automatic copy errors stay visible, highlight supports explicit retry; mot
 
 test("unchanged telemetry polls avoid redraw; task progress is independent of the saved limit and agent switches render honestly", async () => {
   const term = fakeTerm(80, 24);
-  const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../tasks").TaskRow[];
+  const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../core/data/tasks/tasks").TaskRow[];
   const fake = fakeOrchestrators();
   let limit = 7;
   const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks, flowSettings: async () => ({ maxReviewRounds: limit, dynamicDispatch: false }),

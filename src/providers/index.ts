@@ -1,5 +1,5 @@
-import type { SearchRequest, SearchResult } from "./web-search";
-import type { RequestSettings } from "../project-settings";
+import type { SearchRequest, SearchResult } from "./search/web-search";
+import type { RequestSettings } from "../core/data/projects/project-settings";
 // A provider turns the transcript into one model turn. The transcript stays
 // Anthropic-shaped (text / tool_use / tool_result blocks) whatever the
 // provider; OpenAI is translated on the way in and out.

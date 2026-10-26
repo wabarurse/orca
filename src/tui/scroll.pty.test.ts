@@ -4,8 +4,8 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { open } from "../transcript";
-import { FakeScreen } from "./testing";
+import { open } from "../core/data/transcripts/transcript";
+import { FakeScreen } from "./components/testing";
 
 const END_FRAME = "\x1b[?2026l";
 
@@ -37,7 +37,7 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
       trap - TERM HUP
       printf '\\nSTTY_AFTER:%s\\n' "$(stty -g)"
       exit "$result"
-    `, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli.ts")], {
+    `, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli", "main.ts")], {
       cwd: home,
       // No inherited auth, tmux server/socket, git config, or user's project.
       env: { HOME: home, ORCA_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
@@ -118,7 +118,7 @@ test("owned PTY: Option+Backspace and a drag sent as separate writes (Terminal.a
     await t.append({ type: "message", message: { role: "assistant", content: "PTY-SELECT-ME here" } });
     let output = "";
     const decoder = new TextDecoder();
-    child = Bun.spawn(["/bin/sh", "-c", `"$1" "$2" start probe <&0`, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli.ts")], {
+    child = Bun.spawn(["/bin/sh", "-c", `"$1" "$2" start probe <&0`, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli", "main.ts")], {
       cwd: home,
       // No inherited auth, tmux server/socket, git config, or user's project; the SSH guard keeps the host clipboard untouched.
       env: { HOME: home, ORCA_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },

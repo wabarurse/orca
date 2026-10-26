@@ -217,7 +217,7 @@ mergeability), so unknown is not clean.
 
 ## TypeScript / UI contract
 
-Import from `src/tasks.ts`:
+Import from `src/core/data/tasks/tasks.ts`:
 
 * `listTasks(project): Promise<TaskRow[]>` — active rows, registration order.
   `TaskRow` contains only `id`, `name`, `summary`, `branch`, `status`, optional
@@ -233,7 +233,7 @@ Import from `src/tasks.ts`:
 * Producers: `registerTask`, `prepareTaskRun`, `startTaskRun`, `stopTaskRun`,
   `setTaskAttention`, `invalidateTaskBranch`, `taskForRun`.
 * Trusted GitHub adapters: `observeTaskPR`, `validateTaskReadiness`,
-  `archiveMergedTasks`; `src/github.ts` provides `ghTaskPR`/`parseTaskPR`.
+  `archiveMergedTasks`; `src/core/data/tasks/github.ts` provides `ghTaskPR`/`parseTaskPR`.
   These low-level APIs accept typed observations, not arbitrary tool input;
   use `task` for origin/HEAD/role validation. Readiness uses revision comparison
   to reject races during network/local validation.

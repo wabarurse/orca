@@ -103,8 +103,8 @@ test("script build failure leaves a previous installation untouched", async () =
   const { root, home, source, target } = await fixture();
   await installBinary(source, home);
   const app = join(root, "app"); await mkdir(join(app, "scripts"), { recursive: true });
-  await mkdir(join(app, "src"));
-  await writeFile(join(app, "src", "installation.ts"), await readFile(join(import.meta.dir, "../src/installation.ts")));
+  await mkdir(join(app, "src", "core", "install"), { recursive: true });
+  await writeFile(join(app, "src", "core", "install", "installation.ts"), await readFile(join(import.meta.dir, "../src/core/install/installation.ts")));
   await writeFile(join(app, "scripts", "install.ts"), await readFile(join(import.meta.dir, "install.ts")));
   await writeFile(join(app, "package.json"), JSON.stringify({ scripts: { build: "exit 18" } }));
   const child = Bun.spawn([process.execPath, join(app, "scripts", "install.ts")], {
