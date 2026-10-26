@@ -255,10 +255,12 @@ test("/effort with no args opens a picker of default plus supported levels for t
 });
 
 test("effort picker lists catalog-reported levels and cannot write a model the project no longer uses", async () => {
-  const ui = await setup([], undefined, { effortChoices: async () => ({ model: "gpt-6-astra", current: "default", choices: [{ value: "default", label: "default", current: true }, { value: "medium", label: "medium" }, { value: "high", label: "high" }] }) });
+  const ui = await setup([], undefined, { effortChoices: async () => ({ model: "gpt-6-astra", current: "default", note: "saved effort xhigh is not supported", choices: [{ value: "default", label: "default", current: true }, { value: "medium", label: "medium" }, { value: "high", label: "high" }] }) });
   const lines = () => ui.app.page!.lines.join("");
   try {
     ui.type("/effort\r"); await until(() => !!ui.app.menu);
+    expect(lines()).toContain("fetching effort levels…");
+    expect(lines()).toContain("saved effort xhigh is not supported");
     expect(ui.app.menu!.items).toEqual(["● default", "  medium", "  high"]);
     await setModel("gpt-5.5", ui.project);
     ui.key({ name: "down" }); ui.type("\r");

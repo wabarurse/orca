@@ -35,10 +35,19 @@ export function claudeCatalogEfforts(capability: unknown): Effort[] {
   if (!effort || effort.supported !== true) return [];
   return full.filter((level) => effort[level]?.supported === true);
 }
+/** The current list: catalog-reported levels when known in this process, else the built-in table.
+ * Time-varying (the catalog lands in the background) and per process, so request paths must not throw on it. */
 export function modelCapabilities(model: string): { effort: Effort[]; fast: boolean } {
   const base = hardcodedCapabilities(model);
   const reported = catalogEfforts.get(model);
   return reported ? { ...base, effort: [...reported] } : base;
+}
+/** Every level either source has reported for the model: what a request may still carry
+ * when the catalog lands between settings resolution and the provider's own check. */
+export function knownEfforts(model: string): Effort[] {
+  const table = hardcodedCapabilities(model).effort;
+  const reported = catalogEfforts.get(model) ?? [];
+  return full.filter((level) => table.includes(level) || reported.includes(level));
 }
 function hardcodedCapabilities(model: string): { effort: Effort[]; fast: boolean } {
   if (claudeFull.has(model)) return { effort: [...full], fast: claudeFast.has(model) };

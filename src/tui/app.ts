@@ -1352,7 +1352,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     });
   }
 
-  private async modelsMenu(page: Page, operation: number, identity: string): Promise<void> {
+  private async modelMenu(page: Page, operation: number, identity: string): Promise<void> {
     this.say(dim("fetching models…"));
     const { choices, errors } = await (this.deps.modelChoices ?? modelChoices)(dim, page.project);
     if (!this.modelPageCurrent(page, operation)) return;
@@ -1462,7 +1462,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear model context after confirmation; keep full history" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
-    ["/model", { args: true, run: (args, page) => this.modelsCommand(args, page), help: { group: "settings", label: "/model [id]", description: "choose or set the project model" } }],
+    ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [id]", description: "choose or set the project model" } }],
     ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
     ["/review-rounds", { args: true, run: (args, page) => this.reviewRoundsCommand(args, page), help: { group: "advanced", label: "/review-rounds [n]", description: "review rounds before ci; 0 goes straight to ci" } }],
@@ -1574,10 +1574,12 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const operation = ++this.modelGeneration;
     if (!page) return this.say(dim("open a project before changing its model settings"));
     const identity = projectIdentity(page.project);
+    this.say(dim("fetching effort levels…"));
     let picker: Awaited<ReturnType<typeof effortChoices>>;
     try { picker = await (this.deps.effortChoices ?? effortChoices)(page.project); }
     catch (err) { return this.say(dim(err instanceof Error ? err.message : String(err)), page); }
     if (!this.modelPageCurrent(page, operation)) return;
+    if (picker.note) this.say(dim(picker.note), page);
     this.openMenu(`effort for ${picker.model}   (/effort <level|default> sets directly)`, picker.choices, async (level) => {
       if (!this.modelPageCurrent(page, operation)) return;
       try { this.say(dim(await setEffort(page.project, picker.model, level, identity)), page); }
@@ -1587,11 +1589,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   /** /model opens the menu; /model <id> sets any id. */
-  private async modelsCommand(id: string, page?: Page): Promise<void> {
+  private async modelCommand(id: string, page?: Page): Promise<void> {
     const operation = ++this.modelGeneration;
     if (!page) return this.say(dim("open a project before changing its model"));
     const identity = projectIdentity(page.project);
-    if (!id) return this.modelsMenu(page, operation, identity);
+    if (!id) return this.modelMenu(page, operation, identity);
     await this.switchModel(page, id, operation, identity);
   }
 

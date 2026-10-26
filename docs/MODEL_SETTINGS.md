@@ -25,6 +25,21 @@ validation of direct `/effort <level>` uses the same list. A model the catalog
 does not list, or lists without levels, or a failed/unauthenticated fetch, keeps
 the built-in table below.
 
+That list is therefore time-varying within a process (the background prefetch
+lands after the first request) and differs between processes (TUI, daemon, each
+agent) until each has fetched. So only **saves** validate effort against the
+current list. The request path never throws on a saved effort: `effectiveSettings`
+(`effectiveSettingsReport`) omits an effort the current list lacks and reports it
+as `dropped`, so the request uses the backend default and an agent mid-run keeps
+working. The value stays on disk: it applies again wherever the list includes it
+(for example in a process without catalog data), the `/effort` picker marks
+`default` and prints a note, and the next `/effort` or `/fast` save merges onto
+the effective settings, so the dead effort is not carried along. Providers'
+own `validateSettings` call accepts every level the table or the catalog has
+reported (`knownEfforts`), so a request resolved just before the catalog landed
+is not refused locally; the service may still reject it. A saved **fast** mode
+the model does not support remains an error as before.
+
 ## Persistence and next-request boundary
 
 - `projects/<id>/model` overrides global `config.model`; absence preserves the

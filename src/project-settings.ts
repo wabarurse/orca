@@ -1,7 +1,7 @@
 import { rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "./config";
-import { modelCapabilities, type Effort } from "./model-capabilities";
+import { knownEfforts, modelCapabilities, type Effort } from "./model-capabilities";
 import { effectiveModel } from "./project-model";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./project-state";
 
@@ -37,24 +37,40 @@ function selectedSettings(saved: SavedSettings, model: string): RequestSettings 
   assertSettingsShape(entry);
   return entry;
 }
-export function validateSettings(model: string, settings: RequestSettings): void {
+/** Shape, effort and fast checks. Saves validate effort against the current list
+ * (`modelCapabilities`); providers use the default, every level known from the table or
+ * the catalog, so a request resolved moments before the catalog landed is never refused here. */
+export function validateSettings(model: string, settings: RequestSettings, efforts: Effort[] = knownEfforts(model)): void {
   assertSettingsShape(settings);
   const supported = modelCapabilities(model);
-  if (settings.effort !== undefined && !supported.effort.includes(settings.effort)) throw new Error(`effort ${settings.effort} is unsupported for ${model}; supported: default, ${supported.effort.join(", ") || "no explicit levels"}`);
+  if (settings.effort !== undefined && !efforts.includes(settings.effort)) throw new Error(`effort ${settings.effort} is unsupported for ${model}; supported: default, ${supported.effort.join(", ") || "no explicit levels"}`);
   if (settings.fast !== undefined && typeof settings.fast !== "boolean") throw new Error("invalid fast mode");
   if (settings.fast && !supported.fast) throw new Error(`fast mode is unsupported for ${model} on this endpoint`);
 }
+export interface SettingsReport { settings: RequestSettings; /** A saved effort the current capability list does not include: omitted, not an error. */ dropped?: Effort }
+/** The saved preference as a request may carry it. Capabilities vary over time (catalog
+ * fetch) and per process, so an effort the current list lacks is dropped to the backend
+ * default and reported, never thrown: an agent mid-run keeps working. The saved value stays
+ * on disk and applies again wherever the list includes it. Malformed data still throws. */
+export async function effectiveSettingsReport(project: string, model: string): Promise<SettingsReport> {
+  const report = withSupportedEffort(await readSettings(project), model);
+  validateSettings(model, report.settings); // shape and fast; an unsupported saved fast mode is still an error
+  return report;
+}
+/** The saved entry (shape-checked) with an effort the current list lacks moved to `dropped`. */
+function withSupportedEffort(saved: SavedSettings, model: string): SettingsReport {
+  const { effort, ...rest } = selectedSettings(saved, model);
+  if (effort !== undefined && !modelCapabilities(model).effort.includes(effort)) return { settings: rest, dropped: effort };
+  return { settings: effort === undefined ? rest : { ...rest, effort } };
+}
 export async function effectiveSettings(project: string, model: string): Promise<RequestSettings> {
-  const saved = await readSettings(project);
-  const settings = selectedSettings(saved, model);
-  validateSettings(model, settings);
-  return settings;
+  return (await effectiveSettingsReport(project, model)).settings;
 }
 /** Per-model preferences prevent invalid effort/tier fields crossing providers.
  * Queue order starts at saveProjectSettings invocation, after any command reads. */
 export function saveProjectSettings(project: string, model: string, patch: RequestSettings, expectedIdentity?: string): Promise<void> {
   try {
-    validateSettings(model, patch);
+    validateSettings(model, patch, modelCapabilities(model).effort);
     const identity = expectedIdentity ?? projectIdentity(project);
     return withProjectStateLock(project, () => commitSettings(project, model, patch, identity));
   } catch (error) { return Promise.reject(error); }
@@ -63,8 +79,9 @@ async function commitSettings(project: string, model: string, patch: RequestSett
   assertProjectIdentity(project, identity);
   if (await effectiveModel(project) !== model) throw new Error("model changed while saving settings; try again");
   const saved = await readSettings(project);
-  const entry = { ...selectedSettings(saved, model), ...patch };
-  validateSettings(model, entry);
+  // Merge onto the effective settings: a saved effort the current list no longer includes is not carried along.
+  const entry = { ...withSupportedEffort(saved, model).settings, ...patch };
+  validateSettings(model, entry, modelCapabilities(model).effort);
   const next = { ...saved, [model]: entry };
   const path = settingsPath(project);
   const temp = `${path}.${crypto.randomUUID()}.tmp`;
