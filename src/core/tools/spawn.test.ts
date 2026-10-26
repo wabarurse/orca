@@ -119,11 +119,18 @@ describe("one agent per branch", () => {
     expect((await chain("worker-soon")).map((m) => m.content)).toEqual(["Branch: soon\n\nnext task"]);
   });
 
-  test("tmux could not be asked: spawn goes ahead as before", async () => {
+  test("tmux could not be asked: spawn preserves branch ownership", async () => {
     const { r, asked, starts } = runner([null]);
-    expect(await makeSpawn(r, wait).run({ prompt: "x", branch: "unknown" }, qctx)).toBe("worker-unknown");
+    expect(await makeSpawn(r, wait).run({ prompt: "x", branch: "unknown" }, qctx)).toContain("cannot verify");
     expect(asked).toHaveLength(1);
-    expect(starts).toHaveLength(1);
+    expect(starts).toHaveLength(0);
+  });
+
+  test("a liveness exception also refuses a replacement", async () => {
+    const { r, starts } = runner([]);
+    r.running = async () => { throw new Error("tmux unavailable"); };
+    expect(await makeSpawn(r, wait).run({ prompt: "x", branch: "unknown-error" }, qctx)).toContain("cannot verify");
+    expect(starts).toHaveLength(0);
   });
 });
 

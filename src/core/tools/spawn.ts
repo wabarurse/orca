@@ -17,14 +17,14 @@ import type { Tool, ToolContext } from "./registry";
 export interface SpawnWait { waitMs: number; pollMs: number }
 const WAIT: SpawnWait = { waitMs: 20_000, pollMs: 250 };
 
-/** The branch's agents still live after waiting up to `waitMs`; [] when none, or when tmux could not be asked. */
-async function stillLive(runner: Runner, project: string, branch: string, wait: SpawnWait, signal?: AbortSignal): Promise<string[]> {
+/** The branch's live agents after waiting; null means ownership could not be checked. */
+async function stillLive(runner: Runner, project: string, branch: string, wait: SpawnWait, signal?: AbortSignal): Promise<string[] | null> {
   const ids = [sessionId("worker", branch), sessionId("reviewer", branch)];
   const deadline = Date.now() + wait.waitMs;
   for (;;) {
     signal?.throwIfAborted();
     const live = await runner.running(project, ids, signal).catch(() => null);
-    if (!live?.length || Date.now() >= deadline) return live ?? [];
+    if (!live?.length || Date.now() >= deadline) return live;
     await delay(wait.pollMs, signal);
   }
 }
@@ -77,6 +77,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       // One agent per branch: a reported agent may still be finishing, so wait briefly for it.
       const busy = await stillLive(runner, ctx.project, branch, wait, ctx.signal);
       ctx.signal?.throwIfAborted();
+      if (busy === null) return `refused: cannot verify whether agents are still running on ${branch}; restore liveness checks before retrying`;
       if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
       if (input.reviewMode !== undefined && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: invalid reviewMode";
