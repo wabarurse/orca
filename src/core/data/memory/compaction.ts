@@ -156,6 +156,9 @@ async function summarize(deps: ContextDeps, source: MessageParam[], maxTokens: n
   return text;
 }
 
+/** The progress lines foreground compaction reports (the TUI shows them as transient notes: tui/conversation/notices.ts). */
+export const COMPACTION_STATUS = { started: "compacting…", done: "compaction complete (best-effort; original transcript preserved)" } as const;
+
 function status(deps: ContextDeps, text: string): void {
   try { deps.write?.(`${text}\n`, true); } catch { /* UI output failure cannot undo a committed checkpoint. */ }
 }
@@ -168,7 +171,7 @@ export async function compact(deps: ContextDeps, manual = false): Promise<boolea
   const limit = contextLimit(options, deps.model);
   const reserve = outputCap(deps);
   if (!manual && budget(deps, messages) + reserve < limit * .8) return null;
-  status(deps, "compacting…");
+  status(deps, COMPACTION_STATUS.started);
   try {
     return await checkpoint(deps, messages, limit);
   } catch (error) {
@@ -203,7 +206,7 @@ async function checkpoint(deps: ContextDeps, messages: MessageParam[], limit: nu
   if (head !== deps.transcript.head()) throw new Error("conversation changed during compaction");
   await deps.transcript.append({ type: "summary", text, retained, boundary: head }, deps.signal);
   if (deps.compaction) deps.compaction.measured = undefined;
-  status(deps, "compaction complete (best-effort; original transcript preserved)");
+  status(deps, COMPACTION_STATUS.done);
   return true;
 }
 

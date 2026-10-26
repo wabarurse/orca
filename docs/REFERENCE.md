@@ -583,15 +583,18 @@ and the daemon's acknowledgement that replaces it (`orchestrator: turn cancelled
 the orchestrator stays paused until you send a message`, or `nothing was running;
 queued input stays paused …`), `/compact`'s `compaction requested …`, compaction
 progress (`compacting…`, `compacting older conversation in the background…`) and
-its outcome (`compaction complete: ~N → ~M history tokens …`, `background summary
+its outcome (`compaction complete (best-effort; original transcript preserved)`,
+`compaction complete: ~N → ~M history tokens …`, `background summary
 did not reduce context; original history kept.`), and an answered or skipped
 question (`? <question> → <answer>`, `? <question> → skipped, removed from inbox`)
 show as one dim row directly above the composer, cut to
 the width. A newer note for the same page replaces it; the next keypress on
-that page clears it (scrolling with the wheel or Page Up/Down and mouse
+that page after the row has been drawn clears it (scrolling with the wheel or Page Up/Down and mouse
 selection do not). While the Inbox panel is open the row is held back, like the
-attached-images row, and shows once the panel closes. Each page keeps its own note,
-so a background page's shows when you switch to it. Notes are never written to
+attached-images row: the note waits unseen, the key that closes the panel (or
+answers the next question) does not clear it, and it shows once the panel
+closes, until the next key. Each page keeps its own note,
+so a background page's shows when you switch to it (its keys there do not clear it). Notes are never written to
 the conversation, so `/refresh`, a reopen or an exit replay never bring them
 back. Errors, refusals (`usage: /fast [on|off]`, `usage: /review-rounds [n]`,
 `effort ultra is unsupported`, `orchestrator is not running: …`), the daemon's
@@ -707,7 +710,7 @@ can be hidden while still owning keys; Esc closes it. In an agent view Questions
 shows a guard, never an answer field: close Inbox, then Esc or `/back` to the
 project orchestrator before answering. A settled question leaves no conversation
 line: an answer is the transient `? question → answer` note above the composer
-(shown once the panel closes) and sits in the prompt queue as `? question → answer`
+(shown once the panel closes, however it closes) and sits in the prompt queue as `? question → answer`
 until the orchestrator reads it; a skip is the transient `? question → skipped,
 removed from inbox` note, not a delivered reply or model input. When the
 orchestrator reads an answer (yours, another window's or a historical delivered

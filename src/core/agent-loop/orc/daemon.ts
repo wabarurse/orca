@@ -27,6 +27,9 @@ export const TURN_POLL_MS = 100;
 const IN_TURN = new Set<Command["kind"]>(["compact", "model"]);
 /** The watchers' period (the merge watcher throttles itself further to MERGE_POLL_MS). */
 export const WATCH_MS = 2000;
+/** The acknowledgements of a cancel and of a /compact request; the client prefixes "orchestrator: " and the TUI shows them as transient notes (tui/conversation/notices.ts). */
+export const CANCEL_ACK = { turn: "turn cancelled; the orchestrator stays paused until you send a message", idle: "nothing was running; queued input stays paused until you send a message" } as const;
+export const COMPACT_ACK = "compaction requested; it runs at the next safe boundary";
 
 export interface DaemonOptions {
   project: string;
@@ -98,7 +101,7 @@ async function contextEstimate(d: Daemon): Promise<void> {
 async function runCommand(d: Daemon, command: Command): Promise<string> {
   const { session, project } = d.o;
   switch (command.kind) {
-    case "compact": await session.compact?.(); return "compaction requested; it runs at the next safe boundary";
+    case "compact": await session.compact?.(); return COMPACT_ACK;
     case "clear": await session.clear?.(); return "model context cleared";
     // Confirms what is saved now: an older request overtaken by a newer switch still gets the current answer, not an error.
     case "model": return `model ${await effectiveModel(project)} applies from the orchestrator's next request`;
@@ -124,7 +127,7 @@ async function takeCancel(d: Daemon, inTurn: boolean): Promise<boolean> {
   const token = takeCancellation(d.o.project, "orchestrator", d.o.run);
   if (!token) return false;
   d.o.session.cancel?.();
-  const what = inTurn ? "turn cancelled; the orchestrator stays paused until you send a message" : "nothing was running; queued input stays paused until you send a message";
+  const what = inTurn ? CANCEL_ACK.turn : CANCEL_ACK.idle;
   await acknowledge(d.o.project, token, true, what).catch(error => d.o.log(`orchestrator: could not acknowledge the cancel: ${error}`));
   return true;
 }

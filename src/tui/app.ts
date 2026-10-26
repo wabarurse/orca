@@ -141,6 +141,8 @@ export interface AppDeps {
 export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void; /** A status line from the daemon: an informational acknowledgement or progress (`transientNotice`) shows as the page's transient note; anything else is a retained page line. */ notice?(text: string): void }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
+/** A transient status note and whether a frame has drawn its row yet (only then does a key clear it). */
+interface Note { text: string; shown: boolean }
 
 const realClock: Clock = {
   now: () => Date.now(),
@@ -377,9 +379,9 @@ export class App {
   /** Pages whose last rendering left out calls the running turn has not finished (they show as running rows instead); re-rendered once the turn ends. */
   private readonly hidRunning = new WeakSet<Page>();
   private readonly notices = new WeakMap<Page, Line[]>();
-  /** Each page's transient status note (one row above the composer; the next keypress on that page clears it), and the one shown while no page is open. */
-  private readonly notes = new WeakMap<Page, string>();
-  private looseNote: string | undefined;
+  /** Each page's transient status note (one row above the composer; the next keypress on that page after it was drawn clears it), and the one shown while no page is open. */
+  private readonly notes = new WeakMap<Page, Note>();
+  private looseNote: Note | undefined;
 
   /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
   readonly questions: Questions;
@@ -496,23 +498,27 @@ export class App {
    * project list's status, the next keypress clears it; a mouse event does not.
    */
   note(text: string, page = this.page): void {
-    if (page) this.notes.set(page, text); else this.looseNote = text;
+    const note: Note = { text, shown: false };
+    if (page) this.notes.set(page, note); else this.looseNote = note;
     this.draw();
   }
 
-  /** The next keypress on the page clears its note; scrolling (wheel, page keys) and mouse selection leave it. */
+  /** The next keypress on the page clears its note once a frame has shown it (one set while the Inbox panel had its row, or on a background page, waits for that frame); scrolling (wheel, page keys) and mouse selection leave it. */
   private clearNote(k: Key): void {
     if (/^(?:wheel|mouse|page)/.test(k.name)) return;
     const page = this.page;
-    if (page ? !this.notes.delete(page) : this.looseNote === undefined) return;
-    if (!page) this.looseNote = undefined;
+    const note = page ? this.notes.get(page) : this.looseNote;
+    if (!note?.shown) return;
+    if (page) this.notes.delete(page); else this.looseNote = undefined;
     this.draw();
   }
 
-  /** The shown page's note, cut to one row. */
+  /** The shown page's note, cut to one row; the frame that takes it marks it shown. */
   private noteRow(page: Page | undefined): string | undefined {
-    const text = page ? this.notes.get(page) : this.looseNote;
-    return text === undefined ? undefined : dim(fit(sanitize(text.replace(/\s*\n\s*/g, " ")), this.deps.term.cols));
+    const note = page ? this.notes.get(page) : this.looseNote;
+    if (!note) return undefined;
+    note.shown = true;
+    return dim(fit(sanitize(note.text.replace(/\s*\n\s*/g, " ")), this.deps.term.cols));
   }
 
   private keepNotice(page: Page, line: Line): void {

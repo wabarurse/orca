@@ -503,6 +503,24 @@ for (const transition of ["close", "section", "project", "recreate"] as const) {
   });
 }
 
+test("a note set while the Inbox panel has its row waits, unseen, for the panel to close: the closing key does not clear it, the next one does", async () => {
+  let open = [syntheticQuestion("q1"), syntheticQuestion("q2")];
+  const ui = await setup({ questions: fakeQuestions({ list: async () => open, answer: async (_p, id) => { open = open.filter(q => q.id !== id); } }) }), { app } = ui;
+  const page = app.page!;
+  await app.commands.get("/questions")!.run("", page);
+  app.input = { text: "first", cursor: 5 }; app.draw();
+  await app.onKey({ name: "enter" });
+  await until(() => page.questions.open.length === 1);
+  expect(app.frame().inbox?.section).toBe("questions"); // q2 keeps the panel open: no note row
+  expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q1?");
+  await app.onKey({ name: "escape" }); // closes the panel; the note was never drawn, so it survives this key
+  expect(app.frame().inbox).toBeNull();
+  expect(plain(app.frame().inputArea!.lines)).toContain("? Question q1? → first");
+  expect(page.lines).toEqual([]);
+  await app.onKey({ name: "char", text: "x" });
+  expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q1?");
+});
+
 for (const transition of ["project", "recreate"] as const) {
   test(`a late question answer remains owned by its captured page after ${transition}`, async () => {
     const gate = deferred<void>(); let open = [syntheticQuestion()];

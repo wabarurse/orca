@@ -48,6 +48,12 @@ export function rollingCut(messages: MessageParam[], tailTokens: number): number
 }
 
 const checkpoint = (t: Transcript) => t.branch().find(e => e.type === "summary")?.uuid;
+/** The progress lines background compaction reports (the TUI shows them as transient notes: tui/conversation/notices.ts); failures are worded inline. */
+export const ROLLING_STATUS = {
+  started: "compacting older conversation in the background…",
+  unchanged: "background summary did not reduce context; original history kept.",
+  done: (before: number, after: number) => `compaction complete: ~${before} → ~${after} history tokens; recent messages unchanged.`,
+} as const;
 function status(deps: ContextDeps, text: string): void {
   try { deps.write?.(`${text}\n`, true); } catch { /* Reporting cannot undo a committed checkpoint. */ }
 }
@@ -148,7 +154,7 @@ export class RollingCompactor {
       .then(memory => { assertProjectIdentity(this.project, identity); job.memory = memory; })
       .catch(error => { job.error = error; })
       .finally(() => { clearTimeout(timer); job.settled = true; });
-    status(deps, "compacting older conversation in the background…");
+    status(deps, ROLLING_STATUS.started);
   }
 
   private async apply(deps: ContextDeps, job: Job): Promise<void> {
@@ -185,13 +191,13 @@ export class RollingCompactor {
       const retained = [...retainedImages(current.slice(0, job.cut)), ...current.slice(job.cut)];
       const proposed: MessageParam[] = [{ role: "user", content: text }, ...retained];
       const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
-      if (!paired(proposed) || estimate(proposed) >= estimate(current)) { status(deps, "background summary did not reduce context; original history kept."); return; }
+      if (!paired(proposed) || estimate(proposed) >= estimate(current)) { status(deps, ROLLING_STATUS.unchanged); return; }
       // New arrivals can outgrow even a valid summary. Commit the reduction; the loop
       // still refuses a model request until requireFits passes (possibly after another pass).
       await this.transcript.append({ type: "summary", text, memory, retained, boundary: job.head }, signal, { head, check: authorize });
       if (deps.compaction) deps.compaction.measured = undefined;
       this.retryAfter = fits(clean, proposed) ? Date.now() + 30000 : 0;
-      status(deps, `compaction complete: ~${estimate(current)} → ~${estimate(proposed)} history tokens; recent messages unchanged.`);
+      status(deps, ROLLING_STATUS.done(estimate(current), estimate(proposed)));
     });
   }
 }
