@@ -177,8 +177,8 @@ describe("project list", () => {
     });
   });
 
-  test("agentWindows ignores the session's idle shell", () => {
-    expect(agentWindows(["shell", "worker-x", "reviewer-x"])).toEqual(["worker-x", "reviewer-x"]);
+  test("agentWindows ignores the session's idle shell and the orchestrator daemon's window", () => {
+    expect(agentWindows(["shell", "orchestrator", "worker-x", "reviewer-x"])).toEqual(["worker-x", "reviewer-x"]);
     expect(agentWindows(["shell"])).toEqual([]);
     expect(agentWindows([])).toEqual([]);
   });
@@ -205,8 +205,9 @@ describe("project list", () => {
       await togglePin("doomed");
       const order: string[] = [];
       const killed: string[] = [];
-      await deleteProject("doomed", { live: async () => [], kill: async (p) => { killed.push(p); }, beforeRemove: () => { order.push(existsSync(join(home, "projects", "doomed")) ? "present" : "gone"); } });
-      expect(order).toEqual(["present"]);
+      // The orchestrator daemon is stopped (and waited for) before the session dies and anything is removed.
+      await deleteProject("doomed", { live: async () => [], stop: async (p) => { order.push(`stop ${p}`); }, kill: async (p) => { killed.push(p); order.push("kill"); }, beforeRemove: () => { order.push(existsSync(join(home, "projects", "doomed")) ? "present" : "gone"); } });
+      expect(order).toEqual(["stop doomed", "kill", "present"]);
       expect(killed).toEqual(["doomed"]);
       expect(existsSync(join(home, "projects", "doomed"))).toBe(false);
       expect((await loadConfig()).pinned).toEqual([]);
@@ -217,9 +218,11 @@ describe("project list", () => {
     await withHome(async (home) => {
       project(home, "busy");
       let hooked = false;
-      const attempt = deleteProject("busy", { live: async () => ["worker-x"], beforeRemove: () => { hooked = true; } });
+      let stopped = false;
+      const attempt = deleteProject("busy", { live: async () => ["worker-x"], stop: async () => { stopped = true; }, beforeRemove: () => { hooked = true; } });
       await expect(attempt).rejects.toThrow("live agents (worker-x)");
       expect(hooked).toBe(false);
+      expect(stopped).toBe(false); // the daemon keeps running while its project stays
       expect(existsSync(join(home, "projects", "busy", "repo"))).toBe(true);
       for (const bad of ["../busy", "", "a/b", "..", "."]) await expect(deleteProject(bad, { live: async () => [] })).rejects.toThrow("not a project name");
       await expect(deleteProject("nope", { live: async () => [] })).rejects.toThrow("no project named nope");

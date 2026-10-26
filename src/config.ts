@@ -5,6 +5,8 @@
 //     memory.sqlite            one rebuildable orchestrator history/task retrieval index for every project
 //                              (+ -wal/-shm while open); transcripts and tasks.json stay authoritative
 //     tmux.sock                orca's own tmux server (src/runner.ts), never the user's default one
+//     daemon-locks/<name>      held by a project's orchestrator daemon for its lifetime (src/orchestrator-daemon.ts);
+//                              its owner.json pid is how clients tell the daemon is alive
 //     projects/<name>/
 //       name                   display name set by /rename (absent = <name>)
 //       input-history          the TUI's ↑/↓ input history, one JSON string per line, newest last
@@ -16,6 +18,10 @@
 //       tasks.json             versioned structured task registry (src/tasks.ts), not a message queue
 //       questions/             the orchestrator's open questions for the user, a file each
 //       merged/<n>             PR #n's merge claim: started → handled / kept / nothing to do (src/merges.ts)
+//       orchestrator/          the orchestrator daemon's client channel (src/orchestrator-channel.ts):
+//         status.json            pid, run, idle|turn|stopped since when, turn count, context estimate (daemon writes, clients read)
+//         commands/<ts>-<id>.json a client's clear / compact / model / stop request (cancel uses transcripts/orchestrator.jsonl.cancel)
+//         acks/<id>.json         the daemon's reply to a request or cancel token; the waiting client removes it, stale ones are pruned
 //       transcripts/<role>-<branch>.jsonl   original agent history + context checkpoints
 
 import { homedir } from "node:os";
@@ -52,6 +58,8 @@ export const paths = {
   get memory() { return join(root(), "memory.sqlite"); },
   /** The socket of orca's own tmux server, so a stale user server (started from a since-moved directory) cannot break agent windows. */
   get tmuxSocket() { return join(root(), "tmux.sock"); },
+  daemonLock: (name: string) => join(root(), "daemon-locks", name),
+  orchestrator: (name: string) => join(root(), "projects", name, "orchestrator"),
   project: (name: string) => join(root(), "projects", name),
   displayName: (name: string) => join(root(), "projects", name, "name"),
   inputHistory: (name: string) => join(root(), "projects", name, "input-history"),

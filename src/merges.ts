@@ -2,7 +2,7 @@
 // reviewer, clean the branch up and tell the orchestrator with one
 // `[agent-exit]` notice, like the cleanup it used to do by hand.
 //
-// The TUI calls a watcher's check for every open page on each inbox poll; the
+// The orchestrator daemon calls a watcher's check on each poll; the
 // watcher asks `gh pr list --repo <origin> --state merged` at most every
 // MERGE_POLL_MS per project, one check per project at a time. A merge is
 // handled once, also across restarts and with two TUIs open:
@@ -444,7 +444,7 @@ async function checkProject(project: string, w: Watcher): Promise<number[]> {
 }
 
 /**
- * The TUI's merge watcher: `check(project)` lists merged PRs at most every
+ * The daemon's merge watcher: `check(project)` lists merged PRs at most every
  * `everyMs` per project, one check per project at a time, and handles each
  * merged branch that still has a worktree, agent windows, transcripts or runs.
  * A non-GitHub origin, or gh or tmux failing, skips the check quietly; it is

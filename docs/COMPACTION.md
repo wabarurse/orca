@@ -42,7 +42,8 @@ and conditionally appends against the locked head. All newer arrivals survive
 verbatim. Task registry revisions are reconciled before publication. Idle
 maintenance only publishes work already requested; refresh never starts or
 publishes inference. Page disposal, cancellation, clear or another checkpoint
-invalidates stale work. The one-shot CLI joins its worker while owning the turn.
+invalidates stale work. The orchestrator daemon keeps the worker between turns;
+the compiled one-shot probe joins it while owning the turn.
 
 SQLite is a rebuildable private original-entry/task index, not a replacement for
 JSONL or tasks.json: one global `~/.orca/memory.sqlite` (WAL, mode `0600`)

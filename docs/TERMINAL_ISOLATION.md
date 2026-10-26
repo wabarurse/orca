@@ -134,8 +134,9 @@ Two separate issues must not be conflated:
   `$ bun src/cli.ts start`. That is a fresh source launch, not evidence of a stale
   binary. It does not tell us which bytes (if any) reached stdin, whether the
   terminal's native history viewport moved while alternate screen stayed active,
-  or whether their main UI has an intermediary such as tmux. Workers being in
-  tmux establishes none of that.
+  or whether their main UI has an intermediary such as tmux. Workers (and, since
+  the orchestrator became a daemon, the orchestrator itself) being in tmux
+  establishes none of that: the TUI never runs inside orca's tmux server.
 
 ### Application change and resource use
 

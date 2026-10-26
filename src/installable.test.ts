@@ -124,7 +124,7 @@ for (const role of ["orchestrator", "worker", "reviewer"] as const) {
     expect(rows.find(row => row.sessionCwd)?.sessionCwd).toBe(state);
     const window = calls.find(call => call[2] === "new-window")!;
     expect(window).toContain("--"); expect(window).not.toContain(";");
-    // A confirmed launch (worker/reviewer: their run record; orchestrator: exited 0) removes the already dead fake pane without reading it.
+    // A confirmed launch (every role's run record, the orchestrator daemon's included) removes the already dead fake pane without reading it.
     expect(calls.some(call => call[2] === "kill-pane")).toBe(true);
     expect(calls.some(call => call[2] === "capture-pane")).toBe(false);
   });

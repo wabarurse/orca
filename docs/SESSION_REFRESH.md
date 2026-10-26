@@ -94,25 +94,55 @@ preview is local to the submitting window; it is not a global inbox inventory.
 - A turn holds two locks outside the project directory for the **whole
   orchestrator model/tool turn**: the checkout-wide `checkout-locks/<sha256>`
   shared by every conversation bound to one original checkout, then the
-  conversation's own `turn-locks/<project>` (one path for legacy clones). A
-  losing window returns without starting a competing turn and holds nothing;
-  normal polling checks later. The winner reloads shared context before
-  starting. Workers retain their existing role/session ownership; this is not
-  new worker scheduling or restart behavior.
+  conversation's own `turn-locks/<project>` (one path for legacy clones). Their
+  owner is the project's **orchestrator daemon** (`src/orchestrator-daemon.ts`,
+  the `orchestrator` tmux window), the only process that appends to the
+  orchestrator's transcript; TUIs are clients that enqueue input and requests
+  and read the transcript back (`src/orchestrator-client.ts`). A losing daemon
+  (two conversations on one checkout) returns without starting a competing turn
+  and holds nothing; its next poll checks again. The winner reloads shared
+  context before starting. Workers retain their existing role/session
+  ownership; this is not new worker scheduling or restart behavior.
+- One daemon per project: `daemon-locks/<project>` is held for the daemon's
+  lifetime (dead-owner takeover as for every lock), and its `owner.json` pid is
+  how clients tell the daemon is alive. Requests (`projects/<id>/orchestrator/commands/`)
+  are read once; the daemon answers each under its id in `acks/`, and a client
+  waiting for an ack gives up when the daemon dies or after 15s. A request the
+  daemon read but did not answer (a crash in between) is not retried by anyone:
+  the client reports the missing acknowledgement and the user decides.
+  `status.json` is advisory presentation state (idle/turn, turn count, last
+  error, context estimate); durable truth stays in the transcript, inbox
+  receipts, locks and run records.
 - Inbox locks (`inbox/<recipient>.lock`) protect consumption transactions.
   Concurrent puts are atomic and not blocked on a model turn; files published
   after a consumer's snapshot wait for a later boundary. Per-process submission
   FIFO is preserved. Simultaneous independent windows have no invented global
   keystroke order beyond their persisted filename order.
-- `/clear` acquires both turn locks too; project deletion only the conversation's
+- `/clear` acquires both turn locks too (in the daemon, on the client's request,
+  after the client's own disk checks); project deletion only the conversation's
   own, so an idle conversation can be deleted while a sibling on the same checkout
-  is mid-turn (deletion never touches the shared checkout's files, and the
+  is mid-turn. Deletion first asks the daemon to stop and waits for its process
+  (killing its window after 10s, refusing after 3s more), so nothing writes the
+  project's files back after they are removed (deletion never touches the shared checkout's files, and the
   worktrees it unregisters live in the project's own namespace). A refusal names
   the holder (PID, since, project). Clear still uses the project-state lock shared
   with orchestrator publication, and refuses queued input. Captured directory identity prevents stale Pages/queued publications
   from acquiring a deleted/recreated project's state.
 - The persisted cancellation epoch also gates other windows' later turns.
-  Refresh never changes it. Pre-cancel input (including late login/persistence)
+  Refresh never changes it. Ctrl+C writes the launch's cancel request
+  (`transcripts/orchestrator.jsonl.cancel`, naming the run in
+  `transcripts/orchestrator.jsonl.launch`); the daemon takes it (renamed aside,
+  so a newer request is never lost), aborts the turn, advances the epoch and
+  acknowledges under the request's token. The live daemon owns the launch
+  file: it publishes its own run as soon as it holds the daemon lock and
+  re-asserts it on every pass, so two TUIs starting daemons in the same poll
+  (the loser exits before its run record, but may have published its launch
+  last) cannot leave cancels addressed to a run nobody runs. A cancel for a
+  dead daemon is never applied by a later launch (it names the exact run), so
+  pre-cancel input would run when the daemon restarts; the page says the
+  cancel was not acknowledged. Turn locks left by a daemon killed mid-turn
+  (dead owner pid) do not gate the next daemon's turns or a clear
+  (`turnLocksHeld`/`lockHeld`); taking the turn moves them aside. Pre-cancel input (including late login/persistence)
   and agent reports cannot resume a paused project; fresh human input or an
   explicit compact request is required. Explicit `/compact` retains its existing
   local resume permission until the epoch changes; refresh cannot create that
@@ -123,7 +153,10 @@ preview is local to the submitting window; it is not a global inbox inventory.
 
 **All concurrent consumers/writers must use this protocol.** Older binaries can
 still read the additive transcript metadata, but they do not honor new locks or
-write exact receipts. A mixed-version running population cannot guarantee
+write exact receipts; an older TUI would also run turns in-process next to a
+daemon (both take the turn locks, so they do not overlap, but the older one
+cancels and clears only its own process). Let running daemons exit before
+upgrading. A mixed-version running population cannot guarantee
 exclusive consumption, safe transcript publication or cross-window queue
 acknowledgement. Already-consumed legacy messages cannot be assigned receipts
 by text or missing-file inference. Never automatically resend them to repair a

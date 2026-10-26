@@ -6,6 +6,7 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { paths, repositoryBinding } from "./config";
+import { lockHeld } from "./storage-lock";
 
 // Separate conversations using one original checkout must never run overlapping turns.
 export const projectTurnLock = (project: string) => {
@@ -20,6 +21,11 @@ export const projectTurnLock = (project: string) => {
 export const conversationTurnLock = (project: string) => join(paths.root, "turn-locks", project);
 /** The lock paths a turn owns, checkout-wide first; one path for legacy clones. */
 export const turnLocks = (project: string): string[] => [...new Set([projectTurnLock(project), conversationTurnLock(project)])];
+/** Whether a turn is owned by a process that may still be running (a dead owner's lock does not count). */
+export async function turnLocksHeld(project: string): Promise<boolean> {
+  for (const path of turnLocks(project)) if (await lockHeld(path)) return true;
+  return false;
+}
 
 export function projectIdentity(project: string): string {
   const s = statSync(paths.project(project), { bigint: true });

@@ -3,6 +3,7 @@
 // is taken over only when its recorded owner pid is verifiably gone (ESRCH); a
 // live, unsignalable (EPERM, which includes pid reuse) or unreadable owner keeps
 // it, and an operator must verify the owner is gone before removal.
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -26,6 +27,18 @@ export async function lockOwner(path: string): Promise<LockOwner | undefined> {
     if (typeof owner?.pid !== "number" || typeof owner.since !== "string") return;
     return { pid: owner.pid, since: owner.since, ...(typeof owner.project === "string" ? { project: owner.project } : {}) };
   } catch { return; }
+}
+
+/**
+ * Whether `path` is held by someone who may still be working: it exists and
+ * its recorded owner is alive, unsignalable or unreadable. A lock whose owner
+ * pid is verifiably gone is not held (the next taker moves it aside), so a
+ * crashed or signal-killed holder cannot gate others forever.
+ */
+export async function lockHeld(path: string): Promise<boolean> {
+  if (!existsSync(path)) return false;
+  const owner = await lockOwner(path);
+  return !owner || pidAlive(owner.pid);
 }
 
 /** `pid N since T` plus the owning project when recorded, for refusal messages. */
