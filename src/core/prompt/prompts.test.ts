@@ -193,6 +193,33 @@ test("check ownership survives review limits, dynamic dispatch and publication h
   expect(task.spec.description).toContain("matching the worker's relevant-check evidence to the current clean PR head");
 });
 
+test("CI monitoring yields pending instead of blocking across dispatch modes", async () => {
+  for (const maxReviewRounds of [0, 1, 100]) {
+    for (const dynamicDispatch of [false, true]) {
+      const config = { ...defaults, maxReviewRounds, dynamicDispatch };
+      for (const role of ["orchestrator", "reviewer"] as const) {
+        const prompt = rolePrompt(role, config);
+        expect(prompt).toContain("one-shot");
+        expect(prompt).toContain("no --watch");
+        expect(prompt).toContain("polling loops or");
+        expect(prompt).toContain("Return control/check inbox; report pending");
+        expect(prompt).not.toContain("gh pr checks --watch");
+      }
+      const reviewer = rolePrompt("reviewer", config);
+      expect(reviewer).toContain("`gh pr checks` with bash timeout_ms: 10000");
+      expect(reviewer).toContain("never rerun jobs or add a local validation pass");
+      expect(reviewer).toContain("match the current PR head to the worker's check evidence on a clean head");
+      expect(reviewer).toContain("require required hosted checks and approval satisfied");
+      expect(reviewer).toContain("No hosted checks is not a pass");
+      expect(reviewer).toContain("Pending/unknown is not ready: task attention waiting, report PR/head/status");
+    }
+  }
+  const docs = await Bun.file(new URL("../../../docs/REFERENCE.md", import.meta.url)).text();
+  expect(docs).not.toContain("gh pr checks --watch");
+  expect(docs).toContain("bash `timeout_ms: 10000`");
+  expect(docs).toContain("not shell-command enforcement");
+});
+
 test("every role is pointed at web_search for finding sources and curl only for a known URL", () => {
   for (const role of ["orchestrator", "worker", "reviewer"] as const) {
     const p = rolePrompt(role, defaults);

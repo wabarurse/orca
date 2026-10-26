@@ -740,13 +740,25 @@ goes to the worker for changes and relevant checks; subsequent reviews focus on
 the new diff and prior findings. This repeats for at most `maxReviewRounds` rounds.
 Unresolved findings at the limit are reported without claiming readiness.
 
-After approval, "watch ci" publishes the PR and observes hosted checks with
-`gh pr checks --watch`. It reuses worker evidence matched to the current PR head,
-never reruns jobs or adds a final local validation pass. Failures return to the
-worker through the orchestrator; missing or stale evidence prevents readiness.
-With no hosted checks, existing worker evidence still has to establish readiness.
-These are role/dispatch instructions, not a shell-command sandbox or a durable
-check-result cache. One agent codes on a branch at a
+After approval, "watch ci" publishes the PR and performs CI-only validation,
+not a blocking watch. Use bounded one-shot `gh pr checks <PR>` and, when needed,
+`gh pr view <PR> --json headRefOid,reviewDecision,mergeStateStatus` calls with
+bash `timeout_ms: 10000`. Never use `--watch`, shell polling loops or long sleeps
+for CI monitoring, including output-piped watches. Return control/check inbox
+between observations; report pending with the PR link, observed head/status and
+next step instead of holding the turn. Use `task attention` with kind `waiting`
+for pending CI; a later turn can take another snapshot. Timeouts/errors are
+unknown, not success.
+
+Reuse worker evidence matched to the exact current clean PR head; never rerun
+jobs or add a local validation pass. Readiness also requires required hosted
+checks and required approval to be satisfied. No hosted checks is not a pass
+and cannot replace worker evidence. Failures return to the worker through the
+orchestrator; missing/stale evidence prevents readiness. Recheck the head when
+observing status; changed heads invalidate prior readiness.
+These are role/dispatch instructions, not shell-command enforcement, a process
+cancellation mechanism or a durable check-result cache. They address blocking
+CI monitoring, not every possible cause of a later model stall. One agent codes on a branch at a
 time: spawn waits briefly and then refuses while the branch's worker or reviewer
 is still running. Corrections to an existing task or unmerged PR reuse its task ID
 and branch, including CI failures, review feedback and user-requested fixes after
