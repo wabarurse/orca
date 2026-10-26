@@ -35,12 +35,12 @@ export function saveProjectModel(project: string, model: string, identity?: stri
   } catch (error) { return Promise.reject(error); }
 }
 async function commitModel(project: string, model: string, identity: string): Promise<void> {
-  assertProjectIdentity(project, identity);
+  assertProjectIdentity(project, identity, "switching model");
   const path = modelPath(project);
   const temp = `${path}.${crypto.randomUUID()}.tmp`;
   try {
     await Bun.write(temp, model + "\n", { createPath: false });
-    assertProjectIdentity(project, identity);
+    assertProjectIdentity(project, identity, "switching model");
     await rename(temp, path);
   } finally { await unlink(temp).catch(() => {}); }
 }

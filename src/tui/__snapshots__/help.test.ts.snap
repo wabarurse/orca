@@ -54,7 +54,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   /model [id]                    choose or set the project model
   /accounts                      choose a subscription account
   /login claude|codex [profile]  sign in to a subscription account
-  /dynamic-dispatch [on|off]     show or set dynamic dispatch (global)
+  /dynamic-dispatch [on|off]     show or set the project's dynamic dispatch
 
   keyboard · navigation
   ctrl+n             new orchestrator
@@ -87,7 +87,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   advanced & diagnostics
   /keys               diagnose keys/wheel; ctrl+g keeps draft; esc ends
   /compact            summarize model context; keep full history
-  /review-rounds [n]  review rounds before ci; 0 goes straight to ci"
+  /review-rounds [n]  project review rounds before ci; 0 goes straight to ci"
 `;
 
 exports[`help appearance fixtures 40x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
@@ -174,8 +174,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   /login claude|codex [profile]
     sign in to a subscription account
   /dynamic-dispatch [on|off]
-    show or set dynamic dispatch
-    (global)
+    show or set the project's dynamic
+    dispatch
 
   keyboard · navigation
   ctrl+n
@@ -236,8 +236,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     summarize model context; keep full
     history
   /review-rounds [n]
-    review rounds before ci; 0 goes
-    straight to ci"
+    project review rounds before ci; 0
+    goes straight to ci"
 `;
 
 exports[`help appearance fixtures End reaches diagnostics with a bounded range and dismissal hint 1`] = `
@@ -263,6 +263,6 @@ help · commands & keys                                                52–60/6
   advanced & diagnostics
   /keys               diagnose keys/wheel; ctrl+g keeps draft; esc ends
   /compact            summarize model context; keep full history
-  /review-rounds [n]  review rounds before ci; 0 goes straight to ci
+  /review-rounds [n]  project review rounds before ci; 0 goes straight to ci
 ↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;

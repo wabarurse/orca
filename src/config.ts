@@ -9,6 +9,9 @@
 //                              its owner.json pid is how clients tell the daemon is alive
 //     projects/<name>/
 //       name                   display name set by /rename (absent = <name>)
+//       model                  the project's model, overriding config.model (src/project-model.ts)
+//       model-settings.json    effort/fast per exact model id (src/project-settings.ts)
+//       settings.json          the project's maxReviewRounds / dynamicDispatch, overriding config.toml's (src/project-flow.ts)
 //       input-history          the TUI's ↑/↓ input history, one JSON string per line, newest last
 //       repository.json        original checkout, default branch and worktree namespace
 //       repo/, worktrees/      legacy projects only
@@ -91,9 +94,9 @@ export interface Config {
   maxToolOutputBytes: number;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
-  /** Max review rounds before the orchestrator reports what is still open; 0 skips review and goes straight to CI. */
+  /** Default max review rounds for projects without their own (projects/<id>/settings.json, /review-rounds); 0 skips review and goes straight to CI. */
   maxReviewRounds: number;
-  /** Saved /dynamic-dispatch switch; dormant until the orchestrator reads it. Default off. */
+  /** Default /dynamic-dispatch switch for projects without their own; dormant until the orchestrator reads it. Default off. */
   dynamicDispatch: boolean;
   /** Complexity thresholds the reviewer reports against. */
   cyclomatic: number;
@@ -119,7 +122,7 @@ export const defaults: Config = {
   pinned: [],
 };
 
-/** Most review rounds /review-rounds and config.toml accept. */
+/** Most review rounds /review-rounds, settings.json and config.toml accept. */
 export const MAX_REVIEW_ROUNDS = 100;
 
 /** The last parse warning, so a broken file is reported once, not on every load. */

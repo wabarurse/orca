@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Orchestrator } from "../orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../commands";
 import { loadConfig, paths } from "../config";
+import { effectiveFlow } from "../project-flow";
 import { AGENTS_TICK_MS, App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
 import { createOrchestrator } from "../orchestrator";
 import { drain, put, type Message } from "../inbox";
@@ -393,23 +394,28 @@ describe("tui app", () => {
     let finish!: () => void;
     const login = async () => { await new Promise<void>((r) => (finish = r)); return "signed in"; };
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, login });
+    mkdirSync(paths.project("rounds"), { recursive: true }); // the setting lives in the project's directory
     const running = app.run("rounds");
     await until(() => !!app.page);
     const page = app.page!;
     const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false, calls: new Calls() };
     page.view = view;
+    const note = () => strip(app.frame().inputArea!.lines.join("\n"));
     term.type("/review-rounds 3\r");
-    await until(() => view.lines.join("\n").includes("review rounds set to 3"));
-    expect((await loadConfig()).maxReviewRounds).toBe(3);
+    await until(() => note().includes("review rounds set to 3")); // a transient note (cut to the width), even in an agent view
+    expect(view.lines.join("\n")).not.toContain("review rounds set to 3");
+    expect((await effectiveFlow("rounds")).maxReviewRounds).toBe(3);
+    expect((await loadConfig()).maxReviewRounds).toBe(1); // the project's setting, not config.toml's
     page.view = null;
     term.type("/login claude\r");
     await until(() => app.loggingIn);
     term.type("/review-rounds 0\r");
-    await until(() => page.lines.join("\n").includes("review rounds set to 0"));
-    expect((await loadConfig()).maxReviewRounds).toBe(0);
+    await until(() => note().includes("review rounds set to 0"));
+    expect((await effectiveFlow("rounds")).maxReviewRounds).toBe(0);
     term.type("/review-rounds\r");
-    await until(() => page.lines.join("\n").includes("review rounds: 0"));
+    await until(() => note().includes("review rounds: 0"));
     expect(page.lines.join("\n")).not.toContain("queued");
+    expect(page.lines.join("\n")).not.toContain("review rounds");
     finish();
     await until(() => !app.loggingIn);
     await Bun.sleep(20);
@@ -4007,7 +4013,7 @@ test("unchanged telemetry polls avoid redraw; task progress is independent of th
   const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../tasks").TaskRow[];
   const fake = fakeOrchestrators();
   let limit = 7;
-  const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks, reviewLimit: async () => limit,
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks, flowSettings: async () => ({ maxReviewRounds: limit, dynamicDispatch: false }),
     agents: async () => [], openOrchestrator: async (...args) => ({ ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]), contextUsage: () => 12500 }) });
   const running = app.run("header-poll-telemetry");
   try {
@@ -4043,7 +4049,7 @@ test("header denominator: verified claude window, unlisted model shows the sessi
   const term = fakeTerm(80, 24);
   const fake = fakeOrchestrators();
   let model = "claude-opus-5-5";
-  const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], reviewLimit: async () => 7, agents: async () => [],
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], flowSettings: async () => ({ maxReviewRounds: 7, dynamicDispatch: false }), agents: async () => [],
     openOrchestrator: async (...args) => ({ ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]), contextUsage: () => 45000,
       contextWindow: (m: string) => (m === "claude-opus-5-5" ? { limit: 1000000, estimated: false } : { limit: 64000, estimated: true }) }) });
   const running = app.run("header-denominator");

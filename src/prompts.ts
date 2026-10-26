@@ -1,6 +1,7 @@
 // The role system prompts: short lists of how each agent behaves. They go in
-// after the provider's compatibility identity. Thresholds and limits come
-// from config so the prompt and the tools agree.
+// after the provider's compatibility identity. Thresholds come from config and
+// the review limit / dispatch switch from the agent's project (project-flow.ts),
+// so the prompt and the tools agree.
 
 import type { Config } from "./config";
 import type { Role } from "./transcript";
@@ -73,8 +74,11 @@ const taskFlow = (rounds: number) => rounds === 0
 
 const templates: Record<Role, string> = { orchestrator: ORCHESTRATOR, worker: WORKER, reviewer: REVIEWER };
 
-/** The prompt for a role with its config values filled in. */
-export function rolePrompt(role: Role, config: Config): string {
+/** What a prompt needs: config.toml's thresholds plus the project's resolved task-flow settings (`effectiveFlow`). */
+export type PromptConfig = Pick<Config, "maxReviewRounds" | "dynamicDispatch" | "cyclomatic" | "cognitive">;
+
+/** The prompt for a role with its values filled in; callers resolve the project's review rounds and dispatch first. */
+export function rolePrompt(role: Role, config: PromptConfig): string {
   const values: Record<string, string | number> = { taskFlow: taskFlow(config.maxReviewRounds), cyclomatic: config.cyclomatic, cognitive: config.cognitive };
   const prompt = templates[role].replace(/\{(\w+)\}/g, (m, key: string) => (key in values ? String(values[key]) : m));
   return role === "orchestrator" && config.dynamicDispatch ? `${prompt}\n\n${DYNAMIC_DISPATCH}` : prompt;

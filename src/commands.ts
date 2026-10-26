@@ -1,7 +1,8 @@
 import { readRun } from "./exits";
 import { describeOwner, lockOwner, tryStorageLock } from "./storage-lock";
-import { conversationTurnLock, withProjectStateLock } from "./project-state";
+import { conversationTurnLock, projectIdentity, withProjectStateLock } from "./project-state";
 import { effectiveModel, saveProjectModel, validateModel } from "./project-model";
+import { effectiveFlow, saveProjectFlow } from "./project-flow";
 // What the slash commands do, apart from how they are shown. The TUI turns
 // these into menus and status lines.
 
@@ -306,23 +307,25 @@ export async function setModel(id: string, project?: string, identity?: string):
 
 export const REVIEW_ROUNDS_USAGE = `usage: /review-rounds [n]  (n = 0 to ${MAX_REVIEW_ROUNDS}; 0 skips review and goes straight to ci)`;
 
-/** `/review-rounds [n]`: show the review round limit, or save it. */
-export async function reviewRounds(arg: string): Promise<string> {
-  if (!arg) return `review rounds: ${(await loadConfig()).maxReviewRounds}`;
+/** `/review-rounds [n]`: show the project's review round limit, or save it for this project. */
+export async function reviewRounds(project: string, arg: string): Promise<string> {
+  const identity = projectIdentity(project);
+  if (!arg) return `review rounds: ${(await effectiveFlow(project)).maxReviewRounds}`;
   const n = /^\d{1,3}$/.test(arg) ? Number(arg) : NaN;
   if (!validRounds(n)) return REVIEW_ROUNDS_USAGE;
-  await saveConfig({ maxReviewRounds: n });
-  return `review rounds set to ${n} (takes effect from the orchestrator's next turn)`;
+  await saveProjectFlow(project, { maxReviewRounds: n }, identity);
+  return `review rounds set to ${n} for this project; applies from the orchestrator's next turn`;
 }
 
 export const DYNAMIC_DISPATCH_USAGE = "usage: /dynamic-dispatch [on|off]";
 
-/** `/dynamic-dispatch [on|off]`: show the global switch, or save it. */
-export async function dynamicDispatch(arg: string): Promise<string> {
-  if (!arg) return `dynamic dispatch: ${(await loadConfig()).dynamicDispatch ? "on" : "off"}`;
+/** `/dynamic-dispatch [on|off]`: show the project's switch, or save it for this project. */
+export async function dynamicDispatch(project: string, arg: string): Promise<string> {
+  const identity = projectIdentity(project);
+  if (!arg) return `dynamic dispatch: ${(await effectiveFlow(project)).dynamicDispatch ? "on" : "off"}`;
   if (arg !== "on" && arg !== "off") return DYNAMIC_DISPATCH_USAGE;
-  await saveConfig({ dynamicDispatch: arg === "on" });
-  return `dynamic dispatch set to ${arg} (takes effect from the orchestrator's next turn)`;
+  await saveProjectFlow(project, { dynamicDispatch: arg === "on" }, identity);
+  return `dynamic dispatch set to ${arg} for this project; applies from the orchestrator's next turn`;
 }
 
 export const LOGIN_USAGE = "usage: /login anthropic [profile] [--from-claude-code]  |  /login openai [profile] [--from-codex]";

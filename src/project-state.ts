@@ -31,8 +31,9 @@ export function projectIdentity(project: string): string {
   const s = statSync(paths.project(project), { bigint: true });
   return `${s.dev}:${s.ino}:${s.birthtimeNs}`;
 }
-export function assertProjectIdentity(project: string, identity: string): void {
-  if (projectIdentity(project) !== identity) throw new Error("project changed while switching model; try again");
+/** `what` names the interrupted action ("switching model"); the default is neutral, since many saves share this check. */
+export function assertProjectIdentity(project: string, identity: string, what = "saving"): void {
+  if (projectIdentity(project) !== identity) throw new Error(`project changed while ${what}; try again`);
 }
 const queues = new Map<string, Promise<unknown>>();
 /** Invocation-order queue locally, exclusive directory lock between processes. */

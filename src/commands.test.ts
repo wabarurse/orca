@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { listAgents, agentWindows, deleteProject, displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "./commands";
 import { DYNAMIC_DISPATCH_USAGE, dynamicDispatch, recentModels, REVIEW_ROUNDS_USAGE, reviewRounds } from "./commands";
 import { loadConfig, paths, saveConfig } from "./config";
+import { effectiveFlow } from "./project-flow";
 import { tmux } from "./runner";
 
 describe("recentModels", () => {
@@ -81,20 +82,29 @@ describe("repoHere", () => {
 });
 
 describe("/dynamic-dispatch", () => {
-  test("shows, saves and refuses", async () => {
+  test("shows, saves per project and refuses; config.toml is the default and stays untouched", async () => {
     const before = process.env.ORCA_HOME;
     const home = mkdtempSync(join(tmpdir(), "orca-dispatch-"));
     process.env.ORCA_HOME = home;
+    mkdirSync(paths.project("one"), { recursive: true });
+    mkdirSync(paths.project("two"), { recursive: true });
     try {
-      expect(await dynamicDispatch("")).toBe("dynamic dispatch: off");
-      expect(await dynamicDispatch("on")).toBe("dynamic dispatch set to on (takes effect from the orchestrator's next turn)");
-      expect((await loadConfig()).dynamicDispatch).toBe(true);
-      expect(await dynamicDispatch("")).toBe("dynamic dispatch: on");
-      for (const bad of ["ON", "true", "1", "yes", "on off", "of"]) expect(await dynamicDispatch(bad)).toBe(DYNAMIC_DISPATCH_USAGE);
+      expect(await dynamicDispatch("one", "")).toBe("dynamic dispatch: off");
+      expect(await dynamicDispatch("one", "on")).toBe("dynamic dispatch set to on for this project; applies from the orchestrator's next turn");
+      expect((await effectiveFlow("one")).dynamicDispatch).toBe(true);
+      expect(await dynamicDispatch("one", "")).toBe("dynamic dispatch: on");
+      expect(await dynamicDispatch("two", "")).toBe("dynamic dispatch: off"); // another project keeps the default
+      expect((await loadConfig()).dynamicDispatch).toBe(false); // the global default is never written
+      for (const bad of ["ON", "true", "1", "yes", "on off", "of"]) expect(await dynamicDispatch("one", bad)).toBe(DYNAMIC_DISPATCH_USAGE);
       expect(DYNAMIC_DISPATCH_USAGE).toBe(DYNAMIC_DISPATCH_USAGE.toLowerCase());
-      expect((await loadConfig()).dynamicDispatch).toBe(true);
-      expect(await dynamicDispatch("off")).toBe("dynamic dispatch set to off (takes effect from the orchestrator's next turn)");
-      expect(await dynamicDispatch("")).toBe("dynamic dispatch: off");
+      expect((await effectiveFlow("one")).dynamicDispatch).toBe(true);
+      expect(await dynamicDispatch("one", "off")).toBe("dynamic dispatch set to off for this project; applies from the orchestrator's next turn");
+      expect(await dynamicDispatch("one", "")).toBe("dynamic dispatch: off");
+      // config.toml supplies the default for projects without an override; a saved override wins over it.
+      await saveConfig({ dynamicDispatch: true });
+      expect(await dynamicDispatch("two", "")).toBe("dynamic dispatch: on");
+      expect(await dynamicDispatch("one", "")).toBe("dynamic dispatch: off");
+      await expect(dynamicDispatch("missing", "")).rejects.toThrow(); // no project directory: nothing to show or change
     } finally {
       if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
       rmSync(home, { recursive: true, force: true });
@@ -103,18 +113,30 @@ describe("/dynamic-dispatch", () => {
 });
 
 describe("/review-rounds", () => {
-  test("shows, saves and refuses", async () => {
+  test("shows, saves per project and refuses; config.toml is the default and stays untouched", async () => {
     const before = process.env.ORCA_HOME;
     const home = mkdtempSync(join(tmpdir(), "orca-rounds-"));
     process.env.ORCA_HOME = home;
+    mkdirSync(paths.project("one"), { recursive: true });
+    mkdirSync(paths.project("two"), { recursive: true });
     try {
-      expect(await reviewRounds("")).toBe("review rounds: 1");
-      expect(await reviewRounds("3")).toContain("next turn");
-      expect((await loadConfig()).maxReviewRounds).toBe(3);
-      expect(await reviewRounds("0")).toContain("set to 0");
-      expect(await reviewRounds("")).toBe("review rounds: 0");
-      for (const bad of ["-1", "1.5", "two", "1e2", "1e23", "2 3", "101", "999", "0100", "9007199254740993"]) expect(await reviewRounds(bad)).toBe(REVIEW_ROUNDS_USAGE);
-      expect((await loadConfig()).maxReviewRounds).toBe(0);
+      expect(await reviewRounds("one", "")).toBe("review rounds: 1");
+      expect(await reviewRounds("one", "3")).toBe("review rounds set to 3 for this project; applies from the orchestrator's next turn");
+      expect((await effectiveFlow("one")).maxReviewRounds).toBe(3);
+      expect(await reviewRounds("two", "")).toBe("review rounds: 1");
+      expect((await loadConfig()).maxReviewRounds).toBe(1);
+      expect(await reviewRounds("one", "0")).toContain("set to 0");
+      expect(await reviewRounds("one", "")).toBe("review rounds: 0");
+      for (const bad of ["-1", "1.5", "two", "1e2", "1e23", "2 3", "101", "999", "0100", "9007199254740993"]) expect(await reviewRounds("one", bad)).toBe(REVIEW_ROUNDS_USAGE);
+      expect((await effectiveFlow("one")).maxReviewRounds).toBe(0);
+      await saveConfig({ maxReviewRounds: 5 });
+      expect(await reviewRounds("two", "")).toBe("review rounds: 5");
+      expect(await reviewRounds("one", "")).toBe("review rounds: 0");
+      // Both settings share one file: saving one keeps the other.
+      await dynamicDispatch("one", "on");
+      expect(await effectiveFlow("one")).toEqual({ maxReviewRounds: 0, dynamicDispatch: true });
+      expect(await reviewRounds("one", "2")).toContain("set to 2");
+      expect(await effectiveFlow("one")).toEqual({ maxReviewRounds: 2, dynamicDispatch: true });
     } finally {
       if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
       rmSync(home, { recursive: true, force: true });
