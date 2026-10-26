@@ -1,3 +1,4 @@
+import { modelRequestText } from "../../../protocol/transcript";
 import { materializeImages } from "../../data/images";
 import { requireVision } from "../../../providers";
 import type { RequestSettings } from "../../../providers/catalog";
@@ -147,13 +148,15 @@ async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Pro
 /** One model request, streamed and appended to the transcript. */
 async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   await deps.tracker?.model();
+  const requestId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
   const observe = async (stage: ModelRequestState["stage"]) => {
     const state: ModelRequestState = { model: deps.model, provider: deps.provider?.name ?? "unknown",
       stage, startedAt, updatedAt: new Date().toISOString() };
     // Observability must not introduce a new failure/retry boundary.
+    try { await deps.transcript.append({ type: "model-request", requestId, ...state }); } catch {}
     try { await deps.tracker?.request?.(state); } catch {}
-    try { write(`[model request] ${state.provider}/${state.model} ${stage}; started ${startedAt}\n`, true); } catch {}
+    try { write(`${modelRequestText(state)}\n`, true); } catch {}
   };
   await observe("preparing");
   const { message, estimated } = await (async () => {

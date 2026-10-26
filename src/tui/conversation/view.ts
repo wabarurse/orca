@@ -1,3 +1,4 @@
+import { modelRequestText } from "../../protocol/transcript";
 // Render a transcript for a terminal and follow it as it grows. This is what
 // picking an agent in /agents shows: the same view the orchestrator page gives you, for any agent.
 
@@ -42,6 +43,7 @@ function joinedText(blocks: Block[]): Block[] {
 
 /** One entry as pieces to show, or null for entries with nothing to show. */
 export function parts(entry: Entry): Part[] | null {
+  if (entry.type === "model-request") return [dim(modelRequestText(entry))];
   if (entry.type === "context-boundary") return null;
   if (entry.type === "meta") return [dim(`— ${entry.role}${entry.branch ? ` on ${entry.branch}` : ""} (${entry.model || "default model"})`)];
   if (entry.type === "summary") return [dim(`— compacted: ${firstLine(entry.text)}`)];
