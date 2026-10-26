@@ -1,12 +1,13 @@
 /** Internal transport scope for dormant recovery. Each attempt owns its HTTP lifetime. */
-export type RequestScope = { signal: AbortSignal; fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
+export type RequestScope = { signal: AbortSignal; fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response> };
 type Cleanup = () => Promise<void>;
 
 function responseMetadata(response: Response, source: Response): Response {
+  // Bun inherits an undici clone signature, but runtime clones retain Bun headers.
   const clone = response.clone.bind(response);
   Object.defineProperties(response, {
     url: { value: source.url }, redirected: { value: source.redirected }, type: { value: source.type },
-    clone: { value: () => responseMetadata(clone(), source) },
+    clone: { value: () => responseMetadata(clone() as Response, source) },
   });
   return response;
 }
@@ -39,7 +40,7 @@ function observedResponse(source: Response, signal: AbortSignal, activity: () =>
 }
 
 /** init.signal overrides Request.signal (including explicit null); undefined inherits it. */
-function requestSignal(input: RequestInfo | URL, init?: RequestInit): AbortSignal | undefined {
+function requestSignal(input: Parameters<typeof fetch>[0], init?: RequestInit): AbortSignal | undefined {
   if (init?.signal !== undefined) return init.signal ?? undefined;
   return input instanceof Request ? input.signal : undefined;
 }

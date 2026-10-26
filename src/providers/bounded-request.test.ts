@@ -10,7 +10,8 @@ function clock() {
   now = 0; timers.clear();
   spies.push(spyOn(globalThis, "setTimeout").mockImplementation(((run: () => void, ms: number) => {
     const id = ++sequence; timers.set(id, { at: now + ms, run }); return id;
-  }) as typeof setTimeout));
+  // This fake deliberately implements only the timer call, not Node promisify metadata.
+  }) as unknown as typeof setTimeout));
   spies.push(spyOn(globalThis, "clearTimeout").mockImplementation(((id: number) => { timers.delete(id); }) as typeof clearTimeout));
   spies.push(spyOn(Date, "now").mockImplementation(() => now));
   spies.push(spyOn(Math, "random").mockReturnValue(0.5));
