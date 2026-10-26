@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, repositoryBinding } from "./config";
 import { ensureProject, createOrchestrator } from "./orchestrator";
 import { ensureWorktree, removeWorktree } from "./runner";
 import { deleteProject, listProjects, projectFor, repoHere } from "./commands";
-import { projectTurnLock } from "./project-state";
-import { tryStorageLock } from "./storage-lock";
+import { conversationTurnLock, projectTurnLock } from "./project-state";
+import { lockOwner, tryStorageLock } from "./storage-lock";
 import { fakeProvider, text, toolUse } from "./test/fake-provider";
 import { bash } from "./tools/bash";
 import { mergeWatcher } from "./merges";
@@ -105,8 +105,9 @@ test("parallel conversations serialize original-checkout turns and use separate 
   await ensureProject("p", repo);
   await ensureProject("q", repo);
   expect(projectTurnLock("q")).toBe(projectTurnLock("p"));
+  expect(conversationTurnLock("q")).not.toBe(conversationTurnLock("p"));
   expect(paths.worktrees("q")).not.toBe(paths.worktrees("p"));
-  const release = await tryStorageLock(projectTurnLock("p"));
+  const release = await tryStorageLock(projectTurnLock("p"), "p");
   const provider = fakeProvider([]);
   const orch = await createOrchestrator({ project: "q", provider, write: () => {} });
   try {
@@ -114,8 +115,51 @@ test("parallel conversations serialize original-checkout turns and use separate 
     expect(await orch.pending()).toBe(false);
     expect(await orch.turn()).toEqual([]);
     expect(provider.calls).toHaveLength(0);
-    await expect(deleteProject("q", { live: async () => [], kill: async () => {} })).rejects.toThrow("running");
+    expect(existsSync(conversationTurnLock("q"))).toBe(false); // A lost checkout lock leaves nothing held.
   } finally { await release?.(); orch.dispose?.(); }
+});
+
+test("a turn owns the checkout and conversation locks; an idle sibling can be deleted mid-turn, the busy one cannot", async () => {
+  await ensureProject("p", repo);
+  await ensureProject("q", repo);
+  const provider = fakeProvider([[text("done")]]);
+  const complete = provider.complete.bind(provider);
+  const held: Record<string, boolean> = {};
+  provider.complete = async req => {
+    for (const [name, path] of Object.entries({ checkout: projectTurnLock("p"), own: conversationTurnLock("p"), sibling: conversationTurnLock("q") })) held[name] = existsSync(path);
+    held.ownerIsP = (await lockOwner(conversationTurnLock("p")))?.project === "p";
+    return complete(req);
+  };
+  const orch = await createOrchestrator({ project: "p", provider, write: () => {} });
+  try {
+    await orch.say("go");
+    await orch.turn();
+    expect(held).toEqual({ checkout: true, own: true, sibling: false, ownerIsP: true });
+    expect(existsSync(projectTurnLock("p"))).toBe(false);
+    expect(existsSync(conversationTurnLock("p"))).toBe(false);
+  } finally { orch.dispose?.(); }
+  // Sibling p mid-turn (its checkout lock held) no longer blocks deleting idle q.
+  const sibling = await tryStorageLock(projectTurnLock("p"), "p");
+  const opts = { live: async () => [], kill: async () => {} };
+  try {
+    await deleteProject("q", opts);
+    expect(existsSync(paths.project("q"))).toBe(false);
+    expect(existsSync(paths.project("p"))).toBe(true);
+    // p's own turn running in another session refuses, naming the holder.
+    const own = await tryStorageLock(conversationTurnLock("p"), "p");
+    try {
+      const refusal = await deleteProject("p", opts).catch((error: Error) => error.message);
+      expect(refusal).toContain("p orchestrator is mid-turn in another session");
+      expect(refusal).toContain(`pid ${process.pid} (p) since `);
+      expect(refusal).toContain("wait for that turn to end");
+      expect(existsSync(paths.project("p"))).toBe(true);
+    } finally { await own?.(); }
+    // An unreadable owner is never taken over, and the message says where the lock is.
+    mkdirSync(conversationTurnLock("p"), { recursive: true });
+    const unknown = await deleteProject("p", opts).catch((error: Error) => error.message);
+    expect(unknown).toContain(`${conversationTurnLock("p")} is held by an unknown owner`);
+    rmSync(conversationTurnLock("p"), { recursive: true });
+  } finally { await sibling?.(); }
 });
 
 test("deletion refuses local worker files; clean deletion unregisters worktrees and preserves original files, login and branches", async () => {

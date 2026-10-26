@@ -78,26 +78,38 @@ preview is local to the submitting window; it is not a global inbox inventory.
 
 ## Concurrency and cancellation boundaries
 
-- `storage-lock.ts` uses exclusive directory creation plus PID/time owner metadata.
-  Short transactions have invocation-order local queues and bounded cross-process
-  waits. No timer-based lock stealing.
+- `storage-lock.ts` uses exclusive directory creation plus PID/time (and, for
+  turn locks, project) owner metadata. Short transactions have invocation-order
+  local queues and bounded cross-process waits. No timer-based lock stealing: a
+  lock is taken over only when its recorded owner PID is verifiably gone
+  (`ESRCH`), via a claim marker inside the orphan and a rename aside so two
+  contenders cannot both win. Live, unsignalable (`EPERM`, which covers PID
+  reuse) or unreadable owners are never taken over. Processes in another PID
+  namespace (containers sharing one ORCA_HOME) look dead to `kill(pid, 0)`, so
+  takeover is only safe when every orca process shares the host's PID namespace.
 - Transcript reload, parent selection and staged/fsync/rename publication share
   a per-file lock (`transcripts/<session>.jsonl.lock`). Publication preserves the
   exact old byte prefix. Refresh replaces its snapshot only after successful
   reading/parsing; damaged legacy lines are preserved on disk, not replayed.
-- A project-wide `turn-locks/<project>` outside the project directory is held for
-  the **whole orchestrator model/tool turn**. A losing window returns without
-  starting a competing turn; normal polling checks later. The winner reloads
-  shared context before starting. Workers retain their existing role/session
-  ownership; this is not new worker scheduling or restart behavior.
+- A turn holds two locks outside the project directory for the **whole
+  orchestrator model/tool turn**: the checkout-wide `checkout-locks/<sha256>`
+  shared by every conversation bound to one original checkout, then the
+  conversation's own `turn-locks/<project>` (one path for legacy clones). A
+  losing window returns without starting a competing turn and holds nothing;
+  normal polling checks later. The winner reloads shared context before
+  starting. Workers retain their existing role/session ownership; this is not
+  new worker scheduling or restart behavior.
 - Inbox locks (`inbox/<recipient>.lock`) protect consumption transactions.
   Concurrent puts are atomic and not blocked on a model turn; files published
   after a consumer's snapshot wait for a later boundary. Per-process submission
   FIFO is preserved. Simultaneous independent windows have no invented global
   keystroke order beyond their persisted filename order.
-- `/clear` and project deletion acquire the turn lock too. Clear still uses the
-  project-state lock shared with orchestrator publication, and refuses queued
-  input. Captured directory identity prevents stale Pages/queued publications
+- `/clear` acquires both turn locks too; project deletion only the conversation's
+  own, so an idle conversation can be deleted while a sibling on the same checkout
+  is mid-turn (deletion never touches the shared checkout's files, and the
+  worktrees it unregisters live in the project's own namespace). A refusal names
+  the holder (PID, since, project). Clear still uses the project-state lock shared
+  with orchestrator publication, and refuses queued input. Captured directory identity prevents stale Pages/queued publications
   from acquiring a deleted/recreated project's state.
 - The persisted cancellation epoch also gates other windows' later turns.
   Refresh never changes it. Pre-cancel input (including late login/persistence)
@@ -117,13 +129,15 @@ acknowledgement. Already-consumed legacy messages cannot be assigned receipts
 by text or missing-file inference. Never automatically resend them to repair a
 badge. This change does not upgrade or restart any existing process.
 
-A crashed process may leave a lock directory. Ownership is deliberately not
-stolen based on age: a long model/tool request may still be active. A stale turn
-lock can leave input waiting; transaction locks time out with a path-specific
-error. Recovery is an **explicit operator action**: first verify all relevant
-owners are no longer operating on that project/storage, inspect `owner.json`
-(PID reuse means the PID alone is insufficient), and only then remove the
-specific orphan lock. Do not remove inbox/transcript data or run a second
+A crashed process may leave a lock directory. The next contender takes it over
+only when the recorded owner PID no longer exists; ownership is deliberately not
+stolen based on age: a long model/tool request may still be active. A lock whose
+PID was reused, whose `owner.json` is unreadable, or whose takeover was itself
+interrupted (a `takeover` marker inside) stays held: a stale turn lock can leave
+input waiting; transaction locks time out with a path-specific error. Recovery
+is then an **explicit operator action**: first verify all relevant owners are no
+longer operating on that project/storage, inspect `owner.json` (PID reuse means
+the PID alone is insufficient), and only then remove the specific orphan lock. Do not remove inbox/transcript data or run a second
 consumer as a workaround. No recovery action is performed by refresh or tests.
 
 Legacy non-cooperating filesystem editors, network filesystems with weaker

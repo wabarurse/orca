@@ -12,8 +12,14 @@ export const projectTurnLock = (project: string) => {
   const binding = repositoryBinding(project);
   return binding
     ? join(paths.root, "checkout-locks", createHash("sha256").update(binding.directory).digest("hex"))
-    : join(paths.root, "turn-locks", project);
+    : conversationTurnLock(project);
 };
+// This conversation's own turn, taken inside the checkout lock (the same path for
+// legacy clones). Deletion needs only this one: a sibling mid-turn on the shared
+// checkout does not make this conversation busy.
+export const conversationTurnLock = (project: string) => join(paths.root, "turn-locks", project);
+/** The lock paths a turn owns, checkout-wide first; one path for legacy clones. */
+export const turnLocks = (project: string): string[] => [...new Set([projectTurnLock(project), conversationTurnLock(project)])];
 
 export function projectIdentity(project: string): string {
   const s = statSync(paths.project(project), { bigint: true });

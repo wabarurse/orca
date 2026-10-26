@@ -15,6 +15,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { open as openFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "./config";
+import { pidAlive } from "./storage-lock";
 import { put } from "./inbox";
 import { run } from "./proc";
 import { SETTLED_EXIT, slug } from "./runner";
@@ -324,15 +325,7 @@ export async function afterExit(info: RunInfo & { code: number }): Promise<boole
 }
 
 /** True while `pid` is a running process (EPERM still means it exists). */
-export function pidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
+export { pidAlive };
 
 export interface WatchdogOptions {
   /** Live agent windows, or null when tmux could not be asked (then the check is skipped). */
