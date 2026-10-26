@@ -72,12 +72,12 @@ async function setup(extra: Partial<AppDeps> = {}) {
 
 test("opening a page starts ensuring its daemon without blocking the page, shows what the keeper did, and every poll keeps it alive", async () => {
   const ensured: string[] = [];
-  let line: string | undefined = "orchestrator started";
+  let line: string | undefined = "orchestrator was not running; restarted"; // the keeper's first start is silent: only a restart is noted
   const { app, calls } = await setup({ ensureDaemon: async project => { ensured.push(project); const l = line; line = undefined; return l; } });
   expect(ensured[0]).toBe("a");
-  await until(() => note(app).includes("orchestrator started")); // a transient note, not conversation
+  await until(() => note(app).includes("orchestrator was not running; restarted")); // a transient note, not conversation
   await until(() => ensured.length >= 3); // the poll
-  expect(text(app)).not.toContain("orchestrator started");
+  expect(text(app)).not.toContain("restarted");
   // Every restart is noted, even one that repeats the last outcome after a key cleared it (the keeper rate-limits restarts).
   for (let i = 0; i < 2; i++) {
     await app.onKey({ name: "char", text: "x" });
