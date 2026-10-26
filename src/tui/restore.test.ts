@@ -8,6 +8,7 @@ import { historyRows, lineRows, type Line } from "./lines";
 import { answeredLine, earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, unresolvedCalls } from "./restore";
 import { toolView } from "../toolview";
 import { bold, dim } from "./render";
+import { collapseCalls } from "./tools";
 
 const dir = mkdtempSync(join(tmpdir(), "orca-restore-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -76,6 +77,47 @@ test("a tool call restores as the line it showed when it ended, through the form
     { tool: "bash(false)", summary: "exit 1: boom", failed: true },
     { tool: "bash(sleep 9)", summary: "interrupted", failed: true },
   ]);
+});
+
+test("collapsed: a restored run of calls across assistant entries and their tool_result entries folds into one summary line, broken by text, a user message or a report; a lone call, and the expanded view, render as before", () => {
+  const bash = (id: string, command: string) => ({ type: "tool_use", id, name: "bash", input: { command } });
+  const result = (id: string, content: string, is_error = false) => ({ type: "tool_result", tool_use_id: id, content, is_error });
+  const entries = transcript(
+    meta,
+    user(inbox(["user", "go"])),
+    assistant([{ type: "text", text: "Looking" }, bash("b1", "ls"), bash("b2", "false")]),
+    user([result("b1", "a\n"), result("b2", "boom\n[exit 1]")]),
+    assistant([bash("b3", "cat x"), { type: "tool_use", id: "r1", name: "read", input: { path: "x" } }]), // no text: the run continues across entries
+    user([result("b3", "x\n"), result("r1", "refused", true)]),
+    assistant([bash("b4", "sleep 9")]), // never got a result: interrupted, failed
+    user(inbox(["worker-a", "done"])), // a report breaks the run
+    assistant([bash("b5", "pwd"), bash("b6", "id")]),
+    user([result("b5", "/\n"), result("b6", "me\n")]),
+    assistant([{ type: "text", text: "Done." }, bash("b7", "true")]), // a lone call keeps its own lines
+    user([result("b7", "")]),
+  );
+  const lines = restore(entries, 60);
+  const text = (shown: ReturnType<typeof collapseCalls>) => historyRows(shown, 60).map(row => Bun.stripANSI(row).trimEnd()).filter(Boolean);
+  expect(text(collapseCalls(lines))).toEqual([
+    "> go", "Looking",
+    "⏺ 5 tool calls · bash ×4, read ×1 · 3 failed",
+    "from worker-a: done",
+    "⏺ 2 tool calls · bash ×2",
+    "Done.", "⏺ bash(true)", "  ⎿  no output",
+  ]);
+  expect(text(lines)).toEqual([
+    "> go", "Looking",
+    "⏺ bash(ls)", "  ⎿  1 line", "⏺ bash(false)", "  ⎿  exit 1: boom", "⏺ bash(cat x)", "  ⎿  1 line", "⏺ read(x)", "  ⎿  refused", "⏺ bash(sleep 9)", "  ⎿  interrupted",
+    "from worker-a: done",
+    "⏺ bash(pwd)", "  ⎿  1 line", "⏺ bash(id)", "  ⎿  1 line",
+    "Done.", "⏺ bash(true)", "  ⎿  no output",
+  ]);
+  // A run of calls still running is left out of the fold too: what remains folds, or stands alone.
+  const mid = transcript(meta, assistant([bash("c1", "a"), bash("c2", "b"), bash("c3", "c")]), user([result("c1", ""), result("c2", "")]));
+  expect(text(collapseCalls(restore(mid, 60, Infinity, undefined, unresolvedCalls(mid))))).toEqual(["⏺ 2 tool calls · bash ×2"]);
+  const one = transcript(meta, assistant([bash("c1", "a"), bash("c2", "b")]), user([result("c1", "")]));
+  expect(text(collapseCalls(restore(one, 60, Infinity, undefined, unresolvedCalls(one))))).toEqual(["⏺ bash(a)", "  ⎿  no output"]);
+  expect(text(collapseCalls(restore(one, 60)))).toEqual(["⏺ 2 tool calls · bash ×2 · 1 failed"]); // once the turn is over, the lost call is interrupted
 });
 
 test("while a turn runs, the newest entry's calls without a result are left out (the live view shows them running) instead of interrupted; earlier ones and finished ones are untouched", () => {

@@ -25,7 +25,7 @@ import { format } from "node:util";
 import { follow, parts } from "../view";
 import * as ed from "./editor";
 import type { Key } from "./keys";
-import { historyRows, type Line } from "./lines";
+import { historyRows, type Line, type Shown } from "./lines";
 import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } from "./history";
 import { MarkdownStream } from "./mdstream";
 import { helpLines, type CommandHelp } from "./help";
@@ -36,7 +36,7 @@ import type { Terminal } from "./term";
 import { shimmer } from "./shimmer";
 import { chapterRows, headerHeight } from "./chrome";
 import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./anchor";
-import { Calls } from "./tools";
+import { Calls, collapseCalls } from "./tools";
 import { agentRow, reselect } from "./agent-clock";
 import type { ToolCall, ToolOutcome } from "../toolview";
 import { stickyRows, stickyUpdate, type StickyScreen } from "./sticky";
@@ -77,6 +77,8 @@ export interface Page {
   view: { name: string; lines: Line[]; leave: () => void; live: boolean; calls: Calls } | null;
   /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
   calls: Calls;
+  /** Ctrl+T: runs of finished calls show call by call instead of folded into one summary line (tools.ts `collapseCalls`). Per page, not saved. */
+  toolsExpanded?: boolean;
   model?: string;
   settings?: RequestSettings;
   agentCount?: number;
@@ -482,7 +484,7 @@ export class App {
   private toPage(page: Page, lines: Line[]): void {
     const previous = page.lines.at(-1);
     page.lines.push(...lines);
-    if (this.started && page === this.page && !page.view) this.pending.push(...this.rows(lines, previous));
+    if (this.started && page === this.page && !page.view) this.append(page, lines, previous);
     this.draw();
   }
 
@@ -490,17 +492,29 @@ export class App {
   private toView(page: Page, view: NonNullable<Page["view"]>, lines: Line[]): void {
     const previous = view.lines.at(-1);
     view.lines.push(...lines);
-    if (this.started && page === this.page && page.view === view) this.pending.push(...this.rows(lines, previous));
+    if (this.started && page === this.page && page.view === view) this.append(page, lines, previous);
     this.draw();
+  }
+
+  /** New lines onto the screen: appended rows, unless they fold into the run of calls already drawn (its summary row changes), which needs a reprint. */
+  private append(page: Page, lines: Line[], previous?: Line): void {
+    const run = previous === undefined ? lines : [previous, ...lines];
+    if (!page.toolsExpanded && collapseCalls(run).length !== run.length) this.needReprint = true;
+    else this.pending.push(...this.rows(lines, previous));
+  }
+
+  /** The lines a page shows (its agent view's, else its own): runs of finished calls folded into one line each unless the page is expanded (Ctrl+T). */
+  private shown(page: Page, lines = page.view?.lines ?? page.lines): readonly Shown[] {
+    return page.toolsExpanded ? lines : collapseCalls(lines);
   }
 
   /** What the screen shows for the active page: its agent view or its history. */
   private screenLines(page = this.page): string[] {
-    return page ? this.rows(page.view?.lines ?? page.lines) : this.looseLines;
+    return page ? this.rows(this.shown(page)) : this.looseLines;
   }
 
   /** History lines laid out at the terminal's width. */
-  private rows(lines: Line[], previous?: Line): string[] {
+  private rows(lines: readonly Shown[], previous?: Shown): string[] {
     return historyRows(lines, this.deps.term.cols, previous);
   }
 
@@ -868,7 +882,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (owner !== this.screenOwner) this.scrollTop = null;
     if (this.scrollTop === null) { this.scrollAnchor = undefined; return; }
     if (!this.screen || this.screen.cols === cols) return;
-    const lines = this.page?.view?.lines ?? this.page?.lines ?? this.looseLines;
+    const lines = this.page ? this.shown(this.page) : this.looseLines;
     this.scrollAnchor ??= captureAnchor(lines, this.screen.cols, this.scrollTop);
     this.scrollTop = resolveAnchor(lines, cols, this.scrollAnchor);
   }
@@ -880,7 +894,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   private leave(): void {
     const page = this.page;
     const held = page && !page.view ? page.md.pending : "";
-    const history = page?.view?.lines ?? page?.lines ?? this.looseLines;
+    const history = page ? this.shown(page) : this.looseLines;
     const lines = [...(page ? this.header(page, false) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
     this.pending = [];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
@@ -969,19 +983,20 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.notices.set(page, notes);
     const anchor = this.relocatedAnchor(page, lines);
     page.lines = [...lines, ...notes];
-    if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(page.lines, this.deps.term.cols, anchor); }
+    if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(this.shown(page, page.lines), this.deps.term.cols, anchor); }
     this.renderedHeads.set(page, head);
     if (page === this.page && !page.view) this.reprint();
   }
 
-  /** Where the scrolled-up viewport's anchor line sits in the re-rendered `lines` (the same line's same occurrence), if the page is scrolled. */
+  /** Where the scrolled-up viewport's anchor line sits in the re-rendered `lines` (the same shown line's same occurrence), if the page is scrolled. */
   private relocatedAnchor(page: Page, lines: Line[]): HistoryAnchor | undefined {
     if (page !== this.page || page.view || this.scrollTop === null) return;
-    const anchor = captureAnchor(page.lines, this.deps.term.cols, this.scrollTop);
-    const source = JSON.stringify(page.lines[anchor.line]);
-    const occurrence = page.lines.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
-    const matches = lines.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
-    anchor.line = matches[occurrence] ?? Math.min(anchor.line, lines.length);
+    const old = this.shown(page, page.lines), next = this.shown(page, lines);
+    const anchor = captureAnchor(old, this.deps.term.cols, this.scrollTop);
+    const source = JSON.stringify(old[anchor.line]);
+    const occurrence = old.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
+    const matches = next.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
+    anchor.line = matches[occurrence] ?? Math.min(anchor.line, next.length);
     return anchor;
   }
 
@@ -1670,13 +1685,23 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["n", () => this.newPage()],
     ["z", () => this.switchPage(-1)],
     ["x", () => this.switchPage(1)],
+    ["t", () => this.toggleTools()],
   ]);
+
+  /** Ctrl+T: the page's runs of finished tool calls call by call, or folded back into one summary line each (the default). */
+  private toggleTools(): void {
+    const page = this.page;
+    if (!page) return;
+    page.toolsExpanded = !page.toolsExpanded;
+    this.selection.clear(); // the rows under it moved
+    this.reprint();
+  }
 
   /**
    * Who gets a key: the first layer whose (pure) `takes` says yes. In order:
    * 0. clear: local Cancel-default confirmation owns all keys; navigation cancels it first;
    * 1. keyEcho: /keys echoes every key except Ctrl+C until Esc;
-   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys;
+   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+G opens draft-safe /keys, Ctrl+T expands/collapses tool calls;
    * 3. projects: Ctrl+B anywhere (tmux's prefix, hence also /projects), and every key while the list is open and no menu is up;
    * 4. menu: every key while a menu (/models, /agents, /accounts) is open;
    * 5. help: scroll or dismiss the explicit help panel, preserving the composer;

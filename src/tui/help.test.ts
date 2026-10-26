@@ -48,6 +48,7 @@ describe("help appearance fixtures", () => {
       for (const [name, command] of commands) {
         if (!command.help.viewOnly) expect(plain(lines)).toContain(name);
       }
+      expect(plain(lines).replace(/\s+/g, " ")).toContain("ctrl+t expand or collapse runs of tool calls");
     });
   }
   test("End reaches diagnostics with a bounded range and dismissal hint", () => {

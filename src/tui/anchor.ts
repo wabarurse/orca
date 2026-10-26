@@ -1,7 +1,7 @@
 // Stable reading positions, independent of rendered block heights. Separators
 // have their own identity; markdown parts expose content before repeated gutters.
 import { cells } from "./editor";
-import { historyRows, lineRows, type Line } from "./lines";
+import { historyRows, lineRows, type Shown } from "./lines";
 import { renderBlock, renderLabelled, renderMarkdown, type RowTrace } from "./markdown";
 import { sanitize, wrap } from "./render";
 
@@ -9,7 +9,7 @@ interface Position { part: number; offset: number }
 export interface HistoryAnchor extends Position { line: number }
 
 /** One position per rendered content row; part -1 is reserved for a separator. */
-function positions(line: Line, cols: number): Position[] {
+function positions(line: Shown, cols: number): Position[] {
   const out: Position[] = [];
   let part = 0;
   const trace: RowTrace = (rows, mode) => {
@@ -20,7 +20,7 @@ function positions(line: Line, cols: number): Position[] {
     }
     part++;
   };
-  if (typeof line === "string" || "tool" in line) return lineRows(line, cols).map((_, part) => ({ part, offset: 0 }));
+  if (typeof line === "string" || "tool" in line || "calls" in line) return lineRows(line, cols).map((_, part) => ({ part, offset: 0 }));
   if ("user" in line) trace(wrap(sanitize(line.user), cols), "literal");
   else if (line.block) renderBlock(line.md, cols, trace);
   else if (line.label) renderLabelled(line.label, line.md, cols, trace);
@@ -28,7 +28,7 @@ function positions(line: Line, cols: number): Position[] {
   return out;
 }
 
-function layout(lines: Line[], index: number, cols: number) {
+function layout(lines: readonly Shown[], index: number, cols: number) {
   const line = lines[index]!;
   const content = positions(line, cols);
   const height = historyRows([line], cols, lines[index - 1]).length;
@@ -36,7 +36,7 @@ function layout(lines: Line[], index: number, cols: number) {
 }
 
 /** Capture once per scroll intent, not once per resize (which would lose offsets). */
-export function captureAnchor(lines: Line[], cols: number, top: number): HistoryAnchor {
+export function captureAnchor(lines: readonly Shown[], cols: number, top: number): HistoryAnchor {
   for (let line = 0; line < lines.length; line++) {
     const { content, height, separator } = layout(lines, line, cols);
     if (top < height) return { line, ...(content[top - separator] ?? { part: -1, offset: 0 }) };
@@ -54,7 +54,7 @@ function contentRow(content: Position[], anchor: HistoryAnchor): number {
   return row;
 }
 
-export function resolveAnchor(lines: Line[], cols: number, anchor: HistoryAnchor): number {
+export function resolveAnchor(lines: readonly Shown[], cols: number, anchor: HistoryAnchor): number {
   let top = 0;
   for (let line = 0; line < Math.min(anchor.line, lines.length); line++) top += historyRows([lines[line]!], cols, lines[line - 1]).length;
   if (anchor.line >= lines.length || anchor.part === -1) return top;
