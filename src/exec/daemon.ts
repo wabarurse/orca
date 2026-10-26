@@ -23,8 +23,11 @@ import { SETTLED_EXIT } from "../core/tmux";
  */
 export async function orchestratorAgent(opts: AgentOptions & { run: string }, exit?: (code: number) => void): Promise<number> {
   const { project, run } = opts;
-  const release = await tryStorageLock(paths.daemonLock(project), project);
-  if (!release) { console.error(`orca: an orchestrator is already running for ${project}`); return SETTLED_EXIT; }
+  const held = await tryStorageLock(paths.daemonLock(project), project);
+  if (!held) { console.error(`orca: an orchestrator is already running for ${project}`); return SETTLED_EXIT; }
+  // Once only: a second rm could take a recreated project's new lock with it.
+  let released = false;
+  const release = async () => { if (!released) { released = true; await held(); } };
   publishLaunch(project, "orchestrator", run); // the live daemon's run is what cancel requests must name, whoever launched last
   const info = { project, id: "orchestrator", run, role: "orchestrator" as const, cwd: process.cwd() };
   try {

@@ -2,7 +2,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
 import { openai } from "./openai";
-import { transientFailure, withTransientRetries } from "./retry";
+import { retryNotice, transientFailure, withTransientRetries } from "./retry";
 import type { CompleteRequest } from "./provider";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
 
@@ -30,7 +30,9 @@ test("withTransientRetries: a bounded number of retries, none after the stream s
   expect(await withTransientRetries(flaky, { backoffMs, notice: t => notices.push(t), what: "fake" })).toBe("ok");
   expect(attempts).toBe(3);
   expect(notices).toHaveLength(2);
-  expect(notices[0]).toMatch(/^fake request failed \(HTTP 529\); retrying in 0\.00s \(1\/3\)$/);
+  expect(notices[0]).toBe(retryNotice("fake", "HTTP 529", 1, 1, 3)); // a 1ms backoff jitters to 1ms
+  expect(notices[0]).toBe("fake request failed (HTTP 529); retrying in 0.00s (1/3)");
+  expect(retryNotice("claude", "HTTP 529", 4200, 2, 3)).toBe("claude request failed (HTTP 529); retrying in 4s (2/3)");
   attempts = 0;
   await expect(withTransientRetries(async () => { attempts++; throw Object.assign(new Error("down"), { status: 503 }); }, { backoffMs, notice() {} })).rejects.toThrow("down");
   expect(attempts).toBe(4); // the request plus every retry

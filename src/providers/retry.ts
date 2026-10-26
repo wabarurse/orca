@@ -51,16 +51,24 @@ export async function withTransientRetries<T>(attempt: (started: () => void) => 
     try { return await attempt(() => { consumed = true; }); }
     catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
-      const reason = consumed ? undefined : transientFailure(error);
-      if (reason === undefined || retries >= backoffMs.length) throw error;
-      const wait = jittered(backoffMs[retries]!);
-      notice(`${what} request failed (${reason}); retrying in ${(wait / 1000).toFixed(wait < 1000 ? 2 : 0)}s (${retries + 1}/${backoffMs.length})`);
+      const wait = retryAfter(error, consumed, retries, backoffMs);
+      if (wait === undefined) throw error;
+      notice(retryNotice(what, transientFailure(error)!, wait, retries + 1, backoffMs.length));
       await sleep(wait, signal);
     }
   }
 }
 
-const jittered = (ms: number) => Math.round(ms * (0.75 + Math.random() * 0.5));
+/** The jittered wait before retry `retries + 1`, or undefined when the failure is final: the stream had begun, the error is not transient, or the retries are spent. */
+function retryAfter(error: unknown, consumed: boolean, retries: number, backoffMs: number[]): number | undefined {
+  if (consumed || retries >= backoffMs.length || transientFailure(error) === undefined) return undefined;
+  return Math.round(backoffMs[retries]! * (0.75 + Math.random() * 0.5));
+}
+
+/** The one wording of a retry's announcement; the TUI classifies transient notices by it. */
+export function retryNotice(what: string, reason: string, waitMs: number, n: number, of: number): string {
+  return `${what} request failed (${reason}); retrying in ${(waitMs / 1000).toFixed(waitMs < 1000 ? 2 : 0)}s (${n}/${of})`;
+}
 
 /** Resolves after `ms`, or rejects with the signal's reason (at once when it is already aborted). */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

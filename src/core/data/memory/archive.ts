@@ -51,7 +51,14 @@ const SCHEMA = `
 
 /** The main file and its WAL siblings hold conversation text: owner-only, always. */
 function secure(file: string): void {
-  for (const path of [file, `${file}-wal`, `${file}-shm`]) {
+  chmodAll([file, `${file}-wal`, `${file}-shm`]);
+}
+/** The siblings alone, for a read path that must leave the main file as it is. */
+function secureSiblings(file: string): void {
+  chmodAll([`${file}-wal`, `${file}-shm`]);
+}
+function chmodAll(paths: string[]): void {
+  for (const path of paths) {
     try { chmodSync(path, 0o600); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
 }
@@ -388,22 +395,25 @@ function readonlyDatabase(): Database | undefined {
   try { [db, version] = opened(); }
   catch (error) {
     // A read-only connection cannot create the siblings (SQLite reads a WAL database without them only when it
-    // may create them); after a close that removed them, one read on a read-write connection brings them back,
-    // empty, without writing the main file.
+    // may create them); after a close that removed them, a read-write connection's read brings them back, empty,
+    // without writing the main file. It stays open until the read-only one is: SQLite removes the siblings again
+    // when the last connection closes, on the builds that do.
     if ((error as { code?: string }).code !== "SQLITE_CANTOPEN" || existsSync(`${file}-wal`)) throw error;
-    primeWal(file);
-    [db, version] = opened();
+    const primer = primeWal(file);
+    try { [db, version] = opened(); } finally { primer.close(); }
   }
   if (version > SCHEMA_VERSION) { db.close(); throw new Error("memory archive was written by a newer version"); }
   if (version >= SCHEMA_VERSION) return db;
   db.close();
 }
 
-/** Recreate a WAL database's missing `-wal`/`-shm` siblings: a read-write connection's first read creates them. */
-function primeWal(file: string): void {
+/** Recreate a WAL database's missing `-wal`/`-shm` siblings: a read-write connection's first read creates them.
+ * Returns that connection open; the caller closes it once its own read-only connection holds the database. */
+function primeWal(file: string): Database {
   const db = new Database(file, { readwrite: true, create: false, strict: true });
-  try { db.exec("PRAGMA busy_timeout=2000"); userVersion(db); } finally { db.close(); }
-  secure(file);
+  try { db.exec("PRAGMA busy_timeout=2000"); userVersion(db); secureSiblings(file); }
+  catch (error) { db.close(); throw error; }
+  return db;
 }
 
 /** Backfill state of the archive: other projects may be missing from it until the migration completed. */

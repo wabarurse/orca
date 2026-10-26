@@ -294,13 +294,8 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
   try {
     abandoned = await body(t) === ABANDONED;
   } catch (err) {
-    if (err instanceof Cancelled) what = "cancelled by user";
-    else {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`agent crashed: ${err instanceof Error && err.stack ? err.stack : msg}`);
-      what = `crashed: ${msg}`;
-      code = 1;
-    }
+    what = crashText(err, log);
+    code = what === "cancelled by user" ? 0 : 1;
   } finally {
     signals.off();
   }
@@ -309,6 +304,14 @@ export async function supervise(info: RunInfo, body: (t: Tracker) => Promise<voi
   if (abandoned) return code; // nothing to close: the project's files are gone and must not come back
   await closeRun(info, t, what, GIT_TIMEOUT_MS, log);
   return code && claimed(info.project, info.id, info.run) ? SETTLED_EXIT : code;
+}
+
+/** How a body's throw closes the run: a cancellation by name, anything else as a logged crash. */
+function crashText(err: unknown, log: (s: string) => void): string {
+  if (err instanceof Cancelled) return "cancelled by user";
+  const msg = err instanceof Error ? err.message : String(err);
+  log(`agent crashed: ${err instanceof Error && err.stack ? err.stack : msg}`);
+  return `crashed: ${msg}`;
 }
 
 /** True while `pid` is a running process (EPERM still means it exists). */
