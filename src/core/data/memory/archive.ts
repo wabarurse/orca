@@ -91,6 +91,22 @@ function initialize(db: Database): void {
   if (userVersion(db) > SCHEMA_VERSION) throw new Error("memory archive was written by a newer version");
 }
 
+/** Put the connection in WAL mode. A mode change needs an exclusive lock that SQLite takes without invoking
+ * the busy handler, so with several processes opening the archive at once the first switcher makes the others
+ * fail with SQLITE_BUSY: they wait briefly and look again, finding it already in WAL mode, for up to `busyMs`. */
+function walMode(db: Database, busyMs: number): void {
+  const mode = () => (db.query("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode;
+  const deadline = Date.now() + busyMs;
+  for (;;) {
+    if (mode() === "wal") return;
+    try { db.exec("PRAGMA journal_mode=WAL"); return; }
+    catch (error) {
+      if ((error as { code?: string }).code !== "SQLITE_BUSY" || Date.now() >= deadline) throw error;
+      Bun.sleepSync(5 + Math.random() * 20);
+    }
+  }
+}
+
 /** Open (creating if needed) the one global archive. Many processes share it: WAL plus a long busy timeout. */
 export function database(busyMs = BUSY_MS): Database {
   const file = archivePath();
@@ -99,7 +115,7 @@ export function database(busyMs = BUSY_MS): Database {
   const db = new Database(file, { create: true, strict: true });
   try {
     db.exec(`PRAGMA busy_timeout=${busyMs}`);
-    db.exec("PRAGMA journal_mode=WAL");
+    walMode(db, busyMs);
     initialize(db);
     secure(file);
     return db;
