@@ -756,8 +756,10 @@ inference require validation with your account; automated tests use fake tokens.
 
 ### Orchestrator rolling memory
 
-The orchestrator starts a background `gpt-6-luna` summary at about **100,000 input
-tokens**, or earlier if its selected model has a smaller usable context. It keeps
+The orchestrator starts a background `gpt-6-luna` summary at about **40% of the
+selected model's context window** (roughly 400,000 input tokens on a 1M-context
+model, 80,000 on a 200k model), capped lower when the usable context after the
+output reserve is smaller. It keeps
 roughly the newest **20,000 tokens verbatim**, including complete tool exchanges.
 An oversized newest exchange stays intact. Workers and reviewers keep their
 existing compaction behavior.

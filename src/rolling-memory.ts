@@ -103,8 +103,11 @@ export class RollingCompactor {
     // stale checkpoint must not cause inference merely because polling refreshed.
     if (maintenance) return;
     const messages = await this.transcript.chain();
-    const safeInput = .8 * contextLimit(deps.compaction ?? {}, deps.model) - outputCap(deps);
-    const trigger = Math.min(this.options.triggerTokens ?? 100000, safeInput * .8);
+    const limit = contextLimit(deps.compaction ?? {}, deps.model);
+    const safeInput = .8 * limit - outputCap(deps);
+    // Default: 40% of the selected model's window, so 1M-context models do not
+    // compact at 100k. An explicit triggerTokens stays an absolute token count.
+    const trigger = Math.min(this.options.triggerTokens ?? limit * .4, safeInput * .8);
     if (!this.job && (manual || (budget(deps, messages) >= trigger && Date.now() >= this.retryAfter))) {
       await this.start(deps, messages);
     }
