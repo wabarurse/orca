@@ -7,7 +7,7 @@ import { paths } from "./config";
 import { archiveBestEffort, archivePath, archiveTranscript, BATCH, database, entryText, queryHistory, sync } from "./memory-archive";
 import { withProjectStateLock } from "./project-state";
 import { backfillMemory, cleanOrphans, startMemoryBackfill } from "./memory-backfill";
-import { registerTask } from "./tasks";
+import { prepareTaskRun, registerTask, startTaskRun } from "./tasks";
 import { open, type Entry } from "./transcript";
 
 const previous = process.env.ORCA_HOME, dirs: string[] = [];
@@ -53,6 +53,7 @@ test("backfill is lossless: every entry and task of every project lands in the g
   const a = await project("alpha", ["walrus one", "two", "three"], true), b = await project("beta-clear", ["before", "after"]);
   await project("gamma", ["no old index here"]);
   writeOldIndex("alpha", a.entries); writeOldIndex("beta-clear", b.entries.slice(0, 1));
+  await prepareTaskRun("alpha", a.task!.id, a.task!.branch, { id: "run-1", agent: "worker-feat-x", role: "worker" }); await startTaskRun("alpha", "run-1");
   expect(await backfillMemory()).toBe(true);
   const rows = snapshot();
   expect(rows).toHaveLength(a.entries.length + b.entries.length + 1);
@@ -60,6 +61,7 @@ test("backfill is lossless: every entry and task of every project lands in the g
   expect(rows.find(r => r.id === b.entries[0]!.uuid)?.epoch).toBe("initial");
   expect(rows.find(r => r.id === b.entries.at(-1)!.uuid)?.epoch).toBe(b.entries.at(-1)!.uuid);
   expect(globalRows("SELECT 1 FROM tasks WHERE project='alpha' AND id=? AND revision>=?", a.task!.id, String(a.task!.revision))).toHaveLength(1);
+  expect(globalRows<{ started_at: string | null; ended_at: string | null }>("SELECT started_at,ended_at FROM tasks WHERE project='alpha'")).toEqual([{ started_at: expect.stringMatching(/^\d{4}-/), ended_at: null }]);
   for (const f of [...siblings("alpha"), ...siblings("beta-clear")]) expect(existsSync(f)).toBe(false);
   expect(meta("backfill_version")).toBe("1");
   expect(meta("backfill:alpha")).toBeDefined(); expect(meta("backfill:gamma")).toBeDefined();

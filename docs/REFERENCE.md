@@ -799,8 +799,14 @@ global `memory.sqlite` in the state directory (`~/.orca` by default; mode `0600`
 using Bun's built-in SQLite and FTS5. Every project shares the file: `entries`
 carry `project` and `agent` columns (`agent` is always `orchestrator`; worker and
 reviewer transcripts are never indexed and have no database access), `tasks`
-are keyed by `(project, id)`, and `entry_tasks`, `sources` (per-project
-`indexed_through`) and `meta` complete the schema (`PRAGMA user_version = 1`).
+are keyed by `(project, id)` and carry nullable ISO `started_at`/`ended_at`
+derived from the registry record (`started_at`: the earliest confirmed run
+start, so prepared or failed launches leave it NULL; `ended_at`: the confirmed
+`mergedAt` of an archived task, the registry's only terminal state — cancelled,
+closed or blocked attention is revocable, so such tasks stay active with
+`ended_at` NULL), and `entry_tasks`, `sources` (per-project `indexed_through`)
+and `meta` complete the schema (`PRAGMA user_version = 2`; a version-1 file
+gains the two columns in place on open, filled from each row's `raw` record).
 The file runs in WAL mode with a long busy timeout; writers use
 `BEGIN IMMEDIATE` transactions, so several orchestrators can index concurrently.
 

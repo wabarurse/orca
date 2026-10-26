@@ -32,7 +32,8 @@ export function scopedTasks(tasks: Task[], entries: Entry[]): Task[] {
 
 /** The only agent whose transcript is ever indexed. Workers and reviewers never reach the database. */
 export const ARCHIVE_AGENT = "orchestrator";
-const SCHEMA_VERSION = 1;
+/** 2: tasks.started_at/ended_at, filled from the rows' own raw registry records. */
+const SCHEMA_VERSION = 2;
 const BUSY_MS = 10_000;
 const TASK_ID = /[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/gi;
 
@@ -40,7 +41,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS entries (project TEXT NOT NULL, agent TEXT NOT NULL, id TEXT NOT NULL, epoch TEXT NOT NULL, kind TEXT NOT NULL, ts TEXT NOT NULL, body TEXT NOT NULL, raw TEXT NOT NULL, UNIQUE(project,id));
   CREATE INDEX IF NOT EXISTS entries_scope ON entries(project,agent,epoch);
   CREATE VIRTUAL TABLE IF NOT EXISTS entry_search USING fts5(body, content='entries', content_rowid='rowid');
-  CREATE TABLE IF NOT EXISTS tasks (project TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, name TEXT NOT NULL, summary TEXT NOT NULL, branch TEXT NOT NULL, status TEXT NOT NULL, raw TEXT NOT NULL, PRIMARY KEY(project,id));
+  CREATE TABLE IF NOT EXISTS tasks (project TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, name TEXT NOT NULL, summary TEXT NOT NULL, branch TEXT NOT NULL, status TEXT NOT NULL, raw TEXT NOT NULL, started_at TEXT, ended_at TEXT, PRIMARY KEY(project,id));
   CREATE TABLE IF NOT EXISTS entry_tasks (project TEXT NOT NULL, entry_id TEXT NOT NULL, task_id TEXT NOT NULL, PRIMARY KEY(project,entry_id,task_id));
   CREATE INDEX IF NOT EXISTS entry_tasks_task ON entry_tasks(project,task_id);
   CREATE TABLE IF NOT EXISTS sources (project TEXT NOT NULL, agent TEXT NOT NULL, indexed_through TEXT NOT NULL, indexed_at TEXT NOT NULL, PRIMARY KEY(project,agent));
@@ -53,11 +54,35 @@ function secure(file: string): void {
   }
 }
 const userVersion = (db: Database): number => (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+
+/** When the task's work started and ended, from the registry's own records. `startedAt` is the earliest
+ * confirmed run start (an agent actually began; prepared or failed launches do not count). `endedAt` is
+ * the confirmed merge time of an archived task, the registry's only terminal state: cancelled/closed/
+ * blocked attention is revocable, so such tasks stay active and keep `endedAt` null. */
+export function taskTimes(t: Pick<Task, "runs" | "archive">): { startedAt: string | null; endedAt: string | null } {
+  const starts = (t.runs ?? []).map(r => r.startedAt).filter((s): s is string => typeof s === "string");
+  return { startedAt: starts.length ? starts.reduce((a, b) => a < b ? a : b) : null, endedAt: t.archive?.mergedAt ?? null };
+}
+
+/** In-place upgrades for databases created by earlier versions; `UPGRADES[n]` takes version n-1 to n. */
+const UPGRADES: Record<number, (db: Database) => void> = {
+  2: db => {
+    db.exec("ALTER TABLE tasks ADD COLUMN started_at TEXT; ALTER TABLE tasks ADD COLUMN ended_at TEXT");
+    const fill = db.query("UPDATE tasks SET started_at=?, ended_at=? WHERE project=? AND id=?");
+    for (const row of db.query("SELECT project,id,raw FROM tasks").all() as { project: string; id: string; raw: string }[]) {
+      let times: ReturnType<typeof taskTimes>;
+      try { times = taskTimes(JSON.parse(row.raw)); } catch { continue; } // unreadable raw: left null, as a rebuild would start from
+      fill.run(times.startedAt, times.endedAt, row.project, row.id);
+    }
+  },
+};
 function initialize(db: Database): void {
   if (userVersion(db) < SCHEMA_VERSION) {
     db.transaction(() => {
-      if (userVersion(db) >= SCHEMA_VERSION) return;
-      db.exec(SCHEMA);
+      const from = userVersion(db);
+      if (from >= SCHEMA_VERSION) return;
+      db.exec(SCHEMA); // idempotent; existing tables keep their old shape until upgraded
+      if (from > 0) for (let v = from + 1; v <= SCHEMA_VERSION; v++) UPGRADES[v]!(db);
       db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
     }).immediate();
   }
@@ -106,10 +131,13 @@ function insertEntries(db: Database, project: string, entries: Entry[], epochs: 
 /** Upsert the registry; returns ids that were not indexed before. */
 function upsertTasks(db: Database, project: string, tasks: Task[]): string[] {
   const known = new Set((db.query("SELECT id FROM tasks WHERE project=?").all(project) as { id: string }[]).map(r => r.id));
-  const upsert = db.query(`INSERT INTO tasks(project,id,revision,name,summary,branch,status,raw) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(project,id) DO UPDATE SET
-    revision=excluded.revision,name=excluded.name,summary=excluded.summary,branch=excluded.branch,status=excluded.status,raw=excluded.raw
+  const upsert = db.query(`INSERT INTO tasks(project,id,revision,name,summary,branch,status,raw,started_at,ended_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(project,id) DO UPDATE SET
+    revision=excluded.revision,name=excluded.name,summary=excluded.summary,branch=excluded.branch,status=excluded.status,raw=excluded.raw,started_at=excluded.started_at,ended_at=excluded.ended_at
     WHERE tasks.revision < excluded.revision`);
-  for (const t of tasks) upsert.run(project, t.id, t.revision, t.name, t.summary, t.branch, t.archive ? "merged" : t.status, JSON.stringify(t));
+  for (const t of tasks) {
+    const { startedAt, endedAt } = taskTimes(t);
+    upsert.run(project, t.id, t.revision, t.name, t.summary, t.branch, t.archive ? "merged" : t.status, JSON.stringify(t), startedAt, endedAt);
+  }
   return tasks.filter(t => !known.has(t.id)).map(t => t.id);
 }
 
