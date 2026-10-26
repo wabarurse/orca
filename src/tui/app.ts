@@ -946,7 +946,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   /** Only durable exact IDs acknowledge pending input. Re-rendering saved tool
-   * entries is presentation, never tool execution. Called idle or pre-stream. */
+   * entries is presentation, never tool execution. Called idle, pre-stream, or
+   * mid-turn by a daemon client when an entry lands: the durable entries then
+   * supersede what the live events showed, so the stream's partial text and
+   * running calls are dropped with the old rendering (the events still ahead of
+   * the record follow again through the same hooks). */
   private syncTranscript(page: Page): void {
     const consumed = page.orch.consumed?.();
     if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
@@ -954,23 +958,28 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!entries) return;
     const head = entries.at(-1)?.uuid;
     if (this.renderedHeads.get(page) === head) return;
+    page.md.reset(); page.calls.clear(); page.held.length = 0;
     const lines = restore(entries, this.deps.term.cols, Infinity, id => page.questions.seen.get(id));
     // Keep local diagnostics/skip feedback, but don't duplicate persisted answers.
     const saved = new Set(lines.map(line => JSON.stringify(line)));
     const notes = (this.notices.get(page) ?? []).filter(line => !saved.has(JSON.stringify(line)));
     this.notices.set(page, notes);
-    const anchor = page === this.page && !page.view && this.scrollTop !== null
-      ? captureAnchor(page.lines, this.deps.term.cols, this.scrollTop) : undefined;
-    if (anchor) {
-      const source = JSON.stringify(page.lines[anchor.line]);
-      const occurrence = page.lines.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
-      const matches = lines.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
-      anchor.line = matches[occurrence] ?? Math.min(anchor.line, lines.length);
-    }
+    const anchor = this.relocatedAnchor(page, lines);
     page.lines = [...lines, ...notes];
     if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(page.lines, this.deps.term.cols, anchor); }
     this.renderedHeads.set(page, head);
     if (page === this.page && !page.view) this.reprint();
+  }
+
+  /** Where the scrolled-up viewport's anchor line sits in the re-rendered `lines` (the same line's same occurrence), if the page is scrolled. */
+  private relocatedAnchor(page: Page, lines: Line[]): HistoryAnchor | undefined {
+    if (page !== this.page || page.view || this.scrollTop === null) return;
+    const anchor = captureAnchor(page.lines, this.deps.term.cols, this.scrollTop);
+    const source = JSON.stringify(page.lines[anchor.line]);
+    const occurrence = page.lines.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
+    const matches = lines.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
+    anchor.line = matches[occurrence] ?? Math.min(anchor.line, lines.length);
+    return anchor;
   }
 
   private restorePage(page: Page, asked: import("./restore").AskedLookup): void {

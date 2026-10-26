@@ -9,12 +9,14 @@ import { paths, saveConfig } from "./config";
 import { pending, put } from "./inbox";
 import { createOrchestrator } from "./orchestrator";
 import { acknowledge, awaitAck, daemonBusy, pruneAcks, readStatus, request, takeRequests, writeStatus } from "./orchestrator-channel";
-import { orchestratorAgent, runDaemon, type DaemonOptions } from "./orchestrator-daemon";
+import { orchestratorAgent, runDaemon, windowHooks, type DaemonOptions } from "./orchestrator-daemon";
+import { liveFile, liveReader, liveWriter, type LiveEvent } from "./orchestrator-live";
 import { claimed, readRun } from "./exits";
 import { saveProjectModel } from "./project-model";
 import { lockHeld, tryStorageLock } from "./storage-lock";
 import { writeFileSync } from "node:fs";
-import { fakeProvider, text } from "./test/fake-provider";
+import { fakeProvider, text, toolUse } from "./test/fake-provider";
+import type { Tool } from "./tools/index";
 import { open } from "./transcript";
 import { inputEpoch } from "./user-input";
 
@@ -321,5 +323,58 @@ test("turn locks left by a dead owner (a daemon killed mid-turn) do not gate the
   expect(readStatus(p)?.error).toBeUndefined();
   expect(await turnLocksHeld(p)).toBe(false);
   await session.checkClear!(); // not refused by the stale locks either
+  session.dispose?.();
+});
+
+test("a turn streams its text, tool starts and ends to the live file, keyed by run and turn and tagged with the transcript head; the file is gone once the turn's entries are durable", async () => {
+  const p = await project("live");
+  const transcript = open(paths.transcript(p, "orchestrator"));
+  const gate = deferred();
+  const echo: Tool = { spec: { name: "echo", description: "echo", input_schema: { type: "object", properties: {} } }, run: async input => { await gate.promise; return `echo ${input.text}`; } };
+  const provider = fakeProvider([[text("look"), text("ing"), toolUse("t1", "echo", { text: "hi" })], [text("done")]]);
+  const complete = provider.complete, second = deferred();
+  provider.complete = async (req: CompleteRequest) => { if (provider.calls.length === 1) await second.promise; return complete(req); };
+  const window: string[] = [];
+  const live = liveWriter({ project: p, run: "run-l", head: () => transcript.head(), log() {} });
+  const session = await createOrchestrator({ project: p, provider, tools: { echo }, transcript, ...windowHooks(live, t => { window.push(t); }) });
+  const clock = fakeClock();
+  const running = runDaemon({ project: p, run: "run-l", session, live, sleep: clock.sleep, now: clock.now, log() {}, watchers: { watchdog: async () => {}, merges: async () => {} } });
+  await until(() => clock.sleeping() === 1);
+  expect(existsSync(liveFile(p))).toBe(false);
+  await put(p, "orchestrator", { from: "user", text: "go" });
+  clock.wake();
+  const reader = liveReader(p);
+  const seen: LiveEvent[] = [];
+  // Follow the file while the tool waits: the streamed text and the tool start are there, each tagged with the head it followed.
+  await until(() => { const s = readStatus(p); if (s?.state === "turn") seen.push(...reader.read({ run: s.run, turn: s.turns })); return seen.some(e => e.kind === "tool_start"); });
+  expect(seen[0]).toMatchObject({ seq: 0, kind: "start", run: "run-l", turn: 1 });
+  expect(seen.map(e => e.seq)).toEqual(seen.map((_, i) => i));
+  const texts = seen.filter(e => e.kind === "text") as Extract<LiveEvent, { kind: "text" }>[];
+  expect(texts.map(e => e.text)).toEqual(["look", "ing", "\n"]);
+  const entries = transcript.history!();
+  const inboxEntry = entries.find(e => e.type === "message" && e.message.role === "user")!;
+  const reply = entries.find(e => e.type === "message" && e.message.role === "assistant")!;
+  expect(texts[0]!.head).toBe(inboxEntry.uuid); // streamed after the input was consumed, before the reply was appended
+  expect(seen.at(-1)).toMatchObject({ kind: "tool_start", head: reply.uuid, call: { id: "t1", name: "echo", input: { text: "hi" } } });
+  expect(entries.at(-1)!.uuid).toBe(reply.uuid); // the tool's result is not durable yet: only the live file has the running call
+  gate.resolve();
+  // The tool ended (its end is tagged with the reply, before its result is appended) and the next request waits.
+  await until(() => { const s = readStatus(p)!; seen.push(...reader.read({ run: s.run, turn: s.turns })); return seen.some(e => e.kind === "tool_end"); });
+  expect(seen.at(-1)).toMatchObject({ kind: "tool_end", head: reply.uuid, outcome: { id: "t1", ok: true, text: "echo hi" } });
+  expect(readStatus(p)?.state).toBe("turn");
+  second.resolve();
+  await until(() => readStatus(p)?.state === "idle");
+  expect(existsSync(liveFile(p))).toBe(false); // rotated before the status said idle
+  const s = readStatus(p)!;
+  expect(reader.read({ run: s.run, turn: s.turns })).toEqual([]);
+  // The window showed the same turn: streamed text, the call line and its result line.
+  expect(window.join("")).toContain("looking\n");
+  expect(window.join("")).toContain("echo(hi)");
+  expect(window.some(t => t.includes("⎿"))).toBe(true);
+  await until(() => clock.sleeping() === 1);
+  const stop = await request(p, { kind: "stop" });
+  clock.wake();
+  expect(await running).toBe("stopped");
+  expect((await awaitAck(p, stop, { alive: async () => true })).ok).toBe(true);
   session.dispose?.();
 });

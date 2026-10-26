@@ -16,10 +16,13 @@ import { paths } from "./config";
 import { claim, supervise, type Tracker } from "./exits";
 import { contextWindow } from "./model-context";
 import { effectiveModel } from "./project-model";
-import { createOrchestrator, type Orchestrator } from "./orchestrator";
+import { createOrchestrator, type Orchestrator, type OrchestratorDeps } from "./orchestrator";
 import { acknowledge, pruneAcks, takeRequests, writeStatus, type Command, type DaemonState, type Request } from "./orchestrator-channel";
+import { liveWriter, type LiveWriter } from "./orchestrator-live";
 import { SETTLED_EXIT } from "./runner";
 import { tryStorageLock } from "./storage-lock";
+import { callText, resultText } from "./toolview";
+import { open } from "./transcript";
 
 /** How often the idle loop looks for input and requests when nothing woke it earlier, and how often a running turn checks for a cancel or an in-turn request. */
 export const DAEMON_POLL_MS = 1000;
@@ -45,10 +48,12 @@ export interface DaemonOptions {
   /** Whether the project is gone (deleted underneath): the loop ends. */
   gone?: () => boolean;
   log?: (text: string) => void;
+  /** The turn's live side channel (src/orchestrator-live.ts): begun with each turn, ended once its entries are durable. The session's hooks feed the same writer. */
+  live?: Pick<LiveWriter, "begin" | "end">;
 }
 export type DaemonOutcome = "stopped" | "deleted" | "idle";
 
-type Settled = Required<Omit<DaemonOptions, "watchers" | "exitWhenIdle">> & Pick<DaemonOptions, "exitWhenIdle">;
+type Settled = Required<Omit<DaemonOptions, "watchers" | "exitWhenIdle" | "live">> & Pick<DaemonOptions, "exitWhenIdle" | "live">;
 interface Daemon {
   o: Settled;
   watchdog: (project: string) => Promise<unknown>;
@@ -150,10 +155,11 @@ async function runWatchers(d: Daemon): Promise<void> {
   await Promise.all([d.watchdog, d.merges].map(w => w(d.o.project).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`))));
 }
 
-/** One turn with its own cancel poll; a failed turn is published, never fatal (input stays, the next message resumes). */
+/** One turn with its own cancel poll; a failed turn is published, never fatal (input stays, the next message resumes). The live file spans the turn: begun before the status says `turn`, gone before it says `idle`. */
 async function runTurn(d: Daemon): Promise<void> {
   d.turns++;
   d.error = undefined;
+  d.o.live?.begin(d.turns);
   await publish(d, "turn");
   const polling = new AbortController();
   const poll = pollTurn(d, polling.signal);
@@ -162,6 +168,7 @@ async function runTurn(d: Daemon): Promise<void> {
     d.error = error instanceof Error ? error.message : String(error);
     d.o.log(`orchestrator: turn failed: ${d.error}; send another message to resume with retained history`);
   } finally { polling.abort(); await poll; }
+  await d.o.live?.end(); // the turn's entries are durable now: a late client finds no live data for a finished turn
   await contextEstimate(d);
   await publish(d, "idle");
 }
@@ -206,6 +213,15 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   } finally { watched?.close(); }
 }
 
+/** The session's output hooks: the window shows streamed text and tool lines like a worker's, and the live file gets the same events. */
+export function windowHooks(live: LiveWriter, out: (text: string) => void = text => { process.stdout.write(text); }): Pick<OrchestratorDeps, "write" | "onTool" | "onToolResult"> {
+  return {
+    write: (text, plain) => { out(text); live.write(text, plain); },
+    onTool: call => { out(`${callText(call)}\n`); live.onTool(call); },
+    onToolResult: (outcome, call) => { out(`${resultText(call.name, outcome)}\n`); live.onToolResult(outcome); },
+  };
+}
+
 /**
  * `orca agent --role orchestrator`: one daemon per project, supervised like a
  * worker (run record, exit notice on a crash or a signal). A clean stop closes
@@ -220,9 +236,11 @@ export async function orchestratorAgent(opts: AgentOptions & { run: string }, ex
   const info = { project, id: "orchestrator", run, role: "orchestrator" as const, cwd: process.cwd() };
   try {
     return await supervise(info, async (tracker: Tracker) => {
-      const session = await createOrchestrator({ project, loadProvider: opts.loadProvider, rolling: opts.rolling, tracker, joinRolling: opts.exitWhenIdle });
+      const transcript = open(paths.transcript(project, "orchestrator"));
+      const live = liveWriter({ project, run, head: () => transcript.head(), log: text => console.error(text) });
+      const session = await createOrchestrator({ project, transcript, loadProvider: opts.loadProvider, rolling: opts.rolling, tracker, joinRolling: opts.exitWhenIdle, ...windowHooks(live) });
       let outcome: DaemonOutcome;
-      try { outcome = await runDaemon({ project, run, session, exitWhenIdle: opts.exitWhenIdle }); }
+      try { outcome = await runDaemon({ project, run, session, live, exitWhenIdle: opts.exitWhenIdle }); }
       finally { session.dispose?.(); }
       if (outcome === "deleted") { await release(); exit(0); return new Promise<never>(() => {}); } // nothing after a real exit
       await claim(project, "orchestrator", run); // a clean stop is not an exit to report

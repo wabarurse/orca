@@ -11,14 +11,18 @@ import { pendingInput, put } from "./inbox";
 import { contextWindow } from "./model-context";
 import type { Orchestrator } from "./orchestrator";
 import { awaitAck, daemonPid, liveStatus, readStatus, request, type DaemonStatus } from "./orchestrator-channel";
+import { liveReader, type LiveEvent, type LiveReader } from "./orchestrator-live";
 import { projectIdentity, turnLocksHeld } from "./project-state";
 import { local, sessionName, tmux, type Runner } from "./runner";
 import { pidAlive } from "./storage-lock";
+import type { ToolCall, ToolOutcome } from "./toolview";
 import { open, type Transcript } from "./transcript";
 import { inputEpoch } from "./user-input";
 
 /** How often a following client looks at the status and transcript. */
 export const FOLLOW_MS = 250;
+/** How often it tails the live file between those looks while a turn runs. */
+export const LIVE_MS = 100;
 /** How long a turn started by this client's own send waits for the daemon to pick the input up. */
 export const START_GRACE_MS = 5000;
 /** After a dead daemon is restarted, how long before the keeper tries again. */
@@ -90,10 +94,14 @@ export async function stopDaemon(project: string, opts: { kill?: (project: strin
 
 export interface ClientDeps {
   project: string;
-  /** The transcript has new entries (idle or mid-turn): the TUI re-syncs from disk. */
+  /** The transcript has new entries (idle or mid-turn): the TUI re-syncs from disk, dropping what the live events below showed (durable entries supersede them). */
   onRefresh?: () => void;
   /** Acknowledgements and failures the user should see. */
   notice?: (text: string) => void;
+  /** The daemon's live events while a turn runs (src/orchestrator-live.ts), as the in-process hooks got them: streamed text (`plain` for status lines), a tool starting and ending. */
+  write?: (text: string, plain?: boolean) => void;
+  onTool?: (call: ToolCall) => void;
+  onToolResult?: (outcome: ToolOutcome) => void;
   transcript?: Transcript;
   put?: typeof put;
   cancel?: typeof cancelSession;
@@ -101,10 +109,11 @@ export interface ClientDeps {
   status?: (project: string) => Promise<DaemonStatus | undefined>;
   alive?: (project: string) => Promise<boolean>;
   followMs?: number;
+  liveMs?: number;
   graceMs?: number;
 }
 
-interface Follow { seen: string | null; turnsAt: number; engaged: boolean; abort: AbortController }
+interface Follow { seen: string | null; turnsAt: number; engaged: boolean; abort: AbortController; live: LiveReader; status?: DaemonStatus }
 
 /** What a client shares between its methods. */
 interface Client {
@@ -128,10 +137,47 @@ async function sync(c: Client, f: Follow): Promise<void> {
   if (head !== f.seen) { f.seen = head; c.deps.onRefresh?.(); }
 }
 
+/** One live event to the view, through the hooks the in-process turn used. */
+function show(c: Client, e: Exclude<LiveEvent, { kind: "start" }>): void {
+  switch (e.kind) {
+    case "text": c.deps.write?.(e.text); break;
+    case "status": c.deps.write?.(e.text, true); break;
+    case "tool_start": c.deps.onTool?.(e.call); break;
+    case "tool_end": c.deps.onToolResult?.(e.outcome); break;
+    case "truncated": c.deps.write?.("live output truncated; the transcript shows the rest when the turn ends\n", true); break;
+  }
+}
+
+/**
+ * The live events appended since the last look. An event tagged with the
+ * transcript head the view shows is ahead of the record and goes to the view;
+ * one tagged with another head is behind a durable entry (the daemon appends,
+ * then tags with the new head), so the first such event re-syncs the view once
+ * and whatever is still not at the head is superseded by what that sync showed.
+ */
+async function tailLive(c: Client, f: Follow, s: DaemonStatus): Promise<void> {
+  let synced = false;
+  for (const e of f.live.read({ run: s.run, turn: s.turns })) {
+    if (e.kind === "start") continue;
+    if (e.head !== f.seen && !synced) { synced = true; await sync(c, f); }
+    if (e.head === f.seen) show(c, e);
+  }
+}
+
+/** Between two looks: tail the live file every liveMs while a turn runs (a tick every followMs otherwise). */
+async function pause(c: Client, f: Follow): Promise<void> {
+  const followMs = c.deps.followMs ?? FOLLOW_MS;
+  const ticks = Math.max(1, Math.round(followMs / Math.min(c.deps.liveMs ?? LIVE_MS, followMs)));
+  for (let i = 0; i < ticks; i++) {
+    await delay(followMs / ticks, f.abort.signal);
+    if (f.status?.state === "turn") await tailLive(c, f, f.status);
+  }
+}
+
 /** One look while following: "dead", "done" (the followed turn ended), "none" (nothing started within the grace) or "wait". */
 async function observe(c: Client, f: Follow, deadline: number): Promise<"dead" | "done" | "none" | "wait"> {
   await sync(c, f);
-  const s = await c.status(c.project);
+  const s = f.status = await c.status(c.project);
   if (!s) return "dead";
   if (s.turns > f.turnsAt || s.state === "turn") f.engaged = true;
   if (f.engaged && s.state !== "turn") {
@@ -144,14 +190,14 @@ async function observe(c: Client, f: Follow, deadline: number): Promise<"dead" |
 
 /** Wait until the daemon's turn ends (or none starts within the grace), re-syncing as the transcript grows. A turn that began and ended between two looks still counts (the turn counter). */
 async function follow(c: Client): Promise<void> {
-  const f: Follow = { seen: c.transcript.head(), turnsAt: 0, engaged: false, abort: new AbortController() };
+  const f: Follow = { seen: c.transcript.head(), turnsAt: 0, engaged: false, abort: new AbortController(), live: liveReader(c.project) };
   c.following = f; // before the first await: pending() must not schedule a second follow meanwhile
   const deadline = Date.now() + (c.deps.graceMs ?? START_GRACE_MS);
   try {
     const start = await c.status(c.project);
     f.turnsAt = start?.turns ?? 0;
     f.engaged = start?.state === "turn";
-    while (await observe(c, f, deadline) === "wait") await delay(c.deps.followMs ?? FOLLOW_MS, f.abort.signal);
+    while (await observe(c, f, deadline) === "wait") await pause(c, f);
   } catch (error) {
     if (!f.abort.signal.aborted) throw error;
   } finally { c.following = undefined; }

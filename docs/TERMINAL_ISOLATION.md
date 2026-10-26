@@ -136,7 +136,11 @@ Two separate issues must not be conflated:
   terminal's native history viewport moved while alternate screen stayed active,
   or whether their main UI has an intermediary such as tmux. Workers (and, since
   the orchestrator became a daemon, the orchestrator itself) being in tmux
-  establishes none of that: the TUI never runs inside orca's tmux server.
+  establishes none of that: the TUI never runs inside orca's tmux server. The
+  daemon's streamed output reaches the TUI only through the live file it tails
+  (`projects/<id>/orchestrator/live.jsonl`); no pane content, escape sequence or
+  control from the tmux window is ever read by the TUI, and the tool lines it
+  shows are built from the same plain `src/toolview.ts` text as the window's.
 
 ### Application change and resource use
 

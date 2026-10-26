@@ -63,7 +63,8 @@ switch (cmd) {
       async openOrchestrator(project, url, write, _onInbox, tools) {
         await ensureProject(project, url);
         // A client of the project's orchestrator daemon: it runs no turn itself.
-        return createClientOrchestrator({ project, onRefresh: tools?.onRefresh, notice: tools?.notice ?? (line => write(`${line}\n`, true)) });
+        return createClientOrchestrator({ project, onRefresh: tools?.onRefresh, notice: tools?.notice ?? (line => write(`${line}\n`, true)),
+          write, onTool: tools?.onTool, onToolResult: tools?.onToolResult });
       },
     });
     try { await app.run(rest[0], rest[1]); }

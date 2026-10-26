@@ -277,8 +277,16 @@ file requests it acknowledges on the page, and the conversation is read back
 from the saved transcript as the daemon appends to it. Closing the TUI (or your
 terminal) leaves the orchestrator's turn, its background workers, the exit
 watchdog and merge cleanup running; the next `orca start` attaches to them
-again. The page shows a `thinking…` indicator while a daemon turn runs and each
-completed reply or tool line as it lands; partial text is not streamed. A
+again. While a daemon turn runs the page shows it live, as it did when the
+turn ran inside the TUI: the reply streaming in, each tool call while it runs
+and its result line when it ends, `thinking…`/`working…`. The daemon writes
+these events to `projects/<id>/orchestrator/live.jsonl` beside the status; the
+transcript it appends at each message boundary stays the record, and every
+entry that lands replaces the live rendering of what it records, so nothing
+shows twice. Any number of TUIs can watch; one opened mid-turn restores the
+saved conversation, then shows the rest of the turn live. A very long turn
+(over 1 MiB of streamed text) stops streaming text and says so; its tool lines
+go on and the full text appears when the turn ends. A
 daemon that crashes leaves an `[agent-exit] orchestrator …` notice for its
 successor and is restarted by the next TUI poll (`orchestrator was not running;
 restarted`); `tmux -S ~/.orca/tmux.sock attach -t orca-<project>` shows its

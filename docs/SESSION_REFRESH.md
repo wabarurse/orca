@@ -112,7 +112,15 @@ preview is local to the submitting window; it is not a global inbox inventory.
   the client reports the missing acknowledgement and the user decides.
   `status.json` is advisory presentation state (idle/turn, turn count, last
   error, context estimate); durable truth stays in the transcript, inbox
-  receipts, locks and run records.
+  receipts, locks and run records. So is `live.jsonl`
+  (`src/orchestrator-live.ts`): the running turn's streamed text and tool
+  events, each tagged with the transcript head it followed, replaced when a
+  turn starts and removed once the turn's entries are durable. Clients only
+  read it (keyed by the status's run and turn count, so a dead daemon's or an
+  earlier turn's file is ignored) and show an event only while its head is the
+  transcript's; a durable entry supersedes the events behind it. Nothing is
+  consumed, acknowledged or retried through it, and a client that misses events
+  loses nothing but the live view, since the transcript shows the turn when it ends.
 - Inbox locks (`inbox/<recipient>.lock`) protect consumption transactions.
   Concurrent puts are atomic and not blocked on a model turn; files published
   after a consumer's snapshot wait for a later boundary. Per-process submission
