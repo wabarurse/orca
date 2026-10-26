@@ -3,7 +3,7 @@ import { chapterRows, tabRow, headerHeight, type Chapter } from "./chrome";
 import { commit, statusRows } from "./render";
 import { toolRows, runningRow } from "./tools";
 import { FakeScreen } from "./testing";
-import { whaleRows } from "./whale";
+import { finRows, whaleRows } from "./whale";
 
 const plain = (rows: string[]) => rows.map(Bun.stripANSI);
 const chapter: Chapter = { tabs: [{ name: "orch-one" }, { name: "orch-two" }], active: 1, model: "model-a", directory: "/repo", remote: "host/repo" };
@@ -71,28 +71,46 @@ test("bounded header budgets retain each field before wrapping long metadata", (
   }
 });
 
-test("whale fits beside metadata at ordinary sizes and falls back safely on tiny terminals", () => {
+test("fin fits to the right of metadata and yields to fields on tiny terminals", () => {
   for (const cols of [1, 20, 40, 68, 80, 100, 160]) for (const rows of [6, 12, 24, 36, 60, 90]) {
     const budget = headerHeight(rows);
-    const c = { ...chapter, context: "24k / 272k", review: "review 1", dispatch: "dispatch off", whale: { time: 1200, active: true } };
+    const c = { ...chapter, context: "24k / 272k", review: "review 1", dispatch: "dispatch off", fin: { time: 1200, active: true } };
     const header = plain(chapterRows(c, cols, budget));
     expect(header.length).toBeLessThanOrEqual(budget);
     expect(header.every(line => Bun.stringWidth(line) <= cols)).toBe(true);
     if (cols >= 80 && rows >= 24) {
-      expect(header.join("\n")).toContain("orca");
+      expect(header.join("\n")).toContain("~");
+      expect(header.filter(row => row.includes("#")).length).toBe(4);
       expect(header.join("\n")).toContain("model model-a");
       expect(header.join("\n")).toContain("host/repo");
       expect(header.join("\n")).toContain(">[orch-two]");
     }
   }
+  const settings = "gpt-6-astra · effort medium · fast off";
+  const ordinary = chapterRows({ ...chapter, model: settings, context: "ctx 0 / 272k", review: "review rounds: 1", dispatch: "dispatch off", fin: { time: 0, active: true } }, 80, headerHeight(24));
+  expect(plain(ordinary).join("\n")).toContain(`model ${settings}`);
 });
 
-test("whale animation only changes the tail and stays still when idle", () => {
+test("new-chat whale is uncaptioned and fits each supported viewport", () => {
   for (const [cols, budget] of [[32, 6], [44, 10], [84, 19]]) {
-    const a = whaleRows(cols!, budget!, 0, true), b = whaleRows(cols!, budget!, 1200, true);
-    expect(a.slice(0, -2)).toEqual(b.slice(0, -2));
-    expect(a).not.toEqual(b);
-    expect(whaleRows(cols!, budget!, 0, false)).toEqual(whaleRows(cols!, budget!, 1200, false));
-    expect(b.every(row => row.length === cols && /^[ -~]+$/.test(row))).toBe(true);
+    const art = whaleRows(cols!, budget!);
+    expect(art).toHaveLength(budget!);
+    expect(art.every(row => row.length === cols && /^[ #,']+$/.test(row))).toBe(true);
   }
+  expect(whaleRows(20, 20)).toEqual([]);
+  expect(whaleRows(100, 5)).toEqual([]);
+});
+
+test("fin cruises within its bounds only while active", () => {
+  for (const cols of [24, 32, 36]) {
+    expect(finRows(cols, 6, 0, true)).not.toEqual(finRows(cols, 6, 1200, true));
+    expect(finRows(cols, 6, 0, false)).toEqual(finRows(cols, 6, 1200, false));
+    for (let time = 0; time < 30_000; time += 180) {
+      const rows = finRows(cols, 6, time, true);
+      expect(rows).toHaveLength(6);
+      expect(rows.every(row => row.length === cols && /^[ -~]+$/.test(row))).toBe(true);
+    }
+  }
+  expect(finRows(23, 6)).toEqual([]);
+  expect(finRows(36, 5)).toEqual([]);
 });

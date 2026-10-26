@@ -1,7 +1,7 @@
 // Chapter rules for the pinned header. Labels are display-only; navigation and
 // storage continue to use the immutable project IDs held by App.
 import { bold, dim, fit, sanitize, visibleLength, wrap } from "./render";
-import { whaleRows } from "./whale";
+import { finRows } from "./whale";
 
 export interface Tab { name: string; busy?: boolean }
 export interface Chapter {
@@ -14,7 +14,7 @@ export interface Chapter {
   context?: string;
   review?: string;
   dispatch?: string;
-  whale?: { time: number; active: boolean };
+  fin?: { time: number; active: boolean };
 }
 
 const plain = (s: string) => Bun.stripANSI(sanitize(s.replace(/[\r\n\t]/g, " ")));
@@ -62,7 +62,7 @@ function details(fields: string[], cols: number, budget: number): string[] {
   }).slice(0, budget).map(dim);
 }
 
-/** Keep project identity and metadata before spending spare rows on the whale. */
+/** Keep project identity and metadata before making room for the fin. */
 export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   if (budget < 1) return [];
   cols = Math.max(1, cols);
@@ -71,23 +71,18 @@ export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   const head = inset ? `${dim("── ")}${tabs}${dim(" " + "─".repeat(Math.max(0, cols - 4 - visibleLength(tabs))))}` : tabs;
   if (budget === 1) return [head];
   const metadata = details(chapterFields(c, cols), cols, budget - 2);
-  if (c.whale) {
-    const { time, active } = c.whale;
-    // Use the full reference when it fits. Smaller terminals share rows between
-    // the whale and metadata instead of taking space from the input or history.
-    const banner = whaleRows(cols, budget - metadata.length - 3, time, active);
-    if (banner.length >= 10) return [dim("orca"), ...banner, head, ...metadata, dim("─".repeat(cols))];
-    const artCols = budget >= 12 && cols >= 80 ? 44 : 32;
+  if (c.fin) {
+    const { time, active } = c.fin;
+    const artCols = Math.min(32, cols - 35);
     const detailCols = cols - artCols - 3;
-    if (detailCols >= 32) {
+    if (artCols >= 24) {
       const fields = chapterFields(c, detailCols);
-      const art = whaleRows(artCols, budget - 2, time, active);
+      const art = finRows(artCols, budget - 2, time, active);
       if (art.length && fields.length <= budget - 2) {
         const info = details(fields, detailCols, budget - 2);
         const rows = Array.from({ length: Math.max(art.length, info.length) }, (_, i) => {
-          const whale = (art[i] ?? " ".repeat(artCols));
-          const label = i === 0 ? "orca" + whale.slice(4) : whale;
-          return label + "   " + (info[i] ?? "");
+          const label = info[i] ?? "";
+          return label + " ".repeat(detailCols - visibleLength(label) + 3) + (art[i] ?? "");
         });
         return [head, ...rows, dim("─".repeat(cols))];
       }

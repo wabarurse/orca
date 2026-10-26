@@ -65,6 +65,8 @@ export interface Frame {
   running?: string[];
   /** Transient selected-conversation activity; never persisted or part of the footer. */
   activity?: string;
+  /** Decorative new-chat art in the empty viewport; never history or model context. */
+  welcome?: boolean;
   input: Input;
   /** The selected project's orchestrator inbox/sign-in-held input, oldest first (even in an agent view). */
   queued?: QueuedInput;

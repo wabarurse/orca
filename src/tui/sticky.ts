@@ -2,6 +2,7 @@ import { headerHeight } from "./chrome";
 import type { Line } from "./lines";
 import { captureAnchor, resolveAnchor } from "./anchor";
 import { fit, liveRows, sanitize, wrap, type Frame } from "./render";
+import { whaleRows } from "./whale";
 
 export interface StickyScreen {
   rows: string[];
@@ -39,6 +40,11 @@ export function stickyRows(f: Frame, history: string[], chrome: string[], scroll
   const visible = [...history.slice(start, end), ...tail.slice(Math.max(0, start - history.length), Math.max(0, end - history.length))]
     .map(line => fit(sanitize(line), f.cols));
   const padding = Array.from({ length: bodyHeight - visible.length }, () => "");
+  if (f.welcome && !history.length && !tail.length) {
+    const art = whaleRows(f.cols, bodyHeight);
+    const offset = Math.floor((bodyHeight - art.length) / 2);
+    art.forEach((row, i) => { padding[offset + i] = row; });
+  }
   return { rows: [...top, ...visible, ...padding, ...(gap ? [""] : []), ...bottom.rows], cols: f.cols, cursor: height - bottom.rows.length + bottom.cursor, col: bottom.col, bodyTop: top.length, bodyHeight, start, maxStart };
 }
 
