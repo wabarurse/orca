@@ -18,16 +18,18 @@ import { toolsFor, type Tool } from "../core/tools";
 /**
  * Run an agent process. Workers and reviewers are supervised: a crash or an
  * exit without a report sends an `[agent-exit]` notice to the orchestrator.
- * Returns the process exit code.
+ * Returns the process exit code. `exit` is how the CLI ends the process at once
+ * when the orchestrator's project is deleted underneath it; without it (tests,
+ * in-process callers) the outcome comes back as the code and nothing exits.
  */
-export async function runAgent(opts: AgentOptions): Promise<number> {
+export async function runAgent(opts: AgentOptions, exit?: (code: number) => void): Promise<number> {
   const run = opts.run ?? crypto.randomUUID();
   if (!opts.run) publishLaunch(opts.project, sessionId(opts.role, opts.branch), run);
   opts = { ...opts, run };
   if (opts.role === "orchestrator") {
     // The long-lived daemon loop; imported lazily so a worker process never loads it.
     const { orchestratorAgent } = await import("./daemon");
-    return orchestratorAgent({ ...opts, run });
+    return orchestratorAgent({ ...opts, run }, exit);
   }
   if (!opts.branch) {
     await startAgent(opts);

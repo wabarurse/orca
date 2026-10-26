@@ -40,6 +40,7 @@ function gated(value = memory()) {
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "rolling-memory-")); dirs.push(dir); process.env.ORCA_HOME = dir;
   const project = "p", transcript = open(paths.transcript(project, "orchestrator"));
+  mkdirSync(paths.repo(project), { recursive: true }); // the binding the daemon expects; without it the one-shot CLI sees a deleted project
   await saveConfig({ model: "gpt-6-sol" });
   for (const [role, content] of [["user", "Prefers concise responses. Use Bun. " + "old work ".repeat(2500)], ["assistant", "old findings ".repeat(2500)], ["user", "recent question"], ["assistant", "recent answer"]] as const) {
     await transcript.append({ type: "message", message: { role, content } });
@@ -247,7 +248,7 @@ test("the one-shot orchestrator CLI also uses Luna and joins its worker before e
   const { project, transcript, foreground } = await fixture(), worker = gated();
   let ended = false;
   await put(project, "orchestrator", { from: "user", text: "continue", inputId: "cli" });
-  const run = runAgent({ project, role: "orchestrator", loadProvider: async () => foreground,
+  const run = runAgent({ project, role: "orchestrator", exitWhenIdle: true, loadProvider: async () => foreground,
     rolling: { triggerTokens: 5000, tailTokens: 200, loadProvider: async () => worker.provider } }).then(code => { ended = true; return code; });
   await worker.entered;
   for (let i = 0; i < 100 && !foreground.calls.length; i++) await Bun.sleep(1);

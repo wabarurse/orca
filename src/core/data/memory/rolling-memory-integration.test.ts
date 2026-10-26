@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentDeps } from "../../agent-loop/loop/agent";
@@ -38,6 +38,7 @@ function summary() {
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "rolling-integration-")); dirs.push(dir); process.env.ORCA_HOME = dir;
   const project = "p", transcript = open(paths.transcript(project, "orchestrator"));
+  mkdirSync(paths.repo(project), { recursive: true }); // the binding the daemon expects; without it the one-shot CLI sees a deleted project
   await saveConfig({ model: "gpt-6-sol" });
   for (const [role, content] of [["user", "old-original-evidence ".repeat(3000)], ["assistant", "older findings ".repeat(2500)], ["user", "recent question"], ["assistant", "recent answer"]] as const) {
     await transcript.append({ type: "message", message: { role, content } });
@@ -198,7 +199,7 @@ test("one-shot CLI shares whole-turn ownership while joining memory; residue and
   const { project, transcript, foreground, session } = await fixture(), worker = summary();
   const other = await session(worker);
   await other.say("cli", undefined, "cli");
-  const run = runAgent({ project, role: "orchestrator", loadProvider: async () => foreground,
+  const run = runAgent({ project, role: "orchestrator", exitWhenIdle: true, loadProvider: async () => foreground,
     rolling: { triggerTokens: 5000, tailTokens: 200, loadProvider: async () => worker.provider } });
   await worker.entered.promise; await until(() => foreground.calls.length === 1);
   await other.say("queued", undefined, "queued");
@@ -211,7 +212,7 @@ test("one-shot CLI shares whole-turn ownership while joining memory; residue and
   expect(foreground.calls.length).toBeGreaterThanOrEqual(2);
   const count = foreground.calls.length, summaryCount = worker.calls.length;
   await put(project, "orchestrator", { from: "user", text: "cli", inputId: "cli" });
-  expect(await runAgent({ project, role: "orchestrator", loadProvider: async () => foreground, rolling: { loadProvider: async () => worker.provider } })).toBe(0);
+  expect(await runAgent({ project, role: "orchestrator", exitWhenIdle: true, loadProvider: async () => foreground, rolling: { loadProvider: async () => worker.provider } })).toBe(0);
   expect(foreground.calls).toHaveLength(count); expect(worker.calls).toHaveLength(summaryCount);
   expect(await pending(project, "orchestrator")).toBe(false);
   expect(open(transcript.path).consumed!().inputs).toEqual(new Set(["cli", "queued"]));
@@ -220,7 +221,7 @@ test("one-shot CLI shares whole-turn ownership while joining memory; residue and
 test("one-shot CLI cannot resume a paused project with old input", async () => {
   const { project, foreground, session } = await fixture(), worker = summary(), other = await session(worker);
   await other.say("old", undefined, "old"); other.cancel!();
-  expect(await runAgent({ project, role: "orchestrator", loadProvider: async () => foreground, rolling: { loadProvider: async () => worker.provider } })).toBe(0);
+  expect(await runAgent({ project, role: "orchestrator", exitWhenIdle: true, loadProvider: async () => foreground, rolling: { loadProvider: async () => worker.provider } })).toBe(0);
   expect(foreground.calls).toHaveLength(0); expect(worker.calls).toHaveLength(0);
   expect(await pending(project, "orchestrator")).toBe(true);
 });
