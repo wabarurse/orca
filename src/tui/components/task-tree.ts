@@ -4,7 +4,7 @@ import { treeTasks, type TreeTask } from "./task-tree-data";
 
 export interface TaskTreeOptions {
   cols: number; rows: number; selectedId?: string;
-  /** Independent graph cell offsets and metadata line offset; caller owns scrolling. */
+  /** Independent list offsets and details line offset; caller owns scrolling. */
   graphX?: number; graphY?: number; detailY?: number; revealSelected?: boolean;
   collapsed?: ReadonlySet<string>; frame?: number;
 }
@@ -18,7 +18,7 @@ export interface TaskTreeRender {
 }
 export interface OutlineNode { id: string; depth: number; parent?: string; children: string[] }
 interface Viewport { x: number; y: number; rows: number; cols: number }
-interface Panels { cols: number; rows: number; wide: boolean; graphCols: number; graphRows: number; detailCols: number; detailRows: number }
+interface Panels { cols: number; rows: number; graphCols: number; graphRows: number; detailCols: number; detailRows: number }
 const size = (n: number, max: number) => Number.isFinite(n) ? Math.max(1, Math.min(max, Math.floor(n))) : 1;
 const offset = (n: number | undefined, max: number) => Number.isFinite(n) ? Math.max(0, Math.min(max, Math.floor(n!))) : 0;
 /** wordWrap alone permits a two-cell grapheme in a one-cell column. */
@@ -44,12 +44,10 @@ function outlineLabel(label: string, cols: number): string {
 
 function panels(options: TaskTreeOptions): Panels {
   const cols = size(options.cols, 500), rows = size(options.rows, 200);
-  const wide = cols >= 70;
-  const graphCols = wide ? Math.floor(cols * .55) : cols;
-  const graphRows = Math.max(1, wide ? rows - 2 : Math.floor((rows - 2) / 2));
-  const detailRows = Math.max(0, wide ? rows - 2 : rows - graphRows - 2);
-  const detailCols = wide ? cols - graphCols - 3 : cols;
-  return { cols, rows, wide, graphCols, graphRows, detailCols, detailRows };
+  const graphCols = cols, detailCols = cols;
+  const graphRows = Math.max(1, Math.min(8, Math.floor((rows - 3) / 3)));
+  const detailRows = Math.max(0, rows - graphRows - 3);
+  return { cols, rows, graphCols, graphRows, detailCols, detailRows };
 }
 
 function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: number[][] } {
@@ -89,15 +87,24 @@ function active(task: TreeTask): boolean {
   return !task.archive && !task.attention && task.runs.some(run => run.state === "started" && !run.endedAt);
 }
 
-function status(task: TreeTask, frame: number): string {
-  if (task.archive) return "[x] merged";
-  if (task.attention) return `[!] ${task.attention.kind}`;
-  if (active(task)) {
-    const roles = task.runs.filter(run => run.state === "started" && !run.endedAt).map(run => run.role);
-    return `${["◐", "◓", "◑", "◒"][frame % 4]} ${roles.includes("worker") ? "working" : "reviewing"}${roles.includes("worker") && roles.includes("reviewer") ? "/reviewing" : ""}`;
-  }
-  if (task.status === "queued") return "[ ] queued";
-  return `[-] ${task.status.replaceAll("_", " ")} (idle)`;
+function status(task: TreeTask): string {
+  if (task.archive) return "Merged";
+  if (task.attention) return task.attention.kind;
+  if (active(task)) return "Loading";
+  if (task.status === "ready_to_merge" && task.readiness?.head === task.pr?.head) return "Ready";
+  const latest = task.runs.at(-1);
+  if (latest?.state === "stopped" || latest?.state === "failed") return latest.state;
+  return task.status.replaceAll("_", " ");
+}
+
+function statusColor(task: TreeTask): number {
+  const label = status(task);
+  return ({ Merged: 35, Ready: 32, Loading: 33 } as Record<string, number>)[label] ?? 90;
+}
+
+function activity(task: TreeTask): string {
+  return task.runs.filter(run => run.state === "started" && !run.endedAt)
+    .map(run => run.role === "worker" ? "working" : "reviewing").join(" / ");
 }
 
 export function navigateOutline(nodes: OutlineNode[], selectedId: string | undefined, collapsed: Set<string>, key: string, shift = false): string | undefined {
@@ -134,74 +141,42 @@ function paintNode(canvas: string[][], label: string, x: number, row: number, vi
   return hits;
 }
 
-function runFields(run: TreeTask["runs"][number]): [string, string][] {
-  return [
-    ["Run", `${run.id}: ${run.state}; ${run.role} ${run.agent}${run.reviewMode ? ` (${run.reviewMode})` : ""}`],
-    ["Prepared", run.preparedAt], ["Started", run.startedAt ?? "not recorded"], ["Ended", run.endedAt ?? "not recorded"],
-  ];
-}
-
-function technicalFields(selected: TreeTask): [string, string][] {
-  const fields: [string, string][] = [["Technical details", "scroll with PgUp/PgDn"]];
-  const { pr, readiness: ready, archive } = selected;
-  if (pr) fields.push(["PR URL", pr.url], ["PR head", pr.head]);
-  if (ready) fields.push(["Validation", ready.validation], ["Validated head", ready.head], ["Validation run", ready.run]);
-  if (archive) fields.push(["Archive PR", `${archive.pr.repository} #${archive.pr.number}`], ["Archive URL", archive.pr.url], ["Archive head", archive.pr.head]);
-  fields.push(["Runs", String(selected.runs.length)]);
-  for (const run of [...selected.runs].reverse()) fields.push(...runFields(run));
-  return fields;
-}
-
 function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][] {
-  const index = new Map(tasks.map((t, i) => [t.id.toLowerCase(), i]));
   const dependencies = selected.dependsOn.map(id => {
-    const i = index.get(id.toLowerCase())!;
+    const i = tasks.findIndex(t => t.id.toLowerCase() === id.toLowerCase());
     return `#${i + 1} ${tasks[i]!.name}`;
   });
   const fields: [string, string][] = [
-    [`SELECTED [${tasks.indexOf(selected) + 1}]`, selected.name],
-    ["Overview", selected.summary], ["Status", status(selected, 0)],
-    ["Lifecycle", selected.archive ? "merged" : selected.status],
-    ["Attention", selected.attention ? `${selected.attention.kind}: ${selected.attention.reason}` : "none"],
-    ["Dependencies", dependencies.join(", ") || "none"],
+    [`Task #${tasks.indexOf(selected) + 1} · ${status(selected)}`, selected.name],
+    ["Overview", selected.summary],
+    ["Dependencies", dependencies.join("; ") || "none"],
   ];
-  const pr = selected.pr, ready = selected.readiness, archive = selected.archive;
-  const latest = selected.runs.at(-1);
-  fields.push(["Activity", latest ? `${latest.state} · ${latest.role} ${latest.agent}${latest.reviewMode ? ` (${latest.reviewMode})` : ""}` : "none recorded"]);
-  fields.push(["PR", pr ? `${pr.repository} #${pr.number}` : "not recorded"]);
-  fields.push(["Readiness", ready ? `recorded; checks ${ready.checks}; validated ${ready.validatedAt}` : "not recorded (not inferred)"]);
-  fields.push(["Verified archive", archive ? `merged ${archive.mergedAt}; archived ${archive.archivedAt}` : "not recorded"]);
-  fields.push(...technicalFields(selected));
-  fields.push(["Branch", selected.branch], ["ID", selected.id], ["Created", selected.createdAt], ["Updated", selected.updatedAt], ["Revision", String(selected.revision)]);
+  if (active(selected)) fields.push(["Activity", activity(selected)]);
+  if (selected.attention) fields.push(["Attention", selected.attention.reason]);
+  if (selected.readiness) fields.push(["Validation", `${selected.readiness.checks}: ${selected.readiness.validation}`]);
   return fields;
 }
 
 function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: number): string[] {
   if (!selected) return safeLines("Tasks: No tasks", cols);
-  // Source strings were already bounded. Bound derived
-  // text too, before segmentation/wrapping; escape expansion never drops evidence.
-  const fields = detailFields(tasks, selected);
-  const length = fields.reduce((total, [name, value]) => total + name.length + value.length + 2, 0);
-  check(length <= 65536, "Metadata limit: 65536 units of derived selected details");
   const lines: string[] = [];
-  for (const [name, value] of fields) {
-    for (const line of safeLines(`${name}: ${value}`, cols)) lines.push(line);
+  for (const [name, value] of detailFields(tasks, selected)) {
+    lines.push(...safeLines(`${name}: ${value}`, cols), "");
   }
+  const pr = selected.archive?.pr ?? selected.pr;
+  if (pr) {
+    for (const label of safeLines(`PR: ${pr.repository} #${pr.number}`, cols)) {
+      lines.push(`\x1b]8;;${pr.url}\x07${label}\x1b]8;;\x07`);
+    }
+  } else lines.push(...safeLines("PR: not recorded", cols));
   return lines;
 }
 
 function compose(p: Panels, graph: string[], detail: string[], detailY: number, footer: string): string[] {
-  const lines = [safeLines("TASKS · primary prerequisite outline; +dep = other prerequisites", p.cols)[0]!];
-  for (let row = 0; row < p.graphRows; row++) {
-    const left = graph[row] ?? "";
-    if (p.wide) {
-      const padding = " ".repeat(Math.max(0, p.graphCols - visibleLength(left)));
-      lines.push(left + padding + " │ " + (detail[detailY + row] ?? ""));
-    } else lines.push(left);
-  }
-  if (!p.wide) {
-    for (const line of detail.slice(detailY, detailY + p.detailRows)) lines.push(line);
-  }
+  const lines = [safeLines("TASKS", p.cols)[0]!];
+  for (let row = 0; row < p.graphRows; row++) lines.push(graph[row] ?? "");
+  lines.push("");
+  for (let row = 0; row < p.detailRows; row++) lines.push(detail[detailY + row] ?? "");
   lines.push(safeLines(footer, p.cols)[0]!);
   return lines.slice(0, p.rows);
 }
@@ -231,15 +206,17 @@ export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options:
     const hits: TaskTreeHit[] = [];
     for (const [row, node] of nodes.slice(view.y, view.y + view.rows).entries()) {
       const i = tasks.findIndex(t => t.id === node.id), task = tasks[i]!;
-      const others = task.dependsOn.filter(id => id.toLowerCase() !== node.parent?.toLowerCase());
-      const refs = others.map(id => `#${tasks.findIndex(t => t.id.toLowerCase() === id.toLowerCase()) + 1}`).join(",");
       const indent = "  ".repeat(Math.min(node.depth, Math.max(0, Math.floor((view.cols - 25) / 2))));
-      const label = `${node.id === selected?.id ? "▶" : " "}${indent}${node.children.length ? collapsed.has(node.id) ? "▸" : "▾" : "·"} ${status(task, options.frame ?? 0)} #${i + 1}${refs ? ` +dep:${refs}` : ""} ${plainText(task.name)}`;
+      const label = `${node.id === selected?.id ? "▶" : " "}${indent}#${i + 1} ● ${plainText(task.name)}`;
       hits.push(...paintNode(canvas, outlineLabel(label, view.cols), 0, row, view, { id: task.id, number: i + 1 }));
     }
     const detail = detailLines(tasks, selected, p.detailCols);
     const dy = offset(options.detailY, Math.max(0, detail.length - p.detailRows));
-    const lines = canvas.map(row => row.join(""));
+    const lines = canvas.map((row, i) => {
+      const task = tasks.find(t => t.id === nodes[view.y + i]?.id);
+      const line = row.join("");
+      return task ? line.replace("●", `\x1b[${statusColor(task)}m●\x1b[0m`) : line;
+    });
     if (!tasks.length) lines[0] = "No tasks";
     const footer = `Outline y=${view.y}/${Math.max(0, nodes.length - view.rows)}; details=${dy}/${Math.max(0, detail.length - p.detailRows)}`;
     return { nodes, animated: nodes.slice(view.y, view.y + view.rows).some(n => active(tasks.find(t => t.id === n.id)!)),

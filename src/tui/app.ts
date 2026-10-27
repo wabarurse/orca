@@ -181,7 +181,7 @@ interface AgentsTimer { menu: ActiveMenu; readAt: number; reading: boolean; stop
 interface TaskTreeState {
   page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
   graphX: number; graphY: number; detailY: number; loading: boolean; error?: string;
-  collapsed: Set<string>; frame: number;
+  collapsed: Set<string>; frame: number; detailsFocused?: boolean;
   revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
 }
 
@@ -326,8 +326,8 @@ export class App {
     view.graphX = rendered.graph.x; view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
-    const controls = ["Ctrl+T/Esc chat · Shift+Tab next · click row · r refresh",
-      "↑↓ select · ←→ fold · Shift+arrows same depth · PgUp/Dn details"].map(line => fit(line, cols));
+    const controls = ["Ctrl+T/Esc chat · r refresh · terminal gesture opens PR links",
+      view.detailsFocused ? "Details: ↑↓ scroll · ← list" : "↑↓ select · ← fold/parent · → expand/details"].map(line => fit(line, cols));
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
     return { rows: [...content, ...controls].slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0,
       bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
@@ -352,7 +352,7 @@ export class App {
     // terminal 1-based coordinates; subtracting graph offsets again is wrong.
     const row = (k.y ?? 0) - 1, col = (k.x ?? 0) - 1;
     const hit = rendered.hits.find(h => h.row === row && col >= h.col && col < h.col + h.width);
-    if (hit) { view.selectedId = hit.id; view.detailY = 0; }
+    if (hit) { view.selectedId = hit.id; view.detailY = 0; view.detailsFocused = false; }
   }
 
   private cycleTreeSelection(view: TaskTreeState, rendered: TaskTreeRender): void {
@@ -363,9 +363,22 @@ export class App {
     view.detailY = 0;
   }
 
+  private focusTaskDetails(view: TaskTreeState, key: string): boolean {
+    if (view.detailsFocused) {
+      if (key === "left") view.detailsFocused = false;
+      if (key === "up") view.detailY--;
+      if (key === "down") view.detailY++;
+      return true;
+    }
+    if (key !== "right" || view.collapsed.has(view.selectedId ?? "")) return false;
+    view.detailsFocused = true;
+    return true;
+  }
+
   private scrollTaskTree(view: TaskTreeState, rendered: TaskTreeRender, k: Key): void {
+    if (this.focusTaskDetails(view, k.name)) return;
     if (["up", "down", "left", "right"].includes(k.name)) {
-      view.selectedId = navigateOutline(rendered.nodes, view.selectedId, view.collapsed, k.name, k.shift);
+      view.selectedId = navigateOutline(rendered.nodes, view.selectedId, view.collapsed, k.name);
       view.revealSelected = true;
       view.detailY = 0;
     } else if (k.name === "pageup" || k.name === "pagedown") {
