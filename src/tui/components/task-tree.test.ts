@@ -13,7 +13,7 @@ const pr = { repository: "sample/repo", number: 105, url: "https://github.com/sa
 test("fork/join, archived prerequisite, deterministic labels and UUID selection, cell hits", () => {
   const tasks = sample();
   tasks[4]!.archive = { reason: "merged", mergedAt: "2026-01-02", archivedAt: "2026-01-03", pr };
-  const opts = { cols: 120, rows: 35, selectedId: id(3) };
+  const opts = { cols: 300, rows: 35, selectedId: id(3) };
   const a = renderTaskTree(tasks, opts), b = renderTaskTree([...tasks].reverse().map(taskTreeView), opts);
   expect(a).toEqual(b); expect(a.errors).toEqual([]); expect(a.selectedId).toBe(id(3));
   expect(new Set(a.hits.map(h => h.id)).size).toBe(6);
@@ -113,15 +113,40 @@ test("metadata budgets reject before expensive processing and history is never r
 
 test("skip-layer dependency crosses an unrelated incoming route without adding a join", () => {
   const tasks = [task(1), task(2), task(3, [1]), task(4, [2]), task(5, [1, 3, 4])];
-  const out = renderTaskTree(tasks, { cols: 120, rows: 35 });
+  const out = renderTaskTree(tasks, { cols: 300, rows: 35 });
   expect(out.errors).toEqual([]);
-  // 13-cell lanes: edge 1→5 crosses the incoming route 1→3 at (28,2).
+  // 33-cell lanes: edge 1→5 crosses the incoming route 1→3 at (68,2).
   // Only the shared source and destination endpoints are junctions.
-  expect(out.lines[3]![28]).toBe("╪"); expect(out.lines[3]![2]).toBe("└");
-  expect(out.lines[3]![54]).toBe("┐");
+  expect(out.lines[3]![68]).toBe("╪"); expect(out.lines[3]![2]).toBe("└");
+  expect(out.lines[3]![134]).toBe("┐");
   const nodeRows = tasks.map(t => new Set(out.hits.filter(h => h.id === t.id).map(h => h.row)));
   for (const rows of nodeRows) expect(rows.size).toBe(1);
   expect([...nodeRows[4]!][0]!).toBeGreaterThan([...nodeRows[2]!][0]!);
-  const clipped = renderTaskTree(tasks, { cols: 20, rows: 24, graphX: 15 });
+  const clipped = renderTaskTree(tasks, { cols: 20, rows: 24, graphX: 40 });
   expect(clipped.lines.join("\n")).toContain("╪");
+});
+
+
+test("disconnected registries use vertical named rows and reveal keeps UUID/cell mapping", () => {
+  const singletons = Array.from({ length: 24 }, (_, i) => task(i + 1, [], `Independent task number ${i + 1}`));
+  const connected = [task(25), task(26, [25]), task(27, [25]), task(28, [26, 27]), task(29), task(30, [29]), task(31, [29]), task(32, [30, 31])];
+  for (const cols of [80, 120]) {
+    const options = { cols, rows: cols === 80 ? 24 : 35 };
+    const only = renderTaskTree(singletons, options);
+    expect(only.graph.width).toBe(only.graph.cols);
+    expect(only.graph.height).toBe(24);
+    expect(only.lines[2]).toContain("[2] Independent task number 2");
+    const tasks = [...singletons, ...connected];
+    const top = renderTaskTree(tasks, options);
+    expect(top.graph.width).toBeLessThanOrEqual(4 * 24);
+    const revealed = renderTaskTree(tasks, { ...options, selectedId: id(24), revealSelected: true });
+    expect(revealed.hits.some(h => h.id === id(24))).toBe(true);
+    expect(revealed.lines.join("\n")).toContain("▶[24] Independent task number 24");
+    const last = renderTaskTree(tasks, { ...options, selectedId: id(32), revealSelected: true });
+    expect(last.hits.some(h => h.id === id(32))).toBe(true);
+    expect(last.order).toEqual(tasks.map(t => t.id));
+    const back = renderTaskTree(tasks, { ...options, graphX: last.graph.x, graphY: last.graph.y, selectedId: id(1), revealSelected: true });
+    expect(back.graph.x).toBe(0); expect(back.graph.y).toBe(0);
+    expect(back.lines[1]).toContain("▶[1] Independent task number 1");
+  }
 });

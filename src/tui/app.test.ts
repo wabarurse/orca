@@ -4423,3 +4423,31 @@ test("task tree deferred reads coalesce a trailing pass and ignore a replaced ov
     await until(() => term.screen().includes("current failure"));
   } finally { app.quit(); await running; }
 });
+
+test("task tree cycling reveals long independent registries without changing chat input", async () => {
+  const term = fakeTerm(80, 24), fake = fakeOrchestrators();
+  const tasks: import("../protocol/tasks").Task[] = Array.from({ length: 24 }, (_, i) => ({
+    id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
+    name: `Independent task ${i + 1}`, summary: "Saved task", branch: "feat/example",
+    status: "queued", createdAt: "2026-01-01", updatedAt: "2026-01-02", revision: 1,
+    dependsOn: [], runs: [], history: [],
+  }));
+  const app = new App({ term, pollMs: 100_000, agents: async () => [],
+    openOrchestrator: fake.openOrchestrator, treeTasks: async () => tasks });
+  const running = app.run("tree-independent");
+  const screen = () => term.display.screen().join("\n");
+  try {
+    await until(() => !!app.page);
+    term.type("keep draft"); term.type("\x14");
+    await until(() => screen().includes("▶[1] Independent task 1"));
+    for (let i = 0; i < 23; i++) term.type("\x1b[Z");
+    await until(() => screen().includes("▶[24] Independent task 24"));
+    expect(screen()).toContain("Graph x=0/0");
+    term.type("\x1b[Z");
+    await until(() => screen().includes("▶[1] Independent task 1"));
+    expect(screen()).toContain(" y=0/");
+    term.press({ name: "escape" });
+    await until(() => !screen().includes("TASKS"));
+    expect(app.input.text).toBe("keep draft");
+  } finally { app.quit(); await running; }
+});

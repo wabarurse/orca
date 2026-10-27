@@ -181,7 +181,7 @@ interface AgentsTimer { menu: ActiveMenu; readAt: number; reading: boolean; stop
 interface TaskTreeState {
   page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
   graphX: number; graphY: number; detailY: number; loading: boolean; error?: string;
-  rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
+  revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
 }
 
 interface TaskInboxState extends TaskInboxData {
@@ -320,6 +320,7 @@ export class App {
     const view = this.taskTree!, { cols, rows } = this.deps.term;
     const rendered = renderTaskTree(view.error ? [] : view.tasks, { ...view, cols, rows: Math.max(1, rows - 2) });
     view.rendered = rendered;
+    view.revealSelected = false;
     if (!view.error && !view.loading) view.selectedId = rendered.selectedId;
     view.graphX = rendered.graph.x; view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
@@ -357,6 +358,7 @@ export class App {
     if (!rendered.order.length) return;
     const next = (rendered.order.indexOf(view.selectedId ?? "") + 1) % rendered.order.length;
     view.selectedId = rendered.order[next];
+    view.revealSelected = true;
     view.detailY = 0;
   }
 
