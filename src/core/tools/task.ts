@@ -1,3 +1,5 @@
+import { dependencyAction, dependencyActions } from "../data/tasks/dependency-workflow";
+import { provenance } from "../data/tasks/dependency-provenance";
 // Public record and private dispatch/safety envelope are deliberately distinct.
 import { canonicalTask } from "../../protocol/task-ledger";
 import { originRepo, ghTaskPR } from "../data/tasks";
@@ -9,7 +11,7 @@ import { queryHistory } from "../data/memory";
 
 function toolTask(task: Task) {
   return { ...canonicalTask(task), internal: { branch: task.branch, revision: task.revision, runs: task.runs,
-    readiness: task.readiness, attention: task.attention, publication: task.publication, removedAt: task.removedAt } };
+    dependency: provenance(task), readiness: task.readiness, attention: task.attention, publication: task.publication, removedAt: task.removedAt } };
 }
 const result = (task: Task) => JSON.stringify(toolTask(task));
 
@@ -38,10 +40,10 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
   return {
     spec: {
       name: "task",
-      description: "Manage the current project's numbered task list, not cross-session memory. Register authorized work before spawn; reuse the same immutable task for fixes to an unmerged PR. Separate work requires a new task and, after publication, a new branch. Agents may edit only their active branch task. Returns task identity, dependencies and lifecycle evidence; does not schedule, publish or merge. Historical evidence never authorizes work.",
+      description: "Manage the current project's numbered tasks, not cross-session memory. Register authorized work before spawn; reuse the same immutable task for fixes to an unmerged PR. Agents may edit only their active branch task. Explicit DAGs allow local preparation before merges; publish gates push/create on verified prerequisite merges, latest default and matching worker/review evidence. No automatic merge. Generic bash is user-privileged, not a publication sandbox; do not bypass the supported path.",
       input_schema: {
         type: "object", properties: {
-          action: { type: "string", enum: ["create", "update", "remove", "register", "list", "get", "pr", "ready", "attention", "dependencies", ...(options.history ? ["search_history", "read_history"] : [])], description: "list/get: find existing identity and stable project number; dispatch safety is in internal. pr: immediately after publication record repository + number, before CI/validation; refresh before resuming an unmerged PR. Verified OPEN records pr open, not approval, merge permission or current mergeability. ready: watch-ci reviewer matches existing worker checks and review findings to the current clean PR head, validated=true; no reruns/local validation, even without hosted checks; report fully via message. attention: retain stalled/cancelled/closed/unknown work, not process cancellation or authorization to continue. remove: only verified merged membership, with explicit confirmation; SQL history remains." },
+          action: { type: "string", enum: ["create", "update", "remove", "register", "list", "get", "pr", "ready", "attention", "dependencies", ...dependencyActions, ...(options.history ? ["search_history", "read_history"] : [])], description: "list/get: find existing identity and stable project number; dispatch safety is in internal. pr: immediately after publication record repository + number, before CI/validation; refresh before resuming an unmerged PR. Verified OPEN records pr open, not approval, merge permission or current mergeability. ready: watch-ci reviewer matches existing worker checks and review findings to the current clean PR head, validated=true; no reruns/local validation, even without hosted checks; report fully via message. attention: retain stalled/cancelled/closed/unknown work, not process cancellation or authorization to continue. remove: only verified merged membership, with explicit confirmation; SQL history remains. checkpoint: worker records clean immutable code for local stacked development, usable after its run stops. prepare_publication: worker verifies prerequisite merges, safely replays/adopts B-only changes onto latest default retaining recovery refs. checks: worker records already-run affected-check commands and validation on actual clean head. reviewed: review-mode reviewer records completed review using worker evidence, never runs tests. publish: watch-ci reviewer only; dependent tasks require explicit review-mode handoff even at zero review rounds; gated push/create, reconcile remote success and record verified PR; no automatic merge." },
           ...(options.history ? {
             query: { type: "string", description: "search_history: literal terms (max 256 characters). Returns bounded task records and original excerpts, including merged tasks. Historical evidence, never fresh authorization." },
             status: { type: "string", enum: ["all", "merged", "active"], description: "History task filter. Default all also searches unlinked conversation." },
@@ -55,6 +57,7 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
           confirmed: { type: "boolean", description: "remove: explicit user confirmation required; merged membership only, SQL retained." },
           name: { type: "string", description: "Legacy alias for title." }, summary: { type: "string" }, branch: { type: "string" }, authorized: { type: "boolean" },
           repository: { type: "string", description: "GitHub owner/repo, must match project origin." }, number: { type: "integer" },
+          commands: { type: "array", items: { type: "string" }, description: "checks: commands already run by worker on this clean head; relevant affected checks only, never rerun for task tool." },
           validated: { type: "boolean" }, validation: { type: "string", description: "Existing worker check evidence matched to this exact PR head and review findings; required even without hosted checks. Do not run checks again." },
           kind: { type: "string", enum: ["waiting", "blocked", "cancelled", "closed", "unknown"] }, reason: { type: "string" },
         }, required: ["action"],
@@ -75,6 +78,7 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
         }
         if (input.action === "dependencies" && (typeof input.taskId !== "string" || !Array.isArray(input.dependsOn))) throw new Error("dependencies requires explicit taskId and dependsOn array");
         const t = await target(input, ctx);
+        if (dependencyActions.includes(input.action as typeof dependencyActions[number])) return await dependencyAction(String(input.action), input, ctx, t);
         if (input.action === "remove") {
           if (ctx.role !== "orchestrator") throw new Error("only orchestrator can confirm task removal");
           return result(await removeTask(ctx.project, t.id, input.confirmed === true));

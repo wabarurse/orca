@@ -84,3 +84,16 @@ test("built-in underscore names materialize without enabling arbitrary paths", (
   expect(editableTool({ ...tool, spec: { ...tool.spec, name: "web_search" } }).spec.name).toBe("web_search");
   expect(() => definition("tools/../../escape.json", "{}")).toThrow("invalid definition name");
 });
+
+test('edited task schemas retain annotations while upgrading publication actions and evidence fields', () => {
+  const legacy: Tool = { ...tool, spec: { name: 'task', description: 'Task contract', input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['get'], description: 'Action' } }, required: ['action'] } } };
+  editableTool(legacy);
+  const actual = join(home, 'tools/task.json');
+  const edited = JSON.parse(readFileSync(actual, 'utf8')); edited.description = 'My task guidance';
+  writeFileSync(actual, JSON.stringify(edited));
+  const upgraded: Tool = { ...legacy, spec: { ...legacy.spec, input_schema: { ...legacy.spec.input_schema, properties: { action: { type: 'string', enum: ['get', 'checkpoint', 'prepare_publication', 'checks', 'reviewed', 'publish'], description: 'Action' }, commands: { type: 'array', items: { type: 'string' } } } } } };
+  const result = editableTool(upgraded);
+  expect(result.spec.description).toContain('My task guidance');
+  expect(JSON.stringify(result.spec.input_schema)).toContain('prepare_publication');
+  expect(JSON.stringify(result.spec.input_schema)).toContain('commands');
+});

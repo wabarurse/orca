@@ -86,3 +86,13 @@ describe('publication after verified merges', () => {
     await expect(assertPublication(snapshot, state, ancestor, stack)).rejects.toThrow('replay receipt');
   });
 });
+
+test('zero-review exception is independent-only; dependent and stale-head reviews fail closed', async () => {
+  const { a, b, snapshot, state } = fixture(); merged(a);
+  state.requireReview = false; state.reviewedHead = undefined;
+  await expect(assertPublication(snapshot, state, ancestor)).rejects.toThrow('code review');
+  b.dependsOn = [];
+  await assertPublication(snapshot, state, ancestor);
+  state.requireReview = true;
+  await expect(assertPublication(snapshot, state, ancestor)).rejects.toThrow('code review');
+});

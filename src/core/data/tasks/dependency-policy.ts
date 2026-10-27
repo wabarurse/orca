@@ -1,6 +1,6 @@
-/** Future dispatch/publication policy. Pure snapshots: never inspect another worktree.
+/** Dispatch/publication policy. Pure snapshots: never inspect another worktree.
  * Callers must obtain authorization, checkpoint and merge evidence from trusted runtime
- * storage under the project lock, not from model-supplied booleans. Not yet mounted.
+ * storage under the project lock, not from model-supplied booleans.
  */
 import { check, sha, taskDependencies, type Task } from '../../../protocol/tasks';
 
@@ -106,7 +106,8 @@ export interface PublicationState {
   clean: boolean;
   /** Worker evidence bound to the updated state; reviewer never reruns it. */
   workerEvidence: { head: string; defaultCommit: string; commands: readonly string[] };
-  reviewedHead: string;
+  reviewedHead?: string;
+  requireReview?: boolean;
   /** For stacked work, trusted receipt for replaying ONLY baseCommit..oldHead. */
   update?: { stack: StackBase; oldHead: string; newHead: string; onto: string; isolatedReplay: boolean };
 }
@@ -119,7 +120,7 @@ export async function assertPublication(snapshot: DependencySnapshot, state: Pub
   check(await ancestor(state.defaultCommit, state.head), 'update onto latest default before publication');
   check(state.workerEvidence.head === state.head && state.workerEvidence.defaultCommit === state.defaultCommit &&
     state.workerEvidence.commands.length > 0 && state.workerEvidence.commands.every(c => c.trim()), 'affected-change worker evidence required');
-  check(state.reviewedHead === state.head, 'code review does not match updated head');
+  check(state.requireReview === false && !recordedStack && !(snapshot.tasks.find(t => t.id === state.taskId)?.dependsOn?.length) || state.reviewedHead === state.head, 'code review does not match updated head');
   if (recordedStack) {
     const update = state.update;
     check(recordedStack.taskId === state.taskId && update &&
@@ -130,7 +131,7 @@ export async function assertPublication(snapshot: DependencySnapshot, state: Pub
   } else check(!state.update, 'unrecorded stack update');
 }
 
-/** Future authoritative publication entrypoint: gate BEFORE either push or gh pr create.
+/** Authoritative publication gate: gate BEFORE either push or gh pr create.
  * The adapter must hold exclusive task/branch ownership, refresh latest default/merges,
  * persist stack provenance and reject stale receipts. Generic bash is NOT intercepted.
  * No shell parsing, automatic merge, deployment, destructive rebase, or CI reruns here.

@@ -1,3 +1,4 @@
+import { prepareStackSpawn } from "../data/tasks/dependency-workflow";
 import { attachmentSchema, forwardImages } from "./attachments";
 import { consume, content } from "../data/inbox";
 import { imageContent } from "../data/images";
@@ -57,7 +58,8 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
           attachments: attachmentSchema,
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Everything the agent needs, including prior check commands, tested commit/code state, results and saved failure-output paths. Workers run only relevant checks once per checked code state. Reviewers inspect failed-check output, diff and complexity; they never run tests or validation commands. Never request full suites, baseline comparisons or duplicate tests, including in watch-ci. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
-          branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects). Never use the default branch itself." },
+          branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects), or explicit baseCommit from authorized prerequisite checkpoints. Never use the default branch itself." },
+          baseCommit: { type: "string", description: "Optional explicit immutable prerequisite checkpoint commit for a NEW local stacked branch. Requires registered explicit task dependencies and all prerequisite code in this commit. No automatic composition/merge. Prerequisites may remain open for development; publication waits for all verified merges." },
           reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "Required when role is reviewer; explicitly identify: code review or CI-only validation. CI is not another review round." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
@@ -74,6 +76,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (role === "reviewer" && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: reviewer requires reviewMode: review or watch-ci (prompt text does not select the mode)";
       if (role === "worker" && input.reviewMode !== undefined) return "refused: reviewMode is only valid for reviewer";
 
+      if (input.baseCommit !== undefined && (role !== "worker" || typeof input.baseCommit !== "string" || !/^[0-9a-f]{40,64}$/.test(input.baseCommit))) return "refused: baseCommit requires worker and immutable commit";
       const attachments = await forwardImages(input.attachments, ctx);
       // One agent per branch: a reported agent may still be finishing, so wait briefly for it.
       const busy = await stillLive(runner, ctx.project, branch, wait, ctx.signal);
@@ -82,6 +85,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
       if (input.reviewMode !== undefined && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: invalid reviewMode";
+      if (typeof input.baseCommit === "string") await prepareStackSpawn(ctx.project, input.taskId, branch, ctx.cwd, input.baseCommit);
       return launch(runner, prompt, branch, role, input.taskId, ctx, attachments, role === "reviewer" ? input.reviewMode as "review" | "watch-ci" : undefined);
     },
   };

@@ -1,3 +1,4 @@
+import { assertLedgerPrerequisitesMerged } from "./dependency-ledger";
 import { validateProvenance, type DependencyProvenance, type ProvenanceTask } from "./dependency-provenance";
 import { existsSync, readFileSync } from "node:fs";
 import { paths } from "../../../config";
@@ -291,6 +292,11 @@ export async function validateTaskReadiness(project: string, id: string, input: 
   check(input.validated === true && input.observation.ready && input.observation.state === "OPEN" && ["passed", "not_configured"].includes(input.observation.checks), "pr is not validated ready");
   return update(project, s => {
     const t = find(s, id); active(t);
+    assertLedgerPrerequisitesMerged(s.tasks, t.id);
+    if (t.dependsOn?.length || (t as ProvenanceTask).dependencyProvenance?.stack) {
+      const p = (t as ProvenanceTask).dependencyProvenance;
+      check(p?.checks?.head === pr.head && p.review?.head === pr.head, "dependent readiness requires matching worker and review evidence");
+    }
     const reviewer = current(s, input.run);
     check(reviewer?.run.role === "reviewer" && reviewer.run.state === "started" && reviewer.task.branch === t.branch && t.runs.some(r => r.startedAt), "readiness requires an active reviewer on the task branch");
     check(t.attention?.kind !== "cancelled", "cancelled task needs explicit authorized continuation");
@@ -351,14 +357,15 @@ export function existingTasks(project: string): Task[] {
  * This serializes Orca writers, not arbitrary user shells or external git clients.
  */
 export async function withDependencyTaskOwnership<T>(project: string, id: string, branch: string,
-  action: (task: Task, tasks: Task[], save: (value: DependencyProvenance) => void) => Promise<T>): Promise<T> {
+  action: (task: Task, tasks: Task[], save: (value: DependencyProvenance) => void) => Promise<T>, ownerRun?: string): Promise<T> {
   projectId(project);
   const identity = projectIdentity(project);
   return withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
     const tasks = await allTasksLocked(project), t = find({ version: 1, tasks }, id);
     active(t); check(!t.removedAt && t.branch === branch, "dependency task branch mismatch");
-    check(!tasks.some(other => other.branch === branch && other.runs.some(r => r.state === "prepared" || r.state === "started")), "dependency operation requires quiescent branch");
+    if (ownerRun) check(t.runs.at(-1)?.id === ownerRun && t.runs.at(-1)?.state === "started", "dependency owner is not the active run");
+    check(!tasks.some(other => other.branch === branch && other.runs.some(r => (r.state === "prepared" || r.state === "started") && r.id !== ownerRun)), "dependency operation requires quiescent branch or exclusive active-run ownership");
     check(!t.attention || !["cancelled", "blocked", "closed", "unknown"].includes(t.attention.kind), "task attention blocks dependency operation");
     let revision = t.revision;
     const save = (value: DependencyProvenance) => {

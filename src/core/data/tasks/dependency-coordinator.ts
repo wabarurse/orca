@@ -1,4 +1,4 @@
-/** Internal runtime support for the existing task tool's future publication action.
+/** Internal runtime support for the existing task tool's publication action.
  * Not a competing tool/API. All writes use task ledger safety JSON and project lock.
  */
 import { realpath } from 'node:fs/promises';
@@ -22,7 +22,7 @@ function snapshot(tasks: Task[], authority: DependencyAuthority): DependencySnap
   return { tasks, ...authority, checkpoints: tasks.flatMap(t => provenance(t)?.checkpoint ? [provenance(t)!.checkpoint!] : []) };
 }
 
-async function assertRepository(project: string, cwd: string): Promise<void> {
+export async function assertRepository(project: string, cwd: string): Promise<void> {
   const common = async (dir: string) => realpath(await dependencyGit(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
   check(await common(cwd) === await common(paths.repo(project)), 'dependency checkout belongs to another repository');
 }
