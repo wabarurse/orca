@@ -16,7 +16,7 @@ function fixture() {
 }
 const id = "11111111-1111-4111-8111-111111111111";
 function insert(db: Database, number = 1, project = "conversation-a", uuid = id) {
-  const task: LedgerTask = { id: uuid, number, title: "Task", summary: "", createdAt: "2026-01-01T00:00:00Z", checkpoints: {}, status: "queued", dependencies: [], references: [] };
+  const task: LedgerTask = { id: uuid, number, title: "Task", summary: "", createdAt: "2026-01-01T00:00:00Z", checkpoints: {}, status: "queued", dependencies: [] };
   db.query("INSERT INTO task_ledger_records VALUES(?,?,?,?,?,?,1,1,NULL)").run(uuid, project, number, uuid, JSON.stringify(task), '{"history":[]}');
 }
 function install(db: Database) {
@@ -41,7 +41,7 @@ test("independent version never upgrades archive and rejects future ledger versi
   const db = fixture();
   db.exec("PRAGMA user_version=1"); installTaskLedgerSchema(db);
   expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 1 });
-  db.exec("UPDATE task_ledger_schema SET version=2");
+  db.exec("UPDATE task_ledger_schema SET version=3");
   expect(() => installTaskLedgerSchema(db)).toThrow("unsupported task ledger");
 });
 

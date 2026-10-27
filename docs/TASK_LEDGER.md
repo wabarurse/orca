@@ -1,65 +1,87 @@
-# Task ledger stack — 1/7 (dormant schema)
+# Persistent numbered tasks
 
-No application imports or calls the installer. It takes an already-open connection;
-this PR does not open memory.sqlite, upgrade runtime storage, import legacy tasks,
-change UI/tool statuses, or make SQL authoritative yet. Future SQL authority lives
-in the global memory.sqlite; project JSON lists become recoverable projections.
+## Two-PR delivery
 
-The shared LedgerTask is the canonical user record, stored as record_json rather
-than duplicated mutable SQL fields. Identity columns are constrained projections.
-The new status vocabulary is queued / building / pr open / merged; existing Task
-and all current readers/writers are unchanged. `number` means stable project task
-number; UUID dependencies resolve against retained SQL records, not JSON membership.
-References are explicit strings, not dependencies inferred from chat or plans.
+1. **Implement persistent numbered tasks** (this PR): durable SQL authority,
+   migration and projection recovery, lifecycle/tool integration, Ctrl+T and
+   confirmed merged-only removal, persistent cross-session task memory.
+2. Layout, editable prompts/tool definitions and runtime-path work, **only after
+   PR1 merges**. No runtime relocation, deployment or restart is part of PR1.
 
-Private columns retain project/repository binding, revision, membership revision,
-removal tombstone, legacy identity mapping and a separate safety envelope. Projects
-remain conversation project IDs even when repositories match. Legacy imports must
-retain complete Task snapshots (including branch, ownership, attempts, readiness,
-attention and history); the safety envelope is not a second user status model.
+## Authority and scope
 
-Numbers exceed the retained project high-water mark, never reset or reused. Records,
-identity mappings and project bindings cannot be deleted/reassigned by ordinary DML.
-The later transactional allocator/importer must sort explicit legacy inputs
-deterministically, persist mappings once, and fail on ambiguous identities. No
-allocator, importer or graph validation is activated here. JSON shape validation,
-UUID validation, first-reach immutability, optimistic revision checks and dependency
-graph validation belong to that writer; DDL alone is not a public write API.
+Global `memory.sqlite` contains durable `task_ledger_*` tables alongside the
+rebuildable conversation archive. **Never delete or replace this database to
+rebuild the archive.** Archive purge/sync only target their own tables; backfill
+refuses to delete an old per-project database containing ledger records.
 
-Checkpoint fields are individually optional, with no automatic timestamps. Retain
-first evidenced reach even after status changes: queuedAt only with evidence,
-buildingAt from earliest confirmed run start (not prepared launch), prOpenAt from
-verified OPEN observation (never readiness), mergedAt from provider merge time.
-Preserve local merge observation/archive time separately in safety metadata.
-Missing legacy evidence stays absent; never substitute migration time.
+Each conversation/project retains its own immutable identity/repository binding,
+UUID identities and monotonic project-local numbers. Sharing a repository does
+not combine projects. Deleting/recreating a project under the same name fails
+closed rather than adopting its old ledger. Explicit recovery is required.
 
-## Compatibility and deployment gate
+The public record contains title, summary, number/UUID, creation time, individual
+checkpoint times, four statuses (`queued`, `building`, `pr open`, `merged`),
+dependencies and a PR link. Complete legacy ownership, branch, run attempts,
+readiness, attention and history remain in private SQL safety snapshots. Existing
+internal lifecycle states are not additional public statuses; merge/readiness
+validation remains separate and is not weakened.
 
-Archive user_version remains unchanged (currently 2): its incremental upgrades and
-readers own that version and reject newer values. task_ledger_schema has an independent
-transactional version (1); unknown versions and conflicting unversioned tables fail
-closed. Future ledger changes must add ordered incremental steps, not recreate data.
-Existing archive sync/purge only targets entries/tasks/entry_tasks/sources/meta and
-cannot overwrite these separately named ledger tables. These tests simulate the
-explicit SQL targeting without importing archive.ts or opening application paths.
-File deletion/rebuild outside those functions is NOT safe once the ledger is active.
+Numbers are allocated inside SQLite IMMEDIATE transactions while holding the
+project state lock (never take those locks in reverse order). Legacy records are
+sorted by creation time and UUID; migration preserves UUIDs and snapshots and
+saves exact input bytes to `tasks.json.legacy-v1.backup` before importing. Duplicate
+identities and conflicting backups fail closed. Import is transactional and
+idempotent, with a retained project high-water mark and irreversible tombstones.
 
-Before step 2 enables any write path, deploy compatible code to **all** processes and
-audit every reader/writer, rebuild, cleanup, backup and database-file replacement
-path. A dormant schema merge is not deployment or activation approval. No automatic
-runtime upgrade is included. SQL commit + revisioned projection recovery must prevent
-stale JSON from resurrecting removed membership; removing membership must retain the
-record, number mapping and dependency resolution in SQL.
+Archive `user_version` remains 2. Ledger schema has its own version, now 2, with an
+incremental upgrade from the dormant version 1. Unknown versions are refused.
 
-## Seven-PR sequence
+## Checkpoints and publication
 
-1. **This PR:** shared model, isolated additive DDL helper and focused temporary-SQLite tests.
-2. Task tool/lifecycle SQL writes and recoverable JSON synchronization, gated on schema
-   deployment to all processes and reader/writer compatibility.
-3. UI/tool four statuses and stable IDs, including verified merged migration.
-4. `d`: merged-only confirmed JSON membership removal; ledger retention and SQL
-   dependency resolution, no resurrection.
-5. Memory tool cross-session queries including removed durable tasks.
-6. Visible editable prompts/tool definitions actually loaded, safe permissions;
-   executable code stays in app, skills reserved.
-7. Runtime path migration with coordinated shutdown.
+Registration supplies queued evidence; only a supervisor-confirmed run start
+supplies building evidence (not preparing or dispatching a run). Verified GitHub
+OPEN observation supplies the first PR-open checkpoint, independent of CI or
+readiness. A verified merge supplies the provider's merge timestamp; local merge
+observation time remains in the private archive snapshot. Checkpoints persist
+through retries, closed/reopened PRs and later observations. Import does not
+invent missing timestamps or infer publication from readiness/chat plans.
+
+## Recovery and compatibility
+
+`tasks.json` is a compact version-2 membership projection, not a second authority.
+SQL commits first; projection replacement is atomic. The next locked task read
+repairs missing, corrupt or stale projections from SQL, including removals. If
+projection writing fails, the API can report failure **after SQL committed**:
+read the task before retrying. A prepared attempt can therefore be retained even
+though dispatch never occurred; existing run reconciliation handles attempts
+that never started. Registration retries should supply the same UUID.
+
+Old task writers reject version 2. New code rejects a changed version-1 snapshot
+after activation rather than overwriting SQL; the exact migration backup is
+accepted only for recovery of the commit-before-projection window. Deploy
+compatible readers/writers together before using this feature; stop old
+processes before recovery. This PR does not perform that deployment or mutate
+live databases/configuration/auth/locks. Back up the entire SQLite database with
+a SQLite-consistent backup, not just `tasks.json`, before operational rollout.
+
+## User operations and memory
+
+Task tool register/get/list/dependencies accept stable project numbers where
+appropriate; canonical dependency edges remain UUIDs. Title/summary are editable.
+The tool exposes public fields separately from private dispatch/readiness details.
+Ctrl+T includes merged tasks, retains navigation and `r`, polls automatically and
+preserves selection. `d` asks for confirmation and only removes a verified merged
+task's list membership; the SQL record, dependency edges and number are retained.
+Visible PR URLs and OSC8 hyperlinks remain available (terminal gesture behavior
+is terminal-specific; no physical Cmd-gesture verification is claimed).
+
+Orchestrator `memory` (and compatibility alias `history`) supports `action: tasks`
+for persistent cross-session lookup including removed records. Retrieval never
+activates/imports projects or repairs projections. Read-only SQLite may recreate
+missing owner-only WAL/SHM siblings using a read-write connection's read, without
+writing database rows. Conversation indexing remains separately rebuildable.
+
+Validation uses isolated temporary homes/SQLite and real App fixtures at 80/120
+columns, not a live installation. Relevant checks and prior failures are recorded
+in the implementation report; no full-suite or baseline comparison is required.

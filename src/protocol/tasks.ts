@@ -17,6 +17,7 @@ export interface TaskRun {
 export interface TaskReadiness { head: string; run: string; validatedAt: string; validation: string; checks: "passed" | "not_configured" }
 export interface TaskEvent { revision: number; at: string; kind: string; status: TaskStatus; run?: string; pr?: TaskPR; attention?: TaskAttention; readiness?: TaskReadiness }
 export interface Task {
+  number?: number; checkpoints?: import("./task-ledger").LedgerTask["checkpoints"]; removedAt?: string;
   readonly id: string; name: string; summary: string; branch: string; status: TaskStatus;
   createdAt: string; updatedAt: string; revision: number;
   /** Explicit prerequisite task IDs; absent in legacy records. Not a scheduling signal. */
@@ -26,7 +27,7 @@ export interface Task {
   history: TaskEvent[];
 }
 /** Small UI projection. No transcripts, prompts, reports or mutable display-name identities. */
-export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr" | "dependsOn" | "publication"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
+export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr" | "dependsOn" | "publication" | "number" | "checkpoints" | "archive"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
 /** taskPR's validators; tasks.ts shares them for the rest of a record. */
 export const sha = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{40,64}$/.test(s);
 export const object = (s: unknown): s is Record<string, unknown> => !!s && typeof s === "object" && !Array.isArray(s);

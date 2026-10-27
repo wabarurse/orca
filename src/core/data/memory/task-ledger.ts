@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-/** DORMANT: caller-owned connection only; no paths, opening, backfill or runtime call.
+/** Caller-owned connection only; runtime activation belongs to ledger-store.
  * Archive user_version belongs to the rebuildable index (currently 2). Independent
  * ledger versioning lets those readers coexist without downgrading/rejecting it.
  */
@@ -10,8 +10,9 @@ export function installTaskLedgerSchema(db: Database): void {
       singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL
     ) STRICT`);
     const row = db.query("SELECT version FROM task_ledger_schema WHERE singleton=1").get() as { version: number } | null;
-    if (row && row.version !== 1) throw new Error("unsupported task ledger schema version");
-    if (row) return;
+    if (row && ![1, 2].includes(row.version)) throw new Error("unsupported task ledger schema version");
+    if (row?.version === 2) return;
+    if (row?.version === 1) { upgradeRetention(db); return; }
     // No IF NOT EXISTS: an unversioned partial/conflicting schema must fail closed.
     db.exec(`
       CREATE TABLE task_ledger_projects (
@@ -52,5 +53,18 @@ export function installTaskLedgerSchema(db: Database): void {
       BEGIN SELECT RAISE(ABORT,'task ledger binding/high water cannot regress'); END;
       INSERT INTO task_ledger_schema VALUES(1,1);
     `);
+    upgradeRetention(db);
   }).immediate();
+}
+
+/** Version 1 was additive/dormant; version 2 is the activation safety upgrade. */
+function upgradeRetention(db: Database): void {
+  db.exec(`
+    CREATE UNIQUE INDEX task_ledger_uuid ON task_ledger_records(lower(id));
+    CREATE TRIGGER task_ledger_revision BEFORE UPDATE ON task_ledger_records
+    WHEN NEW.revision<OLD.revision OR NEW.membership_revision<OLD.membership_revision
+      OR (OLD.removed_at IS NOT NULL AND NEW.removed_at IS NOT OLD.removed_at)
+    BEGIN SELECT RAISE(ABORT,'task revision/membership cannot regress'); END;
+    UPDATE task_ledger_schema SET version=2 WHERE singleton=1;
+  `);
 }

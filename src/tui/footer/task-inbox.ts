@@ -1,3 +1,4 @@
+import { publicTaskStatus } from "../../protocol/task-ledger";
 import { taskPublicationMilestone } from "../../protocol/tasks";
 // Read-only presentation of the durable registry. Never inspect agents/transcripts.
 import { taskPR, taskStatusLabels, type TaskRow } from "../../protocol";
@@ -69,7 +70,7 @@ export function taskInboxLines(data: TaskInboxData, cols: number): { lines: stri
   } else if (data.loading) lines.push(...bounded(data.rows ? "refreshing task inbox…" : "loading task inbox…", cols));
   if (!data.rows) return { lines };
   if (!data.rows.length) {
-    lines.push(...bounded(data.error ? "last successful snapshot had no active registered tasks." : "no active registered tasks.", cols));
+    lines.push(...bounded(data.error ? "last successful snapshot had no listed tasks." : "no listed tasks.", cols));
     lines.push(...bounded("unregistered or historical work is not tracked here; this is not a completion claim.", cols));
     return { lines };
   }
@@ -89,8 +90,8 @@ export function taskInboxLines(data: TaskInboxData, cols: number): { lines: stri
     let milestone;
     try { milestone = taskPublicationMilestone(row); } catch { /* malformed proof stays unknown */ }
     const published = milestone?.kind === "published";
-    const status = milestone && milestone.kind !== "unknown" ? milestone.label : row.attention ? inboxText(row.attention.kind) : taskStatusLabels[row.status];
-    const fields = [inboxText(row.name), inboxText(row.summary), status, url];
+    const status = publicTaskStatus(row);
+    const fields = [`#${row.number ?? "?"} ${inboxText(row.name)}`, inboxText(row.summary), status, url];
     const decorate = (part: string, i: number) => i === 3 ? link(part) : i === 2 && published ? `\x1b[32m${link(part)}\x1b[0m` : part;
     if (wide) {
       const cells = fields.map((text, i) => bounded(text, widths[i]!).map(part => decorate(part, i)));

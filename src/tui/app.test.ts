@@ -4335,7 +4335,7 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
     tasks = [...tasks].reverse().map(t => t.id === id(1) ? { ...t, summary: "Updated durable metadata" } : t);
     await app.refreshSessions();
     await until(() => screen().includes("Updated durable metadata"));
-    expect(screen()).toContain("Task #1 · Merged");
+    expect(screen()).toContain("Task #1 · merged");
     term.resize(52, 18);
     await until(() => screen().includes("TASKS"));
     term.type("\x14");
@@ -4460,5 +4460,39 @@ test("task tree cycling reveals long independent registries without changing cha
     term.press({ name: "escape" });
     await until(() => !screen().includes("TASKS"));
     expect(app.input.text).toBe("keep draft");
+  } finally { app.quit(); await running; }
+});
+
+for (const width of [80, 120]) test(`persistent task tree real App ${width}: confirmed merged d retains SQL and numbering`, async () => {
+  const { registerTask, observeTaskPR, getTask, listTasks, setTaskDependencies } = await import("../core/data/tasks/tasks");
+  const { searchLedger } = await import("../core/data/tasks/ledger-store");
+  const project = `persistent-tree-${width}`;
+  mkdirSync(paths.project(project), { recursive: true });
+  const a = await registerTask(project, { name: "Merged parent", summary: "retained memory", branch: "feat/a", authorized: true });
+  const b = await registerTask(project, { name: "Queued child", summary: "dependent", branch: "feat/b", authorized: true });
+  await setTaskDependencies(project, b.id, [a.id]);
+  await observeTaskPR(project, a.id, { pr: { repository: "o/r", number: 1, url: "https://github.com/o/r/pull/1", head: "a".repeat(40) }, branch: a.branch, state: "MERGED", mergedAt: "2026-01-01T00:00:00Z", ready: false, checks: "unknown" });
+  const term = fakeTerm(width, 34), fake = fakeOrchestrators();
+  const app = new App({ term, pollMs: 100_000, agents: async () => [], openOrchestrator: fake.openOrchestrator });
+  const running = app.run(project), screen = () => term.display.screen().join("\n");
+  try {
+    await until(() => !!app.page); term.type("draft"); term.type("\x14");
+    await until(() => screen().includes("Task #1 · merged"));
+    expect(term.raw()).toContain("https://github.com/o/r/pull/1"); // OSC8 + visible fallback; not a physical Cmd gesture claim
+    term.press({ name: "down" }); await until(() => screen().includes("Task #2 · queued"));
+    term.type("d"); await until(() => screen().includes("Only verified merged"));
+    term.press({ name: "up" }); await until(() => screen().includes("Task #1 · merged"));
+    term.type("d"); await until(() => screen().includes("y confirm / n cancel"));
+    term.type("n"); expect(await listTasks(project)).toHaveLength(2);
+    term.type("d"); term.type("y");
+    await until(() => screen().includes("Task #2 · queued") && !screen().includes("#1 ●"));
+    expect((await listTasks(project)).map(t => t.number)).toEqual([2]);
+    expect((await getTask(project, b.id)).dependsOn).toEqual([a.id]);
+    expect((searchLedger({ project, taskId: a.id })[0] as { removedAt: string }).removedAt).toBeTruthy();
+    expect(screen()).toContain("retained");
+    term.type("r"); await app.refreshSessions(); expect(screen()).toContain("Task #2 · queued");
+    term.type("\x14"); expect(app.input.text).toBe("draft"); term.type("\x14");
+    await until(() => screen().includes("Task #2 · queued"));
+    expect(screen()).not.toContain("#1 ●");
   } finally { app.quit(); await running; }
 });

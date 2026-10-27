@@ -1,4 +1,4 @@
-/** Dormant canonical user record shared by the future SQL authority and JSON projection.
+/** Canonical user record shared by the SQL authority and JSON projection.
  * `number` is project-local; `id` is the global UUID used by dependency references.
  * Project/repository binding and operational metadata are deliberately not user fields.
  */
@@ -17,7 +17,6 @@ export interface LedgerTask {
   checkpoints: { queuedAt?: string; buildingAt?: string; prOpenAt?: string; mergedAt?: string };
   status: LedgerTaskStatus;
   dependencies: string[];
-  references: string[];
   prLink?: string;
 }
 
@@ -32,4 +31,23 @@ export interface LedgerTaskSafety {
   attempts?: import("./tasks").TaskRun[];
   history?: import("./tasks").TaskEvent[];
   mergeObservedAt?: string;
+}
+
+/** Public checkpoints do not depend on review/CI readiness. The private legacy
+ * lifecycle remains unchanged for dispatch and merge safety. */
+export function canonicalTask(task: import("./tasks").Task): LedgerTask {
+  const checkpoints = { ...task.checkpoints };
+  const starts = task.runs.flatMap(r => r.startedAt ? [r.startedAt] : []).sort();
+  if (!checkpoints.queuedAt && task.history[0]?.kind === "registered") checkpoints.queuedAt = task.createdAt;
+  if (!checkpoints.buildingAt && starts[0]) checkpoints.buildingAt = starts[0];
+  if (!checkpoints.prOpenAt && task.publication?.state === "OPEN") checkpoints.prOpenAt = task.publication.observedAt;
+  if (!checkpoints.mergedAt && task.archive) checkpoints.mergedAt = task.archive.mergedAt;
+  return { id: task.id, number: task.number ?? 0, title: task.name, summary: task.summary,
+    createdAt: task.createdAt, checkpoints,
+    status: task.archive ? "merged" : checkpoints.prOpenAt ? "pr open" : checkpoints.buildingAt ? "building" : "queued",
+    dependencies: task.dependsOn ?? [], ...(task.pr ? { prLink: task.pr.url } : {}) };
+}
+
+export function publicTaskStatus(task: Pick<import("./tasks").Task, "archive" | "checkpoints" | "publication">): LedgerTaskStatus {
+  return task.archive ? "merged" : task.checkpoints?.prOpenAt || task.publication?.state === "OPEN" ? "pr open" : task.checkpoints?.buildingAt ? "building" : "queued";
 }

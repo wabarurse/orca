@@ -1,3 +1,4 @@
+import { publicTaskStatus } from "../../protocol/task-ledger";
 import { taskPublicationMilestone } from "../../protocol/tasks";
 import { check, type Task, type TaskTreeView } from "../../protocol/tasks";
 import { cells, plainText, visibleLength, wordWrap, wrap } from "./text";
@@ -71,6 +72,9 @@ function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: num
  * Other prerequisites remain explicit references, never implied tree edges.
  */
 function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>): OutlineNode[] {
+  dependencyLayers(tasks); // Validate against retained SQL records before hiding membership.
+  const visible = new Set(tasks.filter(t => !t.removedAt).map(t => t.id.toLowerCase()));
+  tasks = tasks.filter(t => visible.has(t.id.toLowerCase())).map(t => ({ ...t, dependsOn: t.dependsOn.filter(id => visible.has(id.toLowerCase())) }));
   const { parents } = dependencyLayers(tasks);
   const primary = parents.map(ps => [...ps].sort((a, b) => a - b)[0]);
   const children = tasks.map((_, i) => tasks.flatMap((t, j) => primary[j] === i ? [t.id] : []));
@@ -88,16 +92,7 @@ function active(task: TreeTask): boolean {
   return !task.archive && !task.attention && task.runs.some(run => run.state === "started" && !run.endedAt);
 }
 
-function status(task: TreeTask): string {
-  const milestone = taskPublicationMilestone(task);
-  if (milestone.kind !== "unknown") return milestone.kind === "merged" ? "Merged" : milestone.label;
-  if (task.attention) return task.attention.kind;
-  if (active(task)) return "Loading";
-  if (task.status === "ready_to_merge" && task.readiness?.head === task.pr?.head) return "Ready";
-  const latest = task.runs.at(-1);
-  if (latest?.state === "stopped" || latest?.state === "failed") return latest.state;
-  return task.status.replaceAll("_", " ");
-}
+function status(task: TreeTask): string { return publicTaskStatus(task); }
 
 function statusColor(task: TreeTask): number {
   const tone = taskPublicationMilestone(task).tone;
@@ -146,10 +141,12 @@ function paintNode(canvas: string[][], label: string, x: number, row: number, vi
 function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][] {
   const dependencies = selected.dependsOn.map(id => {
     const i = tasks.findIndex(t => t.id.toLowerCase() === id.toLowerCase());
-    return `#${i + 1} ${tasks[i]!.name}`;
+    return `#${tasks[i]!.number ?? i + 1} ${tasks[i]!.name}${tasks[i]!.removedAt ? " (removed from list; retained)" : ""}`;
   });
   const fields: [string, string][] = [
-    [`Task #${tasks.indexOf(selected) + 1} · ${status(selected)}`, selected.name],
+    [`Task #${selected.number ?? tasks.indexOf(selected) + 1} · ${status(selected)}`, selected.name],
+    ["UUID", selected.id],
+    ["Created", selected.createdAt],
     ["Overview", selected.summary],
     ["Dependencies", dependencies.join("; ") || "none"],
   ];
@@ -169,6 +166,7 @@ function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: nu
   for (const [name, value] of detailFields(tasks, selected)) {
     lines.push(...safeLines(`${name}: ${value}`, cols), "");
   }
+  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) lines.push(...safeLines(`${checkpoint}: ${at}`, cols));
   const pr = selected.archive?.pr ?? selected.pr;
   if (pr) {
     for (const label of safeLines(`PR: ${pr.repository} #${pr.number}`, cols)) {
@@ -214,8 +212,8 @@ export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options:
     for (const [row, node] of nodes.slice(view.y, view.y + view.rows).entries()) {
       const i = tasks.findIndex(t => t.id === node.id), task = tasks[i]!;
       const indent = "  ".repeat(Math.min(node.depth, Math.max(0, Math.floor((view.cols - 25) / 2))));
-      const label = `${node.id === selected?.id ? "▶" : " "}${indent}#${i + 1} ● ${plainText(task.name)}`;
-      hits.push(...paintNode(canvas, outlineLabel(label, view.cols), 0, row, view, { id: task.id, number: i + 1 }));
+      const label = `${node.id === selected?.id ? "▶" : " "}${indent}#${task.number ?? i + 1} ● ${plainText(task.name)}`;
+      hits.push(...paintNode(canvas, outlineLabel(label, view.cols), 0, row, view, { id: task.id, number: task.number ?? i + 1 }));
     }
     const detail = detailLines(tasks, selected, p.detailCols);
     const dy = offset(options.detailY, Math.max(0, detail.length - p.detailRows));
@@ -224,7 +222,7 @@ export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options:
       const line = row.join("");
       return task ? line.replace("●", `\x1b[${statusColor(task)}m●\x1b[0m`) : line;
     });
-    if (!tasks.length) lines[0] = "No tasks";
+    if (!nodes.length) lines[0] = "No tasks";
     const footer = `Outline y=${view.y}/${Math.max(0, nodes.length - view.rows)}; details=${dy}/${Math.max(0, detail.length - p.detailRows)}`;
     return { nodes, animated: nodes.slice(view.y, view.y + view.rows).some(n => active(tasks.find(t => t.id === n.id)!)),
       lines: compose(p, lines, detail, dy, footer), hits, selectedId: selected?.id,

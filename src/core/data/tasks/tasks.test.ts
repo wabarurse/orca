@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterAll, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -33,6 +34,13 @@ async function ready() {
 }
 const info = (run: string) => ({ project, id: "worker-feat-x", branch: "feat/x", role: "worker" as const, run, cwd: home });
 
+// Corruption fixtures target private durable SQL, never the recoverable JSON view.
+function safety(task: Task): void {
+  const db = new Database(paths.memory);
+  try { db.query("UPDATE task_ledger_records SET safety_json=? WHERE id=?").run(JSON.stringify({ legacy: task }), task.id); }
+  finally { db.close(); }
+}
+
 test("versioned persistence, stable UUIDs, narrow typed rows and project isolation", async () => {
   const t = await registerTask(project, input());
   expect(t.status).toBe("queued"); expect(t.id).toMatch(/^[0-9a-f-]{36}$/);
@@ -40,8 +48,8 @@ test("versioned persistence, stable UUIDs, narrow typed rows and project isolati
   await expect(registerTask(project, { ...input(), id: t.id, name: "Different task" })).rejects.toThrow("different fields");
   expect(await getTask(project, t.id)).toEqual(t);
   expect(await listTasks("another-project")).toEqual([]);
-  expect(Object.keys((await listTasks(project))[0]!).sort()).toEqual(["id", "name", "summary", "branch", "status", "createdAt", "updatedAt", "review"].sort());
-  expect(JSON.parse(readFileSync(join(paths.project(project), "tasks.json"), "utf8")).version).toBe(1);
+  expect(Object.keys((await listTasks(project))[0]!).sort()).toEqual(["id", "number", "checkpoints", "archive", "dependsOn", "name", "summary", "branch", "status", "createdAt", "updatedAt", "review"].sort());
+  expect(JSON.parse(readFileSync(join(paths.project(project), "tasks.json"), "utf8")).version).toBe(2);
   expect(taskStatusLabels.ready_to_merge).toBe("ready to merge");
 });
 
@@ -106,12 +114,14 @@ test("failed launches and failed persistence cannot fabricate working or dispatc
   const failed = await getTask(project, t.id);
   expect(failed.status).toBe("queued"); expect(failed.runs[0]?.state).toBe("failed"); expect(failed.attention?.kind).toBe("blocked");
   const before = readFileSync(join(paths.project(project), "tasks.json"), "utf8");
-  // A directory at the final filename makes read/write fail closed, without touching user data.
+  // Projection failure prevents dispatch, but SQL has already committed the prepared attempt.
   rmSync(join(paths.project(project), "tasks.json")); mkdirSync(join(paths.project(project), "tasks.json"));
   await expect(tool.run({ taskId: t.id, branch: t.branch, prompt: "retry" }, ctx)).rejects.toThrow();
   expect(starts).toBe(1);
   rmSync(join(paths.project(project), "tasks.json"), { recursive: true }); writeFileSync(join(paths.project(project), "tasks.json"), before);
-  expect(await getTask(project, t.id)).toEqual(failed);
+  const recovered = await getTask(project, t.id);
+  expect(recovered.runs).toHaveLength(2); expect(recovered.runs[1]?.state).toBe("prepared");
+  expect(recovered.status).toBe("queued");
 });
 
 test("PR creation, absence of CI, normal report and process exit never imply readiness", async () => {
@@ -215,7 +225,7 @@ test("confirmed matching merges archive but retain records; neither old branch n
   expect(await listTasks(project)).toHaveLength(2);
   const mergedAt = new Date().toISOString();
   await archiveMergedTasks(project, observation().pr, mergedAt); await archiveMergedTasks(project, observation().pr, mergedAt);
-  expect((await listTasks(project)).map(t => t.id)).toEqual([newer.id]);
+  expect((await listTasks(project)).map(t => t.id)).toEqual([first.id, newer.id]);
   expect((await getTask(project, first.id)).archive).toMatchObject({ reason: "merged", mergedAt });
   expect((await getTask(project, first.id)).history.filter(e => e.kind === "merged")).toHaveLength(1);
   expect(await allTasks(project)).toHaveLength(2);
@@ -272,7 +282,7 @@ test("queued updates cannot resurrect a deleted/recreated project", async () => 
   const deletion = withProjectStateLock(project, async () => { entered(); await blocked; rmSync(paths.project(project), { recursive: true }); mkdirSync(paths.project(project)); });
   await inLock;
   const change = setTaskAttention(project, t.id, { kind: "blocked", reason: "Old project" }).catch(e => e);
-  release(); await deletion; expect(await change).toBeInstanceOf(Error); expect(await listTasks(project)).toEqual([]);
+  release(); await deletion; expect(await change).toBeInstanceOf(Error); await expect(listTasks(project)).rejects.toThrow("identity/repository changed");
 });
 
 test("registry updates never consume questions or durable agent/user message queues", async () => {
@@ -343,7 +353,7 @@ test("malformed persisted run states and readiness history fail closed", async (
     { ...t, history: t.history.map(e => e.readiness ? { ...e, readiness: {} } : e) },
     { ...t, history: t.history.map(e => e.readiness ? { ...e, readiness: undefined } : e) },
   ]) {
-    writeFileSync(path, JSON.stringify({ version: 1, tasks: [corrupt] }));
+    safety(corrupt as Task);
     await expect(allTasks(project)).rejects.toThrow();
   }
 });
@@ -372,7 +382,9 @@ test("publication persists across rereads, attention revisions, close/reopen and
   expect(opened.publication).toEqual({ state: "OPEN", pr: observation().pr, observedAt: expect.any(String) });
   expect((await listTasks(project)).find(row => row.id === t.id)?.publication).toEqual(opened.publication);
   const disk = JSON.parse(readFileSync(join(paths.project(project), "tasks.json"), "utf8"));
-  expect(disk.tasks[0].publication).toEqual(opened.publication);
+  expect(disk.version).toBe(2); expect(disk.tasks[0].status).toBe("pr open");
+  expect(disk.tasks[0].prLink).toBe(opened.publication?.pr.url);
+  expect(disk.tasks[0].publication).toBeUndefined();
   await setTaskAttention(project, t.id, { kind: "unknown", reason: "lookup unavailable" });
   const unavailable = await getTask(project, t.id);
   expect(unavailable.revision).toBeGreaterThan(opened.revision);
@@ -393,8 +405,8 @@ test("publication persists across rereads, attention revisions, close/reopen and
 test("publication is optional in legacy ready records; new proof preserves ready validation and history", async () => {
   const { taskPublicationView } = await import("../../../protocol/tasks");
   const t = await ready(), path = join(paths.project(project), "tasks.json");
-  const store = JSON.parse(readFileSync(path, "utf8")); delete store.tasks[0].publication;
-  writeFileSync(path, JSON.stringify(store));
+  const store = structuredClone(t); delete store.publication; delete store.checkpoints?.prOpenAt;
+  safety(store);
   const legacy = await getTask(project, t.id);
   expect(taskPublicationView(legacy).milestone.kind).toBe("unknown");
   const updated = await observeTaskPR(project, t.id, observation());
@@ -412,12 +424,12 @@ test("publication malformed persisted evidence is rejected without changing lega
   for (const publication of [null, {}, { ...proof, state: "unknown" }, { ...proof, observedAt: 123 },
     { ...proof, observedAt: "invalid" }, { ...proof, pr: { ...proof.pr, head: "invalid" } },
     { ...proof, pr: { ...proof.pr, number: 5, url: "https://github.com/o/r/pull/5" } }]) {
-    const store = JSON.parse(original); store.tasks[0].publication = publication;
-    writeFileSync(path, JSON.stringify(store));
+    const store = { ...t, publication };
+    safety(store as Task);
     await expect(getTask(project, t.id)).rejects.toThrow();
   }
-  const store = JSON.parse(original); delete store.tasks[0].pr;
-  writeFileSync(path, JSON.stringify(store));
+  const store = { ...t, publication: proof }; delete store.pr;
+  safety(store);
   await expect(getTask(project, t.id)).rejects.toThrow("publication pr mismatch");
-  writeFileSync(path, original);
+  safety(t);
 });

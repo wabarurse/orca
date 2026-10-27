@@ -1,11 +1,12 @@
-// SQLite is a rebuildable retrieval index. JSONL and tasks.json remain authoritative.
+// These archive tables are a rebuildable retrieval index. The separate task_ledger_*
+// tables in this SAME file are durable authority: never delete/replace memory.sqlite.
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import { paths } from "../../../config";
 import { historicalMessages } from "../images";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
-import { allTasks } from "../tasks";
+import { existingTasks } from "../tasks";
 import type { Task } from "../../../protocol";
 import { open, type Transcript } from "../transcripts";
 import type { Entry } from "../../../protocol";
@@ -211,7 +212,7 @@ export interface ArchiveOptions extends Pick<SyncOptions, "signal"> { busyMs?: n
 /** Archive succeeds before context can be replaced. Safe to repeat after a crash. */
 export async function archiveTranscript(project: string, transcript: Transcript, { busyMs = BUSY_MS, signal }: ArchiveOptions = {}): Promise<Task[]> {
   const identity = projectIdentity(project);
-  const tasks = await allTasks(project);
+  const tasks = existingTasks(project);
   assertProjectIdentity(project, identity);
   const entries = transcriptEntries(transcript), db = database(busyMs);
   try { await sync(db, project, entries, tasks, { signal }); } finally { db.close(); }
@@ -240,7 +241,7 @@ export async function archiveBestEffort(project: string, transcript: Transcript,
   } finally { clearTimeout(timer); expired.catch(() => {}); }
 }
 
-/** Remove every row of a project, including its FTS postings. No-op when no archive exists. */
+/** Remove rebuildable archive rows of a project, including its FTS postings. Durable task ledger is retained. No-op when no archive exists. */
 export function purgeProject(project: string): void {
   if (!existsSync(archivePath())) return;
   const db = database();
@@ -461,7 +462,7 @@ export async function queryGlobalHistory(project: string, input: Record<string, 
     assertProjectIdentity(project, identity);
     const transcript = open(paths.transcript(project, ARCHIVE_AGENT));
     // Refresh our own transcript first so a just-cleared epoch is searchable; an empty transcript has nothing to index (and creates no file).
-    const tasks = transcript.head() !== null ? await archiveTranscript(project, transcript, { signal }) : await allTasks(project);
+    const tasks = transcript.head() !== null ? await archiveTranscript(project, transcript, { signal }) : existingTasks(project);
     const own = { project, epoch: contextEpoch(transcriptEntries(transcript)), taskIds: tasks.map(t => t.id) };
     signal?.throwIfAborted();
     const db = readonlyDatabase();

@@ -27,7 +27,7 @@ export interface Tool {
 
 // Which tools each role gets. The set is deliberately small. `history` is orchestrator-only by owner decision.
 export const toolsFor: Record<Role, string[]> = {
-  orchestrator: ["bash", "spawn", "message", "ask", "web_search", "task", "history"],
+  orchestrator: ["bash", "spawn", "message", "ask", "web_search", "task", "history", "memory"],
   worker: ["bash", "message", "web_search", "task"],
   reviewer: ["bash", "message", "complexity", "web_search", "task"],
 };
