@@ -11,7 +11,7 @@ const NAVIGATION: HelpEntry[] = [
   { label: "ctrl+n", description: "new orchestrator" },
   { label: "ctrl+z / ctrl+x", description: "previous / next project page" },
   { label: "ctrl+b", description: "open or close projects" },
-  { label: "ctrl+t", description: "fullscreen task tree; shift+tab/click selects; arrows/PgUp/PgDn scroll graph, shift+up/down scroll details; r refresh, esc returns to draft" },
+  { label: "ctrl+t", description: "task outline; up/down selects; left folds/parent, right expands/child; shift+arrows previous/next visible same depth; shift+tab/click selects; PgUp/PgDn details; r refresh, esc returns to draft" },
   { label: "ctrl+q", description: "inbox questions toggle; arrivals never open inbox" },
   { label: "shift+tab (inbox)", description: "switch tasks / questions; esc or tab closes without answering" },
   { label: "pgup/pgdn / wheel", description: "scroll conversation, help or inbox tasks (mouse reporting required)" },
