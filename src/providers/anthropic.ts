@@ -1,17 +1,19 @@
+import type { RequestScope } from "./bounded-transport";
+import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
 import { requireVision, validatedBase64 } from "./images";
 import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { claudeSearchResults } from "./search";
 import { CLAUDE_BETAS } from "../login";
 import { validateSettings, type RequestSettings } from "./catalog";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { type Middleware, type MiddlewareNext } from "@anthropic-ai/sdk";
 import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { claudeCatalogEfforts, rememberCatalogEfforts } from "./catalog";
-import { exhaustedQuota, withTransientRetries, type RetryOptions } from "./retry";
+import { exhaustedQuota, type RetryOptions } from "./retry";
 
 // account.ts supplies Claude Code subscription credentials. There is no API-key mode.
-export function anthropic(client: Anthropic, options: { promptCache?: boolean; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
+export function anthropic(client: Anthropic, options: { recovery?: RecoveryPolicy; promptCache?: boolean; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
   return {
     name: "anthropic",
     async complete(req) {
@@ -31,27 +33,20 @@ export function anthropic(client: Anthropic, options: { promptCache?: boolean; r
         ],
         ...(req.tools.length ? { tools: req.tools } : {}),
       };
-      // Retries are ours (./retry), on the initial request only. The SDK keeps one: its credentials refresh on a
-      // 401 is a retry (login/claude.ts's forceRefresh), so that single attempt stays, and may also answer one
-      // transient failure before ours do.
-      return withTransientRetries(async started => {
-        const stream = client.messages.stream(params, { maxRetries: 1,
-          // Stop the SDK's own transient retry too, retaining its 401 refresh.
-          middleware: [async (request, next, context) => {
-            const response = await next(request);
-            if (!response.ok && exhaustedQuota(await context.parse(response).catch(() => undefined))) {
-              const headers = new Headers(response.headers);
-              headers.set("x-should-retry", "false");
-              return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-            }
-            return response;
-          }], ...(req.signal ? { signal: req.signal } : {}),
-          ...(req.settings?.fast && req.model !== "claude-opus-5-5" ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
-        stream.on("streamEvent", started);
-        stream.on("text", req.onText);
-        const message = await stream.finalMessage();
-        return completedTurn(message);
-      }, { signal: req.signal, what: "claude", model: req.model, notice: req.onNotice, ...options.retry });
+      const recovery = completionRecovery();
+      return providerRequest(options.recovery, async (started, scope) => {
+        const active = scope ? client.withOptions({ maxRetries: 0, logLevel: "off" }) : client;
+        const complete = async () => {
+          const stream = active.messages.stream(params, { maxRetries: scope ? 0 : 1,
+            middleware: [recovery.middleware(scope)], signal: scope?.signal ?? req.signal,
+            ...(req.settings?.fast && req.model !== "claude-opus-5-5" ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
+          stream.on("streamEvent", started);
+          stream.on("text", req.onText);
+          const message = await stream.finalMessage();
+          return completedTurn(message);
+        };
+        return recovery.authorize(complete, scope);
+      }, { signal: req.signal, what: "claude", model: req.model, notice: req.onNotice, ...options.retry }, recovery.fetch);
     },
     async search(req) {
       req.signal.throwIfAborted();
@@ -83,6 +78,41 @@ export function anthropic(client: Anthropic, options: { promptCache?: boolean; r
       rememberCatalogEfforts(all.map((m) => [m.id, claudeCatalogEfforts(m.capabilities)]));
       // Newest first, so callers can take the head as "recent".
       return all.sort((a, b) => b.created_at.localeCompare(a.created_at)).map((m) => m.id);
+    },
+  };
+}
+
+/** One closure per completion, never per transient attempt: refresh budget is shared. */
+function completionRecovery() {
+  let refreshed = false;
+  let send: RequestScope["fetch"];
+  return {
+    fetch: ((input, init) => send(input, init)) as RequestScope["fetch"],
+    middleware(scope?: RequestScope): Middleware {
+      return async (request, next, context) => {
+        // Preserve the configured transport and request fields without private SDK access.
+        send = (_, init) => next({ ...request, ...init } as Parameters<MiddlewareNext>[0]);
+        // SDK iterator cleanup aborts its private signal on success/error. Caller abort
+        // is already linked to the helper lifetime, which owns transport cancellation.
+        const response = scope ? await scope.fetch(request.url, { ...request, signal: scope.signal }) : await next(request);
+        if (!response.ok && exhaustedQuota(await context.parse(response).catch(() => undefined))) {
+          const headers = new Headers(response.headers);
+          headers.set("x-should-retry", "false");
+          return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+        }
+        return response;
+      };
+    },
+    async authorize<T>(complete: () => Promise<T>, scope?: RequestScope): Promise<T> {
+      try { return await complete(); }
+      catch (error) {
+        if (!scope || refreshed || !(error instanceof Anthropic.APIError) || error.status !== 401) throw error;
+        // With zero SDK retries, its 401 handler still invalidates the credential
+        // cache. Dispatch once more within this scope to obtain refreshed credentials.
+        scope.signal.throwIfAborted();
+        refreshed = true;
+        return complete();
+      }
     },
   };
 }

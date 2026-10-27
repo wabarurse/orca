@@ -1,15 +1,16 @@
+import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
 import { requireVision, validatedBase64 } from "./images";
 import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { codexSearchItemSources, codexSearchResults } from "./search";
 import { validateSettings, type RequestSettings } from "./catalog";
 import OpenAI from "openai";
-import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
+import type { FunctionTool, ResponseOutputItemDoneEvent, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../login";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { codexCatalogEfforts, rememberCatalogEfforts } from "./catalog";
-import { exhaustedQuota, withTransientRetries, type RetryOptions } from "./retry";
+import { exhaustedQuota, type RetryOptions } from "./retry";
 
 // Protocol/catalog compatibility snapshot, matching Codex CLI 0.154.0.
 export const CODEX_CLIENT_VERSION = "0.154.0";
@@ -104,25 +105,27 @@ function clientFor(tokens: CodexTokens): OpenAI {
 }
 
 /** OpenAI models always use the Codex subscription endpoint. */
-export function openai(credentials: ReturnType<typeof codexCredentials>, options: { retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
+export function openai(credentials: ReturnType<typeof codexCredentials>, options: { recovery?: RecoveryPolicy; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
   const request = <T>(run: (client: OpenAI) => Promise<T>) => authorizedRequest(credentials, run);
   return {
     name: "openai",
     async complete(req) {
       requireVision(req.model, req.messages);
       const input = toResponses(req.messages) as ResponseInputItem[], settings = codexRequestSettings(req.model, req.settings);
+      let refreshed = false;
       // Retries are ours (./retry), on the initial request only: the SDK's own are off.
-      return withTransientRetries(async started => {
-        const stream = await request((client) => client.responses.create({
+      return providerRequest(options.recovery, async (started, scope) => {
+        // Use the lifetime signal, not SDK-private iterator-cleanup cancellation.
+        const stream = await authorizedRequest(credentials, (client) => (scope ? client.withOptions({ fetch: (input, init) => scope.fetch(input, { ...init, signal: scope.signal }), maxRetries: 0, logLevel: "off" }) : client).responses.create({
           // The SDK's platform type requires server IDs that Codex's stateless history omits.
           model: req.model, input, instructions: req.system ? `You are Codex, an AI coding agent.\n\n${req.system}` : "You are Codex, an AI coding agent.",
           store: false, stream: true, parallel_tool_calls: true,
           ...settings, include: ["reasoning.encrypted_content"],
           ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
           // Codex manages its output budget; the backend rejects max_output_tokens.
-        }, { signal: req.signal, maxRetries: 0 }));
+        }, { signal: scope?.signal ?? req.signal, maxRetries: 0 }), scope?.signal ?? req.signal, scope ? () => { if (refreshed) return false; refreshed = true; return true; } : undefined);
         let usage: Turn["usage"];
-        const output = await completedOutput(observed(stream as AsyncIterable<CodexStreamEvent>, started), req.onText, false, value => { usage = value; });
+        const output = await completedOutput(observed(stream as AsyncIterable<CodexStreamEvent>, started), req.onText, false, value => { usage = value; }, !!scope);
         const content = fromResponses(output);
         return { completion: summaryCompletion(output), content, ...(usage ? { usage, inputTokens: usage.input } : {}), stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
       }, { signal: req.signal, what: "codex", model: req.model, notice: req.onNotice, ...options.retry });
@@ -175,23 +178,18 @@ async function* observed<T>(stream: AsyncIterable<T>, started: () => void): Asyn
 }
 
 const FAILED_EVENTS = new Set(["response.failed", "response.incomplete", "error"]);
-async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: (text: string) => void, strict = false, onUsage?: (usage: NonNullable<Turn["usage"]>) => void): Promise<ResponseOutputItem[]> {
+async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: (text: string) => void, strict = false, onUsage?: (usage: NonNullable<Turn["usage"]>) => void, drain = false): Promise<ResponseOutputItem[]> {
+  let completed: ResponseOutputItem[] | undefined;
   const doneItems = new Map<number, ResponseOutputItem>();
   for await (const event of stream) {
     if (event.type === "response.output_text.delta") onText(event.delta);
     else if (event.type === "response.output_item.done") {
-      if (strict) {
-        if (!Number.isInteger(event.output_index) || event.output_index < 0 || doneItems.has(event.output_index)) throw new SearchError("malformed");
-        codexSearchItemSources(event.item);
-      }
-      doneItems.set(event.output_index, event.item);
+      recordOutputItem(event, doneItems, strict);
     }
     else if (event.type === "response.completed" || event.type === "response.done") {
-      const output = finalOutput(event, doneItems, strict);
-      const usage = event.response.usage;
-      if (usage) onUsage?.({ input: usage.input_tokens, cachedInput: usage.input_tokens_details?.cached_tokens,
-        output: usage.output_tokens, reasoning: usage.output_tokens_details?.reasoning_tokens });
-      return output;
+      const output = completedEventOutput(event, doneItems, strict, onUsage);
+      if (!drain) return output;
+      completed = output;
     }
     else if (FAILED_EVENTS.has(event.type)) {
       if (!strict && exhaustedQuota(event)) throw event; // Keep structured stream evidence for the persistent error path.
@@ -199,8 +197,23 @@ async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: 
       throw new Error("codex response failed or was incomplete; no tool calls were executed.");
     }
   }
+  if (completed) return completed;
   if (strict) throw new SearchError("incomplete");
   throw new Error("codex stream ended before the response completed.");
+}
+function recordOutputItem(event: ResponseOutputItemDoneEvent, items: Map<number, ResponseOutputItem>, strict: boolean): void {
+  if (strict) {
+    if (!Number.isInteger(event.output_index) || event.output_index < 0 || items.has(event.output_index)) throw new SearchError("malformed");
+    codexSearchItemSources(event.item);
+  }
+  items.set(event.output_index, event.item);
+}
+function completedEventOutput(event: Parameters<typeof finalOutput>[0], items: Map<number, ResponseOutputItem>, strict: boolean, onUsage?: (usage: NonNullable<Turn["usage"]>) => void): ResponseOutputItem[] {
+  const output = finalOutput(event, items, strict);
+  const usage = event.response.usage;
+  if (usage) onUsage?.({ input: usage.input_tokens, cachedInput: usage.input_tokens_details?.cached_tokens,
+    output: usage.output_tokens, reasoning: usage.output_tokens_details?.reasoning_tokens });
+  return output;
 }
 function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEvent, "type"> & { type: "response.done" }), items: Map<number, ResponseOutputItem>, strict = false): ResponseOutputItem[] {
   if (strict) {
@@ -219,13 +232,13 @@ function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEven
   return event.response.output ?? [...items].sort(([a], [b]) => a - b).map(([, item]) => item);
 }
 
-async function authorizedRequest<T>(credentials: ReturnType<typeof codexCredentials>, run: (client: OpenAI) => Promise<T>, signal?: AbortSignal): Promise<T> {
+async function authorizedRequest<T>(credentials: ReturnType<typeof codexCredentials>, run: (client: OpenAI) => Promise<T>, signal?: AbortSignal, allowRefresh: () => boolean = () => true): Promise<T> {
   signal?.throwIfAborted();
   const tokens = await credentials();
   signal?.throwIfAborted();
   try { return await run(clientFor(tokens)); }
   catch (error) {
-    if (!(error instanceof OpenAI.APIError) || error.status !== 401) throw error;
+    if (!(error instanceof OpenAI.APIError) || error.status !== 401 || !allowRefresh()) throw error;
     // Retry only the initial HTTP request, never a partially consumed stream.
     signal?.throwIfAborted();
     const refreshed = await credentials({ forceRefresh: true });
