@@ -358,3 +358,65 @@ test("persisted explicit review intent projects review rounds independently of C
   }
   expect((await listTasks(project)).find(row => row.id === t.id)?.review).toEqual({ rounds: 1, unknown: false, ci: true });
 });
+
+test("publication persists across rereads, attention revisions, close/reopen and merge without readiness", async () => {
+  const { taskPublicationView } = await import("../../../protocol/tasks");
+  const t = await registerTask(project, input());
+  expect(taskPublicationView(t).milestone.kind).toBe("unknown");
+  for (const checks of ["passed", "not_configured", "pending", "failed", "unknown"] as const) {
+    const observed = await observeTaskPR(project, t.id, { ...observation(), ready: false, checks, mergeable: "conflicting" });
+    expect(observed.readiness).toBeUndefined();
+    expect(taskPublicationView(observed).milestone.kind).toBe("published");
+  }
+  const opened = await getTask(project, t.id);
+  expect(opened.publication).toEqual({ state: "OPEN", pr: observation().pr, observedAt: expect.any(String) });
+  const disk = JSON.parse(readFileSync(join(paths.project(project), "tasks.json"), "utf8"));
+  expect(disk.tasks[0].publication).toEqual(opened.publication);
+  await setTaskAttention(project, t.id, { kind: "unknown", reason: "lookup unavailable" });
+  const unavailable = await getTask(project, t.id);
+  expect(unavailable.revision).toBeGreaterThan(opened.revision);
+  expect(unavailable.publication).toEqual(opened.publication);
+  expect(taskPublicationView(unavailable).milestone.kind).toBe("published");
+  await observeTaskPR(project, t.id, { ...observation(), state: "CLOSED", ready: false });
+  expect(taskPublicationView(await getTask(project, t.id)).milestone.kind).toBe("closed");
+  const reopened = await observeTaskPR(project, t.id, observation("b".repeat(40)));
+  expect(reopened.publication?.state).toBe("OPEN");
+  expect(reopened.publication?.pr.head).toBe("b".repeat(40));
+  expect(taskPublicationView(reopened).milestone.kind).toBe("published");
+  await expect(observeTaskPR(project, t.id, { ...observation(), pr: { ...observation().pr, number: 4, url: "https://github.com/o/r/pull/4" } })).rejects.toThrow("another pr");
+  expect((await getTask(project, t.id)).publication).toEqual(reopened.publication);
+  await observeTaskPR(project, t.id, { ...observation("b".repeat(40)), state: "MERGED", mergedAt: new Date().toISOString(), ready: false });
+  expect(taskPublicationView(await getTask(project, t.id)).milestone.kind).toBe("merged");
+});
+
+test("publication is optional in legacy ready records; new proof preserves ready validation and history", async () => {
+  const { taskPublicationView } = await import("../../../protocol/tasks");
+  const t = await ready(), path = join(paths.project(project), "tasks.json");
+  const store = JSON.parse(readFileSync(path, "utf8")); delete store.tasks[0].publication;
+  writeFileSync(path, JSON.stringify(store));
+  const legacy = await getTask(project, t.id);
+  expect(taskPublicationView(legacy).milestone.kind).toBe("unknown");
+  const updated = await observeTaskPR(project, t.id, observation());
+  expect(updated.status).toBe("ready_to_merge"); expect(updated.readiness).toEqual(t.readiness);
+  expect(updated.attention).toBeUndefined();
+  expect(updated.history.slice(0, t.history.length)).toEqual(t.history);
+  expect(updated.publication?.state).toBe("OPEN");
+  expect(await observeTaskPR(project, t.id, observation())).toEqual(updated);
+});
+
+test("publication malformed persisted evidence is rejected without changing legacy schema", async () => {
+  const t = await registerTask(project, input()); await observeTaskPR(project, t.id, observation());
+  const path = join(paths.project(project), "tasks.json"), original = readFileSync(path, "utf8");
+  const proof = (await getTask(project, t.id)).publication!;
+  for (const publication of [null, {}, { ...proof, state: "unknown" }, { ...proof, observedAt: 123 },
+    { ...proof, observedAt: "invalid" }, { ...proof, pr: { ...proof.pr, head: "invalid" } },
+    { ...proof, pr: { ...proof.pr, number: 5, url: "https://github.com/o/r/pull/5" } }]) {
+    const store = JSON.parse(original); store.tasks[0].publication = publication;
+    writeFileSync(path, JSON.stringify(store));
+    await expect(getTask(project, t.id)).rejects.toThrow();
+  }
+  const store = JSON.parse(original); delete store.tasks[0].pr;
+  writeFileSync(path, JSON.stringify(store));
+  await expect(getTask(project, t.id)).rejects.toThrow("publication pr mismatch");
+  writeFileSync(path, original);
+});

@@ -3,7 +3,7 @@ import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { paths } from "../../../config";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import { clean } from "../inbox";
-import { check, object, sha, taskDependencies, taskPR, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol";
+import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol";
 
 interface Store { version: 1; tasks: Task[] }
 const file = (project: string) => `${paths.project(project)}/tasks.json`;
@@ -42,6 +42,7 @@ function validateTask(raw: unknown): asserts raw is Task {
     check(["stopped", "failed"].includes(String(r.state)) === (r.endedAt !== undefined), "run end/state mismatch");
   }
   if (raw.pr !== undefined) taskPR(raw.pr);
+  if (raw.publication !== undefined) taskPublicationObservation(raw.publication, raw.pr === undefined ? undefined : taskPR(raw.pr));
   if (raw.attention !== undefined) attention(raw.attention);
   if (raw.readiness !== undefined) {
     const r = raw.readiness;
@@ -247,6 +248,7 @@ export async function setTaskAttention(project: string, id: string, note: TaskAt
 }
 export async function observeTaskPR(project: string, id: string, observation: PRObservation, expectedRevision?: number): Promise<Task> {
   const pr = taskPR(observation.pr);
+  check(["OPEN", "CLOSED", "MERGED"].includes(observation.state), "invalid observation state");
   return update(project, s => {
     const t = find(s, id);
     if (t.archive) return t;
@@ -262,6 +264,12 @@ export async function observeTaskPR(project: string, id: string, observation: PR
       delete t.attention;
     } else if (observation.state === "CLOSED") t.attention = { kind: "closed", reason: "pr closed without merging" };
     else if (before !== JSON.stringify(t) && !t.readiness && (!t.attention || t.attention.kind === "waiting")) t.attention = { kind: "waiting", reason: "pr observed; readiness needs explicit validation" };
+    // Historical milestone only. Keep duplicate polls idempotent and leave all
+    // existing attention/readiness decisions above independent of this evidence.
+    if (observation.state !== "MERGED" && (!t.publication || t.publication.state !== observation.state
+      || !samePR(t.publication.pr, pr) || t.publication.pr.head !== pr.head)) {
+      t.publication = { pr: { ...pr }, state: observation.state, observedAt: new Date().toISOString() };
+    }
     if (before !== JSON.stringify(t)) event(t, t.archive ? "merged" : "pr_observed");
     return t;
   });

@@ -21,7 +21,7 @@ export interface Task {
   createdAt: string; updatedAt: string; revision: number;
   /** Explicit prerequisite task IDs; absent in legacy records. Not a scheduling signal. */
   dependsOn?: string[];
-  runs: TaskRun[]; pr?: TaskPR; readiness?: TaskReadiness; attention?: TaskAttention;
+  runs: TaskRun[]; pr?: TaskPR; publication?: TaskPublicationObservation; readiness?: TaskReadiness; attention?: TaskAttention;
   archive?: { reason: "merged"; mergedAt: string; archivedAt: string; pr: TaskPR };
   history: TaskEvent[];
 }
@@ -91,4 +91,56 @@ export function taskTreeView(task: Task): TaskTreeView {
     state = { kind: "ready_to_merge", pr: source.pr, readiness: source.readiness, attention };
   } else state = { kind: source.status, attention };
   return { id, name, summary, branch, createdAt, updatedAt, revision, dependsOn: taskDependencies(source.dependsOn, id), state, source };
+}
+
+/** Historical verified publication, not real-time OPEN/mergeability or readiness.
+ * observedAt is when this state/head was recorded; identical observations are
+ * idempotent and do not refresh it. Missing in legacy records; never inferred.
+ */
+export interface TaskPublicationObservation {
+  pr: TaskPR;
+  state: "OPEN" | "CLOSED";
+  observedAt: string;
+}
+/** Validate persisted proof, including association; head may be historical. */
+export function taskPublicationObservation(raw: unknown, associated: TaskPR | undefined): TaskPublicationObservation {
+  check(object(raw) && (raw.state === "OPEN" || raw.state === "CLOSED"), "invalid publication state");
+  check(typeof raw.observedAt === "string" && Number.isFinite(Date.parse(raw.observedAt)), "invalid publication timestamp");
+  const pr = taskPR(raw.pr);
+  check(object(raw.pr) && raw.pr.repository === pr.repository && raw.pr.url === pr.url, "noncanonical publication pr");
+  check(associated && associated.repository === pr.repository && associated.number === pr.number && associated.url === pr.url, "publication pr mismatch");
+  return { pr, state: raw.state, observedAt: raw.observedAt };
+}
+export type TaskPublicationMilestone =
+  | { kind: "unknown"; tone: "neutral" }
+  | { kind: "published"; label: "PR is out"; tone: "green"; pr: TaskPR; observedAt: string }
+  | { kind: "closed"; label: "PR closed"; tone: "neutral"; pr: TaskPR; observedAt: string }
+  | { kind: "merged"; label: "merged"; tone: "purple"; pr: TaskPR; mergedAt: string; archivedAt: string };
+export interface TaskPublicationView {
+  id: string;
+  revision: number;
+  milestone: TaskPublicationMilestone;
+  /** Orthogonal to publication: never hide blocked/cancelled or stopped runs. */
+  attention: TaskTreeAttention;
+  /** Detached details retain status, readiness, run identities and validation history. */
+  source: Task;
+}
+
+/** Dormant local-only presentation of the last recorded verified publication.
+ * No lookup, freshness assertion, readiness gate or scheduling. Unrelated task
+ * revisions and failed lookups do not erase historical evidence. Archive wins.
+ */
+export function taskPublicationView(task: Task): TaskPublicationView {
+  const source = structuredClone(task);
+  let milestone: TaskPublicationMilestone = { kind: "unknown", tone: "neutral" };
+  if (source.archive) {
+    const { pr, mergedAt, archivedAt } = source.archive;
+    milestone = { kind: "merged", label: "merged", tone: "purple", pr, mergedAt, archivedAt };
+  } else if (source.publication) {
+    const { pr, state, observedAt } = taskPublicationObservation(source.publication, source.pr);
+    milestone = state === "OPEN"
+      ? { kind: "published", label: "PR is out", tone: "green", pr, observedAt }
+      : { kind: "closed", label: "PR closed", tone: "neutral", pr, observedAt };
+  }
+  return { id: source.id, revision: source.revision, milestone, attention: source.attention ?? { kind: "none" }, source };
 }
