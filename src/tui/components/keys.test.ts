@@ -63,6 +63,28 @@ describe("parseKeys", () => {
     expect(parseKeys("\x1b[27;3;127~")).toEqual(want);
   });
 
+  test("extended Kitty Option+Backspace retains Alt on press/repeat and ignores release", () => {
+    for (const code of [8, 127]) {
+      for (const event of [1, 2]) {
+        for (const key of [`${code}`, `${code}::${code}`]) {
+          const sequence = `\x1b[${key};3:${event}u`;
+          const want = [{ name: "backspace", alt: true }];
+          expect(parseKeys(sequence)).toEqual(want);
+          // Every possible read boundary, including within the colon subfields.
+          for (let split = 1; split < sequence.length; split++) {
+            const r = reader();
+            r.feed(sequence.slice(0, split));
+            r.feed(sequence.slice(split));
+            expect(r.got).toEqual(want);
+          }
+        }
+      }
+      expect(parseKeys(`\x1b[${code};3:3u`)).toEqual([]);
+    }
+    expect(parseKeys("\x1b[127;:1u")).toEqual([{ name: "backspace" }]);
+    expect(parseKeys("\x1b[127;3:9u")).toEqual([]);
+  });
+
   test("word movement and deletion chords", () => {
     expect(parseKeys("\x1b[1;3D\x1b[1;3C")).toEqual([{ name: "left", alt: true }, { name: "right", alt: true }]);
     expect(parseKeys("\x1b\x1b[D")).toEqual([{ name: "left", alt: true }]);

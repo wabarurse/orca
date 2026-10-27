@@ -3734,6 +3734,31 @@ test("Option+Backspace and a drag arriving as separate writes through realTermin
   } finally { app.quit(); await running; }
 });
 
+test("extended Kitty Option Delete edits Unicode at the cursor through realTerminal, not on release", async () => {
+  let input: ((chunk: Uint8Array) => void) | undefined;
+  const stdin = { isTTY: true, setRawMode() {}, on(_e: string, fn: typeof input) { input = fn; }, off() {}, resume() {}, pause() {} };
+  const stdout = { isTTY: true, columns: 60, rows: 24, on() {}, write() { return true; } };
+  const proc = { on() {}, off() {}, exit() {}, stderr: { write() {} } };
+  const term = realTerminal(stdin as never, stdout as never, proc, NO_REPLY_WINDOW);
+  const orchs = fakeOrchestrators();
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+  const running = app.run("kitty-option-delete");
+  try {
+    await until(() => !!app.page);
+    app.input = { text: "keep café 世界 tail", cursor: "keep café 世界".length };
+    // Documented protocol bytes, not a capture from the user's terminal.
+    // Split inside the modifier/event field, the part previously coerced to NaN.
+    input!(Buffer.from("\x1b[127;3:"));
+    input!(Buffer.from("1u"));
+    expect(app.input).toEqual({ text: "keep café  tail", cursor: "keep café ".length });
+    input!(Buffer.from("\x1b[127;3:2u"));
+    expect(app.input).toEqual({ text: "keep  tail", cursor: 5 });
+    input!(Buffer.from("\x1b[127;3:3u"));
+    expect(app.input).toEqual({ text: "keep  tail", cursor: 5 });
+    expect(orchs.said["kitty-option-delete"]).toEqual([]);
+  } finally { app.quit(); await running; }
+});
+
 test("ctrl+g enters /keys without replacing chat, answer, or no-page drafts and input history", async () => {
   const term = fakeTerm(100, 24), orchs = fakeOrchestrators();
   const app = new App({ term, pollMs: 100_000, questionDelayMs: 0, openOrchestrator: orchs.openOrchestrator });
