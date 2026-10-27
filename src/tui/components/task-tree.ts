@@ -6,22 +6,21 @@ export interface TaskTreeOptions {
   cols: number; rows: number; selectedId?: string;
   /** Independent graph cell offsets and metadata line offset; caller owns scrolling. */
   graphX?: number; graphY?: number; detailY?: number; revealSelected?: boolean;
+  collapsed?: ReadonlySet<string>; frame?: number;
 }
 export interface TaskTreeHit { id: string; number: number; row: number; col: number; width: number }
 /** Coordinates/offsets are zero-based terminal cells, not JS string indices. */
 export interface TaskTreeRender {
+  nodes: OutlineNode[]; animated: boolean;
   lines: string[]; hits: TaskTreeHit[]; selectedId?: string; order: string[]; errors: string[];
   graph: { width: number; height: number; x: number; y: number; rows: number; cols: number };
   details: { height: number; y: number; rows: number };
 }
-interface Edge { from: number; to: number; y: number }
-interface Layout { xs: number[]; widths: number[]; ys: number[]; edges: Edge[]; width: number; height: number }
+export interface OutlineNode { id: string; depth: number; parent?: string; children: string[] }
 interface Viewport { x: number; y: number; rows: number; cols: number }
 interface Panels { cols: number; rows: number; wide: boolean; graphCols: number; graphRows: number; detailCols: number; detailRows: number }
 const size = (n: number, max: number) => Number.isFinite(n) ? Math.max(1, Math.min(max, Math.floor(n))) : 1;
 const offset = (n: number | undefined, max: number) => Number.isFinite(n) ? Math.max(0, Math.min(max, Math.floor(n!))) : 0;
-const glyph: Record<number, string> = { 1: "│", 2: "─", 4: "│", 8: "─", 5: "│", 10: "─", 3: "└", 6: "┌", 9: "┘", 12: "┐", 7: "├", 11: "┴", 13: "┤", 14: "┬", 15: "┼" };
-
 /** wordWrap alone permits a two-cell grapheme in a one-cell column. */
 function safeLines(value: string, cols: number): string[] {
   const lines: string[] = [];
@@ -31,9 +30,21 @@ function safeLines(value: string, cols: number): string[] {
   return lines;
 }
 
+/** Clip without wordWrap: leading spaces encode the filesystem hierarchy. */
+function outlineLabel(label: string, cols: number): string {
+  if (visibleLength(label) <= cols) return label;
+  let result = "", width = 0;
+  for (const cell of cells(label)) {
+    if (width + cell.width > cols - 1) break;
+    result += cell.text;
+    width += cell.width;
+  }
+  return result + "…";
+}
+
 function panels(options: TaskTreeOptions): Panels {
   const cols = size(options.cols, 500), rows = size(options.rows, 200);
-  const wide = cols >= 90;
+  const wide = cols >= 70;
   const graphCols = wide ? Math.floor(cols * .55) : cols;
   const graphRows = Math.max(1, wide ? rows - 2 : Math.floor((rows - 2) / 2));
   const detailRows = Math.max(0, wide ? rows - 2 : rows - graphRows - 2);
@@ -57,117 +68,55 @@ function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: num
   return { layers, parents };
 }
 
-/** Weak components use separate vertical bands; unrelated UUIDs never consume lanes. */
-function components(parents: number[][]): number[][] {
-  const neighbors = parents.map(p => [...p]);
-  parents.forEach((ps, child) => ps.forEach(p => neighbors[p]!.push(child)));
-  const seen = new Set<number>(), groups: number[][] = [];
-  for (let i = 0; i < parents.length; i++) {
-    if (seen.has(i)) continue;
-    const group = [i];
-    seen.add(i);
-    for (const node of group) for (const next of neighbors[node]!) {
-      if (!seen.has(next)) { seen.add(next); group.push(next); }
-    }
-    groups.push(group.sort((a, b) => a - b));
-  }
-  return groups;
+/** A single canonical identity, placed under its lowest-UUID prerequisite.
+ * Other prerequisites remain explicit references, never implied tree edges.
+ */
+function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>): OutlineNode[] {
+  const { parents } = dependencyLayers(tasks);
+  const primary = parents.map(ps => [...ps].sort((a, b) => a - b)[0]);
+  const children = tasks.map((_, i) => tasks.flatMap((t, j) => primary[j] === i ? [t.id] : []));
+  const result: OutlineNode[] = [];
+  const visit = (i: number, depth: number) => {
+    const task = tasks[i]!;
+    result.push({ id: task.id, depth, parent: primary[i] === undefined ? undefined : tasks[primary[i]!]!.id, children: children[i]! });
+    if (!collapsed.has(task.id)) for (let j = 0; j < tasks.length; j++) if (primary[j] === i) visit(j, depth + 1);
+  };
+  tasks.forEach((_, i) => { if (primary[i] === undefined) visit(i, 0); });
+  return result;
 }
 
-/** Assign node and routing rows within a single connected vertical band. */
-function placeComponent(group: number[], layers: number[][], parents: number[][], ys: number[], edges: Edge[], height: number): number {
-  const members = new Set(group);
-  for (const layer of layers) {
-    const local = layer.filter(i => members.has(i));
-    if (!local.length) continue;
-    for (const i of local) ys[i] = height;
-    height++;
-    for (const from of local) {
-      for (const to of group.filter(i => parents[i]!.includes(from))) {
-        edges.push({ from, to, y: height++ });
-      }
-    }
-    height++;
-  }
-  return height;
+function active(task: TreeTask): boolean {
+  return !task.archive && !task.attention && task.runs.some(run => run.state === "started" && !run.endedAt);
 }
 
-function layout(tasks: TreeTask[], cols: number): Layout {
-  const { layers, parents } = dependencyLayers(tasks);
-  const xs: number[] = [], widths: number[] = [], ys: number[] = [], edges: Edge[] = [];
-  let height = 0, width = 1;
-  for (const group of components(parents)) {
-    const lane = group.length === 1 ? cols : Math.max(24, Math.min(40, Math.floor(cols / group.length)));
-    group.forEach((i, local) => { xs[i] = local * lane; widths[i] = lane - 1; });
-    width = Math.max(width, group.length * lane);
-    if (group.length === 1) { ys[group[0]!] = height++; continue; }
-    height = placeComponent(group, layers, parents, ys, edges, height);
+function status(task: TreeTask, frame: number): string {
+  if (task.archive) return "[x] merged";
+  if (task.attention) return `[!] ${task.attention.kind}`;
+  if (active(task)) {
+    const roles = task.runs.filter(run => run.state === "started" && !run.endedAt).map(run => run.role);
+    return `${["◐", "◓", "◑", "◒"][frame % 4]} ${roles.includes("worker") ? "working" : "reviewing"}${roles.includes("worker") && roles.includes("reviewer") ? "/reviewing" : ""}`;
   }
-  return { xs, widths, ys, edges, width, height };
+  if (task.status === "queued") return "[ ] queued";
+  return `[-] ${task.status.replaceAll("_", " ")} (idle)`;
 }
 
-/** Sparse viewport raster: routes visit visible cells only, not their full lengths. */
-class Routes {
-  private masks: number[][];
-  private junctions = new Set<string>();
-  constructor(private view: Viewport) {
-    this.masks = Array.from({ length: view.rows }, () => Array<number>(view.cols).fill(0));
-  }
-  private mark(x: number, y: number, mask: number): void {
-    const col = x - this.view.x, row = y - this.view.y;
-    if (col < 0 || col >= this.view.cols || row < 0 || row >= this.view.rows) return;
-    this.masks[row]![col]! |= mask;
-  }
-  private horizontal(x: number, u: number, y: number): void {
-    const low = Math.min(x, u), high = Math.max(x, u);
-    const end = Math.min(high, this.view.x + this.view.cols - 1);
-    for (let col = Math.max(low, this.view.x); col <= end; col++) {
-      let mask = 0;
-      if (col > low) mask |= 8;
-      if (col < high) mask |= 2;
-      this.mark(col, y, mask);
+export function navigateOutline(nodes: OutlineNode[], selectedId: string | undefined, collapsed: Set<string>, key: string, shift = false): string | undefined {
+  const i = nodes.findIndex(node => node.id === selectedId), node = nodes[i];
+  if (!node) return nodes[0]?.id;
+  const previous = key === "up" || key === "left";
+  if (shift) {
+    for (let j = i + (previous ? -1 : 1); j >= 0 && j < nodes.length; j += previous ? -1 : 1) {
+      if (nodes[j]!.depth === node.depth) return nodes[j]!.id;
     }
+  } else if (key === "up" || key === "down") return nodes[i + (previous ? -1 : 1)]?.id ?? node.id;
+  else if (key === "left") {
+    if (node.children.length && !collapsed.has(node.id)) collapsed.add(node.id);
+    else return node.parent ?? node.id;
+  } else if (key === "right" && node.children.length) {
+    if (collapsed.has(node.id)) collapsed.delete(node.id);
+    else return node.children[0];
   }
-  private vertical(x: number, y: number, v: number): void {
-    const low = Math.min(y, v), high = Math.max(y, v);
-    const end = Math.min(high, this.view.y + this.view.rows - 1);
-    for (let row = Math.max(low, this.view.y); row <= end; row++) {
-      let mask = 0;
-      if (row > low) mask |= 1;
-      if (row < high) mask |= 4;
-      this.mark(x, row, mask);
-    }
-  }
-  edge(edge: Edge, graph: Layout): void {
-    const x = graph.xs[edge.from]! + 2, u = graph.xs[edge.to]! + 2;
-    const start = graph.ys[edge.from]! + 1, end = graph.ys[edge.to]! - 1;
-    this.vertical(x, start, edge.y);
-    this.horizontal(x, u, edge.y);
-    this.vertical(u, edge.y, end);
-    this.mark(x, start, 1);
-    this.mark(u, end, 4);
-    this.junctions.add(`${x},${edge.y}`);
-    this.junctions.add(`${u},${edge.y}`);
-  }
-  canvas(): string[][] {
-    return this.masks.map((row, y) => row.map((mask, x) => {
-      if (mask === 15 && !this.junctions.has(`${x + this.view.x},${y + this.view.y}`)) return "╪";
-      return glyph[mask] ?? " ";
-    }));
-  }
-}
-
-function nodeLabel(task: TreeTask, number: number, selectedId: string | undefined, width: number): string {
-  const focus = task.id === selectedId ? "▶" : " ";
-  const label = `${focus}[${number}] ${plainText(task.name)}`;
-  if (visibleLength(label) <= width) return label;
-  let prefix = "", used = 0;
-  for (const cell of cells(label)) {
-    if (used + cell.width > width - 1) break;
-    prefix += cell.text;
-    used += cell.width;
-  }
-  return prefix + "…";
+  return node.id;
 }
 
 function paintNode(canvas: string[][], label: string, x: number, row: number, view: Viewport, identity: { id: string; number: number }): TaskTreeHit[] {
@@ -185,18 +134,6 @@ function paintNode(canvas: string[][], label: string, x: number, row: number, vi
   return hits;
 }
 
-function graphLines(tasks: TreeTask[], selectedId: string | undefined, graph: Layout, view: Viewport): { lines: string[]; hits: TaskTreeHit[] } {
-  const routes = new Routes(view);
-  for (const edge of graph.edges) routes.edge(edge, graph);
-  const canvas = routes.canvas(), hits: TaskTreeHit[] = [];
-  for (const [i, task] of tasks.entries()) {
-    const label = nodeLabel(task, i + 1, selectedId, graph.widths[i]!);
-    const nodeHits = paintNode(canvas, label, graph.xs[i]!, graph.ys[i]! - view.y, view, { id: task.id, number: i + 1 });
-    for (const hit of nodeHits) hits.push(hit);
-  }
-  return { lines: canvas.map(row => row.join("")), hits };
-}
-
 function runFields(run: TreeTask["runs"][number]): [string, string][] {
   return [
     ["Run", `${run.id}: ${run.state}; ${run.role} ${run.agent}${run.reviewMode ? ` (${run.reviewMode})` : ""}`],
@@ -205,7 +142,7 @@ function runFields(run: TreeTask["runs"][number]): [string, string][] {
 }
 
 function technicalFields(selected: TreeTask): [string, string][] {
-  const fields: [string, string][] = [["Technical details", "scroll with Shift+↑/↓"]];
+  const fields: [string, string][] = [["Technical details", "scroll with PgUp/PgDn"]];
   const { pr, readiness: ready, archive } = selected;
   if (pr) fields.push(["PR URL", pr.url], ["PR head", pr.head]);
   if (ready) fields.push(["Validation", ready.validation], ["Validated head", ready.head], ["Validation run", ready.run]);
@@ -219,23 +156,23 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
   const index = new Map(tasks.map((t, i) => [t.id.toLowerCase(), i]));
   const dependencies = selected.dependsOn.map(id => {
     const i = index.get(id.toLowerCase())!;
-    return `[${i + 1}] ${tasks[i]!.name} (${id})`;
+    return `#${i + 1} ${tasks[i]!.name}`;
   });
   const fields: [string, string][] = [
     [`SELECTED [${tasks.indexOf(selected) + 1}]`, selected.name],
-    ["Summary", selected.summary], ["Branch", selected.branch],
+    ["Overview", selected.summary], ["Status", status(selected, 0)],
     ["Lifecycle", selected.archive ? "merged" : selected.status],
     ["Attention", selected.attention ? `${selected.attention.kind}: ${selected.attention.reason}` : "none"],
     ["Dependencies", dependencies.join(", ") || "none"],
   ];
   const pr = selected.pr, ready = selected.readiness, archive = selected.archive;
   const latest = selected.runs.at(-1);
-  fields.push(["Latest run", latest ? `${latest.state} · ${latest.role} ${latest.agent}${latest.reviewMode ? ` (${latest.reviewMode})` : ""}` : "none recorded"]);
+  fields.push(["Activity", latest ? `${latest.state} · ${latest.role} ${latest.agent}${latest.reviewMode ? ` (${latest.reviewMode})` : ""}` : "none recorded"]);
   fields.push(["PR", pr ? `${pr.repository} #${pr.number}` : "not recorded"]);
   fields.push(["Readiness", ready ? `recorded; checks ${ready.checks}; validated ${ready.validatedAt}` : "not recorded (not inferred)"]);
   fields.push(["Verified archive", archive ? `merged ${archive.mergedAt}; archived ${archive.archivedAt}` : "not recorded"]);
   fields.push(...technicalFields(selected));
-  fields.push(["ID", selected.id], ["Created", selected.createdAt], ["Updated", selected.updatedAt], ["Revision", String(selected.revision)]);
+  fields.push(["Branch", selected.branch], ["ID", selected.id], ["Created", selected.createdAt], ["Updated", selected.updatedAt], ["Revision", String(selected.revision)]);
   return fields;
 }
 
@@ -254,7 +191,7 @@ function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: nu
 }
 
 function compose(p: Panels, graph: string[], detail: string[], detailY: number, footer: string): string[] {
-  const lines = [safeLines("TASKS ↓ prerequisites → dependents; ╪ crossing, not join", p.cols)[0]!];
+  const lines = [safeLines("TASKS · primary prerequisite outline; +dep = other prerequisites", p.cols)[0]!];
   for (let row = 0; row < p.graphRows; row++) {
     const left = graph[row] ?? "";
     if (p.wide) {
@@ -273,47 +210,41 @@ function failed(p: Panels, error: unknown): TaskTreeRender {
   // Only renderer-generated, fixed error messages cross this boundary.
   const message = error instanceof Error ? error.message : "Invalid task registry";
   const errors = [plainText(message).slice(0, 256)];
-  const lines = compose(p, safeLines(`ERROR: ${errors[0]}`, p.graphCols), [], 0, "Invalid registry; no graph rendered");
-  return { lines, errors, hits: [], order: [], graph: { width: 0, height: 0, x: 0, y: 0, rows: p.graphRows, cols: p.graphCols }, details: { height: 0, y: 0, rows: p.detailRows } };
+  const lines = compose(p, safeLines(`ERROR: ${errors[0]}`, p.graphCols), [], 0, "Invalid registry; no outline rendered");
+  return { nodes: [], animated: false, lines, errors, hits: [], order: [], graph: { width: 0, height: 0, x: 0, y: 0, rows: p.graphRows, cols: p.graphCols }, details: { height: 0, y: 0, rows: p.detailRows } };
 }
 
-/** Dormant, no I/O; requires the complete registry including archived prerequisites.
- * One identity/column within each component, one edge/routing row; ╪ crosses without joining.
- * See treeTasks for source budgets. Derived selected details have a 65536-unit
- * budget; any malformed/over-budget record rejects the whole render, with no hits.
- * History/unknown properties are never cloned, traversed or serialized.
- */
+/** Read-only complete registry, including archived prerequisites. Invalid graphs fail closed. */
 export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options: TaskTreeOptions): TaskTreeRender {
   const p = panels(options);
   try {
-    const tasks = treeTasks(input), graph = layout(tasks, p.graphCols);
-    const selected = tasks.find(t => t.id === options.selectedId) ?? tasks[0];
-    const view = { cols: p.graphCols, rows: p.graphRows,
-      x: offset(options.graphX, Math.max(0, graph.width - p.graphCols)),
-      y: offset(options.graphY, Math.max(0, graph.height - p.graphRows)),
-    };
+    const tasks = treeTasks(input), collapsed = options.collapsed ?? new Set<string>();
+    const nodes = outline(tasks, collapsed);
+    const selected = tasks.find(t => t.id === options.selectedId && nodes.some(n => n.id === t.id)) ?? tasks.find(t => t.id === nodes[0]?.id);
+    const view = { cols: p.graphCols, rows: p.graphRows, x: 0,
+      y: offset(options.graphY, Math.max(0, nodes.length - p.graphRows)) };
     if (options.revealSelected && selected) {
-      const i = tasks.indexOf(selected), y = graph.ys[i]!, x = graph.xs[i]!;
-      const top = Math.max(y - view.rows + 1, Math.min(view.y, y));
-      view.y = offset(top, Math.max(0, graph.height - view.rows));
-      const label = nodeLabel(selected, i + 1, selected.id, graph.widths[i]!);
-      // Reveal the painted cell extent, not just its origin. If the viewport is
-      // narrower than the label, prioritize its prefix (selection and number).
-      // Graph X remains shared across components; manual scrolling is unchanged.
-      const end = x + Math.min(visibleLength(label), view.cols);
-      const left = Math.max(end - view.cols, Math.min(view.x, x));
-      view.x = offset(left, Math.max(0, graph.width - view.cols));
+      const y = nodes.findIndex(n => n.id === selected.id);
+      view.y = Math.max(y - view.rows + 1, Math.min(view.y, y));
+    }
+    const canvas = Array.from({ length: view.rows }, () => Array<string>(view.cols).fill(" "));
+    const hits: TaskTreeHit[] = [];
+    for (const [row, node] of nodes.slice(view.y, view.y + view.rows).entries()) {
+      const i = tasks.findIndex(t => t.id === node.id), task = tasks[i]!;
+      const others = task.dependsOn.filter(id => id.toLowerCase() !== node.parent?.toLowerCase());
+      const refs = others.map(id => `#${tasks.findIndex(t => t.id.toLowerCase() === id.toLowerCase()) + 1}`).join(",");
+      const indent = "  ".repeat(Math.min(node.depth, Math.max(0, Math.floor((view.cols - 25) / 2))));
+      const label = `${node.id === selected?.id ? "▶" : " "}${indent}${node.children.length ? collapsed.has(node.id) ? "▸" : "▾" : "·"} ${status(task, options.frame ?? 0)} #${i + 1}${refs ? ` +dep:${refs}` : ""} ${plainText(task.name)}`;
+      hits.push(...paintNode(canvas, outlineLabel(label, view.cols), 0, row, view, { id: task.id, number: i + 1 }));
     }
     const detail = detailLines(tasks, selected, p.detailCols);
     const dy = offset(options.detailY, Math.max(0, detail.length - p.detailRows));
-    const painted = graphLines(tasks, selected?.id, graph, view);
-    if (!tasks.length) painted.lines = safeLines("No tasks", p.graphCols);
-    const footer = `Graph x=${view.x}/${Math.max(0, graph.width - view.cols)} y=${view.y}/${Math.max(0, graph.height - view.rows)}; details=${dy}/${Math.max(0, detail.length - p.detailRows)}`;
-    return { lines: compose(p, painted.lines, detail, dy, footer), hits: painted.hits.filter(h => h.row < p.rows),
-      selectedId: selected?.id, order: tasks.map(t => t.id), errors: [],
-      graph: { ...view, width: graph.width, height: graph.height }, details: { height: detail.length, y: dy, rows: p.detailRows },
-    };
-  } catch (error) {
-    return failed(p, error);
-  }
+    const lines = canvas.map(row => row.join(""));
+    if (!tasks.length) lines[0] = "No tasks";
+    const footer = `Outline y=${view.y}/${Math.max(0, nodes.length - view.rows)}; details=${dy}/${Math.max(0, detail.length - p.detailRows)}`;
+    return { nodes, animated: nodes.slice(view.y, view.y + view.rows).some(n => active(tasks.find(t => t.id === n.id)!)),
+      lines: compose(p, lines, detail, dy, footer), hits, selectedId: selected?.id,
+      order: nodes.map(n => n.id), errors: [], graph: { ...view, width: view.cols, height: nodes.length },
+      details: { height: detail.length, y: dy, rows: p.detailRows } };
+  } catch (error) { return failed(p, error); }
 }

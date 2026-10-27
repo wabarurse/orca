@@ -1,4 +1,4 @@
-import { renderTaskTree, type TaskTreeRender } from "./components/task-tree";
+import { navigateOutline, renderTaskTree, type TaskTreeRender } from "./components/task-tree";
 import { ConversationSelection, hitRow } from "./screen";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./components";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
@@ -181,6 +181,7 @@ interface AgentsTimer { menu: ActiveMenu; readAt: number; reading: boolean; stop
 interface TaskTreeState {
   page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
   graphX: number; graphY: number; detailY: number; loading: boolean; error?: string;
+  collapsed: Set<string>; frame: number;
   revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
 }
 
@@ -284,7 +285,7 @@ export class App {
   private toggleTaskTree(): void {
     if (this.taskTree) { this.taskTree = null; this.draw(); return; }
     if (!this.page || this.clearing || this.keyEcho) return;
-    this.taskTree = { page: this.page, tasks: [], graphX: 0, graphY: 0, detailY: 0, loading: true };
+    this.taskTree = { page: this.page, tasks: [], collapsed: new Set(), frame: 0, graphX: 0, graphY: 0, detailY: 0, loading: true };
     void this.refreshTaskTree();
     this.draw();
   }
@@ -325,8 +326,8 @@ export class App {
     view.graphX = rendered.graph.x; view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
-    const controls = ["Ctrl+T/Esc chat · Shift+Tab next · click node · r refresh",
-      "Arrows graph X/Y · PgUp/PgDn graph · Shift+↑/↓ details"].map(line => fit(line, cols));
+    const controls = ["Ctrl+T/Esc chat · Shift+Tab next · click row · r refresh",
+      "↑↓ select · ←→ fold · Shift+arrows same depth · PgUp/Dn details"].map(line => fit(line, cols));
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
     return { rows: [...content, ...controls].slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0,
       bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
@@ -363,15 +364,15 @@ export class App {
   }
 
   private scrollTaskTree(view: TaskTreeState, rendered: TaskTreeRender, k: Key): void {
-    if (k.name === "left" || k.name === "right") {
-      view.graphX += k.name === "left" ? -4 : 4;
-      return;
+    if (["up", "down", "left", "right"].includes(k.name)) {
+      view.selectedId = navigateOutline(rendered.nodes, view.selectedId, view.collapsed, k.name, k.shift);
+      view.revealSelected = true;
+      view.detailY = 0;
+    } else if (k.name === "pageup" || k.name === "pagedown") {
+      view.detailY += (k.name === "pageup" ? -1 : 1) * Math.max(1, rendered.details.rows - 1);
+    } else if (k.name === "wheelup" || k.name === "wheeldown") {
+      view.graphY += k.name === "wheelup" ? -1 : 1;
     }
-    const steps: Record<string, number> = { up: -1, down: 1, wheelup: -1, wheeldown: 1, pageup: -1, pagedown: 1 };
-    const delta = steps[k.name];
-    if (delta === undefined) return;
-    if (k.shift) view.detailY += delta;
-    else view.graphY += delta * (k.name.startsWith("page") ? Math.max(1, rendered.graph.rows) : 1);
   }
 
   private helpContent?: { cols: number; inView: boolean; lines: string[] };
@@ -528,6 +529,13 @@ export class App {
       void this.refreshSessions(false); // passive snapshots also follow responses consumed in another window
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
+    const stopTreeAnimation = this.clock.every(() => {
+      const view = this.taskTree;
+      if (!this.closed && view?.rendered?.animated && !view.loading && !view.error) {
+        view.frame = (view.frame + 1) % 4;
+        this.draw();
+      }
+    }, 250);
     try {
       this.draw(); // "opening…" at once
       const shaded = term.background?.then(() => this.draw()); // the input in the terminal's shade as soon as it is known
@@ -539,6 +547,7 @@ export class App {
       await this.finished;
     } finally {
       clearInterval(poll);
+      stopTreeAnimation();
       this.closed = true;
       for (const t of [this.frameTimer, this.resizeTimer]) if (t) clearTimeout(t);
       this.stopSpinner?.();
