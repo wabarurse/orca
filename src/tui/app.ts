@@ -1,9 +1,10 @@
+import { renderTaskTree, type TaskTreeRender } from "./components/task-tree";
 import { ConversationSelection, hitRow } from "./screen";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./components";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
 import type { ImageRef } from "../protocol";
 import { contextStatus, dispatchStatus, reviewStatus } from "./header";
-import { listTasks } from "../core/data/tasks";
+import { allTasks, listTasks } from "../core/data/tasks";
 import { refreshTaskInboxData, taskInboxLines, type TaskInboxData } from "./footer";
 import { cancelSession } from "../core/tmux";
 import { effortCommand, fastCommand, effectiveSettings, setEffort } from "../core/data/projects";
@@ -134,6 +135,7 @@ export interface AppDeps {
   questions?: QuestionStore;
   /** Active structured task rows; read-only, defaults to the durable registry. */
   tasks?: typeof listTasks;
+  treeTasks?: typeof allTasks;
   /** How long Enter, digits and typing are ignored after a question first shows (QUESTION_DELAY_MS); tests shorten it. */
   questionDelayMs?: number;
 }
@@ -260,7 +262,7 @@ export class App {
   private _active = 0;
   get active(): number { return this._active; }
   set active(index: number) {
-    if (index !== this._active) { this.clipboardGeneration++; if (this.page) this.questions.hide(this.page); this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
+    if (index !== this._active) { this.taskTree = null; this.clipboardGeneration++; if (this.page) this.questions.hide(this.page); this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
     this._active = index;
   }
   private looseLines: string[] = [];
@@ -271,6 +273,77 @@ export class App {
   private helpTop: number | null = null;
   /** One explicit panel, owned by the captured page object; never reused across projects. */
   private taskInbox: TaskInboxState | null = null;
+  private taskTree: { page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
+    graphX: number; graphY: number; detailY: number; loading: boolean; error?: string;
+    rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean } | null = null;
+
+  private toggleTaskTree(): void {
+    if (this.taskTree) { this.taskTree = null; this.draw(); return; }
+    if (!this.page || this.clearing || this.keyEcho) return;
+    this.taskTree = { page: this.page, tasks: [], graphX: 0, graphY: 0, detailY: 0, loading: true };
+    void this.refreshTaskTree();
+    this.draw();
+  }
+
+  private refreshTaskTree(): Promise<void> {
+    const view = this.taskTree;
+    if (!view) return Promise.resolve();
+    if (view.reading) { view.again = true; return view.reading; }
+    view.reading = (async () => {
+      do {
+        view.again = false;
+        try {
+          const tasks = await (this.deps.treeTasks ?? allTasks)(view.page.project);
+          if (this.taskTree !== view) return;
+          view.tasks = tasks; view.error = undefined;
+        } catch (error) {
+          if (this.taskTree !== view) return;
+          view.error = `Tasks unavailable: ${error instanceof Error ? error.message : String(error)}`;
+        }
+        view.loading = false; this.draw();
+      } while (view.again && this.taskTree === view && !this.closed);
+    })().finally(() => { view.reading = undefined; });
+    return view.reading;
+  }
+
+  private treeScreen(): StickyScreen {
+    const view = this.taskTree!, { cols, rows } = this.deps.term;
+    const rendered = renderTaskTree(view.error ? [] : view.tasks, { ...view, cols, rows: Math.max(1, rows - 2) });
+    view.rendered = rendered;
+    if (!view.error && !view.loading) view.selectedId = rendered.selectedId;
+    view.graphX = rendered.graph.x; view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
+    const lines = view.error || view.loading
+      ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
+    const controls = ["Ctrl+T/Esc chat · Shift+Tab next · click node · r refresh",
+      "Arrows graph X/Y · PgUp/PgDn graph · Shift+↑/↓ details"].map(line => fit(line, cols));
+    const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
+    return { rows: [...content, ...controls].slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0,
+      bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
+  }
+
+  private taskTreeKey(k: Key): void {
+    const view = this.taskTree!;
+    if (k.name === "escape" || k.ctrl && k.name === "t") return this.toggleTaskTree();
+    if (k.name === "char" && k.text === "r") { void this.refreshTaskTree(); return; }
+    const rendered = view.rendered;
+    if (!rendered || view.error || view.loading) return;
+    if (k.name === "mousedown") {
+      const hit = rendered.hits.find(h => h.row === (k.y ?? 0) - 1 && (k.x ?? 0) - 1 >= h.col && (k.x ?? 0) - 1 < h.col + h.width);
+      if (hit) { view.selectedId = hit.id; view.detailY = 0; }
+    } else if (k.name === "tab" && k.shift && !k.ctrl && !k.alt) {
+      view.selectedId = rendered.order[(rendered.order.indexOf(view.selectedId ?? "") + 1) % rendered.order.length];
+      view.detailY = 0;
+    } else if (!k.ctrl && !k.alt) {
+      const delta = k.name === "up" || k.name === "pageup" || k.name === "wheelup" ? -1 : 1;
+      if (["up", "down", "wheelup", "wheeldown", "pageup", "pagedown"].includes(k.name)) {
+        if (k.shift) view.detailY += delta;
+        else view.graphY += delta * (k.name.startsWith("page") ? Math.max(1, rendered.graph.rows) : 1);
+      }
+      if (k.name === "left" || k.name === "right") view.graphX += k.name === "left" ? -4 : 4;
+    }
+    this.draw();
+  }
+
   private helpContent?: { cols: number; inView: boolean; lines: string[] };
   menu: ActiveMenu | null = null;
   projectList: ProjectListState | null = null;
@@ -847,7 +920,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** Coalesce changed pinned rows and the conversation viewport into the next frame. */
   draw(): void {
     if (this.closed) return;
-    this.questions.sync(); // the input holds the chat draft or the shown question's answer, as the state now wants
+    if (!this.taskTree) this.questions.sync(); // the input holds the chat draft or the shown question's answer, as the state now wants
     this.animate();
     if (this.frameQueued || this.resizeTimer) return;
     this.frameQueued = true;
@@ -879,10 +952,10 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   private flush(): void {
     this.lastFrame = Date.now();
     try {
-      this.questions.sync(); // the input holds the chat draft or the shown question's answer
-      const next = this.viewport(this.frame());
+      if (!this.taskTree) this.questions.sync(); // the input holds the chat draft or the shown question's answer
+      const next = this.taskTree ? this.treeScreen() : this.viewport(this.frame());
       const output = stickyUpdate(next, this.screen);
-      this.needReprint = false;
+      if (!this.taskTree) this.needReprint = false;
       // Synchronized output, so the terminal shows the whole update at once.
       if (output) this.deps.term.write(`\x1b[?2026h${output}\x1b[?2026l`);
       this.screen = next;
@@ -1753,6 +1826,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
   private readonly chords = new Map<string, () => Promise<void> | void>([
+    ["t", () => this.toggleTaskTree()],
     ["c", () => this.interrupt()],
     ["g", () => this.commands.get("/keys")!.run("", this.page)],
     ["q", () => {
@@ -1858,6 +1932,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   async onKey(k: Key): Promise<void> {
+    if (this.taskTree) return this.taskTreeKey(k);
     if (!this.selectionAllowed()) this.selection.clear();
     if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) { this.toolClick(k); return this.selectionMouse(k); }
     this.clearNote(k);
@@ -1936,7 +2011,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       this.pages.includes(view.page) && !view.page.deleting;
   }
 
-  private refreshTaskInbox(page = this.page): Promise<void> {
+  private async refreshTaskInbox(page = this.page): Promise<void> {
+    if (this.taskTree?.page === page) await this.refreshTaskTree();
     const view = this.taskInbox;
     if (!view || view.page !== page || !this.taskInboxCurrent(view)) return Promise.resolve();
     return refreshTaskInboxData(view, () => (this.deps.tasks ?? listTasks)(page.project),

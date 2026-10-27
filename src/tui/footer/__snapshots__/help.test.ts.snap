@@ -14,7 +14,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ inbox 1
-help · commands & keys                                                  1–9/60
+help · commands & keys                                                  1–9/63
   conversation
   /refresh       reload shared local state; active context waits until idle;
                  never runs work
@@ -60,6 +60,9 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   ctrl+n             new orchestrator
   ctrl+z / ctrl+x    previous / next project page
   ctrl+b             open or close projects
+  ctrl+t             fullscreen task tree; shift+tab/click selects;
+                     arrows/PgUp/PgDn scroll graph, shift+up/down scroll
+                     details; r refresh, esc returns to draft
   ctrl+q             inbox questions toggle; arrivals never open inbox
   shift+tab (inbox)  switch tasks / questions; esc or tab closes without
                      answering
@@ -105,7 +108,7 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 inbox 1
-help                           1–8/120
+help                           1–8/126
   conversation
   /refresh
     reload shared local state; active
@@ -184,6 +187,12 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     previous / next project page
   ctrl+b
     open or close projects
+  ctrl+t
+    fullscreen task tree;
+    shift+tab/click selects;
+    arrows/PgUp/PgDn scroll graph,
+    shift+up/down scroll details; r
+    refresh, esc returns to draft
   ctrl+q
     inbox questions toggle; arrivals
     never open inbox
@@ -254,7 +263,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ inbox 1
-help · commands & keys                                                52–60/60
+help · commands & keys                                                55–63/63
   alt+d                delete next word
   home/end / ctrl+a/e  start / end of current line
   ctrl+u / ctrl+k      delete to start / end of current line

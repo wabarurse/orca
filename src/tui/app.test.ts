@@ -4275,3 +4275,77 @@ describe("/agents clocks", () => {
     } finally { await t.stop(); }
   });
 });
+
+test("task tree activation routes terminal keys, preserves drafts, selects renderer hits and refreshes durable UUIDs", async () => {
+  const term = fakeTerm(120, 28), fake = fakeOrchestrators();
+  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  let tasks: import("../protocol/tasks").Task[] = Array.from({ length: 12 }, (_, i) => ({
+    id: id(i + 1), name: `Node ${i + 1}`, summary: `Summary ${i + 1}`, branch: "feat/tree",
+    status: "queued", createdAt: "2026-01-01", updatedAt: "2026-01-02", revision: 1,
+    dependsOn: i ? [id(i)] : [], runs: [], history: [],
+  }));
+  tasks[0]!.summary = "Long metadata ".repeat(120);
+  tasks[0]!.archive = { reason: "merged", mergedAt: "today", archivedAt: "today",
+    pr: { repository: "test/repo", number: 1, url: "https://github.com/test/repo/pull/1", head: "a".repeat(40) } };
+  let fail = false;
+  const app = new App({ term, pollMs: 100_000, agents: async () => [],
+    clipboardImage: async () => ({ bytes: png(), mime: "image/png" }),
+    openOrchestrator: fake.openOrchestrator, treeTasks: async () => {
+      if (fail) throw new Error("registry offline");
+      return tasks;
+    } });
+  mkdirSync(paths.project("tree-navigation"), { recursive: true });
+  await askQuestions("tree-navigation", [{ text: "Keep this pending?" }]);
+  const running = app.run("tree-navigation");
+  const screen = () => term.display.screen().join("\n");
+  try {
+    await until(() => !!app.page);
+    term.type("draft survives"); term.press({ name: "left" });
+    await app.onKey({ name: "v", ctrl: true });
+    expect(app.frame().inputArea!.lines.join("\n")).toContain("[image 1]");
+    const draft = { ...app.input };
+    const questions = app.page!.questions;
+    // Bytes from the terminal's registered callback, not an isolated navigation helper.
+    term.type("\x14");
+    await until(() => screen().includes("SELECTED [1]"));
+    expect(screen()).toContain("Long metadata");
+    expect(screen()).toContain("Shift+Tab next");
+    term.type("\x1b[Z");
+    await until(() => screen().includes("SELECTED [2]"));
+    expect(screen()).toContain("Summary: Summary 2");
+    const row = term.display.screen().findIndex(line => line.startsWith(" [1]"));
+    const col = term.display.screen()[row]!.indexOf("[1]");
+    term.press({ name: "mousedown", x: col + 1, y: row + 1 });
+    term.press({ name: "mouseup", x: col + 1, y: row + 1 });
+    await until(() => screen().includes("SELECTED [1]"));
+    term.press({ name: "right" }); term.press({ name: "down" });
+    term.press({ name: "down", shift: true });
+    await until(() => screen().includes("Graph x=4/") && screen().includes(" y=1/") && screen().includes("details=1/"));
+    term.press({ name: "pageup" });
+    await until(() => screen().includes(" y=0/"));
+    tasks = [...tasks].reverse().map(t => t.id === id(1) ? { ...t, summary: "Updated durable metadata" } : t);
+    await app.refreshSessions();
+    await until(() => screen().includes("Updated durable metadata"));
+    expect(screen()).toContain("Lifecycle: merged");
+    term.resize(52, 18);
+    await until(() => screen().includes("TASKS"));
+    term.type("\x14");
+    await until(() => !screen().includes("TASKS"));
+    expect(app.input.text).toBe(draft.text); expect(app.input.cursor).toBe(draft.cursor);
+    expect(app.page!.questions).toBe(questions);
+    expect((await allQuestions("tree-navigation"))[0]!.status).toBe("open");
+    expect(app.frame().inputArea!.lines.join("\n")).toContain("[image 1]");
+    term.resize(120, 28); term.type("\x14");
+    await until(() => screen().includes("SELECTED [1]"));
+    tasks = tasks.filter(t => t.id !== id(1)).map(t => ({ ...t, dependsOn: [] }));
+    await app.refreshSessions();
+    await until(() => screen().includes("SELECTED [1]: Node 2"));
+    fail = true; await app.refreshSessions();
+    await until(() => screen().includes("Tasks unavailable: registry offline"));
+    fail = false; tasks = []; term.type("r");
+    await until(() => screen().includes("No tasks"));
+    term.press({ name: "escape" });
+    await until(() => !screen().includes("TASKS"));
+    expect(app.input.text).toBe(draft.text); expect(app.input.cursor).toBe(draft.cursor);
+  } finally { app.quit(); await running; }
+});
