@@ -64,3 +64,64 @@ test("independent roots, wide Unicode and hostile text are safe at narrow and sc
   expect(scroll.graph.y).toBe(scroll.graph.height - scroll.graph.rows);
   expect(scroll.lines.at(-1)).toContain("Graph x=");
 });
+
+test("one-cell metadata viewport stays cell-safe when scrolled into CJK and emoji fields", () => {
+  const t = task(1, [], "界🙂"); t.summary = "🙂界";
+  const options = { cols: 1, rows: 10, selectedId: t.id };
+  const first = renderTaskTree([t], options);
+  let replacements = 0;
+  for (let detailY = 0; detailY < first.details.height; detailY += 3) {
+    const result = renderTaskTree([t], { ...options, detailY });
+    expect(result.errors).toEqual([]);
+    for (const line of result.lines) expect(visibleLength(line)).toBeLessThanOrEqual(1);
+    const metadata = result.lines.slice(result.graph.rows + 1, -1);
+    replacements += metadata.filter(line => line === "…").length;
+  }
+  expect(replacements).toBeGreaterThan(0);
+});
+
+test("malformed identities and durable metadata reject coherently without hits or invented facts", () => {
+  const malformed = [
+    { ...task(1), id: 12 }, { ...task(1), id: "bad" }, { ...task(1), runs: undefined },
+    { ...task(1), name: null }, { ...task(1), runs: [{}] }, { ...task(1), attention: { kind: "blocked" } },
+    { ...task(1), pr: {} }, { ...task(1), readiness: {} }, { ...task(1), archive: {} },
+    { ...task(1), status: "done" }, { ...taskTreeView(task(1)), source: null },
+  ];
+  for (const record of malformed) {
+    const out = renderTaskTree([record] as Task[], { cols: 80, rows: 24 });
+    expect(out.errors.length).toBe(1); expect(out.hits).toEqual([]);
+    expect(out.selectedId).toBeUndefined(); expect(out.lines.join("\n")).toContain("ERROR:");
+  }
+  const projection = taskTreeView(task(1)); projection.name = "Untrusted display override";
+  expect(renderTaskTree([projection], { cols: 120, rows: 35 }).lines.join("\n")).not.toContain(projection.name);
+});
+
+test("metadata budgets reject before expensive processing and history is never read", () => {
+  const history = task(1);
+  Object.defineProperty(history, "history", { get() { throw new Error("History must not be read"); } });
+  expect(renderTaskTree([history], { cols: 120, rows: 35 }).errors).toEqual([]);
+  const hugeField = { ...task(1), summary: "界".repeat(8193) };
+  const tooManyRuns = { ...task(1), runs: Array(129).fill(null) };
+  const registry = Array.from({ length: 40 }, (_, i) => ({ ...task(i + 1), summary: "x".repeat(8192) }));
+  const expanded = task(1);
+  expanded.runs = Array.from({ length: 10 }, () => ({ id: "r", agent: "a", role: "worker", state: "started", preparedAt: "x".repeat(8192) }));
+  for (const records of [[hugeField], [tooManyRuns], registry, [expanded]]) {
+    const result = renderTaskTree(records, { cols: 80, rows: 24 });
+    expect(result.errors.join(" ")).toContain("Metadata limit:"); expect(result.hits).toEqual([]);
+  }
+});
+
+test("skip-layer dependency crosses an unrelated incoming route without adding a join", () => {
+  const tasks = [task(1), task(2), task(3, [1]), task(4, [2]), task(5, [1, 3, 4])];
+  const out = renderTaskTree(tasks, { cols: 120, rows: 35 });
+  expect(out.errors).toEqual([]);
+  // 13-cell lanes: edge 1→5 crosses the incoming route 1→3 at (28,2).
+  // Only the shared source and destination endpoints are junctions.
+  expect(out.lines[3]![28]).toBe("╪"); expect(out.lines[3]![2]).toBe("└");
+  expect(out.lines[3]![54]).toBe("┐");
+  const nodeRows = tasks.map(t => new Set(out.hits.filter(h => h.id === t.id).map(h => h.row)));
+  for (const rows of nodeRows) expect(rows.size).toBe(1);
+  expect([...nodeRows[4]!][0]!).toBeGreaterThan([...nodeRows[2]!][0]!);
+  const clipped = renderTaskTree(tasks, { cols: 20, rows: 24, graphX: 15 });
+  expect(clipped.lines.join("\n")).toContain("╪");
+});
