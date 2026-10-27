@@ -5,7 +5,7 @@ import { treeTasks, type TreeTask } from "./task-tree-data";
 export interface TaskTreeOptions {
   cols: number; rows: number; selectedId?: string;
   /** Independent graph cell offsets and metadata line offset; caller owns scrolling. */
-  graphX?: number; graphY?: number; detailY?: number;
+  graphX?: number; graphY?: number; detailY?: number; revealSelected?: boolean;
 }
 export interface TaskTreeHit { id: string; number: number; row: number; col: number; width: number }
 /** Coordinates/offsets are zero-based terminal cells, not JS string indices. */
@@ -15,7 +15,7 @@ export interface TaskTreeRender {
   details: { height: number; y: number; rows: number };
 }
 interface Edge { from: number; to: number; y: number }
-interface Layout { lane: number; ys: number[]; edges: Edge[]; width: number; height: number }
+interface Layout { xs: number[]; widths: number[]; ys: number[]; edges: Edge[]; width: number; height: number }
 interface Viewport { x: number; y: number; rows: number; cols: number }
 interface Panels { cols: number; rows: number; wide: boolean; graphCols: number; graphRows: number; detailCols: number; detailRows: number }
 const size = (n: number, max: number) => Number.isFinite(n) ? Math.max(1, Math.min(max, Math.floor(n))) : 1;
@@ -57,22 +57,53 @@ function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: num
   return { layers, parents };
 }
 
-function layout(tasks: TreeTask[], cols: number): Layout {
-  const { layers, parents } = dependencyLayers(tasks);
-  const lane = Math.max(10, Math.min(28, Math.floor(cols / Math.max(1, tasks.length))));
-  const ys: number[] = [], edges: Edge[] = [];
-  let height = 0;
+/** Weak components use separate vertical bands; unrelated UUIDs never consume lanes. */
+function components(parents: number[][]): number[][] {
+  const neighbors = parents.map(p => [...p]);
+  parents.forEach((ps, child) => ps.forEach(p => neighbors[p]!.push(child)));
+  const seen = new Set<number>(), groups: number[][] = [];
+  for (let i = 0; i < parents.length; i++) {
+    if (seen.has(i)) continue;
+    const group = [i];
+    seen.add(i);
+    for (const node of group) for (const next of neighbors[node]!) {
+      if (!seen.has(next)) { seen.add(next); group.push(next); }
+    }
+    groups.push(group.sort((a, b) => a - b));
+  }
+  return groups;
+}
+
+/** Assign node and routing rows within a single connected vertical band. */
+function placeComponent(group: number[], layers: number[][], parents: number[][], ys: number[], edges: Edge[], height: number): number {
+  const members = new Set(group);
   for (const layer of layers) {
-    for (const i of layer) ys[i] = height;
+    const local = layer.filter(i => members.has(i));
+    if (!local.length) continue;
+    for (const i of local) ys[i] = height;
     height++;
-    for (const i of layer) {
-      for (let j = 0; j < tasks.length; j++) {
-        if (parents[j]!.includes(i)) edges.push({ from: i, to: j, y: height++ });
+    for (const from of local) {
+      for (const to of group.filter(i => parents[i]!.includes(from))) {
+        edges.push({ from, to, y: height++ });
       }
     }
     height++;
   }
-  return { lane, ys, edges, width: Math.max(1, tasks.length * lane), height };
+  return height;
+}
+
+function layout(tasks: TreeTask[], cols: number): Layout {
+  const { layers, parents } = dependencyLayers(tasks);
+  const xs: number[] = [], widths: number[] = [], ys: number[] = [], edges: Edge[] = [];
+  let height = 0, width = 1;
+  for (const group of components(parents)) {
+    const lane = group.length === 1 ? cols : Math.max(24, Math.min(40, Math.floor(cols / group.length)));
+    group.forEach((i, local) => { xs[i] = local * lane; widths[i] = lane - 1; });
+    width = Math.max(width, group.length * lane);
+    if (group.length === 1) { ys[group[0]!] = height++; continue; }
+    height = placeComponent(group, layers, parents, ys, edges, height);
+  }
+  return { xs, widths, ys, edges, width, height };
 }
 
 /** Sparse viewport raster: routes visit visible cells only, not their full lengths. */
@@ -108,7 +139,7 @@ class Routes {
     }
   }
   edge(edge: Edge, graph: Layout): void {
-    const x = edge.from * graph.lane + 2, u = edge.to * graph.lane + 2;
+    const x = graph.xs[edge.from]! + 2, u = graph.xs[edge.to]! + 2;
     const start = graph.ys[edge.from]! + 1, end = graph.ys[edge.to]! - 1;
     this.vertical(x, start, edge.y);
     this.horizontal(x, u, edge.y);
@@ -159,11 +190,29 @@ function graphLines(tasks: TreeTask[], selectedId: string | undefined, graph: La
   for (const edge of graph.edges) routes.edge(edge, graph);
   const canvas = routes.canvas(), hits: TaskTreeHit[] = [];
   for (const [i, task] of tasks.entries()) {
-    const label = nodeLabel(task, i + 1, selectedId, graph.lane - 1);
-    const nodeHits = paintNode(canvas, label, i * graph.lane, graph.ys[i]! - view.y, view, { id: task.id, number: i + 1 });
+    const label = nodeLabel(task, i + 1, selectedId, graph.widths[i]!);
+    const nodeHits = paintNode(canvas, label, graph.xs[i]!, graph.ys[i]! - view.y, view, { id: task.id, number: i + 1 });
     for (const hit of nodeHits) hits.push(hit);
   }
   return { lines: canvas.map(row => row.join("")), hits };
+}
+
+function runFields(run: TreeTask["runs"][number]): [string, string][] {
+  return [
+    ["Run", `${run.id}: ${run.state}; ${run.role} ${run.agent}${run.reviewMode ? ` (${run.reviewMode})` : ""}`],
+    ["Prepared", run.preparedAt], ["Started", run.startedAt ?? "not recorded"], ["Ended", run.endedAt ?? "not recorded"],
+  ];
+}
+
+function technicalFields(selected: TreeTask): [string, string][] {
+  const fields: [string, string][] = [["Technical details", "scroll with Shift+↑/↓"]];
+  const { pr, readiness: ready, archive } = selected;
+  if (pr) fields.push(["PR URL", pr.url], ["PR head", pr.head]);
+  if (ready) fields.push(["Validation", ready.validation], ["Validated head", ready.head], ["Validation run", ready.run]);
+  if (archive) fields.push(["Archive PR", `${archive.pr.repository} #${archive.pr.number}`], ["Archive URL", archive.pr.url], ["Archive head", archive.pr.head]);
+  fields.push(["Runs", String(selected.runs.length)]);
+  for (const run of [...selected.runs].reverse()) fields.push(...runFields(run));
+  return fields;
 }
 
 function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][] {
@@ -179,18 +228,20 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
     ["Attention", selected.attention ? `${selected.attention.kind}: ${selected.attention.reason}` : "none"],
     ["Dependencies", dependencies.join(", ") || "none"],
   ];
-  const pr = selected.pr;
-  fields.push(["PR", pr ? `${pr.repository} #${pr.number} ${pr.url} head ${pr.head}` : "not recorded"]);
-  fields.push(["Readiness", selected.readiness ? JSON.stringify(selected.readiness) : "not recorded (not inferred)"]);
-  fields.push(["Verified archive", selected.archive ? JSON.stringify(selected.archive) : "not recorded"]);
-  fields.push(["Runs", selected.runs.length ? JSON.stringify(selected.runs) : "none recorded"]);
+  const pr = selected.pr, ready = selected.readiness, archive = selected.archive;
+  const latest = selected.runs.at(-1);
+  fields.push(["Latest run", latest ? `${latest.state} · ${latest.role} ${latest.agent}${latest.reviewMode ? ` (${latest.reviewMode})` : ""}` : "none recorded"]);
+  fields.push(["PR", pr ? `${pr.repository} #${pr.number}` : "not recorded"]);
+  fields.push(["Readiness", ready ? `recorded; checks ${ready.checks}; validated ${ready.validatedAt}` : "not recorded (not inferred)"]);
+  fields.push(["Verified archive", archive ? `merged ${archive.mergedAt}; archived ${archive.archivedAt}` : "not recorded"]);
+  fields.push(...technicalFields(selected));
   fields.push(["ID", selected.id], ["Created", selected.createdAt], ["Updated", selected.updatedAt], ["Revision", String(selected.revision)]);
   return fields;
 }
 
 function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: number): string[] {
   if (!selected) return safeLines("Tasks: No tasks", cols);
-  // Source strings were already bounded before JSON serialization. Bound derived
+  // Source strings were already bounded. Bound derived
   // text too, before segmentation/wrapping; escape expansion never drops evidence.
   const fields = detailFields(tasks, selected);
   const length = fields.reduce((total, [name, value]) => total + name.length + value.length + 2, 0);
@@ -227,7 +278,7 @@ function failed(p: Panels, error: unknown): TaskTreeRender {
 }
 
 /** Dormant, no I/O; requires the complete registry including archived prerequisites.
- * One identity/column, one edge/routing row; ╪ crosses without joining.
+ * One identity/column within each component, one edge/routing row; ╪ crosses without joining.
  * See treeTasks for source budgets. Derived selected details have a 65536-unit
  * budget; any malformed/over-budget record rejects the whole render, with no hits.
  * History/unknown properties are never cloned, traversed or serialized.
@@ -241,6 +292,18 @@ export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options:
       x: offset(options.graphX, Math.max(0, graph.width - p.graphCols)),
       y: offset(options.graphY, Math.max(0, graph.height - p.graphRows)),
     };
+    if (options.revealSelected && selected) {
+      const i = tasks.indexOf(selected), y = graph.ys[i]!, x = graph.xs[i]!;
+      const top = Math.max(y - view.rows + 1, Math.min(view.y, y));
+      view.y = offset(top, Math.max(0, graph.height - view.rows));
+      const label = nodeLabel(selected, i + 1, selected.id, graph.widths[i]!);
+      // Reveal the painted cell extent, not just its origin. If the viewport is
+      // narrower than the label, prioritize its prefix (selection and number).
+      // Graph X remains shared across components; manual scrolling is unchanged.
+      const end = x + Math.min(visibleLength(label), view.cols);
+      const left = Math.max(end - view.cols, Math.min(view.x, x));
+      view.x = offset(left, Math.max(0, graph.width - view.cols));
+    }
     const detail = detailLines(tasks, selected, p.detailCols);
     const dy = offset(options.detailY, Math.max(0, detail.length - p.detailRows));
     const painted = graphLines(tasks, selected?.id, graph, view);
