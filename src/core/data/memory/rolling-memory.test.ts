@@ -314,6 +314,48 @@ test("structured summaries reject unknown tasks, invalid fields and oversized ou
   expect(() => parseMemory("x".repeat(12000), [])).toThrow("budget");
 });
 
+test("summary task allowlist keeps active notes and removes verified merged notes", async () => {
+  const { project } = await fixture();
+  const active = await registerTask(project, { name: "Active", summary: "Work", branch: "active", authorized: true });
+  const merged = await registerTask(project, { name: "Merged", summary: "Done", branch: "merged", authorized: true });
+  const archived = { ...merged, archive: { reason: "merged" as const, mergedAt: merged.createdAt, archivedAt: merged.createdAt, pr: { repository: "o/r", number: 1, url: "https://github.com/o/r/pull/1", head: "a".repeat(40) } } };
+  const result = memory({ tasks: [{ id: active.id, notes: "next" }, { id: merged.id, notes: "done" }] });
+  const calls: CompleteRequest[] = [];
+  const provider: Provider = { name: "openai", models: async () => [], complete: async req => { calls.push(req); return answer(result); } };
+  const parsed = await summarizeOlder([{ role: "user", content: `Completed ${merged.id}` }], [active, archived], new AbortController().signal, async () => provider);
+  expect(parsed.tasks).toEqual([{ id: active.id, notes: "next" }]);
+  const input = JSON.parse(calls[0]!.messages[0]!.content as string);
+  expect(input.taskIds).toEqual([active.id]);
+  expect(input.registry.map((t: { id: string }) => t.id)).toEqual([active.id, merged.id]);
+});
+
+test("out-of-snapshot summary references fail closed with safe source diagnostics", async () => {
+  const { project, transcript, deps, controller } = await fixture();
+  const outside = "unverified-private-reference";
+  // A historical reference is not evidence of registration in this project/snapshot.
+  await transcript.append({ type: "message", message: { role: "user", content: outside + " old context ".repeat(3000) } });
+  await transcript.append({ type: "message", message: { role: "assistant", content: "recent tail" } });
+  const before = await transcript.chain(), head = transcript.head();
+  const notices: string[] = [];
+  deps.write = text => { notices.push(text); };
+  const worker = gated(memory({ tasks: [{ id: outside, notes: "private notes" }] }));
+  const rolling = controller(worker.provider);
+  await rolling.boundary(deps); await worker.entered;
+  // New registration while inference is in flight must not authorize an unknown output.
+  await registerTask(project, { name: "New arrival", summary: "New work", branch: "new-arrival", authorized: true });
+  worker.release(); await settle(rolling); await rolling.boundary(deps, false, true);
+  expect(await transcript.chain()).toEqual(before);
+  expect(transcript.head()).toBe(head);
+  const notice = notices.find(n => n.includes("unknown task in memory"))!;
+  expect(notice).toContain("original history kept");
+  expect(notice).toContain("reference occurs in source");
+  expect(notice).toContain("0 tasks");
+  expect(notice).not.toContain(outside);
+  expect(notice).not.toContain("private notes");
+  expect(() => parseMemory(JSON.stringify(memory({ tasks: [{ id: outside, notes: "private notes" }] })), [], "unrelated source"))
+    .toThrow("reference absent from source");
+});
+
 test("SQLite retrieval finds merged tasks and exact original pages; rebuild is idempotent and scoped", async () => {
   const { project, transcript, deps } = await fixture();
   const t = await registerTask(project, { name: "Search migration", summary: "Replace search", branch: "feat/search", authorized: true });
