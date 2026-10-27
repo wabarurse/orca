@@ -1,6 +1,6 @@
 import type { RequestScope } from "./bounded-transport";
 import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
-import { requireVision, validatedBase64 } from "./images";
+import { validatedBase64 } from "./images";
 import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { claudeSearchResults } from "./search";
 import { CLAUDE_BETAS } from "../login";
@@ -17,7 +17,6 @@ export function anthropic(client: Anthropic, options: { recovery?: RecoveryPolic
   return {
     name: "anthropic",
     async complete(req) {
-      requireVision(req.model, req.messages);
       const settings = claudeRequestSettings(req.model, req.settings);
       const params = {
         ...settings,

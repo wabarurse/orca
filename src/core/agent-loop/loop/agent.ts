@@ -1,6 +1,5 @@
 import { modelRequestText } from "../../../protocol/transcript";
 import { materializeImages } from "../../data/images";
-import { requireVision } from "../../../providers";
 import type { RequestSettings } from "../../../providers/catalog";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/core/prompt/shared.ts). The task
@@ -163,7 +162,6 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
     const messages = await deps.transcript.chain();
     const estimated = budget({ ...deps, compaction: undefined }, messages);
     if (!deps.provider) throw new Error("agent: no provider or resolver");
-    requireVision(deps.model, messages);
     const delivered = await materializeImages(deps.ctx.project, messages);
     const request = {
       signal: deps.signal,
@@ -212,7 +210,6 @@ function boundaries(deps: AgentDeps) {
     deps.signal?.throwIfAborted();
     if (current.model !== previousModel) failed = false;
     previousModel = current.model;
-    requireVision(current.model, await current.transcript.chain());
     if (current.compactBoundary) await current.compactBoundary(current, manual, maintenance);
     else if (!maintenance && (manual || !failed)) {
       try {

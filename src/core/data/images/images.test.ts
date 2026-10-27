@@ -9,12 +9,13 @@ import { content, consume, pending, put } from "../inbox/inbox";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
 import { imageBlock, imageContent, loadImage, materializeImages, pendingImageInputs, saveImage, saveImageInput, validateRefs } from "./images";
-import { MAX_IMAGE_BYTES, requireVision, validatedBase64, validateImage } from "../../../providers/images";
+import { MAX_IMAGE_BYTES, validatedBase64, validateImage } from "../../../providers/images";
 import { forwardImages } from "../../tools/attachments";
 import { message } from "../../tools/message";
 import { makeSpawn } from "../../tools/spawn";
 import { registerTask } from "../tasks/tasks";
-import { claudeMessages } from "../../../providers/anthropic";
+import Anthropic from "@anthropic-ai/sdk";
+import { anthropic, claudeMessages } from "../../../providers/anthropic";
 import { toResponses } from "../../../providers/openai";
 import { compact, estimate } from "../memory/compaction";
 import { fakeProvider, text } from "../../../test/fake-provider";
@@ -69,14 +70,15 @@ test("atomic storage persists real bytes, rejects traversal/cross-project refere
   await expect(loadImage(a, ref)).rejects.toThrow();
 });
 
-test.each(["", "implement this screen"])("image prompt %j: queue -> exact committed transcript -> Claude AND Codex bytes, ordered, durable", async prompt => {
+test.each(["claude-fable-5-1", "claude-unknown", "gpt-unknown"])("image model %s: queue -> exact committed transcript -> Claude AND Codex bytes, ordered, durable", async model => {
+  const prompt = "inspect screenshot";
   const p = project(), refs = [await saveImage(p, png()), await saveImage(p, png(2, 1, 250))];
   const inputId = crypto.randomUUID();
   await saveImageInput(p, { text: prompt, inputId, attachments: refs });
   await put(p, "orchestrator", { from: "user", text: prompt, inputId, attachments: refs });
   const transcript = open(paths.transcript(p, "orchestrator"));
   const provider = fakeProvider([[text("done")]]);
-  await createAgent({ transcript, provider, model: "claude-sonnet-4-6", tools: {}, ctx: ctx(p), write() {}, compaction: { enabled: false } }).run();
+  await createAgent({ transcript, provider, model, tools: {}, ctx: ctx(p), write() {}, compaction: { enabled: false } }).run();
   expect(await pending(p, "orchestrator")).toBe(false);
   expect(transcript.consumed!().inputs.has(inputId)).toBe(true);
   expect(await pendingImageInputs(p, transcript.consumed!().inputs)).toEqual([]);
@@ -142,10 +144,6 @@ test("failed transcript commit retains inbox and image ownership; failed seriali
   expect(await pending(p, "orchestrator")).toBe(true); expect(await loadImage(p, ref)).toEqual(png());
   const refs: MessageParam[] = [{ role: "user", content: imageContent("", [ref]) }];
   expect(() => toResponses(refs)).toThrow("not resolved"); expect(() => claudeMessages(refs)).toThrow("not resolved");
-  expect(() => requireVision("gpt-unknown", refs)).toThrow("not enabled");
-  expect(() => requireVision("gpt-5.5", refs)).not.toThrow();
-  expect(() => requireVision("claude-sonnet-5-5", refs)).not.toThrow();
-  expect(() => requireVision("gpt-unknown", [{ role: "user", content: "text" }])).not.toThrow();
   rmSync(join(paths.project(p), "images", `${ref.id}.png`));
   await expect(materializeImages(p, refs)).rejects.toThrow();
   await expect(consume(p, "orchestrator", t, async () => {})).rejects.toThrow();
@@ -201,15 +199,17 @@ test("compaction budgets pixels rather than base64, retains inspectable image bl
   expect(estimate({ type: "image", source: { type: "base64", data: "X".repeat(1000000) } })).toBeLessThan(6200);
 });
 
-test("unsupported model and provider failure preserve committed pixels; refresh cannot replay, explicit new prompt resumes", async () => {
+test("provider failure on an unknown model preserves committed pixels; refresh cannot replay, explicit new prompt resumes", async () => {
   const p = project(), ref = await saveImage(p, png()), t = open(paths.transcript(p, "orchestrator"));
   const inputId = crypto.randomUUID();
   await saveImageInput(p, { inputId, text: "inspect", attachments: [ref] });
   await put(p, "orchestrator", { from: "user", text: "inspect", inputId, attachments: [ref] });
   const unsupported = fakeProvider([]);
+  unsupported.complete = async req => { expect(req.model).toBe("text-only-unknown"); unsupported.calls.push({ messages: req.messages, tools: [] }); throw new Error("fixture provider rejected image"); };
   const deps = { transcript: t, tools: {}, ctx: ctx(p), write() {}, compaction: { enabled: false }, requireInbox: true };
-  await expect(createAgent({ ...deps, provider: unsupported, model: "text-only-unknown" }).run()).rejects.toThrow("not enabled");
-  expect(unsupported.calls).toHaveLength(0);
+  await expect(createAgent({ ...deps, provider: unsupported, model: "text-only-unknown" }).run()).rejects.toThrow("provider rejected image");
+  expect(unsupported.calls).toHaveLength(1);
+  expect(imageCount(unsupported.calls[0]!.messages)).toBe(1);
   expect(t.consumed!().inputs.has(inputId)).toBe(true);
   expect(imageCount(await open(t.path).chain())).toBe(1);
   const failed = { ...fakeProvider([]), complete: async () => { throw new Error("fixture provider rejected image"); } };
@@ -264,4 +264,27 @@ test("provider serializers refuse assistant and nested tool images rather than d
     expect(() => serialize(assistant)).toThrow("assistant image");
     expect(() => serialize(nested)).toThrow("nested tool images");
   }
+});
+
+// Exercise the actual Claude adapter without credentials or network requests.
+test.each(["claude-fable-5-1", "claude-unknown"])("%s sends validated images unchanged to Claude", async model => {
+  const messages: MessageParam[] = [{ role: "user", content: [{ type: "image", source: {
+    type: "base64", media_type: "image/png", data: png().toString("base64"),
+  } }] }];
+  let calls = 0;
+  const client = { messages: { stream(req: { model: string; messages: MessageParam[] }) {
+    calls++;
+    expect(req.model).toBe(model);
+    expect(req.messages).toEqual(messages);
+    return { on() {}, async finalMessage() { return { content: [], stop_reason: "end_turn" }; } };
+  } } } as unknown as Anthropic;
+  const provider = anthropic(client);
+  await provider.complete({ model, messages, tools: [], maxTokens: 100, onText() {} });
+  expect(calls).toBe(1);
+  const malformed: MessageParam[] = [{ role: "user", content: [{ type: "image", source: {
+    type: "base64", media_type: "image/png", data: "invalid!",
+  } }] }];
+  await expect(provider.complete({ model, messages: malformed, tools: [], maxTokens: 100, onText() {} })).rejects.toThrow("base64");
+  expect(() => toResponses(malformed)).toThrow("base64");
+  expect(calls).toBe(1);
 });

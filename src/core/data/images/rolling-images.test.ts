@@ -186,7 +186,7 @@ test("failed rolling checkpoint append keeps image context, searchable originals
   expect(JSON.parse(await queryHistory(f.project, { action: "search_history", query: f.refs[0]!.id })).entries).toHaveLength(1);
 });
 
-test("retained image budget blocks requests rather than dropping pixels; unsupported switching precedes summary inference", async () => {
+test("retained image budget blocks requests rather than dropping pixels", async () => {
   const f = await fixture(), worker = summary();
   await commit(f.project, f.transcript, f.refs); await commit(f.project, f.transcript, f.refs); await tail(f.transcript);
   const { rolling, deps, foreground } = controller(f, worker);
@@ -195,8 +195,7 @@ test("retained image budget blocks requests rather than dropping pixels; unsuppo
   expect(worker.calls).toHaveLength(1); expect(foreground.calls).toHaveLength(0);
   expect(ids(await f.transcript.chain())).toEqual([...f.refs, ...f.refs].map(r => r.id));
   expect(estimate(await f.transcript.chain())).toBeGreaterThan(24000);
-  await expect(createAgent({ ...deps, model: "unknown-text-model", compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle) }).run()).rejects.toThrow("image input is not enabled");
-  expect(worker.calls).toHaveLength(1); expect(foreground.calls).toHaveLength(0);
+
 });
 
 test("missing retained bytes fail at the provider boundary after rolling; committed image prompts are never replayed", async () => {
