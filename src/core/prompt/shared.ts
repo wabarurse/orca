@@ -39,6 +39,8 @@ const taskFlow = (rounds: number) => rounds === 0
   ? `A task runs as: spawn a worker → it reports → spawn the reviewer with "watch ci" and existing check evidence → it reports ready to merge → tell the user.`
   : `A task runs as: spawn a worker → it reports → spawn a reviewer with check evidence. Feedback: worker fixes, reviewer reviews. At most ${rounds} review ${rounds === 1 ? "round" : "rounds"}; stop and report unresolved findings at the limit. Approved: reviewer with "watch ci" and existing evidence → it reports ready to merge → tell the user.`;
 
+const TERMINOLOGY = "Use the user’s terminology for concepts and features. If an internal term differs, explain the distinction rather than silently substituting it.";
+
 const templates: Record<Role, string> = { orchestrator: ORCHESTRATOR, worker: WORKER, reviewer: REVIEWER };
 
 /** What a prompt needs: config.toml's thresholds plus the project's resolved task-flow settings (`effectiveFlow`). */
@@ -47,6 +49,6 @@ export type PromptConfig = Pick<Config, "maxReviewRounds" | "dynamicDispatch" | 
 /** The prompt for a role with its values filled in; callers resolve the project's review rounds and dispatch first. */
 export function rolePrompt(role: Role, config: PromptConfig): string {
   const values: Record<string, string | number> = { taskFlow: taskFlow(config.maxReviewRounds), cyclomatic: config.cyclomatic, cognitive: config.cognitive };
-  const prompt = templates[role].replace(/\{(\w+)\}/g, (m, key: string) => (key in values ? String(values[key]) : m));
+  const prompt = `${templates[role]}\n\n${TERMINOLOGY}`.replace(/\{(\w+)\}/g, (m, key: string) => (key in values ? String(values[key]) : m));
   return role === "orchestrator" && config.dynamicDispatch ? `${prompt}\n\n${DYNAMIC_DISPATCH}` : prompt;
 }

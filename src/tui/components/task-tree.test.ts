@@ -130,7 +130,7 @@ test("only unended started runs animate; merged checkbox requires archive eviden
   const b = renderTaskTree(tasks, { cols: 120, rows: 35, frame: 1 });
   expect(a.animated).toBe(true);
   expect(a.lines).toEqual(b.lines);
-  for (const color of [90, 33, 35]) expect(a.lines.join("\n")).toContain(`\x1b[${color}m●`);
+  for (const color of [90, 35]) expect(a.lines.join("\n")).toContain(`\x1b[${color}m●`);
   expect(renderTaskTree(tasks, { cols: 120, rows: 35, selectedId: id(4) }).lines.join("\n")).toContain("stopped");
   expect(renderTaskTree(tasks.slice(3), { cols: 120, rows: 35 }).animated).toBe(false);
   tasks[1]!.attention = { kind: "blocked", reason: "stopped externally" };
@@ -144,11 +144,24 @@ test("only unended started runs animate; merged checkbox requires archive eviden
   for (const cols of [80, 120]) {
     const out = renderTaskTree([ready, merged], { cols, rows: 35, selectedId: merged.id });
     expect(out.lines.slice(0, out.graph.rows + 1).join("\n")).not.toContain("Overview");
-    expect(out.lines.join("\n")).toContain("\x1b[32m●");
+    expect(out.lines.join("\n")).not.toContain("\x1b[32m●");
     expect(out.lines.join("\n")).toContain("Task #2 · Merged");
     expect(out.lines.join("\n")).toContain("Dependencies: #1 Task 1");
     expect(out.lines.join("\n")).toContain(`\x1b]8;;${pr.url}\x07PR: sample/repo #105`);
   }
   ready.readiness.head = "b".repeat(40);
   expect(renderTaskTree([ready], { cols: 80, rows: 24 }).errors.join(" ")).toContain("ready requires matching validation");
+});
+
+test("publication is green independently of attention, failed runs or readiness; closed and legacy neutral", () => {
+  const t = task(1); t.pr = pr;
+  t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
+  t.attention = { kind: "blocked", reason: "conflicting; checks failed" };
+  t.runs = [{ id: "w", agent: "worker", role: "worker", state: "failed", preparedAt: "today" }];
+  const render = () => renderTaskTree([t], { cols: 120, rows: 60 }).lines.join("\n");
+  for (const value of ["PR is out", "\x1b[32m●", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
+  t.publication.state = "CLOSED";
+  expect(render()).toContain("PR closed"); expect(render()).not.toContain("\x1b[32m●");
+  delete t.publication;
+  expect(render()).not.toContain("PR is out");
 });

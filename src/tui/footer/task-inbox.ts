@@ -1,3 +1,4 @@
+import { taskPublicationMilestone } from "../../protocol/tasks";
 // Read-only presentation of the durable registry. Never inspect agents/transcripts.
 import { taskPR, taskStatusLabels, type TaskRow } from "../../protocol";
 import { wordWrap } from "../components";
@@ -85,14 +86,21 @@ export function taskInboxLines(data: TaskInboxData, cols: number): { lines: stri
     // Each physical fragment closes its link, so styles/links cannot leak rows.
     const link = (text: string) => url.startsWith("https://github.com/") ? `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\` : text;
     // Display precedence only: never change stored lifecycle, attention or reason.
-    const fields = [inboxText(row.name), inboxText(row.summary), row.attention ? inboxText(row.attention.kind) : taskStatusLabels[row.status], url];
+    let milestone;
+    try { milestone = taskPublicationMilestone(row); } catch { /* malformed proof stays unknown */ }
+    const published = milestone?.kind === "published";
+    const status = milestone && milestone.kind !== "unknown" ? milestone.label : row.attention ? inboxText(row.attention.kind) : taskStatusLabels[row.status];
+    const fields = [inboxText(row.name), inboxText(row.summary), status, url];
+    const decorate = (part: string, i: number) => i === 3 ? link(part) : i === 2 && published ? `\x1b[32m${link(part)}\x1b[0m` : part;
     if (wide) {
-      const cells = fields.map((text, i) => bounded(text, widths[i]!).map(part => i === 3 ? link(part) : part));
+      const cells = fields.map((text, i) => bounded(text, widths[i]!).map(part => decorate(part, i)));
       const height = Math.max(...cells.map(cell => cell.length));
       for (let i = 0; i < height; i++) lines.push(tableRow(cells.map(cell => cell[i] ?? "")));
     } else {
-      fields.forEach((text, i) => lines.push(...bounded(`${labels[i]}: ${text}`, cols).map(part => i === 3 ? link(part) : part)));
+      fields.forEach((text, i) => lines.push(...bounded(`${labels[i]}: ${text}`, cols).map(part => decorate(part, i))));
     }
+    if (row.attention) lines.push(...bounded(`attention: ${inboxText(row.attention.kind)}: ${inboxText(row.attention.reason)}`, cols));
+    if (milestone && "observedAt" in milestone) lines.push(...bounded(`observed: ${milestone.observedAt} (historical; not merge permission)`, cols));
     lines.push("");
   }
   lines.pop();

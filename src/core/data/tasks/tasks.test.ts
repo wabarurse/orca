@@ -370,6 +370,7 @@ test("publication persists across rereads, attention revisions, close/reopen and
   }
   const opened = await getTask(project, t.id);
   expect(opened.publication).toEqual({ state: "OPEN", pr: observation().pr, observedAt: expect.any(String) });
+  expect((await listTasks(project)).find(row => row.id === t.id)?.publication).toEqual(opened.publication);
   const disk = JSON.parse(readFileSync(join(paths.project(project), "tasks.json"), "utf8"));
   expect(disk.tasks[0].publication).toEqual(opened.publication);
   await setTaskAttention(project, t.id, { kind: "unknown", reason: "lookup unavailable" });
