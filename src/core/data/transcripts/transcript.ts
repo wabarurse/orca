@@ -122,38 +122,53 @@ export function open(path: string, io: Storage = disk): Transcript {
   };
 }
 
-/** Only an unfinished FINAL assistant batch can be recovered. Never invent an
- * outcome, execute a tool, or repair orphan/duplicate IDs or earlier corruption. */
-export function interruptedMessages(messages: MessageParam[]): MessageParam[] | null {
-  if (paired(messages)) return null;
+function corruptToolHistory(): never {
+  throw new Error("invalid tool history: refusing interrupted-call recovery");
+}
+
+/** Validate the complete prefix and the final assistant batch before inspecting results. */
+function finalInterruptedBatch(messages: MessageParam[]) {
   const index = messages.findLastIndex(m => m.role === "assistant");
   const batch = messages[index];
-  const corrupt = () => { throw new Error("invalid tool history: refusing interrupted-call recovery"); };
-  if (!batch || !Array.isArray(batch.content) || !paired(messages.slice(0, index))) return corrupt();
+  if (!batch || !Array.isArray(batch.content) || !paired(messages.slice(0, index))) return corruptToolHistory();
   const calls = batch.content.filter(b => b.type === "tool_use");
   const ids = new Set(calls.map(b => b.id));
-  if (!calls.length || ids.size !== calls.length || calls.some(b => !b.id)) return corrupt();
+  if (!calls.length || ids.size !== calls.length || calls.some(b => !b.id)) return corruptToolHistory();
+  return { index, calls, ids };
+}
+
+/** Extract only matching results; retain all interposed user content in order. */
+function interruptedTail(messages: MessageParam[], ids: Set<string>) {
   const results: Extract<Exclude<MessageParam["content"], string>[number], { type: "tool_result" }>[] = [];
   const tail: MessageParam[] = [];
   const seen = new Set<string>();
-  for (const message of messages.slice(index + 1)) {
-    if (message.role !== "user") return corrupt();
+  for (const message of messages) {
+    if (message.role !== "user") return corruptToolHistory();
     if (typeof message.content === "string") { tail.push(message); continue; }
     const rest = [];
     for (const block of message.content) {
       if (block.type !== "tool_result") { rest.push(block); continue; }
-      if (!ids.has(block.tool_use_id) || seen.has(block.tool_use_id)) return corrupt();
+      if (!ids.has(block.tool_use_id) || seen.has(block.tool_use_id)) return corruptToolHistory();
       seen.add(block.tool_use_id);
       results.push(block);
     }
     if (rest.length) tail.push({ ...message, content: rest });
   }
+  return { results, tail, seen };
+}
+
+/** Only an unfinished FINAL assistant batch can be recovered. Never invent an
+ * outcome, execute a tool, or repair orphan/duplicate IDs or earlier corruption. */
+export function interruptedMessages(messages: MessageParam[]): MessageParam[] | null {
+  if (paired(messages)) return null;
+  const { index, calls, ids } = finalInterruptedBatch(messages);
+  const { results, tail, seen } = interruptedTail(messages.slice(index + 1), ids);
   const missing = calls.filter(b => !seen.has(b.id));
-  if (!missing.length) return corrupt();
+  if (!missing.length) return corruptToolHistory();
   results.push(...missing.map(b => ({ type: "tool_result" as const, tool_use_id: b.id,
     is_error: true, content: "interrupted; outcome unknown—reconcile before retrying" })));
   const recovered: MessageParam[] = [...messages.slice(0, index + 1), { role: "user", content: results }, ...tail];
-  if (!paired(recovered)) return corrupt();
+  if (!paired(recovered)) return corruptToolHistory();
   return recovered;
 }
 
