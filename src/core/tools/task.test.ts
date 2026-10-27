@@ -37,7 +37,7 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
   expect(await tool.run({ action: "register", name: "Task", summary: "Summary", branch: "feat/x" }, ctx())).toContain("authorization");
   const task = JSON.parse(await tool.run({ action: "register", name: "Task", summary: "Summary", branch: "feat/x", authorized: true }, ctx()));
   expect(task.status).toBe("queued");
-  expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual(await listTasks(project));
+  expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual([task]);
   expect(JSON.parse(await tool.run({ action: "get", taskId: task.id }, ctx())).id).toBe(task.id);
   expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain('spawn the reviewer with "watch ci" and existing check evidence');
   expect(rolePrompt("reviewer", defaults)).toContain("Review-only never asserts readiness.");
@@ -45,12 +45,12 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
 
 test("PR creation/no CI is not ready; active reviewer explicitly validates verified exact clean head", async () => {
   const t = await reviewer();
-  expect(JSON.parse(await record()).status).toBe("reviewing");
+  expect(JSON.parse(await record()).status).toBe("pr open");
   expect(await validate({ validated: false })).toContain("not validated");
   expect(await validate({ validation: "" })).toContain("validation is required");
   expect((await getTask(project, t.id)).status).toBe("reviewing");
-  const ready = JSON.parse(await validate()); expect(ready.status).toBe("ready_to_merge"); expect(ready.readiness.head).toBe(head);
-  expect(ready.readiness.checks).toBe("not_configured");
+  const ready = JSON.parse(await validate()); expect(ready.status).toBe("pr open"); expect(ready.internal.readiness.head).toBe(head);
+  expect(ready.internal.readiness.checks).toBe("not_configured");
   expect(await validate({}, ctx("orchestrator"))).toContain("taskId");
   expect(await validate({ taskId: t.id }, ctx("orchestrator"))).toContain("only a reviewer");
 });
@@ -64,10 +64,10 @@ test("duplicate registration on a PR branch guides corrections to the existing t
   expect(result).toContain("resume its existing taskId and branch without registering again");
   expect(result).toContain("separate work needs a new branch");
   expect(JSON.parse(await tool.run({ action: "list" }, ctx())).map((row: { id: string }) => row.id)).toEqual([t.id]);
-  expect(JSON.parse(await tool.run({ action: "get", taskId: t.id }, ctx()))).toEqual(before);
+  expect(JSON.parse(await tool.run({ action: "get", taskId: t.id }, ctx())).internal.revision).toBe(before.revision);
   const separate = JSON.parse(await tool.run({ action: "register", name: "Separate work", summary: "Independent feature", branch: "feat/separate", authorized: true }, ctx()));
   expect(separate.id).not.toBe(t.id);
-  expect(separate.branch).toBe("feat/separate");
+  expect(separate.internal.branch).toBe("feat/separate");
   expect(tool.spec.description).toContain("resume its taskId and branch without registering again, even after a ready report");
 });
 
@@ -105,9 +105,9 @@ test("ready attempt observes a real merge, closed PR is retained, attention does
   expect(await validate()).toContain("not validated ready");
   expect((await getTask(project, t.id)).attention?.kind).toBe("closed"); expect(await listTasks(project)).toHaveLength(1);
   const out = JSON.parse(await tool.run({ action: "attention", taskId: t.id, kind: "cancelled", reason: "User stopped it" }, ctx()));
-  expect(out.attention.kind).toBe("cancelled");
+  expect(out.internal.attention.kind).toBe("cancelled");
   snapshot = { ...observed(), state: "MERGED", ready: false, mergedAt: new Date().toISOString() };
-  await record(); expect(await listTasks(project)).toEqual([]); expect((await getTask(project, t.id)).archive?.reason).toBe("merged");
+  await record(); expect(await listTasks(project)).toHaveLength(1); expect((await getTask(project, t.id)).archive?.reason).toBe("merged");
 });
 
 test("failed explicit PR refresh invalidates previously validated readiness without removing the task", async () => {
@@ -128,7 +128,7 @@ test("both exposed task schemas describe executable structured dependencies, not
     expect(description).toContain("not notes");
     expect(description).toContain("Never infer relationships from text");
     expect(description).toContain("do not schedule or start work");
-    expect(description).toContain("archive records and preserve history, not delete them");
+    expect(description).toContain("remain visible until explicit confirmed remove");
     expect(description).toContain("it neither cancels a process nor authorizes continuation");
     expect(description).toContain("never rerun tests or add local validation");
     expect(description).toContain("No hosted checks does not replace worker evidence");
@@ -138,11 +138,24 @@ test("both exposed task schemas describe executable structured dependencies, not
     await registerTask(project, { id, name: "Example", summary: "Explicit prerequisite", branch, authorized: true });
   }
   const edited = JSON.parse(await agentTask.run(example, ctx()));
-  expect(edited.dependsOn).toEqual(example.dependsOn);
+  expect(edited.dependencies).toEqual(example.dependsOn);
   expect(edited.status).toBe("queued");
-  expect(edited.runs).toEqual([]);
-  expect(JSON.parse(await orchestratorTask.run({ action: "get", taskId: example.taskId }, ctx())).dependsOn).toEqual(example.dependsOn);
+  expect(edited.internal.runs).toEqual([]);
+  expect(JSON.parse(await orchestratorTask.run({ action: "get", taskId: example.taskId }, ctx())).dependencies).toEqual(example.dependsOn);
   expect(await agentTask.run({ action: "dependencies", taskId: example.taskId }, ctx())).toStartWith("refused:");
   expect((await getTask(project, example.taskId)).dependsOn).toEqual(example.dependsOn);
-  expect(JSON.parse(await agentTask.run({ ...example, dependsOn: [] }, ctx())).dependsOn).toEqual([]);
+  expect(JSON.parse(await agentTask.run({ ...example, dependsOn: [] }, ctx())).dependencies).toEqual([]);
+});
+
+test("persistent tool uses project numbers for create/update/remove and retains canonical memory", async () => {
+  const created = JSON.parse(await tool.run({ action: "create", title: "Numbered", summary: "Summary", branch: "feat/numbered", authorized: true }, ctx()));
+  expect(created.number).toBe(1); expect(created.title).toBe("Numbered"); expect(created).not.toHaveProperty("runs");
+  const edited = JSON.parse(await tool.run({ action: "update", taskNumber: 1, title: "Edited", summary: "Revised" }, ctx()));
+  expect(edited.id).toBe(created.id); expect(edited.title).toBe("Edited");
+  expect(await tool.run({ action: "remove", taskNumber: 1, confirmed: true }, ctx())).toContain("only merged");
+  await observeTaskPR(project, created.id, { ...snapshot!, branch: "feat/numbered", state: "MERGED", mergedAt: "2026-01-01T00:00:00Z" });
+  expect(await tool.run({ action: "remove", taskNumber: 1 }, ctx())).toContain("confirmation");
+  expect(JSON.parse(await tool.run({ action: "remove", taskNumber: 1, confirmed: true }, ctx())).status).toBe("merged");
+  expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual([]);
+  expect(JSON.parse(await tool.run({ action: "get", taskId: "#1" }, ctx())).id).toBe(created.id);
 });

@@ -17,4 +17,4 @@ export const ORCHESTRATOR = `Stay on the default branch.
 - On \`[agent-cancelled]\`: tell the user; no respawn or tool retry without explicit user authorization.
 - On \`[agent-exit]\`: tell the user. If it says "PR … merged", that branch is done: don't respawn; start what was waiting on it. Otherwise respawn that agent once on the same branch with its last task plus "check the worktree for uncommitted work"; if it exits the same way again, tell the user and stop. If it lists conflicting PRs, their workers rebase onto main first, then rerun the task flow.
 - One agent per branch (spawn enforces it).
-- Trust your context; use \`history\` tool only for earlier sessions/other projects.`;
+- Trust your context; use \`memory\` tool (tasks for durable numbered tasks; search/read for conversations) only for earlier sessions/other projects.`;

@@ -2,8 +2,8 @@
 //
 //   ~/.orca/
 //     config.toml              model, byte limits, defaults, pinned projects
-//     memory.sqlite            one rebuildable orchestrator history/task retrieval index for every project
-//                              (+ -wal/-shm while open); transcripts and tasks.json stay authoritative
+//     memory.sqlite            durable task ledger + rebuildable conversation retrieval index for every project
+//                              (+ -wal/-shm while open); transcripts stay authoritative; tasks.json is a recoverable SQL projection
 //     tmux.sock                orca's own tmux server (src/core/tmux/runner.ts), never the user's default one
 //     daemon-locks/<name>      held by a project's orchestrator daemon for its lifetime (src/core/agent-loop/orc/daemon.ts);
 //                              its owner.json pid is how clients tell the daemon is alive
@@ -18,7 +18,7 @@
 //       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
 //       runs/<agent>.json       the agent's latest run: run id, pid, reported or running, last step, startedAt/endedAt (src/core/tmux/exits.ts)
 //       runs/<agent>.<run>.exit a run's close claim: created once, by whoever sends its exit notice (or none)
-//       tasks.json             versioned structured task registry (src/core/data/tasks/tasks.ts), not a message queue
+//       tasks.json             v2 compact task membership projection; durable authority is memory.sqlite
 //       questions/             the orchestrator's open questions for the user, a file each
 //       merged/<n>             PR #n's merge claim: started → handled / kept / nothing to do (src/core/tmux/merges.ts)
 //       orchestrator/          the orchestrator daemon's client channel (src/core/agent-loop/orc/channel.ts):

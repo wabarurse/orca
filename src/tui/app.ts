@@ -4,7 +4,7 @@ import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./c
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
 import type { ImageRef } from "../protocol";
 import { contextStatus, dispatchStatus, reviewStatus } from "./header";
-import { allTasks, listTasks } from "../core/data/tasks";
+import { allTasks, listTasks, removeTask } from "../core/data/tasks";
 import { refreshTaskInboxData, taskInboxLines, type TaskInboxData } from "./footer";
 import { cancelSession } from "../core/tmux";
 import { effortCommand, fastCommand, effectiveSettings, setEffort } from "../core/data/projects";
@@ -136,6 +136,7 @@ export interface AppDeps {
   /** Active structured task rows; read-only, defaults to the durable registry. */
   tasks?: typeof listTasks;
   treeTasks?: typeof allTasks;
+  removeTask?: typeof removeTask;
   /** How long Enter, digits and typing are ignored after a question first shows (QUESTION_DELAY_MS); tests shorten it. */
   questionDelayMs?: number;
 }
@@ -182,6 +183,7 @@ interface TaskTreeState {
   page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
   graphX: number; graphY: number; detailY: number; loading: boolean; error?: string;
   collapsed: Set<string>; frame: number; detailsFocused?: boolean;
+  confirmRemoval?: string; notice?: string; removing?: boolean;
   revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
 }
 
@@ -326,7 +328,7 @@ export class App {
     view.graphX = rendered.graph.x; view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
-    const controls = ["Ctrl+T/Esc chat · r refresh · terminal gesture opens PR links",
+    const controls = [view.confirmRemoval ? "Remove merged task from list? y confirm / n cancel (SQL retained)" : view.notice ?? "Ctrl+T/Esc chat · r refresh · d remove merged · terminal gesture opens PR links",
       view.detailsFocused ? "Details: ↑↓ scroll · ← list" : "↑↓ select · ← fold/parent · → expand/details"].map(line => fit(line, cols));
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
     return { rows: [...content, ...controls].slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0,
@@ -335,8 +337,20 @@ export class App {
 
   private taskTreeKey(k: Key): void {
     const view = this.taskTree!;
+    if (view.removing) return;
+    if (view.confirmRemoval) {
+      if (k.name === "char" && k.text === "y") void this.confirmTaskRemoval(view);
+      else if (k.name === "escape" || k.name === "char" && k.text === "n") { view.confirmRemoval = undefined; this.draw(); }
+      return;
+    }
     if (k.name === "escape" || k.ctrl && k.name === "t") return this.toggleTaskTree();
     if (k.name === "char" && k.text === "r") { void this.refreshTaskTree(); return; }
+    if (k.name === "char" && k.text === "d") {
+      const selected = view.tasks.find(t => t.id === view.selectedId);
+      if (!view.error && !view.loading && selected?.archive) { view.confirmRemoval = selected.id; view.notice = undefined; }
+      else view.notice = "Only verified merged tasks can be removed.";
+      this.draw(); return;
+    }
     const rendered = view.rendered;
     if (!rendered || view.error || view.loading) return;
     if (k.name === "mousedown") this.selectTreeHit(view, rendered, k);
@@ -345,6 +359,19 @@ export class App {
       else this.scrollTaskTree(view, rendered, k);
     }
     this.draw();
+  }
+
+  private async confirmTaskRemoval(view: TaskTreeState): Promise<void> {
+    const id = view.confirmRemoval;
+    if (!id || this.taskTree !== view) return;
+    view.removing = true;
+    try {
+      await (this.deps.removeTask ?? removeTask)(view.page.project, id, true);
+      if (this.taskTree !== view) return;
+      view.notice = "Removed from list; task memory and dependencies retained.";
+      await this.refreshTaskTree();
+    } catch (error) { view.notice = `Removal refused: ${error instanceof Error ? error.message : String(error)}`; }
+    finally { view.removing = false; view.confirmRemoval = undefined; if (this.taskTree === view) this.draw(); }
   }
 
   private selectTreeHit(view: TaskTreeState, rendered: TaskTreeRender, k: Key): void {
@@ -539,6 +566,7 @@ export class App {
       if (this.page) this.checkLive(this.page.project);
       this.watchPages();
       this.questions.poll(this.pages);
+      if (this.taskTree && !this.taskTree.removing) void this.refreshTaskTree();
       void this.refreshSessions(false); // passive snapshots also follow responses consumed in another window
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);

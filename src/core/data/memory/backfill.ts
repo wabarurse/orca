@@ -1,6 +1,6 @@
 // One-time, resumable migration from per-project memory.sqlite files to the global archive.
 //
-// The transcript and tasks.json are authoritative; the old file is only an index. It is deleted
+// The transcript and global task ledger are authoritative; the old file is only an index. It is deleted
 // after, and only after, the project was re-indexed into the global database and read back
 // identically. Anything short of that keeps the old file and is retried on a later start.
 import { Database } from "bun:sqlite";
@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { paths } from "../../../config";
 import { ARCHIVE_AGENT, BATCH, database, entryText, epochsOf, purgeProject, sync, transcriptEntries } from "./archive";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
-import { allTasks } from "../tasks";
+import { existingTasks } from "../tasks";
 import type { Task } from "../../../protocol";
 import { open } from "../transcripts";
 import type { Entry } from "../../../protocol";
@@ -43,7 +43,7 @@ function readTranscript(project: string): Entry[] {
 }
 async function snapshot(project: string): Promise<Snapshot> {
   // Throws (and so keeps the old file) when either source cannot be read.
-  return { tasks: await allTasks(project), entries: readTranscript(project) };
+  return { tasks: existingTasks(project), entries: readTranscript(project) };
 }
 
 type Row = { id: string; epoch: string; body: string; raw: string };
@@ -110,6 +110,7 @@ async function unmigrated(db: Database, project: string, signal?: AbortSignal): 
 }
 async function missingFrom(db: Database, project: string, old: Database, signal?: AbortSignal): Promise<string | undefined> {
   const tables = new Set((old.query("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name));
+  if (tables.has("task_ledger_records")) return "old file contains durable task ledger; explicit migration required (never delete)";
   const entry = db.query("SELECT 1 FROM entries WHERE project=? AND id=?");
   const ids = tables.has("entries") ? old.query("SELECT id FROM entries").all() as { id: string }[] : [];
   for (const [i, { id }] of ids.entries()) {

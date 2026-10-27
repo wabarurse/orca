@@ -81,7 +81,13 @@ export function treeTasks(input: readonly (Task | TaskTreeView)[]): TreeTask[] {
       edgeCount += raw.dependsOn.length;
     }
     check(edgeCount <= 1024, "Graph limit: 1024 dependencies");
-    const task = { ...values, status: raw.status, revision: raw.revision,
+    if (raw.number !== undefined) check(Number.isSafeInteger(raw.number) && Number(raw.number) > 0, "invalid project task number");
+    if (raw.removedAt !== undefined) string(raw.removedAt);
+    if (raw.checkpoints !== undefined) {
+      check(object(raw.checkpoints), "invalid checkpoints");
+      for (const key of ["queuedAt", "buildingAt", "prOpenAt", "mergedAt"]) if (raw.checkpoints[key] !== undefined) string(raw.checkpoints[key]);
+    }
+    const task = { ...values, number: raw.number, checkpoints: raw.checkpoints, removedAt: raw.removedAt, status: raw.status, revision: raw.revision,
       dependsOn: taskDependencies(raw.dependsOn, values.id!), runs: runs(raw.runs),
       pr: raw.pr === undefined ? undefined : pr(raw.pr), readiness: readiness(raw.readiness),
       attention: attention(raw.attention), archive: archive(raw.archive),
@@ -97,5 +103,5 @@ export function treeTasks(input: readonly (Task | TaskTreeView)[]): TreeTask[] {
     }
     return task;
   });
-  return tasks.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return tasks.sort((a, b) => (a.number ?? 0) - (b.number ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }

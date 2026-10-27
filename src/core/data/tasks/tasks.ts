@@ -1,12 +1,12 @@
-// Structured task records, not a scheduler or any of the message/question queues.
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { paths } from "../../../config";
+// Structured task records, not a scheduler or any of the message/question queues.
+import { ledgerTransaction, existingLedgerTasks } from "./ledger-store";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import { clean } from "../inbox";
 import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol";
 
 interface Store { version: 1; tasks: Task[] }
-const file = (project: string) => `${paths.project(project)}/tasks.json`;
 const uuid = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 const stamp = (s: unknown): s is string => typeof s === "string" && Number.isFinite(Date.parse(s));
 function text(value: unknown, max: number, what: string): string {
@@ -25,6 +25,11 @@ function validateReadiness(raw: unknown): asserts raw is TaskReadiness {
 function validateTask(raw: unknown): asserts raw is Task {
   check(object(raw) && uuid(raw.id), "invalid task id");
   taskDependencies(raw.dependsOn, raw.id);
+  if (raw.number !== undefined) check(Number.isSafeInteger(raw.number) && Number(raw.number) > 0, "invalid project task number");
+  if (raw.checkpoints !== undefined) {
+    check(object(raw.checkpoints), "invalid task checkpoints");
+    for (const value of Object.values(raw.checkpoints)) check(stamp(value), "invalid checkpoint timestamp");
+  }
   check(text(raw.name, 120, "name") === raw.name && text(raw.summary, 500, "summary") === raw.summary && text(raw.branch, 250, "branch") === raw.branch, "noncanonical text");
   check(taskStatuses.includes(raw.status as TaskStatus), "invalid status");
   check(stamp(raw.createdAt) && stamp(raw.updatedAt) && Number.isSafeInteger(raw.revision) && Number(raw.revision) > 0, "invalid task timestamps/revision");
@@ -64,41 +69,29 @@ function validateTask(raw: unknown): asserts raw is Task {
     check(e.status !== "ready_to_merge" || e.readiness !== undefined, "ready event requires validation");
   });
 }
+/** Caller already owns the project lock (archive/backfill paths). */
+export async function allTasksLocked(project: string): Promise<Task[]> {
+  projectId(project);
+  return ledgerTransaction(project, validateTask, store => store.tasks);
+}
 async function read(project: string): Promise<Store> {
   projectId(project);
-  let bytes: string;
-  try { bytes = await readFile(file(project), "utf8"); }
-  catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, tasks: [] }; throw e; }
-  const raw: unknown = JSON.parse(bytes);
-  check(object(raw) && raw.version === 1 && Array.isArray(raw.tasks), "unsupported/corrupt registry");
-  const ids = new Set<string>(), runs = new Set<string>();
-  for (const t of raw.tasks) {
-    validateTask(t); check(!ids.has(t.id), "duplicate task id"); ids.add(t.id);
-    for (const r of t.runs) { check(!runs.has(r.id), "run belongs to multiple tasks"); runs.add(r.id); }
-  }
-  return raw as unknown as Store;
+  if (!existsSync(paths.project(project))) return { version: 1, tasks: [] };
+  return withProjectStateLock(project, async () => ({ version: 1, tasks: await allTasksLocked(project) }));
 }
 async function update<T>(project: string, action: (s: Store) => T): Promise<T> {
   projectId(project);
-  const identity = projectIdentity(project); // never resurrect a deleted/recreated managed project
+  const identity = projectIdentity(project);
   return withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
-    const store = await read(project), before = JSON.stringify(store);
-    const result = action(store), after = JSON.stringify(store);
-    if (before !== after) {
-      for (const t of store.tasks) validateTask(t);
-      const tmp = `${file(project)}.${crypto.randomUUID()}.tmp`;
-      try { await writeFile(tmp, after + "\n", { flag: "wx", mode: 0o600 }); await rename(tmp, file(project)); }
-      finally { await rm(tmp, { force: true }); }
-    }
-    return result;
+    return ledgerTransaction(project, validateTask, action);
   });
 }
 function event(t: Task, kind: string, run?: string): void {
   t.updatedAt = new Date().toISOString(); t.revision++;
   t.history.push({ revision: t.revision, at: t.updatedAt, kind, status: t.status, ...(run ? { run } : {}), ...(t.pr ? { pr: { ...t.pr } } : {}), ...(t.attention ? { attention: { ...t.attention } } : {}), ...(t.readiness ? { readiness: { ...t.readiness } } : {}) });
 }
-function find(s: Store, id: string): Task { const t = s.tasks.find(t => t.id === id); check(t, "task not found"); return t; }
+function find(s: Store, id: string): Task { const t = s.tasks.find(t => t.id.toLowerCase() === id.toLowerCase() || String(t.number) === id.replace(/^#/, "")); check(t, "task not found"); return t; }
 function active(t: Task): void { check(!t.archive, "task is archived"); }
 function unready(t: Task): void { delete t.readiness; if (t.status === "ready_to_merge") t.status = "reviewing"; }
 function samePR(a: TaskPR, b: TaskPR): boolean { return a.repository === b.repository && a.number === b.number; }
@@ -109,7 +102,7 @@ function current(s: Store, run: string): { task: Task; run: TaskRun } | undefine
 export async function allTasks(project: string): Promise<Task[]> { return (await read(project)).tasks; }
 export async function getTask(project: string, id: string): Promise<Task> { return find(await read(project), id); }
 export async function listTasks(project: string): Promise<TaskRow[]> {
-  return (await allTasks(project)).filter(t => !t.archive).map(({ id, name, summary, branch, status, createdAt, updatedAt, attention, pr, publication, runs, dependsOn }) => ({ id, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), ...(publication ? { publication } : {}), review: reviewProgress(runs) }));
+  return (await allTasks(project)).filter(t => !t.removedAt).map(({ id, number, checkpoints, archive, name, summary, branch, status, createdAt, updatedAt, attention, pr, publication, runs, dependsOn }) => ({ id, number, checkpoints, archive, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), ...(publication ? { publication } : {}), review: reviewProgress(runs) }));
 }
 /** Case-folded references resolve to actual stored IDs, never guessed or filtered edges. */
 function dependencyResolver(tasks: Task[]): (id: string) => Task {
@@ -154,7 +147,9 @@ export async function setTaskDependencies(project: string, id: string, dependsOn
     check(dependsOn !== undefined, "dependsOn is required (use [] to clear)");
     const t = find(s, id); active(t);
     const resolve = dependencyResolver(s.tasks);
-    const proposed = taskDependencies(dependsOn, t.id).map(dep => resolve(dep).id);
+    check(Array.isArray(dependsOn), "invalid task dependencies");
+    const ids = dependsOn.map(dep => typeof dep === "string" && /^#?[1-9][0-9]*$/.test(dep) ? find(s, dep).id : dep);
+    const proposed = taskDependencies(ids, t.id).map(dep => resolve(dep).id);
     validateDependencyGraph(s.tasks, dependencyGraph(s.tasks, t, proposed, resolve));
     if (JSON.stringify(t.dependsOn) !== JSON.stringify(proposed)) {
       t.dependsOn = proposed; event(t, "dependencies_updated");
@@ -170,7 +165,7 @@ export async function registerTask(project: string, input: { id?: string; name: 
   const name = text(input.name, 120, "name"), summary = text(input.summary, 500, "summary"), branch = text(input.branch, 250, "branch");
   check(!branch.startsWith("-") && !/[\s~^:?*\[\\]/.test(branch) && !branch.includes("..") && !branch.includes("@{"), "invalid branch");
   return update(project, s => {
-    const old = s.tasks.find(t => t.id === id);
+    const old = s.tasks.find(t => t.id.toLowerCase() === id.toLowerCase() || String(t.number) === id.replace(/^#/, ""));
     if (old) { check(old.name === name && old.summary === summary && old.branch === branch, "task id already registered with different fields"); return old; }
     check(!s.tasks.some(t => t.branch === branch && t.pr), "branch already has a pr: for a correction to the same unmerged pr, use task list/get and resume its existing taskId and branch without registering again; separate work needs a new branch");
     const now = new Date().toISOString();
@@ -311,4 +306,35 @@ export function reviewProgress(runs: TaskRun[]): { rounds: number; unknown: bool
   const started = runs.filter(r => r.role === "reviewer" && r.startedAt);
   return { rounds: started.filter(r => r.reviewMode === "review").length,
     unknown: started.some(r => !r.reviewMode), ci: started.at(-1)?.reviewMode === "watch-ci" };
+}
+
+/** Confirmed membership removal only, never delete durable records or edges. */
+export async function removeTask(project: string, id: string, confirmed: boolean): Promise<Task> {
+  check(confirmed === true, "task removal requires confirmation");
+  return update(project, s => {
+    const task = find(s, id); check(task.archive, "only merged tasks may be removed");
+    if (!task.removedAt) { task.removedAt = new Date().toISOString(); event(task, "membership_removed"); }
+    return task;
+  });
+}
+export async function updateTaskMetadata(project: string, id: string, fields: { title?: string; summary?: string }): Promise<Task> {
+  return update(project, s => {
+    const task = find(s, id);
+    const name = fields.title === undefined ? task.name : text(fields.title, 120, "title");
+    const summary = fields.summary === undefined ? task.summary : text(fields.summary, 500, "summary");
+    if (name !== task.name || summary !== task.summary) { task.name = name; task.summary = summary; event(task, "metadata_updated"); }
+    return task;
+  });
+}
+
+/** Retrieval may consult legacy source, but cannot initialize SQL or repair JSON. */
+export function existingTasks(project: string): Task[] {
+  const durable = existingLedgerTasks(project);
+  if (durable) return durable;
+  const path = `${paths.project(project)}/tasks.json`;
+  if (!existsSync(path)) return [];
+  const raw = JSON.parse(readFileSync(path, "utf8"));
+  check(raw.version === 1 && Array.isArray(raw.tasks), "task projection requires durable ledger");
+  for (const task of raw.tasks) validateTask(task);
+  return raw.tasks;
 }

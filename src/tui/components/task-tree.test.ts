@@ -145,7 +145,7 @@ test("only unended started runs animate; merged checkbox requires archive eviden
     const out = renderTaskTree([ready, merged], { cols, rows: 35, selectedId: merged.id });
     expect(out.lines.slice(0, out.graph.rows + 1).join("\n")).not.toContain("Overview");
     expect(out.lines.join("\n")).not.toContain("\x1b[32m●");
-    expect(out.lines.join("\n")).toContain("Task #2 · Merged");
+    expect(out.lines.join("\n")).toContain("Task #2 · merged");
     expect(out.lines.join("\n")).toContain("Dependencies: #1 Task 1");
     expect(out.lines.join("\n")).toContain(`\x1b]8;;${pr.url}\x07PR: sample/repo #105`);
   }
@@ -159,9 +159,9 @@ test("publication is green independently of attention, failed runs or readiness;
   t.attention = { kind: "blocked", reason: "conflicting; checks failed" };
   t.runs = [{ id: "w", agent: "worker", role: "worker", state: "failed", preparedAt: "today" }];
   const render = () => renderTaskTree([t], { cols: 120, rows: 60 }).lines.join("\n");
-  for (const value of ["PR is out", "\x1b[32m●", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
+  for (const value of ["pr open", "\x1b[32m●", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
   t.publication.state = "CLOSED";
-  expect(render()).toContain("PR closed"); expect(render()).not.toContain("\x1b[32m●");
+  expect(render()).toContain("queued"); expect(render()).not.toContain("\x1b[32m●");
   delete t.publication;
-  expect(render()).not.toContain("PR is out");
+  expect(render()).not.toContain("pr open");
 });
