@@ -254,7 +254,7 @@ test("all production review flows require structured intent including zero-revie
 test("reviewer watch-ci opens the PR with title and body from the first commit", () => {
   for (const dynamicDispatch of [false, true]) {
     const prompt = rolePrompt("reviewer", { ...defaults, dynamicDispatch });
-    expect(prompt).toContain("open the PR with `gh pr create --fill-first` (title and body from the first commit) if there is none");
+    expect(prompt).toContain("use `task` publish (gated push/create; title and body from the first commit)");
     expect(prompt.length - terminology.length - 2).toBeLessThan(2200);
   }
 });
@@ -293,7 +293,7 @@ describe("dynamic dispatch", () => {
     expect(s).toContain('Use numbered tasks for dependencies, "none" for roots');
     expect(s).toContain('"<branch> (existing)" for reused branches');
     expect(s).toContain("Justify every edge with a concrete code, migration or safety prerequisite; a shared subject is not an edge.");
-    expect(s).toContain("Spawn only branches from the default branch; only real dependents wait for prerequisites to merge before starting.");
+    expect(s).toContain("Default to branches from the default branch; explicit DAG dependents may use checkpoint baseCommit for local unpublished work, but publish only after all transitive prerequisites merge.");
     expect(s).toContain("Independent milestones run in parallel on disjoint files, including build registrations");
     expect(s).not.toContain("dispatch the stack sequentially");
     expect(s).not.toContain("each PR starts after the previous one merges");

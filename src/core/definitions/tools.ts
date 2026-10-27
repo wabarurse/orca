@@ -4,6 +4,13 @@ import { definition } from "./files";
 // Input structure and validation remain trusted. Annotation edits are effective
 // provider schema edits, not executable extensions or new input capabilities.
 function annotations(base: unknown, edited: unknown, path: string): unknown {
+  // Upgrade older edited schemas without overwriting user annotation files. Only
+  // these shipped additions are restored; arbitrary schema mutations still fail.
+  if (edited === undefined && ["spawn.properties.baseCommit", "task.properties.commands", "memory.properties.commands"].includes(path)) return base;
+  if (Array.isArray(base) && Array.isArray(edited) && path.endsWith(".properties.action.enum")) {
+    const additions = new Set(["checkpoint", "prepare_publication", "checks", "reviewed", "publish"]);
+    if (JSON.stringify(edited) === JSON.stringify(base.filter(v => !additions.has(String(v))))) return base;
+  }
   if (Array.isArray(base)) {
     if (!Array.isArray(edited) || edited.length !== base.length) throw new Error(`immutable tool schema: ${path}`);
     return base.map((v, i) => annotations(v, edited[i], `${path}.${i}`));
