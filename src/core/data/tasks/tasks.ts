@@ -110,40 +110,51 @@ export async function getTask(project: string, id: string): Promise<Task> { retu
 export async function listTasks(project: string): Promise<TaskRow[]> {
   return (await allTasks(project)).filter(t => !t.archive).map(({ id, name, summary, branch, status, createdAt, updatedAt, attention, pr, runs, dependsOn }) => ({ id, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), review: reviewProgress(runs) }));
 }
+/** Case-folded references resolve to actual stored IDs, never guessed or filtered edges. */
+function dependencyResolver(tasks: Task[]): (id: string) => Task {
+  const byId = new Map<string, Task>();
+  for (const task of tasks) {
+    const key = task.id.toLowerCase();
+    check(!byId.has(key), "ambiguous task id"); byId.set(key, task);
+  }
+  return id => {
+    const task = byId.get(id.toLowerCase());
+    check(task, "dependency not found in this project"); return task;
+  };
+}
+function dependencyGraph(tasks: Task[], target: Task, proposed: string[], resolve: (id: string) => Task) {
+  const remaining = new Map<Task, number>(), dependents = new Map<Task, Task[]>();
+  for (const task of tasks) {
+    const deps = task === target ? proposed : taskDependencies(task.dependsOn, task.id);
+    remaining.set(task, deps.length);
+    for (const dep of deps) {
+      const prerequisite = resolve(dep);
+      const children = dependents.get(prerequisite) ?? [];
+      children.push(task); dependents.set(prerequisite, children);
+    }
+  }
+  return { remaining, dependents };
+}
+/** Kahn traversal includes archived prerequisites and validates even no-op edits. */
+function validateDependencyGraph(tasks: Task[], graph: ReturnType<typeof dependencyGraph>): void {
+  const { remaining, dependents } = graph;
+  const queue = tasks.filter(task => remaining.get(task) === 0);
+  for (let i = 0; i < queue.length; i++) {
+    for (const child of dependents.get(queue[i]!) ?? []) {
+      const count = remaining.get(child)! - 1; remaining.set(child, count);
+      if (count === 0) queue.push(child);
+    }
+  }
+  check(queue.length === tasks.length, "task dependency cycle");
+}
 /** Explicit metadata edit only: resolve and validate the full proposed project DAG under its lock. */
 export async function setTaskDependencies(project: string, id: string, dependsOn: unknown): Promise<Task> {
-  check(dependsOn !== undefined, "dependsOn is required (use [] to clear)");
   return update(project, s => {
+    check(dependsOn !== undefined, "dependsOn is required (use [] to clear)");
     const t = find(s, id); active(t);
-    const byId = new Map<string, Task>();
-    for (const task of s.tasks) {
-      const key = task.id.toLowerCase();
-      check(!byId.has(key), "ambiguous task id"); byId.set(key, task);
-    }
-    const resolve = (dep: string): Task => {
-      const task = byId.get(dep.toLowerCase());
-      check(task, "dependency not found in this project"); return task;
-    };
+    const resolve = dependencyResolver(s.tasks);
     const proposed = taskDependencies(dependsOn, t.id).map(dep => resolve(dep).id);
-    // Kahn traversal includes archived prerequisites; never filter unknown edges away.
-    const remaining = new Map<Task, number>(), dependents = new Map<Task, Task[]>();
-    for (const task of s.tasks) {
-      const deps = task === t ? proposed : taskDependencies(task.dependsOn, task.id);
-      remaining.set(task, deps.length);
-      for (const dep of deps) {
-        const prerequisite = resolve(dep);
-        const children = dependents.get(prerequisite) ?? [];
-        children.push(task); dependents.set(prerequisite, children);
-      }
-    }
-    const queue = s.tasks.filter(task => remaining.get(task) === 0);
-    for (let i = 0; i < queue.length; i++) {
-      for (const child of dependents.get(queue[i]!) ?? []) {
-        const count = remaining.get(child)! - 1; remaining.set(child, count);
-        if (count === 0) queue.push(child);
-      }
-    }
-    check(queue.length === s.tasks.length, "task dependency cycle");
+    validateDependencyGraph(s.tasks, dependencyGraph(s.tasks, t, proposed, resolve));
     if (JSON.stringify(t.dependsOn) !== JSON.stringify(proposed)) {
       t.dependsOn = proposed; event(t, "dependencies_updated");
     }

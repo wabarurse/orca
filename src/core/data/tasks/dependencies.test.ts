@@ -86,3 +86,29 @@ test("tool explicit inputs, exposure and existing active branch authorization", 
   expect(JSON.parse(await edit({ taskId: a.id, dependsOn: [] })).dependsOn).toEqual([]);
   expect(tool.spec.input_schema.properties).toHaveProperty("dependsOn");
 });
+
+
+test("repeated canonical input is a byte/revision/history no-op but still validates full graph", async () => {
+  const a = await create("a"), b = await create("b"), c = await create("c");
+  const before = await setTaskDependencies(project, a.id, [b.id]);
+  const saved = bytes();
+  for (const dep of [b.id, b.id.toUpperCase()]) {
+    const repeated = await setTaskDependencies(project, a.id, [dep]);
+    expect(bytes()).toBe(saved);
+    expect(repeated.revision).toBe(before.revision);
+    expect(repeated.history).toEqual(before.history);
+  }
+  const store = JSON.parse(saved);
+  store.tasks.find((t: { id: string }) => t.id === c.id).dependsOn = [crypto.randomUUID()];
+  writeFileSync(`${paths.project(project)}/tasks.json`, JSON.stringify(store));
+  await rejectsUnchanged(a.id, [b.id]);
+});
+
+test("ambiguous case-folded registry IDs reject without mutation even on canonical no-op", async () => {
+  const a = await create("a"), b = await create("b", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+  await setTaskDependencies(project, a.id, [b.id]);
+  const store = JSON.parse(bytes());
+  store.tasks.push({ ...b, id: b.id.toUpperCase() });
+  writeFileSync(`${paths.project(project)}/tasks.json`, JSON.stringify(store));
+  await rejectsUnchanged(a.id, [b.id]);
+});
