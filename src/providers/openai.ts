@@ -1,5 +1,5 @@
 import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
-import { requireVision, validatedBase64 } from "./images";
+import { validatedBase64 } from "./images";
 import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { codexSearchItemSources, codexSearchResults } from "./search";
 import { validateSettings, type RequestSettings } from "./catalog";
@@ -110,7 +110,6 @@ export function openai(credentials: ReturnType<typeof codexCredentials>, options
   return {
     name: "openai",
     async complete(req) {
-      requireVision(req.model, req.messages);
       const input = toResponses(req.messages) as ResponseInputItem[], settings = codexRequestSettings(req.model, req.settings);
       let refreshed = false;
       // Retries are ours (./retry), on the initial request only: the SDK's own are off.
