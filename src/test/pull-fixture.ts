@@ -10,7 +10,7 @@ import { legacy } from "../config/legacy";
 export async function pullFixture(options: { legacyApp?: boolean } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "orca-pull-")));
   const home = join(root, "home ' $space"), stateDirectory = options.legacyApp ? legacy.stateDirectory : ".orca";
-  const app = join(home, stateDirectory, "app"), remote = join(root, "remote ' repo");
+  const app = join(home, stateDirectory, ".runtime", "app"), remote = join(root, "remote ' repo");
   const caller = join(root, "unrelated ' repo"), state = join(root, "relocated state");
   const env = { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null" };
   for (const key of Object.keys(env)) if (key.startsWith("GIT_") && !["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM"].includes(key)) delete env[key as keyof typeof env];
@@ -20,7 +20,7 @@ export async function pullFixture(options: { legacyApp?: boolean } = {}) {
     if (r.code) throw new Error(r.err);
     return r.out.trim();
   }
-  await mkdir(remote, { recursive: true }); await mkdir(join(home, stateDirectory), { recursive: true });
+  await mkdir(remote, { recursive: true }); await mkdir(join(home, stateDirectory, ".runtime"), { recursive: true });
   await g(remote, "init", "-q", "-b", "main");
   await writeFile(join(remote, ".gitignore"), "dist\nnode_modules\n.*.bun-build\n");
   await writeFile(join(remote, "tracked"), "old content\n");

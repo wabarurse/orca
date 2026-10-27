@@ -68,7 +68,7 @@ test("duplicate registration on a PR branch guides corrections to the existing t
   const separate = JSON.parse(await tool.run({ action: "register", name: "Separate work", summary: "Independent feature", branch: "feat/separate", authorized: true }, ctx()));
   expect(separate.id).not.toBe(t.id);
   expect(separate.internal.branch).toBe("feat/separate");
-  expect(tool.spec.description).toContain("resume its taskId and branch without registering again, even after a ready report");
+  expect(tool.spec.description).toContain("reuse the same immutable task for fixes to an unmerged PR");
 });
 
 test("workers and unrelated/stale reviewer runs cannot write readiness or PR identities", async () => {
@@ -124,17 +124,12 @@ test("both exposed task schemas describe executable structured dependencies, not
     expect(exposed.spec.input_schema.properties).toMatchObject({ action: { enum: expect.arrayContaining(["dependencies"]) } });
     expect(exposed.spec.input_schema.properties).toMatchObject({ taskId: { description: expect.stringContaining("dependencies, which requires an explicit taskId") } });
     expect(exposed.spec.input_schema.properties).toMatchObject({ dependsOn: { type: "array", items: { type: "string" } } });
-    const description = exposed.spec.description!;
-    expect(description).toContain("not notes");
-    expect(description).toContain("Never infer relationships from text");
-    expect(description).toContain("do not schedule or start work");
-    expect(description).toContain("remain visible until explicit confirmed remove");
-    expect(description).toContain("it neither cancels a process nor authorizes continuation");
-    expect(description).toContain("never rerun tests or add local validation");
-    expect(description).toContain("No hosted checks does not replace worker evidence");
+    const description = JSON.stringify(exposed.spec);
+    for (const text of ["not free-text notes", "never infer dependencies from text", "no scheduling", "only verified merged membership", "not process cancellation or authorization to continue", "no reruns/local validation", "even without hosted checks"]) expect(description).toContain(text);
+    expect(exposed.spec.description!.length).toBeLessThan(600);
   }
-  const example = JSON.parse(agentTask.spec.description!.match(/\{"action":"dependencies"[^}]+\}/)![0]);
-  for (const [id, branch] of [[example.taskId, "feat/x"], [example.dependsOn[0], "feat/prerequisite"]]) {
+  const example = { action: "dependencies", taskId: "11111111-1111-4111-8111-111111111111", dependsOn: ["22222222-2222-4222-8222-222222222222"] };
+  for (const [id, branch] of [[example.taskId, "feat/x"], [example.dependsOn[0]!, "feat/prerequisite"]] as const) {
     await registerTask(project, { id, name: "Example", summary: "Explicit prerequisite", branch, authorized: true });
   }
   const edited = JSON.parse(await agentTask.run(example, ctx()));

@@ -12,13 +12,13 @@ import { lockHeld } from "../storage-lock";
 export const projectTurnLock = (project: string) => {
   const binding = repositoryBinding(project);
   return binding
-    ? join(paths.root, "checkout-locks", createHash("sha256").update(binding.directory).digest("hex"))
+    ? join(paths.runtime, "checkout-locks", createHash("sha256").update(binding.directory).digest("hex"))
     : conversationTurnLock(project);
 };
 // This conversation's own turn, taken inside the checkout lock (the same path for
 // legacy clones). Deletion needs only this one: a sibling mid-turn on the shared
 // checkout does not make this conversation busy.
-export const conversationTurnLock = (project: string) => join(paths.root, "turn-locks", project);
+export const conversationTurnLock = (project: string) => join(paths.runtime, "turn-locks", project);
 /** The lock paths a turn owns, checkout-wide first; one path for legacy clones. */
 export const turnLocks = (project: string): string[] => [...new Set([projectTurnLock(project), conversationTurnLock(project)])];
 /** Whether a turn is owned by a process that may still be running (a dead owner's lock does not count). */
@@ -39,7 +39,7 @@ const queues = new Map<string, Promise<unknown>>();
 /** Invocation-order queue locally, exclusive directory lock between processes. */
 export function withProjectStateLock<T>(project: string, action: () => Promise<T>): Promise<T> {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project)) return Promise.reject(new Error("invalid project id"));
-  const key = join(paths.root, "project-locks", project);
+  const key = join(paths.runtime, "project-locks", project);
   const next = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() => locked(key, action));
   queues.set(key, next);
   void next.finally(() => { if (queues.get(key) === next) queues.delete(key); }).catch(() => {});

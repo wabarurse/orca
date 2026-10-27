@@ -1,5 +1,5 @@
 import { REVIEWER } from "./reviewer";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { defaults } from "../../config/config";
 import { DYNAMIC_DISPATCH, rolePrompt } from "./shared";
 import { ORCHESTRATOR } from "./orchestrator";
@@ -8,6 +8,14 @@ import { ask } from "../tools/ask";
 import { message } from "../tools/message";
 import { makeSpawn } from "../tools/spawn";
 import { task } from "../tools/task";
+
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const promptHome = mkdtempSync(join(tmpdir(), "orca-prompt-definitions-"));
+const previousHome = process.env.ORCA_HOME;
+process.env.ORCA_HOME = promptHome;
+afterAll(() => { if (previousHome === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previousHome; rmSync(promptHome, { recursive: true, force: true }); });
 
 const terminology = "Use the user’s terminology for concepts and features. If an internal term differs, explain the distinction rather than silently substituting it.";
 
@@ -156,8 +164,9 @@ describe("rolePrompt", () => {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
       expect(p.split("\n").filter((l) => l.startsWith("- ")).length).toBeGreaterThan(3);
       // Includes the mandatory structured review/CI dispatch protocol; the orchestrator also carries the one-sentence history and web_search pointers.
-      // The shared terminology sentence is additional to each role's existing budget.
-      expect(p.length - terminology.length - 2).toBeLessThan(role === "orchestrator" ? 2500 : 2200);
+      // The memory/numbered-task pointer is included in the orchestrator budget;
+      // shared terminology remains additional to each role's budget.
+      expect(p.length - terminology.length - 2).toBeLessThan(role === "orchestrator" ? 2600 : 2200);
       expect(p).not.toMatch(/\{\w+\}/);
     }
   });
@@ -193,8 +202,8 @@ test("check ownership survives review limits, dynamic dispatch and publication h
   const schema = makeSpawn({} as Runner).spec.input_schema as { properties: { prompt: { description: string } } };
   expect(schema.properties.prompt.description).toContain("prior check commands, tested commit/code state, results and saved failure-output paths");
   expect(schema.properties.prompt.description).toContain("Never request full suites, baseline comparisons or duplicate tests, including in watch-ci");
-  expect(task.spec.description).toContain("never rerun tests or add local validation");
-  expect(task.spec.description).toContain("matching the worker's relevant-check evidence to the current clean PR head");
+  expect(JSON.stringify(task.spec.input_schema)).toContain("no reruns/local validation");
+  expect(JSON.stringify(task.spec.input_schema)).toContain("matches existing worker checks and review findings to the current clean PR head");
 });
 
 test("CI monitoring yields pending instead of blocking across dispatch modes", async () => {
@@ -263,7 +272,7 @@ describe("dynamic dispatch", () => {
       expect(off).not.toContain("Splitting work into PRs");
       expect(on).toBe(`${off}\n\n${DYNAMIC_DISPATCH}`);
       // The role base keeps its budget; shared terminology and dispatch sit outside it.
-      expect(off.length - terminology.length - 2).toBeLessThan(2500);
+      expect(off.length - terminology.length - 2).toBeLessThan(2600);
       expect(on).not.toMatch(/\{\w+\}/);
     }
   });

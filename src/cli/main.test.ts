@@ -73,10 +73,10 @@ test("`orca stop <project>` refuses bad input, reports an idle project and stops
     await mkdir(join(home, "projects", "p", "repo"), { recursive: true });
     expect(await run("stop", "p")).toMatchObject({ code: 0, stdout: "p: no orchestrator daemon is running\n" });
     // A recorded live daemon (a shell standing in, which exits once the stop request lands) is asked, then waited for.
-    const commands = join(home, "projects", "p", "orchestrator", "commands");
+    const commands = join(home, ".runtime", "projects", "p", "orchestrator", "commands");
     const child = Bun.spawn(["sh", "-c", `while ! ls "$1"/*.json >/dev/null 2>&1; do sleep 0.1; done`, "sh", commands]);
-    await mkdir(join(home, "daemon-locks", "p"), { recursive: true });
-    await Bun.write(join(home, "daemon-locks", "p", "owner.json"), JSON.stringify({ pid: child.pid, since: new Date().toISOString(), project: "p" }));
+    await mkdir(join(home, ".runtime", "daemon-locks", "p"), { recursive: true });
+    await Bun.write(join(home, ".runtime", "daemon-locks", "p", "owner.json"), JSON.stringify({ pid: child.pid, since: new Date().toISOString(), project: "p" }));
     try { expect(await run("stop", "p")).toMatchObject({ code: 0, stdout: `p: orchestrator daemon (pid ${child.pid}) stopped\n` }); }
     finally { child.kill(); }
     expect(await child.exited).toBe(0);

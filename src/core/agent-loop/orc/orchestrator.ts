@@ -1,3 +1,4 @@
+import { editableTool } from "../../definitions/tools";
 import { budget, type CompactOptions } from "../../data/memory";
 import { contextWindow, type ContextWindow } from "../../../providers/catalog";
 import { contextMessages } from "../../data/transcripts";
@@ -291,7 +292,7 @@ async function replies(project: string, transcript: Transcript): Promise<Message
 
 function orchestratorTools(overrides?: Record<string, Tool>): Record<string, Tool> {
   if (overrides) return overrides;
-  return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, name === "task" ? orchestratorTask : registry[name]]] : []));
+  return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, editableTool(name === "task" ? orchestratorTask : registry[name]!, name === "task" ? "task-orchestrator" : name)]] : []));
 }
 async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean, signal: AbortSignal, rolling: RollingCompactor, onContext: (current: AgentDeps) => void) {
   const epoch = inputEpoch(deps.project);

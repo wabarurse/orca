@@ -196,8 +196,8 @@ describe.skipIf(!hasTmux)("tmux", () => {
 });
 
 test("every tmux call uses orca's own socket under ORCA_HOME, or -L orca when that path is too long", () => {
-  expect(tmuxSocket()).toEqual(["-S", join(home, "tmux.sock")]);
-  expect(tmux.argv("list-windows", "-t", "=s")).toEqual(["tmux", "-S", join(home, "tmux.sock"), "list-windows", "-t", "=s"]);
+  expect(tmuxSocket()).toEqual(["-S", join(home, ".runtime", "tmux.sock")]);
+  expect(tmux.argv("list-windows", "-t", "=s")).toEqual(["tmux", "-S", join(home, ".runtime", "tmux.sock"), "list-windows", "-t", "=s"]);
   const previous = process.env.ORCA_HOME;
   process.env.ORCA_HOME = join(tmpdir(), "x".repeat(120));
   try { expect(tmuxSocket()).toEqual(["-L", "orca"]); }
@@ -212,7 +212,7 @@ test("checkServer explains a server that cannot run commands and points at kill-
   process.env.PATH = `${bin}:${path}`;
   try {
     const error = await tmux.checkServer().catch((e) => e);
-    expect(error.message).toBe(`runner: the orca tmux server cannot run commands (pwd: Operation not permitted); its working directory is probably gone or not permitted. Stop it with \`tmux -S ${join(home, "tmux.sock")} kill-server\` (this also stops every agent on it) and spawn again`);
+    expect(error.message).toBe(`runner: the orca tmux server cannot run commands (pwd: Operation not permitted); its working directory is probably gone or not permitted. Stop it with \`tmux -S ${join(home, ".runtime", "tmux.sock")} kill-server\` (this also stops every agent on it) and spawn again`);
   } finally {
     process.env.PATH = path;
   }

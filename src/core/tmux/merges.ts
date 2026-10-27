@@ -140,7 +140,7 @@ interface Claim {
   running?: string[];
 }
 
-const mergedDir = (project: string) => join(paths.project(project), "merged");
+const mergedDir = (project: string) => join(paths.runtimeProject(project), "merged");
 const claimPath = (project: string, n: number) => join(mergedDir(project), String(n));
 const claimOf = (pr: MergedPR, outcome: string, running?: string[]): Claim =>
   ({ outcome, ts: new Date().toISOString(), branch: pr.headRefName, url: pr.url, mergedAt: pr.mergedAt, running });

@@ -1,3 +1,5 @@
+> Existing homes: follow the [offline layout migration](ORCA_HOME.md) before startup or updating. Do not bootstrap over existing state.
+
 # orca reference
 
 ### Upgrading to orca
@@ -20,13 +22,13 @@ overwriting an unrelated command or changing a running process.
 Existing data stays readable without moving it. `ORCA_HOME` takes precedence;
 the old `PARALLELS_HOME` override still works. Without an override, established
 state in `~/.orca` wins; otherwise an existing `~/.parallels` is reused, including
-saved accounts and conversations. Creating only `~/.orca/app` does not hide old
+saved accounts and conversations. Creating only `~/.orca/.runtime/app` does not hide old
 state. Set `ORCA_HOME` explicitly if you keep two separate state stores. Existing
 worker worktrees retain their registered paths, and old saved image references
 remain valid. There is no automatic migration or deletion.
 
 `orca pull` also supports an existing dedicated `~/.parallels/app` checkout when
-`~/.orca/app` is absent. Builds include a compatibility output for an already
+`~/.orca/.runtime/app` is absent. Builds include a compatibility output for an already
 running old updater, so it receives the new binary instead of a stale build;
 the one-time install above supplies the new `orca` command. The verified GitHub
 origin is still `https://github.com/wabarurse/parallels.git`; renaming the product
@@ -67,7 +69,7 @@ After installing the prerequisites above, run:
 curl -fsSL https://raw.githubusercontent.com/wabarurse/parallels/main/install.sh | sh
 ```
 
-The installer clones the app's `main` branch into `~/.orca/app`, installs frozen
+The installer clones the app's `main` branch into `~/.orca/.runtime/app`, installs frozen
 dependencies, builds it, and installs `~/.local/bin/orca`. It adds the PATH entry
 to `.bashrc` for bash, `.zshrc` (respecting `ZDOTDIR`) for zsh, or `.profile` for
 sh. Unsupported shells and unsafe startup files get manual instructions.
@@ -97,13 +99,13 @@ Alternatively, install manually without changing shell files:
   set -eu
   umask 022
   # Never replace an existing app or follow a symlink into unrelated content.
-  if [ -L "$HOME/.orca" ] || [ -e "$HOME/.orca/app" ] || [ -L "$HOME/.orca/app" ]; then
+  if [ -L "$HOME/.orca" ] || [ -e "$HOME/.orca/.runtime/app" ] || [ -L "$HOME/.orca/.runtime/app" ]; then
     echo "Existing app or symlink: inspect it first; use the update steps for your own clone." >&2
     exit 1
   fi
   mkdir -p "$HOME/.orca"
-  git clone https://github.com/wabarurse/parallels.git "$HOME/.orca/app"
-  cd "$HOME/.orca/app"
+  git clone https://github.com/wabarurse/parallels.git "$HOME/.orca/.runtime/app"
+  cd "$HOME/.orca/.runtime/app"
   # To install an exact reviewed revision, first: git switch --detach <reviewed-commit>
   bun install --frozen-lockfile
   bun run install:local
@@ -211,7 +213,7 @@ Standard system tools (`sh` and `env`) must also remain on PATH.
 agents to do (for example PR publication/review).
 
 Keep the harness checkout separate from the repositories you work on. Both the
-bootstrap and manual workflow install the app at `~/.orca/app` and the executable
+bootstrap and manual workflow install the app at `~/.orca/.runtime/app` and the executable
 at `~/.local/bin/orca`.
 
 Follow the [quick-start installation steps](#2-install-once) above.
@@ -361,7 +363,7 @@ orca pull
 ```
 
 This command accepts no arguments. It updates **only the dedicated harness
-installation** at `$HOME/.orca/app`, never the invoking repository or a
+installation** at `$HOME/.orca/.runtime/app`, never the invoking repository or a
 managed project. `ORCA_HOME` still relocates runtime state, not the updater's
 checkout or executable. Git and **Bun >= 1.4.2 on PATH** are required for updates;
 Bun is not required for normal compiled runtime. An initial clone and successful
@@ -453,14 +455,14 @@ select that exact revision in the dedicated app clone, then run
 `bun install --frozen-lockfile` and `bun run install:local`; do not build from the
 unrelated project you happened to invoke `orca` in.
 
-If the bootstrap stopped after cloning, inspect `~/.orca/app` before retrying.
+If the bootstrap stopped after cloning, inspect `~/.orca/.runtime/app` before retrying.
 For your verified clean clone of the official repository, resume with:
 
 ```sh
 (
   set -eu
   umask 022
-  cd "$HOME/.orca/app"
+  cd "$HOME/.orca/.runtime/app"
   bun install --frozen-lockfile
   bun run install:local
 )

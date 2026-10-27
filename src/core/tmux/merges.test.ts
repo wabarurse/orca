@@ -101,7 +101,7 @@ function fakeTmux(windows: Record<string, ReturnType<typeof Bun.spawn> | null>) 
 }
 
 const inbox = () => drain(project, "orchestrator");
-const claimFile = (num: number) => join(paths.project(project), "merged", String(num));
+const claimFile = (num: number) => join(paths.runtimeProject(project), "merged", String(num));
 const claimOf = (num: number) => JSON.parse(readFileSync(claimFile(num), "utf8")) as { outcome: string; ts: string; running?: string[] };
 
 describe("a merged branch", () => {
@@ -407,7 +407,7 @@ describe("once", () => {
   test("a crash between the claim and the notice: a fresh 'started' claim waits, a stale one is taken over once with its running list", async () => {
     const { wt, oid } = await branch("crashed");
     const started = { outcome: "started", ts: new Date().toISOString(), branch: "crashed", url: url(30), mergedAt: future(), running: ["worker-crashed", "reviewer-crashed"] };
-    mkdirSync(join(paths.project(project), "merged"), { recursive: true });
+    mkdirSync(join(paths.runtimeProject(project), "merged"), { recursive: true });
     writeFileSync(claimFile(30), JSON.stringify(started));
     expect(await watch([pr(30, "crashed", oid)])(project)).toEqual([]);
     expect(existsSync(wt)).toBe(true);

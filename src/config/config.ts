@@ -1,33 +1,9 @@
-// Harness state lives under ~/.orca. Checkouts stay outside it.
-//
-//   ~/.orca/
-//     config.toml              model, byte limits, defaults, pinned projects
-//     memory.sqlite            durable task ledger + rebuildable conversation retrieval index for every project
-//                              (+ -wal/-shm while open); transcripts stay authoritative; tasks.json is a recoverable SQL projection
-//     tmux.sock                orca's own tmux server (src/core/tmux/runner.ts), never the user's default one
-//     daemon-locks/<name>      held by a project's orchestrator daemon for its lifetime (src/core/agent-loop/orc/daemon.ts);
-//                              its owner.json pid is how clients tell the daemon is alive
-//     projects/<name>/
-//       name                   display name set by /rename (absent = <name>)
-//       model                  the project's model, overriding config.model (src/core/data/projects/project-model.ts)
-//       model-settings.json    effort/fast per exact model id (src/core/data/projects/project-settings.ts)
-//       settings.json          the project's maxReviewRounds / dynamicDispatch, overriding config.toml's (src/core/data/projects/flow.ts)
-//       input-history          the TUI's ↑/↓ input history, one JSON string per line, newest last
-//       repository.json        original checkout, default branch and worktree namespace
-//       repo/, worktrees/      legacy projects only
-//       inbox/<agent>/         one FIFO queue per agent (orchestrator, user, worker-<branch>, ...)
-//       runs/<agent>.json       the agent's latest run: run id, pid, reported or running, last step, startedAt/endedAt (src/core/tmux/exits.ts)
-//       runs/<agent>.<run>.exit a run's close claim: created once, by whoever sends its exit notice (or none)
-//       tasks.json             v2 compact task membership projection; durable authority is memory.sqlite
-//       questions/             the orchestrator's open questions for the user, a file each
-//       merged/<n>             PR #n's merge claim: started → handled / kept / nothing to do (src/core/tmux/merges.ts)
-//       orchestrator/          the orchestrator daemon's client channel (src/core/agent-loop/orc/channel.ts):
-//         status.json            pid, run, idle|turn|stopped since when, turn count, context estimate (daemon writes, clients read)
-//         commands/<ts>-<id>.json a client's clear / compact / model / stop request (cancel uses transcripts/orchestrator.jsonl.cancel)
-//         acks/<id>.json         the daemon's reply to a request or cancel token; the waiting client removes it, stale ones are pruned
-//         live.jsonl             the running turn's streamed text and tool events (src/core/agent-loop/orc/live.ts), each tagged with the
-//                                transcript head it followed; replaced at turn start, removed at turn end; TUIs tail it, never the daemon
-//       transcripts/<role>-<branch>.jsonl   original agent history + context checkpoints
+// Public state: config.toml, memory.sqlite (+ adjacent WAL/SHM), private auth,
+// prompts/, tools/, reserved skills/, and projects/ (task membership, binding,
+// settings, transcripts/images and historical tool-output evidence).
+// Internal state: .runtime/{app,tmux.sock,*-locks,projects/<id>/{runs,inbox,
+// questions,orchestrator,merged}}. See docs/ORCA_HOME.md for offline upgrade.
+// Checkouts/worktrees stay at their Git-registered locations.
 
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -62,9 +38,11 @@ export const paths = {
   get config() { return join(root(), "config.toml"); },
   get memory() { return join(root(), "memory.sqlite"); },
   /** The socket of orca's own tmux server, so a stale user server (started from a since-moved directory) cannot break agent windows. */
-  get tmuxSocket() { return join(root(), "tmux.sock"); },
-  daemonLock: (name: string) => join(root(), "daemon-locks", name),
-  orchestrator: (name: string) => join(root(), "projects", name, "orchestrator"),
+  get runtime() { return join(root(), ".runtime"); },
+  runtimeProject: (name: string) => join(root(), ".runtime", "projects", name),
+  get tmuxSocket() { return join(root(), ".runtime", "tmux.sock"); },
+  daemonLock: (name: string) => join(root(), ".runtime", "daemon-locks", name),
+  orchestrator: (name: string) => join(root(), ".runtime", "projects", name, "orchestrator"),
   project: (name: string) => join(root(), "projects", name),
   displayName: (name: string) => join(root(), "projects", name, "name"),
   inputHistory: (name: string) => join(root(), "projects", name, "input-history"),
@@ -72,9 +50,9 @@ export const paths = {
   repo: (name: string) => repositoryBinding(name)?.directory ?? join(root(), "projects", name, "repo"),
   worktrees,
   worktree: (name: string, slug: string) => join(worktrees(name), slug),
-  inbox: (name: string) => join(root(), "projects", name, "inbox"),
-  runs: (name: string) => join(root(), "projects", name, "runs"),
-  questions: (name: string) => join(root(), "projects", name, "questions"),
+  inbox: (name: string) => join(root(), ".runtime", "projects", name, "inbox"),
+  runs: (name: string) => join(root(), ".runtime", "projects", name, "runs"),
+  questions: (name: string) => join(root(), ".runtime", "projects", name, "questions"),
   transcript: (name: string, id: string) => join(root(), "projects", name, "transcripts", `${id}.jsonl`),
 };
 
