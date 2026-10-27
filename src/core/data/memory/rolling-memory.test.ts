@@ -92,7 +92,20 @@ test("foreground proceeds while Luna works; idle publication preserves newer mes
   expect(estimate(await transcript.chain())).toBeLessThan(estimate(before) / 5);
   expect(await open(transcript.path).chain()).toEqual(await transcript.chain());
   const db = new Database(archivePath(), { readonly: true });
-  try { expect(db.query("SELECT count(*) AS n FROM entries WHERE kind='message'").get()).toEqual({ n: history.length }); }
+  try {
+    // history() also replays model-request diagnostics; only message entries are
+    // counted by this query. Verify every original entry's raw archive separately.
+    expect(db.query("SELECT count(*) AS n FROM entries WHERE kind='message'").get())
+      .toEqual({ n: history.filter(e => e.type === "message").length });
+    expect(history.filter(e => e.type === "model-request").map(e => e.stage))
+      .toEqual(["preparing", "provider-wait", "completed", "preparing", "provider-wait", "completed"]);
+    const archived = db.query("SELECT raw FROM entries WHERE project=? AND agent='orchestrator' AND id=?");
+    for (const entry of history) {
+      const row = archived.get(project, entry.uuid) as { raw: string } | null;
+      expect(row).not.toBeNull();
+      expect(JSON.parse(row!.raw)).toEqual(entry);
+    }
+  }
   finally { db.close(); }
 });
 
