@@ -139,3 +139,31 @@ test("Claude: refreshed request completes and metadata reaches SDK middleware", 
   expect(calls).toBe(2);
   expect(seen).toEqual(["401:test-id:https://example.test/messages", "200:test-id:https://example.test/messages"]);
 });
+
+for (const outcome of ["success", "rejected", "transient", "cancelled"] as const) test(`Codex opt-in 401 refresh: ${outcome}`, async () => {
+  let calls = 0;
+  const refresh: (boolean | undefined)[] = [];
+  const authorization: (string | null)[] = [];
+  const caller = new AbortController();
+  const reason = new Error("stopped during refresh");
+  const initial = fakeCodexTokens("test-account", Date.now() + 3600_000, "initial");
+  const renewed = fakeCodexTokens("test-account", Date.now() + 3600_000, "renewed");
+  mock = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    calls++;
+    authorization.push(new Request(input, init).headers.get("authorization"));
+    if (calls === 2 && outcome === "success") return codexSSE([{ type: "response.completed", response: { status: "completed", output: [] } }]);
+    return Response.json({ error: { type: "authentication_error" } }, { status: calls === 2 && outcome === "transient" ? 503 : 401 });
+  }, { preconnect: fetch.preconnect }));
+  const provider = openai(async opts => {
+    refresh.push(opts?.forceRefresh);
+    if (opts?.forceRefresh && outcome === "cancelled") caller.abort(reason);
+    return opts?.forceRefresh || refresh.length > 1 ? renewed : initial;
+  }, { recovery: policy, retry: { backoffMs: [0, 0] } });
+  const result = provider.complete({ ...req, signal: caller.signal });
+  if (outcome === "success") expect((await result).stop).toBe("end");
+  else if (outcome === "cancelled") await expect(result).rejects.toBe(reason);
+  else await expect(result).rejects.toMatchObject({ kind: "permanent" });
+  expect(calls).toBe(outcome === "cancelled" ? 1 : outcome === "transient" ? 3 : 2);
+  expect(refresh).toEqual(outcome === "transient" ? [undefined, true, undefined] : [undefined, true]);
+  expect(authorization).toEqual([`Bearer ${initial.accessToken}`, ...Array(calls - 1).fill(`Bearer ${renewed.accessToken}`)]);
+});
