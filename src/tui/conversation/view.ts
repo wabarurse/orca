@@ -45,6 +45,7 @@ function joinedText(blocks: Block[]): Block[] {
 export function parts(entry: Entry): Part[] | null {
   if (entry.type === "model-request") return [dim(modelRequestText(entry))];
   if (entry.type === "context-boundary") return null;
+  if (entry.type === "tool-recovery") return [dim("— interrupted tool calls completed as errors; outcome unknown—reconcile before retrying")];
   if (entry.type === "meta") return [dim(`— ${entry.role}${entry.branch ? ` on ${entry.branch}` : ""} (${entry.model || "default model"})`)];
   if (entry.type === "summary") return [dim(`— compacted: ${firstLine(entry.text)}`)];
   if (entry.type === "replies") return entry.messages.flatMap((m): Part[] => [dim(`${m.from} → user:`), { md: m.text }]);

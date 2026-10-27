@@ -75,7 +75,14 @@ export function modelRequestText(event: Pick<ModelRequestEntry, "provider" | "mo
   return `[model request] ${event.provider}/${event.model} ${event.stage}; started ${event.startedAt}; updated ${event.updatedAt}`;
 }
 
-export type Entry = MessageEntry | SummaryEntry | MetaEntry | RepliesEntry | ContextBoundaryEntry | ModelRequestEntry;
+/** Lossless protocol checkpoint after an interrupted final tool batch.
+ * Original entries remain in the parent chain for history and consumption. */
+export interface ToolRecoveryEntry extends BaseEntry {
+  type: "tool-recovery";
+  messages: MessageParam[];
+}
+
+export type Entry = ToolRecoveryEntry | MessageEntry | SummaryEntry | MetaEntry | RepliesEntry | ContextBoundaryEntry | ModelRequestEntry;
 
 /** An entry as passed to append(): uuid/ts are filled in, parentUuid defaults to head(). */
 export type NewEntry = Entry extends infer E

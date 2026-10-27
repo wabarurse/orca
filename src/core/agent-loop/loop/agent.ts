@@ -1,3 +1,4 @@
+import { completeInterruptedTools } from "../../data/transcripts/transcript";
 import { modelRequestText } from "../../../protocol/transcript";
 import { materializeImages } from "../../data/images";
 import { requireVision } from "../../../providers";
@@ -208,6 +209,7 @@ function boundaries(deps: AgentDeps) {
   let previousModel = "";
   return async (manual = false, maintenance = false): Promise<AgentDeps> => {
     deps.signal?.throwIfAborted();
+    await completeInterruptedTools(deps.transcript, deps.signal);
     const current = await snapshot(deps);
     deps.signal?.throwIfAborted();
     if (current.model !== previousModel) failed = false;
