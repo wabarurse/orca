@@ -74,6 +74,24 @@ function components(parents: number[][]): number[][] {
   return groups;
 }
 
+/** Assign node and routing rows within a single connected vertical band. */
+function placeComponent(group: number[], layers: number[][], parents: number[][], ys: number[], edges: Edge[], height: number): number {
+  const members = new Set(group);
+  for (const layer of layers) {
+    const local = layer.filter(i => members.has(i));
+    if (!local.length) continue;
+    for (const i of local) ys[i] = height;
+    height++;
+    for (const from of local) {
+      for (const to of group.filter(i => parents[i]!.includes(from))) {
+        edges.push({ from, to, y: height++ });
+      }
+    }
+    height++;
+  }
+  return height;
+}
+
 function layout(tasks: TreeTask[], cols: number): Layout {
   const { layers, parents } = dependencyLayers(tasks);
   const xs: number[] = [], widths: number[] = [], ys: number[] = [], edges: Edge[] = [];
@@ -83,17 +101,7 @@ function layout(tasks: TreeTask[], cols: number): Layout {
     group.forEach((i, local) => { xs[i] = local * lane; widths[i] = lane - 1; });
     width = Math.max(width, group.length * lane);
     if (group.length === 1) { ys[group[0]!] = height++; continue; }
-    const members = new Set(group);
-    for (const layer of layers) {
-      const local = layer.filter(i => members.has(i));
-      if (!local.length) continue;
-      for (const i of local) ys[i] = height;
-      height++;
-      for (const i of local) for (const j of group) {
-        if (parents[j]!.includes(i)) edges.push({ from: i, to: j, y: height++ });
-      }
-      height++;
-    }
+    height = placeComponent(group, layers, parents, ys, edges, height);
   }
   return { xs, widths, ys, edges, width, height };
 }
@@ -189,6 +197,24 @@ function graphLines(tasks: TreeTask[], selectedId: string | undefined, graph: La
   return { lines: canvas.map(row => row.join("")), hits };
 }
 
+function runFields(run: TreeTask["runs"][number]): [string, string][] {
+  return [
+    ["Run", `${run.id}: ${run.state}; ${run.role} ${run.agent}${run.reviewMode ? ` (${run.reviewMode})` : ""}`],
+    ["Prepared", run.preparedAt], ["Started", run.startedAt ?? "not recorded"], ["Ended", run.endedAt ?? "not recorded"],
+  ];
+}
+
+function technicalFields(selected: TreeTask): [string, string][] {
+  const fields: [string, string][] = [["Technical details", "scroll with Shift+↑/↓"]];
+  const { pr, readiness: ready, archive } = selected;
+  if (pr) fields.push(["PR URL", pr.url], ["PR head", pr.head]);
+  if (ready) fields.push(["Validation", ready.validation], ["Validated head", ready.head], ["Validation run", ready.run]);
+  if (archive) fields.push(["Archive PR", `${archive.pr.repository} #${archive.pr.number}`], ["Archive URL", archive.pr.url], ["Archive head", archive.pr.head]);
+  fields.push(["Runs", String(selected.runs.length)]);
+  for (const run of [...selected.runs].reverse()) fields.push(...runFields(run));
+  return fields;
+}
+
 function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][] {
   const index = new Map(tasks.map((t, i) => [t.id.toLowerCase(), i]));
   const dependencies = selected.dependsOn.map(id => {
@@ -208,15 +234,7 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
   fields.push(["PR", pr ? `${pr.repository} #${pr.number}` : "not recorded"]);
   fields.push(["Readiness", ready ? `recorded; checks ${ready.checks}; validated ${ready.validatedAt}` : "not recorded (not inferred)"]);
   fields.push(["Verified archive", archive ? `merged ${archive.mergedAt}; archived ${archive.archivedAt}` : "not recorded"]);
-  fields.push(["Technical details", "scroll with Shift+↑/↓"]);
-  if (pr) fields.push(["PR URL", pr.url], ["PR head", pr.head]);
-  if (ready) fields.push(["Validation", ready.validation], ["Validated head", ready.head], ["Validation run", ready.run]);
-  if (archive) fields.push(["Archive PR", `${archive.pr.repository} #${archive.pr.number}`], ["Archive URL", archive.pr.url], ["Archive head", archive.pr.head]);
-  fields.push(["Runs", String(selected.runs.length)]);
-  for (const run of [...selected.runs].reverse()) {
-    fields.push(["Run", `${run.id}: ${run.state}; ${run.role} ${run.agent}${run.reviewMode ? ` (${run.reviewMode})` : ""}`],
-      ["Prepared", run.preparedAt], ["Started", run.startedAt ?? "not recorded"], ["Ended", run.endedAt ?? "not recorded"]);
-  }
+  fields.push(...technicalFields(selected));
   fields.push(["ID", selected.id], ["Created", selected.createdAt], ["Updated", selected.updatedAt], ["Revision", String(selected.revision)]);
   return fields;
 }
@@ -278,7 +296,13 @@ export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options:
       const i = tasks.indexOf(selected), y = graph.ys[i]!, x = graph.xs[i]!;
       const top = Math.max(y - view.rows + 1, Math.min(view.y, y));
       view.y = offset(top, Math.max(0, graph.height - view.rows));
-      view.x = offset(x < view.x || x >= view.x + view.cols ? x : view.x, Math.max(0, graph.width - view.cols));
+      const label = nodeLabel(selected, i + 1, selected.id, graph.widths[i]!);
+      // Reveal the painted cell extent, not just its origin. If the viewport is
+      // narrower than the label, prioritize its prefix (selection and number).
+      // Graph X remains shared across components; manual scrolling is unchanged.
+      const end = x + Math.min(visibleLength(label), view.cols);
+      const left = Math.max(end - view.cols, Math.min(view.x, x));
+      view.x = offset(left, Math.max(0, graph.width - view.cols));
     }
     const detail = detailLines(tasks, selected, p.detailCols);
     const dy = offset(options.detailY, Math.max(0, detail.length - p.detailRows));

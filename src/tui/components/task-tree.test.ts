@@ -150,3 +150,23 @@ test("disconnected registries use vertical named rows and reveal keeps UUID/cell
     expect(back.lines[1]).toContain("▶[1] Independent task number 1");
   }
 });
+
+test("reveal fits painted label cells, including right-clipped origins and narrow Unicode", () => {
+  const tasks = [task(1), task(2, [1]), task(3, [1]), task(4, [2, 3], "界🙂界🙂界🙂界🙂")];
+  // The selected origin (72) already lies inside an 80-cell viewport.
+  for (const cols of [1, 4, 8, 20, 80, 120]) {
+    const options = { cols, rows: 35, selectedId: id(4), graphY: 999 };
+    const out = renderTaskTree(tasks, { ...options, revealSelected: true });
+    const hits = out.hits.filter(h => h.id === id(4));
+    const row = out.lines[hits[0]!.row]!;
+    expect(out.errors).toEqual([]);
+    expect(out.graph.x).toBeLessThanOrEqual(out.graph.width - out.graph.cols);
+    expect(hits.reduce((sum, h) => sum + h.width, 0)).toBe(cols < 5 ? cols : 5 + 2 * Math.min(8, Math.floor((Math.min(cols, out.graph.cols) - 5) / 2)));
+    if (cols >= 5) expect(row).toContain("▶[4] ");
+    if (cols >= 24) expect(row).toContain("▶[4] 界🙂界🙂界🙂界🙂");
+    if (cols === 80) expect(out.graph.x).toBe(13);
+    // Without the one-shot request manual offsets are not pulled toward selection.
+    const manual = renderTaskTree(tasks, { ...options, graphX: 0 });
+    expect(manual.graph.x).toBe(0);
+  }
+});
