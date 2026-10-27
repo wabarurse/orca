@@ -7,7 +7,7 @@ import { getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, startT
 import type { PRObservation } from "../../protocol/tasks";
 import { rolePrompt } from "../prompt/shared";
 import { defaults } from "../../config/config";
-import { makeTaskTool } from "./task";
+import { makeTaskTool, orchestratorTask, task as agentTask } from "./task";
 import { registry } from "./index";
 import { toolsFor, type ToolContext } from "./registry";
 
@@ -116,4 +116,33 @@ test("failed explicit PR refresh invalidates previously validated readiness with
   expect(await validate()).toContain("lookup failed/unknown");
   const retained = await getTask(project, t.id);
   expect(retained.readiness).toBeUndefined(); expect(retained.attention?.kind).toBe("unknown"); expect(await listTasks(project)).toHaveLength(1);
+});
+
+
+test("both exposed task schemas describe executable structured dependencies, not scheduling", async () => {
+  for (const exposed of [agentTask, orchestratorTask]) {
+    expect(exposed.spec.input_schema.properties?.action).toMatchObject({ enum: expect.arrayContaining(["dependencies"]) });
+    expect(exposed.spec.input_schema.properties?.taskId).toMatchObject({ description: expect.stringContaining("dependencies, which requires an explicit taskId") });
+    expect(exposed.spec.input_schema.properties?.dependsOn).toMatchObject({ type: "array", items: { type: "string" } });
+    const description = exposed.spec.description!;
+    expect(description).toContain("not notes");
+    expect(description).toContain("Never infer relationships from text");
+    expect(description).toContain("do not schedule or start work");
+    expect(description).toContain("archive records and preserve history, not delete them");
+    expect(description).toContain("it neither cancels a process nor authorizes continuation");
+    expect(description).toContain("never rerun tests or add local validation");
+    expect(description).toContain("No hosted checks does not replace worker evidence");
+  }
+  const example = JSON.parse(agentTask.spec.description!.match(/\{"action":"dependencies"[^}]+\}/)![0]);
+  for (const [id, branch] of [[example.taskId, "feat/x"], [example.dependsOn[0], "feat/prerequisite"]]) {
+    await registerTask(project, { id, name: "Example", summary: "Explicit prerequisite", branch, authorized: true });
+  }
+  const edited = JSON.parse(await agentTask.run(example, ctx()));
+  expect(edited.dependsOn).toEqual(example.dependsOn);
+  expect(edited.status).toBe("queued");
+  expect(edited.runs).toEqual([]);
+  expect(JSON.parse(await orchestratorTask.run({ action: "get", taskId: example.taskId }, ctx())).dependsOn).toEqual(example.dependsOn);
+  expect(await agentTask.run({ action: "dependencies", taskId: example.taskId }, ctx())).toStartWith("refused:");
+  expect((await getTask(project, example.taskId)).dependsOn).toEqual(example.dependsOn);
+  expect(JSON.parse(await agentTask.run({ ...example, dependsOn: [] }, ctx())).dependsOn).toEqual([]);
 });
