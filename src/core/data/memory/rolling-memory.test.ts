@@ -15,7 +15,7 @@ import type { CompleteRequest, Provider } from "../../../providers/provider";
 import { RollingCompactor, rollingCut, type RollingOptions } from "./rolling-memory";
 import { parseMemory, summarizeOlder } from "./rolling-summary";
 import type { RollingMemory } from "../../../protocol/transcript";
-import { observeTaskPR, registerTask, setTaskAttention } from "../tasks/tasks";
+import { existingTasks, observeTaskPR, registerTask, setTaskAttention } from "../tasks/tasks";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { paired } from "./tool-pairs";
 import { open } from "../transcripts/transcript";
@@ -388,8 +388,13 @@ test("SQLite retrieval finds merged tasks and exact original pages; rebuild is i
   const second = JSON.parse(await queryHistory(project, { action: "read_history", entryId: entry.uuid, offset: first.nextOffset }));
   expect(first.nextOffset).toBe(2048); expect(second.offset).toBe(2048);
   expect(first.text + second.text).toBe([...`[user] ${body}`].slice(0, 4096).join(""));
-  rmSync(archivePath());
+  // Only retrieval rows are disposable: the same SQLite file holds task authority.
+  const durable = existingTasks(project);
+  purgeProject(project);
+  expect(existingTasks(project)).toEqual(durable);
+  expect(durable.find(task => task.id === t.id)?.archive?.reason).toBe("merged");
   expect(JSON.parse(await queryHistory(project, query))).toEqual(result);
+  expect(existingTasks(project)).toEqual(durable);
   const db = new Database(archivePath(), { readonly: true });
   try { expect(JSON.parse((db.query("SELECT raw FROM entries WHERE id=?").get(entry.uuid) as { raw: string }).raw)).toEqual(entry); }
   finally { db.close(); }

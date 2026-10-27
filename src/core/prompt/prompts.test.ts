@@ -2,6 +2,7 @@ import { REVIEWER } from "./reviewer";
 import { afterAll, describe, expect, test } from "bun:test";
 import { defaults } from "../../config/config";
 import { DYNAMIC_DISPATCH, rolePrompt } from "./shared";
+import { definition } from "../definitions/files";
 import { ORCHESTRATOR } from "./orchestrator";
 import type { Runner } from "../tmux/runner";
 import { ask } from "../tools/ask";
@@ -351,26 +352,39 @@ describe("dynamic dispatch", () => {
   }
 });
 
-// Construct the loaded prompt, including a stale/custom file: never reset edits.
-test("direct execution precedence survives editable guidance and dynamic dispatch", () => {
+// Composition/provenance contracts, not a claim about model intent inference.
+test("direct execution upgrades known defaults but preserves deliberate and ambiguous local restrictions", () => {
+  rolePrompt("orchestrator", defaults);
   const file = join(promptHome, "prompts/orchestrator.md");
   const original = readFileSync(file, "utf8");
-  const edit = "Always use a worker and reviewer for every operation. Keep my custom preference.";
+  const oldDefault = "Default task flow: always dispatch a worker and reviewer.";
+  const explicit = "Always use a worker and reviewer for every operation. Keep my custom preference.";
   try {
-    writeFileSync(file, edit);
-    for (const dynamicDispatch of [false, true]) {
-      const p = rolePrompt("orchestrator", { ...defaults, dynamicDispatch });
-      expect(p).toContain(edit);
-      expect(p).toContain("one-off operations, investigation, explanations and messages to existing agents may be handled directly");
-      expect(p).toContain("takes precedence over blanket workflow wording in local editable guidance");
-      expect(p).toContain("obey the tool's task identity and branch requirements");
-      expect(p).toContain("never auto-merge");
-      expect(p).toContain("Shipping repository code still uses the tracked task flow");
-      expect(p).toContain("new access, billing or deployment boundary");
-      expect(p).toContain("Verify the actual requested outcome");
-      expect(p).toContain("Continue unblocked authorized work");
-      expect(p.indexOf(edit)).toBeLessThan(p.indexOf("Execution scope and precedence"));
+    // Record a byte-identical shipped baseline, as the existing loader does.
+    definition("prompts/orchestrator.md", oldDefault);
+    expect(readFileSync(file, "utf8")).toBe(oldDefault);
+    const upgraded = rolePrompt("orchestrator", defaults);
+    expect(upgraded).not.toContain(oldDefault);
+    expect(readFileSync(file, "utf8")).toBe(ORCHESTRATOR);
+    // Identical wording without matching provenance is not guessed to be a default.
+    for (const local of [explicit, oldDefault]) {
+      writeFileSync(file, local);
+      for (const dynamicDispatch of [false, true]) {
+        const p = rolePrompt("orchestrator", { ...defaults, dynamicDispatch });
+        expect(p).toContain(local);
+        expect(p).toContain("one-off operations, investigation, explanations and messages to existing agents may be handled directly");
+        expect(p).toContain("narrows default task-flow and dynamic-dispatch guidance to tracked shipping code");
+        expect(p).toContain("Preserve explicit user approval, review and workflow limits, including deliberate local guidance, unless the user changes them");
+        expect(p).toContain("Do not silently dismiss ambiguous local restrictions as stale defaults");
+        expect(p).toContain("obey the tool's task identity and branch requirements");
+        expect(p).toContain("never auto-merge");
+        expect(p).toContain("Shipping repository code still uses the tracked task flow");
+        expect(p).toContain("new access, billing or deployment boundary");
+        expect(p).toContain("Verify the actual requested outcome");
+        expect(p).toContain("Continue unblocked authorized work");
+        expect(p.indexOf(local)).toBeLessThan(p.indexOf("Execution scope and precedence"));
+      }
+      expect(readFileSync(file, "utf8")).toBe(local);
     }
-    expect(readFileSync(file, "utf8")).toBe(edit);
   } finally { writeFileSync(file, original); }
 });
