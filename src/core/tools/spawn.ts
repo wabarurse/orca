@@ -1,4 +1,5 @@
 import { attachmentSchema, forwardImages } from "./attachments";
+import { consume, content } from "../data/inbox";
 import { imageContent } from "../data/images";
 import type { ImageRef } from "../../protocol";
 import { delay, publishLaunch } from "../tmux";
@@ -95,7 +96,16 @@ async function launch(runner: Runner, prompt: string, branch: string, role: "wor
     publishLaunch(ctx.project, id, run);
     const t = open(paths.transcript(ctx.project, id));
     if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
-    await t.append({ type: "message", message: { role: "user", content: imageContent(`Branch: ${branch}\n\n${prompt}`, attachments) } });
+    await consume(ctx.project, id, t, async inbox => {
+      ctx.signal?.throwIfAborted();
+      const queued = content(inbox);
+      const next = imageContent(`Branch: ${branch}\n\n${prompt}`, attachments);
+      // One durable entry: never acknowledge STOP without also preserving its
+      // position before this explicit instruction. No text/timestamp inference.
+      const blocks = (value: typeof next) => typeof value === "string" ? [{ type: "text" as const, text: value }] : value;
+      await t.append({ type: "message", inbox, message: { role: "user",
+        content: inbox.length ? [...blocks(queued), ...blocks(next)] : next } }, ctx.signal);
+    }, true);
     ctx.signal?.throwIfAborted();
     await runner.start({ project: ctx.project, role, branch, run, ...(ctx.signal ? { signal: ctx.signal } : {}) });
     return id;

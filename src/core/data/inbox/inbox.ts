@@ -49,7 +49,7 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
   // Clear and orchestrator input publication share the project lock. A send
   // published after a clear is new input, never silently discarded by it.
   const done = (writing.get(d) ?? Promise.resolve()).then(() => to === "orchestrator"
-    ? withProjectStateLock(project, publish) : publish());
+    ? withProjectStateLock(project, publish) : withStorageLock(`${d}.lock`, publish));
   const tail = done.catch(() => {});
   writing.set(d, tail);
   tail.then(() => { if (writing.get(d) === tail) writing.delete(d); });
@@ -123,9 +123,12 @@ export interface ConsumeTarget {
 /** Commit inbox payload AND exact delivery evidence before deleting any files.
  * An interrupted cleanup is retried without resending already committed input.
  * The consumer owns its turn separately; this lock protects the inbox transaction.
+ * commitEmpty lets launch atomically append its next instruction after all queued
+ * deliveries, even when empty. Non-orchestrator puts share this lock: a racing
+ * send is wholly before the launch instruction or remains queued after it.
  */
 export async function consume(project: string, agent: string, transcript: ConsumeTarget,
-  commit: (messages: (Message & { deliveryId: string })[]) => Promise<unknown>): Promise<Message[]> {
+  commit: (messages: (Message & { deliveryId: string })[]) => Promise<unknown>, commitEmpty = false): Promise<Message[]> {
   const d = dir(project, agent);
   return withStorageLock(`${d}.lock`, async () => {
     await transcript.refresh?.();
@@ -146,7 +149,7 @@ export async function consume(project: string, agent: string, transcript: Consum
       fresh.push({ ...m, deliveryId });
       if (m.from === "user" && m.inputId) receipts?.inputs.add(m.inputId);
     }
-    if (fresh.length) await commit(fresh);
+    if (fresh.length || commitEmpty) await commit(fresh);
     // Publication is committed. Cleanup errors must NOT make callers resend.
     for (const name of names) await unlink(join(d, name)).catch(() => {});
     return fresh;
