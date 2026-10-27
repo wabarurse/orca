@@ -4,7 +4,7 @@ import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt }
 import { codexSearchItemSources, codexSearchResults } from "./search";
 import { validateSettings, type RequestSettings } from "./catalog";
 import OpenAI from "openai";
-import type { FunctionTool, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
+import type { FunctionTool, ResponseOutputItemDoneEvent, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../login";
 import type { Provider, Turn } from "./provider";
@@ -184,17 +184,10 @@ async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: 
   for await (const event of stream) {
     if (event.type === "response.output_text.delta") onText(event.delta);
     else if (event.type === "response.output_item.done") {
-      if (strict) {
-        if (!Number.isInteger(event.output_index) || event.output_index < 0 || doneItems.has(event.output_index)) throw new SearchError("malformed");
-        codexSearchItemSources(event.item);
-      }
-      doneItems.set(event.output_index, event.item);
+      recordOutputItem(event, doneItems, strict);
     }
     else if (event.type === "response.completed" || event.type === "response.done") {
-      const output = finalOutput(event, doneItems, strict);
-      const usage = event.response.usage;
-      if (usage) onUsage?.({ input: usage.input_tokens, cachedInput: usage.input_tokens_details?.cached_tokens,
-        output: usage.output_tokens, reasoning: usage.output_tokens_details?.reasoning_tokens });
+      const output = completedEventOutput(event, doneItems, strict, onUsage);
       if (!drain) return output;
       completed = output;
     }
@@ -207,6 +200,20 @@ async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: 
   if (completed) return completed;
   if (strict) throw new SearchError("incomplete");
   throw new Error("codex stream ended before the response completed.");
+}
+function recordOutputItem(event: ResponseOutputItemDoneEvent, items: Map<number, ResponseOutputItem>, strict: boolean): void {
+  if (strict) {
+    if (!Number.isInteger(event.output_index) || event.output_index < 0 || items.has(event.output_index)) throw new SearchError("malformed");
+    codexSearchItemSources(event.item);
+  }
+  items.set(event.output_index, event.item);
+}
+function completedEventOutput(event: Parameters<typeof finalOutput>[0], items: Map<number, ResponseOutputItem>, strict: boolean, onUsage?: (usage: NonNullable<Turn["usage"]>) => void): ResponseOutputItem[] {
+  const output = finalOutput(event, items, strict);
+  const usage = event.response.usage;
+  if (usage) onUsage?.({ input: usage.input_tokens, cachedInput: usage.input_tokens_details?.cached_tokens,
+    output: usage.output_tokens, reasoning: usage.output_tokens_details?.reasoning_tokens });
+  return output;
 }
 function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEvent, "type"> & { type: "response.done" }), items: Map<number, ResponseOutputItem>, strict = false): ResponseOutputItem[] {
   if (strict) {
