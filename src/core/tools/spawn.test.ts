@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../config/config";
-import { drain } from "../data/inbox/inbox";
+import { consume, content, drain, pending, put } from "../data/inbox/inbox";
 import type { Runner, StartOptions } from "../tmux/runner";
 import { open } from "../data/transcripts/transcript";
 import type { ToolContext } from "./registry";
@@ -220,4 +220,67 @@ test("production reviewer protocol refuses omitted intent and persists both mode
     expect(persisted.runs.at(-1)?.reviewMode).toBe(reviewMode);
     expect((await listTasks("p")).find(t => t.id === task.id)?.review).toEqual({ rounds: 1, unknown: false, ci: reviewMode === "watch-ci" });
   }
+});
+
+for (const role of ["worker", "reviewer"] as const) test(`${role} launch preserves old STOP / resume / new STOP across reopen and interrupted cleanup`, async () => {
+  const branch = `ordering-${role}`, id = `${role}-${branch}`;
+  const context = ctx("orchestrator");
+  const t = open(paths.transcript("p", id));
+  await t.append({ type: "message", message: { role: "user", content: "original authorized task" } });
+  await put("p", id, { from: "orchestrator", text: "STOP old" });
+  const directory = join(paths.inbox("p"), id);
+  const name = readdirSync(directory).find(n => n.endsWith(".json"))!;
+  const bytes = readFileSync(join(directory, name));
+  const runner: Runner = { ...fakeRunner, async start() {
+    // A send after launch publication must remain a newer instruction.
+    await put("p", id, { from: "orchestrator", text: "STOP new" });
+  } };
+  await makeSpawn(runner).run({ branch, role, prompt: "explicit resume", ...(role === "reviewer" ? { reviewMode: "review" } : {}) }, context);
+  // Simulate a crash after transcript commit but before inbox unlink.
+  writeFileSync(join(directory, name), bytes);
+  const reopened = open(paths.transcript("p", id));
+  const delivered = await consume("p", id, reopened, async inbox => {
+    await reopened.append({ type: "message", inbox, message: { role: "user", content: content(inbox) } });
+  });
+  expect(delivered.map(m => m.text)).toEqual(["STOP new"]);
+  const saved = open(reopened.path);
+  const serialized = JSON.stringify(await saved.chain());
+  expect(serialized.indexOf("STOP old")).toBeLessThan(serialized.indexOf("explicit resume"));
+  expect(serialized.indexOf("explicit resume")).toBeLessThan(serialized.indexOf("STOP new"));
+  expect(serialized.match(/STOP old/g)).toHaveLength(1);
+  expect(saved.consumed!().deliveries.size).toBe(2);
+  expect(saved.history!()[0]!.type).toBe("message");
+  expect(await pending("p", id)).toBe(false);
+});
+
+test("launch fails closed on unreadable queued input without starting or appending resume", async () => {
+  const branch = "ordering-invalid", id = `worker-${branch}`;
+  await put("p", id, { from: "orchestrator", text: "STOP" });
+  const directory = join(paths.inbox("p"), id);
+  writeFileSync(join(directory, readdirSync(directory).find(n => n.endsWith(".json"))!), "broken");
+  let starts = 0;
+  const runner: Runner = { ...fakeRunner, async start() { starts++; } };
+  await expect(makeSpawn(runner).run({ branch, prompt: "resume" }, ctx("orchestrator"))).rejects.toThrow();
+  expect(starts).toBe(0);
+  expect(await open(paths.transcript("p", id)).chain()).toEqual([]);
+  expect(await pending("p", id)).toBe(true);
+});
+
+test("empty launch transaction serializes a racing STOP; failed commit leaves old input retryable", async () => {
+  const id = "worker-ordering-race", t = open(paths.transcript("p", id));
+  let send!: Promise<unknown>;
+  await consume("p", id, t, async inbox => {
+    expect(inbox).toEqual([]);
+    send = put("p", id, { from: "orchestrator", text: "STOP racing" });
+    await t.append({ type: "message", inbox, message: { role: "user", content: "resume" } });
+  }, true);
+  await send;
+  await expect(consume("p", id, t, async () => { throw new Error("publication failed"); })).rejects.toThrow("publication failed");
+  expect(await pending("p", id)).toBe(true);
+  expect(open(t.path).consumed!().deliveries.size).toBe(0);
+  const reopened = open(t.path);
+  await consume("p", id, reopened, async inbox => {
+    await reopened.append({ type: "message", inbox, message: { role: "user", content: content(inbox) } });
+  });
+  expect((await open(t.path).chain()).map(m => m.content)).toEqual(["resume", "[orchestrator] STOP racing"]);
 });

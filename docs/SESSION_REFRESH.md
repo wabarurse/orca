@@ -254,7 +254,7 @@ request. Missing results are durable errors: `interrupted; outcome unknown—rec
 before retrying`. Existing results and original parent history are preserved. No
 interrupted tool is executed or automatically retried, and no external outcome is
 inferred. Recovery does not authorize a stopped session to resume or reorder user
-instructions; a stale STOP delivered after a resume remains a separate ordering issue.
+instructions; launch/inbox ordering is handled separately as described below.
 
 Recovery writes a `tool-recovery` context checkpoint. **Older readers that do not
 recognize this entry cannot replay its corrected context.** Upgrade all processes
@@ -271,3 +271,25 @@ byte-exact backup, stopped ownership, existing publication locks, expected-head
 validation and reopening with that runtime's reader. It must not grant publishing
 permission, supersede STOP or start a provider request. The generic recovery path
 is not an automatic migration tool for older runtimes.
+
+## Launch instruction ordering
+
+Explicit worker/reviewer spawn now consumes already-published inbox deliveries
+and appends them **before** the launch/follow-up instruction in one transcript
+entry, with their existing exact delivery receipts. Inbox publication and launch
+consumption share the recipient lock. A concurrent send commits either before
+that instruction or remains queued after it; a genuinely later STOP is not hidden.
+Failed publication leaves deliveries retryable; interrupted cleanup cannot replay
+receipted deliveries on reopen. No STOP/resume text classification or timestamp
+comparison is used. Task authorization, liveness checks and cancellation gates
+still apply; this does not automatically resume, retry tools or permit publishing.
+
+This prevents new launch inversions; it does not infer the intended order of
+already-inverted legacy records (which lack a shared durable ordering boundary).
+Such history is preserved unchanged and must not be automatically treated as
+resume authorization: request an explicit authorized follow-up after reconciling
+it. Malformed queued input fails closed before launch. Deploy all inbox writers
+and launch readers together; old writers do not participate in the ordering lock.
+This source-only fix is stacked on #152 (merge `6d804db`); its `tool-recovery`
+reader/writer compatibility rollout above remains required. No runtime/session
+migration, restart or historical incident repair is performed by this fix.
