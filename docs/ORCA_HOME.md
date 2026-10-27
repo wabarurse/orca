@@ -167,13 +167,20 @@ bun /absolute/compatible-orca/scripts/migrate-layout.ts \
   --apply --offline-acknowledged --rollback
 ```
 
-Rollback renames original entries back, retains backups/journal and marks the
-journal `rolled-back`. New-version startup and another migration then refuse
+Rollback first durably marks the journal `rolling-back`, then renames original
+entries back and fsyncs both rename parents before marking the journal
+`rolled-back`. Backups and the journal are retained. A crash after a rename is
+resumed by re-syncing both parents; an interrupted rollback cannot be resumed
+as a forward apply. New-version startup and another migration then refuse
 until a human inspects and archives the recovery journal/version marker outside
 the runtime directory. Restore a compatible launch plan before lifting exclusion.
 Rollback after startup is refused (`activated`), because new writes may need data
 reconciliation. Do not remove that marker to force rollback. An interrupted
-rollback still fails closed; rerun the same rollback while offline. Disk failure
+rollback still fails closed; rerun the same rollback while offline. Source and
+destination ancestors (including `projects` and each project directory) must
+remain owned, non-writable by other users, real directories, not symlinks.
+Migration validates these before discovery and again when resuming/rolling back;
+a replaced legacy project parent is refused without following it. Disk failure
 or loss of primary data requires manual recovery from verified backups, not a
 blind replay. The runtime backup is not a substitute for an independent backup
 of SQLite/auth/history, and power-loss recovery cannot guarantee faulty storage.

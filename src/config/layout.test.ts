@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertLayout } from "./layout";
@@ -114,4 +114,69 @@ test("offline migration leaves a real closed SQLite ledger byte-identical with s
   expect([after.dev, after.ino, after.birthtimeMs]).toEqual([identity.dev, identity.ino, identity.birthtimeMs]);
   const check = new Database(join(root, "memory.sqlite"), { readonly: true });
   try { expect(check.query("SELECT * FROM task_ledger").all()).toEqual([{ id: "immutable-id", status: "merged", removed_at: "retained-removal-evidence" }]); } finally { check.close(); }
+});
+
+for (const linked of ["projects", "projects/p"]) test(`linked source ancestor ${linked} refuses discovery and movement without touching external evidence`, () => {
+  legacy();
+  const external = mkdtempSync(join(suite, "external-"));
+  const displaced = join(external, "original");
+  renameSync(join(root, linked), displaced);
+  symlinkSync(displaced, join(root, linked));
+  const project = linked === "projects" ? join(displaced, "p") : displaced;
+  mkdirSync(join(project, "transcripts/unresolved.lock"), { recursive: true });
+  writeFileSync(join(project, "transcripts/unresolved.lock/owner"), "unknown owner");
+  const before = readdirSync(root);
+  expect(() => migrateLayout({ root, bin })).toThrow("unsafe migration");
+  expect(() => apply()).toThrow("unsafe migration");
+  expect(() => assertLayout(root)).toThrow("unsafe migration");
+  expect(readdirSync(root)).toEqual(before);
+  expect(existsSync(join(root, ".runtime"))).toBe(false);
+  expect(readFileSync(join(project, "runs/worker.json"), "utf8")).toBe("retained projects/p/runs/worker.json");
+  expect(readFileSync(join(project, "transcripts/unresolved.lock/owner"), "utf8")).toBe("unknown owner");
+  expect(readFileSync(join(root, "app/package.json"), "utf8")).toBe("retained app/package.json");
+});
+
+test("rollback refuses a replaced legacy project parent before changing any journal or external path", () => {
+  legacy(); apply();
+  const external = mkdtempSync(join(suite, "rollback-external-"));
+  writeFileSync(join(external, "sentinel"), "untouched");
+  renameSync(join(root, "projects/p"), join(root, "retained-project"));
+  symlinkSync(external, join(root, "projects/p"));
+  const journal = readFileSync(join(root, ".runtime/migration.json"), "utf8");
+  expect(() => apply({ rollback: true })).toThrow("unsafe migration");
+  expect(readFileSync(join(root, ".runtime/migration.json"), "utf8")).toBe(journal);
+  expect(readdirSync(external)).toEqual(["sentinel"]);
+  expect(readFileSync(join(external, "sentinel"), "utf8")).toBe("untouched");
+  expect(readFileSync(join(root, ".runtime/projects/p/runs/worker.json"), "utf8")).toBe("retained projects/p/runs/worker.json");
+});
+
+for (const fault of ["renamed", "synced"] as const) test(`rollback persists both rename parents before terminal journal and resumes after ${fault} interruption`, () => {
+  legacy(); apply();
+  const phase = () => JSON.parse(readFileSync(join(root, ".runtime/migration.json"), "utf8")).phase;
+  const events: [string, string][] = [];
+  expect(() => apply({ rollback: true, persistenceEvent: (stage: string, path: string) => {
+    expect(phase()).toBe("rolling-back");
+    events.push([stage, path]);
+    if (stage === fault) throw new Error("injected persistence fault");
+  } })).toThrow("injected persistence fault");
+  expect(phase()).toBe("rolling-back");
+  expect(() => assertLayout(root)).toThrow("manual offline");
+  expect(() => apply()).toThrow("explicit rollback resume");
+  const resumed: [string, string][] = [];
+  apply({ rollback: true, persistenceEvent: (stage: string, path: string) => {
+    expect(phase()).toBe("rolling-back");
+    resumed.push([stage, path]);
+  } });
+  // The already-renamed first entry is re-synced before any other rename.
+  expect(resumed.slice(0, 2)).toEqual([
+    ["synced", join(root, ".runtime/projects/p")], ["synced", join(root, "projects/p")],
+  ]);
+  for (let i = 0; i < resumed.length; i++) if (resumed[i]![0] === "renamed") {
+    expect(resumed[i + 1]?.[0]).toBe("synced");
+    expect(resumed[i + 2]?.[0]).toBe("synced");
+  }
+  expect(events[0]?.[0]).toBe("renamed");
+  expect(phase()).toBe("rolled-back");
+  expect(readFileSync(join(root, "projects/p/runs/worker.json"), "utf8")).toBe("retained projects/p/runs/worker.json");
+  expect(readFileSync(join(root, "app/package.json"), "utf8")).toBe("retained app/package.json");
 });

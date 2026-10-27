@@ -9,22 +9,27 @@ function annotations(base: unknown, edited: unknown, path: string): unknown {
     return base.map((v, i) => annotations(v, edited[i], `${path}.${i}`));
   }
   if (base && typeof base === "object") {
-    if (!edited || typeof edited !== "object" || Array.isArray(edited)) throw new Error(`invalid tool schema: ${path}`);
-    const a = base as Record<string, unknown>, b = edited as Record<string, unknown>;
-    const schemaNode = !path.endsWith(".properties");
-    if (Object.keys(b).some(k => !Object.hasOwn(a, k) && !(k === "description" && schemaNode))) throw new Error(`unknown tool schema field: ${path}`);
-    const result: Record<string, unknown> = {};
-    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
-      if (key === "description" && schemaNode) {
-        if (typeof b[key] !== "string" || !(b[key] as string).trim()) throw new Error(`invalid description: ${path}`);
-        // Essential shipped field guidance cannot be erased by an override.
-        result[key] = b[key] === a[key] ? a[key] : `${b[key]}\n${a[key] ?? ""}`;
-      } else result[key] = annotations(a[key], b[key], `${path}.${key}`);
-    }
-    return result;
+    return objectAnnotations(base as Record<string, unknown>, edited, path);
   }
   if (base !== edited) throw new Error(`immutable tool schema: ${path}`);
   return base;
+}
+function description(base: unknown, edited: unknown, path: string) {
+  if (typeof edited !== "string" || !edited.trim()) throw new Error(`invalid description: ${path}`);
+  // Essential shipped field guidance cannot be erased by an override.
+  return edited === base ? base : `${edited}\n${base ?? ""}`;
+}
+function objectAnnotations(a: Record<string, unknown>, edited: unknown, path: string) {
+  if (!edited || typeof edited !== "object" || Array.isArray(edited)) throw new Error(`invalid tool schema: ${path}`);
+  const b = edited as Record<string, unknown>, schemaNode = !path.endsWith(".properties");
+  if (Object.keys(b).some(k => !Object.hasOwn(a, k) && !(k === "description" && schemaNode))) throw new Error(`unknown tool schema field: ${path}`);
+  const result: Record<string, unknown> = {};
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    result[key] = key === "description" && schemaNode
+      ? description(a[key], b[key], path)
+      : annotations(a[key], b[key], `${path}.${key}`);
+  }
+  return result;
 }
 export function editableTool(tool: Tool, variant = tool.spec.name): Tool {
   const defaults = { description: tool.spec.description, input_schema: tool.spec.input_schema };

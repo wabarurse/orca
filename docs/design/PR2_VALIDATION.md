@@ -57,3 +57,75 @@ No full suite, baseline comparison, live migration, provider API call or live
 process integration was performed. Manual coordinated shutdown/exclusion of old
 executables during **and after** migration remains an operator requirement, not
 a technical guarantee from the acknowledgement flag.
+
+## Single-review corrections (after `2d484527ae2e209590730f759d78fa8b6840b706`)
+
+This section describes the code in the commit **“Harden offline migration ancestry
+and rollback persistence”**; its exact commit ID is provided in the final worker
+report (a commit cannot embed its own hash). No further code-review round is
+requested. The authorized next step is CI readiness, not merge.
+
+### Findings resolved
+
+1. **P1 source ancestors:** shared layout safety helpers reject unsafe directory
+   ownership/permissions and links. Migration validates both legacy and runtime
+   project parents before lock scanning/discovery, then validates source,
+   destination and backup ancestor chains before inspecting leaves. Legacy
+   discovery independently validates project parents, including startup gating.
+   Rollback uses the same preflight before any writes. Tests cover linked
+   `projects` and `projects/p` containing external runtime children and an
+   unresolved lock, and a legacy project parent replaced before rollback; external
+   evidence and journal stay untouched on refusal. Existing destination checks
+   remain, including same-device refusal.
+2. **P2 rollback durability:** apply and rollback share `persistedRename`, syncing
+   both parents before terminal journal persistence. Rollback durably enters
+   `rolling-back` before moving and only reaches `rolled-back` after syncing.
+   Resume re-syncs already-renamed entries and requires explicit rollback mode.
+   Injected observer faults after rename and after the first parent fsync verify
+   interrupted journal state, startup refusal, direction gating, recovery ordering
+   and retained bytes. The observer does not replace filesystem calls. These are
+   filesystem fault-ordering simulations, not physical power-loss tests.
+3. **Complexity:** cohesive helpers separate ancestry/file validation, journal
+   validation, device checks, lock traversal, backup, persisted moves/rollback,
+   provenance reading/default reconciliation and schema annotations. No unrelated
+   existing TASK/orchestrator/pull complexity refactor. All functions in the five
+   changed production files meet cyclomatic <=10 and cognitive <=15.
+
+Repository `scoreSource` measured final scores (cyclomatic/cognitive):
+`migrateLayout` 6/6; `locksAt` 6/6 and `scanLocks` 5/7 (replacing nested `locks`);
+`assertLayout` 8/9; `definition` 4/4; `annotations` 7/8. Maximum across all new or
+changed helpers: 8 cyclomatic, 9 cognitive. Initial extracted `inspect` was 12/11;
+extracting root preflight reduced it to 6/5, with `migrationRoots` 7/6. Full scores
+are `/tmp/orca-pr2-review-complexity-1.log` (unchanged files) and
+`/tmp/orca-pr2-review-complexity-migration-final.log` (final migration).
+Command: `bun -e 'import {scoreSource} from "./src/core/tools/complexity/scoring";
+for (const file of FILES) console.log(file, scoreSource(await Bun.file(file).text(), file));'`
+where FILES were `src/config/{migrate-layout,layout,layout-safety}.ts` and
+`src/core/definitions/{files,tools}.ts`; only migration was rescored after changing
+its root-preflight extraction.
+
+### Final affected-code checks
+
+| Command | Result | Saved output |
+| --- | --- | --- |
+| `bun run check` | pass | `/tmp/orca-pr2-review-tsc.log` |
+| `bun test src/config/layout.test.ts` | 15 pass, 157 assertions | `/tmp/orca-pr2-review-layout.log` |
+| `bun test src/core/definitions/definitions.test.ts` | 7 pass, 43 assertions | `/tmp/orca-pr2-review-definitions.log` |
+| `bun test src/core/definitions/provider-integration.test.ts` | 1 pass, 50 assertions | `/tmp/orca-pr2-review-provider-integration.log` |
+| `git diff --cached --check` | pass | empty output before commit |
+
+Each test file ran once on final changed code, separately with a fresh temporary
+`ORCA_HOME`; all succeeded on the first review-correction test run, so there are
+no failed test-output paths for this run. Only complexity had an initial
+above-threshold result, retained in the first score log. Final production/test
+fingerprints are `/tmp/orca-pr2-review-code-fingerprints.txt`.
+Prior history/TASK/prompt tests and unchanged pull/bootstrap results are carried
+forward as previously recorded; their files were not modified or rerun. Previous
+layout/definition evidence is superseded by the affected-code checks above.
+No full suite, baseline, live installation/migration, provider request or physical
+power-loss test was run. SQL/auth/WAL retention, immutable identities, editable
+contracts and short descriptions remain unchanged. The bin-local installer lock
+stays outside the home. Manual coordinated shutdown and prevention of old
+launches **during and after** migration remain mandatory. Dynamic dispatch,
+configuration and the exactly-two-PR plan are unchanged. The separate queued
+dependency-tree workflow is not included.
