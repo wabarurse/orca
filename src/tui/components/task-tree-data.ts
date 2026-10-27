@@ -1,4 +1,4 @@
-import { check, object, sha, taskDependencies, taskPR, taskStatuses, type Task, type TaskTreeView } from "../../protocol/tasks";
+import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type Task, type TaskTreeView } from "../../protocol/tasks";
 
 /** History is intentionally not read or cloned: it is not displayed by this view. */
 export type TreeTask = Omit<Task, "history"> & { dependsOn: string[] };
@@ -86,6 +86,12 @@ export function treeTasks(input: readonly (Task | TaskTreeView)[]): TreeTask[] {
       pr: raw.pr === undefined ? undefined : pr(raw.pr), readiness: readiness(raw.readiness),
       attention: attention(raw.attention), archive: archive(raw.archive),
     } as TreeTask;
+    if (raw.publication !== undefined) {
+      check(object(raw.publication), "invalid publication");
+      strings(raw.publication, ["state", "observedAt"]);
+      pr(raw.publication.pr);
+      task.publication = taskPublicationObservation(raw.publication, task.pr);
+    }
     if (task.status === "ready_to_merge") {
       check(task.pr && task.readiness && task.pr.head === task.readiness.head, "ready requires matching validation");
     }

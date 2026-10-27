@@ -1,3 +1,4 @@
+import { REVIEWER } from "./reviewer";
 import { describe, expect, test } from "bun:test";
 import { defaults } from "../../config/config";
 import { DYNAMIC_DISPATCH, rolePrompt } from "./shared";
@@ -7,6 +8,8 @@ import { ask } from "../tools/ask";
 import { message } from "../tools/message";
 import { makeSpawn } from "../tools/spawn";
 import { task } from "../tools/task";
+
+const terminology = "Use the user’s terminology for concepts and features. If an internal term differs, explain the distinction rather than silently substituting it.";
 
 describe("rolePrompt", () => {
   test("fills the config values in", () => {
@@ -153,7 +156,8 @@ describe("rolePrompt", () => {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
       expect(p.split("\n").filter((l) => l.startsWith("- ")).length).toBeGreaterThan(3);
       // Includes the mandatory structured review/CI dispatch protocol; the orchestrator also carries the one-sentence history and web_search pointers.
-      expect(p.length).toBeLessThan(role === "orchestrator" ? 2500 : 2200);
+      // The shared terminology sentence is additional to each role's existing budget.
+      expect(p.length - terminology.length - 2).toBeLessThan(role === "orchestrator" ? 2500 : 2200);
       expect(p).not.toMatch(/\{\w+\}/);
     }
   });
@@ -242,7 +246,7 @@ test("reviewer watch-ci opens the PR with title and body from the first commit",
   for (const dynamicDispatch of [false, true]) {
     const prompt = rolePrompt("reviewer", { ...defaults, dynamicDispatch });
     expect(prompt).toContain("open the PR with `gh pr create --fill-first` (title and body from the first commit) if there is none");
-    expect(prompt.length).toBeLessThan(2200);
+    expect(prompt.length - terminology.length - 2).toBeLessThan(2200);
   }
 });
 
@@ -255,11 +259,11 @@ describe("dynamic dispatch", () => {
       const on = rolePrompt("orchestrator", { ...defaults, maxReviewRounds, dynamicDispatch: true });
       expect(off).toBe(rolePrompt("orchestrator", { ...defaults, maxReviewRounds }));
       expect(off.startsWith(ORCHESTRATOR.slice(0, ORCHESTRATOR.indexOf("{taskFlow}")))).toBe(true);
-      expect(off.endsWith(ORCHESTRATOR.slice(ORCHESTRATOR.indexOf("{taskFlow}") + "{taskFlow}".length))).toBe(true);
+      expect(off.endsWith(`${ORCHESTRATOR.slice(ORCHESTRATOR.indexOf("{taskFlow}") + "{taskFlow}".length)}\n\n${terminology}`)).toBe(true);
       expect(off).not.toContain("Splitting work into PRs");
       expect(on).toBe(`${off}\n\n${DYNAMIC_DISPATCH}`);
-      // The base keeps its budget; the section sits outside it.
-      expect(off.length).toBeLessThan(2500);
+      // The role base keeps its budget; shared terminology and dispatch sit outside it.
+      expect(off.length - terminology.length - 2).toBeLessThan(2500);
       expect(on).not.toMatch(/\{\w+\}/);
     }
   });
@@ -320,4 +324,20 @@ describe("dynamic dispatch", () => {
     expect(s).toContain("tasks 1 and 2 (depth 1); activation task 3 depends on 1 and 2 (depth 2)");
     expect(s).toContain("waits for the required deploy before switching reads or dropping old storage");
   });
+});
+
+ test("reviewer records publication before CI without relaxing readiness", () => {
+  expect(REVIEWER).toContain("immediately after publication, before waiting for CI or validation");
+  expect(REVIEWER).toContain('"PR is out"');
+  expect(REVIEWER).toContain("require required hosted checks and approval satisfied");
+});
+
+ test("all role system prompts use the user's terminology without silently equating internal terms", () => {
+  for (const role of ["orchestrator", "worker", "reviewer"] as const) {
+    for (const dynamicDispatch of [false, true]) {
+      const prompt = rolePrompt(role, { ...defaults, dynamicDispatch });
+      expect(prompt).toContain("Use the user’s terminology for concepts and features. If an internal term differs, explain the distinction rather than silently substituting it.");
+      if (role === "reviewer") expect(prompt).toContain("never grants merge permission");
+    }
+  }
 });

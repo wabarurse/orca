@@ -1,3 +1,4 @@
+import { taskPublicationMilestone } from "../../protocol/tasks";
 import { check, type Task, type TaskTreeView } from "../../protocol/tasks";
 import { cells, plainText, visibleLength, wordWrap, wrap } from "./text";
 import { treeTasks, type TreeTask } from "./task-tree-data";
@@ -88,7 +89,8 @@ function active(task: TreeTask): boolean {
 }
 
 function status(task: TreeTask): string {
-  if (task.archive) return "Merged";
+  const milestone = taskPublicationMilestone(task);
+  if (milestone.kind !== "unknown") return milestone.kind === "merged" ? "Merged" : milestone.label;
   if (task.attention) return task.attention.kind;
   if (active(task)) return "Loading";
   if (task.status === "ready_to_merge" && task.readiness?.head === task.pr?.head) return "Ready";
@@ -98,8 +100,8 @@ function status(task: TreeTask): string {
 }
 
 function statusColor(task: TreeTask): number {
-  const label = status(task);
-  return ({ Merged: 35, Ready: 32, Loading: 33 } as Record<string, number>)[label] ?? 90;
+  const tone = taskPublicationMilestone(task).tone;
+  return tone === "purple" ? 35 : tone === "green" ? 32 : 90;
 }
 
 function activity(task: TreeTask): string {
@@ -152,7 +154,11 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
     ["Dependencies", dependencies.join("; ") || "none"],
   ];
   if (active(selected)) fields.push(["Activity", activity(selected)]);
-  if (selected.attention) fields.push(["Attention", selected.attention.reason]);
+  const milestone = taskPublicationMilestone(selected);
+  if ("observedAt" in milestone) fields.push(["Observed", `${milestone.observedAt} (historical; not merge permission)`]);
+  if (selected.attention) fields.push(["Attention", `${selected.attention.kind}: ${selected.attention.reason}`]);
+  const latest = selected.runs.at(-1);
+  if (latest) fields.push(["Run", `${latest.role}: ${latest.state}`]);
   if (selected.readiness) fields.push(["Validation", `${selected.readiness.checks}: ${selected.readiness.validation}`]);
   return fields;
 }
@@ -168,6 +174,7 @@ function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: nu
     for (const label of safeLines(`PR: ${pr.repository} #${pr.number}`, cols)) {
       lines.push(`\x1b]8;;${pr.url}\x07${label}\x1b]8;;\x07`);
     }
+    lines.push(...safeLines(pr.url, cols));
   } else lines.push(...safeLines("PR: not recorded", cols));
   return lines;
 }

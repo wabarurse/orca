@@ -109,7 +109,7 @@ function current(s: Store, run: string): { task: Task; run: TaskRun } | undefine
 export async function allTasks(project: string): Promise<Task[]> { return (await read(project)).tasks; }
 export async function getTask(project: string, id: string): Promise<Task> { return find(await read(project), id); }
 export async function listTasks(project: string): Promise<TaskRow[]> {
-  return (await allTasks(project)).filter(t => !t.archive).map(({ id, name, summary, branch, status, createdAt, updatedAt, attention, pr, runs, dependsOn }) => ({ id, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), review: reviewProgress(runs) }));
+  return (await allTasks(project)).filter(t => !t.archive).map(({ id, name, summary, branch, status, createdAt, updatedAt, attention, pr, publication, runs, dependsOn }) => ({ id, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), ...(publication ? { publication } : {}), review: reviewProgress(runs) }));
 }
 /** Case-folded references resolve to actual stored IDs, never guessed or filtered edges. */
 function dependencyResolver(tasks: Task[]): (id: string) => Task {

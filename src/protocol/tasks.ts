@@ -26,7 +26,7 @@ export interface Task {
   history: TaskEvent[];
 }
 /** Small UI projection. No transcripts, prompts, reports or mutable display-name identities. */
-export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr" | "dependsOn"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
+export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr" | "dependsOn" | "publication"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
 /** taskPR's validators; tasks.ts shares them for the rest of a record. */
 export const sha = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{40,64}$/.test(s);
 export const object = (s: unknown): s is Record<string, unknown> => !!s && typeof s === "object" && !Array.isArray(s);
@@ -126,12 +126,18 @@ export interface TaskPublicationView {
   source: Task;
 }
 
-/** Dormant local-only presentation of the last recorded verified publication.
+/** Local-only presentation of the last recorded verified publication.
  * No lookup, freshness assertion, readiness gate or scheduling. Unrelated task
  * revisions and failed lookups do not erase historical evidence. Archive wins.
  */
 export function taskPublicationView(task: Task): TaskPublicationView {
   const source = structuredClone(task);
+  const milestone = taskPublicationMilestone(source);
+  return { id: source.id, revision: source.revision, milestone, attention: source.attention ?? { kind: "none" }, source };
+}
+
+/** Shared by both UI projections; no inference from lifecycle or validation. */
+export function taskPublicationMilestone(source: Pick<Task, "pr" | "publication" | "archive">): TaskPublicationMilestone {
   let milestone: TaskPublicationMilestone = { kind: "unknown", tone: "neutral" };
   if (source.archive) {
     const { pr, mergedAt, archivedAt } = source.archive;
@@ -142,5 +148,5 @@ export function taskPublicationView(task: Task): TaskPublicationView {
       ? { kind: "published", label: "PR is out", tone: "green", pr, observedAt }
       : { kind: "closed", label: "PR closed", tone: "neutral", pr, observedAt };
   }
-  return { id: source.id, revision: source.revision, milestone, attention: source.attention ?? { kind: "none" }, source };
+  return milestone;
 }

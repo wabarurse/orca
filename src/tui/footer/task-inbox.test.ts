@@ -73,7 +73,7 @@ test("normal-width table has four columns and exact stage labels; all attention 
   for (const label of ["queued", "working", "reviewing", "ready to merge"]) expect(contents).toContain(label);
   expect(contents).not.toContain("ready_to_merge");
   for (const kind of ["waiting", "blocked", "cancelled", "closed", "unknown"]) expect(contents).toContain(kind);
-  expect(contents).not.toContain("!"); expect(contents).not.toContain("Needs");
+  expect(contents).not.toContain("!"); expect(contents).toContain("Needs");
   expect(rendered.lines.join("\n")).toContain(`\x1b]8;;${pr.url}\x1b\\`);
 });
 
@@ -92,13 +92,13 @@ test("exactly one status keyword at wide/narrow/tiny widths, with attention prec
         const rendered = taskInboxLines({ rows: [task], loading: false }, width);
         const label = kind ?? (status === "ready_to_merge" ? "ready to merge" : status);
         if (width >= 72) {
-          const statuses = rendered.lines.map(line => Bun.stripANSI(line).split(" | ")[2]!.trim()).filter(Boolean);
+          const statuses = rendered.lines.map(line => (Bun.stripANSI(line).split(" | ")[2] ?? "").trim()).filter(Boolean);
           expect(statuses).toEqual([label]);
         } else {
-          expect(plain(rendered.lines).replace(/\s/g, "")).toBe(`name:Fullnamesummary:Fullsummarystatus:${label.replaceAll(" ", "")}prlink:${pr.url}`);
+          expect(plain(rendered.lines).replace(/\s/g, "")).toBe(`name:Fullnamesummary:Fullsummarystatus:${label.replaceAll(" ", "")}prlink:${pr.url}${kind ? `attention:${kind}:SECRETREASON` : ""}`);
         }
         expect(plain(rendered.lines)).not.toContain("!");
-        expect(plain(rendered.lines)).not.toContain("SECRET");
+        if (kind && width >= 72) expect(plain(rendered.lines)).toContain("SECRET");
         expect(task).toEqual(before);
       }
     }
@@ -152,7 +152,7 @@ test("large long records and CJK/emoji wrap fully; narrow/tiny screens stay boun
     const f = frame(cols!, rows!, tasks);
     expect(f.inbox!.lines.every(line => Bun.stringWidth(line) <= cols!)).toBe(true);
     expect(plain(f.inbox!.lines).replace(/\s/g, "")).toContain("SUMMARY-END");
-    expect(plain(f.inbox!.lines).replace(/\s/g, "")).not.toContain("REASON-END");
+    expect(plain(f.inbox!.lines).replace(/\s/g, "")).toContain("REASON-END");
     f.inbox!.top = Number.MAX_SAFE_INTEGER;
     const panel = taskInboxPanel(f);
     expect(panel.top).toBe(panel.maxTop);
@@ -775,4 +775,47 @@ test("external silent skip reports an orphan draft as closed, restores chat and 
   expect(app.input.text).toBe(""); expect(app.questions.view()?.text).toBe("Next?");
   expect(await drain("a", "orchestrator")).toEqual([]);
   expect(ui.calls().turns).toBe(0); expect(ui.sent).toEqual([]);
+});
+
+// Actual App + realTerminal adapter over isolated streams, NOT a production CLI
+// or OS Cmd-click test. Captures preserve raw OSC 8 as well as visible cells.
+for (const cols of [80, 120]) test(`publication App/realTerminal fixture ${cols}x24 and manual tree refresh`, async () => {
+  const { realTerminal } = await import("../components/term");
+  const { writeFileSync } = await import("node:fs");
+  const screen = new FakeScreen(cols, 24); let raw = "";
+  const stdin = { isTTY: true, setRawMode() {}, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
+  const stdout = { isTTY: true, columns: cols, rows: 24, write(s: string) { raw += s; screen.write(s); return true; }, on() {} };
+  const proc = { on() {}, off() {}, exit() {}, stderr: { write() {} } };
+  const term = realTerminal(stdin as never, stdout as never, proc as never);
+  const base = { ...row("Published unchecked"), id: "00000000-0000-4000-8000-000000000001", revision: 1, runs: [], history: [] };
+  const published = { ...base, publication: { pr, state: "OPEN" as const, observedAt: "2026-01-01" }, attention: { kind: "blocked" as const, reason: "conflicting; checks failed" } };
+  const closed = { ...base, id: base.id.replace(/1$/, "2"), name: "Closed", publication: { ...published.publication, state: "CLOSED" as const } };
+  const legacy = { ...base, id: base.id.replace(/1$/, "3"), name: "Legacy ready", status: "ready_to_merge" as const,
+    readiness: { head: pr.head, run: "r", validatedAt: "today", validation: "checked", checks: "passed" as const } };
+  const merged = { ...base, id: base.id.replace(/1$/, "4"), name: "Archived", archive: { reason: "merged" as const, pr, mergedAt: "today", archivedAt: "today" } };
+  let tasks = [base, closed, legacy, merged];
+  const { app, command } = await setup({ term, treeTasks: async () => tasks, tasks: async () => tasks.filter(t => !("archive" in t)) });
+  await app.onKey({ name: "t", ctrl: true });
+  await until(() => screen.text().includes("Published unchecked"));
+  expect(screen.text()).not.toContain("PR is out");
+  tasks = [published, closed, legacy, merged];
+  await app.onKey({ name: "char", text: "r" });
+  await until(() => screen.text().includes("PR is out"));
+  expect(raw).toContain("\x1b[32m●"); expect(raw).toContain("\x1b[35m●");
+  let capture = `TREE ${cols}x24\n${screen.text()}\n`;
+  // Details scroll is existing behavior; publication doesn't add a polling loop.
+  await app.onKey({ name: "right" });
+  for (let i = 0; i < 14; i++) await app.onKey({ name: "down" });
+  await until(() => raw.includes(`\x1b]8;;${pr.url}`));
+  capture += `TREE details\n${screen.text()}\n`;
+  await app.onKey({ name: "escape" }); await command();
+  await until(() => text(app).includes("PR is out"));
+  const lines = app.frame().inbox!.lines.join("\n");
+  expect(lines).toContain("\x1b[32m"); expect(lines).toContain("conflicting; checks failed");
+  expect(lines).toContain("PR closed"); expect(lines).toContain("ready to merge");
+  expect(lines.match(/PR is out/g)).toHaveLength(1);
+  await until(() => screen.text().includes("pr link"));
+  capture += `INBOX\n${screen.text()}\nALL INBOX ROWS\n${plain(app.frame().inbox!.lines)}\n`;
+  writeFileSync(`/tmp/pr-activation-${cols}.txt`, capture);
+  writeFileSync(`/tmp/pr-activation-${cols}.ansi`, raw);
 });
