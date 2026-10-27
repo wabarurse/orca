@@ -1,3 +1,4 @@
+import { validateProvenance, type DependencyProvenance, type ProvenanceTask } from "./dependency-provenance";
 import { existsSync, readFileSync } from "node:fs";
 import { paths } from "../../../config";
 // Structured task records, not a scheduler or any of the message/question queues.
@@ -60,6 +61,7 @@ function validateTask(raw: unknown): asserts raw is Task {
     check(object(a) && a.reason === "merged" && stamp(a.mergedAt) && stamp(a.archivedAt), "invalid archive");
     const p = taskPR(a.pr); check(object(raw.pr) && samePR(p, taskPR(raw.pr)), "archive pr mismatch");
   }
+  validateProvenance(raw as unknown as Task);
   check(raw.history.length === raw.revision, "invalid history revision");
   raw.history.forEach((e, i) => {
     check(object(e) && e.revision === i + 1 && stamp(e.at) && typeof e.kind === "string" && taskStatuses.includes(e.status as TaskStatus), "invalid event");
@@ -152,6 +154,10 @@ export async function setTaskDependencies(project: string, id: string, dependsOn
     const proposed = taskDependencies(ids, t.id).map(dep => resolve(dep).id);
     validateDependencyGraph(s.tasks, dependencyGraph(s.tasks, t, proposed, resolve));
     if (JSON.stringify(t.dependsOn) !== JSON.stringify(proposed)) {
+      check(!s.tasks.some(other => {
+        const stack = (other as ProvenanceTask).dependencyProvenance?.stack;
+        return stack && (other.id === t.id || stack.prerequisites.some(dep => dep.taskId === t.id));
+      }), "recorded stack dependencies are immutable; explicit recovery required");
       t.dependsOn = proposed; event(t, "dependencies_updated");
     }
     return t;
@@ -337,4 +343,34 @@ export function existingTasks(project: string): Task[] {
   check(raw.version === 1 && Array.isArray(raw.tasks), "task projection requires durable ledger");
   for (const task of raw.tasks) validateTask(task);
   return raw.tasks;
+}
+
+/** Internal dependency coordinator seam. Holds the existing cross-process project lock
+ * across git verification/side effects; task-run preparation uses this same lock.
+ * No model-facing arbitrary receipt writer. Never nest public task APIs in action.
+ * This serializes Orca writers, not arbitrary user shells or external git clients.
+ */
+export async function withDependencyTaskOwnership<T>(project: string, id: string, branch: string,
+  action: (task: Task, tasks: Task[], save: (value: DependencyProvenance) => void) => Promise<T>): Promise<T> {
+  projectId(project);
+  const identity = projectIdentity(project);
+  return withProjectStateLock(project, async () => {
+    assertProjectIdentity(project, identity);
+    const tasks = await allTasksLocked(project), t = find({ version: 1, tasks }, id);
+    active(t); check(!t.removedAt && t.branch === branch, "dependency task branch mismatch");
+    check(!tasks.some(other => other.branch === branch && other.runs.some(r => r.state === "prepared" || r.state === "started")), "dependency operation requires quiescent branch");
+    check(!t.attention || !["cancelled", "blocked", "closed", "unknown"].includes(t.attention.kind), "task attention blocks dependency operation");
+    let revision = t.revision;
+    const save = (value: DependencyProvenance) => {
+      assertProjectIdentity(project, identity);
+      ledgerTransaction(project, validateTask, store => {
+        const current = find(store, t.id);
+        check(current.revision === revision, "dependency task changed");
+        (current as ProvenanceTask).dependencyProvenance = structuredClone(value);
+        unready(current); event(current, "dependency_provenance");
+        validateProvenance(current); revision = current.revision;
+      });
+    };
+    return action(t, tasks, save);
+  });
 }
