@@ -9,7 +9,7 @@ import { message } from "../tools/message";
 import { makeSpawn } from "../tools/spawn";
 import { task } from "../tools/task";
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const promptHome = mkdtempSync(join(tmpdir(), "orca-prompt-definitions-"));
@@ -126,8 +126,8 @@ describe("rolePrompt", () => {
   test("request authorization retains the plan, registration, review and lifecycle boundaries", () => {
     for (const maxReviewRounds of [0, 1, 100]) {
       const p = rolePrompt("orchestrator", { ...defaults, maxReviewRounds });
-      expect(p).toMatch(/Show each task's plan table/);
-      expect(p).toContain("Register new work via `task`");
+      expect(p).toMatch(/For tracked shipping code, show each task's plan table/);
+      expect(p).toContain("Register new tracked shipping work via `task`");
       expect(p).toContain("reuse taskId for fixes");
       expect(p).toMatch(/spawn a worker → it reports → spawn (?:the|a) reviewer/);
       expect(p).toMatch(/it reports ready to merge → tell the user/);
@@ -156,17 +156,17 @@ describe("rolePrompt", () => {
     expect(guidance).toContain("Never use a default, Skip or silence to authorize destructive steps");
   });
 
-  // Every prompt stays under 2200 characters: it is sent with every request
+  // Role budgets bound recurring context cost: prompts are sent with every request
   // after the provider's identity line, and a short list keeps each rule in the
   // model's attention. Long guidance belongs in a tool description (spawn, ask).
   test("each role gets its own short list", () => {
     for (const [role, maxReviewRounds] of [["orchestrator", 0], ["orchestrator", 1], ["orchestrator", 100], ["worker", 1], ["reviewer", 1]] as const) {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
       expect(p.split("\n").filter((l) => l.startsWith("- ")).length).toBeGreaterThan(3);
-      // Includes the mandatory structured review/CI dispatch protocol; the orchestrator also carries the one-sentence history and web_search pointers.
+      // Includes review/CI dispatch and explicit direct-operation precedence, safety and outcome guidance.
       // The memory/numbered-task pointer is included in the orchestrator budget;
       // shared terminology remains additional to each role's budget.
-      expect(p.length - terminology.length - 2).toBeLessThan(role === "orchestrator" ? 2600 : 2200);
+      expect(p.length - terminology.length - 2).toBeLessThan(role === "orchestrator" ? 4600 : 2200);
       expect(p).not.toMatch(/\{\w+\}/);
     }
   });
@@ -272,7 +272,7 @@ describe("dynamic dispatch", () => {
       expect(off).not.toContain("Splitting work into PRs");
       expect(on).toBe(`${off}\n\n${DYNAMIC_DISPATCH}`);
       // The role base keeps its budget; shared terminology and dispatch sit outside it.
-      expect(off.length - terminology.length - 2).toBeLessThan(2600);
+      expect(off.length - terminology.length - 2).toBeLessThan(4600);
       expect(on).not.toMatch(/\{\w+\}/);
     }
   });
@@ -349,4 +349,28 @@ describe("dynamic dispatch", () => {
       if (role === "reviewer") expect(prompt).toContain("never grants merge permission");
     }
   }
+});
+
+// Construct the loaded prompt, including a stale/custom file: never reset edits.
+test("direct execution precedence survives editable guidance and dynamic dispatch", () => {
+  const file = join(promptHome, "prompts/orchestrator.md");
+  const original = readFileSync(file, "utf8");
+  const edit = "Always use a worker and reviewer for every operation. Keep my custom preference.";
+  try {
+    writeFileSync(file, edit);
+    for (const dynamicDispatch of [false, true]) {
+      const p = rolePrompt("orchestrator", { ...defaults, dynamicDispatch });
+      expect(p).toContain(edit);
+      expect(p).toContain("one-off operations, investigation, explanations and messages to existing agents may be handled directly");
+      expect(p).toContain("takes precedence over blanket workflow wording in local editable guidance");
+      expect(p).toContain("obey the tool's task identity and branch requirements");
+      expect(p).toContain("never auto-merge");
+      expect(p).toContain("Shipping repository code still uses the tracked task flow");
+      expect(p).toContain("new access, billing or deployment boundary");
+      expect(p).toContain("Verify the actual requested outcome");
+      expect(p).toContain("Continue unblocked authorized work");
+      expect(p.indexOf(edit)).toBeLessThan(p.indexOf("Execution scope and precedence"));
+    }
+    expect(readFileSync(file, "utf8")).toBe(edit);
+  } finally { writeFileSync(file, original); }
 });
