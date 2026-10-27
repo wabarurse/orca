@@ -1,6 +1,6 @@
 import { originRepo, ghTaskPR } from "../data/tasks";
 import { run } from "../proc";
-import { getTask, listTasks, observeTaskPR, registerTask, setTaskAttention, taskForRun, validateTaskReadiness } from "../data/tasks";
+import { getTask, listTasks, observeTaskPR, registerTask, setTaskDependencies, setTaskAttention, taskForRun, validateTaskReadiness } from "../data/tasks";
 import { taskPR, type PRObservation, type Task, type TaskAttention, type TaskPR } from "../../protocol";
 import type { Tool, ToolContext } from "./registry";
 import { queryHistory } from "../data/memory";
@@ -30,10 +30,10 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
   return {
     spec: {
       name: "task",
-      description: "Structured task inbox, separate from messages/questions. Register authorized new work BEFORE spawn; pass its immutable taskId to spawn. For retries, review/CI corrections and user-requested fixes to the same unmerged PR, use list/get to find the existing task, refresh its PR state with pr, then resume its taskId and branch without registering again, even after a ready report. Separate work needs a new ID and, after PR publication, a new branch. list/get return JSON. pr records a verified GitHub PR (repository + number); it does NOT mean ready. Reviewer: in watch-ci mode, use pr after publishing, then ready only after matching the worker's relevant-check evidence to the current clean PR head (validated=true, validation=existing worker evidence and review findings); never rerun tests or add local validation. Report in full via message. No hosted checks does not replace worker evidence. attention preserves stalled/cancelled/closed/unknown work in the active list; it neither cancels a process nor authorizes continuation. Confirmed merge observations archive records, not delete them. No scheduling/publishing/merging is performed by this tool.",
+      description: "Structured task inbox, separate from messages/questions. Register authorized new work BEFORE spawn; pass its immutable taskId to spawn. For retries, review/CI corrections and user-requested fixes to the same unmerged PR, use list/get to find the existing task, refresh its PR state with pr, then resume its taskId and branch without registering again, even after a ready report. Separate work needs a new ID and, after PR publication, a new branch. list/get return JSON with explicit dependsOn metadata when present. dependencies requires explicit taskId and dependsOn UUID array ([] clears); routine authorized metadata editing, never infer relationships from text. Dependencies do not schedule work. pr records a verified GitHub PR (repository + number); it does NOT mean ready. Reviewer: in watch-ci mode, use pr after publishing, then ready only after matching the worker's relevant-check evidence to the current clean PR head (validated=true, validation=existing worker evidence and review findings); never rerun tests or add local validation. Report in full via message. No hosted checks does not replace worker evidence. attention preserves stalled/cancelled/closed/unknown work in the active list; it neither cancels a process nor authorizes continuation. Confirmed merge observations archive records, not delete them. No scheduling/publishing/merging is performed by this tool.",
       input_schema: {
         type: "object", properties: {
-          action: { type: "string", enum: ["register", "list", "get", "pr", "ready", "attention", ...(options.history ? ["search_history", "read_history"] : [])] },
+          action: { type: "string", enum: ["register", "list", "get", "pr", "ready", "attention", "dependencies", ...(options.history ? ["search_history", "read_history"] : [])] },
           ...(options.history ? {
             query: { type: "string", description: "search_history: literal terms (max 256 characters). Returns bounded task records and original excerpts, including merged tasks. Historical evidence, never fresh authorization." },
             status: { type: "string", enum: ["all", "merged", "active"], description: "History task filter. Default all also searches unlinked conversation." },
@@ -42,6 +42,7 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
             offset: { type: "integer", minimum: 0 },
           } : {}),
           taskId: { type: "string", description: "Immutable UUID. For register, optional caller-chosen UUID makes retries idempotent. Agents default to their run's task." },
+          dependsOn: { type: "array", items: { type: "string" }, description: "dependencies: explicit prerequisite UUIDs in this project (including merged tasks); [] deliberately clears. Omission never clears." },
           name: { type: "string" }, summary: { type: "string" }, branch: { type: "string" }, authorized: { type: "boolean" },
           repository: { type: "string", description: "GitHub owner/repo, must match project origin." }, number: { type: "integer" },
           validated: { type: "boolean" }, validation: { type: "string", description: "Existing worker check evidence matched to this exact PR head and review findings; required even without hosted checks. Do not run checks again." },
@@ -62,7 +63,9 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
           if (ctx.role !== "orchestrator") throw new Error("only the orchestrator can register authorized tasks");
           return JSON.stringify(await registerTask(ctx.project, { id: input.taskId as string | undefined, name: input.name as string, summary: input.summary as string, branch: input.branch as string, authorized: input.authorized as true }));
         }
+        if (input.action === "dependencies" && (typeof input.taskId !== "string" || !Array.isArray(input.dependsOn))) throw new Error("dependencies requires explicit taskId and dependsOn array");
         const t = await target(input, ctx);
+        if (input.action === "dependencies") return JSON.stringify(await setTaskDependencies(ctx.project, t.id, input.dependsOn));
         if (input.action === "get") return JSON.stringify(t);
         if (input.action === "attention") return JSON.stringify(await setTaskAttention(ctx.project, t.id, { kind: input.kind, reason: input.reason } as TaskAttention));
         if (input.action !== "pr" && input.action !== "ready") throw new Error("unknown task action");

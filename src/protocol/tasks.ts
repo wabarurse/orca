@@ -26,7 +26,7 @@ export interface Task {
   history: TaskEvent[];
 }
 /** Small UI projection. No transcripts, prompts, reports or mutable display-name identities. */
-export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
+export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr" | "dependsOn"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
 /** taskPR's validators; tasks.ts shares them for the rest of a record. */
 export const sha = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{40,64}$/.test(s);
 export const object = (s: unknown): s is Record<string, unknown> => !!s && typeof s === "object" && !Array.isArray(s);

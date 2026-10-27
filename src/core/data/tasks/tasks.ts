@@ -108,7 +108,47 @@ function current(s: Store, run: string): { task: Task; run: TaskRun } | undefine
 export async function allTasks(project: string): Promise<Task[]> { return (await read(project)).tasks; }
 export async function getTask(project: string, id: string): Promise<Task> { return find(await read(project), id); }
 export async function listTasks(project: string): Promise<TaskRow[]> {
-  return (await allTasks(project)).filter(t => !t.archive).map(({ id, name, summary, branch, status, createdAt, updatedAt, attention, pr, runs }) => ({ id, name, summary, branch, status, createdAt, updatedAt, ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), review: reviewProgress(runs) }));
+  return (await allTasks(project)).filter(t => !t.archive).map(({ id, name, summary, branch, status, createdAt, updatedAt, attention, pr, runs, dependsOn }) => ({ id, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), review: reviewProgress(runs) }));
+}
+/** Explicit metadata edit only: resolve and validate the full proposed project DAG under its lock. */
+export async function setTaskDependencies(project: string, id: string, dependsOn: unknown): Promise<Task> {
+  check(dependsOn !== undefined, "dependsOn is required (use [] to clear)");
+  return update(project, s => {
+    const t = find(s, id); active(t);
+    const byId = new Map<string, Task>();
+    for (const task of s.tasks) {
+      const key = task.id.toLowerCase();
+      check(!byId.has(key), "ambiguous task id"); byId.set(key, task);
+    }
+    const resolve = (dep: string): Task => {
+      const task = byId.get(dep.toLowerCase());
+      check(task, "dependency not found in this project"); return task;
+    };
+    const proposed = taskDependencies(dependsOn, t.id).map(dep => resolve(dep).id);
+    // Kahn traversal includes archived prerequisites; never filter unknown edges away.
+    const remaining = new Map<Task, number>(), dependents = new Map<Task, Task[]>();
+    for (const task of s.tasks) {
+      const deps = task === t ? proposed : taskDependencies(task.dependsOn, task.id);
+      remaining.set(task, deps.length);
+      for (const dep of deps) {
+        const prerequisite = resolve(dep);
+        const children = dependents.get(prerequisite) ?? [];
+        children.push(task); dependents.set(prerequisite, children);
+      }
+    }
+    const queue = s.tasks.filter(task => remaining.get(task) === 0);
+    for (let i = 0; i < queue.length; i++) {
+      for (const child of dependents.get(queue[i]!) ?? []) {
+        const count = remaining.get(child)! - 1; remaining.set(child, count);
+        if (count === 0) queue.push(child);
+      }
+    }
+    check(queue.length === s.tasks.length, "task dependency cycle");
+    if (JSON.stringify(t.dependsOn) !== JSON.stringify(proposed)) {
+      t.dependsOn = proposed; event(t, "dependencies_updated");
+    }
+    return t;
+  });
 }
 export async function taskForRun(project: string, run: string): Promise<Task | undefined> { return current(await read(project), run)?.task; }
 /** Caller must have authorization already; id enables idempotent retry, never derives from branch/name. */
