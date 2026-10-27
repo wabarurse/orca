@@ -154,3 +154,76 @@ changes); `bun test src/core/data/run-ownership/ownership.test.ts` passed 8 test
 40 expectations, including independent-process admission; `bun run check` passed.
 Logs: `/tmp/feat-subagent-run-ownership-{install,tests,check}.log`. Checks ran once
 on final code/test state; only this documentation was appended afterward.
+
+## Revised milestone 3: dormant exact-run tmux interrupt
+
+User chose practical Ctrl+C instead of proving all descendants gone. This slice
+adds `core/tmux/interrupt.ts` and its tests, with **no production callers**. It
+is not a delivered stop action. Stack: #133 → #134 → current interrupt primitive
+→ lifecycle/enrollment and persistent uncertain-stop admission guard → activation.
+Existing launches are unaffected. No provider or shared lifecycle code changed.
+
+A trusted future launcher supplies full project/task/branch/agent/run identity,
+a fresh launch UUID, exact pane ID/PID, and the launch's server/socket. It must
+install the encoded identity as a pane option before opening an execution gate,
+retain dead panes, and never respawn/reuse an enrolled pane. The primitive checks
+that binding and PID in tmux's `if-shell -F`, then queues `send-keys C-c`. This
+avoids a shell predicate subprocess, **not** an OS identity guarantee or an atomic
+lock against other tmux clients. Enrollment/stop serialization and prohibition of
+pane respawn are activation gates, not invariants enforced by this helper.
+The real fixture confirms options survive respawn; PID mismatch rejects that
+case, but eventual PID reuse is not solved by the PID comparison.
+
+Results distinguish `agent-exited-cleanup-unverified` (the retained enrolled
+pane command exited), `still-running` (observed within the bounded interval),
+and `unknown` (missing/mismatched pane, transport failure or no observation).
+Exit means agent exit only under the future launch-wrapper contract; this helper
+does not inspect OS descendants. Dispatch has a one-second client deadline and
+observation accepts at most ten seconds. Client timeout sends TERM only to its
+own tmux client, with no escalation; it may not undo an already queued interrupt.
+Ctrl+C targets the terminal foreground group. Existing SIGINT/process-exit hooks
+may SIGKILL known tool groups: **this is not guaranteed graceful cancellation**.
+There is no added agent force, task cancellation, ownership release, cleanup,
+respawn or worktree removal. Every result warns cleanup is unverified and remote
+operations may continue.
+
+Live activation is unsafe today: exit handlers close task bookkeeping, and
+spawn/runner do not consult dormant ownership. Next work must persist an exact-run
+uncertain-stop guard in the existing registry/ownership storage BEFORE dispatch,
+and enforce it across branch admission/launch independently of exit handlers.
+Do not forge the old all-descendants-gone release attestation. This guard plus
+launch enrollment must be reviewed/tested before adding a public action. No new
+general cancellation framework, containment infrastructure or provider changes
+are needed for the narrowed goal.
+
+Checks on this slice's final code: frozen install succeeded; focused
+`bun test src/core/tmux/interrupt.test.ts` passed 2 tests, 24 expectations,
+including a private disposable tmux server (INT exit, ignored INT, stale run/PID,
+missing pane and respawn). No active agent was targeted. `bun run check` failed
+with four diagnostics in existing provider bounded-request/transport files;
+none in this slice. Provider fixes are separate work, not modified here. Logs:
+`/tmp/feat-subagent-graceful-stop-{install,tests,check}.log`. No full suite,
+baseline or duplicate checks. Only this documentation changed after checks.
+
+Review correction: observation now uses a monotonic `performance.now()` deadline
+in a separate helper, clipping each query timeout to the remaining budget. A
+focused regression changes wall time backwards/forwards while checking the exact
+monotonic query budget. Fixture teardown now requires successful `kill-server`;
+null/errors fail the test and retain the private socket directory and
+`recovery.json` argv/session metadata, rather than unlinking recovery information.
+A deterministic teardown regression covers both failure paths and success.
+`bun test src/core/tmux/interrupt.test.ts` passed once on corrected code: 4 tests,
+32 expectations, including the disposable real tmux fixture with confirmed
+teardown. Log: `/tmp/feat-subagent-graceful-stop-review-tests.log`.
+The previous repository typecheck failure remains the blocked gate pending the
+separate provider corrections merging; no provider edits/cherry-picks or
+unchanged typecheck retry here. Dormant activation gates above are unchanged.
+
+Integrated gate cleared after provider #140 merged at
+`b4b17a2fce9410fe5776552dca4c5f8dcca8377f`. The interrupt branch rebased without
+conflicts; interrupt implementation/tests are byte-for-byte unchanged from
+`ac8800fc875219ff0d968453f76bb3a6246b27a8`, so the 4-test/32-expectation evidence
+above carries forward without rerunning. `bun run check` passed once on rebased
+head `d1edf5fcebcd117a60dc504fc3133011da82f22d`; log:
+`/tmp/feat-subagent-graceful-stop-integrated-check.log`. Only this evidence note
+and commit metadata changed afterward. No live activation or publication.
