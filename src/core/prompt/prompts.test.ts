@@ -164,8 +164,9 @@ describe("rolePrompt", () => {
       const p = rolePrompt(role, { ...defaults, maxReviewRounds });
       expect(p.split("\n").filter((l) => l.startsWith("- ")).length).toBeGreaterThan(3);
       // Includes the mandatory structured review/CI dispatch protocol; the orchestrator also carries the one-sentence history and web_search pointers.
-      // The shared terminology sentence is additional to each role's existing budget.
-      expect(p.length - terminology.length - 2).toBeLessThan(role === "orchestrator" ? 2500 : 2200);
+      // The memory/numbered-task pointer is included in the orchestrator budget;
+      // shared terminology remains additional to each role's budget.
+      expect(p.length - terminology.length - 2).toBeLessThan(role === "orchestrator" ? 2600 : 2200);
       expect(p).not.toMatch(/\{\w+\}/);
     }
   });
@@ -271,7 +272,7 @@ describe("dynamic dispatch", () => {
       expect(off).not.toContain("Splitting work into PRs");
       expect(on).toBe(`${off}\n\n${DYNAMIC_DISPATCH}`);
       // The role base keeps its budget; shared terminology and dispatch sit outside it.
-      expect(off.length - terminology.length - 2).toBeLessThan(2500);
+      expect(off.length - terminology.length - 2).toBeLessThan(2600);
       expect(on).not.toMatch(/\{\w+\}/);
     }
   });

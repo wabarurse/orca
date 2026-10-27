@@ -68,7 +68,7 @@ test("duplicate registration on a PR branch guides corrections to the existing t
   const separate = JSON.parse(await tool.run({ action: "register", name: "Separate work", summary: "Independent feature", branch: "feat/separate", authorized: true }, ctx()));
   expect(separate.id).not.toBe(t.id);
   expect(separate.internal.branch).toBe("feat/separate");
-  expect(tool.spec.description).toContain("resume its taskId and branch without registering again, even after a ready report");
+  expect(tool.spec.description).toContain("reuse the same immutable task for fixes to an unmerged PR");
 });
 
 test("workers and unrelated/stale reviewer runs cannot write readiness or PR identities", async () => {
@@ -129,7 +129,7 @@ test("both exposed task schemas describe executable structured dependencies, not
     expect(exposed.spec.description!.length).toBeLessThan(600);
   }
   const example = { action: "dependencies", taskId: "11111111-1111-4111-8111-111111111111", dependsOn: ["22222222-2222-4222-8222-222222222222"] };
-  for (const [id, branch] of [[example.taskId, "feat/x"], [example.dependsOn[0], "feat/prerequisite"]]) {
+  for (const [id, branch] of [[example.taskId, "feat/x"], [example.dependsOn[0]!, "feat/prerequisite"]] as const) {
     await registerTask(project, { id, name: "Example", summary: "Explicit prerequisite", branch, authorized: true });
   }
   const edited = JSON.parse(await agentTask.run(example, ctx()));
