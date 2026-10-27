@@ -178,6 +178,12 @@ interface ActiveMenu extends Menu {
   reload?: () => Promise<void>;
 }
 interface AgentsTimer { menu: ActiveMenu; readAt: number; reading: boolean; stop: () => void }
+interface TaskTreeState {
+  page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
+  graphX: number; graphY: number; detailY: number; loading: boolean; error?: string;
+  rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
+}
+
 interface TaskInboxState extends TaskInboxData {
   page: Page;
   top: number;
@@ -273,9 +279,7 @@ export class App {
   private helpTop: number | null = null;
   /** One explicit panel, owned by the captured page object; never reused across projects. */
   private taskInbox: TaskInboxState | null = null;
-  private taskTree: { page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
-    graphX: number; graphY: number; detailY: number; loading: boolean; error?: string;
-    rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean } | null = null;
+  private taskTree: TaskTreeState | null = null;
 
   private toggleTaskTree(): void {
     if (this.taskTree) { this.taskTree = null; this.draw(); return; }
@@ -292,18 +296,24 @@ export class App {
     view.reading = (async () => {
       do {
         view.again = false;
-        try {
-          const tasks = await (this.deps.treeTasks ?? allTasks)(view.page.project);
-          if (this.taskTree !== view) return;
-          view.tasks = tasks; view.error = undefined;
-        } catch (error) {
-          if (this.taskTree !== view) return;
-          view.error = `Tasks unavailable: ${error instanceof Error ? error.message : String(error)}`;
-        }
-        view.loading = false; this.draw();
+        await this.readTaskTree(view);
       } while (view.again && this.taskTree === view && !this.closed);
     })().finally(() => { view.reading = undefined; });
     return view.reading;
+  }
+
+  /** Apply one snapshot only while its overlay still owns the result. */
+  private async readTaskTree(view: TaskTreeState): Promise<void> {
+    try {
+      const tasks = await (this.deps.treeTasks ?? allTasks)(view.page.project);
+      if (this.taskTree !== view || this.closed) return;
+      view.tasks = tasks; view.error = undefined;
+    } catch (error) {
+      if (this.taskTree !== view || this.closed) return;
+      view.error = `Tasks unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    view.loading = false;
+    this.draw();
   }
 
   private treeScreen(): StickyScreen {
@@ -327,21 +337,39 @@ export class App {
     if (k.name === "char" && k.text === "r") { void this.refreshTaskTree(); return; }
     const rendered = view.rendered;
     if (!rendered || view.error || view.loading) return;
-    if (k.name === "mousedown") {
-      const hit = rendered.hits.find(h => h.row === (k.y ?? 0) - 1 && (k.x ?? 0) - 1 >= h.col && (k.x ?? 0) - 1 < h.col + h.width);
-      if (hit) { view.selectedId = hit.id; view.detailY = 0; }
-    } else if (k.name === "tab" && k.shift && !k.ctrl && !k.alt) {
-      view.selectedId = rendered.order[(rendered.order.indexOf(view.selectedId ?? "") + 1) % rendered.order.length];
-      view.detailY = 0;
-    } else if (!k.ctrl && !k.alt) {
-      const delta = k.name === "up" || k.name === "pageup" || k.name === "wheelup" ? -1 : 1;
-      if (["up", "down", "wheelup", "wheeldown", "pageup", "pagedown"].includes(k.name)) {
-        if (k.shift) view.detailY += delta;
-        else view.graphY += delta * (k.name.startsWith("page") ? Math.max(1, rendered.graph.rows) : 1);
-      }
-      if (k.name === "left" || k.name === "right") view.graphX += k.name === "left" ? -4 : 4;
+    if (k.name === "mousedown") this.selectTreeHit(view, rendered, k);
+    else if (!k.ctrl && !k.alt) {
+      if (k.name === "tab" && k.shift) this.cycleTreeSelection(view, rendered);
+      else this.scrollTaskTree(view, rendered, k);
     }
     this.draw();
+  }
+
+  private selectTreeHit(view: TaskTreeState, rendered: TaskTreeRender, k: Key): void {
+    // Renderer hits already include viewport clipping/offsets. Only convert
+    // terminal 1-based coordinates; subtracting graph offsets again is wrong.
+    const row = (k.y ?? 0) - 1, col = (k.x ?? 0) - 1;
+    const hit = rendered.hits.find(h => h.row === row && col >= h.col && col < h.col + h.width);
+    if (hit) { view.selectedId = hit.id; view.detailY = 0; }
+  }
+
+  private cycleTreeSelection(view: TaskTreeState, rendered: TaskTreeRender): void {
+    if (!rendered.order.length) return;
+    const next = (rendered.order.indexOf(view.selectedId ?? "") + 1) % rendered.order.length;
+    view.selectedId = rendered.order[next];
+    view.detailY = 0;
+  }
+
+  private scrollTaskTree(view: TaskTreeState, rendered: TaskTreeRender, k: Key): void {
+    if (k.name === "left" || k.name === "right") {
+      view.graphX += k.name === "left" ? -4 : 4;
+      return;
+    }
+    const steps: Record<string, number> = { up: -1, down: 1, wheelup: -1, wheeldown: 1, pageup: -1, pagedown: 1 };
+    const delta = steps[k.name];
+    if (delta === undefined) return;
+    if (k.shift) view.detailY += delta;
+    else view.graphY += delta * (k.name.startsWith("page") ? Math.max(1, rendered.graph.rows) : 1);
   }
 
   private helpContent?: { cols: number; inView: boolean; lines: string[] };
@@ -1932,7 +1960,9 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   async onKey(k: Key): Promise<void> {
-    if (this.taskTree) return this.taskTreeKey(k);
+    // Ctrl+C retains the global cancellation/double-press exit path even when
+    // the overlay is loading, failed, or waiting on an unresponsive registry.
+    if (this.taskTree && !(k.ctrl && k.name === "c")) return this.taskTreeKey(k);
     if (!this.selectionAllowed()) this.selection.clear();
     if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) { this.toolClick(k); return this.selectionMouse(k); }
     this.clearNote(k);

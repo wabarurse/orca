@@ -4321,6 +4321,12 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
     term.press({ name: "right" }); term.press({ name: "down" });
     term.press({ name: "down", shift: true });
     await until(() => screen().includes("Graph x=4/") && screen().includes(" y=1/") && screen().includes("details=1/"));
+    const scrolledRow = term.display.screen().findIndex(line => line.slice(0, 66).includes("[2]"));
+    const scrolledCol = term.display.screen()[scrolledRow]!.indexOf("[2]");
+    term.press({ name: "mousedown", x: scrolledCol + 1, y: scrolledRow + 1 });
+    await until(() => screen().includes("SELECTED [2]"));
+    for (let i = 0; i < 11; i++) term.type("\x1b[Z");
+    await until(() => screen().includes("SELECTED [1]"));
     term.press({ name: "pageup" });
     await until(() => screen().includes(" y=0/"));
     tasks = [...tasks].reverse().map(t => t.id === id(1) ? { ...t, summary: "Updated durable metadata" } : t);
@@ -4347,5 +4353,73 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
     term.press({ name: "escape" });
     await until(() => !screen().includes("TASKS"));
     expect(app.input.text).toBe(draft.text); expect(app.input.cursor).toBe(draft.cursor);
+  } finally { app.quit(); await running; }
+});
+
+for (const state of ["ready", "loading", "error"] as const) {
+  test(`task tree Ctrl+C cancels a running turn and repeats to exit while ${state}`, async () => {
+    const term = fakeTerm(120, 28), fake = fakeOrchestrators();
+    let cancelled = 0, finish!: () => void;
+    const turn = new Promise<void>(resolve => { finish = resolve; });
+    const app = new App({ term, pollMs: 100_000, agents: async () => [],
+      clock: { now: () => 10000, every: () => () => {} },
+      treeTasks: async () => {
+        if (state === "loading") return new Promise(() => {});
+        if (state === "error") throw new Error("offline");
+        return [];
+      },
+      openOrchestrator: async (...args) => ({ ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]),
+        turn: async () => { await turn; return []; },
+        cancel: () => { cancelled++; finish(); },
+      }),
+    });
+    const running = app.run(`tree-interrupt-${state}`);
+    try {
+      await until(() => !!app.page);
+      term.type("run a turn\r");
+      await until(() => app.page!.busy);
+      term.type("\x14");
+      const label = { ready: "No tasks", loading: "Loading tasks", error: "Tasks unavailable: offline" }[state];
+      await until(() => term.screen().includes(label));
+      term.type("\x03");
+      await until(() => cancelled === 1 && !app.page!.busy);
+      expect(term.closed).toBe(false);
+      expect(term.screen()).toContain(label);
+      term.type("\x03");
+      await until(() => term.closed);
+      await running;
+      expect(cancelled).toBe(1);
+    } finally { finish(); app.quit(); await running; }
+  });
+}
+
+test("task tree deferred reads coalesce a trailing pass and ignore a replaced overlay", async () => {
+  const term = fakeTerm(120, 28), fake = fakeOrchestrators();
+  const reads: { resolve: (tasks: import("../protocol/tasks").Task[]) => void; reject: (error: Error) => void }[] = [];
+  const app = new App({ term, pollMs: 100_000, agents: async () => [],
+    openOrchestrator: fake.openOrchestrator,
+    treeTasks: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+  });
+  const running = app.run("tree-deferred");
+  try {
+    await until(() => !!app.page);
+    term.type("\x14");
+    await until(() => reads.length === 1);
+    for (let i = 0; i < 3; i++) term.type("r");
+    expect(reads.length).toBe(1);
+    reads[0]!.resolve([]);
+    await until(() => reads.length === 2);
+    term.type("\x14\x14");
+    await until(() => reads.length === 3);
+    reads[2]!.resolve([]);
+    await until(() => term.screen().includes("No tasks"));
+    reads[1]!.reject(new Error("obsolete failure"));
+    await settle();
+    expect(term.screen()).not.toContain("obsolete failure");
+    expect(reads.length).toBe(3);
+    term.type("r");
+    await until(() => reads.length === 4);
+    reads[3]!.reject(new Error("current failure"));
+    await until(() => term.screen().includes("current failure"));
   } finally { app.quit(); await running; }
 });
