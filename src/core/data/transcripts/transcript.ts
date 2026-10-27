@@ -6,6 +6,7 @@
 // Explicit context-boundary entries reset model context without cutting parent links.
 // history() walks past both for UI replay without duplicating retained turns.
 
+import { paired } from "../memory/tool-pairs";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { withStorageLock } from "../storage-lock";
 import type { AppendGuard, Entry, NewEntry } from "../../../protocol";
@@ -46,7 +47,7 @@ function walk(byUuid: Map<string, Entry>, head: string | null, context = true): 
     seen.add(cur.uuid);
     if (context && cur.type === "context-boundary") break;
     entries.push(cur);
-    if (context && cur.type === "summary") break;
+    if (context && (cur.type === "summary" || cur.type === "tool-recovery")) break;
     cur = cur.parentUuid ? byUuid.get(cur.parentUuid) : undefined;
   }
   return entries.reverse();
@@ -65,6 +66,7 @@ function load(path: string): Map<string, Entry> {
 }
 export function contextMessages(entries: Entry[]): MessageParam[] {
   return entries.flatMap((e): MessageParam[] => {
+    if (e.type === "tool-recovery") return e.messages;
     if (e.type === "summary") return [{ role: "user", content: e.text }, ...(e.retained ?? [])];
     return e.type === "message" ? [e.message] : [];
   });
@@ -118,4 +120,68 @@ export function open(path: string, io: Storage = disk): Transcript {
     history: () => walk(byUuid, head, false).filter(e => e.type !== "summary" || !e.retained),
     chain: async () => contextMessages(branch()),
   };
+}
+
+function corruptToolHistory(): never {
+  throw new Error("invalid tool history: refusing interrupted-call recovery");
+}
+
+/** Validate the complete prefix and the final assistant batch before inspecting results. */
+function finalInterruptedBatch(messages: MessageParam[]) {
+  const index = messages.findLastIndex(m => m.role === "assistant");
+  const batch = messages[index];
+  if (!batch || !Array.isArray(batch.content) || !paired(messages.slice(0, index))) return corruptToolHistory();
+  const calls = batch.content.filter(b => b.type === "tool_use");
+  const ids = new Set(calls.map(b => b.id));
+  if (!calls.length || ids.size !== calls.length || calls.some(b => !b.id)) return corruptToolHistory();
+  return { index, calls, ids };
+}
+
+/** Each persisted result must belong to this batch and occur exactly once. */
+function claimInterruptedResult(id: string, ids: Set<string>, seen: Set<string>): void {
+  if (!ids.has(id) || seen.has(id)) return corruptToolHistory();
+  seen.add(id);
+}
+
+/** Extract only matching results; retain all interposed user content in order. */
+function interruptedTail(messages: MessageParam[], ids: Set<string>) {
+  const results: Extract<Exclude<MessageParam["content"], string>[number], { type: "tool_result" }>[] = [];
+  const tail: MessageParam[] = [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "user") return corruptToolHistory();
+    if (typeof message.content === "string") { tail.push(message); continue; }
+    const rest = [];
+    for (const block of message.content) {
+      if (block.type !== "tool_result") { rest.push(block); continue; }
+      claimInterruptedResult(block.tool_use_id, ids, seen);
+      results.push(block);
+    }
+    if (rest.length) tail.push({ ...message, content: rest });
+  }
+  return { results, tail, seen };
+}
+
+/** Only an unfinished FINAL assistant batch can be recovered. Never invent an
+ * outcome, execute a tool, or repair orphan/duplicate IDs or earlier corruption. */
+export function interruptedMessages(messages: MessageParam[]): MessageParam[] | null {
+  if (paired(messages)) return null;
+  const { index, calls, ids } = finalInterruptedBatch(messages);
+  const { results, tail, seen } = interruptedTail(messages.slice(index + 1), ids);
+  const missing = calls.filter(b => !seen.has(b.id));
+  if (!missing.length) return corruptToolHistory();
+  results.push(...missing.map(b => ({ type: "tool_result" as const, tool_use_id: b.id,
+    is_error: true, content: "interrupted; outcome unknown—reconcile before retrying" })));
+  const recovered: MessageParam[] = [...messages.slice(0, index + 1), { role: "user", content: results }, ...tail];
+  if (!paired(recovered)) return corruptToolHistory();
+  return recovered;
+}
+
+/** Called only by the authorized sole-writer at a model boundary, not refresh.
+ * The head guard rejects races; publication/cancellation failure sends no request. */
+export async function completeInterruptedTools(transcript: Transcript, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const head = transcript.head();
+  const messages = interruptedMessages(await transcript.chain());
+  if (messages) await transcript.append({ type: "tool-recovery", messages }, signal, { head });
 }
