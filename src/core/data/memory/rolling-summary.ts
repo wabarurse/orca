@@ -21,28 +21,38 @@ Remove completed/merged task detail from every section; retain any independently
 Each source part continues the previous part and may split a serialized message. Merge with previous memory; do not drop still-relevant facts merely because this part does not repeat them. Later explicit corrections win. Do not invent missing details.
 Use at most 24 items in each string array, at most 100 tasks, at most 1000 characters per item/note, and at most 8000 characters total. If nothing remains, use empty arrays.`;
 
+function memoryStrings(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 24 || value.some(v => typeof v !== "string" || v.length > 1000)) throw new Error("invalid memory items");
+  return value;
+}
+
+function unknownTaskReference(id: string, position: number, snapshotSize: number, source?: string): Error {
+  // Do not echo model-generated IDs/notes: they can contain private source text.
+  let reference = "source not checked";
+  if (source !== undefined) reference = id.length > 0 && source.includes(id) ? "reference occurs in source" : "reference absent from source";
+  return new Error(`unknown task in memory: summary task #${position} is outside the supplied registry snapshot (${snapshotSize} tasks; ${reference}). Only supplied taskIds are valid; preserve unverified work as pending context. No registry changes were made`);
+}
+
+function taskNotes(value: unknown, tasks: Task[], source?: string): RollingMemory["tasks"] {
+  if (!Array.isArray(value) || value.length > 100) throw new Error("invalid memory tasks");
+  const known = new Map(tasks.map(t => [t.id, t])), seen = new Set<string>();
+  const notes: RollingMemory["tasks"] = [];
+  for (const t of value) {
+    if (!t || typeof t.id !== "string" || typeof t.notes !== "string" || t.notes.length > 1000 || seen.has(t.id)) throw new Error("invalid task memory");
+    seen.add(t.id);
+    const task = known.get(t.id);
+    if (!task) throw unknownTaskReference(t.id, seen.size, tasks.length, source);
+    if (!task.archive) notes.push({ id: t.id, notes: t.notes });
+  }
+  return notes;
+}
+
 export function parseMemory(text: string, tasks: Task[], source?: string): RollingMemory {
   if (text.length > 10000 || estimate(text) > 4096) throw new Error("memory exceeds output budget");
   const raw = JSON.parse(text);
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid memory object");
-  const strings = (value: unknown): string[] => {
-    if (!Array.isArray(value) || value.length > 24 || value.some(v => typeof v !== "string" || v.length > 1000)) throw new Error("invalid memory items");
-    return value;
-  };
-  const allowed = new Set(tasks.filter(t => !t.archive).map(t => t.id)), seen = new Set<string>();
-  if (!Array.isArray(raw.tasks) || raw.tasks.length > 100) throw new Error("invalid memory tasks");
-  const notes: RollingMemory["tasks"] = [];
-  for (const t of raw.tasks) {
-    if (!t || typeof t.id !== "string" || typeof t.notes !== "string" || t.notes.length > 1000 || seen.has(t.id)) throw new Error("invalid task memory");
-    seen.add(t.id);
-    if (!tasks.some(known => known.id === t.id)) {
-      // Do not echo model-generated IDs/notes: they can contain private source text.
-      const reference = source === undefined ? "source not checked" : t.id.length > 0 && source.includes(t.id) ? "reference occurs in source" : "reference absent from source";
-      throw new Error(`unknown task in memory: summary task #${seen.size} is outside the supplied registry snapshot (${tasks.length} tasks; ${reference}). Only supplied taskIds are valid; preserve unverified work as pending context. No registry changes were made`);
-    }
-    if (allowed.has(t.id)) notes.push({ id: t.id, notes: t.notes });
-  }
-  return { user: strings(raw.user), project: strings(raw.project), pending: strings(raw.pending), tasks: notes };
+  const notes = taskNotes(raw.tasks, tasks, source);
+  return { user: memoryStrings(raw.user), project: memoryStrings(raw.project), pending: memoryStrings(raw.pending), tasks: notes };
 }
 
 /** UTF-8 chunks cap every summarization request, even for a single enormous tool result. */

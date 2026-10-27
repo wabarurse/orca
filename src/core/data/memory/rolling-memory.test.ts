@@ -342,7 +342,7 @@ test("summary task allowlist keeps active notes and removes verified merged note
   expect(input.registry.map((t: { id: string }) => t.id)).toEqual([active.id, merged.id]);
 });
 
-test("out-of-snapshot summary references fail closed with safe source diagnostics", async () => {
+test.each(["historical", "registered during inference"] as const)("out-of-snapshot %s references fail closed with safe source diagnostics", async kind => {
   const { project, transcript, deps, controller } = await fixture();
   const outside = "unverified-private-reference";
   // A historical reference is not evidence of registration in this project/snapshot.
@@ -351,19 +351,22 @@ test("out-of-snapshot summary references fail closed with safe source diagnostic
   const before = await transcript.chain(), head = transcript.head();
   const notices: string[] = [];
   deps.write = text => { notices.push(text); };
-  const worker = gated(memory({ tasks: [{ id: outside, notes: "private notes" }] }));
+  const output = memory({ tasks: [{ id: outside, notes: "private notes" }] });
+  const worker = gated(output);
   const rolling = controller(worker.provider);
   await rolling.boundary(deps); await worker.entered;
   // New registration while inference is in flight must not authorize an unknown output.
-  await registerTask(project, { name: "New arrival", summary: "New work", branch: "new-arrival", authorized: true });
+  const arrival = await registerTask(project, { name: "New arrival", summary: "New work", branch: "new-arrival", authorized: true });
+  if (kind === "registered during inference") output.tasks[0]!.id = arrival.id;
   worker.release(); await settle(rolling); await rolling.boundary(deps, false, true);
   expect(await transcript.chain()).toEqual(before);
   expect(transcript.head()).toBe(head);
   const notice = notices.find(n => n.includes("unknown task in memory"))!;
   expect(notice).toContain("original history kept");
-  expect(notice).toContain("reference occurs in source");
+  expect(notice).toContain(kind === "historical" ? "reference occurs in source" : "reference absent from source");
   expect(notice).toContain("0 tasks");
   expect(notice).not.toContain(outside);
+  expect(notice).not.toContain(arrival.id);
   expect(notice).not.toContain("private notes");
   expect(() => parseMemory(JSON.stringify(memory({ tasks: [{ id: outside, notes: "private notes" }] })), [], "unrelated source"))
     .toThrow("reference absent from source");
