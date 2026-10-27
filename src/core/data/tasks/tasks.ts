@@ -3,7 +3,7 @@ import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { paths } from "../../../config";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import { clean } from "../inbox";
-import { check, object, sha, taskPR, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol";
+import { check, object, sha, taskDependencies, taskPR, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol";
 
 interface Store { version: 1; tasks: Task[] }
 const file = (project: string) => `${paths.project(project)}/tasks.json`;
@@ -24,6 +24,7 @@ function validateReadiness(raw: unknown): asserts raw is TaskReadiness {
 }
 function validateTask(raw: unknown): asserts raw is Task {
   check(object(raw) && uuid(raw.id), "invalid task id");
+  taskDependencies(raw.dependsOn, raw.id);
   check(text(raw.name, 120, "name") === raw.name && text(raw.summary, 500, "summary") === raw.summary && text(raw.branch, 250, "branch") === raw.branch, "noncanonical text");
   check(taskStatuses.includes(raw.status as TaskStatus), "invalid status");
   check(stamp(raw.createdAt) && stamp(raw.updatedAt) && Number.isSafeInteger(raw.revision) && Number(raw.revision) > 0, "invalid task timestamps/revision");
