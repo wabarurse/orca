@@ -1,3 +1,4 @@
+import { promptDefinitions } from "../definitions/prompts";
 // The role system prompts (one file per role) with their values filled in:
 // short lists of how each agent behaves, after the provider's compatibility
 // identity. Thresholds come from config and the review limit / dispatch switch
@@ -49,6 +50,6 @@ export type PromptConfig = Pick<Config, "maxReviewRounds" | "dynamicDispatch" | 
 /** The prompt for a role with its values filled in; callers resolve the project's review rounds and dispatch first. */
 export function rolePrompt(role: Role, config: PromptConfig): string {
   const values: Record<string, string | number> = { taskFlow: taskFlow(config.maxReviewRounds), cyclomatic: config.cyclomatic, cognitive: config.cognitive };
-  const prompt = `${templates[role]}\n\n${TERMINOLOGY}`.replace(/\{(\w+)\}/g, (m, key: string) => (key in values ? String(values[key]) : m));
+  const prompt = `${promptDefinitions(role, templates[role], TERMINOLOGY)}${templates[role]}\n\n${TERMINOLOGY}`.replace(/\{(\w+)\}/g, (m, key: string) => (key in values ? String(values[key]) : m));
   return role === "orchestrator" && config.dynamicDispatch ? `${prompt}\n\n${DYNAMIC_DISPATCH}` : prompt;
 }

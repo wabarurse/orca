@@ -19,9 +19,10 @@ test("new installs use orca; an app-only checkout cannot hide existing logins an
   expect(stateRoot(home, { ORCA_HOME: "/new-custom", [legacy.homeVariable]: "/old-custom" })).toBe("/new-custom");
   mkdirSync(join(current, "projects"));
   expect(stateRoot(home, {})).toBe(current);
-  expect(installedApp(home)).toBe(join(current, "app"));
+  expect(() => installedApp(home)).toThrow("offline layout migration");
   rmSync(join(current, "app"), { recursive: true });
-  expect(installedApp(home)).toBe(join(old, "app"));
+  mkdirSync(join(old, ".runtime", "app"), { recursive: true });
+  expect(installedApp(home)).toBe(join(old, ".runtime", "app"));
 });
 
 test("existing worker checkout paths remain registered; new namespaces use orca", () => {

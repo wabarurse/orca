@@ -272,8 +272,8 @@ test("aborting stops between projects, releases every project lock and keeps unv
   writeOldIndex("alpha", a.entries); writeOldIndex("beta", b.entries);
   const stop = new AbortController();
   await expect(backfillMemory({ signal: stop.signal, afterIndex: () => stop.abort(new Error("leaving")) })).rejects.toThrow("leaving");
-  expect(existsSync(join(dir, "project-locks", "alpha"))).toBe(false);
-  expect(existsSync(join(dir, "project-locks", "beta"))).toBe(false);
+  expect(existsSync(join(dir, ".runtime", "project-locks", "alpha"))).toBe(false);
+  expect(existsSync(join(dir, ".runtime", "project-locks", "beta"))).toBe(false);
   expect(existsSync(oldFile("alpha"))).toBe(true); expect(existsSync(oldFile("beta"))).toBe(true);
   expect(meta("backfill_version")).toBeUndefined();
   expect(await backfillMemory()).toBe(true); // a later start finishes
@@ -289,7 +289,7 @@ test("the shared startup run stops once every session that started it has been d
   void startMemoryBackfill({ signal: two.signal });
   one.abort(); two.abort();
   expect(await run).toBe(false);
-  expect(existsSync(join(dir, "project-locks", "alpha"))).toBe(false);
+  expect(existsSync(join(dir, ".runtime", "project-locks", "alpha"))).toBe(false);
   expect(meta("backfill_version")).toBeUndefined();
 });
 

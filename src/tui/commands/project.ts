@@ -52,6 +52,7 @@ export async function deleteProject(name: string, { live = liveAgentsOrNull, sto
     await withProjectStateLock(name, async () => {
       await removeProjectWorktrees(name);
       await beforeRemove?.();
+      await rm(paths.runtimeProject(name), { recursive: true, force: true });
       await rm(paths.project(name), { recursive: true, force: true });
       // Best effort: the project is already gone, and the backfill's orphan cleanup removes leftovers.
       try { purgeProject(name); } catch { /* rebuildable index */ }
