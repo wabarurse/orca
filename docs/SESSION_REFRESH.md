@@ -244,3 +244,30 @@ prompt and draft without any model calls. Reviewer local validation: focused
 refresh suites **20 passed, 162 assertions**; full suite **997 passed, 0 failed,
 8 snapshots, 17,953 assertions across 74 files**; typecheck, build and whitespace
 checks passed. GitHub reports no workflows/checks; no hosted run was requested.
+
+
+## Interrupted tool calls and runtime compatibility
+
+At an authorized model boundary, recovery completes an unfinished final assistant
+batch from persisted context (including a retained summary) before another model
+request. Missing results are durable errors: `interrupted; outcome unknown—reconcile
+before retrying`. Existing results and original parent history are preserved. No
+interrupted tool is executed or automatically retried, and no external outcome is
+inferred. Recovery does not authorize a stopped session to resume or reorder user
+instructions; a stale STOP delivered after a resume remains a separate ordering issue.
+
+Recovery writes a `tool-recovery` context checkpoint. **Older readers that do not
+recognize this entry cannot replay its corrected context.** Upgrade all processes
+that can read/write a conversation before relying on generic recovery; do not run
+mixed-version writers or downgrade a recovered conversation without an explicit,
+backed-up compatibility migration. This source change does not deploy or update an
+installed runtime. Retaining original history does not itself make the new entry
+backward compatible.
+
+A separately authorized repair on an older runtime can instead use its supported
+`summary` checkpoint with the entire corrected context in `retained`, without
+summarizing or removing original messages. Such operational repair requires a
+byte-exact backup, stopped ownership, existing publication locks, expected-head
+validation and reopening with that runtime's reader. It must not grant publishing
+permission, supersede STOP or start a provider request. The generic recovery path
+is not an automatic migration tool for older runtimes.

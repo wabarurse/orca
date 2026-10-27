@@ -273,11 +273,18 @@ describe("dynamic dispatch", () => {
     expect(s.startsWith("## Splitting work into PRs\nThe PR is the unit of work.")).toBe(true);
     expect(s).toContain("Split by what a reviewer can approve alone, never by layer.");
     expect(s).toContain("The plan table gets one row per PR.");
-    // Stacks: spawn only branches from the default branch, so milestones go one after another.
-    expect(s).toContain("titled `<feature> 2/5: <milestone>`");
-    expect(s).toContain("Spawn only branches from the default branch, so dispatch the stack sequentially: each PR starts after the previous one merges.");
-    expect(s).toContain("Every body lists the stack and marks the current PR.");
-    expect(s).not.toContain("opened together");
+    expect(s).toContain("not maximum PR count");
+    expect(s).toContain("Before dispatch, report the PR count, maximum merge depth, and immediately runnable task numbers.");
+    expect(s).toContain("the longest prerequisite path in nodes; independent tasks have depth 1");
+    expect(s).toContain("Task # · branch · scope · depends on");
+    expect(s).toContain('Use numbered tasks for dependencies, "none" for roots');
+    expect(s).toContain('"<branch> (existing)" for reused branches');
+    expect(s).toContain("Justify every edge with a concrete code, migration or safety prerequisite; a shared subject is not an edge.");
+    expect(s).toContain("Spawn only branches from the default branch; only real dependents wait for prerequisites to merge before starting.");
+    expect(s).toContain("Independent milestones run in parallel on disjoint files, including build registrations");
+    expect(s).not.toContain("dispatch the stack sequentially");
+    expect(s).not.toContain("each PR starts after the previous one merges");
+    expect(s).not.toContain('If the title needs "and", split.');
     // Approval is defined; post-approval findings become follow-up PRs, with CI and explicit-user exceptions.
     expect(s).toContain("- Approved = the reviewer reported ready to merge.");
     expect(s).toContain("After that, new review findings, including bot or user review comments, become a follow-up PR, not another commit: register a new task and plan a new branch, started after this PR merges.");
@@ -297,6 +304,20 @@ describe("dynamic dispatch", () => {
     expect(s).toContain("pasted terminal output for UI");
     expect(s).not.toMatch(/screenshot/i);
     expect(s).not.toMatch(/push/i);
-    for (const kept of ["Data change: expand/contract.", "Codeowner-owned migrations get their own PR.", "Behavior switch: one PR adds it dormant with tests, a second small PR turns it on.", 'If the title needs "and", split.', "Never a branch name.", "2 to 5 files, under 300 lines. Over 600 lines needs a stated reason.", "Merges alone, leaves main working, carries its own test or eval change.", "Parallel only on disjoint files; shared prerequisites ship first as their own PR, dependents start when it merges."]) expect(s).toContain(kept);
+    for (const kept of ["Data change: expand/contract.", "Codeowner-owned migrations get their own PR.", "Never a branch name.", "Target 2 to 5 files, under 300 changed lines, without artificial PR inflation.", "Over 600 changed lines needs a stated reason.", "Merges alone, leaves main working, carries its own test or eval change."]) expect(s).toContain(kept);
+  });
+  test("contracts and rollout gates enable safe concurrency without artificial layers", () => {
+    const s = DYNAMIC_DISPATCH;
+    expect(s).toContain("Agree shared request/result/error contracts before parallel UI and backend work.");
+    expect(s).toContain("Use an existing or agreed contract; if a shared contract PR is necessary, it must merge first.");
+    expect(s).toContain("No competing interfaces or empty scaffolding.");
+    expect(s).toContain("Contracts do not justify layered PRs that cannot merge alone.");
+    expect(s).toContain("Prefer disabled implementations with tests that can merge independently; apply rollout prerequisites to activation, not automatically to implementation.");
+    expect(s).toContain("Keep genuine safety prerequisites even for disabled code.");
+    expect(s).toContain("Preserve genuine migration, deployment and safety gates.");
+    expect(s).toContain(`Each body names its merge gate ("after PR N's deploy rolls out").`);
+    expect(s).toContain("one coherent, independently testable behavior");
+    expect(s).toContain("tasks 1 and 2 (depth 1); activation task 3 depends on 1 and 2 (depth 2)");
+    expect(s).toContain("waits for the required deploy before switching reads or dropping old storage");
   });
 });

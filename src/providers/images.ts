@@ -1,9 +1,8 @@
-// Which image blocks a provider admits: PNG validation (signature, chunks,
-// dimensions, scanlines), the base64 check on a request block, and the
-// vision-model table. Pure; images.ts stores what passes here.
+// Model-independent image validation: PNG bytes, dimensions, scanlines and
+// request-block base64. Provider acceptance is determined by the provider.
 
 import { inflateSync } from "node:zlib";
-import type { ImageBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ImageBlockParam } from "@anthropic-ai/sdk/resources/messages";
 
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_PIXELS = 4096 * 4096;
@@ -56,29 +55,6 @@ export function validateImage(input: Uint8Array, mime = "image/png"): { width: n
   if (pixels.length !== row * height) throw new Error("invalid png scanline length.");
   for (let y = 0; y < height; y++) if (pixels[y * row]! > 4) throw new Error("invalid png scanline filter.");
   return { width, height };
-}
-/** Explicit capabilities, separate from effort/output settings. Unknown models fail
- * closed. Provider rejection is propagated; no fallback or text-only retry. */
-export function requireVision(model: string, messages: MessageParam[]): void {
-  if (!messages.some(m => Array.isArray(m.content) && m.content.some(b => b.type === "image"))) return;
-  const claude = new Set([
-    "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307",
-    "claude-3-5-sonnet-20240620", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-7-sonnet-20250219",
-    "claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-opus-4-1-20250805",
-    "claude-sonnet-4-5", "claude-sonnet-4-5-20250929", "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-4-5", "claude-opus-4-5-20251101",
-    "claude-sonnet-4-6", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
-    "claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5", "claude-opus-5-5", "claude-haiku-5-5",
-  ]).has(model);
-  const codex = new Set([
-    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-5", "gpt-5-mini", "gpt-5-nano",
-    "gpt-5-codex", "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max", "gpt-5.2", "gpt-5.2-codex",
-    "gpt-5.3-codex", "gpt-5.4", "gpt-5.5",
-    // Codex catalog input_modalities (same snapshot as docs/MODEL_SETTINGS.md).
-    // Admission is independent of reasoning/fast support and account access.
-    "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
-    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review",
-  ]).has(model);
-  if (!claude && !codex) throw new Error(`image input is not enabled for model ${model}. choose a documented vision model explicitly; attachments were preserved.`);
 }
 export function validatedBase64(block: ImageBlockParam): { data: string; mime: "image/png" } {
   if (block.source.type !== "base64" || block.source.media_type !== "image/png") throw new Error("image was not resolved to supported png bytes; request refused.");

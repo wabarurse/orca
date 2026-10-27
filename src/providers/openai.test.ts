@@ -106,16 +106,22 @@ test.each([
 });
 
 test.each(["gpt-unknown", "gpt-6-astra-unverified", "gpt-6-astra-2099-01-01", "gpt-3.5-turbo"])(
-  "%s still refuses images before accessing credentials or sending a request", async model => {
+  "%s attempts image input without changing models", async model => {
     let credentials = 0, calls = 0;
-    intercept(async () => { calls++; return Response.json({}); });
+    intercept(async req => {
+      calls++;
+      const body = await req.json() as any;
+      expect(body.model).toBe(model);
+      expect(body.input[0].content[0]).toEqual({ type: "input_image", image_url: `data:image/png;base64,${png().toString("base64")}`, detail: "auto" });
+      return codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]);
+    });
     const provider = openai(async () => { credentials++; return fakeCodexTokens(); });
     const messages: MessageParam[] = [{ role: "user", content: [
       { type: "image", source: { type: "base64", media_type: "image/png", data: png().toString("base64") } },
     ] }];
-    await expect(provider.complete({ ...request(), model, messages })).rejects.toThrow("attachments were preserved");
-    expect(credentials).toBe(0);
-    expect(calls).toBe(0);
+    await provider.complete({ ...request(), model, messages });
+    expect(credentials).toBe(1);
+    expect(calls).toBe(1);
   },
 );
 

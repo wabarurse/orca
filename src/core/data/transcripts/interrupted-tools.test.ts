@@ -24,7 +24,8 @@ async function fixture(messages: MessageParam[]) {
 }
 
 test("aborted push gets a durable unknown error before the next request, never executes", async () => {
-  const t = await fixture([user("publish"), batch("push"), user("resume"), user("STOP")]);
+  const persisted = await fixture([user("publish"), batch("push"), user("resume"), user("STOP")]);
+  const t = open(persisted.path);
   const before = readFileSync(t.path, "utf8");
   const provider = fakeProvider([[text("reconcile first")]]);
   let executions = 0;
@@ -115,4 +116,22 @@ test("recovery checkpoint renders an honest diagnostic without duplicating histo
   const rendered = parts({ type: "tool-recovery", uuid: "r", parentUuid: null, ts: "now", messages: [batch("push")] });
   expect(rendered).toHaveLength(1);
   expect(String(rendered![0])).toContain("outcome unknown—reconcile before retrying");
+});
+
+
+test("legacy retained checkpoint with persisted unfinished batch is recovered after reopen", async () => {
+  const t = await fixture([user("original history")]);
+  const retained = [user("retained instruction"), batch("legacy-push"), user("STOP")];
+  await t.append({ type: "summary", text: "prior summary", retained });
+  const bytes = readFileSync(t.path, "utf8");
+  await completeInterruptedTools(open(t.path));
+  const reopened = open(t.path);
+  const messages = await reopened.chain();
+  expect(paired(messages)).toBe(true);
+  expect(messages.slice(0, 3)).toEqual([user("prior summary"), ...retained.slice(0, 2)]);
+  expect(messages[3]).toEqual(user([{ type: "tool_result", tool_use_id: "legacy-push", is_error: true,
+    content: "interrupted; outcome unknown—reconcile before retrying" }]));
+  expect(messages[4]).toEqual(user("STOP"));
+  expect(readFileSync(t.path, "utf8").startsWith(bytes)).toBe(true);
+  expect(reopened.all!()).toHaveLength(3);
 });

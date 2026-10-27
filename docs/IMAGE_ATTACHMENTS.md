@@ -121,26 +121,14 @@ Responses receives equivalent ordered **`input_image` data URLs**, alongside
 references, unsupported/nested tool-result image inputs and assistant image inputs
 fail explicitly rather than disappearing in a text serializer.
 
-`requireVision` in `src/providers/images.ts` contains explicit model-ID admission lists,
-**independent of effort/fast settings**. Unknown IDs fail closed with instructions
-to select a supported vision model. Known local defaults (`claude-sonnet-5-5`,
-`gpt-5.5`) and the enumerated Claude 3+/4+/5 and GPT-4o/4.1/5/6 IDs are admitted;
-this operational list is **not live service capability/entitlement verification**.
-The full exact list is the source of truth. Models outside it may support vision
-but need a reviewed admission change. A provider rejection is surfaced unchanged;
-there is no automatic provider/model fallback.
-
-The Codex admission update verified on **2026-10-23** includes `gpt-6-astra`,
-`gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`,
-`gpt-5.6-luna`, and `codex-auto-review`. Each explicitly advertises `image` in
-`input_modalities` in the same
-[Codex catalog snapshot](https://github.com/openai/codex/blob/9b39316997fd8bcecdb2007722f52ef858f0dbd8/codex-rs/models-manager/models.json)
-used for request settings. The
-[GPT-6 Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra)
-also documents image input. Provider model discovery alone does not grant image
-admission, and reasoning/fast support is not used to infer vision support. Future
-model additions need an explicit modality check as well as settings validation.
-Unknown IDs and unverified aliases/date variants remain refused.
+Orca attempts image requests with every selectable model, including unknown IDs
+and aliases, without a model-name allowlist. This does **not** guarantee provider
+image support or account entitlement. Image byte, format, size and security
+validation still applies, independently of model effort/fast settings and account
+authentication. Provider rejection is surfaced through the existing error path;
+attachments remain preserved, with no silent dropping, automatic model/provider
+switching or text-only fallback. Model discovery and request-settings catalogs
+are not image-admission gates.
 
 Agents receive a real image block plus `[Image N; attachment_id=<UUID>]`.
 Delegation must **explicitly** pass relevant IDs:
@@ -197,14 +185,14 @@ The orchestrator-only `history` tool (earlier sessions and other projects) retur
 same text markers only: never pixels, and no forwarding permission. Image IDs stay
 project-scoped.
 
-`materializeImages` and `requireVision` remain at the provider boundary. Keep
+`materializeImages` and provider image validation remain at the request boundary. Keep
 image budgeting, original prompt association, exact receipts, shared cancellation
 and conditional checkpoint publication intact when changing memory semantics.
 `forwardImages` authorizes against `afterContextBoundary(transcript.history())`;
 checkpoint tails must not replace original history for that check. Combined
 regressions in `rolling-images.test.ts` cover repeated compaction, search/reload,
 both provider serializers, explicit worker pixels, clear/cancel, newer arrivals,
-failed publication, unsupported models, missing bytes and image-budget refusal.
+failed publication, missing bytes and image-budget refusal.
 
 ## Validation and reviewer constraints
 

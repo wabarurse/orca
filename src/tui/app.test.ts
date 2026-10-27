@@ -4307,32 +4307,35 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
     const questions = app.page!.questions;
     // Bytes from the terminal's registered callback, not an isolated navigation helper.
     term.type("\x14");
-    await until(() => screen().includes("SELECTED [1]"));
+    await until(() => screen().includes("Task #1 ·"));
     expect(screen()).toContain("Long metadata");
-    expect(screen()).toContain("Shift+Tab next");
+    expect(screen()).toContain("↑↓ select");
     term.type("\x1b[Z");
-    await until(() => screen().includes("SELECTED [2]"));
-    expect(screen()).toContain("Summary: Summary 2");
-    const row = term.display.screen().findIndex(line => line.startsWith(" [1]"));
-    const col = term.display.screen()[row]!.indexOf("[1]");
+    await until(() => screen().includes("Task #2 ·"));
+    expect(screen()).toContain("Overview: Summary 2");
+    const row = term.display.screen().findIndex(line => line.includes("#1 ● Node 1"));
+    const col = term.display.screen()[row]!.indexOf("#1");
     term.press({ name: "mousedown", x: col + 1, y: row + 1 });
     term.press({ name: "mouseup", x: col + 1, y: row + 1 });
-    await until(() => screen().includes("SELECTED [1]"));
-    term.press({ name: "right" }); term.press({ name: "down" });
-    term.press({ name: "down", shift: true });
-    await until(() => screen().includes("Graph x=4/") && screen().includes(" y=1/") && screen().includes("details=1/"));
-    const scrolledRow = term.display.screen().findIndex(line => line.slice(0, 66).includes("[2]"));
-    const scrolledCol = term.display.screen()[scrolledRow]!.indexOf("[2]");
-    term.press({ name: "mousedown", x: scrolledCol + 1, y: scrolledRow + 1 });
-    await until(() => screen().includes("SELECTED [2]"));
-    for (let i = 0; i < 11; i++) term.type("\x1b[Z");
-    await until(() => screen().includes("SELECTED [1]"));
-    term.press({ name: "pageup" });
-    await until(() => screen().includes(" y=0/"));
+    await until(() => screen().includes("Task #1 ·"));
+    term.press({ name: "left" });
+    await until(() => !screen().includes("#2 ● Node 2"));
+    term.press({ name: "right" });
+    await until(() => screen().includes("#2 ● Node 2"));
+    term.press({ name: "down" });
+    await until(() => screen().includes("Task #2 ·"));
+    term.press({ name: "left" }); term.press({ name: "left" });
+    await until(() => screen().includes("Task #1 ·"));
+    term.press({ name: "right" });
+    term.press({ name: "down" });
+    await until(() => !screen().includes("details=0/"));
+    term.press({ name: "up" });
+    await until(() => screen().includes("details=0/"));
+    term.press({ name: "left" });
     tasks = [...tasks].reverse().map(t => t.id === id(1) ? { ...t, summary: "Updated durable metadata" } : t);
     await app.refreshSessions();
     await until(() => screen().includes("Updated durable metadata"));
-    expect(screen()).toContain("Lifecycle: merged");
+    expect(screen()).toContain("Task #1 · Merged");
     term.resize(52, 18);
     await until(() => screen().includes("TASKS"));
     term.type("\x14");
@@ -4342,10 +4345,10 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
     expect((await allQuestions("tree-navigation"))[0]!.status).toBe("open");
     expect(app.frame().inputArea!.lines.join("\n")).toContain("[image 1]");
     term.resize(120, 28); term.type("\x14");
-    await until(() => screen().includes("SELECTED [1]"));
+    await until(() => screen().includes("Task #1 ·"));
     tasks = tasks.filter(t => t.id !== id(1)).map(t => ({ ...t, dependsOn: [] }));
     await app.refreshSessions();
-    await until(() => screen().includes("SELECTED [1]: Node 2"));
+    await until(() => screen().includes("Task #1 · queued: Node 2"));
     fail = true; await app.refreshSessions();
     await until(() => screen().includes("Tasks unavailable: registry offline"));
     fail = false; tasks = []; term.type("r");
@@ -4428,7 +4431,7 @@ test("task tree cycling reveals long independent registries without changing cha
   const term = fakeTerm(80, 24), fake = fakeOrchestrators();
   const tasks: import("../protocol/tasks").Task[] = Array.from({ length: 24 }, (_, i) => ({
     id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
-    name: `Independent task ${i + 1}`, summary: "Saved task", branch: "feat/example",
+    name: `Independent task ${i + 1}`, summary: "Saved task with a long readable overview. ".repeat(90), branch: "feat/example",
     status: "queued", createdAt: "2026-01-01", updatedAt: "2026-01-02", revision: 1,
     dependsOn: [], runs: [], history: [],
   }));
@@ -4439,13 +4442,21 @@ test("task tree cycling reveals long independent registries without changing cha
   try {
     await until(() => !!app.page);
     term.type("keep draft"); term.type("\x14");
-    await until(() => screen().includes("▶[1] Independent task 1"));
+    await until(() => screen().includes("#1 ● Independent task 1"));
     for (let i = 0; i < 23; i++) term.type("\x1b[Z");
-    await until(() => screen().includes("▶[24] Independent task 24"));
-    expect(screen()).toContain("Graph x=0/0");
+    await until(() => screen().includes("#24 ● Independent task 24"));
+    expect(screen()).toContain("Outline y=");
     term.type("\x1b[Z");
-    await until(() => screen().includes("▶[1] Independent task 1"));
-    expect(screen()).toContain(" y=0/");
+    await until(() => screen().includes("#1 ● Independent task 1"));
+    expect(screen()).toContain("Outline y=0/");
+    term.press({ name: "right" });
+    await until(() => screen().includes("Details: ↑↓ scroll"));
+    term.press({ name: "down" });
+    await until(() => !screen().includes("details=0/"));
+    term.press({ name: "up" });
+    term.press({ name: "mousedown", x: 5, y: 18 });
+    term.press({ name: "left" });
+    await until(() => screen().includes("↑↓ select"));
     term.press({ name: "escape" });
     await until(() => !screen().includes("TASKS"));
     expect(app.input.text).toBe("keep draft");

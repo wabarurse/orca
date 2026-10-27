@@ -137,6 +137,12 @@ function finalInterruptedBatch(messages: MessageParam[]) {
   return { index, calls, ids };
 }
 
+/** Each persisted result must belong to this batch and occur exactly once. */
+function claimInterruptedResult(id: string, ids: Set<string>, seen: Set<string>): void {
+  if (!ids.has(id) || seen.has(id)) return corruptToolHistory();
+  seen.add(id);
+}
+
 /** Extract only matching results; retain all interposed user content in order. */
 function interruptedTail(messages: MessageParam[], ids: Set<string>) {
   const results: Extract<Exclude<MessageParam["content"], string>[number], { type: "tool_result" }>[] = [];
@@ -148,8 +154,7 @@ function interruptedTail(messages: MessageParam[], ids: Set<string>) {
     const rest = [];
     for (const block of message.content) {
       if (block.type !== "tool_result") { rest.push(block); continue; }
-      if (!ids.has(block.tool_use_id) || seen.has(block.tool_use_id)) return corruptToolHistory();
-      seen.add(block.tool_use_id);
+      claimInterruptedResult(block.tool_use_id, ids, seen);
       results.push(block);
     }
     if (rest.length) tail.push({ ...message, content: rest });
