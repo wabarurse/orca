@@ -40,7 +40,7 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
   expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual(await listTasks(project));
   expect(JSON.parse(await tool.run({ action: "get", taskId: task.id }, ctx())).id).toBe(task.id);
   expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain('spawn the reviewer with "watch ci" and existing check evidence');
-  expect(rolePrompt("reviewer", defaults)).toContain("Review-only mode never asserts readiness");
+  expect(rolePrompt("reviewer", defaults)).toContain("Review-only never asserts readiness.");
 });
 
 test("PR creation/no CI is not ready; active reviewer explicitly validates verified exact clean head", async () => {
