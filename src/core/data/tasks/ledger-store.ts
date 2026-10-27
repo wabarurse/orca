@@ -149,7 +149,9 @@ export function existingLedgerTasks(project: string): Task[] | undefined {
   try {
     db.exec("PRAGMA busy_timeout=2000");
     if (!db.query("SELECT name FROM sqlite_master WHERE name='task_ledger_records'").get()) return;
-    if (!db.query("SELECT 1 FROM task_ledger_projects WHERE project_id=?").get(project)) return;
+    const saved = db.query("SELECT repository FROM task_ledger_projects WHERE project_id=?").get(project) as { repository: string } | null;
+    if (!saved) return;
+    if (saved.repository !== binding(project)) throw new Error("task ledger project identity/repository changed; explicit recovery required");
     return load(db, project).tasks;
   } finally { db.close(); }
 }

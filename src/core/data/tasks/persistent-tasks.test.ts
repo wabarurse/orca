@@ -1,15 +1,16 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { paths } from "../../../config";
 import { canonicalTask } from "../../../protocol/task-ledger";
 import type { Task } from "../../../protocol/tasks";
-import { allTasks, getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, removeTask, setTaskDependencies, startTaskRun, stopTaskRun, updateTaskMetadata } from "./tasks";
-import { searchLedger } from "./ledger-store";
-import { purgeProject } from "../memory/archive";
+import { existingTasks, allTasks, getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, removeTask, setTaskDependencies, startTaskRun, stopTaskRun, updateTaskMetadata } from "./tasks";
+import { existingLedgerTasks, searchLedger } from "./ledger-store";
+import { archiveTranscript, queryGlobalHistory, purgeProject } from "../memory/archive";
 import { backfillMemory } from "../memory/backfill";
+import { open } from "../transcripts";
 
 const home = mkdtempSync(join(tmpdir(), "persistent-tasks-"));
 process.env.ORCA_HOME = home;
@@ -128,3 +129,58 @@ test("backfill leaves global ledger intact and refuses deleting per-project dura
   expect(logs.join("\n")).toContain("durable task ledger");
   expect((searchLedger({ project }) as unknown[]).length).toBe(1);
 });
+
+for (const replacement of ["project directory", "repository binding"] as const) {
+  test(`current-project snapshots refuse changed ${replacement} without import/repair; historical lookup remains available`, async () => {
+    // Isolate the backfill completion marker and all filesystem changes from other fixtures.
+    const isolated = mkdtempSync(join(tmpdir(), "task-binding-"));
+    process.env.ORCA_HOME = isolated;
+    try {
+      mkdirSync(paths.project(project), { recursive: true });
+      const task = await create();
+      const ledgerRows = () => {
+        const db = new Database(paths.memory, { readonly: true });
+        try { return {
+          projects: db.query("SELECT * FROM task_ledger_projects").all(),
+          records: db.query("SELECT * FROM task_ledger_records").all(),
+        }; } finally { db.close(); }
+      };
+      const before = ledgerRows();
+      if (replacement === "project directory") {
+        rmSync(paths.project(project), { recursive: true }); mkdirSync(paths.project(project));
+      } else {
+        writeFileSync(join(paths.project(project), "repository.json"), JSON.stringify({
+          version: 1, directory: join(isolated, "different-repo"), branch: "main", worktreeId: crypto.randomUUID(),
+        }));
+      }
+      // A valid legacy input must not be imported, backed up or repaired by these readers.
+      const projection = JSON.stringify({ version: 1, tasks: [] });
+      writeFileSync(path(), projection);
+      const oldPath = join(paths.project(project), "memory.sqlite"), old = new Database(oldPath);
+      old.exec("CREATE TABLE retained_fixture(id TEXT)"); old.close();
+      const oldBytes = readFileSync(oldPath);
+      const error = "task ledger project identity/repository changed; explicit recovery required";
+      expect(() => existingLedgerTasks(project)).toThrow(error);
+      expect(() => existingTasks(project)).toThrow(error);
+      const transcript = open(paths.transcript(project, "orchestrator"));
+      await expect(archiveTranscript(project, transcript)).rejects.toThrow(error);
+      await expect(queryGlobalHistory(project, { action: "search", query: "first" })).rejects.toThrow(error);
+      const logs: string[] = []; let indexed = false;
+      expect(await backfillMemory({ log: line => logs.push(line), afterIndex: () => { indexed = true; } })).toBe(false);
+      expect(logs.join("\n")).toContain(error); expect(indexed).toBe(false);
+      expect(readFileSync(oldPath)).toEqual(oldBytes);
+      expect(readFileSync(path(), "utf8")).toBe(projection);
+      expect(existsSync(`${path()}.legacy-v1.backup`)).toBe(false);
+      expect(ledgerRows()).toEqual(before);
+      const db = new Database(paths.memory, { readonly: true });
+      try { expect(db.query("SELECT * FROM tasks WHERE project=?").all(project)).toEqual([]); }
+      finally { db.close(); }
+      expect(searchLedger({ project, taskId: task.id })).toEqual([
+        { project, task: canonicalTask(task), removedAt: null },
+      ]);
+    } finally {
+      process.env.ORCA_HOME = home;
+      rmSync(isolated, { recursive: true, force: true });
+    }
+  });
+}
