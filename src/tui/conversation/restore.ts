@@ -1,3 +1,4 @@
+import { routineModelRequest } from "./notices";
 import { modelRequestText } from "../../protocol/transcript";
 import { imageLabels } from "../../core/data/images";
 import type { Message } from "../../protocol";
@@ -204,7 +205,7 @@ function release(state: Fold): Fold {
 
 /** One entry of the branch into the items. `sent` is empty past the first `replies` entry: from there they hold the replies. */
 function step(state: Fold, e: Entry, sent: Set<string>): void {
-  if (e.type === "model-request") state.items.push(now([dim(modelRequestText(e))]));
+  if (e.type === "model-request" && !routineModelRequest(e.stage)) state.items.push(now([dim(modelRequestText(e))]));
   if (e.type === "summary") state.items.push({ lines: () => [SUMMARIZED], summary: true });
   // The run that recorded these also made the held message calls: the entry has them, so they are not shown twice.
   if (e.type === "replies") {
