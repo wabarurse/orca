@@ -11,7 +11,7 @@ orca_install() (
     --help)
       echo 'usage: sh install.sh [--no-modify-path]'
       echo 'requires macOS or Linux, git, tmux, and Bun >= 1.4.2'
-      echo 'installs ~/.orca/app and ~/.local/bin/orca; preserves saved state'
+      echo 'installs ~/.orca/.runtime/app and ~/.local/bin/orca; preserves saved state'
       return ;;
     *) echo "orca install: unknown option: $1" >&2; exit 1 ;;
   esac
@@ -34,21 +34,26 @@ const [major, minor, patch] = Bun.version.split('.').map(Number);
 if (!(major > 1 || major === 1 && (minor > 4 || minor === 4 && patch >= 2))) fail('Bun 1.4.2 or newer is required; upgrade Bun first');
 if (!process.env.HOME) fail('HOME must be set');
 const home = realpathSync(process.env.HOME);
-for (const path of [home, join(home, '.orca'), join(home, '.local'), join(home, '.local', 'bin')]) {
+for (const path of [home, join(home, '.orca'), join(home, '.orca', '.runtime'), join(home, '.local'), join(home, '.local', 'bin')]) {
   let s;
   try { s = lstatSync(path); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
   if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid() || s.mode & 0o022)
     fail(`unsafe directory: ${path}; must be owned by you, not a symlink, and not group/world writable`);
 }
-const app = join(home, '.orca', 'app');
+for (const path of [join(home, '.orca', 'app'), join(home, '.parallels'), join(home, '.orca', 'projects'), join(home, '.orca', 'memory.sqlite'), ...['config.toml', 'auth', 'tmux.sock', 'checkout-locks', 'turn-locks', 'project-locks', 'daemon-locks'].map(name => join(home, '.orca', name))]) {
+  try { lstatSync(path); fail('existing state: use the manual offline migration runbook, not bootstrap installation'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+const app = join(home, '.orca', '.runtime', 'app');
 try { lstatSync(app); fail(`existing app at ${app}; use orca pull for updates, or see docs/REFERENCE.md#installer-ownership-and-recovery`); }
 catch (error) { if (error.code !== 'ENOENT') throw error; }
 JS
 
-  mkdir -p "$HOME/.orca"
+  mkdir -p "$HOME/.orca/.runtime"
   echo 'orca install: downloading the app…'
-  GIT_TERMINAL_PROMPT=0 git clone --branch main --single-branch https://github.com/wabarurse/parallels.git "$HOME/.orca/app"
-  cd "$HOME/.orca/app"
+  GIT_TERMINAL_PROMPT=0 git clone --branch main --single-branch https://github.com/wabarurse/parallels.git "$HOME/.orca/.runtime/app"
+  cd "$HOME/.orca/.runtime/app"
+  bun -e 'import { assertLayout } from "./src/config/layout"; assertLayout(process.env.HOME + "/.orca");'
   bun install --frozen-lockfile
   bun run install:local
 

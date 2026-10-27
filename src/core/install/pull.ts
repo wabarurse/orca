@@ -38,6 +38,7 @@ async function appDirectory(home: string): Promise<string> {
   const root = await realpath(home);
   await directory(root);
   const app = installedApp(root);
+  await directory(dirname(dirname(app)));
   await directory(dirname(app));
   await directory(app);
   // An actual dedicated clone, not a linked worktree or symlink into a project.

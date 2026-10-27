@@ -2,7 +2,6 @@ import { afterEach, expect, test } from "bun:test";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { stateRoot } from "../src/config/legacy";
 
 const root = resolve(import.meta.dir, "..");
 const temporary: string[] = [];
@@ -12,9 +11,10 @@ async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "orca-bootstrap-"));
   temporary.push(dir);
   const home = join(dir, "user's home"), bin = join(dir, "bin"), source = join(dir, "source"), cwd = join(dir, "unrelated project");
-  for (const path of [home, bin, source, cwd, join(source, "scripts"), join(source, "src"), join(source, "src/core"), join(source, "src/core/install")]) {
+  for (const path of [home, bin, source, cwd, join(source, "scripts"), join(source, "src"), join(source, "src/core"), join(source, "src/core/install"), join(source, "src/config")]) {
     await mkdir(path, { mode: 0o755 });
   }
+  await cp(join(root, "src/config/layout.ts"), join(source, "src/config/layout.ts"));
   await cp(join(root, "scripts/install.ts"), join(source, "scripts/install.ts"));
   await cp(join(root, "src/core/install/installation.ts"), join(source, "src/core/install/installation.ts"));
   await writeFile(join(source, "package.json"), JSON.stringify({ scripts: { "install:local": "bun scripts/install.ts", build: "bun build-fixture.ts" } }));
@@ -44,12 +44,8 @@ cpSync(process.env.ORCA_TEST_SOURCE!, args[5]!, { recursive: true });`);
   return { dir, home, cwd, run };
 }
 
-test("piped installer installs from any directory, preserves legacy state, and refuses an existing app", async () => {
+test("piped installer installs from any directory and refuses an existing app", async () => {
   const f = await fixture();
-  const legacy = join(f.home, ".parallels");
-  await mkdir(join(legacy, "auth"), { recursive: true });
-  await writeFile(join(legacy, "auth", "saved"), "saved-login");
-  await writeFile(join(legacy, "config.toml"), "existing-settings");
   await writeFile(join(f.cwd, "keep"), "project-content");
   await writeFile(join(f.home, ".bashrc"), "# user settings\n", { mode: 0o644 });
   const result = await f.run();
@@ -59,9 +55,6 @@ test("piped installer installs from any directory, preserves legacy state, and r
   const bytes = await Bun.file(executable).bytes();
   expect(receipt.sha256).toBe(new Bun.CryptoHasher("sha256").update(bytes).digest("hex"));
   expect(await new Response(Bun.spawn([executable], { stdout: "pipe" }).stdout).text()).toBe("fixture-orca\n");
-  expect(stateRoot(f.home, {})).toBe(legacy);
-  expect(await readFile(join(legacy, "auth/saved"), "utf8")).toBe("saved-login");
-  expect(await readFile(join(legacy, "config.toml"), "utf8")).toBe("existing-settings");
   expect(await readFile(join(f.cwd, "keep"), "utf8")).toBe("project-content");
   const profile = await readFile(join(f.home, ".bashrc"), "utf8");
   expect(profile).toBe('# user settings\n\n# orca\nexport PATH="$HOME/.local/bin:$PATH"\n');
@@ -113,4 +106,24 @@ test("symlinked shell configuration is left for manual PATH setup", async () => 
   const result = await f.run();
   expect(result.code).toBe(0); expect(result.output).toContain("PATH was not changed");
   expect(await readFile(target, "utf8")).toBe("keep-settings");
+});
+
+test("existing legacy state refuses bootstrap and preserves private files", async () => {
+  const f = await fixture(), legacy = join(f.home, ".parallels");
+  await mkdir(join(legacy, "auth"), { recursive: true });
+  await writeFile(join(legacy, "auth", "saved"), "fixture-private");
+  const result = await f.run();
+  expect(result.code).toBe(1);
+  expect(result.output).toContain("manual offline migration");
+  expect(await readFile(join(legacy, "auth", "saved"), "utf8")).toBe("fixture-private");
+});
+
+test("existing config-only state refuses before clone", async () => {
+  const f = await fixture();
+  await mkdir(join(f.home, ".orca"));
+  await writeFile(join(f.home, ".orca/config.toml"), "fixture-settings");
+  const result = await f.run();
+  expect(result.code).toBe(1); expect(result.output).toContain("manual offline migration");
+  expect(await readFile(join(f.home, ".orca/config.toml"), "utf8")).toBe("fixture-settings");
+  expect(await Bun.file(join(f.dir, "git.json")).exists()).toBe(false);
 });

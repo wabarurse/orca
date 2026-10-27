@@ -35,8 +35,13 @@ export function worktreeRoot(checkout: string, id: string): string {
 
 /** Updates use an installed checkout, independently of the runtime state root. */
 export function installedApp(home: string): string {
-  const current = join(home, ".orca", "app");
-  return present(current) ? current : join(home, legacy.stateDirectory, "app");
+  const current = join(home, ".orca");
+  if (present(join(current, "app")) || present(join(home, legacy.stateDirectory, "app"))) {
+    throw new Error("legacy installed app: run the documented offline layout migration before pull");
+  }
+  const migrated = join(current, ".runtime", "app");
+  const oldMigrated = join(home, legacy.stateDirectory, ".runtime", "app");
+  return present(migrated) || !present(oldMigrated) ? migrated : oldMigrated;
 }
 
 export const harnessEngine = (engine: unknown) => engine === "orca" || engine === legacy.engine;

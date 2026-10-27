@@ -11,7 +11,7 @@ afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { rec
 async function fixture() { const f = await pullFixture(); roots.push(f.root); return f; }
 const fetched = (calls: string[][]) => calls.some(a => a.includes("fetch"));
 
-test("orca updates a legacy dedicated checkout without moving it or changing origin trust", async () => {
+test("orca updates a migrated legacy dedicated checkout without changing origin trust", async () => {
   const f = await pullFixture({ legacyApp: true }); roots.push(f.root);
   await pullHarness(f.options);
   expect(await f.binary()).toBe("new executable");

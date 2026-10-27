@@ -1,3 +1,4 @@
+import { editableTool } from "../core/definitions/tools";
 // The `orca agent` process: runAgent publishes the launch, supervises a worker or
 // reviewer (run record, exit notice on a crash) and runs one agent session over
 // the loop in core/agent-loop/loop/agent.ts. The orchestrator role hands over to
@@ -68,7 +69,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: T
   const tools: Record<string, Tool> = {};
   for (const name of toolsFor[opts.role]) {
     const tool = registry[name];
-    if (tool) tools[name] = tool;
+    if (tool) tools[name] = editableTool(tool);
   }
 
   const agent = createAgent({

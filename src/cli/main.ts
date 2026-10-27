@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { assertLayout } from "../config/layout";
 // orca / orca start [project] [directory]   open the TUI: one page per orchestrator (binds the original checkout;
 //                                         run inside a git repo to get an orchestrator for it)
 // orca msg <project> <text>        drop a message in the orchestrator's inbox
@@ -25,6 +26,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
+if (["", "start", "msg", "stop", "agent", "agent-exit", "pull"].includes(cmd ?? "")) assertLayout(paths.root);
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -41,7 +43,7 @@ function usage(error?: string): never {
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
-  orca pull                       update ~/.orca/app from origin/main
+  orca pull                       update ~/.orca/.runtime/app from origin/main
   orca help | --help
   orca agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
   orca agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>`);
@@ -111,7 +113,7 @@ switch (cmd) {
     break;
   }
   case "pull":
-    if (rest.length) usage("pull takes no arguments; it only updates ~/.orca/app");
+    if (rest.length) usage("pull takes no arguments; it only updates ~/.orca/.runtime/app");
     try { await pullHarness(); }
     catch (error) {
       console.error(`orca pull: ${error instanceof Error ? error.message : String(error)}\nthe installed executable was not replaced on failure; the harness checkout/dependencies may have advanced. inspect the error and retry after resolving it.`);

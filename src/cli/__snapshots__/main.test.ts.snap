@@ -7,7 +7,7 @@ exports[`offline CLI usage and owned errors are lowercase without changing suppl
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
-  orca pull                       update ~/.orca/app from origin/main
+  orca pull                       update ~/.orca/.runtime/app from origin/main
   orca help | --help
   orca agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
   orca agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>
@@ -22,7 +22,7 @@ usage:
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
-  orca pull                       update ~/.orca/app from origin/main
+  orca pull                       update ~/.orca/.runtime/app from origin/main
   orca help | --help
   orca agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
   orca agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>
