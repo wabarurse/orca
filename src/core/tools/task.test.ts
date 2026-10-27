@@ -121,9 +121,9 @@ test("failed explicit PR refresh invalidates previously validated readiness with
 
 test("both exposed task schemas describe executable structured dependencies, not scheduling", async () => {
   for (const exposed of [agentTask, orchestratorTask]) {
-    expect(exposed.spec.input_schema.properties?.action).toMatchObject({ enum: expect.arrayContaining(["dependencies"]) });
-    expect(exposed.spec.input_schema.properties?.taskId).toMatchObject({ description: expect.stringContaining("dependencies, which requires an explicit taskId") });
-    expect(exposed.spec.input_schema.properties?.dependsOn).toMatchObject({ type: "array", items: { type: "string" } });
+    expect(exposed.spec.input_schema.properties).toMatchObject({ action: { enum: expect.arrayContaining(["dependencies"]) } });
+    expect(exposed.spec.input_schema.properties).toMatchObject({ taskId: { description: expect.stringContaining("dependencies, which requires an explicit taskId") } });
+    expect(exposed.spec.input_schema.properties).toMatchObject({ dependsOn: { type: "array", items: { type: "string" } } });
     const description = exposed.spec.description!;
     expect(description).toContain("not notes");
     expect(description).toContain("Never infer relationships from text");
