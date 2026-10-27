@@ -92,3 +92,49 @@ export function taskTreeView(task: Task): TaskTreeView {
   } else state = { kind: source.status, attention };
   return { id, name, summary, branch, createdAt, updatedAt, revision, dependsOn: taskDependencies(source.dependsOn, id), state, source };
 }
+
+/** Caller-owned live verification, bound to the task snapshot used for the lookup.
+ * PRObservation has no timestamp; callers must drop this evidence when stale or
+ * lookup fails. A durable Task.pr (even with readiness) cannot prove OPEN today.
+ */
+export interface TaskPublicationEvidence {
+  taskId: string;
+  revision: number;
+  observation: PRObservation;
+}
+export type TaskPublicationMilestone =
+  | { kind: "unknown"; tone: "neutral" }
+  | { kind: "published"; label: "PR is out"; tone: "green"; pr: TaskPR }
+  | { kind: "closed"; label: "PR closed"; tone: "neutral"; pr: TaskPR }
+  | { kind: "merged"; label: "merged"; tone: "purple"; pr: TaskPR; mergedAt: string; archivedAt: string };
+export interface TaskPublicationView {
+  id: string;
+  revision: number;
+  milestone: TaskPublicationMilestone;
+  /** Orthogonal to publication: never hide blocked/cancelled or stopped runs. */
+  attention: TaskTreeAttention;
+  /** Detached details retain status, readiness, run identities and validation history. */
+  source: Task;
+}
+
+/** Dormant presentation only: no readiness gate, durable writes or scheduling.
+ * Accept only current caller-verified observations matching the associated PR,
+ * branch and head. Archive evidence is durable; raw MERGED observations must
+ * first go through the existing verified archive writer.
+ */
+export function taskPublicationView(task: Task, evidence?: TaskPublicationEvidence | null): TaskPublicationView {
+  const source = structuredClone(task);
+  let milestone: TaskPublicationMilestone = { kind: "unknown", tone: "neutral" };
+  if (source.archive) {
+    const { pr, mergedAt, archivedAt } = source.archive;
+    milestone = { kind: "merged", label: "merged", tone: "purple", pr, mergedAt, archivedAt };
+  } else if (evidence?.taskId === source.id && evidence.revision === source.revision) {
+    const o = evidence.observation, pr = source.pr;
+    if (pr && o.branch === source.branch && o.pr.repository === pr.repository
+      && o.pr.number === pr.number && o.pr.url === pr.url && o.pr.head === pr.head) {
+      if (o.state === "OPEN") milestone = { kind: "published", label: "PR is out", tone: "green", pr };
+      else if (o.state === "CLOSED") milestone = { kind: "closed", label: "PR closed", tone: "neutral", pr };
+    }
+  }
+  return { id: source.id, revision: source.revision, milestone, attention: source.attention ?? { kind: "none" }, source };
+}
