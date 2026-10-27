@@ -235,6 +235,39 @@ describe("tui app", () => {
     await running;
   });
 
+  test("model lifecycle daemon notices do not split live App tool groups", async () => {
+    const term = fakeTerm(180), fake = fakeOrchestrators();
+    let events!: ToolEvents;
+    const app = new App({ term, pollMs: 100_000, openOrchestrator: async (p, url, write, inbox, tools) => {
+      events = tools!;
+      return fake.openOrchestrator(p, url, write, inbox);
+    } });
+    const running = app.run("lifecycle-notices");
+    const diagnostic = (stage: string) => `[model request] openai/gpt-6-astra ${stage}; started 2026-10-27T00:00:00Z; updated 2026-10-27T00:00:08Z`;
+    const finish = (id: string) => {
+      events.onTool({ id, name: "bash", input: { command: `echo ${id}` } });
+      events.onToolResult({ id, ok: true, text: "ok" });
+    };
+    try {
+      await until(() => !!app.page);
+      finish("one");
+      for (const stage of ["preparing", "provider-wait", "completed"]) {
+        events.notice!(diagnostic(stage));
+        expect(strip(app.frame().inputArea!.lines.join("\n"))).toContain(diagnostic(stage));
+        expect(app.page!.lines).toHaveLength(1);
+      }
+      finish("two");
+      await until(() => term.screen().includes("▸ 2 tool calls · bash ×2"));
+      expect(app.page!.lines).toHaveLength(2);
+      for (const notice of [diagnostic("error"), diagnostic("aborted"),
+        "model request failed (timeout); retrying: attempt 2, nextRetryAt tomorrow",
+        "background compaction failed; original history kept: unknown task in memory"]) {
+        events.notice!(notice);
+        expect(strip(historyRows(app.page!.lines, 180).join("\n"))).toContain(notice);
+      }
+    } finally { app.quit(); await running; }
+  });
+
   test("status notes are one transient row above the composer: replaced by the next, cleared by the next key but not scrolling or the mouse, per page, never conversation", async () => {
     const term = fakeTerm(40);
     const orchs = fakeOrchestrators();
