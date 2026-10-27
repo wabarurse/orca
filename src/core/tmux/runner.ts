@@ -11,8 +11,8 @@ import { command, run } from "../proc";
 // Everything is keyed by branch: one worktree, one window per role, and one
 // transcript per role on that branch. tasks.ts separately binds immutable tasks to exact runs.
 
-import { existsSync, mkdirSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { existsSync, mkdirSync, lstatSync } from "node:fs";
+import { basename, resolve, dirname } from "node:path";
 import { $ } from "bun";
 import { paths, repositoryBinding } from "../../config";
 import { assertMainCheckout, assertWorktree } from "../data/projects";
@@ -70,21 +70,26 @@ export async function ensureWorktree(project: string, branch: string, signal?: A
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
-  if (!branch || slug(branch) === "." || slug(branch) === "..") throw new Error("invalid worker branch");
+  if (["", ".", ".."].includes(slug(branch))) throw new Error("invalid worker branch");
   const base = repositoryBinding(project)?.branch;
   if (branch === base) throw new Error("workers must use a task branch, not the default branch");
   if (existsSync(dir)) { await assertWorktree(project, dir, branch); return dir; }
   if (!existsSync(repo)) throw new Error(`runner: repo not found at ${repo}`);
 
+  const exists = await validateWorktreeBase(repo, branch, stackBase, signal);
+  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, stackBase ?? (base ? `refs/heads/${base}` : "HEAD")])], repo, signal);
+  if (res.code !== 0) throw new Error(`runner: git worktree add failed: ${res.err.trim()}`);
+  return dir;
+}
+
+async function validateWorktreeBase(repo: string, branch: string, stackBase?: string, signal?: AbortSignal): Promise<boolean> {
   if (stackBase && !/^[0-9a-f]{40,64}$/.test(stackBase)) throw new Error("invalid immutable stack base");
   const exists = (await command(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo, signal)).code === 0;
   if (exists && stackBase) {
     const head = (await command(["git", "rev-parse", `refs/heads/${branch}`], repo, signal)).out.trim();
     if (!(await gitAncestry(repo)(stackBase, head))) throw new Error("existing branch omits recorded stack base");
   }
-  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, stackBase ?? (base ? `refs/heads/${base}` : "HEAD")])], repo, signal);
-  if (res.code !== 0) throw new Error(`runner: git worktree add failed: ${res.err.trim()}`);
-  return dir;
+  return exists;
 }
 
 /** Consume only ledger-authorized immutable stack metadata, never an arbitrary launch base. */
@@ -159,7 +164,14 @@ export const tmux = {
    */
   async ensureSession(session: string, cwd: string, signal?: AbortSignal): Promise<void> {
     if (await tmux.hasSession(session, signal)) return;
-    mkdirSync(paths.root, { recursive: true }); // the socket's directory and the server's cwd
+    mkdirSync(paths.root, { recursive: true }); // stable server cwd
+    const [flag, socket] = tmuxSocket();
+    if (flag === '-S') {
+      const parent = dirname(socket!);
+      mkdirSync(parent, { recursive: true, mode: 0o700 });
+      const info = lstatSync(parent);
+      if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() || (info.mode & 0o077)) throw new Error('unsafe private tmux socket directory');
+    }
     const res = await command(tmux.argv("new-session", "-d", "-s", session, "-n", "shell", "-c", cwd, ";", "set-option", "-g", "remain-on-exit", "on"), paths.root, signal);
     if (res.code !== 0) throw new Error(`runner: tmux new-session failed: ${res.err.trim()}`);
   },

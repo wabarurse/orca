@@ -120,7 +120,16 @@ export async function assertPublication(snapshot: DependencySnapshot, state: Pub
   check(await ancestor(state.defaultCommit, state.head), 'update onto latest default before publication');
   check(state.workerEvidence.head === state.head && state.workerEvidence.defaultCommit === state.defaultCommit &&
     state.workerEvidence.commands.length > 0 && state.workerEvidence.commands.every(c => c.trim()), 'affected-change worker evidence required');
-  check(state.requireReview === false && !recordedStack && !(snapshot.tasks.find(t => t.id === state.taskId)?.dependsOn?.length) || state.reviewedHead === state.head, 'code review does not match updated head');
+  check(reviewMatches(snapshot, state, recordedStack), 'code review does not match updated head');
+  await publicationReceipt(state, ancestor, recordedStack);
+}
+
+function reviewMatches(snapshot: DependencySnapshot, state: PublicationState, stack?: StackBase): boolean {
+  if (state.reviewedHead === state.head) return true;
+  const task = snapshot.tasks.find(t => t.id === state.taskId);
+  return state.requireReview === false && !stack && !task?.dependsOn?.length;
+}
+async function publicationReceipt(state: PublicationState, ancestor: Ancestor, recordedStack?: StackBase): Promise<void> {
   if (recordedStack) {
     const update = state.update;
     check(recordedStack.taskId === state.taskId && update &&

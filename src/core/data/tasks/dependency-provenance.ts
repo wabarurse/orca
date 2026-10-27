@@ -16,32 +16,46 @@ export type ProvenanceTask = Task & { dependencyProvenance?: DependencyProvenanc
 export function provenance(task: Task): DependencyProvenance | undefined {
   return (task as ProvenanceTask).dependencyProvenance;
 }
+function revision(value: number, task: Task): boolean {
+  return Number.isSafeInteger(value) && value > 0 && value <= task.revision;
+}
+function worker(task: Task, run: string): boolean { return task.runs.some(r => r.id === run && r.role === 'worker'); }
+function validation(value: string): boolean { return typeof value === 'string' && !!value.trim(); }
+function checkpoint(task: Task, p: DependencyProvenance): void {
+  const c = p.checkpoint;
+  if (c) check(c.taskId === task.id && revision(c.revision, task) && sha(c.commit) && c.clean === true && c.quiescent === true, 'invalid dependency checkpoint');
+  if (p.checkpointRun) check(worker(task, p.checkpointRun), 'invalid checkpoint owner');
+}
+function workerEvidence(task: Task, p: DependencyProvenance): void {
+  const c = p.checks; if (!c) return;
+  check(sha(c.head) && sha(c.defaultCommit) && worker(task, c.run), 'invalid worker evidence owner/head');
+  check(Array.isArray(c.commands) && c.commands.length > 0 && c.commands.every(validation) && validation(c.validation), 'invalid worker evidence');
+}
+function reviewEvidence(task: Task, p: DependencyProvenance): void {
+  const r = p.review; if (!r) return;
+  check(sha(r.head) && validation(r.validation), 'invalid review evidence');
+  check(task.runs.some(run => run.id === r.run && run.role === 'reviewer' && run.reviewMode === 'review'), 'invalid review owner');
+}
+function stack(task: Task, s: StackBase): void {
+  check(s.taskId === task.id && revision(s.revision, task) && sha(s.baseCommit) && sha(s.defaultCommit) && Array.isArray(s.prerequisites), 'invalid stack provenance');
+  const seen = new Set<string>();
+  for (const dep of s.prerequisites) {
+    prerequisite(task, dep, seen); seen.add(dep.taskId);
+  }
+}
+function prerequisite(task: Task, dep: StackBase['prerequisites'][number], seen: Set<string>): void {
+  check(typeof dep.taskId === 'string' && dep.taskId !== task.id && !seen.has(dep.taskId), 'invalid stack prerequisite identity');
+  check(Number.isSafeInteger(dep.revision) && dep.revision > 0 && sha(dep.commit), 'invalid stack prerequisite');
+}
+function receipt(p: DependencyProvenance, r: ReplayReceipt): void {
+  check(p.stack && JSON.stringify(r.stack) === JSON.stringify(p.stack), 'invalid replay stack');
+  check(sha(r.oldHead) && sha(r.newHead) && sha(r.onto) && r.isolatedReplay === true, 'invalid replay receipt');
+  check(/^refs\/orca\/dependency-replays\/[0-9a-f-]{36}$/.test(r.protectedRef) && Number.isFinite(Date.parse(r.createdAt)), 'invalid replay reference');
+}
 export function validateProvenance(task: Task): void {
   const p = provenance(task); if (!p) return;
   check(p.version === 1, 'unsupported dependency provenance');
-  if (p.checkpoint) check(p.checkpoint.taskId === task.id && Number.isSafeInteger(p.checkpoint.revision) &&
-    p.checkpoint.revision > 0 && p.checkpoint.revision <= task.revision && sha(p.checkpoint.commit) &&
-    p.checkpoint.clean === true && p.checkpoint.quiescent === true, 'invalid dependency checkpoint');
-  if (p.checkpointRun) check(task.runs.some(r => r.id === p.checkpointRun && r.role === 'worker'), 'invalid checkpoint owner');
-  if (p.checks) check(sha(p.checks.head) && sha(p.checks.defaultCommit) && task.runs.some(r => r.id === p.checks!.run && r.role === 'worker') &&
-    Array.isArray(p.checks.commands) && p.checks.commands.length > 0 && p.checks.commands.every(c => typeof c === 'string' && c.trim()) &&
-    typeof p.checks.validation === 'string' && p.checks.validation.trim(), 'invalid worker evidence');
-  if (p.review) check(sha(p.review.head) && task.runs.some(r => r.id === p.review!.run && r.role === 'reviewer' && r.reviewMode === 'review') &&
-    typeof p.review.validation === 'string' && p.review.validation.trim(), 'invalid review evidence');
-  if (p.stack) {
-    const s = p.stack;
-    check(s.taskId === task.id && Number.isSafeInteger(s.revision) && s.revision > 0 && s.revision <= task.revision &&
-      sha(s.baseCommit) && sha(s.defaultCommit) && Array.isArray(s.prerequisites), 'invalid stack provenance');
-    const seen = new Set<string>();
-    for (const dep of s.prerequisites) {
-      check(typeof dep.taskId === 'string' && dep.taskId !== task.id && !seen.has(dep.taskId) &&
-        Number.isSafeInteger(dep.revision) && dep.revision > 0 && sha(dep.commit), 'invalid stack prerequisite'); seen.add(dep.taskId);
-    }
-  }
-  if (p.replay) {
-    const r = p.replay;
-    check(p.stack && JSON.stringify(r.stack) === JSON.stringify(p.stack) && sha(r.oldHead) && sha(r.newHead) && sha(r.onto) &&
-      r.isolatedReplay === true && /^refs\/orca\/dependency-replays\/[0-9a-f-]{36}$/.test(r.protectedRef) &&
-      Number.isFinite(Date.parse(r.createdAt)), 'invalid replay receipt');
-  }
+  checkpoint(task, p); workerEvidence(task, p); reviewEvidence(task, p);
+  if (p.stack) stack(task, p.stack);
+  if (p.replay) receipt(p, p.replay);
 }

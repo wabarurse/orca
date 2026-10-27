@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -20,6 +20,9 @@ const repo = paths.repo(project);
 const hasTmux = Bun.which("tmux") !== null;
 
 beforeAll(async () => {
+  // Match the CLI entry gate on a fresh home, before creating project state.
+  const { assertLayout } = await import("../../config/layout");
+  assertLayout(home);
   await $`mkdir -p ${repo}`.quiet();
   await $`git -C ${repo} init -q -b main`.quiet();
   await $`git -C ${repo} -c user.name=t -c user.email=t@t commit -q --allow-empty -m init`.quiet();
@@ -225,5 +228,23 @@ test("local.running is null when tmux cannot be asked", async () => {
     expect(await local.running("p", ["worker-x"])).toBe(null);
   } finally {
     process.env.PATH = path;
+  }
+});
+
+
+test.skipIf(!hasTmux)("ensureSession creates the actual private socket parent before launch environment initialization", async () => {
+  const fresh = mkdtempSync(join(tmpdir(), 'orca-socket-'));
+  process.env.ORCA_HOME = fresh;
+  const session = `fresh-${process.pid}`;
+  try {
+    expect(existsSync(join(fresh, '.runtime'))).toBe(false);
+    await tmux.ensureSession(session, repo);
+    expect(await tmux.hasSession(session)).toBe(true);
+    expect(statSync(join(fresh, '.runtime')).mode & 0o777).toBe(0o700);
+    expect(existsSync(paths.tmuxSocket)).toBe(true);
+  } finally {
+    await tmux.killSession(session);
+    process.env.ORCA_HOME = home;
+    rmSync(fresh, { recursive: true, force: true });
   }
 });

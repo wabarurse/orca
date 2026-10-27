@@ -108,7 +108,7 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
           throw new Error("local clean HEAD must match the observed pr head");
         }
         ctx.signal?.throwIfAborted();
-        return result(await validateTaskReadiness(ctx.project, t.id, { run: ctx.run!, revision: updated.revision, observation: observed, validated: input.validated as true, validation: input.validation as string }));
+        return result(await validateTaskReadiness(ctx.project, t.id, { run: ctx.run!, revision: updated.revision, cwd: ctx.cwd, observation: observed, validated: input.validated as true, validation: input.validation as string }));
       } catch (error) {
         ctx.signal?.throwIfAborted();
         return `refused: ${error instanceof Error ? error.message : String(error)}`;

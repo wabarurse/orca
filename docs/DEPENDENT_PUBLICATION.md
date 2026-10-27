@@ -33,8 +33,9 @@ is merged. Its manual migration scripts remain unrelated and are not run here.
    the first commit. A failed/timeout create is reconciled by a bounded lookup,
    not a blind duplicate create; verified publication is immediately recorded.
 6. Watch CI separately. `task pr` may record historical evidence but cannot
-   make dependent work ready without merged prerequisites and matching worker
-   and review evidence. `task ready` still requires matching hosted-check/PR
+   make dependent work ready without the same latest-default, protected B-only
+   replay-candidate ancestry, merged-prerequisite and matching worker/review
+   verification used by publication, under the project lock. `task ready` still requires matching hosted-check/PR
    evidence. No operation automatically merges a PR.
 
 ## Safety boundaries
@@ -62,3 +63,17 @@ Editable shipped prompts/tool descriptions route agents through these actions.
 User edits are preserved; mandatory trusted contracts and new schema fields
 remain effective. Role allowlists are unchanged. No live home migration,
 service restart, runtime configuration edit, or deployment is part of this change.
+
+Remote reconciliation validates the exact head repository/branch, base repository/
+branch and recorded task PR number before push/create and after create (including
+one-shot timeout recovery). Forks, wrong bases and ambiguous matches fail closed.
+Origin identity, default branch/commit and clean head are checked again immediately
+before each remote write. External users can still race after an observation:
+GitHub and local git do not offer an atomic cross-system latest-default transaction.
+This is not a universal guarantee against external races.
+
+A saved replay receipt is **prepared**, not proof of adoption. A head equal to or
+descending from the protected candidate is adopted; the original head or unrelated
+history is refused before using the receipt's `onto` as a new replay base. The
+receipt/adoption crash window requires explicit manual recovery; retry does not
+automatically reset a branch or claim resumability.

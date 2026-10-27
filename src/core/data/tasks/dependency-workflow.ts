@@ -3,14 +3,15 @@ import { check, type Task } from '../../../protocol/tasks';
 import type { ToolContext } from '../../tools/registry';
 import { allTasks, observeTaskPR, withDependencyTaskOwnership } from './tasks';
 import { ghTaskPR, originRepo } from './github';
-import { dependencyClosure, assertPublication, resolveStackBase } from './dependency-policy';
+import { dependencyClosure, resolveStackBase } from './dependency-policy';
 import { ledgerDependencies, assertLedgerPrerequisitesMerged } from './dependency-ledger';
 import { provenance } from './dependency-provenance';
 import { cleanBranchHead, dependencyGit, replayStack } from './dependency-replay';
 import { gitAncestry } from './dependency-git';
 import { latestDefault, publishBranch } from './dependency-remote';
 import { effectiveFlow } from '../projects';
-import { assertRepository } from './dependency-coordinator';
+import { assertRepository, adoptedReplay, verifyPublicationState } from './dependency-verification';
+import type { DependencyProvenance } from './dependency-provenance';
 
 async function refreshMerges(project: string, id: string): Promise<void> {
   const tasks = await allTasks(project), closure = dependencyClosure(ledgerDependencies(tasks), id); closure.pop();
@@ -48,10 +49,72 @@ export async function prepareStackSpawn(project: string, taskId: string, branch:
   });
 }
 
+interface ActionContext {
+  current: Task; tasks: Task[]; save: (p: DependencyProvenance) => void; ctx: ToolContext; task: Task;
+  p: DependencyProvenance; ancestry: ReturnType<typeof gitAncestry>; head: string; input: Record<string, unknown>;
+}
+async function workerAction(c: ActionContext, action: string): Promise<string> {
+  const { current, save, ctx, p, ancestry, head, input } = c;
+  owner(current, ctx, 'worker');
+  const checkpoint = { taskId: current.id, revision: current.revision + 1, commit: head, clean: true, quiescent: true };
+  const pin = () => dependencyGit(ctx.cwd, ['update-ref', `refs/orca/checkpoints/${current.id}/${current.revision + 1}`, head, '0'.repeat(head.length)]);
+  if (action === 'checkpoint') { await pin(); save({ ...p, checkpoint, checkpointRun: ctx.run }); return `checkpoint ${head}; usable after this worker stops`; }
+  const validation = evidence(input), commands = input.commands;
+  check(Array.isArray(commands) && commands.length > 0 && commands.length <= 100 && commands.every(c => typeof c === 'string' && c.trim() && c.length <= 2000), 'affected-check command list required');
+  const latest = await latestDefault(ctx.cwd);
+  check(await ancestry(latest.commit, head), 'update onto latest default before recording affected checks');
+  await pin();
+  save({ ...p, checkpoint, checkpointRun: ctx.run, checks: { head, defaultCommit: latest.commit, run: ctx.run!, commands: commands as string[], validation }, review: undefined });
+  return `worker evidence recorded for ${head}; no checks executed by task tool`;
+}
+async function reviewAction(c: ActionContext): Promise<string> {
+  const { current, save, ctx, p, head, input } = c;
+  owner(current, ctx, 'reviewer', 'review');
+  check(p.checks?.head === head, 'matching worker evidence required before review attestation');
+  save({ ...p, review: { head, run: ctx.run!, validation: evidence(input) } }); return `code review recorded for ${head}`;
+
+}
+async function prepareAction(c: ActionContext, latest: Awaited<ReturnType<typeof latestDefault>>): Promise<string> {
+  const { current, save, ctx, task, p, ancestry, head, input } = c;
+  owner(current, ctx, 'worker');
+  if (p.replay) await adoptedReplay(current, ctx.cwd, head);
+  if ((!p.stack || p.replay) && await ancestry(latest.commit, head)) return `already contains latest default ${latest.commit}; record affected checks on this head`;
+  check(p.stack && !current.pr, 'worker must update independent/published branch onto latest default without discarding user changes');
+  // Repeated updates replay only the previous default..currentHead, not the old parent.
+  const effective = p.replay ? { ...p.stack, baseCommit: p.replay.onto } : p.stack;
+  const replay = await replayStack(ctx.cwd, task.branch, effective, latest.commit);
+  const receipt = { ...replay, stack: p.stack, oldHead: p.replay?.oldHead ?? replay.oldHead };
+  save({ version: 1, stack: p.stack, replay: receipt }); // durable BEFORE adoption (crash recovery)
+  check(await cleanBranchHead(ctx.cwd, task.branch) === head, 'source head changed before candidate adoption');
+  // --keep rejects overwriting local changes; never --hard. Original and candidate
+  // refs survive. The project lock excludes other supervised writers, not user shells.
+  await dependencyGit(ctx.cwd, ['reset', '--keep', receipt.newHead]);
+  check(await cleanBranchHead(ctx.cwd, task.branch) === receipt.newHead, 'candidate adoption needs recovery');
+  return `adopted B-only candidate ${receipt.newHead} onto ${latest.commit}; run only affected worker checks then request code review`;
+
+}
+
+async function publishAction(c: ActionContext, latest: Awaited<ReturnType<typeof latestDefault>>) {
+  const { current, tasks, ctx, task, p, head } = c;
+  owner(current, ctx, 'reviewer', 'watch-ci');
+  const requireReview = !!current.dependsOn?.length || !!p.stack || (await effectiveFlow(ctx.project)).maxReviewRounds !== 0;
+  await verifyPublicationState(ctx.project, ctx.cwd, current, tasks, requireReview);
+  const repository = await originRepo(ctx.project); check(repository, 'GitHub origin required');
+  check(await cleanBranchHead(ctx.cwd, task.branch) === head, 'head changed before publication');
+  ctx.signal?.throwIfAborted();
+  const pr = await publishBranch(ctx.cwd, repository, task.branch, latest.branch, head, current.pr, async () => {
+    check(await originRepo(ctx.project) === repository, 'origin identity changed before remote effects');
+    const fresh = await latestDefault(ctx.cwd);
+    check(fresh.commit === latest.commit && fresh.branch === latest.branch, 'default changed before remote effects');
+    check(await cleanBranchHead(ctx.cwd, task.branch) === head, 'head changed before remote effects');
+  });
+  return { ...pr, repository };
+}
+
 export const dependencyActions = ['checkpoint', 'prepare_publication', 'checks', 'reviewed', 'publish'] as const;
 export async function dependencyAction(action: string, input: Record<string, unknown>, ctx: ToolContext, task: Task): Promise<string> {
   check(ctx.run && ctx.branch === task.branch, 'workflow action requires supervised own branch');
-  if (action === 'prepare_publication' || action === 'publish') {
+  if (['prepare_publication', 'publish'].includes(action)) {
     owner(task, ctx, action === 'publish' ? 'reviewer' : 'worker', action === 'publish' ? 'watch-ci' : undefined);
     await refreshMerges(ctx.project, task.id);
   }
@@ -61,59 +124,15 @@ export async function dependencyAction(action: string, input: Record<string, unk
     await assertRepository(ctx.project, ctx.cwd);
     const p = provenance(current) ?? { version: 1 as const }, ancestry = gitAncestry(ctx.cwd);
     const head = await cleanBranchHead(ctx.cwd, task.branch);
-    if (action === 'checkpoint' || action === 'checks') {
-      owner(current, ctx, 'worker');
-      const checkpoint = { taskId: current.id, revision: current.revision + 1, commit: head, clean: true, quiescent: true };
-      await dependencyGit(ctx.cwd, ['update-ref', `refs/orca/checkpoints/${current.id}/${current.revision + 1}`, head, '0'.repeat(head.length)]);
-      if (action === 'checkpoint') { save({ ...p, checkpoint, checkpointRun: ctx.run }); return `checkpoint ${head}; usable after this worker stops`; }
-      const validation = evidence(input), commands = input.commands;
-      check(Array.isArray(commands) && commands.length > 0 && commands.length <= 100 && commands.every(c => typeof c === 'string' && c.trim() && c.length <= 2000), 'affected-check command list required');
-      const latest = await latestDefault(ctx.cwd);
-      check(await ancestry(latest.commit, head), 'update onto latest default before recording affected checks');
-      save({ ...p, checkpoint, checkpointRun: ctx.run, checks: { head, defaultCommit: latest.commit, run: ctx.run!, commands: commands as string[], validation }, review: undefined });
-      return `worker evidence recorded for ${head}; no checks executed by task tool`;
-    }
-    if (action === 'reviewed') {
-      owner(current, ctx, 'reviewer', 'review');
-      check(p.checks?.head === head, 'matching worker evidence required before review attestation');
-      save({ ...p, review: { head, run: ctx.run!, validation: evidence(input) } }); return `code review recorded for ${head}`;
-    }
+    const c: ActionContext = { current, tasks, save, ctx, task, p, ancestry, head, input };
+    if (action === 'checkpoint' || action === 'checks') return workerAction(c, action);
+    if (action === 'reviewed') return reviewAction(c);
     assertLedgerPrerequisitesMerged(tasks, current.id);
     const latest = await latestDefault(ctx.cwd);
-    if (action === 'prepare_publication') {
-      owner(current, ctx, 'worker');
-      if ((!p.stack || p.replay) && await ancestry(latest.commit, head)) return `already contains latest default ${latest.commit}; record affected checks on this head`;
-      check(p.stack && !current.pr, 'worker must update independent/published branch onto latest default without discarding user changes');
-      // Repeated updates replay only the previous default..currentHead, not the old parent.
-      const effective = p.replay ? { ...p.stack, baseCommit: p.replay.onto } : p.stack;
-      const replay = await replayStack(ctx.cwd, task.branch, effective, latest.commit);
-      const receipt = { ...replay, stack: p.stack, oldHead: p.replay?.oldHead ?? replay.oldHead };
-      save({ version: 1, stack: p.stack, replay: receipt }); // durable BEFORE adoption (crash recovery)
-      check(await cleanBranchHead(ctx.cwd, task.branch) === head, 'source head changed before candidate adoption');
-      // --keep rejects overwriting local changes; never --hard. Original and candidate
-      // refs survive. The project lock excludes other supervised writers, not user shells.
-      await dependencyGit(ctx.cwd, ['reset', '--keep', receipt.newHead]);
-      check(await cleanBranchHead(ctx.cwd, task.branch) === receipt.newHead, 'candidate adoption needs recovery');
-      return `adopted B-only candidate ${receipt.newHead} onto ${latest.commit}; run only affected worker checks then request code review`;
-    }
-    check(action === 'publish', 'unsupported dependency action'); owner(current, ctx, 'reviewer', 'watch-ci');
-    check(p.checks, 'worker checks evidence required');
-    const requireReview = !!current.dependsOn?.length || !!p.stack || (await effectiveFlow(ctx.project)).maxReviewRounds !== 0;
-    check(!requireReview || p.review, 'separate review-mode handoff required for dependent publication even with zero review rounds; record reviewed on updated head');
-    let update = p.replay;
-    if (p.stack) {
-      check(update, 'prepare_publication required for stacked branch');
-      const candidate = await dependencyGit(ctx.cwd, ['rev-parse', '--verify', `${update.protectedRef}/candidate`]);
-      check(candidate === update.newHead && await ancestry(candidate, head), 'head does not descend from recorded replay candidate');
-      update = { ...update, newHead: head };
-    }
-    await assertPublication(ledgerDependencies(tasks), { taskId: current.id, head, defaultCommit: latest.commit, clean: true,
-      workerEvidence: p.checks, reviewedHead: p.review?.head, requireReview, update }, ancestry, p.stack);
-    const repository = await originRepo(ctx.project); check(repository, 'GitHub origin required');
-    check(await cleanBranchHead(ctx.cwd, task.branch) === head, 'head changed before publication');
-    ctx.signal?.throwIfAborted();
-    const pr = await publishBranch(ctx.cwd, repository, task.branch, latest.branch, head);
-    published = { repository, number: pr.number };
+    if (action === 'prepare_publication') return prepareAction(c, latest);
+    check(action === 'publish', 'unsupported dependency action');
+    const pr = await publishAction(c, latest);
+    published = { repository: pr.repository, number: pr.number };
     return `published ${pr.url}`;
   }, ctx.run);
   // Do not nest project locks. Record verified publication immediately after remote

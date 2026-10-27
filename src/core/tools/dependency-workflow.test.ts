@@ -1,3 +1,5 @@
+import { publishBranch } from '../data/tasks/dependency-remote';
+import { withDependencyTaskOwnership } from '../data/tasks/tasks';
 import { validateTaskReadiness } from '../data/tasks';
 import { saveProjectFlow } from '../data/projects';
 import { afterAll, expect, test } from 'bun:test';
@@ -21,6 +23,8 @@ process.env.FAKE_DEP_GH = stateFile; process.env.PATH = `${bin}:${old.path}`;
 // Keep the fixture's GitHub identity while all transport is rewritten to a local bare repo.
 writeFileSync(join(bin, 'git'), `#!${process.execPath}
 const args=process.argv.slice(2);
+const fs=require('fs'), state=${JSON.stringify(stateFile)};
+if(fs.existsSync(state)){const s=JSON.parse(fs.readFileSync(state)); s.gitCalls??=[];s.gitCalls.push(args);fs.writeFileSync(state,JSON.stringify(s));}
 if(args.slice(-3).join(' ')==='remote get-url origin') console.log('https://github.com/o/r');
 else { const p=Bun.spawnSync([${JSON.stringify(realGit)},...args],{stdin:'inherit',stdout:'inherit',stderr:'inherit'}); process.exit(p.exitCode); }
 `); chmodSync(join(bin, 'git'), 0o700);
@@ -28,8 +32,9 @@ else { const p=Bun.spawnSync([${JSON.stringify(realGit)},...args],{stdin:'inheri
 writeFileSync(join(bin, 'gh'), `#!${process.execPath}
 const fs = require('fs'); const p = ${JSON.stringify(stateFile)}, s = JSON.parse(fs.readFileSync(p)), a = process.argv.slice(2);
 s.calls.push(a); const save = () => fs.writeFileSync(p, JSON.stringify(s));
+if(a[0]==='api'){save();console.log(JSON.stringify({number:s.number??2,state:'open',html_url:'https://github.com/o/r/pull/2',head:{ref:s.headBranch??'b',sha:s.head,repo:{full_name:s.headRepo??'o/r'}},base:{ref:s.baseBranch??'main',repo:{full_name:s.baseRepo??'o/r'}}}));process.exit(0);}
 if (a[0] !== 'pr') process.exit(8);
-if (a[1] === 'list') { save(); console.log(JSON.stringify(s.published ? [{number:2,headRefOid:s.head,state:'OPEN',url:'https://github.com/o/r/pull/2'}] : [])); }
+if (a[1] === 'list') { save(); console.log(JSON.stringify(s.ambiguous ? [{number:2},{number:3}] : s.published ? [{number:s.number??2}] : [])); }
 else if (a[1] === 'create') { s.published=true; save(); if(s.failCreate) process.exit(1); console.log('https://github.com/o/r/pull/2'); }
 else if (a[1] === 'view') { const n=Number(a[2]); save(); console.log(JSON.stringify({ number:n,url:'https://github.com/o/r/pull/'+n,headRefName:n===1?'a':'b',headRefOid:n===1?s.parent:s.head,state:n===1?s.parentState:'OPEN',mergedAt:n===1&&s.parentState==='MERGED'?'2026-01-01':null,isDraft:false,isCrossRepository:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',reviewDecision:'',statusCheckRollup:[] })); }
 else process.exit(9);
@@ -110,4 +115,41 @@ test('real task/spawn/runner: open parent permits local code; merged squash adop
   expect(calls.filter(a => a[1] === 'create')).toHaveLength(1);
   expect((await getTask(project, b.id)).publication?.state).toBe('OPEN');
   expect(provenance(await getTask(project, b.id))!.review!.head).toBe(head);
-});
+  // Historical PR recording is allowed, but readiness uses the same runtime gate.
+  expect(await tool.run({ action: 'pr', repository: 'o/r', number: 2 }, watchCtx)).not.toContain('refused');
+  const saved = provenance(await getTask(project, b.id))!;
+  const save = async (p: typeof saved) => withDependencyTaskOwnership(project, b.id, 'b', async (_t, _ts, persist) => persist(p), watchRun);
+  // Reintroducing the old parent by ordinary merge is not an approved B-only replay.
+  git(workerCwd, 'merge', '--no-edit', original);
+  const ordinary = git(workerCwd, 'rev-parse', 'HEAD'); state({head:ordinary});
+  await save({ ...saved, replay: undefined, checks: { ...saved.checks!, head: ordinary }, review: { ...saved.review!, head: ordinary } });
+  expect(await tool.run({ action: 'pr', repository: 'o/r', number: 2 }, watchCtx)).not.toContain('refused');
+  expect(await tool.run({ action: 'ready', validated: true, validation: 'existing evidence' }, watchCtx)).toContain('missing B-only replay receipt');
+  git(workerCwd, 'reset', '--keep', head); state({head});
+  await save(saved);
+  await tool.run({ action: 'pr', repository: 'o/r', number: 2 }, watchCtx);
+  expect(await tool.run({ action: 'ready', validated: true, validation: 'existing evidence' }, watchCtx)).not.toContain('refused');
+  const awaitTask = await getTask(project, b.id);
+  // Candidate persisted but not adopted: never reinterpret onto as the old stack base.
+  git(workerCwd, 'reset', '--keep', original);
+  await expect(import('../data/tasks/dependency-verification').then(m => m.adoptedReplay(awaitTask, workerCwd, original))).rejects.toThrow('prepared replay not adopted');
+  git(workerCwd, 'reset', '--keep', head);
+  const effects = () => JSON.parse(readFileSync(stateFile, 'utf8')).gitCalls.filter((a: string[]) => a.includes('push')).length;
+  for (const mismatch of [{headRepo:'fork/r'}, {headBranch:'wrong'}, {baseRepo:'other/r'}, {baseBranch:'release'}, {number:3}, {ambiguous:true}]) {
+    const before = effects(), creates = JSON.parse(readFileSync(stateFile, 'utf8')).calls.filter((a: string[]) => a[1]==='create').length;
+    state(mismatch);
+    await expect(publishBranch(workerCwd, 'o/r', 'b', 'main', head, {repository:'o/r',number:2})).rejects.toThrow();
+    expect(effects()).toBe(before);
+    expect(JSON.parse(readFileSync(stateFile, 'utf8')).calls.filter((a: string[]) => a[1]==='create').length).toBe(creates);
+    state({headRepo:'o/r',headBranch:'b',baseRepo:'o/r',baseBranch:'main',number:2,ambiguous:false});
+  }
+  git(cwd, 'commit', '--allow-empty', '-m', 'default advances'); git(cwd, 'push', 'origin', 'main');
+  expect(await tool.run({ action: 'ready', validated: true, validation: 'stale evidence' }, watchCtx)).toContain('update onto latest default');
+  git(workerCwd, 'merge', '--no-edit', 'origin/main');
+  const updatedHead = git(workerCwd, 'rev-parse', 'HEAD'); state({head:updatedHead});
+  await save({ ...saved, checks: { ...saved.checks!, head: updatedHead }, review: { ...saved.review!, head: updatedHead } });
+  expect(await tool.run({ action: 'pr', repository: 'o/r', number: 2 }, watchCtx)).not.toContain('refused');
+  expect(await tool.run({ action: 'ready', validated: true, validation: 'default binding stale' }, watchCtx)).toContain('affected-change worker evidence required');
+
+
+}, 30_000);

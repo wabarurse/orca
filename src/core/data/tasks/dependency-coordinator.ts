@@ -1,8 +1,7 @@
-/** Internal runtime support for the existing task tool's publication action.
- * Not a competing tool/API. All writes use task ledger safety JSON and project lock.
+/** Legacy isolated policy-test adapters, NOT mounted production authority.
+ * Production task actions and readiness share dependency-verification.ts.
+ * These adapters inject synthetic authority for policy/replay/lock tests only.
  */
-import { realpath } from 'node:fs/promises';
-import { paths } from '../../../config';
 import { check, type Task } from '../../../protocol/tasks';
 import { withDependencyTaskOwnership } from './tasks';
 import { provenance } from './dependency-provenance';
@@ -22,10 +21,8 @@ function snapshot(tasks: Task[], authority: DependencyAuthority): DependencySnap
   return { tasks, ...authority, checkpoints: tasks.flatMap(t => provenance(t)?.checkpoint ? [provenance(t)!.checkpoint!] : []) };
 }
 
-export async function assertRepository(project: string, cwd: string): Promise<void> {
-  const common = async (dir: string) => realpath(await dependencyGit(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
-  check(await common(cwd) === await common(paths.repo(project)), 'dependency checkout belongs to another repository');
-}
+export { assertRepository } from './dependency-verification';
+import { assertRepository } from './dependency-verification';
 export async function captureDependencyCheckpoint(project: string, id: string, branch: string, cwd: string) {
   return withDependencyTaskOwnership(project, id, branch, async (task, _tasks, save) => {
     await assertRepository(project, cwd);
