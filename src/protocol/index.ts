@@ -9,4 +9,4 @@ export { callText, interruptedView, RESULT_MARK, resultText, TOOL_MARK, toolView
 export type { AppendGuard, Entry, MessageEntry, NewEntry, Role, RollingMemory } from "./transcript";
 
 export { taskDependencies, taskTreeView, type TaskTreeAttention, type TaskTreeState, type TaskTreeView } from "./tasks";
-export { taskPublicationView, type TaskPublicationEvidence, type TaskPublicationMilestone, type TaskPublicationView } from "./tasks";
+export { taskPublicationView, taskPublicationObservation, type TaskPublicationObservation, type TaskPublicationMilestone, type TaskPublicationView } from "./tasks";

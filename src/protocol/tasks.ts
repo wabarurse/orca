@@ -21,7 +21,7 @@ export interface Task {
   createdAt: string; updatedAt: string; revision: number;
   /** Explicit prerequisite task IDs; absent in legacy records. Not a scheduling signal. */
   dependsOn?: string[];
-  runs: TaskRun[]; pr?: TaskPR; readiness?: TaskReadiness; attention?: TaskAttention;
+  runs: TaskRun[]; pr?: TaskPR; publication?: TaskPublicationObservation; readiness?: TaskReadiness; attention?: TaskAttention;
   archive?: { reason: "merged"; mergedAt: string; archivedAt: string; pr: TaskPR };
   history: TaskEvent[];
 }
@@ -93,19 +93,28 @@ export function taskTreeView(task: Task): TaskTreeView {
   return { id, name, summary, branch, createdAt, updatedAt, revision, dependsOn: taskDependencies(source.dependsOn, id), state, source };
 }
 
-/** Caller-owned live verification, bound to the task snapshot used for the lookup.
- * PRObservation has no timestamp; callers must drop this evidence when stale or
- * lookup fails. A durable Task.pr (even with readiness) cannot prove OPEN today.
+/** Historical verified publication, not real-time OPEN/mergeability or readiness.
+ * observedAt is when this state/head was recorded; identical observations are
+ * idempotent and do not refresh it. Missing in legacy records; never inferred.
  */
-export interface TaskPublicationEvidence {
-  taskId: string;
-  revision: number;
-  observation: PRObservation;
+export interface TaskPublicationObservation {
+  pr: TaskPR;
+  state: "OPEN" | "CLOSED";
+  observedAt: string;
+}
+/** Validate persisted proof, including association; head may be historical. */
+export function taskPublicationObservation(raw: unknown, associated: TaskPR | undefined): TaskPublicationObservation {
+  check(object(raw) && (raw.state === "OPEN" || raw.state === "CLOSED"), "invalid publication state");
+  check(typeof raw.observedAt === "string" && Number.isFinite(Date.parse(raw.observedAt)), "invalid publication timestamp");
+  const pr = taskPR(raw.pr);
+  check(object(raw.pr) && raw.pr.repository === pr.repository && raw.pr.url === pr.url, "noncanonical publication pr");
+  check(associated && associated.repository === pr.repository && associated.number === pr.number && associated.url === pr.url, "publication pr mismatch");
+  return { pr, state: raw.state, observedAt: raw.observedAt };
 }
 export type TaskPublicationMilestone =
   | { kind: "unknown"; tone: "neutral" }
-  | { kind: "published"; label: "PR is out"; tone: "green"; pr: TaskPR }
-  | { kind: "closed"; label: "PR closed"; tone: "neutral"; pr: TaskPR }
+  | { kind: "published"; label: "PR is out"; tone: "green"; pr: TaskPR; observedAt: string }
+  | { kind: "closed"; label: "PR closed"; tone: "neutral"; pr: TaskPR; observedAt: string }
   | { kind: "merged"; label: "merged"; tone: "purple"; pr: TaskPR; mergedAt: string; archivedAt: string };
 export interface TaskPublicationView {
   id: string;
@@ -117,24 +126,21 @@ export interface TaskPublicationView {
   source: Task;
 }
 
-/** Dormant presentation only: no readiness gate, durable writes or scheduling.
- * Accept only current caller-verified observations matching the associated PR,
- * branch and head. Archive evidence is durable; raw MERGED observations must
- * first go through the existing verified archive writer.
+/** Dormant local-only presentation of the last recorded verified publication.
+ * No lookup, freshness assertion, readiness gate or scheduling. Unrelated task
+ * revisions and failed lookups do not erase historical evidence. Archive wins.
  */
-export function taskPublicationView(task: Task, evidence?: TaskPublicationEvidence | null): TaskPublicationView {
+export function taskPublicationView(task: Task): TaskPublicationView {
   const source = structuredClone(task);
   let milestone: TaskPublicationMilestone = { kind: "unknown", tone: "neutral" };
   if (source.archive) {
     const { pr, mergedAt, archivedAt } = source.archive;
     milestone = { kind: "merged", label: "merged", tone: "purple", pr, mergedAt, archivedAt };
-  } else if (evidence?.taskId === source.id && evidence.revision === source.revision) {
-    const o = evidence.observation, pr = source.pr;
-    if (pr && o.branch === source.branch && o.pr.repository === pr.repository
-      && o.pr.number === pr.number && o.pr.url === pr.url && o.pr.head === pr.head) {
-      if (o.state === "OPEN") milestone = { kind: "published", label: "PR is out", tone: "green", pr };
-      else if (o.state === "CLOSED") milestone = { kind: "closed", label: "PR closed", tone: "neutral", pr };
-    }
+  } else if (source.publication) {
+    const { pr, state, observedAt } = taskPublicationObservation(source.publication, source.pr);
+    milestone = state === "OPEN"
+      ? { kind: "published", label: "PR is out", tone: "green", pr, observedAt }
+      : { kind: "closed", label: "PR closed", tone: "neutral", pr, observedAt };
   }
   return { id: source.id, revision: source.revision, milestone, attention: source.attention ?? { kind: "none" }, source };
 }
