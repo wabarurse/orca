@@ -44,8 +44,14 @@ function fromCode(code: number, mod: number): Key | null {
   return withMods(key, mod);
 }
 
-/** Kitty's CSI code;mod u. */
-const fromKitty = (nums: number[]): Key | null => (Number.isFinite(nums[0]) ? fromCode(nums[0]!, nums[1] || 1) : null);
+/** Kitty's CSI code[:alternates];mod[:event][;text] u. Keep subfields
+ * separate: Number("3:1") loses Alt, turning word deletion into backspace.
+ * Press and repeat edit; release must never edit a second time. */
+function fromKitty(params: string): Key | null {
+  const match = /^(\d+)(?::\d*){0,2}(?:;(\d*)(?::([123]))?(?:;\d+(?::\d+)*)?)?$/.exec(params);
+  if (!match || match[3] === "3") return null;
+  return fromCode(Number(match[1]), Number(match[2]) || 1);
+}
 
 /** CSI n;mod ~: xterm's modifyOtherKeys (27;mod;code) or a named key. */
 function fromTilde(nums: number[]): Key | null {
@@ -75,8 +81,8 @@ function fromMouse(params: string, final: string): Key | null {
 
 function fromCsi(params: string, final: string): Key | null {
   if (params.startsWith("<")) return fromMouse(params, final);
+  if (final === "u") return fromKitty(params);
   const nums = params.split(";").map((p) => (p === "" ? NaN : Number(p)));
-  if (final === "u") return fromKitty(nums);
   if (final === "~") return fromTilde(nums);
   if (final === "Z") return { name: "tab", shift: true };
   const name = LETTER_KEYS[final];
