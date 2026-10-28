@@ -12,7 +12,7 @@ import { historicalMessages } from "./history";
 import { blockRef, imageContent, loadImage, pendingImageInputs, saveImage, saveImageInput } from "./images";
 import type { ImageRef } from "../../../protocol/images";
 import { content, consume, pending, put } from "../inbox/inbox";
-import { archivePath, entryText, queryHistory } from "../memory/archive";
+import { archivePath, archiveTranscript, entryText, queryHistory } from "../memory/archive";
 import { createOrchestrator, type Orchestrator } from "../../agent-loop/orc/orchestrator";
 import { claudeMessages } from "../../../providers/anthropic";
 import { toResponses } from "../../../providers/openai";
@@ -140,6 +140,8 @@ for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> r
   // Mere historical text can be mentioned/searched in the new scope, but does
   // not reintroduce pixels or grant forwarding permission after a clear.
   await open(f.transcript.path).append({ type: "message", message: { role: "user", content: `old attachment_id=${f.refs[0]!.id}` } });
+  expect(JSON.parse(await queryHistory(f.project, { action: "search_history", query: f.refs[0]!.id })).entries).toEqual([]); // not compacted yet
+  await archiveTranscript(f.project, open(f.transcript.path)); // what the next compaction writes
   expect(JSON.parse(await queryHistory(f.project, { action: "search_history", query: f.refs[0]!.id })).entries).toHaveLength(1);
   await expect(forwardImages([f.refs[0]!.id], f.ctx)).rejects.toThrow("not received");
   expect(ids(await open(f.transcript.path).chain())).toEqual([]);
@@ -227,5 +229,6 @@ test("text-only memory/search sanitizes inline/nested image bytes and URLs witho
     const entry = await f.transcript.append({ type: "message", message });
     expect(entryText(entry)).not.toContain(image.source.data); expect(entryText(entry)).not.toContain("private.invalid");
   }
+  await archiveTranscript(f.project, f.transcript); // what a compaction writes; searches never index
   expect(JSON.parse(await queryHistory(f.project, { action: "search_history", query: f.refs[1]!.id })).entries).toHaveLength(1);
 });

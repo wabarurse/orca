@@ -9,7 +9,7 @@ import { runAgent } from "../../../exec/run";
 import { budget, estimate } from "./compaction";
 import { paths, saveConfig } from "../../../config/config";
 import { put } from "../inbox/inbox";
-import { archivePath, purgeProject, queryHistory } from "./archive";
+import { archivePath, archiveTranscript, purgeProject, queryHistory } from "./archive";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import type { CompleteRequest, Provider } from "../../../providers/provider";
 import { RollingCompactor, rollingCut, type RollingOptions } from "./rolling-memory";
@@ -433,7 +433,7 @@ test.each(["historical", "registered during inference"] as const)("out-of-snapsh
     .toThrow("reference absent from source");
 });
 
-test("SQLite retrieval finds merged tasks and exact original pages; rebuild is idempotent and scoped", async () => {
+test("SQLite retrieval finds merged tasks and exact original pages once compaction indexed them; searches never index; rebuild is idempotent and scoped", async () => {
   const { project, transcript, deps } = await fixture();
   const t = await registerTask(project, { name: "Search migration", summary: "Replace search", branch: "feat/search", authorized: true });
   const body = `Task ${t.id} search migration evidence ` + "🙂".repeat(3000);
@@ -441,6 +441,8 @@ test("SQLite retrieval finds merged tasks and exact original pages; rebuild is i
   await observeTaskPR(project, t.id, { branch: t.branch, state: "MERGED", ready: false, checks: "not_configured", mergedAt: new Date().toISOString(),
     pr: { repository: "o/r", number: 2, url: "https://github.com/o/r/pull/2", head: "b".repeat(40) } });
   const query = { action: "search_history", query: "search migration", status: "merged", limit: 1 };
+  expect(JSON.parse(await task.run(query, deps.ctx))).toMatchObject({ tasks: [], entries: [] }); // not compacted yet
+  await archiveTranscript(project, transcript); // what a compaction writes
   const result = JSON.parse(await task.run(query, deps.ctx));
   expect(result.tasks[0]).toMatchObject({ id: t.id, status: "merged" });
   expect(result.entries).toHaveLength(1); expect(result.entries[0].entryId).toBe(entry.uuid);
@@ -454,6 +456,8 @@ test("SQLite retrieval finds merged tasks and exact original pages; rebuild is i
   purgeProject(project);
   expect(existingTasks(project)).toEqual(durable);
   expect(durable.find(task => task.id === t.id)?.archive?.reason).toBe("merged");
+  expect(JSON.parse(await queryHistory(project, query))).toMatchObject({ tasks: [], entries: [] }); // a search does not rebuild
+  await archiveTranscript(project, transcript); // the next compaction does
   expect(JSON.parse(await queryHistory(project, query))).toEqual(result);
   expect(existingTasks(project)).toEqual(durable);
   const db = new Database(archivePath(), { readonly: true });

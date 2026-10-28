@@ -25,7 +25,13 @@ const mk = (...projects: string[]) => projects.forEach(p => mkdirSync(paths.proj
 async function say(project: string, role: "user" | "assistant", content: string, agent = "orchestrator") {
   return open(paths.transcript(project, agent)).append({ type: "message", message: { role, content } });
 }
-const search = async (project: string, query: string, extra = {}) => JSON.parse(await queryHistory(project, { action: "search_history", query, ...extra }));
+/** What a compaction (or /clear) writes; searches never index. */
+const indexed = (project: string) => archiveTranscript(project, open(paths.transcript(project, "orchestrator")));
+/** A compaction of `project`, then its read-only `task search_history`. */
+const search = async (project: string, query: string, extra = {}) => {
+  await indexed(project);
+  return JSON.parse(await queryHistory(project, { action: "search_history", query, ...extra }));
+};
 const rows = <T>(sql: string, ...params: string[]) => {
   const db = new Database(archivePath(), { readonly: true });
   try { return db.query(sql).all(...params) as T[]; } finally { db.close(); }
@@ -123,6 +129,7 @@ test("task search_history stays scoped to project and epoch; other projects' row
   const first = await say("alpha", "user", "needle in alpha before clear");
   const query = { action: "search_history", query: "needle" };
   const ctx = { project: "alpha", role: "orchestrator" as const, cwd: "/" };
+  await indexed("alpha");
   const before = JSON.parse(await orchestratorTask.run(query, ctx));
   expect(before.entries.map((e: { entryId: string }) => e.entryId)).toEqual([first.uuid]);
   const other = await say("beta", "user", "needle needle needle in beta");
@@ -230,16 +237,24 @@ test("project delete still succeeds when the archive cannot be purged", async ()
   expect(() => purgeProject("gone")).toThrow();
 });
 
-test("a turn indexes the orchestrator transcript; an unusable archive never fails the turn", async () => {
+test("a turn never indexes; /clear does, like a compaction, and an unusable archive fails neither", async () => {
   const dir = home(); await saveConfig({ model: "unknown", compact: false });
+  const marked = database(); // migration done: the startup backfill indexes nothing
+  try { marked.exec("INSERT INTO meta(key,value) VALUES('backfill_version','1')"); } finally { marked.close(); }
   const transcript = open(paths.transcript("alpha", "orchestrator"));
   const logs: string[] = [];
   const orch = await createOrchestrator({ project: "alpha", transcript, provider: fakeProvider([[text("noted")], [text("second")]]), tools: {}, write: s => { logs.push(s); } });
+  const bodies = () => rows<{ body: string }>("SELECT body FROM entries WHERE project='alpha' ORDER BY rowid").map(r => r.body).join("\n");
   await orch.say("hello archive"); await orch.turn();
-  expect(rows<{ body: string }>("SELECT body FROM entries WHERE project='alpha' ORDER BY rowid").map(r => r.body).join("\n")).toContain("hello archive");
+  expect(bodies()).not.toContain("hello archive");
+  await orch.clear!();
+  expect(bodies()).toContain("hello archive");
   const db = new Database(archivePath()); db.exec("PRAGMA user_version=999"); db.close();
   await orch.say("still works"); await orch.turn();
   expect(transcript.branch().some(e => e.type === "message" && JSON.stringify(e.message).includes("still works"))).toBe(true);
+  expect(logs.join("")).not.toContain("memory index skipped");
+  await orch.clear!();
+  expect(await transcript.chain()).toEqual([]);
   expect(logs.join("")).toContain("memory index skipped");
   orch.dispose?.(); void dir;
 });

@@ -11,6 +11,7 @@ import { WORKER } from "../prompt/worker";
 import { rolePrompt } from "../prompt/shared";
 import { observeTaskPR, registerTask } from "../data/tasks/tasks";
 import { open } from "../data/transcripts/transcript";
+import { withProjectStateLock } from "../data/projects/state";
 import { registry } from "./index";
 import { toolsFor, type ToolContext } from "./registry";
 import { history, memory } from "./history";
@@ -22,13 +23,15 @@ afterEach(() => {
 });
 function home() { const dir = mkdtempSync(join(tmpdir(), "history-tool-")); dirs.push(dir); process.env.ORCA_HOME = dir; return dir; }
 const mk = (...projects: string[]) => projects.forEach(p => mkdirSync(paths.project(p), { recursive: true }));
-/** Appends to a transcript and, like a finished turn, indexes the project's orchestrator transcript. */
+/** Appends to a transcript and, like a compaction, indexes the project's orchestrator transcript (searches never index). */
 async function say(project: string, content: string, role: "user" | "assistant" = "user", agent = "orchestrator") {
   const entry = await open(paths.transcript(project, agent)).append({ type: "message", message: { role, content } });
   await indexed(project);
   return entry;
 }
+/** What a compaction (or /clear) writes; the only way rows reach the archive. */
 const indexed = (project: string) => archiveTranscript(project, open(paths.transcript(project, "orchestrator")));
+/** A context boundary indexed like /clear does. */
 const clear = async (project: string) => { const e = await open(paths.transcript(project, "orchestrator")).append({ type: "context-boundary" }); await indexed(project); return e; };
 const ctx = (project: string, role: ToolContext["role"] = "orchestrator"): ToolContext => ({ project, role, cwd: "/" });
 const call = (project: string, input: Record<string, unknown>, role: ToolContext["role"] = "orchestrator") => history.run(input, ctx(project, role));
@@ -229,13 +232,33 @@ test("a taskId of the caller's current-scope task excludes the task row but keep
   expect(r.entries.map(e => e.excerpt)).toEqual([expect.stringContaining("quokka early")]);
 });
 
-test("abort during the archive step rejects instead of returning a refusal", async () => {
+test("abort while queued behind the project lock rejects instead of returning a refusal", async () => {
   home(); mk("alpha");
-  const log = open(paths.transcript("alpha", "orchestrator"));
-  for (let i = 0; i < 450; i++) await log.append({ type: "message", message: { role: "user", content: `entry ${i}` } });
+  const held = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+  const holder = withProjectStateLock("alpha", async () => { entered.resolve(); await held.promise; });
+  await entered.promise;
   const controller = new AbortController();
-  setTimeout(() => controller.abort(), 0);
-  await expect(history.run({ action: "search", query: "entry" }, { ...ctx("alpha"), signal: controller.signal })).rejects.toBeDefined();
+  const query = history.run({ action: "search", query: "entry" }, { ...ctx("alpha"), signal: controller.signal });
+  controller.abort(); held.resolve(); await holder;
+  await expect(query).rejects.toBeDefined();
+});
+
+test("searches are read-only: nothing since the last compaction is found, and no search writes a row", async () => {
+  home(); mk("alpha", "beta");
+  await say("beta", "compacted beta gecko"); await say("alpha", "compacted alpha gecko");
+  const log = (project: string) => open(paths.transcript(project, "orchestrator"));
+  await log("beta").append({ type: "message", message: { role: "user", content: "recent beta gecko" } });
+  const fresh = await log("alpha").append({ type: "message", message: { role: "user", content: "recent alpha gecko" } });
+  const count = () => { const db = new Database(archivePath(), { readonly: true }); try { return db.query("SELECT count(*) AS n FROM entries").get(); } finally { db.close(); } };
+  const before = count();
+  expect((await search("alpha", "gecko")).entries.map(e => e.excerpt)).toEqual([expect.stringContaining("compacted beta")]);
+  const own = JSON.parse(await queryHistory("alpha", { action: "search_history", query: "gecko" }));
+  expect(own.entries.map((e: { excerpt: string }) => e.excerpt)).toEqual([expect.stringContaining("compacted alpha")]);
+  await expect(queryHistory("alpha", { action: "read_history", entryId: fresh.uuid })).rejects.toThrow("not found");
+  expect(count()).toEqual(before);
+  await indexed("alpha"); await indexed("beta"); // the next compactions
+  expect((await search("alpha", "gecko")).entries).toHaveLength(2);
+  expect(JSON.parse(await queryHistory("alpha", { action: "search_history", query: "gecko" })).entries).toHaveLength(2);
 });
 
 test("a newer-schema archive is refused, whether or not the caller has a transcript", async () => {
@@ -276,6 +299,7 @@ test("task search_history output has the same shape as before for every status/t
   await say("alpha", `civet about ${a.id}`); await say("alpha", `civet about ${m.id}`); await say("alpha", "civet free"); await say("beta", "civet beta");
   const pr = { repository: "o/r", number: 1, url: "https://github.com/o/r/pull/1", head: "a".repeat(40) };
   await observeTaskPR("alpha", m.id, { pr, branch: "feat/m", state: "MERGED", mergedAt: new Date().toISOString(), ready: false, checks: "passed" });
+  await indexed("alpha"); // the merge reaches the archive's task row at the next compaction, not at search time
   const shapes = new Map<string, number>();
   for (const extra of [{}, { status: "all" }, { status: "merged" }, { status: "active" }, { taskId: a.id }, { taskId: m.id, status: "merged" }, { taskId: a.id, status: "merged" }, { taskId: "" }]) {
     const out = JSON.parse(await queryHistory("alpha", { action: "search_history", query: "civet", ...extra }));
