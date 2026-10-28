@@ -68,7 +68,7 @@ Skills are discovered from Orca's personal directory and supported repository lo
 - `src/config/state-store.ts`: private SQLite connections and transactional records.
 - `src/config/config.ts`: global configuration parsing and defaults.
 - `src/core/data/projects/`: model/flow validation, project locking and workspace behavior.
-- `src/core/data/knowledge/`: facts, bounded working brief and selected context.
+- `src/core/data/knowledge/`: facts, bounded working brief, the last 30 human messages kept as provenance for explicit facts (`sources.ts`) and selected context.
 - `src/core/data/sqlite/` and `transcripts/`: ledger/database utilities and transcript pairing; callers import these owners directly.
 
 Memory lookup can open SQLite connections and create/chmod SQLite companions. It is not claimed to be strictly filesystem-read-only. Existing ledger and publication authorization checks remain in place.
