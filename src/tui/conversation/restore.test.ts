@@ -6,7 +6,7 @@ import { format } from "../../protocol/inbox";
 import { open } from "../../core/data/transcripts/transcript";
 import type { Entry } from "../../protocol/transcript";
 import { historyRows, lineRows, type Line } from "./lines";
-import { earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, SUMMARIZED, unresolvedCalls } from "./restore";
+import { earlier, MAX_RESTORED_ROWS, questionReply, replyLine, restore, restoreItems, unresolvedCalls } from "./restore";
 import { toolView } from "../../protocol/toolview";
 import { bold, dim } from "../components/text";
 import { collapseCalls } from "./tools";
@@ -142,7 +142,7 @@ test("while a turn runs, the newest entry's calls without a result are left out 
   expect(unresolvedCalls([])).toEqual(new Set());
 });
 
-test("a summary: only the branch from the head back to it, led by a dim note", () => {
+test("a summary: restore conversation content without status metadata", () => {
   const entries = transcript(
     meta,
     user(inbox(["user", "old question"])),
@@ -153,7 +153,7 @@ test("a summary: only the branch from the head back to it, led by a dim note", (
     user(inbox(["user", "new question"])),
     assistant([{ type: "text", text: "new answer" }]),
   );
-  expect(restore(entries, 60)).toEqual([SUMMARIZED, { user: `${bold(">")} new question` }, { md: "new answer", block: true }]);
+  expect(restore(entries, 60)).toEqual([{ user: `${bold(">")} new question` }, { md: "new answer", block: true }]);
 });
 
 test("the head's branch wins over a later-abandoned fork", () => {
@@ -246,11 +246,10 @@ test("a capped history that began at a summary drops the summary note and counts
   // Note plus 99 one-row messages and their separators: 199 rows; 141 messages omitted.
   expect(lines.length).toBe(100);
   expect(lines[0]).toBe(earlier(141));
-  expect(lines).not.toContain(SUMMARIZED);
   expect(lines.some((l) => raw(l).includes("old"))).toBe(false);
-  // Just under the cap the note leads.
+  // Metadata stays out of short histories too.
   const few = restore(transcript(meta, { type: "summary", text: "s" } as never, user(inbox(["user", "q"]))), 60);
-  expect(few).toEqual([SUMMARIZED, { user: `${bold(">")} q` }]);
+  expect(few).toEqual([{ user: `${bold(">")} q` }]);
 });
 
 test("report lines cut at 100 characters, not UTF-16 units", () => {

@@ -137,7 +137,8 @@ test("external question closure preserves both original chat and orphan answer, 
     await answerQuestion(project, first!.id, "someone else's answer");
     await until(() => app.page!.questions.open[0]?.id === next!.id);
     expect(app.input.text).toBe("original chat draft");
-    expect(app.page!.lines.map(raw).join(" ")).toContain("unsent answer: orphan answer");
+    expect(app.page!.lines.map(raw).join(" ")).not.toContain("unsent answer: orphan answer");
+    expect(app.frame().inputArea!.lines.join("\n")).toContain("closed elsewhere");
     expect(app.questions.view()).toBeNull();
     await app.questions.command(app.page);
     expect(app.input.text).toBe(""); // orphan never becomes the next question's answer
@@ -205,7 +206,10 @@ test("sign-in queue attempts every owned message after failures across pages wit
     expect(attempted).toEqual(["one", "two", "three"]);
     const displayed = [...firstPage.lines, ...secondPage.lines].map(raw).map(strip);
     for (const text of ["one", "two", "three"]) expect(displayed.filter((l) => l === `> ${text}`).length).toBe(text === failed ? 0 : 1);
-    expect(displayed).toContain(`not sent: ${failed}`);
+    expect(displayed).not.toContain(`not sent: ${failed}`);
+    const selected = app.active; app.active = failed === "three" ? 1 : 0;
+    expect(strip(app.frame().inputArea!.lines.join("\n"))).toContain(`not sent: ${failed}`);
+    app.active = selected;
     expect(firstPage.sent).toEqual([]);
     expect(secondPage.sent).toEqual([]);
     expect(app.frame().queued?.texts).toEqual([]);
@@ -285,12 +289,12 @@ test("real App login-held pre-cancel input stays paused, retains FIFO, and does 
     term.type("/login claude\r");
     await until(() => app.loggingIn);
     term.type("held one\rheld two\r");
-    await until(() => cancelled.lines.filter(l => raw(l).includes("queued; runs after sign-in")).length === 2);
+    await until(() => app.frame().queued?.texts.length === 2);
     term.type("\x03");
     await until(() => strip(app.frame().inputArea!.lines[0]!).startsWith("turn cancelled.") && !cancelled.lines.some(l => raw(l).includes("turn cancelled"))); // a note, not a line
     await app.openPage("login-cancel-other");
     term.type("unrelated input\r");
-    await until(() => app.page!.lines.some(l => raw(l).includes("queued; runs after sign-in")));
+    await until(() => app.frame().inputArea!.lines.join("\n").includes("queued; runs after sign-in"));
     finish();
     await until(() => providers.get("login-cancel-other")!.calls.length === 1);
     expect(providers.get("login-cancel-real")!.calls).toHaveLength(0);
@@ -746,7 +750,8 @@ describe("explicit footer help", () => {
       expect(app.input).toEqual(chat);
       expect(app.frame().help).not.toBeNull();
       expect(app.frame().question).toBeNull();
-      expect(app.page!.lines.map(raw).join("\n")).toContain("answer draft");
+      expect(app.page!.lines.map(raw).join("\n")).not.toContain("answer draft");
+      expect(app.frame().inputArea!.lines.join("\n")).toContain("closed elsewhere");
       await app.onKey({ name: "escape" });
       await app.onKey({ name: "q", ctrl: true });
       expect(app.input.text).toBe(""); // Orphan answer never attaches to the next question.
@@ -1102,7 +1107,7 @@ test("a failed write removes that submission, not a later identical pending prom
     await until(() => app.page!.sent.length === 2);
     expect(app.page!.sent).toEqual(original.slice(1));
     expect(app.frame().queued?.texts).toEqual(["middle", "same"]);
-    expect(app.page!.lines.map(raw).map(strip)).toContain("not sent: same");
+    expect(strip(app.frame().inputArea!.lines.join("\n"))).toContain("synthetic write failure");
     expect(app.page!.lines.some(line => typeof line === "object" && "user" in line)).toBe(false);
   } finally { fail?.(new Error("cleanup")); app.quit(); await running; }
 });
@@ -1172,9 +1177,11 @@ test("raw SGR/X10 input through realTerminal only scrolls the body: draft, queue
     // Draft-safe /keys entry uses a real control byte, not a direct command call.
     input!(Buffer.from("\x07"));
     expect(app.keyEcho).toBe(true);
-    input!(up); input!(down);
-    expect(page.lines.map(raw).join("\n")).toContain('{"name":"wheelup"}');
-    expect(page.lines.map(raw).join("\n")).toContain('{"name":"wheeldown"}');
+    input!(up);
+    expect(app.frame().inputArea!.lines.join("\n")).toContain('{"name":"wheelup"}');
+    input!(down);
+    expect(app.frame().inputArea!.lines.join("\n")).toContain('{"name":"wheeldown"}');
+    expect(page.lines.map(raw).join("\n")).not.toContain("wheelup");
     input!(Buffer.from("\x1b"));
     await until(() => !app.keyEcho);
     expect(app.input).toEqual(draft);

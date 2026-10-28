@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createOrchestrator } from "./orchestrator";
@@ -25,7 +25,7 @@ async function fixture(io: Storage = disk) {
   return { dir, project, transcript };
 }
 
-test("explicit append-only boundary resets model branch/chain, not originals, UI, settings, files or worker sessions", async () => {
+test("explicit append-only boundary resets model branch/chain, UI and cache, preserving originals, settings, files and worker sessions", async () => {
   const { project, transcript } = await fixture();
   const provider = fakeProvider([]);
   const orch = await createOrchestrator({ project, transcript, provider, tools: {}, write: () => {} });
@@ -34,7 +34,9 @@ test("explicit append-only boundary resets model branch/chain, not originals, UI
   const retained = [paths.transcript(project, "worker-a"), join(paths.project(project), "repo/file"), join(paths.project(project), "questions/q.json"), join(paths.project(project), "tasks/task.json"), join(paths.worktree(project, "a"), "file"), join(paths.project(project), "model"), join(paths.project(project), "model-settings.json"), join(paths.runs(project), "worker-a.json")];
   for (const path of retained) await Bun.write(path, "keep me");
   await put(project, "user", { from: "worker-a", text: "user reply is NOT input" });
+  await Bun.write(join(paths.cache(project), "nested/preview"), "disposable");
   await orch.checkClear!(); await orch.clear!();
+  expect(readdirSync(paths.cache(project))).toEqual([]);
   expect(provider.calls).toHaveLength(0);
   expect(projectIdentity(project)).toBe(identity);
   expect(await Bun.file(paths.config).text()).toBe(config);
@@ -48,12 +50,13 @@ test("explicit append-only boundary resets model branch/chain, not originals, UI
   expect(boundary.parentUuid).toBe(history.at(-1)!.uuid);
   expect((await Bun.file(transcript.path).text()).startsWith(before)).toBe(true);
   expect(orch.entries!().slice(0, -1)).toEqual(history);
-  expect(restore(orch.entries!(), 100, Infinity)).toEqual(ui);
+  expect(ui.length).toBeGreaterThan(0);
+  expect(restore(orch.entries!(), 100, Infinity)).toEqual([]);
   for (const path of retained) expect(await Bun.file(path).text()).toBe("keep me");
   expect((await drain(project, "user"))[0]?.text).toContain("NOT input");
 });
 
-test("clear -> fresh request -> repeated compaction -> reload never pins or summarizes pre-clear task; complete UI survives", async () => {
+test("clear -> fresh request -> repeated compaction -> reload never pins or summarizes pre-clear task; saved originals survive while UI stays cleared", async () => {
   const { project, transcript } = await fixture();
   let system: string | undefined;
   const fake = fakeProvider([[text("new answer " + "z".repeat(30000))]]);
@@ -74,8 +77,8 @@ test("clear -> fresh request -> repeated compaction -> reload never pins or summ
     const loaded = open(transcript.path);
     expect(JSON.stringify(await loaded.chain())).not.toContain("OLD_SECRET");
     expect(JSON.stringify(await loaded.chain())).toContain("FRESH_TASK");
-    expect(JSON.stringify(restore(loaded.history!(), 100, Infinity))).toContain("OLD_SECRET_TASK");
-    expect(JSON.stringify(restore(loaded.history!(), 100, Infinity))).toContain("OLD_SECRET_ANSWER");
+    expect(JSON.stringify(restore(loaded.history!(), 100, Infinity))).not.toContain("OLD_SECRET_TASK");
+    expect(JSON.stringify(restore(loaded.history!(), 100, Infinity))).not.toContain("OLD_SECRET_ANSWER");
     if (!i) await transcript.append({ type: "message", message: { role: "assistant", content: "another answer " + "y".repeat(30000) } });
   }
   // The latest of multiple clears wins, even across summaries.
@@ -240,4 +243,17 @@ test("an actively compacting orchestrator refuses clear, not just a queued compa
   } finally { release.resolve(); await turn; }
   expect(transcript.history!().some(e => e.type === "context-boundary")).toBe(false);
   expect(JSON.stringify(await transcript.chain())).toContain("OLD_SECRET_TASK");
+});
+
+test("clearing a symlinked cache removes the link without deleting its target", async () => {
+  const { dir, project, transcript } = await fixture();
+  const external = join(dir, "outside-cache");
+  await Bun.write(join(external, "original"), "keep original");
+  symlinkSync(external, paths.cache(project));
+  const orch = await createOrchestrator({ project, transcript, provider: fakeProvider([]), tools: {}, write: () => {} });
+  try {
+    await orch.clear!();
+    expect(await Bun.file(join(external, "original")).text()).toBe("keep original");
+    expect(readdirSync(paths.cache(project))).toEqual([]);
+  } finally { orch.dispose?.(); }
 });

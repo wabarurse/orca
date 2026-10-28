@@ -10,7 +10,7 @@ const home = mkdtempSync(join(tmpdir(), "orca-view-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 test("render shows prompts, text, tool calls and results, and hides thinking", () => {
-  expect(strip(render({ uuid: "1", parentUuid: null, ts: "", type: "meta", role: "worker", branch: "feat/x", model: "m" })!)).toBe("— worker on feat/x (m)");
+  expect(render({ uuid: "1", parentUuid: null, ts: "", type: "meta", role: "worker", branch: "feat/x", model: "m" })).toBeNull();
   expect(strip(render({ uuid: "2", parentUuid: null, ts: "", type: "message", message: { role: "user", content: "do it" } })!)).toBe("> do it");
   const assistant = render({
     uuid: "3", parentUuid: null, ts: "", type: "message",
@@ -60,4 +60,15 @@ test("parts keeps assistant text as markdown, tool calls and results as parts to
 test("a replies entry shows each message to the user with its sender", () => {
   const ps = parts({ uuid: "r", parentUuid: null, ts: "", type: "replies", messages: [{ from: "orchestrator", text: "**done**" }] });
   expect(ps).toEqual(["\x1b[2morchestrator → user:\x1b[0m", { md: "**done**" }]);
+});
+
+test("follow routes runtime metadata to temporary status feedback instead of conversation output", async () => {
+  const path = join(home, "status.jsonl"), t = open(path);
+  await t.append({ type: "meta", role: "worker", model: "m" });
+  await t.append({ type: "message", message: { role: "assistant", content: "actual reply" } });
+  await t.append({ type: "model-request", requestId: "r", provider: "anthropic", model: "m", stage: "aborted", startedAt: "x", updatedAt: "y" });
+  const lines: string[] = [], notices: string[] = [];
+  await follow(path, line => lines.push(line), Promise.resolve(), 1, () => {}, text => notices.push(text));
+  expect(lines).toEqual(["actual reply"]);
+  expect(notices).toEqual(["worker (m)", "[model request] anthropic/m aborted; started x; updated y"]);
 });

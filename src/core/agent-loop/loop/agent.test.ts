@@ -3,7 +3,7 @@ import { open } from "../../data/transcripts/transcript";
 import { budget } from "../../data/memory/compaction";
 import { entryText } from "../../data/memory/archive";
 import { restore } from "../../../tui/conversation/restore";
-import { render } from "../../../tui/conversation/view";
+import { entryNotice } from "../../../tui/conversation/notices";
 import { historyRows } from "../../../tui/conversation/lines";
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -252,7 +252,7 @@ async function expectLifecycle(scenario: Awaited<ReturnType<typeof lifecycleScen
     expect(Number.isNaN(Date.parse(event.ts))).toBe(false);
     expect(Number.isNaN(Date.parse(event.updatedAt))).toBe(false);
     expect(entryText(event)).toBe("");
-    expect(render(event)).toContain(`${event.provider}/${event.model} ${event.stage}`);
+    expect(entryNotice(event)).toContain(`${event.provider}/${event.model} ${event.stage}`);
   }
   const evidence = JSON.stringify(saved) + JSON.stringify(events) + scenario.lines.join("");
   for (const sensitive of ["private prompt", "private output", scenario.secret.message]) expect(evidence).not.toContain(sensitive);
@@ -329,6 +329,6 @@ test("durable requests survive later runs, checkpoints and resets without enteri
   expect(reopened.history!().filter(e => e.type === "model-request")).toEqual(events);
   const lines = restore(reopened.history!(), 160, Infinity);
   const diagnostics = lines.filter(l => typeof l === "string" && l.includes("[model request]"));
-  expect(diagnostics).toEqual(events.map(e => render(e)!));
+  expect(diagnostics).toEqual([]); // Lifecycle evidence stays on disk, outside conversation rows.
   console.info("Captured restored terminal historyRows renderer (not an interactive TUI session):\n" + historyRows(diagnostics, 160).join("\n"));
 });

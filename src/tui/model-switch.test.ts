@@ -117,7 +117,7 @@ for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "revi
       await Bun.write(join(paths.project(ui.project), "transcript"), "not a directory");
       ui.type("/model claude-test\r");
       if (result === null || result === "throw") {
-        await until(() => ui.app.page!.lines.join("").includes("could not determine running agents; try again"));
+        await until(() => note(ui.app).includes("could not determine running agents; try again"));
         expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
       } else if (result.length) {
         await until(() => !!ui.app.menu);
@@ -217,8 +217,8 @@ test("effort/fast real command dispatch query, set, refuse and no-page feedback"
     ui.type("/fast on\r"); await until(() => note(ui.app).includes("fast for gpt-6-astra: on"));
     await until(() => ui.writes.some(s => s.includes("effort high · fast on")));
     expect(lines()).not.toContain("gpt-6-astra");
-    ui.type("/effort ultra\r"); await until(() => lines().includes("effort ultra is unsupported"));
-    ui.type("/fast yes\r"); await until(() => lines().includes("usage: /fast"));
+    ui.type("/effort ultra\r"); await until(() => note(ui.app).includes("effort ultra is unsupported"));
+    ui.type("/fast yes\r"); await until(() => note(ui.app).includes("usage: /fast"));
     ui.app.closePage();
     for (const cmd of ["/effort", "/fast on"]) {
       ui.type(cmd + "\r");
@@ -274,7 +274,7 @@ test("effort picker lists catalog-reported levels and cannot write a model the p
     expect(ui.app.menu!.items).toEqual(["● default", "  medium", "  high"]);
     await setModel("gpt-5.5", ui.project);
     ui.key({ name: "down" }); ui.type("\r");
-    await until(() => lines().includes("model changed while saving settings"));
+    await until(() => note(ui.app).includes("model changed while saving settings"));
     expect((await effectiveSettings(ui.project, "gpt-5.5")).effort).toBeUndefined();
     expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBeUndefined();
   } finally { await ui.close(); }
@@ -289,7 +289,7 @@ test("stopped turn UI explains explicit resume, model change does not rerun it",
   } });
   try {
     ui.type("task\r");
-    await until(() => ui.app.page!.lines.join("").includes("send another message to resume with retained history"));
+    await until(() => note(ui.app).includes("send another message to resume with retained history"));
     await modelCommand(ui, "claude-test");
     expect(turns).toBe(1);
     expect(note(ui.app)).toContain("failed/stopped turns need another message to resume");
@@ -311,7 +311,7 @@ test("confirmed UI save queued behind directory replacement refuses the new proj
     await entered.promise;
     ui.type("/model claude-stale\r"); await started;
     release.resolve(); await replacement;
-    await until(() => ui.app.page!.lines.join("").includes("project changed while switching model"));
+    await until(() => note(ui.app).includes("project changed while switching model"));
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
   } finally { release.resolve(); await ui.close(); }
 });

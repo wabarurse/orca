@@ -140,7 +140,7 @@ async function sync(c: Client, f: Follow): Promise<void> {
   if (head !== f.seen) { f.seen = head; c.deps.onRefresh?.(); }
 }
 
-/** One live event to the view, through the hooks the in-process turn used. Status lines (memory-index warnings and the like) are page notices: they outlive the re-renders a turn's entries cause. */
+/** One live event to the view, through the hooks the in-process turn used. Status lines (memory-index warnings and the like) use the separate notice hook for temporary TUI feedback. */
 function show(c: Client, e: Exclude<LiveEvent, { kind: "start" }>): void {
   switch (e.kind) {
     case "text": c.deps.write?.(e.text); break;

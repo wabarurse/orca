@@ -501,7 +501,7 @@ test("question load/error states never fabricate zero; retry and external closur
   expect(plain(taskInboxPanel(app.frame()).rows)).toContain("snapshot may be stale");
   fail = false; open = []; app.questions.poll(app.pages); await app.page!.questions.polling;
   expect(app.input).toEqual(chat); expect(app.frame().inbox).toBeNull();
-  expect(JSON.stringify(app.page!.lines)).toContain("unsent answer: orphan");
+  expect(plain(app.frame().inputArea!.lines)).toContain("unsent answer: orphan");
   expect(JSON.stringify(app.page!.lines)).not.toContain("owned");
   expect(app.status(app.page!)).toEndWith("inbox 0");
 });
@@ -521,9 +521,10 @@ test("in-flight answer stays single-flight across polls/sections; errors retain 
   app.questions.poll(app.pages); await app.page!.questions.polling;
   gate.reject(new Error("write failed\x1b[2J\u202e")); await closing;
   expect(app.frame().inbox?.section).toBe("tasks"); expect(app.input).toEqual(chat);
+  expect(plain(app.frame().inputArea!.lines)).toContain("could not answer: write failed");
   await app.onKey(sectionKey); expect(app.input).toEqual(answer);
   expect(app.page!.sent).toHaveLength(1); expect(app.page!.questions.closing).toBe(false);
-  expect(JSON.stringify(app.page!.lines)).toContain("could not answer: write failed");
+  expect(plain(app.frame().inputArea!.lines)).not.toContain("could not answer");
   expect((await allQuestions("a"))[0]!.status).toBe("open");
 });
 
@@ -546,7 +547,7 @@ for (const transition of ["close", "section", "project", "recreate"] as const) {
   });
 }
 
-test("a note set while the Inbox panel has its row waits, unseen, for the panel to close: the closing key does not clear it, the next one does", async () => {
+test("status feedback stays above the answer input and the next key clears it while closing the panel", async () => {
   let open = [syntheticQuestion("q1"), syntheticQuestion("q2")];
   const ui = await setup({ questions: fakeQuestions({ list: async () => open, answer: async (_p, id) => { open = open.filter(q => q.id !== id); } }) }), { app } = ui;
   const page = app.page!;
@@ -554,11 +555,11 @@ test("a note set while the Inbox panel has its row waits, unseen, for the panel 
   app.input = { text: "first", cursor: 5 }; app.draw();
   await app.onKey({ name: "enter" });
   await until(() => page.questions.open.length === 1);
-  expect(app.frame().inbox?.section).toBe("questions"); // q2 keeps the panel open: no note row
-  expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q1?");
-  await app.onKey({ name: "escape" }); // closes the panel; the note was never drawn, so it survives this key
-  expect(app.frame().inbox).toBeNull();
+  expect(app.frame().inbox?.section).toBe("questions"); // q2 keeps the panel open; status is still above the input
   expect(plain(app.frame().inputArea!.lines)).toContain("? Question q1? → first");
+  await app.onKey({ name: "escape" }); // closes the panel and clears the visible status
+  expect(app.frame().inbox).toBeNull();
+  expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q1?");
   expect(page.lines).toEqual([]);
   await app.onKey({ name: "char", text: "x" });
   expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q1?");
@@ -638,7 +639,7 @@ test("/agents stays a separate menu; stale agent-list loads cannot attach a diff
 });
 
 for (const outcome of ["answer", "error", "external"] as const) {
-  test(`late question ${outcome} stays in its project history, never the selected agent transcript`, async () => {
+  test(`late question ${outcome} stays in its project status row, never either transcript`, async () => {
     const gate = deferred<void>(); let open = [syntheticQuestion()];
     const ui = await setup({ questions: fakeQuestions({ list: async () => open, answer: async () => { await gate.promise; } }) }), { app } = ui;
     const page = app.page!, chat = { text: "project draft", cursor: 4 }, answer = { text: "answer draft", cursor: 3 };
@@ -656,9 +657,10 @@ for (const outcome of ["answer", "error", "external"] as const) {
       await closing;
     }
     expect(page.view.lines).toEqual([]); expect(app.input).toEqual(chat);
-    // An answer is the project page's transient note (shown over the agent view too); failures and orphans are its history.
+    // Every outcome uses the project status row, including over an agent view.
     if (outcome === "answer") { expect(plain(app.frame().inputArea!.lines)).toContain("? Question q? → answer draft"); expect(page.lines).toEqual([]); }
-    else expect(JSON.stringify(page.lines)).toContain(outcome === "error" ? "answer write failed" : "unsent answer: answer draft");
+    else expect(plain(app.frame().inputArea!.lines)).toContain(outcome === "error" ? "answer write failed" : "unsent answer: answer draft");
+    expect(page.lines).toEqual([]);
     expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
   });
 }
@@ -709,7 +711,7 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   expect(app.frame().inbox?.section).toBe("tasks");
   expect(app.page!.questions.answer).toEqual(answer);
   expect(app.status(app.page!)).toEndWith("inbox 3");
-  expect(JSON.stringify(app.page!.lines)).toContain("could not skip: persistence failed");
+  expect(plain(app.frame().inputArea!.lines)).toContain("could not skip: persistence failed");
   expect(await allQuestions("a")).toEqual(qs);
   stale = undefined;
   await app.onKey(sectionKey); await app.onKey({ name: "enter" });
@@ -766,8 +768,8 @@ test("external silent skip reports an orphan draft as closed, restores chat and 
   await fileStore.skip("a", qs[0]!.id);
   app.questions.poll(app.pages); await app.page!.questions.polling;
   expect(app.input).toEqual(chat); expect(app.frame().inbox).toBeNull();
-  expect(JSON.stringify(app.page!.lines)).toContain("was closed elsewhere");
-  expect(JSON.stringify(app.page!.lines)).toContain("unsent answer: orphan answer");
+  expect(plain(app.frame().inputArea!.lines)).toContain("was closed elsewhere");
+  expect(plain(app.frame().inputArea!.lines)).toContain("unsent answer: orphan answer");
   expect(JSON.stringify(app.page!.lines)).not.toContain("default");
   expect(app.page!.questions.answer.text).toBe("");
   expect(app.status(app.page!)).toEndWith("inbox 1");

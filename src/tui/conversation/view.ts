@@ -1,5 +1,4 @@
-import { routineModelRequest } from "./notices";
-import { modelRequestText } from "../../protocol";
+import { entryNotice } from "./notices";
 // Render a transcript for a terminal and follow it as it grows. This is what
 // picking an agent in /agents shows: the same view the orchestrator page gives you, for any agent.
 
@@ -10,11 +9,6 @@ import { callText, resultText as summaryText, type ToolCall, type ToolOutcome } 
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
-
-const firstLine = (s: string, max = 100) => {
-  const line = s.split("\n").find((l) => l.trim()) ?? "";
-  return line.length > max ? line.slice(0, max) + "…" : line;
-};
 
 /**
  * A piece of an entry as shown: plain styled text, an assistant's markdown
@@ -44,11 +38,7 @@ function joinedText(blocks: Block[]): Block[] {
 
 /** One entry as pieces to show, or null for entries with nothing to show. */
 export function parts(entry: Entry): Part[] | null {
-  if (entry.type === "model-request") return routineModelRequest(entry.stage) ? null : [dim(modelRequestText(entry))];
-  if (entry.type === "context-boundary") return null;
-  if (entry.type === "tool-recovery") return [dim("— interrupted tool calls completed as errors; outcome unknown—reconcile before retrying")];
-  if (entry.type === "meta") return [dim(`— ${entry.role}${entry.branch ? ` on ${entry.branch}` : ""} (${entry.model || "default model"})`)];
-  if (entry.type === "summary") return [dim(`— compacted: ${firstLine(entry.text)}`)];
+  if (entry.type !== "message" && entry.type !== "replies") return null;
   if (entry.type === "replies") return entry.messages.flatMap((m): Part[] => [dim(`${m.from} → user:`), { md: m.text }]);
   const { role, content } = entry.message;
   const text = (t: string): Part => (role === "user" ? `${bold(">")} ${t}` : { md: t });
@@ -75,10 +65,12 @@ export function render(entry: Entry, calls = new Map<string, ToolCall>()): strin
 }
 
 /** Show one transcript line, skipping blank, partial or foreign ones. */
-function emit(line: string, out: (s: string, entry: Entry) => void, calls: Map<string, ToolCall>): void {
+function emit(line: string, out: (s: string, entry: Entry) => void, calls: Map<string, ToolCall>, notice?: (text: string) => void): void {
   if (!line.trim()) return;
   let entry: Entry;
   try { entry = JSON.parse(line) as Entry; } catch { return; }
+  const status = entryNotice(entry);
+  if (status !== undefined) { notice?.(status); return; }
   const rendered = render(entry, calls);
   if (rendered) out(rendered, entry);
 }
@@ -88,7 +80,7 @@ function emit(line: string, out: (s: string, entry: Entry) => void, calls: Map<s
  * `stop` resolves; `out` gets each entry's text and the entry itself. Reads
  * by byte offset so a partial trailing line waits for its newline.
  */
-export async function follow(path: string, out: (s: string, entry: Entry) => void, stop: Promise<void>, intervalMs = 300, afterDrain: () => void = () => {}): Promise<void> {
+export async function follow(path: string, out: (s: string, entry: Entry) => void, stop: Promise<void>, intervalMs = 300, afterDrain: () => void = () => {}, notice?: (text: string) => void): Promise<void> {
   const calls = new Map<string, ToolCall>();
   let offset = 0;
   let done = false;
@@ -105,7 +97,7 @@ export async function follow(path: string, out: (s: string, entry: Entry) => voi
       const end = text.lastIndexOf("\n");
       if (end === -1) return;
       offset += Buffer.byteLength(text.slice(0, end + 1));
-      for (const line of text.slice(0, end).split("\n")) emit(line, out, calls);
+      for (const line of text.slice(0, end).split("\n")) emit(line, out, calls, notice);
     } finally {
       await fh.close();
     }

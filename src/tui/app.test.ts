@@ -161,7 +161,8 @@ describe("tui app", () => {
         "model request failed (timeout); retrying: attempt 2, nextRetryAt tomorrow",
         "background compaction failed; original history kept: unknown task in memory"]) {
         events.notice!(notice);
-        expect(strip(historyRows(app.page!.lines, 180).join("\n"))).toContain(notice);
+        expect(strip(app.frame().inputArea!.lines.join("\n"))).toContain(notice);
+        expect(strip(historyRows(app.page!.lines, 180).join("\n"))).not.toContain(notice);
       }
     } finally { app.quit(); await running; }
   });
@@ -277,7 +278,8 @@ describe("tui app", () => {
     expect(app.frame().help!.lines.join("\n")).not.toContain("/back");
     term.press({ name: "escape" });
     term.type("/back\r");
-    await until(() => app.page!.lines.join("\n").includes("not viewing an agent"));
+    await until(() => term.screen().includes("not viewing an agent"));
+    expect(app.page!.lines).toEqual([]);
     term.type("\x1a"); // back to viewer
     term.type("/back\r");
     await until(() => left === 1);
@@ -372,10 +374,10 @@ describe("tui app", () => {
     await until(() => app.loggingIn);
     term.type("one\r");
     term.type("two\r");
-    await until(() => app.page!.lines.filter((l) => raw(l).includes("queued; runs after sign-in")).length === 2);
+    await until(() => app.frame().queued?.texts.length === 2);
     fail(new Error("denied"));
     await until(() => term.screen().includes("sign-in failed; dropped 2 queued message(s)"));
-    expect(term.screen()).toContain("login failed: denied");
+    expect(app.page!.lines).toEqual([]); // Failure feedback replaces the prior status.
     await Bun.sleep(60); // polls run, but nothing was queued in the inbox
     expect(orchs.said.failer).toEqual([]);
     expect(term.screen()).not.toContain("failer says hi");
@@ -424,8 +426,9 @@ describe("tui app", () => {
     term.type("/keys\r");
     await until(() => app.keyEcho && term.screen().includes("press keys; esc ends"));
     term.type("\x1b[44;5u");
+    await until(() => term.screen().includes('{"name":",","ctrl":true}'));
     term.press({ name: "escape" });
-    await until(() => !app.keyEcho && term.screen().includes('{"name":",","ctrl":true}'));
+    await until(() => !app.keyEcho && !term.screen().includes('{"name":",","ctrl":true}'));
     expect(app.keyEcho).toBe(false);
     expect(app.pages.length).toBe(1); // the chord was echoed, not acted on
     app.quit();
@@ -1124,7 +1127,7 @@ describe("frames, resizes, startup and crashes", () => {
     await running;
   });
 
-  test("the live region shows 'opening…' at once; lines said or logged before the pages open are kept", async () => {
+  test("the live region shows 'opening…' at once; conversation lines survive opening while logs remain temporary", async () => {
     const term = fakeTerm(80);
     let gate!: () => void;
     const orchs = fakeOrchestrators();
@@ -1138,14 +1141,15 @@ describe("frames, resizes, startup and crashes", () => {
     await until(() => term.screen().includes("logged early"));
     gate();
     await until(() => term.screen().includes(">[alpha]") && term.screen().includes("no remote"));
-    expect(bodyRows(term).slice(0, 2)).toEqual(["early note", "logged early"]);
+    expect(bodyRows(term)[0]).toBe("early note");
+    expect(app.page!.lines.map(raw)).not.toContain("logged early");
     expect(term.display.clears).toBe(0);
     expect(term.screen()).not.toContain("opening…");
     app.quit();
     await running;
   });
 
-  test("console output and the config warning go into the scrollback, not to stderr", async () => {
+  test("console output and config warnings replace the temporary status row", async () => {
     const term = fakeTerm(200);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
@@ -1158,8 +1162,12 @@ describe("frames, resizes, startup and crashes", () => {
     await Bun.write(paths.config, "maxReviewRounds = [broken");
     try {
       await loadConfig();
+      await until(() => term.screen().includes("orca: ignoring"));
       console.log("a log line");
-      await until(() => term.screen().includes("orca: ignoring") && term.screen().includes("a log line"));
+      await until(() => term.screen().includes("a log line") && !term.screen().includes("orca: ignoring"));
+      expect(app.page!.lines).toEqual([]);
+      term.type("x");
+      await until(() => !term.screen().includes("a log line"));
       expect(stderr).not.toHaveBeenCalled();
       expect(stdout).not.toHaveBeenCalled();
     } finally {
@@ -1186,7 +1194,8 @@ describe("frames, resizes, startup and crashes", () => {
     app.menu = null;
     app.draw();
     await until(() => term.screen().includes("error drawing the screen: boom"));
-    expect(app.page!.lines.filter((l) => raw(l).includes("boom")).length).toBe(1);
+    expect(app.page!.lines).toEqual([]);
+    expect(strip(app.frame().inputArea!.lines[0]!)).toBe("error drawing the screen: boom");
     term.type("still here\r");
     await until(() => term.screen().includes("worker-x done"));
     app.quit();

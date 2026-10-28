@@ -17,6 +17,7 @@ import { projectIdentity, turnLocks, turnLocksHeld, withProjectStateLock } from 
 // tmux session; the TUI is a client of its files (src/core/agent-loop/orc/client.ts).
 
 import { existsSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
 import { assertMainCheckout, initializeWorkspace } from "../../data/projects";
 import { effectiveModel, projectModelResolver } from "../../data/projects";
 import { createAgent, type AgentDeps } from "../loop";
@@ -221,6 +222,9 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
           await check(true);
           rolling.reset();
           await archiveBestEffort(deps.project, transcript, memoryLog(deps), true);
+          // Only rebuildable project cache is disposable; original evidence stays outside it.
+          await rm(paths.cache(deps.project), { recursive: true, force: true });
+          await mkdir(paths.cache(deps.project), { recursive: true });
           await clearWorkingContext(deps.project, () => transcript.append({ type: "context-boundary" }, authorization));
         });
       } finally { state.clearing = undefined; await release?.(); }

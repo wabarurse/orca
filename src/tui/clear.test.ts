@@ -46,13 +46,13 @@ async function setup(extra: Partial<AppDeps> = {}) {
 }
 const uiText = (app: App) => JSON.stringify(app.page?.lines);
 
-test("bare /clear is local, cancel-default and excluded from recall; esc preserves drafts/history; explicit confirmation keeps exit transcript", async () => {
+test("bare /clear is local, cancel-default and excluded from recall; esc preserves drafts/history; explicit confirmation clears UI and exit replay but keeps saved transcript", async () => {
   const ui = await setup(), { app } = ui;
   const before = await Bun.file(ui.t.path).text();
   app.input = { text: "/clear", cursor: 6 };
   await app.onKey({ name: "enter" });
   expect(app.menu?.index).toBe(0);
-  expect(app.menu?.items).toEqual(["cancel", "clear context"]);
+  expect(app.menu?.items).toEqual(["cancel", "clear conversation"]);
   expect(app.page!.inputHistory).not.toContain("/clear");
   await app.onKey({ name: "enter" });
   expect(app.menu).toBeNull();
@@ -60,9 +60,9 @@ test("bare /clear is local, cancel-default and excluded from recall; esc preserv
   app.input = { text: "draft 界", cursor: 5 };
   const lines = [...app.page!.lines];
   await ui.command();
-  await until(() => ui.screen.text().includes("clear context"));
+  await until(() => ui.screen.text().includes("clear conversation"));
   const visible = ui.screen.screen().map(Bun.stripANSI);
-  expect(visible.findIndex(row => row.includes("clear context"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 messages queued")));
+  expect(visible.findIndex(row => row.includes("clear conversation"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 messages queued")));
   for (const key of [{ name: "paste", text: "danger\n/quit" }, { name: "char", text: "y" }, { name: "q", ctrl: true }, { name: "g", ctrl: true }, { name: "enter", alt: true }]) await app.onKey(key);
   expect(app.input).toEqual({ text: "draft 界", cursor: 5 });
   await app.onKey({ name: "escape" });
@@ -71,13 +71,16 @@ test("bare /clear is local, cancel-default and excluded from recall; esc preserv
   expect(await Bun.file(ui.t.path).text()).toBe(before);
   await ui.command(); await ui.confirm();
   expect(await ui.context()).toEqual([]);
-  expect(uiText(app)).toContain("original UI history");
-  expect(uiText(app)).toContain("model context cleared");
+  expect(app.page!.lines).toEqual([]);
+  expect(Bun.stripANSI(app.frame().inputArea!.lines.join("\n"))).toContain("conversation, model context and cache cleared");
+  await until(() => !ui.screen.text().includes("original UI history"));
+  await app.onKey({ name: "char", text: "a" });
+  expect(Bun.stripANSI(app.frame().inputArea!.lines.join("\n"))).not.toContain("cleared");
   expect(ui.provider.calls).toHaveLength(0);
   expect(open(ui.t.path).history!().map(e => e.type)).toEqual(["message", "context-boundary"]);
-  expect(app.input).toEqual({ text: "draft 界", cursor: 5 });
+  expect(app.input).toEqual({ text: "drafta 界", cursor: 6 });
   app.quit(); await ui.running;
-  expect(ui.exit()).toContain("original UI history");
+  expect(ui.exit()).not.toContain("original UI history");
 });
 
 test("no arguments, no page creation, and worker/reviewer transcript views refuse", async () => {
@@ -92,7 +95,8 @@ test("no arguments, no page creation, and worker/reviewer transcript views refus
     app.page!.view = { name, lines: [], leave() {}, live: false, calls: new Calls() };
     await ui.command();
     expect(app.menu).toBeNull();
-    expect(JSON.stringify(app.page!.view.lines)).toContain("/back first");
+    expect(Bun.stripANSI(app.frame().inputArea!.lines.join("\n"))).toContain("/back first");
+    expect(app.page!.view.lines).toEqual([]);
   }
   app.page!.view = null;
   app.closePage();
@@ -247,4 +251,48 @@ test("late eligibility results cannot open a confirmation after a page change; c
   expect(page.orch.submission!()).toBe(submission); // not global turn cancellation/pause
   expect(app.input).toEqual({ text: "keep draft", cursor: 4 });
   expect(await ui.context()).toHaveLength(1);
+});
+
+test("clear drops cached rows and local notices across refresh, reopen and another client's clear", async () => {
+  const ui = await setup(), { app } = ui, page = app.page!;
+  app.say("old local diagnostic", page);
+  page.md.feedLines("unfinished draft response");
+  await Bun.write(join(paths.cache(ui.project), "rendered/old"), "cached old conversation");
+  await ui.command(); await ui.confirm();
+  await until(() => !ui.screen.text().includes("original UI history"));
+  expect(page.lines).toEqual([]);
+  expect(await Bun.file(join(paths.cache(ui.project), "rendered/old")).exists()).toBe(false);
+  await app.refreshSessions();
+  expect(page.lines).toEqual([]);
+  expect(ui.screen.text()).not.toContain("old local diagnostic");
+  app.closePage(); await app.openPage(ui.project);
+  expect(app.page!.lines).toEqual([]);
+  const saved = open(ui.t.path);
+  await saved.append({ type: "message", message: { role: "assistant", content: "fresh answer" } });
+  await app.refreshSessions();
+  expect(uiText(app)).toContain("fresh answer");
+  expect(uiText(app)).not.toContain("original UI history");
+  app.say("another old diagnostic");
+  await saved.append({ type: "context-boundary" }); // A clear committed by another client.
+  await app.refreshSessions();
+  expect(app.page!.lines).toEqual([]);
+  const disk = await Bun.file(ui.t.path).text();
+  expect(disk).toContain("original UI history");
+  expect(disk).toContain("fresh answer");
+});
+
+test("a clear from another client preserves an open worker view while resetting the chat behind it", async () => {
+  const ui = await setup(), { app } = ui, page = app.page!;
+  page.view = { name: "worker-a", lines: ["worker evidence"], live: false, leave() {}, calls: new Calls() };
+  app.reprint();
+  await until(() => ui.screen.text().includes("worker evidence"));
+  await open(ui.t.path).append({ type: "context-boundary" });
+  await app.refreshSessions();
+  expect(page.lines).toEqual([]);
+  expect(page.view.lines).toEqual(["worker evidence"]);
+  await Bun.sleep(25);
+  expect(ui.screen.text()).toContain("worker evidence");
+  page.view = null; app.reprint();
+  await until(() => !ui.screen.text().includes("worker evidence"));
+  expect(ui.screen.text()).not.toContain("original UI history");
 });

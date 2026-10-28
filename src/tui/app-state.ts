@@ -20,6 +20,9 @@ export interface Page {
   remote: string;
   /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
+  /** Last rendered clear boundary and request status; keep refreshes from reviving old UI state. */
+  contextBoundary?: string;
+  statusNotice?: string;
   /** The streaming reply: markdown blocks leave it as they complete; the rest shows raw in the live region. */
   md: MarkdownStream;
   busy: boolean;
@@ -96,7 +99,7 @@ export interface AppDeps {
   questionDelayMs?: number;
 }
 
-export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void; /** A status line from the daemon: an informational acknowledgement or progress (`transientNotice`) shows as the page's transient note; anything else is a retained page line. */ notice?(text: string): void }
+export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void; /** Runtime acknowledgements, progress and failures share the status row above the composer. */ notice?(text: string): void }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
 /** A transient status note and whether a frame has drawn its row yet (only then does a key clear it). */
