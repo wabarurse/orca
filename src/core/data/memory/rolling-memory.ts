@@ -111,9 +111,9 @@ export class RollingCompactor {
     const messages = await this.transcript.chain();
     const limit = contextLimit(deps.compaction ?? {}, deps.model);
     const safeInput = .8 * limit - outputCap(deps);
-    // Default: 40% of the selected model's window, so 1M-context models do not
-    // compact at 100k. An explicit triggerTokens stays an absolute token count.
-    const trigger = Math.min(this.options.triggerTokens ?? limit * .4, safeInput * .8);
+    // This controller is orchestrator-only. Workers/reviewers keep the separate
+    // foreground compaction policy. Reserve headroom still bounds small windows.
+    const trigger = Math.min(this.options.triggerTokens ?? limit * .5, safeInput);
     if (!this.job && (manual || (budget(deps, messages) >= trigger && Date.now() >= this.retryAfter))) {
       await this.start(deps, messages);
     }
@@ -150,7 +150,11 @@ export class RollingCompactor {
     timer.unref();
     // Race even custom providers that ignore AbortSignal; late answers cannot publish.
     const cancelled = new Promise<never>((_resolve, reject) => abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true }));
-    job.promise = Promise.race([summarizeOlder(messages.slice(0, cut), tasks, abort.signal, this.options.loadProvider, this.project), cancelled])
+    const target = { model: deps.model, compaction: deps.compaction, loadProvider: this.options.loadProvider ?? (async () => {
+      if (!deps.provider) throw new Error("no resolved provider for orchestrator compaction");
+      return deps.provider;
+    }) };
+    job.promise = Promise.race([summarizeOlder(messages.slice(0, cut), tasks, abort.signal, target, this.project), cancelled])
       .then(memory => { assertProjectIdentity(this.project, identity); job.memory = memory; })
       .catch(error => { job.error = error; })
       .finally(() => { clearTimeout(timer); job.settled = true; });

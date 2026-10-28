@@ -1,12 +1,16 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { provider as accountProvider } from "../../../providers";
-import { estimate, requireFits } from "./compaction";
+import { ContextBlocked, estimate, requireFits, type CompactOptions } from "./compaction";
 import { historicalMessages } from "../images";
 import type { Provider } from "../../../providers";
+import { modelCapabilities, type RequestSettings } from "../../../providers/catalog";
 import type { Task } from "../../../protocol/task";
 import type { RollingMemory } from "../../../protocol";
 
-export const SUMMARY_MODEL = "gpt-6-luna";
+interface SummaryTarget {
+  model: string;
+  loadProvider: () => Promise<Provider>;
+  compaction?: CompactOptions;
+}
 const empty = (): RollingMemory => ({ user: [], project: [], pending: [], tasks: [] });
 export const taskSnapshot = (tasks: Task[]) => tasks.map(t => ({ id: t.id, name: t.name, summary: t.summary, branch: t.branch,
   status: t.archive ? "merged" : t.status, attention: t.attention, pr: t.pr, run: t.runs.at(-1) }));
@@ -65,19 +69,36 @@ function* chunks(source: string): Generator<string> {
   }
 }
 
-export async function summarizeOlder(messages: MessageParam[], tasks: Task[], signal: AbortSignal, load: () => Promise<Provider> = () => accountProvider("openai"), project?: string): Promise<RollingMemory> {
-  const provider = await load();
+export async function summarizeOlder(messages: MessageParam[], tasks: Task[], signal: AbortSignal, target: SummaryTarget, project?: string): Promise<RollingMemory> {
+  // Reuse the resolved foreground account/model: Claude-only installations must
+  // not need a second provider login just to keep their conversation bounded.
+  const provider = await target.loadProvider();
+  const settings: RequestSettings = { fast: false };
+  if (modelCapabilities(target.model).effort.includes("low")) settings.effort = "low";
   let memory = empty();
   // Neither reasoning nor image bytes/URLs go to the text-only summary model.
   // Original scoped references stay in SQLite/JSONL and the retained context.
   const source = JSON.stringify(historicalMessages(messages));
   // Finished work accumulates forever in SQLite, not in every summary request.
   const relevant = tasks.filter(t => !t.archive || source.includes(t.id) || source.includes(t.branch) || (t.pr && source.includes(t.pr.url)));
-  for (const part of chunks(source)) {
+  const parts = [...chunks(source)].reverse();
+  while (parts.length) {
     signal.throwIfAborted();
+    const part = parts.pop()!;
     const input: MessageParam[] = [{ role: "user", content: JSON.stringify({ sourceScope: "older conversation prefix only; recent verbatim tail withheld", sourceEncoding: "JSON messages in chronological order; roles and content block types preserved; sourcePart may split a message", registry: taskSnapshot(relevant), taskIds: relevant.filter(t => !t.archive).map(t => t.id), previousMemory: memory, sourcePart: part }) }];
-    requireFits({ model: SUMMARY_MODEL, tools: {}, system: instruction, compaction: {}, transcript: null! }, input, 4096, "rolling summary source");
-    const result = await provider.complete({ trace: { project, agent: "orchestrator", purpose: "rolling-summary" }, signal, model: SUMMARY_MODEL, settings: { effort: "low", fast: false }, system: instruction, messages: input, tools: [], maxTokens: 4096, onText() {} });
+    try {
+      requireFits({ model: target.model, tools: {}, system: instruction, compaction: { ...target.compaction, measured: undefined }, transcript: null! }, input, 4096, "rolling summary source");
+    } catch (error) {
+      if (!(error instanceof ContextBlocked) || part.length < 2) throw error;
+      // Account for JSON escaping, registry, previous memory and the selected
+      // model's actual window. Split without losing text or surrogate pairs.
+      let middle = Math.floor(part.length / 2);
+      if (/[\uD800-\uDBFF]/.test(part[middle - 1]!)) middle--;
+      if (!middle) throw error;
+      parts.push(part.slice(middle), part.slice(0, middle));
+      continue;
+    }
+    const result = await provider.complete({ trace: { project, agent: "orchestrator", purpose: "rolling-summary" }, signal, model: target.model, settings, system: instruction, messages: input, tools: [], maxTokens: 4096, onText() {} });
     signal.throwIfAborted();
     if (result.stop !== "end" || !["completed", "end_turn"].includes(result.completion ?? "")) throw new Error(`summary did not complete (${result.completion ?? "unknown"})`);
     const content = result.content.filter(b => b.type !== "thinking" && b.type !== "redacted_thinking");

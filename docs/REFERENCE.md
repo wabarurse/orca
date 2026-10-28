@@ -157,8 +157,8 @@ to select a model from that provider (↑/↓, Enter; Esc cancels). Login select
 account, not a model; catalog entries may require an entitlement you do not have.
 See [subscription login](#subscription-login) for profiles and
 [existing CLI logins](#existing-cli-logins) for importing a session instead.
-Long conversations use OpenAI for [rolling memory](#orchestrator-rolling-memory),
-so that feature needs `/login codex` even when your foreground model is Claude.
+Long conversations use the active account/model for [rolling memory](#orchestrator-rolling-memory);
+no second provider login is needed for a Claude session.
 
 ### 4. Try a small task
 
@@ -904,13 +904,13 @@ inference require validation with your account; automated tests use fake tokens.
 
 ### Orchestrator rolling memory
 
-The orchestrator starts a background `gpt-6-luna` summary at about **40% of the
-selected model's context window** (roughly 400,000 input tokens on a 1M-context
-model, 80,000 on a 200k model), capped lower when the usable context after the
-output reserve is smaller. It keeps
-roughly the newest **20,000 tokens verbatim**, including complete tool exchanges.
-An oversized newest exchange stays intact. Workers and reviewers keep their
-existing compaction behavior.
+The orchestrator starts a background summary at **50% of the selected model's
+context window** (roughly 500,000 input tokens on a 1M-context model, 100,000 on a
+200k model), capped lower only when the output reserve leaves less safe input
+capacity. It keeps roughly the newest **6,000 tokens verbatim**, including complete
+tool exchanges. An oversized newest exchange stays intact. Workers and reviewers
+keep their existing compaction behavior. Legacy `orchestratorContextTokens`
+values are ignored.
 
 The summary carries user facts/preferences, standing project decisions, unresolved
 questions, unregistered work, and notes for unfinished tasks. A task is finished
@@ -924,7 +924,7 @@ space; `/compact` waits explicitly. The summary replaces only the captured older
 prefix at a safe tool boundary. Every newer message, including messages arriving
 while the worker runs, survives unchanged. The TUI can publish a ready summary
 while idle without making another foreground model request. Summary requests have
-no tools, use low effort, and split large sources into bounded UTF-8 parts. The
+no tools, use low effort when supported, and split large sources into bounded UTF-8 parts. The
 worker has a two-minute deadline and a 30-second automatic retry cooldown.
 Closing the page or exiting the TUI cancels its worker. Shared cancellation,
 `/clear`, or another session's checkpoint invalidates stale summary work. Refresh
@@ -939,8 +939,8 @@ work already requested, and the compiled one-shot probe joins its outstanding
 worker before exiting. Saved history or already-consumed
 inbox residue alone never starts another model turn.
 
-This requires a configured OpenAI subscription login (`/login openai`) even when
-the foreground uses Claude. `compact = false` disables automatic compaction;
+Summaries reuse the foreground's resolved account and model, with fast mode off;
+a Claude session does not require an OpenAI login. `compact = false` disables automatic compaction;
 `/compact` still requests it. Missing credentials, failed summaries, archive
 failures and cancellation preserve the original history. If the resulting input
 still cannot fit, the existing context guard stops the model request.

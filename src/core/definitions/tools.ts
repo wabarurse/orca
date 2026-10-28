@@ -11,7 +11,7 @@ function annotations(base: unknown, edited: unknown, path: string): unknown {
   if (path === "bash.properties.timeout_ms.minimum" && edited === 1 && base === 0) return base;
   // Upgrade older edited schemas without overwriting user annotation files. Only
   // these shipped additions are restored; arbitrary schema mutations still fail.
-  if (edited === undefined && ["spawn.properties.baseCommit", "task.properties.commands", "memory.properties.commands"].includes(path)) return base;
+  if (edited === undefined && ["spawn.properties.baseCommit", "task.properties.commands", "memory.properties.commands", "message.properties.summary.minLength", "message.properties.summary.maxLength"].includes(path)) return base;
   if (Array.isArray(base) && Array.isArray(edited) && path.endsWith(".properties.action.enum")) {
     const additions = new Set(["checkpoint", "prepare_publication", "checks", "reviewed", "publish"]);
     if (JSON.stringify(edited) === JSON.stringify(base.filter(v => !additions.has(String(v))))) return base;

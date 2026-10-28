@@ -11,9 +11,9 @@ Publication remains a separately authorized capability. Existing task, dependenc
 | Consolidation | Integrates the intent and source-attributed memory changes with the runtime work | Role prompts, memory archive and this document |
 | Provider reliability | Preserves streamed Codex output when the completion envelope is empty; handles limit/refusal/error separately; bounds pauses and recovery without replaying delivered stream content | `src/providers/{openai,anthropic,account,bounded-request}.ts`, `src/core/agent-loop/loop/agent.ts` |
 | Optional delegation | `spawn` only requires a brief. Task registration and explicit review are independent | `src/core/tools/spawn.ts` |
-| Small coordinator context | Focused delegation, concise worker reports, selected knowledge and a 32k-token default compaction target | `src/core/prompt/orchestrator.ts`, orchestrator session |
+| Small coordinator context | Delegate by expected intermediate context, retain concise outcomes and selected knowledge, compact at 50% of the orchestrator model’s context window | `src/core/prompt/orchestrator.ts`, orchestrator session |
 | Fresh context | A new worker starts from its brief; `fresh: true` resets an idle worker's active context on its existing branch, retaining original history | Spawn and transcripts |
-| Durable detail | Large reports require a concise summary; full evidence is saved outside the repository with a retrieval path | `src/core/tools/message.ts` |
+| Durable detail | Worker/reviewer reports over 2,000 characters require a summary within 2,000 characters; full evidence is saved outside the repository with a retrieval path | `src/core/tools/message.ts` |
 | File tools | Bounded `read`, exclusive-create `write`, revision-checked replacement and exact `edit` | `src/core/tools/files.ts` |
 | Background commands | Bash can yield a process handle while a separate supervisor owns execution and output | `src/core/data/processes/` |
 | Runtime events | Readiness and terminal events have durable IDs/outboxes; cancellation, timeouts, output caps and lost-supervisor reconciliation are explicit | Processes and inbox observations |
@@ -28,6 +28,12 @@ Publication remains a separately authorized capability. Existing task, dependenc
 | Regression evaluation | Scripted end-to-end runtime cases cover delegation, feedback, files, process lifecycle, providers, memory and accounting | `evals/adaptive/` |
 
 ## Using the capabilities
+
+The orchestrator delegates based on how much intermediate context the work is likely to produce, not labels such as exploration or implementation. Many reads, long outputs and repeated trials/checks are reasons to assign a focused worker before collecting the detail. A bounded action with a short result can stay direct. If it grows, the orchestrator hands off the remaining outcome with findings and evidence references. One worker owns that outcome through validation; follow-up corrections return to its existing workspace. The coordinator inspects targeted evidence for decisions rather than routinely repeating the worker's investigation.
+
+This is model guidance in the existing loop, not a hard router or a guarantee that the model always delegates. `spawn` remains optional and independent of the publication-specific dynamic-dispatch setting. The coordinator retains its direct tools. New workers receive only their brief plus applicable instructions/knowledge, not the coordinator's conversation history.
+
+The message tool enforces a separate report boundary: up to 2,000 characters of report body can reach the orchestrator from a worker or reviewer. Longer reports require an explicit, nonempty `summary` within that limit; delivery contains the summary plus an artifact path, and the complete text is saved in `tool-outputs/reports/`. A summary can also archive a shorter report. Missing or oversized summaries are rejected before delivery, never silently truncated or summarized by another model. Summaries must retain outcomes, checked revision, checks, failures, uncertainty and decisions needed; the runtime bounds size but cannot verify their completeness. Report only completion, blockers or material changes, without splitting logs into multiple messages. This limit is per message; accumulated reports still occupy context until compaction. Ordinary direct tool-result retention is unchanged.
 
 These are model tool inputs, not new workflow modes:
 
@@ -68,7 +74,7 @@ Selection retrieves up to eight relevant facts (or `always.*` preferences) withi
 
 Root instructions load once from the Git root to the working directory. AGENTS.md wins over CLAUDE.md in the same folder. `read` surfaces applicable nested instructions. Large instruction sets include a truncation notice and require explicitly reading the remainder. Skills are cataloged from `.agents/skills`, `.claude/skills` and Orca's personal `skills/`; their bodies load through `skill` only when needed. Shell access does not guarantee automatic nested-instruction discovery, so agents must inspect applicable instructions before editing there.
 
-The default `orchestratorContextTokens = 32000` is a compaction target, not a hard total-request ceiling. It accepts 8k–200k; system instructions and pinned intent may exceed the target. Existing `compact = false` still disables compaction. Fresh worker briefs avoid copying coordinator history, while relevant scoped knowledge and the small current goal remain available.
+The orchestrator compacts at 50% of its selected model's context window, with output-reserve safety checks. The legacy `orchestratorContextTokens` key is ignored; there is no separate 32k target or 48k forced pass. Existing `compact = false` still disables automatic compaction. Workers and reviewers retain their own compaction policy. Fresh worker briefs avoid copying coordinator history, while relevant scoped knowledge and the small current goal remain available.
 
 ## Execution and tmux
 
