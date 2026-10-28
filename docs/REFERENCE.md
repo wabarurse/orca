@@ -919,12 +919,28 @@ tool exchanges. An oversized newest exchange stays intact. Workers and reviewers
 keep their existing compaction behavior. Legacy `orchestratorContextTokens`
 values are ignored.
 
-The summary carries user facts/preferences, standing project decisions, unresolved
-questions, unregistered work, and notes for unfinished tasks. A task is finished
-only after the registry records a verified merge. Blocked, cancelled and
-closed-unmerged tasks stay recorded; their presence never authorizes a restart.
-The current task registry is read again before publication, so an in-flight summary
-cannot restore stale task notes after a merge or other task update.
+The compacted memory has exactly three parts, rendered in this order:
+
+1. **Tasks**: the unarchived task records from the task ledger (SQL), as saved.
+   They are never summarized. A task is finished only after the ledger records a
+   verified merge. Blocked, cancelled and closed-unmerged tasks stay recorded;
+   their presence never authorizes a restart. The ledger is read again at
+   publication, so a merge during an in-flight summary drops that task.
+2. **Preferences**: every saved user and project knowledge fact (what `remember`
+   wrote), as saved: one line each with scope, explicit/tentative, key and the
+   exact text; source and timestamps are omitted. Never summarized. Every explicit
+   fact is always included; tentative facts, newest first, fill the rest of a
+   12,000-character budget, and any omitted tentative facts are counted in the
+   text (they stay listable with `remember`).
+3. **Summary of the rest**: the only model-written part, `{summary, pending}`
+   (at most 32 and 16 items of 1,000 characters): goal and requested outcome,
+   decisions and reasons, permissions and limits, corrections, approaches tried or
+   ruled out, verified outcomes, and open work and questions.
+
+The next summary merges the previous checkpoint's `{summary, pending}` as its
+previous memory instead of re-reading the rendered text. Checkpoints written before
+this layout (`{user, project, pending, tasks}`) still load: their user, project and
+pending items seed the next summary; their task notes are dropped.
 
 One summary worker runs per session. The foreground continues until it needs the reclaimed
 space; `/compact` waits explicitly. The summary replaces only the captured older

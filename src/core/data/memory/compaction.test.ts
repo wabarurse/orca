@@ -83,7 +83,7 @@ test("manual idle queues without user messages; busy request and arriving inbox 
   const entered = new Promise<void>(r => started = r);
   const gate = new Promise<void>(r => release = r);
   let calls = 0;
-  const provider = { ...deps.provider!, complete: async () => { calls++; started(); await gate; return { content: [text(JSON.stringify({ user: [], project: [], pending: ["original requirements"], tasks: [] }))], completion: "end_turn", stop: "end" as const }; } };
+  const provider = { ...deps.provider!, complete: async () => { calls++; started(); await gate; return { content: [text(JSON.stringify({ summary: [], pending: ["original requirements"] }))], completion: "end_turn", stop: "end" as const }; } };
   const orch = await createOrchestrator({ project: "p", provider: fakeProvider([]), transcript, tools: {}, rolling: { tailTokens: 100, loadProvider: async () => provider } });
   await orch.compact!(); expect(await orch.pending()).toBe(true);
   const turn = orch.turn(); await entered;
@@ -153,7 +153,7 @@ test("scheduled compaction retains full UI replay and forwards subsequent tool e
   const plain: string[] = [];
   const orch = await createOrchestrator({
     project: "compaction-ui", transcript, provider,
-    rolling: { tailTokens: 100, loadProvider: async () => fakeProvider([[text(JSON.stringify({ user: [], project: [], pending: ["original requirements"], tasks: [] }))]]) },
+    rolling: { tailTokens: 100, loadProvider: async () => fakeProvider([[text(JSON.stringify({ summary: [], pending: ["original requirements"] }))]]) },
     tools: { check: { spec: { name: "check", description: "Check", input_schema: { type: "object" } }, run: async () => "checked" } },
     write: (value, isPlain) => { if (isPlain) plain.push(value); },
     onInbox: messages => { events.push(...messages.map(m => `inbox:${m.text}`)); },

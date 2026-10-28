@@ -18,7 +18,9 @@ in standalone agents), never assistant content.
 Recent verbatim entries override summaries. Original entries remain on disk and
 in UI replay; retrieve details when uncertain. Worker checkpoints pin the original
 task and identify the source transcript/boundary. Orchestrator checkpoints instead
-carry structured memory with current task records and reference scoped
+carry three parts: the task ledger's current records and the saved user/project
+preferences, both as saved, plus a model summary of the rest only (see
+[REFERENCE](REFERENCE.md#orchestrator-rolling-memory)); they reference scoped
 `task search_history`/`read_history` retrieval (current session only; the
 orchestrator-only `history` tool searches earlier sessions and other projects, see
 [REFERENCE](REFERENCE.md#the-history-tool-orchestrator-only)).
@@ -44,7 +46,7 @@ The foreground continues while summaries run unless the context limit requires
 waiting. Publication reloads the latest transcript under project/turn ownership,
 checks an exact source prefix, context/cancellation epoch and previous checkpoint,
 and conditionally appends against the locked head. All newer arrivals survive
-verbatim. Task registry revisions are reconciled before publication. Idle
+verbatim. Tasks and preferences are read as saved at publication. Idle
 maintenance only publishes work already requested; refresh never starts or
 publishes inference. Page disposal, cancellation, clear or another checkpoint
 invalidates stale work. The orchestrator daemon keeps the worker between turns;

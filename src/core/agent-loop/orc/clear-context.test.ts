@@ -232,7 +232,7 @@ test("an actively compacting orchestrator refuses clear, not just a queued compa
   await transcript.append({ type: "message", message: { role: "assistant", content: "old work " + "x".repeat(30000) } });
   await transcript.append({ type: "message", message: { role: "user", content: "recent work" } });
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
-  const fake = fakeProvider([[text(JSON.stringify({ user: [], project: [], pending: ["OLD_SECRET_TASK"], tasks: [] }))]]);
+  const fake = fakeProvider([[text(JSON.stringify({ summary: [], pending: ["OLD_SECRET_TASK"] }))]]);
   const orch = await createOrchestrator({ project, transcript, tools: {}, write() {}, provider: fakeProvider([]),
     rolling: { tailTokens: 100, loadProvider: async () => ({ ...fake, complete: async req => { entered.resolve(); await release.promise; return fake.complete(req); } }) } });
   await orch.compact!();

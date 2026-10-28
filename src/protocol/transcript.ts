@@ -20,8 +20,16 @@ export interface MessageEntry extends BaseEntry {
   message: MessageParam;
 }
 
-/** The orchestrator's rolling memory, as a summary entry carries it (memory/rolling-summary.ts maintains it). */
+/** The orchestrator's rolling memory, as a summary entry carries it (memory/rolling-summary.ts maintains it):
+ * only the model-summarized rest of the conversation. Tasks (the task ledger) and preferences
+ * (saved user/project knowledge) are rendered beside it as saved at each checkpoint, never stored here. */
 export interface RollingMemory {
+  summary: string[];
+  pending: string[];
+}
+
+/** The shape older transcripts hold; read only to seed the next summary (`previousMemory`), never written. */
+export interface LegacyRollingMemory {
   user: string[];
   project: string[];
   pending: string[];
@@ -34,8 +42,8 @@ export interface SummaryEntry extends BaseEntry {
   /** Atomic context checkpoint; originals remain in the parent chain. */
   retained?: MessageParam[];
   boundary?: string | null;
-  /** Reusable structured memory, distinct from the verbatim recent tail. */
-  memory?: RollingMemory;
+  /** Reusable structured memory, distinct from the verbatim recent tail (legacy shape in older transcripts). */
+  memory?: RollingMemory | LegacyRollingMemory;
 }
 
 export interface MetaEntry extends BaseEntry {

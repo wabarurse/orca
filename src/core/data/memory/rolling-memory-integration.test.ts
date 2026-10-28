@@ -31,7 +31,7 @@ function summary() {
   const entered = gate(), released = gate(), calls: CompleteRequest[] = [];
   const provider: Provider = { name: "openai", models: async () => [], complete: async req => {
     calls.push(req); entered.resolve(); await released.promise;
-    return { content: [text(JSON.stringify({ user: [], project: ["Use Bun"], pending: [], tasks: [] }))], stop: "end", completion: "completed" };
+    return { content: [text(JSON.stringify({ summary: ["Use Bun"], pending: [] }))], stop: "end", completion: "completed" };
   } };
   return { provider, calls, entered, released };
 }

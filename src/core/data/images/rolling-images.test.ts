@@ -33,7 +33,7 @@ afterEach(() => {
   if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
   dirs.splice(0).forEach(d => rmSync(d, { recursive: true, force: true }));
 });
-const memory = { user: [], project: ["Retain visual requirements; pixels are separate."], pending: [], tasks: [] };
+const memory = { summary: ["Retain visual requirements; pixels are separate."], pending: [] };
 function summary(gated = false) {
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), calls: CompleteRequest[] = [];
   if (!gated) release.resolve();
@@ -223,7 +223,7 @@ test("text-only memory/search sanitizes inline/nested image bytes and URLs witho
   const before = JSON.stringify(messages), source = JSON.stringify(historicalMessages(messages));
   expect(source).not.toContain(image.source.data); expect(source).not.toContain("private.invalid"); expect(source).not.toContain("private reasoning");
   expect(source).toContain(f.refs[0]!.id); expect(source).toContain("not a block"); expect(JSON.stringify(messages)).toBe(before);
-  await summarizeOlder(messages, [], new AbortController().signal, { model: "gpt-6-sol", loadProvider: async () => worker.provider });
+  await summarizeOlder(messages, new AbortController().signal, { model: "gpt-6-sol", loadProvider: async () => worker.provider });
   expect(JSON.stringify(worker.calls[0]!.messages)).not.toContain(image.source.data);
   for (const message of messages) {
     const entry = await f.transcript.append({ type: "message", message });
