@@ -3,9 +3,9 @@ import type { RequestSettings } from "../../../providers/catalog";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";
 // A project override never changes the default used by other projects.
 import { loadConfig, readProjectState, writeProjectState } from "../../../config";
-import { provider } from "../../../providers";
+import { provider, type Provider } from "../../../providers";
 import { prefetchContextLimits } from "../../../providers/catalog";
-import { providerFor, type Provider } from "../../../providers";
+import { accountForModel } from "./project-account";
 
 function validateProject(project: string): void {
   if (!/^[a-zA-Z0-9._-]+$/.test(project) || project === "." || project === "..") throw new Error("invalid project id");
@@ -38,7 +38,8 @@ export function projectModelResolver(project: string, load: typeof provider = pr
   return async () => {
     const model = await effectiveModel(project);
     try {
-      const selected = await load(providerFor(model));
+      const account = await accountForModel(model, readProjectState<unknown>(project, "account")); // from the one model read above: this project's account, never a global one
+      const selected = await load(account.provider, { profile: account.profile });
       prefetchContextLimits(selected); // Background only: the turn never waits on the catalog.
       return { model, provider: selected, settings: await effectiveSettings(project, model) };
     }

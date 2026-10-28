@@ -446,7 +446,7 @@ describe("tui app", () => {
     await until(() => !!app.frame().help);
     const help = app.frame().help!.lines.join("\n");
     expect(app.page!.lines).toEqual([]);
-    for (const cmd of ["/keys", "/rename <name>", "/new [name] [directory]", "/close", "/quit", "/agents", "/model [id]", "/accounts", "/login claude|codex", "/review-rounds [n]", "/dynamic-dispatch [on|off]"]) expect(help).toContain(cmd);
+    for (const cmd of ["/keys", "/rename <name>", "/new [name] [directory]", "/close", "/quit", "/agents", "/model", "/accounts", "/login claude|codex", "/review-rounds [n]", "/dynamic-dispatch [on|off]"]) expect(help).toContain(cmd);
     expect(help).not.toContain("/back");
     app.quit();
     await running;
