@@ -400,3 +400,82 @@ test("confirmed save refreshes captured page, not the selection changed while pe
     await until(() => ui.writes.some((s) => s.includes(`model claude-captured`)));
   } finally { release.resolve(); await ui.close(); }
 });
+
+const settings = (ui: Awaited<ReturnType<typeof setup>>) => effectiveSettings(ui.project, "gpt-6-astra");
+const running = [{ name: "worker-a", live: true }, { name: "worker-b", live: false }, { name: "reviewer-a", live: true }];
+
+for (const [command, title, saved] of [
+  ["/effort high", "set effort for gpt-6-astra to high?", { effort: "high" }],
+  ["/effort default", "set effort for gpt-6-astra to default?", { effort: undefined }],
+  ["/fast on", "set fast for gpt-6-astra to on?", { fast: true }],
+  ["/fast off", "set fast for gpt-6-astra to off?", { fast: false }],
+] as const) {
+  test(`${command} with running subagents asks to switch all; Cancel and Escape never persist`, async () => {
+    const ui = await setup(running);
+    try {
+      writeProjectState(ui.project, "model-settings", { "gpt-6-astra": { effort: "low", fast: true } });
+      const before = await settings(ui);
+      for (const answer of ["cancel", "escape", "switch all"] as const) {
+        ui.type(command + "\r");
+        await until(() => !!ui.app.menu);
+        expect(ui.app.menu!.title).toContain(`${title} applies to orchestrator, 1 workers and 1 reviewers.`);
+        expect(ui.app.menu!.items).toEqual(["● cancel", "  switch all"]);
+        if (answer === "escape") ui.key({ name: "escape" });
+        else { if (answer === "switch all") ui.key({ name: "down" }); ui.type("\r"); }
+        await until(() => !ui.app.menu);
+        if (answer !== "switch all") expect(await settings(ui)).toEqual(before);
+      }
+      await until(() => note(ui.app).includes("next model request"));
+      expect(await settings(ui)).toEqual({ ...before, ...saved });
+    } finally { await ui.close(); }
+  });
+}
+
+test("effort picker with running subagents confirms before saving for the picker's model", async () => {
+  const ui = await setup(running);
+  try {
+    for (const answer of ["cancel", "switch all"] as const) {
+      ui.type("/effort\r"); await until(() => !!ui.app.menu);
+      ui.key({ name: "down" }); ui.key({ name: "down" }); ui.type("\r"); // medium
+      await until(() => !!ui.app.menu?.title.includes("set effort for gpt-6-astra to medium? applies to orchestrator, 1 workers and 1 reviewers."));
+      if (answer === "switch all") ui.key({ name: "down" });
+      ui.type("\r");
+      await until(() => !ui.app.menu);
+      if (answer === "cancel") expect((await settings(ui)).effort).toBeUndefined();
+    }
+    await until(() => note(ui.app).includes("effort for gpt-6-astra: medium"));
+    expect((await settings(ui)).effort).toBe("medium");
+  } finally { await ui.close(); }
+});
+
+test("setting reports and refusals never ask; unknown liveness refuses every setting change", async () => {
+  const ui = await setup(running);
+  try {
+    ui.type("/fast\r"); await until(() => note(ui.app).includes("fast for gpt-6-astra: off"));
+    ui.type("/effort ultra\r"); await until(() => note(ui.app).includes("effort ultra is unsupported"));
+    ui.type("/fast yes\r"); await until(() => note(ui.app).includes("usage: /fast"));
+    expect(ui.app.menu).toBeNull();
+    (ui.app as unknown as { deps: AppDeps }).deps.modelAgents = async () => null;
+    for (const command of ["/effort high", "/fast on", "/effort"]) {
+      ui.type(command + "\r");
+      if (command === "/effort") { await until(() => !!ui.app.menu); ui.type("\r"); }
+      await until(() => note(ui.app).includes("could not determine running agents; try again"));
+      expect(ui.app.menu).toBeNull();
+      ui.app.note("-");
+    }
+    expect(await settings(ui)).toEqual({});
+  } finally { await ui.close(); }
+});
+
+test("a stale setting confirmation cannot save from a different selected page", async () => {
+  const ui = await setup(running);
+  try {
+    const original = ui.app.page!;
+    await ui.app.commands.get("/fast")!.run("on", original);
+    expect(ui.app.menu!.title).toContain("set fast for gpt-6-astra to on?");
+    ui.app.pages.push({ ...original, project: "other" }); ui.app.active = 1;
+    ui.key({ name: "down" }); ui.type("\r");
+    await until(() => !ui.app.menu);
+    expect(await settings(ui)).toEqual({});
+  } finally { await ui.close(); }
+});
