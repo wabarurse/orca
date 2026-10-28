@@ -168,7 +168,7 @@ class TurnControl {
 function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, config: Config): Orchestrator {
   const configured = compactionOptions(config);
   const state = new TurnControl(deps.project, transcript);
-  const rolling = new RollingCompactor(deps.project, transcript, { triggerTokens: config.orchestratorContextTokens, tailTokens: 6000, ...deps.rolling });
+  const rolling = new RollingCompactor(deps.project, transcript, { tailTokens: 6000, ...deps.rolling });
   // A Page/session cannot acquire ownership of a deleted/recreated project.
   const identity = existsSync(paths.project(deps.project)) ? projectIdentity(deps.project) : undefined;
   const checkIdentity = () => {
@@ -319,7 +319,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
     compaction: compactionOptions(config), compactRequested,
     compactBoundary: async (current, manual, maintenance) => {
       if (inputEpoch(deps.project) !== epoch) { rolling.reset(); return; }
-      await rolling.boundary(current, manual || (config.compact && !maintenance && budget(current, await transcript.chain()) > config.orchestratorContextTokens * 1.5), maintenance);
+      await rolling.boundary(current, manual, maintenance);
     },
     system: rolePrompt("orchestrator", { ...config, ...await effectiveFlow(deps.project, config) }), // per turn, so /review-rounds and /dynamic-dispatch apply next turn
     ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project) },

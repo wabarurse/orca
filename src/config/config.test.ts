@@ -12,6 +12,14 @@ afterEach(() => {
   if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
 });
 
+test("legacy orchestrator token targets cannot override the half-window policy", async () => {
+  await Bun.write(paths.config, 'orchestratorContextTokens = 32000\nmodel = "claude-opus-5-5"\n');
+  expect(await loadConfig()).not.toHaveProperty("orchestratorContextTokens");
+  await saveConfig({ compact: true });
+  expect(await Bun.file(paths.config).text()).not.toContain("orchestratorContextTokens");
+  expect((await loadConfig()).model).toBe("claude-opus-5-5");
+});
+
 describe("dynamicDispatch", () => {
   test("defaults to off; reads booleans; anything else reads as off", async () => {
     expect(defaults.dynamicDispatch).toBe(false);

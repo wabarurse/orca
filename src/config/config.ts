@@ -5,7 +5,6 @@ export { paths, repositoryBinding, type RepositoryBinding } from "./paths";
 export interface Config {
   /** Full access preserves existing installs; workspace uses an OS write sandbox and fails closed if unavailable. */
   sandbox: "off" | "workspace";
-  orchestratorContextTokens: number;
   model: string;
   compact: boolean;
   contextLimitFallback: number;
@@ -34,7 +33,6 @@ export interface Config {
 
 export const defaults: Config = {
   sandbox: "off",
-  orchestratorContextTokens: 32000,
   model: "claude-sonnet-5-5",
   compact: true,
   contextLimitFallback: 128000,
@@ -72,13 +70,15 @@ export async function loadConfig(options: { strict?: boolean } = {}): Promise<Co
     warned = warning;
     return defaults;
   }
+  // The orchestrator now uses half of the selected model's window. Do not let
+  // a saved absolute target restore the old 32k policy or persist it on save.
+  delete (parsed as Record<string, unknown>).orchestratorContextTokens;
   return withFallbacks({ ...defaults, ...parsed });
 }
 
 /** Invalid saved values read as their defaults. */
 function withFallbacks(config: Config): Config {
   if (config.sandbox !== "off" && config.sandbox !== "workspace") throw new Error("sandbox must be off or workspace; no execution fallback is permitted");
-  if (!integerWithin(config.orchestratorContextTokens, 8000, 200000)) config.orchestratorContextTokens = defaults.orchestratorContextTokens;
   if (typeof config.anthropicPromptCache !== "boolean") config.anthropicPromptCache = defaults.anthropicPromptCache;
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;

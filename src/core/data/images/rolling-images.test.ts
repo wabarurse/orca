@@ -192,7 +192,7 @@ test("retained image budget blocks requests rather than dropping pixels", async 
   const { rolling, deps, foreground } = controller(f, worker);
   deps.compaction = { contextLimit: 30000, outputReserve: 2000 };
   await expect(createAgent({ ...deps, compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle) }).run()).rejects.toThrow("context blocked");
-  expect(worker.calls).toHaveLength(1); expect(foreground.calls).toHaveLength(0);
+  expect(worker.calls).toHaveLength(2); expect(foreground.calls).toHaveLength(0);
   expect(ids(await f.transcript.chain())).toEqual([...f.refs, ...f.refs].map(r => r.id));
   expect(estimate(await f.transcript.chain())).toBeGreaterThan(24000);
 
@@ -221,7 +221,7 @@ test("text-only memory/search sanitizes inline/nested image bytes and URLs witho
   const before = JSON.stringify(messages), source = JSON.stringify(historicalMessages(messages));
   expect(source).not.toContain(image.source.data); expect(source).not.toContain("private.invalid"); expect(source).not.toContain("private reasoning");
   expect(source).toContain(f.refs[0]!.id); expect(source).toContain("not a block"); expect(JSON.stringify(messages)).toBe(before);
-  await summarizeOlder(messages, [], new AbortController().signal, async () => worker.provider);
+  await summarizeOlder(messages, [], new AbortController().signal, { model: "gpt-6-sol", loadProvider: async () => worker.provider });
   expect(JSON.stringify(worker.calls[0]!.messages)).not.toContain(image.source.data);
   for (const message of messages) {
     const entry = await f.transcript.append({ type: "message", message });

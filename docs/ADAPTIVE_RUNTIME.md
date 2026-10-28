@@ -11,7 +11,7 @@ Publication remains a separately authorized capability. Existing task, dependenc
 | Consolidation | Integrates the intent and source-attributed memory changes with the runtime work | Role prompts, memory archive and this document |
 | Provider reliability | Preserves streamed Codex output when the completion envelope is empty; handles limit/refusal/error separately; bounds pauses and recovery without replaying delivered stream content | `src/providers/{openai,anthropic,account,bounded-request}.ts`, `src/core/agent-loop/loop/agent.ts` |
 | Optional delegation | `spawn` only requires a brief. Task registration and explicit review are independent | `src/core/tools/spawn.ts` |
-| Small coordinator context | Focused delegation, concise worker reports, selected knowledge and a 32k-token default compaction target | `src/core/prompt/orchestrator.ts`, orchestrator session |
+| Small coordinator context | Focused delegation, concise worker reports, selected knowledge and compaction at 50% of the orchestrator model’s context window | `src/core/prompt/orchestrator.ts`, orchestrator session |
 | Fresh context | A new worker starts from its brief; `fresh: true` resets an idle worker's active context on its existing branch, retaining original history | Spawn and transcripts |
 | Durable detail | Large reports require a concise summary; full evidence is saved outside the repository with a retrieval path | `src/core/tools/message.ts` |
 | File tools | Bounded `read`, exclusive-create `write`, revision-checked replacement and exact `edit` | `src/core/tools/files.ts` |
@@ -68,7 +68,7 @@ Selection retrieves up to eight relevant facts (or `always.*` preferences) withi
 
 Root instructions load once from the Git root to the working directory. AGENTS.md wins over CLAUDE.md in the same folder. `read` surfaces applicable nested instructions. Large instruction sets include a truncation notice and require explicitly reading the remainder. Skills are cataloged from `.agents/skills`, `.claude/skills` and Orca's personal `skills/`; their bodies load through `skill` only when needed. Shell access does not guarantee automatic nested-instruction discovery, so agents must inspect applicable instructions before editing there.
 
-The default `orchestratorContextTokens = 32000` is a compaction target, not a hard total-request ceiling. It accepts 8k–200k; system instructions and pinned intent may exceed the target. Existing `compact = false` still disables compaction. Fresh worker briefs avoid copying coordinator history, while relevant scoped knowledge and the small current goal remain available.
+The orchestrator compacts at 50% of its selected model's context window, with output-reserve safety checks. The legacy `orchestratorContextTokens` key is ignored; there is no separate 32k target or 48k forced pass. Existing `compact = false` still disables automatic compaction. Workers and reviewers retain their own compaction policy. Fresh worker briefs avoid copying coordinator history, while relevant scoped knowledge and the small current goal remain available.
 
 ## Execution and tmux
 
