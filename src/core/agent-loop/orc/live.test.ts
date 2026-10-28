@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { paths } from "../../../config/config";
 import { liveFile, liveReader, liveWriter } from "./live";
 import type { LiveEvent } from "../../../protocol/daemon";
@@ -166,7 +166,7 @@ test("the cap replaces further text by one truncated event while tool events are
 
 test("an unwritable live file never throws into the turn and is logged once", async () => {
   const p = "live-fail";
-  mkdirSync(paths.project(p), { recursive: true });
+  mkdirSync(dirname(paths.orchestrator(p)), { recursive: true });
   writeFileSync(paths.orchestrator(p), "a file where the directory should be");
   const logs: string[] = [];
   const w = liveWriter({ project: p, run: "r", head: () => null, log: t => { logs.push(t); } });
