@@ -118,7 +118,7 @@ for (const mode of ["model", "tools"]) test(`manual request during busy ${mode} 
   const entered = gate(), resume = gate(); let normal = 0, summaries = 0, tools = 0;
   const { transcript } = await fixture();
   const p = provider(async r => {
-    if (r.system?.startsWith("Maintain a compact")) { summaries++; if (mode === "tools") expect(tools).toBe(2); return end(JSON.stringify({ user: [], project: [], pending: ["continue original task"], tasks: [] })); }
+    if (r.system?.startsWith("Maintain a compact")) { summaries++; if (mode === "tools") expect(tools).toBe(2); return end(JSON.stringify({ summary: [], pending: ["continue original task"] })); }
     normal++;
     if (normal === 1 && mode === "model") { entered.release(); await resume.promise; }
     if (normal === 1 && mode === "tools") return { content: [toolUse("a", "echo", {}), toolUse("b", "echo", {})], stop: "tool_use" };
