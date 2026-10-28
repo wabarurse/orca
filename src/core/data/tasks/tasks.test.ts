@@ -145,6 +145,26 @@ test("explicit validation is head/revision bound; new changes/runs invalidate re
   await prepare(t, "fix"); expect((await getTask(project, t.id)).status).toBe("queued"); expect((await getTask(project, t.id)).readiness).toBeUndefined();
 });
 
+test("reads and a no-op branch invalidation never wait on the project lock another live process holds", async () => {
+  const t = await ready();
+  const other = await registerTask(project, input("feat/other"));
+  await prepareTaskRun(project, other.id, other.branch, { id: "other", agent: "worker-feat-other", role: "worker" }); await startTaskRun(project, "other");
+  // Another orca process holds the project state lock (its owner is alive), e.g. mid publication.
+  const lock = join(paths.runtime, "project-locks", project);
+  mkdirSync(lock, { recursive: true }); writeFileSync(join(lock, "owner.json"), JSON.stringify({ pid: process.pid, since: new Date().toISOString() }));
+  try {
+    const started = Date.now();
+    expect((await getTask(project, t.id)).status).toBe("ready_to_merge");
+    expect(await listTasks(project)).toHaveLength(2);
+    // Run tracking before every shell/edit call: nothing is validated on feat/other, so no lock and no write.
+    await invalidateTaskBranch(project, "other");
+    expect(Date.now() - started).toBeLessThan(2_000);
+  } finally { rmSync(lock, { recursive: true, force: true }); }
+  // feat/x is validated: that invalidation is still recorded, under the lock.
+  await invalidateTaskBranch(project, "reviewer");
+  expect((await getTask(project, t.id)).readiness).toBeUndefined();
+});
+
 test("a conflict found after another merge blocks the task and invalidates readiness once; repeats are no-ops", async () => {
   const t = await ready();
   const reason = "conflicts with main after PR #9 merged; rebase needed";

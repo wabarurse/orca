@@ -45,12 +45,12 @@ export async function prepareStackSpawn(project: string, taskId: string, branch:
     const current = await latestDefault(cwd);
     const stack = await resolveStackBase(ledgerDependencies(tasks), task.id, current.commit, selected, gitAncestry(cwd));
     await dependencyGit(cwd, ['update-ref', `refs/orca/stack-bases/${task.id}`, stack.baseCommit, '0'.repeat(stack.baseCommit.length)]);
-    save({ version: 1, stack });
+    await save({ version: 1, stack });
   });
 }
 
 interface ActionContext {
-  current: Task; tasks: Task[]; save: (p: DependencyProvenance) => void; ctx: ToolContext; task: Task;
+  current: Task; tasks: Task[]; save: (p: DependencyProvenance) => Promise<void>; verify: () => Promise<void>; ctx: ToolContext; task: Task;
   p: DependencyProvenance; ancestry: ReturnType<typeof gitAncestry>; head: string; input: Record<string, unknown>;
 }
 async function workerAction(c: ActionContext, action: string): Promise<string> {
@@ -58,20 +58,20 @@ async function workerAction(c: ActionContext, action: string): Promise<string> {
   owner(current, ctx, 'worker');
   const checkpoint = { taskId: current.id, revision: current.revision + 1, commit: head, clean: true, quiescent: true };
   const pin = () => dependencyGit(ctx.cwd, ['update-ref', `refs/orca/checkpoints/${current.id}/${current.revision + 1}`, head, '0'.repeat(head.length)]);
-  if (action === 'checkpoint') { await pin(); save({ ...p, checkpoint, checkpointRun: ctx.run }); return `checkpoint ${head}; usable after this worker stops`; }
+  if (action === 'checkpoint') { await pin(); await save({ ...p, checkpoint, checkpointRun: ctx.run }); return `checkpoint ${head}; usable after this worker stops`; }
   const validation = evidence(input), commands = input.commands;
   check(Array.isArray(commands) && commands.length > 0 && commands.length <= 100 && commands.every(c => typeof c === 'string' && c.trim() && c.length <= 2000), 'affected-check command list required');
   const latest = await latestDefault(ctx.cwd);
   check(await ancestry(latest.commit, head), 'update onto latest default before recording affected checks');
   await pin();
-  save({ ...p, checkpoint, checkpointRun: ctx.run, checks: { head, defaultCommit: latest.commit, run: ctx.run!, commands: commands as string[], validation }, review: undefined });
+  await save({ ...p, checkpoint, checkpointRun: ctx.run, checks: { head, defaultCommit: latest.commit, run: ctx.run!, commands: commands as string[], validation }, review: undefined });
   return `worker evidence recorded for ${head}; no checks executed by task tool`;
 }
 async function reviewAction(c: ActionContext): Promise<string> {
   const { current, save, ctx, p, head, input } = c;
   owner(current, ctx, 'reviewer', 'review');
   check(p.checks?.head === head, 'matching worker evidence required before review attestation');
-  save({ ...p, review: { head, run: ctx.run!, validation: evidence(input) } }); return `code review recorded for ${head}`;
+  await save({ ...p, review: { head, run: ctx.run!, validation: evidence(input) } }); return `code review recorded for ${head}`;
 
 }
 async function prepareAction(c: ActionContext, latest: Awaited<ReturnType<typeof latestDefault>>): Promise<string> {
@@ -84,10 +84,10 @@ async function prepareAction(c: ActionContext, latest: Awaited<ReturnType<typeof
   const effective = p.replay ? { ...p.stack, baseCommit: p.replay.onto } : p.stack;
   const replay = await replayStack(ctx.cwd, task.branch, effective, latest.commit);
   const receipt = { ...replay, stack: p.stack, oldHead: p.replay?.oldHead ?? replay.oldHead };
-  save({ version: 1, stack: p.stack, replay: receipt }); // durable BEFORE adoption (crash recovery)
+  await save({ version: 1, stack: p.stack, replay: receipt }); // durable BEFORE adoption (crash recovery)
   check(await cleanBranchHead(ctx.cwd, task.branch) === head, 'source head changed before candidate adoption');
   // --keep rejects overwriting local changes; never --hard. Original and candidate
-  // refs survive. The project lock excludes other supervised writers, not user shells.
+  // refs survive. The dependency lock excludes other supervised writers, not user shells.
   await dependencyGit(ctx.cwd, ['reset', '--keep', receipt.newHead]);
   check(await cleanBranchHead(ctx.cwd, task.branch) === receipt.newHead, 'candidate adoption needs recovery');
   return `adopted B-only candidate ${receipt.newHead} onto ${latest.commit}; run only affected worker checks then request code review`;
@@ -95,7 +95,7 @@ async function prepareAction(c: ActionContext, latest: Awaited<ReturnType<typeof
 }
 
 async function publishAction(c: ActionContext, latest: Awaited<ReturnType<typeof latestDefault>>) {
-  const { current, tasks, ctx, task, p, head } = c;
+  const { current, tasks, ctx, task, p, head, verify } = c;
   owner(current, ctx, 'reviewer', 'watch-ci');
   const requireReview = !!current.dependsOn?.length || !!p.stack || (await effectiveFlow(ctx.project)).maxReviewRounds !== 0;
   await verifyPublicationState(ctx.project, ctx.cwd, current, tasks, requireReview);
@@ -107,6 +107,7 @@ async function publishAction(c: ActionContext, latest: Awaited<ReturnType<typeof
     const fresh = await latestDefault(ctx.cwd);
     check(fresh.commit === latest.commit && fresh.branch === latest.branch, 'default changed before remote effects');
     check(await cleanBranchHead(ctx.cwd, task.branch) === head, 'head changed before remote effects');
+    await verify(); // ownership still holds in the ledger right before each push/create
   });
   return { ...pr, repository };
 }
@@ -119,12 +120,13 @@ export async function dependencyAction(action: string, input: Record<string, unk
     await refreshMerges(ctx.project, task.id);
   }
   let published: { repository: string; number: number } | undefined;
-  const result = await withDependencyTaskOwnership(ctx.project, task.id, task.branch, async (current, tasks, save) => {
+  // The dependency lock, not the project state lock, spans the git/gh work below (see withDependencyTaskOwnership).
+  const result = await withDependencyTaskOwnership(ctx.project, task.id, task.branch, async (current, tasks, save, verify) => {
     ctx.signal?.throwIfAborted();
     await assertRepository(ctx.project, ctx.cwd);
     const p = provenance(current) ?? { version: 1 as const }, ancestry = gitAncestry(ctx.cwd);
     const head = await cleanBranchHead(ctx.cwd, task.branch);
-    const c: ActionContext = { current, tasks, save, ctx, task, p, ancestry, head, input };
+    const c: ActionContext = { current, tasks, save, verify, ctx, task, p, ancestry, head, input };
     if (action === 'checkpoint' || action === 'checks') return workerAction(c, action);
     if (action === 'reviewed') return reviewAction(c);
     assertLedgerPrerequisitesMerged(tasks, current.id);

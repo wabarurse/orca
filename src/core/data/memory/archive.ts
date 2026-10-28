@@ -275,13 +275,14 @@ function queryText(value: unknown): string {
  * compaction (or /clear) indexed and never writes the archive, so messages since the last compaction are not found
  * (they are still in the live context). Scope: this project, the orchestrator's transcript, the current /clear epoch. */
 export async function queryHistory(project: string, input: Record<string, unknown>): Promise<string> {
+  // Read-only, so it never waits on the project lock: SQLite gives a consistent snapshot, and the identity checks
+  // around the read refuse a project deleted or recreated meanwhile.
   const identity = projectIdentity(project);
-  return withProjectStateLock(project, async () => {
-    assertProjectIdentity(project, identity);
-    return queryLocked(project, input);
-  });
+  const result = queryScoped(project, input);
+  assertProjectIdentity(project, identity);
+  return result;
 }
-function queryLocked(project: string, input: Record<string, unknown>): string {
+function queryScoped(project: string, input: Record<string, unknown>): string {
   const entries = transcriptEntries(open(paths.transcript(project, ARCHIVE_AGENT)));
   const tasks = scopedTasks(existingTasks(project), entries), epoch = contextEpoch(entries);
   const db = readonlyDatabase();
@@ -468,17 +469,16 @@ function readGlobal(db: Database, own: { project: string; epoch: string }, input
 /** Search or read everything archived outside the caller's current session (all projects, earlier /clear epochs).
  * Read-only, like `queryHistory`: what compaction and /clear indexed, nothing newer. */
 export async function queryGlobalHistory(project: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+  // Read-only: no project lock (see queryHistory).
   const identity = projectIdentity(project);
-  return withProjectStateLock(project, async () => {
-    // An abort while queued behind the project lock is only observed after acquisition (same as the task path).
-    assertProjectIdentity(project, identity);
-    // Only to know which rows are the caller's current session; nothing is indexed here.
-    const entries = transcriptEntries(open(paths.transcript(project, ARCHIVE_AGENT)));
-    const tasks = scopedTasks(existingTasks(project), entries);
-    const own = { project, epoch: contextEpoch(entries), taskIds: tasks.map(t => t.id) };
-    signal?.throwIfAborted();
-    const db = readonlyDatabase();
-    if (!db) return JSON.stringify({ tasks: [], entries: [], note: "no global archive yet", source: GLOBAL_SOURCE });
-    try { return input.action === "read" ? readGlobal(db, own, input) : searchGlobal(db, own, input); } finally { db.close(); }
-  });
+  signal?.throwIfAborted();
+  // Only to know which rows are the caller's current session; nothing is indexed here.
+  const entries = transcriptEntries(open(paths.transcript(project, ARCHIVE_AGENT)));
+  const tasks = scopedTasks(existingTasks(project), entries);
+  const own = { project, epoch: contextEpoch(entries), taskIds: tasks.map(t => t.id) };
+  assertProjectIdentity(project, identity);
+  signal?.throwIfAborted();
+  const db = readonlyDatabase();
+  if (!db) return JSON.stringify({ tasks: [], entries: [], note: "no global archive yet", source: GLOBAL_SOURCE });
+  try { return input.action === "read" ? readGlobal(db, own, input) : searchGlobal(db, own, input); } finally { db.close(); }
 }

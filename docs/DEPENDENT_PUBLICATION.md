@@ -35,13 +35,18 @@ is merged. Its manual migration scripts remain unrelated and are not run here.
 6. Watch CI separately. `task pr` may record historical evidence but cannot
    make dependent work ready without the same latest-default, protected B-only
    replay-candidate ancestry, merged-prerequisite and matching worker/review
-   verification used by publication, under the project lock. `task ready` still requires matching hosted-check/PR
+   verification used by publication, under the project's dependency lock (git and
+   network work never holds the project state lock; the readiness commit then
+   requires the verified ledger to be unchanged). `task ready` still requires matching hosted-check/PR
    evidence. No operation automatically merges a PR.
 
 ## Safety boundaries
 
-Project-lock ownership permits exactly the supervised calling run and excludes
-other Orca writers on the branch. This is **not** a universal lock over user
+Dependency-lock ownership permits exactly the supervised calling run and excludes
+other Orca writers on the branch: dependency actions and task-run preparation share
+the project's dependency lock, and ownership is re-checked under the project state
+lock at the start, at every ledger save and right before each push/create, so a
+task change meanwhile refuses the action. This is **not** a universal lock over user
 shells, external git clients, or other projects sharing a repository. Generic
 bash retains user privileges: supported publication is runtime-gated, but Orca
 cannot claim raw shell commands are universally prevented. Do not bypass the

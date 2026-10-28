@@ -94,3 +94,21 @@ test('recorded stack edges cannot be cleared to bypass prerequisite merge gates'
   await expect(setTaskDependencies(project, a.id, [b.id])).rejects.toThrow();
   expect((await setTaskDependencies(project, b.id, [a.id])).dependsOn).toEqual([a.id]);
 });
+
+test('slow dependency work holds only the dependency lock: project state stays writable, and a task change meanwhile refuses the save', async () => {
+  const { project, b } = await fixture();
+  const before = provenance(await getTask(project, b.id));
+  let release!: () => void, entered!: () => void;
+  const wait = new Promise<void>(r => { release = r; }), ready = new Promise<void>(r => { entered = r; });
+  const operation = withDependencyTaskOwnership(project, b.id, 'b', async (task, _tasks, save) => {
+    entered(); await wait; // stands for git status/fetch/push and gh calls
+    await save({ ...provenance(task), version: 1 });
+  });
+  await ready;
+  // Not queued behind the operation (it previously held the project state lock throughout).
+  await observeTaskPR(project, b.id, { pr: { repository: 'o/r', number: 7, url: 'https://github.com/o/r/pull/7', head: 'd'.repeat(40) }, branch: 'b', state: 'OPEN', ready: false, checks: 'pending' });
+  expect((await getTask(project, b.id)).pr?.number).toBe(7);
+  release();
+  await expect(operation).rejects.toThrow('dependency task changed');
+  expect(provenance(await getTask(project, b.id))).toEqual(before);
+});

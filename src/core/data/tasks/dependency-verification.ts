@@ -1,4 +1,4 @@
-/** Shared runtime gate for publication AND readiness. Caller holds the project lock. */
+/** Shared runtime gate for publication AND readiness. Caller holds the project's dependency lock (never the project state lock: this runs git and fetches). */
 import { realpath } from 'node:fs/promises';
 import { paths } from '../../../config';
 import { check, type Task } from "../../../protocol/task";

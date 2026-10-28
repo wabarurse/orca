@@ -28,7 +28,7 @@ export async function captureDependencyCheckpoint(project: string, id: string, b
     await assertRepository(project, cwd);
     const commit = await cleanBranchHead(cwd, branch);
     const checkpoint = { taskId: task.id, revision: task.revision + 1, commit, clean: true, quiescent: true };
-    save({ ...provenance(task), version: 1, checkpoint });
+    await save({ ...provenance(task), version: 1, checkpoint });
     return checkpoint;
   });
 }
@@ -40,7 +40,7 @@ export async function recordDependencyStack(project: string, id: string, branch:
     const stack = await resolveStackBase(snapshot(tasks, authority), task.id, defaultCommit, selectedCommit, gitAncestry(cwd));
     // Runner will consume this persisted base only for a fresh branch. Existing branch
     // creation/ancestry and repo binding checks must be integrated before exposing it.
-    save({ version: 1, stack }); return stack;
+    await save({ version: 1, stack }); return stack;
   });
 }
 export async function prepareDependencyReplay(project: string, id: string, branch: string, cwd: string,
@@ -50,7 +50,7 @@ export async function prepareDependencyReplay(project: string, id: string, branc
     assertPrerequisitesMerged(snapshot(tasks, authority), task.id);
     const p = provenance(task); check(p?.stack, 'recorded stack required');
     const receipt = await replayStack(cwd, branch, p.stack, latestDefault);
-    save({ version: 1, stack: p.stack, replay: receipt }); return receipt;
+    await save({ version: 1, stack: p.stack, replay: receipt }); return receipt;
   });
 }
 
@@ -63,7 +63,7 @@ export async function prepareDependencyReplay(project: string, id: string, branc
 export async function coordinateDependencyPublication<T>(project: string, id: string, branch: string, cwd: string,
   refresh: (tasks: readonly Task[]) => Promise<{ authority: DependencyAuthority; state: PublicationState }>,
   publish: (head: string) => Promise<T>): Promise<T> {
-  return withDependencyTaskOwnership(project, id, branch, async (task, tasks) => {
+  return withDependencyTaskOwnership(project, id, branch, async (task, tasks, _save, verify) => {
     await assertRepository(project, cwd);
     const { authority, state } = await refresh(tasks);
     check(state.taskId === task.id, 'publication task mismatch');
@@ -74,6 +74,7 @@ export async function coordinateDependencyPublication<T>(project: string, id: st
     if (p?.replay) check(await dependencyGit(cwd, ['rev-parse', '--verify', `${p.replay.protectedRef}/candidate`]) === head, 'replay candidate does not match checkout');
     await assertPublication(snapshot(tasks, authority), actual, gitAncestry(cwd), p?.stack);
     check(await cleanBranchHead(cwd, branch) === head, 'branch changed before publication');
+    await verify(); // the ledger is only locked briefly: ownership must still hold right before the effect
     return publish(head);
   });
 }

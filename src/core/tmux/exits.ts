@@ -206,6 +206,13 @@ export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracke
   };
   await save();
   await startTaskRun(project, run);
+  // A branch invalidation not yet recorded (the ledger was busy): the next tool call records it before it runs.
+  let unrecorded = false;
+  const invalidate = async () => {
+    unrecorded = true;
+    await invalidateTaskBranch(project, run);
+    unrecorded = false;
+  };
   return {
     state: () => ({ ...s }),
     end: async () => { s.endedAt ??= new Date().toISOString(); await save(); },
@@ -213,12 +220,17 @@ export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracke
     model: () => set({ step: "model request" }),
     request: (modelRequest) => set({ modelRequest }),
     tool: async (name, input) => {
-      if (["bash", "write", "edit", "process"].includes(name)) await invalidateTaskBranch(project, run);
+      // Throws when the ledger stays busy: the agent then refuses this one call instead of running it unrecorded.
+      if (unrecorded || ["bash", "write", "edit", "process"].includes(name)) await invalidate();
       const step = describeTool(name, input);
       return set({ step, tool: step, state: "running" });
     },
     reported: () => set({ state: "reported" }),
-    instructed: async () => { await invalidateTaskBranch(project, run); if (s.state !== "running") await set({ state: "running" }); },
+    instructed: async () => {
+      // The inbox is already committed; a busy ledger must not end the run. The next tool call records it.
+      await invalidate().catch(() => {});
+      if (s.state !== "running") await set({ state: "running" });
+    },
   };
 }
 

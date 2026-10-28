@@ -99,7 +99,13 @@ function isReport(name: string, input: unknown, result: ToolResultBlockParam): b
 /** Run one tool call and tell the tracker: the step before, a report after. */
 async function runTracked(deps: AgentDeps, block: ToolUse, track: (name: string, input: unknown) => Promise<void>): Promise<ToolResultBlockParam> {
   const input = block.input as Record<string, unknown>;
-  await track(block.name, input);
+  // Run tracking that cannot be recorded (e.g. task state stayed locked) refuses this call, never ends the run.
+  try { await track(block.name, input); }
+  catch (err) {
+    if (deps.signal?.aborted) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    return { type: "tool_result", tool_use_id: block.id, content: `not run: ${msg}; nothing was changed, retry the call`, is_error: true };
+  }
   const started = performance.now();
   const trace = { project: deps.ctx.project, agent: sessionId(deps.ctx.role, deps.ctx.branch), run: deps.ctx.run };
   const result = await usageScope(trace, () => runTool({ ...deps, ctx: { ...deps.ctx, callId: block.id } }, block.name, input));
@@ -123,8 +129,10 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
   // Run-state writes still have one writer even when tool execution overlaps.
   let tracking = Promise.resolve();
   const track = (name: string, input: unknown) => {
-    tracking = tracking.then(() => deps.tracker?.tool(name, input));
-    return tracking;
+    // A failed step must not reject every later one: each call waits for, not inherits, the previous outcome.
+    const step = tracking.catch(() => {}).then(() => deps.tracker?.tool(name, input));
+    tracking = step;
+    return step;
   };
   const calls = content.filter((b): b is ToolUse => b.type === "tool_use");
   return scheduleTools(calls, b => deps.tools[b.name]?.parallel?.(b.input as Record<string, unknown>) ?? false, async block => {

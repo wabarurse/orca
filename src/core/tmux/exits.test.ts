@@ -635,3 +635,18 @@ test("corrupt task registry cannot suppress shell exit or watchdog notices", asy
   expect(await watch(project)).toEqual(["worker-feat"]);
   expect((await inbox())[0]?.text).toContain("stopped while the tui was not watching");
 });
+
+describe("run tracking when the task ledger refuses a write", () => {
+  test("an inbox instruction never ends the run; the unrecorded invalidation refuses the next tool call of any kind", async () => {
+    mkdirSync(paths.project(project), { recursive: true });
+    await registerTask(project, { name: "Feat", summary: "Feature", branch: "feat", authorized: true }); // a durable ledger for this project
+    const t = await beginRun(info("/"));
+    // Recreated under the agent: every ledger read of the project now fails, as a busy lock would.
+    rmSync(paths.project(project), { recursive: true }); mkdirSync(paths.project(project), { recursive: true });
+    await t.instructed();
+    expect((await readRun(project, "worker-feat"))?.state).toBe("running");
+    // Pending: even a call that normally skips invalidation (echo) waits for it to be recorded first.
+    await expect(t.tool("echo", {})).rejects.toThrow("identity/repository changed");
+    await expect(t.tool("bash", { command: "true" })).rejects.toThrow("identity/repository changed");
+  });
+});

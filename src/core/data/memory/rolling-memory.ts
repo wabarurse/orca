@@ -1,6 +1,7 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { budget, contextLimit, estimate, outputCap, retainedImages, type ContextDeps } from "./compaction";
-import { archiveTranscript, contextEpoch, transcriptEntries } from "./archive";
+import { archiveTranscript, contextEpoch, scopedTasks, transcriptEntries } from "./archive";
+import { existingTasks } from "../tasks";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import type { Provider } from "../../../providers";
 import { previousMemory, summarizeOlder, taskSnapshot } from "./rolling-summary";
@@ -198,6 +199,10 @@ export class RollingCompactor {
     this.retryAfter = Date.now() + 30000;
     if (job.error || !job.memory) { status(deps, `background compaction failed; original history kept: ${job.error instanceof Error ? job.error.message : job.error}`); return; }
     const identity = job.identity;
+    // Index before the lock: SQLite may wait seconds on other archive writers, and indexing is idempotent and resumable
+    // (start() also indexes unlocked). Everything this summary replaces was indexed by start() already.
+    assertProjectIdentity(this.project, identity);
+    await archiveTranscript(this.project, this.transcript);
     await withProjectStateLock(this.project, async () => {
       assertProjectIdentity(this.project, identity);
       const signal = deps.signal ? AbortSignal.any([deps.signal, job.abort.signal]) : job.abort.signal;
@@ -213,8 +218,7 @@ export class RollingCompactor {
       const current = await this.transcript.chain();
       // The original snapshot must still be an exact prefix. All newer messages survive verbatim.
       if (JSON.stringify(current.slice(0, job.source.length)) !== JSON.stringify(job.source)) return;
-      const tasks = await archiveTranscript(this.project, this.transcript);
-      if (this.disposed) return;
+      const tasks = scopedTasks(existingTasks(this.project), transcriptEntries(this.transcript));
       const memory = job.memory!;
       // Tasks and preferences are read as saved now, at publication, never from the model.
       const preferences = preferenceLines([...(await facts(this.project, "user")).map(fact => ({ scope: "user" as const, fact })),

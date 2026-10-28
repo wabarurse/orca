@@ -28,7 +28,9 @@ internal lifecycle states are not additional public statuses; merge/readiness
 validation remains separate and is not weakened.
 
 Numbers are allocated inside SQLite IMMEDIATE transactions while holding the
-project state lock (never take those locks in reverse order). Legacy records are
+project state lock (never take those locks in reverse order; a project's dependency
+lock, when needed, comes first). Reads use the existing ledger's read-only snapshot
+without the project lock; only a first read that imports legacy records takes it. Legacy records are
 sorted by creation time and UUID; migration preserves UUIDs and snapshots and
 saves exact input bytes to `tasks.json.legacy-v1.backup` before importing. Duplicate
 identities and conflicting backups fail closed. Import is transactional and

@@ -1100,8 +1100,8 @@ indexing succeeded; the result reports
 the caller's own project as well, plus `backfill in progress` while
 `meta.backfill_version` is missing.
 
-The query connection is read-only and takes no project state lock of any other
-project: it never modifies the database file or any row, but SQLite may create
+The query connection is read-only and takes no project state lock (not even the
+caller's own; identity checks around the read refuse a recreated project): it never modifies the database file or any row, but SQLite may create
 empty `-wal`/`-shm` siblings to read a WAL database. A missing global file, or a
 file that exists but is not yet initialized (for example 0 bytes), gives an empty
 result with the note "no global archive yet", never an error; an archive written

@@ -103,6 +103,26 @@ describe("agent loop", () => {
     expect(results).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "kaboom", is_error: true }]);
   });
 
+  test("a run-tracking failure (task state locked) refuses that call only; the run and later calls go on", async () => {
+    const transcript = fakeTranscript();
+    await transcript.append(user("go"));
+    const provider = fakeProvider([[toolUse("tu1", "echo", { text: "x" })], [toolUse("tu2", "echo", { text: "y" })], [text("done")]]);
+    const ran: unknown[] = [];
+    const counted: Tool = { ...echo, async run(input) { ran.push(input.text); return `echo:${input.text}`; } };
+    let steps = 0;
+    const tracker = { model: async () => {}, instructed: async () => {}, reported: async () => {},
+      tool: async () => { if (++steps === 1) throw new Error("project state is locked by pid 1 since t; gave up after 30s"); } };
+    await createAgent({ provider, transcript, tools: { echo: counted }, model: "m", ctx, tracker, write: () => {} }).run();
+
+    expect(provider.calls).toHaveLength(3);
+    const refused = provider.calls[1]!.messages[2]!.content as { content: string; is_error?: boolean }[];
+    expect(refused[0]!.is_error).toBe(true);
+    expect(refused[0]!.content).toContain("not run: project state is locked");
+    // The refused call never ran, and the next call's tracking is not poisoned by the earlier rejection.
+    expect(ran).toEqual(["y"]);
+    expect(provider.calls[2]!.messages[4]!.content).toEqual([{ type: "tool_result", tool_use_id: "tu2", content: "echo:y" }]);
+  });
+
   test("messages waiting in the inbox are read before the first request and after each turn", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("go"));

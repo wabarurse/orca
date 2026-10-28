@@ -1,6 +1,7 @@
 // SQL authority; tasks.json is a compact, version-gated recoverable projection.
-// Lock order: project state lock -> SQLite IMMEDIATE. Never acquire a project lock
-// while holding SQLite. Callers must own the project lock, including read repair.
+// Lock order: dependency lock -> project state lock -> SQLite IMMEDIATE. Never acquire a project lock
+// while holding SQLite. Writers (including read repair) must own the project lock;
+// existingLedgerTasks is the read-only lock-free snapshot.
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
