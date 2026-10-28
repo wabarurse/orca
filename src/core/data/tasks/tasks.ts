@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { paths } from "../../../config";
 // Structured task records, not a scheduler or any of the message/question queues.
 import { ledgerTransaction, existingLedgerTasks } from "./ledger-store";
-import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
+import { assertProjectIdentity, projectIdentity, withDependencyLock, withProjectStateLock } from "../projects";
 import { clean } from "../inbox";
 import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol/task";
 
@@ -78,18 +78,33 @@ export async function allTasksLocked(project: string): Promise<Task[]> {
   projectId(project);
   return ledgerTransaction(project, validateTask, store => store.tasks);
 }
+/** Reads never wait for the project lock: an existing ledger is one consistent SQLite (WAL) snapshot. Only a project
+ * without a ledger yet takes the lock, since its first read imports the legacy file (a write). */
 async function read(project: string): Promise<Store> {
   projectId(project);
   if (!existsSync(paths.project(project))) return { version: 1, tasks: [] };
+  const durable = existingLedgerTasks(project);
+  if (durable) { for (const task of durable) validateTask(task); return { version: 1, tasks: durable }; }
   return withProjectStateLock(project, async () => ({ version: 1, tasks: await allTasksLocked(project) }));
 }
+const revisions = (tasks: Task[]) => JSON.stringify(tasks.map(t => [t.id, t.revision]));
+/** A `preflight` (git or network verification) runs outside the project lock, serialized with dependency actions by
+ * their lock; the commit then requires the ledger it verified to be unchanged. */
 async function update<T>(project: string, action: (s: Store) => T, preflight?: (tasks: Task[]) => Promise<void>): Promise<T> {
   projectId(project);
   const identity = projectIdentity(project);
-  return withProjectStateLock(project, async () => {
+  const commit = (verified?: Task[]) => withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
-    if (preflight) await preflight(await allTasksLocked(project));
-    return ledgerTransaction(project, validateTask, action);
+    return ledgerTransaction(project, validateTask, store => {
+      if (verified) check(revisions(store.tasks) === revisions(verified), "tasks changed during verification; retry");
+      return action(store);
+    });
+  });
+  if (!preflight) return commit();
+  return withDependencyLock(project, async () => {
+    const tasks = await withProjectStateLock(project, async () => { assertProjectIdentity(project, identity); return allTasksLocked(project); });
+    await preflight(tasks);
+    return commit(tasks);
   });
 }
 function event(t: Task, kind: string, run?: string): void {
@@ -182,9 +197,10 @@ export async function registerTask(project: string, input: { id?: string; name: 
     event(t, "registered"); s.tasks.push(t); return t;
   });
 }
-/** Persist before dispatch, but do not assert that a process has started. */
+/** Persist before dispatch, but do not assert that a process has started. Waits for a running dependency action of
+ * the project, which requires its branch to stay quiescent. */
 export async function prepareTaskRun(project: string, id: string, branch: string, run: Pick<TaskRun, "id" | "agent" | "role" | "reviewMode">): Promise<void> {
-  await update(project, s => {
+  await withDependencyLock(project, () => update(project, s => {
     const t = find(s, id); active(t); check(t.branch === branch, "task branch mismatch");
     const existing = t.runs.find(r => r.id === run.id);
     if (existing) { check(existing.agent === run.agent && existing.role === run.role, "run identity mismatch"); return; }
@@ -196,7 +212,7 @@ export async function prepareTaskRun(project: string, id: string, branch: string
     t.runs.push({ ...run, state: "prepared", preparedAt: new Date().toISOString() });
     t.status = run.role === "worker" ? "queued" : "reviewing";
     t.attention = { kind: "waiting", reason: "launch prepared; agent has not started" }; event(t, "run_prepared", run.id);
-  });
+  }));
 }
 /** Called by the supervisor inside the actual child, never by spawn's successful return. */
 export async function startTaskRun(project: string, run: string): Promise<void> {
@@ -232,9 +248,11 @@ export async function stopTaskRun(project: string, run: string, kind: AttentionK
     event(c.task, failedLaunch ? "launch_failed" : "run_stopped", run);
   });
 }
-/** Conservative: a shell tool or a new instruction can change code even in the same reviewer run. */
+/** Conservative: a shell tool or a new instruction can change code even in the same reviewer run. Runs before every
+ * shell/edit tool call, so the common case (nothing validated on the branch) is decided by a lock-free read. */
 export async function invalidateTaskBranch(project: string, run: string): Promise<void> {
-  const t = await taskForRun(project, run); if (!t) return;
+  const s = await read(project), t = current(s, run)?.task;
+  if (!t || !s.tasks.some(x => !x.archive && x.branch === t.branch && x.readiness)) return;
   await update(project, s => {
     for (const other of s.tasks.filter(x => !x.archive && x.branch === t.branch && x.readiness)) {
       unready(other); other.attention = { kind: "waiting", reason: "branch activity after validation; validate readiness again" }; event(other, "readiness_invalidated", run);
@@ -360,33 +378,44 @@ export function existingTasks(project: string): Task[] {
   return raw.tasks;
 }
 
-/** Internal dependency coordinator seam. Holds the existing cross-process project lock
- * across git verification/side effects; task-run preparation uses this same lock.
- * No model-facing arbitrary receipt writer. Never nest public task APIs in action.
- * This serializes Orca writers, not arbitrary user shells or external git clients.
+/** Internal dependency coordinator seam. The project's dependency lock is held across git verification/side
+ * effects, serializing dependency actions and task-run preparation; the project state lock is taken only for the
+ * brief ledger reads and writes, so slow git/gh work never stalls other project state (run tracking, saves, inbox).
+ * Ownership is checked at the start, by `verify` (before remote effects) and by every `save`, each under the project
+ * lock: any change to the task meanwhile refuses the action. No model-facing arbitrary receipt writer. Never nest
+ * public task APIs in action. This serializes Orca writers, not arbitrary user shells or external git clients.
  */
 export async function withDependencyTaskOwnership<T>(project: string, id: string, branch: string,
-  action: (task: Task, tasks: Task[], save: (value: DependencyProvenance) => void) => Promise<T>, ownerRun?: string): Promise<T> {
+  action: (task: Task, tasks: Task[], save: (value: DependencyProvenance) => Promise<void>, verify: () => Promise<void>) => Promise<T>, ownerRun?: string): Promise<T> {
   projectId(project);
   const identity = projectIdentity(project);
-  return withProjectStateLock(project, async () => {
+  const owned = (tasks: Task[]): Task => {
     assertProjectIdentity(project, identity);
-    const tasks = await allTasksLocked(project), t = find({ version: 1, tasks }, id);
+    const t = find({ version: 1, tasks }, id);
     active(t); check(!t.removedAt && t.branch === branch, "dependency task branch mismatch");
     if (ownerRun) check(t.runs.at(-1)?.id === ownerRun && t.runs.at(-1)?.state === "started", "dependency owner is not the active run");
     check(!tasks.some(other => other.branch === branch && other.runs.some(r => (r.state === "prepared" || r.state === "started") && r.id !== ownerRun)), "dependency operation requires quiescent branch or exclusive active-run ownership");
     check(!t.attention || !["cancelled", "blocked", "closed", "unknown"].includes(t.attention.kind), "task attention blocks dependency operation");
+    return t;
+  };
+  return withDependencyLock(project, async () => {
+    const { tasks, t } = await withProjectStateLock(project, async () => {
+      const tasks = await allTasksLocked(project);
+      return { tasks, t: owned(tasks) };
+    });
     let revision = t.revision;
-    const save = (value: DependencyProvenance) => {
-      assertProjectIdentity(project, identity);
+    const verify = () => withProjectStateLock(project, async () => {
+      check(owned(await allTasksLocked(project)).revision === revision, "dependency task changed");
+    });
+    const save = (value: DependencyProvenance) => withProjectStateLock(project, async () => {
       ledgerTransaction(project, validateTask, store => {
-        const current = find(store, t.id);
+        const current = owned(store.tasks);
         check(current.revision === revision, "dependency task changed");
         (current as ProvenanceTask).dependencyProvenance = structuredClone(value);
         unready(current); event(current, "dependency_provenance");
         validateProvenance(current); revision = current.revision;
       });
-    };
-    return action(t, tasks, save);
+    });
+    return action(t, tasks, save, verify);
   });
 }

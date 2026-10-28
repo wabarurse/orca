@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import { paths, projectStateScope, readProjectState, readState, updateState } from "../../../config";
 import { withStorageLock } from "../storage-lock";
+import type { HumanMessage } from "./sources";
 
-export interface Fact { key: string; text: string; source: string; confidence: "explicit" | "tentative"; updatedAt: string; project: string }
+/** `source` is the canonical human message id for an explicit fact (with `quote`, a short excerpt of it), free text otherwise. */
+export interface Fact { key: string; text: string; source: string; quote?: string; confidence: "explicit" | "tentative"; updatedAt: string; project: string }
 export interface WorkingContext {
   goal?: string; decisions?: string[]; results?: { label: string; location: string; revision?: string; evidence?: string; status: "reported" | "verified"; processId?: string; observedAt?: string }[];
   latest?: { id: string; text: string; at: string }[];
@@ -48,6 +50,13 @@ export async function clearWorkingContext(project: string, commit?: () => Promis
     catch (error) { publishContext(scope, previous); throw error; }
   });
 }
+/** How many recent human messages stay in the brief (every prompt carries them) and, outside it, as provenance for explicit preferences. */
+const BRIEF_MESSAGES = 3, SOURCE_MESSAGES = 30;
+/** The project's recent human messages, oldest first: the provenance `remember` accepts for explicit preferences.
+ * Kept apart from the brief, so retaining more costs no prompt space; bounded in count and per-message size. */
+export async function humanSources(project: string): Promise<HumanMessage[]> {
+  return readProjectState<HumanMessage[]>(project, "human-sources") ?? [];
+}
 export async function recordCorrection(project: string, correction: { id: string; text: string; at: string }) {
   const scope = projectStateScope(project);
   await withStorageLock(contextLock(project), async () => {
@@ -55,7 +64,8 @@ export async function recordCorrection(project: string, correction: { id: string
     // Originals remain in the transcript. A bounded verbatim tail keeps newer
     // human corrections separate from inferred preferences and historical summaries.
     const text = correction.text.length > 2000 ? `${correction.text.slice(0, 2000)}\n[continued in source message ${correction.id}]` : correction.text;
-    ctx.latest = [...(ctx.latest ?? []).filter(c => c.id !== correction.id), { ...correction, text }].slice(-3);
+    ctx.latest = [...(ctx.latest ?? []).filter(c => c.id !== correction.id), { ...correction, text }].slice(-BRIEF_MESSAGES);
+    updateState<HumanMessage[]>(paths.memory, scope, "human-sources", old => [...(old ?? []).filter(c => c.id !== correction.id), { ...correction, text }].slice(-SOURCE_MESSAGES));
     while (Buffer.byteLength(JSON.stringify(ctx)) > 16000 && ctx.results?.length) ctx.results.shift();
     while (Buffer.byteLength(JSON.stringify(ctx)) > 16000 && ctx.decisions?.length) ctx.decisions.shift();
     publishContext(scope, ctx);

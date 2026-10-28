@@ -1,11 +1,11 @@
 import { readProjectState } from "../../../config";
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, saveConfig } from "../../../config/config";
 import { deleteProject } from "../../../tui/commands/project";
-import { projectIdentity, withProjectStateLock } from "./state";
+import { DEPENDENCY_LOCK_WAIT_MS, lockDelay, PROJECT_LOCK_WAIT_MS, projectIdentity, withDependencyLock, withProjectStateLock } from "./state";
 import { effectiveModel, saveProjectModel } from "./project-model";
 
 const home = mkdtempSync(join(tmpdir(), "project-state-"));
@@ -69,4 +69,37 @@ test("invocation queue prevents overlapping writes from reversing final model", 
   const second = saveProjectModel(project, "gpt-second");
   release.resolve(); await blocked; await Promise.all([second, first]);
   expect(await effectiveModel(project)).toBe("gpt-second");
+});
+
+test("the project lock records its owner, and a lock left by a dead process is taken over instead of failing every caller", async () => {
+  const project = "abandoned";
+  mkdirSync(paths.project(project), { recursive: true });
+  const lock = join(paths.runtime, "project-locks", project);
+  mkdirSync(lock, { recursive: true });
+  writeFileSync(join(lock, "owner.json"), JSON.stringify({ pid: 2 ** 30, since: "2026-01-01T00:00:00.000Z" })); // no such process
+  const started = Date.now();
+  const owner = await withProjectStateLock(project, async () => JSON.parse(readFileSync(join(lock, "owner.json"), "utf8")));
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(owner.pid).toBe(process.pid);
+  expect(owner.project).toBe(project);
+  expect(existsSync(lock)).toBe(false); // released
+});
+
+test("contention waits with backoff for far longer than the old 5s limit, bounded and capped per attempt", () => {
+  expect(PROJECT_LOCK_WAIT_MS).toBeGreaterThanOrEqual(30_000);
+  expect(DEPENDENCY_LOCK_WAIT_MS).toBeGreaterThan(PROJECT_LOCK_WAIT_MS);
+  expect(lockDelay(0)).toBeLessThan(20);
+  for (let attempt = 0; attempt < 40; attempt++) expect(lockDelay(attempt)).toBeLessThan(260);
+  expect(lockDelay(10)).toBeGreaterThanOrEqual(250);
+});
+
+test("the dependency lock is separate: holding it never blocks project state", async () => {
+  const project = "separate";
+  mkdirSync(paths.project(project), { recursive: true });
+  const entered = deferred();
+  const release = deferred();
+  const dependency = withDependencyLock(project, async () => { entered.resolve(); await release.promise; });
+  await entered.promise;
+  expect(await withProjectStateLock(project, async () => "saved")).toBe("saved");
+  release.resolve(); await dependency;
 });

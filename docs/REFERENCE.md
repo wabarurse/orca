@@ -762,8 +762,11 @@ observing status; changed heads invalidate prior readiness.
 These are role/dispatch instructions, not shell-command enforcement, a process
 cancellation mechanism or a durable check-result cache. They address blocking
 CI monitoring, not every possible cause of a later model stall. One agent codes on a branch at a
-time: spawn waits briefly and then refuses while the branch's worker or reviewer
-is still running. Corrections to an existing task or unmerged PR reuse its task ID
+time. When the branch's agent of the same role is still live (also after it
+reported, e.g. supervising a dev server), spawn delivers the prompt to its inbox
+and that run continues; it refuses, with what to do instead, for fresh=true, a
+baseCommit, a different taskId or reviewMode, or when the other role's agent is
+still running after a brief wait. Corrections to an existing task or unmerged PR reuse its task ID
 and branch, including CI failures, review feedback and user-requested fixes after
 a ready report. The orchestrator finds the task with `task list/get` and refreshes
 its PR state with `task pr` before resuming. It messages a running agent or
@@ -1100,8 +1103,8 @@ indexing succeeded; the result reports
 the caller's own project as well, plus `backfill in progress` while
 `meta.backfill_version` is missing.
 
-The query connection is read-only and takes no project state lock of any other
-project: it never modifies the database file or any row, but SQLite may create
+The query connection is read-only and takes no project state lock (not even the
+caller's own; identity checks around the read refuse a recreated project): it never modifies the database file or any row, but SQLite may create
 empty `-wal`/`-shm` siblings to read a WAL database. A missing global file, or a
 file that exists but is not yet initialized (for example 0 bytes), gives an empty
 result with the note "no global archive yet", never an error; an archive written

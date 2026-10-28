@@ -82,9 +82,17 @@ the model does not support remains an error as before.
   captured before waiting, checked inside the lock and before rename. A queued
   old-generation save refuses after managed delete/recreate, never resurrecting
   that project. Files use unique sibling temp files plus atomic rename.
-- A crashed process may leave a lock. Acquisition fails clearly after ~5 seconds,
-  rather than stealing an uncertain lock; the error names it. Remove a stale lock
-  only after confirming no orca process is using it. Arbitrary external
+- The lock records its owner (`owner.json`: pid, since, project). Holders stay
+  brief: no network, git, gh or model call runs under it (dependency task actions
+  hold their own `dependency-locks/<id>` across git/gh and take the project lock
+  only for their ledger reads and writes), and reads (task list/get, history
+  search) take no lock. A contender retries with backoff (10ms doubling to 250ms,
+  jittered) for up to 30 seconds, then fails clearly, naming the owner. A lock
+  whose recorded owner pid is verifiably dead is taken over; a live, unsignalable
+  or unrecorded owner's never is. Remove such a lock only after confirming no orca
+  process is using it. An agent's run tracking (the branch-readiness invalidation
+  before a shell/edit tool call) that cannot be recorded refuses that one tool
+  call and keeps the run going; it is recorded before the next call runs. Arbitrary external
   filesystem operations that ignore the lock are **not** a supported concurrency
   protocol; atomic rename alone does not protect against such mutations.
 

@@ -232,15 +232,19 @@ test("a taskId of the caller's current-scope task excludes the task row but keep
   expect(r.entries.map(e => e.excerpt)).toEqual([expect.stringContaining("quokka early")]);
 });
 
-test("abort while queued behind the project lock rejects instead of returning a refusal", async () => {
+test("read-only searches never wait on a held project lock; an abort still rejects instead of returning a refusal", async () => {
   home(); mk("alpha");
   const held = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
   const holder = withProjectStateLock("alpha", async () => { entered.resolve(); await held.promise; });
   await entered.promise;
+  // Answered while the holder still has the lock (it would otherwise wait forever here).
+  expect(await history.run({ action: "search", query: "entry" }, ctx("alpha"))).not.toContain("refused");
+  expect(await queryHistory("alpha", { action: "search_history", query: "entry" })).toContain("entries");
   const controller = new AbortController();
   const query = history.run({ action: "search", query: "entry" }, { ...ctx("alpha"), signal: controller.signal });
-  controller.abort(); held.resolve(); await holder;
+  controller.abort();
   await expect(query).rejects.toBeDefined();
+  held.resolve(); await holder;
 });
 
 test("searches are read-only: nothing since the last compaction is found, and no search writes a row", async () => {

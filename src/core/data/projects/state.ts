@@ -1,12 +1,11 @@
 // Serialize model/settings commits, context clears, orchestrator inbox publication
 // and managed project creation/deletion, across processes.
 // Locks live outside projects so deleting/recreating a directory cannot replace its lock.
-import { mkdir, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { paths, repositoryBinding } from "../../../config";
-import { lockHeld } from "../storage-lock";
+import { describeOwner, lockHeld, lockOwner, tryStorageLock } from "../storage-lock";
 
 // Separate conversations using one original checkout must never run overlapping turns.
 export const projectTurnLock = (project: string) => {
@@ -35,27 +34,49 @@ export function projectIdentity(project: string): string {
 export function assertProjectIdentity(project: string, identity: string, what = "saving"): void {
   if (projectIdentity(project) !== identity) throw new Error(`project changed while ${what}; try again`);
 }
+/** How long a project state transaction waits for other holders before it gives up. Holders are brief (ledger and
+ * small state files; no network, git, gh or model calls), so this covers a queue of them across processes. */
+export const PROJECT_LOCK_WAIT_MS = 30_000;
+/** Dependency task actions hold their own lock across git/gh work, which can take minutes on a large repository. */
+export const DEPENDENCY_LOCK_WAIT_MS = 300_000;
+/** Backoff between attempts: doubling from 10ms to 250ms, plus jitter so contenders do not retry in step. */
+export const lockDelay = (attempt: number): number => Math.min(10 * 2 ** attempt, 250) + Math.floor(Math.random() * 10);
+
 const queues = new Map<string, Promise<unknown>>();
-/** Invocation-order queue locally, exclusive directory lock between processes. */
+const validProject = (project: string) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project);
+/** Invocation-order queue locally, exclusive directory lock between processes. Keep slow work out of `action`:
+ * every orca process of the project (agents' run tracking, saves, the inbox) waits on it. */
 export function withProjectStateLock<T>(project: string, action: () => Promise<T>): Promise<T> {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project)) return Promise.reject(new Error("invalid project id"));
-  const key = join(paths.runtime, "project-locks", project);
-  const next = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() => locked(key, action));
+  if (!validProject(project)) return Promise.reject(new Error("invalid project id"));
+  return serialized(join(paths.runtime, "project-locks", project), project, PROJECT_LOCK_WAIT_MS, "project state", action);
+}
+/** Serialize a project's dependency task actions (and the run preparation they exclude) across processes. Taken before,
+ * never inside, the project state lock; the action takes that lock only briefly for its ledger reads and writes. */
+export function withDependencyLock<T>(project: string, action: () => Promise<T>): Promise<T> {
+  if (!validProject(project)) return Promise.reject(new Error("invalid project id"));
+  return serialized(join(paths.runtime, "dependency-locks", project), project, DEPENDENCY_LOCK_WAIT_MS, "task dependency operation", action);
+}
+function serialized<T>(key: string, project: string, waitMs: number, what: string, action: () => Promise<T>): Promise<T> {
+  const next = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() => locked(key, project, waitMs, what, action));
   queues.set(key, next);
   void next.finally(() => { if (queues.get(key) === next) queues.delete(key); }).catch(() => {});
   return next;
 }
-async function acquire(path: string): Promise<void> {
-  await mkdir(join(path, ".."), { recursive: true });
-  for (let attempt = 0; attempt < 500; attempt++) {
-    try { await mkdir(path); return; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
-    await Bun.sleep(10);
+/** The lock records its owner pid; a lock whose owner is verifiably dead is taken over (storage-lock.ts), never one
+ * held by a live, unsignalable or unrecorded owner. */
+async function acquire(path: string, project: string, waitMs: number, what: string): Promise<() => Promise<void>> {
+  const deadline = Date.now() + waitMs;
+  for (let attempt = 0; ; attempt++) {
+    const release = await tryStorageLock(path, project);
+    if (release) return release;
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    await Bun.sleep(Math.min(lockDelay(attempt), left));
   }
-  throw new Error(`project state is locked; try again (if no orca process is active, remove stale lock ${path})`);
+  throw new Error(`${what} is locked by ${describeOwner(await lockOwner(path))}; gave up after ${Math.round(waitMs / 1000)}s, try again (remove ${path} only after verifying that owner is gone)`);
 }
-async function locked<T>(path: string, action: () => Promise<T>): Promise<T> {
-  await acquire(path);
+async function locked<T>(path: string, project: string, waitMs: number, what: string, action: () => Promise<T>): Promise<T> {
+  const release = await acquire(path, project, waitMs, what);
   try { return await action(); }
-  finally { await rm(path, { recursive: true, force: true }); }
+  finally { await release(); }
 }
