@@ -41,6 +41,10 @@ async function stillLive(runner: Runner, project: string, branch: string, wait: 
   }
 }
 
+type ReviewMode = "review" | "watch-ci";
+/** Spawn input after its refusal checks: `reviewMode` is the validated mode (undefined for a worker). */
+type Checked = Record<string, unknown> & { reviewMode?: ReviewMode };
+
 export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
   return {
     spec: {
@@ -70,11 +74,14 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (input.taskId !== undefined && typeof input.taskId !== "string") return "refused: invalid taskId";
       if (input.baseCommit !== undefined && typeof input.taskId !== "string") return "refused: baseCommit requires a registered taskId";
 
+      // Every input refusal comes before any liveness check, delivery or launch; both use only the checked reviewMode.
       if (role === "reviewer" && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: reviewer requires reviewMode: review or watch-ci (prompt text does not select the mode)";
       if (role === "worker" && input.reviewMode !== undefined) return "refused: reviewMode is only valid for reviewer";
+      const reviewMode = role === "reviewer" ? input.reviewMode as ReviewMode : undefined;
 
       if (input.baseCommit !== undefined && (role !== "worker" || typeof input.baseCommit !== "string" || !/^[0-9a-f]{40,64}$/.test(input.baseCommit))) return "refused: baseCommit requires worker and immutable commit";
       const attachments = await forwardImages(input.attachments, ctx);
+      const checked: Checked = { ...input, reviewMode };
       return withStorageLock(join(paths.runtimeProject(ctx.project), "spawn-locks", sessionId("worker", branch)), async () => {
       // One agent per branch. A live agent of the same role takes the prompt in its
       // inbox at once; anything else (another role, an agent finishing its last
@@ -90,11 +97,10 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (busy === null) return unverified;
       const other = busy.find(agent => agent !== id);
       if (other) return `refused: ${other} is still running on ${branch} and one agent works on a branch at a time, so this ${role} prompt was not delivered; message ${other} instead, or spawn the ${role} again after ${other} reports and exits`;
-      if (busy.length) return deliver(runner, id, prompt, branch, role, input, ctx, attachments);
+      if (busy.length) return deliver(runner, id, prompt, branch, role, checked, ctx, attachments);
 
-      if (input.reviewMode !== undefined && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: invalid reviewMode";
       if (typeof input.baseCommit === "string") await prepareStackSpawn(ctx.project, input.taskId as string, branch, ctx.cwd, input.baseCommit);
-      return launch(runner, prompt, branch, role, input.taskId as string | undefined, { ...ctx, fresh: input.fresh === true }, attachments, role === "reviewer" ? input.reviewMode as "review" | "watch-ci" : undefined);
+      return launch(runner, prompt, branch, role, input.taskId as string | undefined, { ...ctx, fresh: input.fresh === true }, attachments, reviewMode);
       });
     },
   };
@@ -107,7 +113,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
  * review mode. An agent that exited before reading it is started again with the
  * queued prompt, so it is never left unread.
  */
-async function deliver(runner: Runner, id: string, prompt: string, branch: string, role: "worker" | "reviewer", input: Record<string, unknown>, ctx: ToolContext, attachments: ImageRef[]): Promise<string> {
+async function deliver(runner: Runner, id: string, prompt: string, branch: string, role: "worker" | "reviewer", input: Checked, ctx: ToolContext, attachments: ImageRef[]): Promise<string> {
   const wait = `wait for ${id} to report and exit (it exits once its background commands end: stop them with process, or message it), then spawn again`;
   if (input.fresh === true) return `refused: fresh=true needs an idle ${role}, but ${id} is still running on ${branch}; spawn again without fresh to deliver this prompt into its current context, or ${wait} with fresh=true`;
   if (input.baseCommit !== undefined) return `refused: baseCommit is only for a new branch, but ${id} is already running on ${branch}; spawn again without baseCommit to deliver this prompt to it`;
@@ -129,14 +135,14 @@ async function deliver(runner: Runner, id: string, prompt: string, branch: strin
   const after = await runner.running(ctx.project, [id], ctx.signal).catch(() => null);
   if (after && !after.includes(id) && await pending(ctx.project, id)) {
     const taskId = typeof input.taskId === "string" ? input.taskId : task && !task.archive ? task.id : undefined;
-    const started = await launch(runner, null, branch, role, taskId, ctx, [], role === "reviewer" ? input.reviewMode as "review" | "watch-ci" : undefined);
+    const started = await launch(runner, null, branch, role, taskId, ctx, [], input.reviewMode);
     return `${started}: it exited before reading the prompt, so it was started again on ${branch} with the prompt queued`;
   }
   return `delivered to running ${id}; it continues on ${branch} in its current run (${current}) and reads the prompt at its next inbox check. No new agent was started; its report arrives in your inbox.`;
 }
 
 /** Publish identity before the first transcript entry (the TUI lists transcripts). A null prompt starts it on its queued inbox alone. */
-async function launch(runner: Runner, prompt: string | null, branch: string, role: "worker" | "reviewer", taskId: string | undefined, ctx: ToolContext & { fresh?: boolean }, attachments: ImageRef[] = [], reviewMode?: "review" | "watch-ci"): Promise<string> {
+async function launch(runner: Runner, prompt: string | null, branch: string, role: "worker" | "reviewer", taskId: string | undefined, ctx: ToolContext & { fresh?: boolean }, attachments: ImageRef[] = [], reviewMode?: ReviewMode): Promise<string> {
   const id = sessionId(role, branch);
   const run = crypto.randomUUID();
   if (taskId) await prepareTaskRun(ctx.project, taskId, branch, { id: run, agent: id, role, ...(reviewMode ? { reviewMode } : {}) });

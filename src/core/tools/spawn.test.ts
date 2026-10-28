@@ -159,6 +159,29 @@ describe("one agent per branch", () => {
     expect(await pending("q", "worker-gone")).toBe(false);
   });
 
+  test("invalid input is refused before any liveness check or delivery, even with a live agent of the same role", async () => {
+    const { r, asked, starts } = runner([["worker-strict"]]);
+    const tool = realSpawn(r, wait);
+    expect(await tool.run({ prompt: "x", branch: "strict", reviewMode: "review" }, qctx)).toBe("refused: reviewMode is only valid for reviewer");
+    expect(await tool.run({ prompt: "x", branch: "strict", role: "reviewer", reviewMode: "bogus" }, qctx)).toContain("requires reviewMode");
+    expect(await tool.run({ prompt: "x", branch: "strict", baseCommit: "a".repeat(40) }, qctx)).toBe("refused: baseCommit requires a registered taskId");
+    expect(asked).toEqual([]);
+    expect(starts).toEqual([]);
+    expect(await pending("q", "worker-strict")).toBe(false);
+    expect(await pending("q", "reviewer-strict")).toBe(false);
+  });
+
+  test("a reviewer started again after delivery keeps its checked review mode", async () => {
+    const { r, starts } = runner([[], ["reviewer-relaunch"], []]);
+    const tool = makeSpawn(r, wait);
+    expect(await tool.run({ prompt: "watch CI", branch: "relaunch", role: "reviewer", reviewMode: "watch-ci" }, qctx)).toBe("reviewer-relaunch");
+    const out = await tool.run({ prompt: "CI rerun", branch: "relaunch", role: "reviewer", reviewMode: "watch-ci" }, qctx);
+    expect(out).toBe("reviewer-relaunch: it exited before reading the prompt, so it was started again on relaunch with the prompt queued");
+    expect(starts).toHaveLength(2);
+    const runs = (await getTask("q", taskIds.get("q/relaunch")!)).runs;
+    expect(runs.map(run => run.reviewMode)).toEqual(["watch-ci", "watch-ci"]);
+  });
+
   test("tmux could not be asked: spawn preserves branch ownership", async () => {
     const { r, asked, starts } = runner([null]);
     expect(await makeSpawn(r, wait).run({ prompt: "x", branch: "unknown" }, qctx)).toContain("cannot verify");

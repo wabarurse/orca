@@ -38,6 +38,11 @@ test("a free-text source quoting a human message older than the brief's last thr
   expect(await saved()).toMatchObject({ source: "input-old", quote: "did you load the /mockup-pick skill", confidence: "explicit" });
   // Curly quotes, an ellipsis and different case still match; a source that contains the id does too.
   expect(await save("User: \u201cWHERES the mockup? \u2026 /mockup-pick skill\u201d")).toContain("input-old");
+  // The stored quote is the message's own span (its case, its words between the pieces), not the caller's passage.
+  expect((await saved())?.quote).toBe("wheres the mockup? did you load the /mockup-pick skill");
+  // Stitched fragments (a too-short piece, or pieces out of order) trace to nothing.
+  await expect(save('"wheres … .claude"')).rejects.toThrow("names or quotes none");
+  await expect(save('"/mockup-pick skill … wheres the mockup"')).rejects.toThrow("names or quotes none");
   expect(await save("user message input-old")).toContain("input-old");
 });
 
