@@ -1347,8 +1347,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const identity = projectIdentity(page.project);
     this.openMenu("accounts: enter uses one for this project or signs it in", await accountChoices(dim, page.project), async (account) => {
       if (!account.ok) return this.login(`${account.provider} ${account.profile}`, page, true);
-      try { this.note(await useAccount(account, page.project, identity), page); await this.refreshHeader(page); }
-      catch (err) { this.note(dim(err instanceof Error ? err.message : String(err)), page); }
+      this.note(await useAccount(account, page.project, identity).catch((err: unknown) => dim(err instanceof Error ? err.message : String(err))), page); await this.refreshHeader(page);
     });
   }
 
@@ -1359,7 +1358,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!this.modelPageCurrent(page, operation)) return;
     for (const e of errors) this.note(dim(e));
     if (!choices.length) return this.note(dim("no models available; sign in with /login first"));
-    this.openMenu("switch model   (/model <id> for any other id)", choices, async (id) => this.switchModel(page, id, operation, identity), operation);
+    this.openMenu("switch model   (/accounts for another provider)", choices, async (id) => this.switchModel(page, id, operation, identity), operation);
   }
 
   private async attach(page: Page, name: string, live: boolean): Promise<void> {
@@ -1468,7 +1467,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear conversation, context and cache after confirmation" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
-    ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [id]", description: "choose or set the project model" } }],
+    ["/model", { run: (_, page) => this.modelCommand(page), help: { group: "settings", label: "/model", description: "choose the project model from its account" } }],
     ["/accounts", { run: (_, page) => this.accountsMenu(page), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args, page) => this.login(args, page), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
     ["/review-rounds", { args: true, run: (args, page) => this.flowCommand(page, args, reviewRounds), help: { group: "advanced", label: "/review-rounds [n]", description: "project review rounds before ci; 0 goes straight to ci" } }],
@@ -1596,13 +1595,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     }, operation);
   }
 
-  /** /model opens the menu; /model <id> sets any id. */
-  private async modelCommand(id: string, page?: Page): Promise<void> {
+  /** /model opens the picker of the project's account's models; there is no id argument. */
+  private async modelCommand(page?: Page): Promise<void> {
     const operation = ++this.modelGeneration;
     if (!page) return this.note(dim("open a project before changing its model"));
-    const identity = projectIdentity(page.project);
-    if (!id) return this.modelMenu(page, operation, identity);
-    await this.switchModel(page, id, operation, identity);
+    await this.modelMenu(page, operation, projectIdentity(page.project));
   }
 
   private modelPageCurrent(page: Page, operation: number): boolean {

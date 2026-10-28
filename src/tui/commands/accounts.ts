@@ -4,7 +4,7 @@ import { accountId, accounts, type Account, type AccountRef } from "../../login"
 import { importClaudeCode, loginClaude } from "../../login";
 import { importCodex, loginCodex } from "../../login";
 import { provider, providerFor } from "../../providers";
-import { effectiveAccount, effectiveModel, saveProjectAccount, seedProjectAccount } from "../../core/data/projects";
+import { effectiveAccount, effectiveModel, lastProviderModel, saveProjectAccount, seedProjectAccount } from "../../core/data/projects";
 import { recentModels, type Choice } from "./model";
 
 /** The account list for a project: exactly its one selected account is marked current. */
@@ -14,18 +14,20 @@ export async function accountChoices(dim: (s: string) => string, project?: strin
 }
 
 /** Make a signed-in account the one this project uses from each agent's next model request on (other projects are untouched).
- * An account of another provider cannot serve the project's model, so the project's model becomes that provider's newest
- * one in the same commit; if the provider offers none, nothing changes. */
+ * An account of another provider cannot serve the project's model, so in the same commit the project returns to the last model
+ * it used on that provider, or (never used, or no longer offered) the provider's newest; if the provider offers none, nothing changes. */
 export async function useAccount(account: AccountRef, project: string, identity?: string, load: typeof provider = provider): Promise<string> {
   const model = await effectiveModel(project);
   if (providerFor(model) === account.provider) {
     await saveProjectAccount(project, account, undefined, identity);
     return `using ${accountId(account)} for this project (applies before each agent's next model request; other projects keep theirs)`;
   }
-  const next = recentModels(await (await load(account.provider, { profile: account.profile })).models(), "")[0];
-  if (!next) throw new Error(`${account.provider} offers no models for ${accountId(account)}; choose one with /model <id>`);
+  const offered = await (await load(account.provider, { profile: account.profile })).models();
+  const last = lastProviderModel(project, account.provider);
+  const next = last && offered.includes(last) ? last : recentModels(offered, "")[0];
+  if (!next) throw new Error(`${account.provider} offers no models for ${accountId(account)}; the project keeps ${model} and its account`);
   await saveProjectAccount(project, account, { from: model, to: next }, identity);
-  return `using ${accountId(account)} for this project; its model changed from ${model} to ${next} (${account.provider} cannot serve ${model}; /model picks another)`;
+  return `using ${accountId(account)} for this project; its model changed from ${model} to ${next === last ? `${next}, the last one it used there` : next} (/model picks another)`;
 }
 
 export const LOGIN_USAGE = "usage: /login anthropic [profile] [--from-claude-code]  |  /login openai [profile] [--from-codex]";

@@ -840,9 +840,11 @@ account (a signed-out one starts its login), a model, or a reasoning effort for
 the current model; Esc cancels. Signing in is global (every project can
 use the account), but selection is per project: `/accounts` marks exactly one
 account, for the current project only. Choosing an account of the other provider
-moves that project to the provider's newest model (`/model` picks another). A
-project that never chose uses its model's provider with the profile it had before. `/model <model-id>` sets a model the menu does not list;
-`/effort <level|default>` sets an effort directly.
+moves that project back to the last model it used on that provider, or to the
+provider's newest model if it never used one there (or the provider no longer
+offers it); `/model` picks another. `/model` lists only the selected account's
+models and takes no id. A project that never chose uses its model's provider with
+the profile it had before. `/effort <level|default>` sets an effort directly.
 
 Claude models use the selected Claude subscription. Other models use the selected
 ChatGPT/Codex subscription. Account and model changes take effect on the next

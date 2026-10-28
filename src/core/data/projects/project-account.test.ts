@@ -75,6 +75,26 @@ test("useAccount: same provider keeps the model; another provider moves to its n
   expect(await effectiveAccount("use")).toEqual({ provider: "openai", profile: "w" });
 });
 
+test("switching back to a provider restores the last model this project used there; newest only when never used or no longer offered", async () => {
+  project("back"); project("back-other");
+  await saveProjectModel("back", "claude-opus-old"); await saveProjectModel("back-other", "claude-opus-old");
+  const catalog = (ids: string[]) => async () => ({ ...fakeProvider([]), models: async () => ids });
+  const claude = catalog(["claude-newest", "claude-opus-old"]), openai = catalog(["gpt-newest", "gpt-5"]);
+  // Never used OpenAI here: its newest model.
+  expect(await useAccount({ provider: "openai", profile: "w" }, "back", undefined, openai)).toContain("from claude-opus-old to gpt-newest");
+  await saveProjectModel("back", "gpt-5"); // the user picks another OpenAI model with /model
+  // Back to Claude: the model left there, not Claude's newest; and the OpenAI model left is remembered in the same commit.
+  expect(await useAccount({ provider: "anthropic", profile: "p" }, "back", undefined, claude)).toContain("from gpt-5 to claude-opus-old, the last one it used there");
+  expect(readProjectState("back", "provider-models")).toEqual({ anthropic: "claude-opus-old", openai: "gpt-5" });
+  expect(await useAccount({ provider: "openai", profile: "w" }, "back", undefined, openai)).toContain("to gpt-5, the last one it used there");
+  expect(readProjectState("back", "model")).toBe("gpt-5");
+  // A remembered model the provider no longer offers falls back to its newest.
+  expect(await useAccount({ provider: "anthropic", profile: "p" }, "back", undefined, catalog(["claude-newest"]))).toContain("from gpt-5 to claude-newest");
+  // Memory is per project.
+  expect(readProjectState("back-other", "provider-models")).toBeUndefined();
+  expect(await useAccount({ provider: "openai", profile: "w" }, "back-other", undefined, catalog(["gpt-newest", "gpt-5"]))).toContain("to gpt-newest");
+});
+
 test("every provider call of a project loads that project's account, not a global one", async () => {
   await saveConfig({ account: "global-profile" });
   project("call-a"); project("call-b");

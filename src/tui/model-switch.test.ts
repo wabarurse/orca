@@ -23,6 +23,9 @@ async function until(check: () => boolean) {
 const note = (app: App) => Bun.stripANSI(app.frame().inputArea!.lines.join("\n"));
 async function setup(agents: { name: string; live: boolean }[], choices?: AppDeps["modelChoices"], extra: Partial<AppDeps> = {}) {
   await saveConfig({ model: "gpt-6-astra" });
+  // /model has no id argument: by default the picker offers just `offer.id`, which tests set before picking.
+  const offer = { id: "claude-test" };
+  choices ??= async () => ({ choices: [{ value: offer.id, label: offer.id }], errors: [], current: "gpt-6-astra" });
   const project = `p-${crypto.randomUUID()}`;
   let key: (k: Key) => void = () => {};
   const writes: string[] = [];
@@ -40,23 +43,25 @@ async function setup(agents: { name: string; live: boolean }[], choices?: AppDep
   });
   const running = app.run(project);
   await until(() => !!app.page);
-  return { app, project, writes, opened, type(s: string) { for (const k of parseKeys(s)) key(k); }, key, async close() { app.quit(); await running; } };
+  return { app, project, writes, opened, offer, type(s: string) { for (const k of parseKeys(s)) key(k); }, key, async close() { app.quit(); await running; } };
 }
 
 test("direct switch counts only live subagents; Cancel and Escape never persist; Switch all saves project only", async () => {
   const ui = await setup([{ name: "worker-a", live: true }, { name: "worker-b", live: false }, { name: "reviewer-a", live: true }]);
   try {
-    await ui.app.commands.get("/model")!.run("claude-test", ui.app.page);
-    expect(ui.app.menu!.title).toContain("1 workers and 1 reviewers");
+    await pickModel(ui, "claude-test");
+    await until(() => !!ui.app.menu?.title.includes("1 workers and 1 reviewers"));
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
     ui.type("\r"); // safe default Cancel
     await until(() => !ui.app.menu);
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    await ui.app.commands.get("/model")!.run("claude-test", ui.app.page);
+    await pickModel(ui, "claude-test");
+    await until(() => !!ui.app.menu?.title.includes("switch this project"));
     ui.key({ name: "escape" });
     await until(() => !ui.app.menu);
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    await ui.app.commands.get("/model")!.run("claude-test", ui.app.page);
+    await pickModel(ui, "claude-test");
+    await until(() => !!ui.app.menu?.title.includes("switch this project"));
     ui.key({ name: "down" }); ui.type("\r");
     await until(() => note(ui.app).includes("next model request")); // a transient note above the composer, not conversation
     expect(ui.app.page!.lines).toEqual([]);
@@ -87,7 +92,9 @@ test("async picker and stale confirmation cannot switch a different selected pag
     await fetching;
     expect(ui.app.menu).toBeNull();
     ui.app.active = 0;
-    await ui.app.commands.get("/model")!.run("claude-test", original);
+    const again = ui.app.commands.get("/model")!.run("", original);
+    release({ choices: [{ value: "claude-test", label: "Claude" }], errors: [], current: "gpt-6-astra" }); await again;
+    ui.type("\r"); await until(() => !!ui.app.menu?.title.includes("switch this project"));
     ui.app.active = 1;
     ui.key({ name: "down" }); ui.type("\r");
     await until(() => !ui.app.menu);
@@ -103,7 +110,14 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const catalog = (id: string) => ({ choices: [{ value: id, label: id }], errors: [], current: "gpt-6-astra" });
-const modelCommand = (ui: Awaited<ReturnType<typeof setup>>, id = "") => ui.app.commands.get("/model")!.run(id, ui.app.page);
+const modelCommand = (ui: Awaited<ReturnType<typeof setup>>) => ui.app.commands.get("/model")!.run("", ui.app.page);
+/** /model, then Enter on `id` as the picker's only offer: the pick (and any confirmation it opens) has started when this resolves. */
+async function pickModel(ui: Awaited<ReturnType<typeof setup>>, id: string) {
+  ui.offer.id = id;
+  await modelCommand(ui);
+  expect(ui.app.menu!.title).toContain("switch model");
+  ui.type("\r");
+}
 
 for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "reviewer-no-transcript"]] as const) {
   test(`production liveness boundary ${JSON.stringify(result)} ignores unreadable transcripts`, async () => {
@@ -115,7 +129,7 @@ for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "revi
     try {
       // ENOTDIR is an unreadable transcript directory, regardless of uid.
       await Bun.write(join(paths.project(ui.project), "transcript"), "not a directory");
-      ui.type("/model claude-test\r");
+      await pickModel(ui, "claude-test");
       if (result === null || result === "throw") {
         await until(() => note(ui.app).includes("could not determine running agents; try again"));
         expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
@@ -131,21 +145,30 @@ for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "revi
   });
 }
 
+test("/model takes no id: an argument is an unknown command that opens no picker and saves nothing", async () => {
+  const ui = await setup([]);
+  try {
+    ui.type("/model claude-test\r");
+    await until(() => note(ui.app).includes("unknown command /model"));
+    expect(ui.app.menu).toBeNull();
+    expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
+    expect(ui.app.commands.get("/model")!.args).toBeFalsy();
+  } finally { await ui.close(); }
+});
+
 test("no-page /model real dispatch refuses without creating project/global write; survives reprint", async () => {
   const ui = await setup([]);
   try {
     ui.app.closePage();
-    for (const command of ["/model", "/model claude-test"]) {
-      ui.type(command + "\r");
-      await until(() => ui.writes.join("").includes("open a project before changing its model"));
-      expect(ui.app.pages).toHaveLength(0);
-      expect(ui.opened).toHaveLength(1);
-      expect(await effectiveModel("other")).toBe("gpt-6-astra");
-      ui.app.reprint();
-      await Bun.sleep(30);
-      // An unchanged screen needs no repaint, and the notice stays available.
-      expect(ui.writes.join("")).toContain("open a project before changing its model");
-    }
+    ui.type("/model\r");
+    await until(() => ui.writes.join("").includes("open a project before changing its model"));
+    expect(ui.app.pages).toHaveLength(0);
+    expect(ui.opened).toHaveLength(1);
+    expect(await effectiveModel("other")).toBe("gpt-6-astra");
+    ui.app.reprint();
+    await Bun.sleep(30);
+    // An unchanged screen needs no repaint, and the notice stays available.
+    expect(ui.writes.join("")).toContain("open a project before changing its model");
   } finally { await ui.close(); }
 });
 
@@ -175,9 +198,11 @@ test("out-of-order liveness cannot save an older operation", async () => {
   let calls = 0;
   const ui = await setup([], undefined, { modelAgents: () => ++calls === 1 ? old.promise : Promise.resolve([]) });
   try {
-    const pending = modelCommand(ui, "claude-old");
-    await modelCommand(ui, "gpt-new");
-    old.resolve([]); await pending;
+    await pickModel(ui, "claude-old");
+    await until(() => calls === 1); // its liveness check is pending
+    await pickModel(ui, "gpt-new");
+    await until(() => note(ui.app).includes("model set to gpt-new"));
+    old.resolve([]); await Bun.sleep(20);
     expect(await effectiveModel(ui.project)).toBe("gpt-new");
   } finally { await ui.close(); }
 });
@@ -189,16 +214,16 @@ test("confirmed save belongs to captured project after close, and queued commits
   const lock = withProjectStateLock(ui.project, async () => { entered.resolve(); await gate.promise; });
   try {
     await entered.promise;
-    const commits: string[] = [];
+    const commits: string[] = [], saves: Promise<string>[] = [];
     // The injectable boundary records invocation, but production setModel owns the queue.
     const deps = (ui.app as unknown as { deps: AppDeps }).deps;
-    deps.saveModel = (id, project, identity) => { commits.push(id); return setModel(id, project, identity); };
-    const first = modelCommand(ui, "claude-first");
+    deps.saveModel = (id, project, identity) => { commits.push(id); const save = setModel(id, project, identity); saves.push(save); return save; };
+    await pickModel(ui, "claude-first");
     await until(() => commits.length === 1);
-    const second = modelCommand(ui, "gpt-last");
+    await pickModel(ui, "gpt-last");
     await until(() => commits.length === 2);
     ui.app.closePage();
-    gate.resolve(); await lock; await first; await second;
+    gate.resolve(); await lock; await Promise.all(saves);
     expect(await effectiveModel(ui.project)).toBe("gpt-last");
     expect(ui.app.pages).toHaveLength(0);
   } finally { gate.resolve(); await ui.close(); }
@@ -290,7 +315,8 @@ test("stopped turn UI explains explicit resume, model change does not rerun it",
   try {
     ui.type("task\r");
     await until(() => note(ui.app).includes("send another message to resume with retained history"));
-    await modelCommand(ui, "claude-test");
+    await pickModel(ui, "claude-test");
+    await until(() => note(ui.app).includes("model set to claude-test"));
     expect(turns).toBe(1);
     expect(note(ui.app)).toContain("failed/stopped turns need another message to resume");
   } finally { await ui.close(); }
@@ -309,7 +335,7 @@ test("confirmed UI save queued behind directory replacement refuses the new proj
   });
   try {
     await entered.promise;
-    ui.type("/model claude-stale\r"); await started;
+    await pickModel(ui, "claude-stale"); await started;
     release.resolve(); await replacement;
     await until(() => note(ui.app).includes("project changed while switching model"));
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
@@ -332,11 +358,11 @@ test("header uses the project's startup override and global fallback through the
   } finally { await ui.close(); }
 });
 
-for (const picker of [false, true]) test(`header changes only after confirmed ${picker ? "picker" : "direct"} save`, async () => {
+test("header changes only after confirmed picker save", async () => {
   const ui = await setup([{ name: "worker-a", live: true }], async () => catalog("claude-header"));
   async function request() {
-    await modelCommand(ui, picker ? "" : "claude-header");
-    if (picker) { ui.type("\r"); await until(() => !!ui.app.menu?.title.includes("switch this project")); }
+    await modelCommand(ui);
+    ui.type("\r"); await until(() => !!ui.app.menu?.title.includes("switch this project"));
   }
   try {
     await request();
@@ -359,7 +385,8 @@ test("confirmed save refreshes captured page, not the selection changed while pe
   } });
   try {
     const captured = ui.app.page!;
-    await modelCommand(ui, "claude-captured");
+    await pickModel(ui, "claude-captured");
+    await until(() => !!ui.app.menu?.title.includes("switch this project"));
     ui.key({ name: "down" }); ui.type("\r");
     await entered.promise;
     const other = await ui.app.openPage("header-other-selection");

@@ -51,7 +51,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   model & accounts
   /effort [level|default]        choose or set project/model reasoning effort
   /fast [on|off]                 show or set project/model fast mode
-  /model [id]                    choose or set the project model
+  /model                         choose the project model from its account
   /accounts                      choose a subscription account
   /login claude|codex [profile]  sign in to a subscription account
   /dynamic-dispatch [on|off]     show or set the project's dynamic dispatch
@@ -112,7 +112,7 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 inbox 1
-help                           1–8/134
+help                           1–8/135
   conversation
   /refresh
     reload shared local state; active
@@ -174,8 +174,9 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   /fast [on|off]
     show or set project/model fast
     mode
-  /model [id]
-    choose or set the project model
+  /model
+    choose the project model from its
+    account
   /accounts
     choose a subscription account
   /login claude|codex [profile]
