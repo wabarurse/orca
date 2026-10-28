@@ -1,4 +1,4 @@
-import { prepareStackSpawn } from "../data/tasks/dependency-workflow";
+import { prepareStackSpawn } from "../data/tasks";
 import { attachmentSchema, forwardImages } from "./attachments";
 import { consume, content } from "../data/inbox";
 import { imageContent } from "../data/images";
@@ -9,6 +9,8 @@ import { paths } from "../../config";
 import { local, sessionId, type Runner } from "../tmux";
 import { open } from "../data/transcripts";
 import type { Tool, ToolContext } from "./registry";
+import { withStorageLock } from "../data";
+import { join } from "node:path";
 
 // Orchestrator-only. Seeds the agent's transcript with the prompt, then starts
 // it in a worktree on `branch`. Spawning again on the same branch and role
@@ -35,49 +37,37 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
   return {
     spec: {
       name: "spawn",
-      description:
-        "Start an agent on a git branch in its own worktree and tmux window. The prompt is the only thing it is told. " +
-        "role 'worker' (default) or 'reviewer'. It reports back to you through `message`.\n\n" +
-        "Spawning the same role on a branch again continues that agent: same transcript, so it keeps its context, and same worktree, with its earlier commits. " +
-        "The prompt is its next instruction. One agent works on a branch at a time: spawn waits briefly, then refuses while the branch's worker or reviewer is still running, " +
-        "so spawn again only after it has reported or exited.\n" +
-        "Never spawn on a branch whose PR is merged; the harness stops and cleans those up (within ~30s, when gh is available). Follow-up work goes on a new branch.\n\n" +
-        "Reuse or new branch, decided per task when you plan:\n" +
-        "- Reuse the same taskId and branch for corrections to an existing task or unmerged PR, including review feedback, CI failures and user-requested fixes after a ready report. " +
-        "CI or PR publication does not require a fresh branch for these corrections. Use task list/get to find the existing task and refresh its PR state with task pr before resuming. " +
-        "If its agent is still running, message it; otherwise spawn the worker on that branch with the correction. " +
-        "Run the task flow again; the reviewer pushes to the same PR and validates its updated head. Do not register a new task or use a temporary branch/cherry-pick workaround for the correction.\n" +
-        "- A separate small follow-up on the same feature may reuse a branch before PR publication, with a new taskId and its own task flow. " +
-        "Its whole transcript is resent each call, so avoid a long series of tasks on one worker.\n" +
-        "- Start a new branch for independent work, a separate task after PR publication, work needing its own merge order, or work after the original PR has merged.\n" +
-        "- If unsure, say so in the plan table and let the user choose.\n" +
-        "In the plan table, mark a reused branch (existing): \"<branch> (existing)\".",
+      description: "Delegate focused work to an isolated worker; this does not authorize commit, review, publication or CI. New work starts with a fresh brief, not the orchestrator transcript. Branch is optional: a new work branch is allocated if omitted. Reuse an existing branch for feedback on the same unmerged result. A live worker receives message instead. Set fresh=true to reset only the idle worker's model context while retaining workspace and full history; include current goal, constraints, evidence references and latest corrections. taskId is optional for ordinary work and required for tracked publication/dependencies. Reviewer role is an explicit independent assessment, not an automatic next stage. Never reuse a merged branch.",
       input_schema: {
         type: "object",
         properties: {
           attachments: attachmentSchema,
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, review rounds and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
-          prompt: { type: "string", description: "Everything the agent needs, including prior check commands, tested commit/code state, results and saved failure-output paths. Workers run only relevant checks once per checked code state. Reviewers inspect failed-check output, diff and complexity; they never run tests or validation commands. Never request full suites, baseline comparisons or duplicate tests, including in watch-ci. Never limit its report's length or ask for a short, brief or summary report; it reports in full." },
+          prompt: { type: "string", description: "Focused outcome, acceptance criteria, scope, relevant preferences and instructions, prior attempts and evidence references. Ask for concise findings, check outcomes and unresolved issues with detailed evidence kept in artifacts." },
+          fresh: { type: "boolean", description: "Start with fresh model context on an idle existing branch; retain workspace and original transcript." },
           branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects), or explicit baseCommit from authorized prerequisite checkpoints. Never use the default branch itself." },
           baseCommit: { type: "string", description: "Optional explicit immutable prerequisite checkpoint commit for a NEW local stacked branch. Requires registered explicit task dependencies and all prerequisite code in this commit. No automatic composition/merge. Prerequisites may remain open for development; publication waits for all verified merges." },
           reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "Required when role is reviewer; explicitly identify: code review or CI-only validation. CI is not another review round." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
-        required: ["prompt", "branch", "taskId"],
+        required: ["prompt"],
       },
     },
     async run(input, ctx) {
       if (ctx.role !== "orchestrator") return "refused: only the orchestrator can spawn";
       const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
-      const branch = typeof input.branch === "string" ? input.branch.trim() : "";
+      const branch = typeof input.branch === "string" ? input.branch.trim() : `work-${crypto.randomUUID().slice(0, 8)}`;
       const role = input.role === "reviewer" ? "reviewer" : "worker";
-      if (!prompt || !branch || typeof input.taskId !== "string") return "refused: prompt, branch and registered taskId are required";
+      if (!prompt || !branch) return "refused: prompt and a valid branch are required";
+      if (input.taskId !== undefined && typeof input.taskId !== "string") return "refused: invalid taskId";
+      if (input.baseCommit !== undefined && typeof input.taskId !== "string") return "refused: baseCommit requires a registered taskId";
 
       if (role === "reviewer" && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: reviewer requires reviewMode: review or watch-ci (prompt text does not select the mode)";
       if (role === "worker" && input.reviewMode !== undefined) return "refused: reviewMode is only valid for reviewer";
 
       if (input.baseCommit !== undefined && (role !== "worker" || typeof input.baseCommit !== "string" || !/^[0-9a-f]{40,64}$/.test(input.baseCommit))) return "refused: baseCommit requires worker and immutable commit";
       const attachments = await forwardImages(input.attachments, ctx);
+      return withStorageLock(join(paths.runtimeProject(ctx.project), "spawn-locks", sessionId("worker", branch)), async () => {
       // One agent per branch: a reported agent may still be finishing, so wait briefly for it.
       const busy = await stillLive(runner, ctx.project, branch, wait, ctx.signal);
       ctx.signal?.throwIfAborted();
@@ -85,21 +75,23 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (busy.length) return `refused: ${busy[0]} is still running on ${branch}; message it, or spawn again after it reports or exits`;
 
       if (input.reviewMode !== undefined && input.reviewMode !== "review" && input.reviewMode !== "watch-ci") return "refused: invalid reviewMode";
-      if (typeof input.baseCommit === "string") await prepareStackSpawn(ctx.project, input.taskId, branch, ctx.cwd, input.baseCommit);
-      return launch(runner, prompt, branch, role, input.taskId, ctx, attachments, role === "reviewer" ? input.reviewMode as "review" | "watch-ci" : undefined);
+      if (typeof input.baseCommit === "string") await prepareStackSpawn(ctx.project, input.taskId as string, branch, ctx.cwd, input.baseCommit);
+      return launch(runner, prompt, branch, role, input.taskId as string | undefined, { ...ctx, fresh: input.fresh === true }, attachments, role === "reviewer" ? input.reviewMode as "review" | "watch-ci" : undefined);
+      });
     },
   };
 }
 
 /** Publish identity before the first transcript entry (the TUI lists transcripts). */
-async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", taskId: string, ctx: ToolContext, attachments: ImageRef[] = [], reviewMode?: "review" | "watch-ci"): Promise<string> {
+async function launch(runner: Runner, prompt: string, branch: string, role: "worker" | "reviewer", taskId: string | undefined, ctx: ToolContext & { fresh?: boolean }, attachments: ImageRef[] = [], reviewMode?: "review" | "watch-ci"): Promise<string> {
   const id = sessionId(role, branch);
   const run = crypto.randomUUID();
-  await prepareTaskRun(ctx.project, taskId, branch, { id: run, agent: id, role, ...(reviewMode ? { reviewMode } : {}) });
+  if (taskId) await prepareTaskRun(ctx.project, taskId, branch, { id: run, agent: id, role, ...(reviewMode ? { reviewMode } : {}) });
   try {
     publishLaunch(ctx.project, id, run);
     const t = open(paths.transcript(ctx.project, id));
     if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
+    else if (ctx.fresh) await t.append({ type: "context-boundary" });
     await consume(ctx.project, id, t, async inbox => {
       ctx.signal?.throwIfAborted();
       const queued = content(inbox);

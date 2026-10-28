@@ -1,5 +1,5 @@
 import { routineModelRequest } from "./notices";
-import { modelRequestText } from "../../protocol/transcript";
+import { modelRequestText } from "../../protocol";
 import { imageLabels } from "../../core/data/images";
 import type { Message } from "../../protocol";
 // Rebuild a page's history from its orchestrator's transcript, like

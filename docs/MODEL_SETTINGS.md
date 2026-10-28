@@ -42,15 +42,15 @@ the model does not support remains an error as before.
 
 ## Persistence and next-request boundary
 
-- `projects/<id>/model` overrides global `config.model`; absence preserves the
+- The project `model` record in `memory.sqlite` overrides global `config.model`; absence preserves the
   existing global default, including `gpt-6-astra`. Other projects never change.
-- `projects/<id>/settings.json` saves the project's review-round limit and
+- The project `flow` record in `memory.sqlite` saves the project's review-round limit and
   dynamic-dispatch switch (`/review-rounds`, `/dynamic-dispatch`); absence or a
   missing key keeps `config.toml`'s `maxReviewRounds` / `dynamicDispatch`. Values
   are validated on read and save (integer 0–100, boolean, no other keys); a
-  malformed file is refused, never repaired by a save. Agents read them when
+  malformed record is refused, never repaired by a save. Agents read them when
   building their prompt (orchestrator: every turn; worker/reviewer: at start).
-- `projects/<id>/model-settings.json` saves effort/fast **by exact model id**.
+- The project `model-settings` record in `memory.sqlite` saves effort/fast **by exact model id**.
   Switching models uses that model's saved preference, or backend-default effort
   and fast off. Switching back restores its preference. Values do not carry
   between providers/models, so a previously selected unsupported effort/tier

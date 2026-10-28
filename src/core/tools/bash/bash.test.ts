@@ -35,7 +35,7 @@ test("no exit line on success", async () => {
 
 test("invalid timeouts are rejected before starting a command", async () => {
   for (const timeout_ms of [null, 0, -1, 1.5, 600001, NaN, Infinity, "1000", true]) {
-    await expect(bash.run({ command: "touch invalid-timeout-started", timeout_ms }, ctx(home))).rejects.toThrow("timeout_ms must be an integer from 1 to 600000");
+    await expect(bash.run({ command: "touch invalid-timeout-started", timeout_ms }, ctx(home))).rejects.toThrow("timeout_ms must be");
   }
   expect(await Bun.file(join(home, "invalid-timeout-started")).exists()).toBe(false);
 });

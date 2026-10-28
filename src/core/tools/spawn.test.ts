@@ -64,7 +64,7 @@ test("spawning again on the same branch appends to the existing transcript", asy
 });
 
 test("spawn refuses missing input and non-orchestrators", async () => {
-  expect(await spawn.run({ prompt: "x" }, ctx("orchestrator"))).toContain("required");
+  expect(await spawn.run({ prompt: "" }, ctx("orchestrator"))).toContain("required");
   expect(await spawn.run({ prompt: "x", branch: "b" }, ctx("worker", "b"))).toContain("only the orchestrator");
   expect(started).toHaveLength(3);
 });

@@ -2,7 +2,7 @@
  * Production task actions and readiness share dependency-verification.ts.
  * These adapters inject synthetic authority for policy/replay/lock tests only.
  */
-import { check, type Task } from '../../../protocol/tasks';
+import { check, type Task } from "../../../protocol/task";
 import { withDependencyTaskOwnership } from './tasks';
 import { provenance } from './dependency-provenance';
 import { assertPrerequisitesMerged, assertPublication, resolveStackBase, type DependencySnapshot, type PublicationState } from './dependency-policy';

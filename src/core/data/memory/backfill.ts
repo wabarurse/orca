@@ -4,14 +4,14 @@
 // after, and only after, the project was re-indexed into the global database and read back
 // identically. Anything short of that keeps the old file and is retried on a later start.
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { paths } from "../../../config";
 import { ARCHIVE_AGENT, BATCH, database, entryText, epochsOf, purgeProject, sync, transcriptEntries } from "./archive";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import { existingTasks } from "../tasks";
-import type { Task } from "../../../protocol";
+import type { Task } from "../../../protocol/task";
 import { open } from "../transcripts";
 import type { Entry } from "../../../protocol";
 
@@ -96,7 +96,8 @@ async function unmigrated(db: Database, project: string, signal?: AbortSignal): 
   if (!existsSync(file)) return;
   if (statSync(file).size === 0) return;
   // Read a private copy of the main file alone: leftover -wal/-journal siblings must not make the read fail or write.
-  const scratch = mkdtempSync(join(paths.root, ".backfill-"));
+  mkdirSync(paths.runtime, { recursive: true, mode: 0o700 });
+  const scratch = mkdtempSync(join(paths.runtime, ".backfill-"));
   try {
     const copy = join(scratch, "old.sqlite");
     copyFileSync(file, copy);

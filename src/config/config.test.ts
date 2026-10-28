@@ -84,3 +84,13 @@ test("efficiency defaults are enabled and overrides remain bounded", async () =>
   await Bun.write(paths.config, 'anthropicPromptCache = "yes"\ntoolConcurrency = 0\nmaxToolResultBytes = -1\nmaxToolOutputBytes = 1\n');
   expect(await loadConfig()).toMatchObject({ anthropicPromptCache: true, toolConcurrency: 4, maxToolResultBytes: 16384, maxToolOutputBytes: 67108864 });
 });
+
+
+test("execution configuration rejects invalid sandbox values and malformed TOML", async () => {
+  await Bun.write(paths.config, 'sandbox = "workspce"\n');
+  await expect(loadConfig({ strict: true })).rejects.toThrow("sandbox must be");
+  await Bun.write(paths.config, 'sandbox = "workspace"\nmodel = [unclosed\n');
+  await expect(loadConfig({ strict: true })).rejects.toThrow("invalid execution configuration");
+  await Bun.write(paths.config, 'sandbox = "workspace"\n');
+  expect((await loadConfig({ strict: true })).sandbox).toBe("workspace");
+});

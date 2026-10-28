@@ -3,8 +3,8 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { LedgerTask } from "../../../protocol/task-ledger";
-import { installTaskLedgerSchema } from "./task-ledger";
+import type { LedgerTask } from "../../../protocol/task/task-ledger";
+import { installTaskLedgerSchema } from "../sqlite/task-ledger";
 
 const open: { db: Database; dir: string }[] = [];
 afterEach(() => { for (const { db, dir } of open.splice(0)) { db.close(); rmSync(dir, { recursive: true }); } });

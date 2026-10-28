@@ -7,6 +7,7 @@ import type { RequestSettings } from "../../providers/catalog";
 import type { Role } from "../../protocol";
 
 export interface ToolContext {
+  callId?: string;
   signal?: AbortSignal;
   /** Exact supervised run; not a branch-derived task identity. */
   run?: string;
@@ -27,7 +28,7 @@ export interface Tool {
 
 // Which tools each role gets. The set is deliberately small. `history` is orchestrator-only by owner decision.
 export const toolsFor: Record<Role, string[]> = {
-  orchestrator: ["bash", "spawn", "message", "ask", "web_search", "task", "history", "memory"],
-  worker: ["bash", "message", "web_search", "task"],
-  reviewer: ["bash", "message", "complexity", "web_search", "task"],
+  orchestrator: ["bash", "read", "write", "edit", "process", "context", "remember", "skill", "runtime", "spawn", "message", "ask", "web_search", "task", "history", "memory"],
+  worker: ["bash", "read", "write", "edit", "process", "context", "skill", "message", "web_search", "task"],
+  reviewer: ["bash", "read", "process", "context", "skill", "message", "complexity", "web_search", "task"],
 };

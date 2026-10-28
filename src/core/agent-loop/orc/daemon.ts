@@ -1,3 +1,4 @@
+import { reconcileProcesses } from "../../data/processes";
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
 // (exec/daemon.ts) runs this loop in the `orchestrator` window of the project's
 // tmux session, so turns, rolling memory, the exit watchdog and the merge watcher
@@ -11,7 +12,7 @@ import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
 import { delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux";
 import { exitWatchdog, mergeWatch } from "../../tmux";
-import { paths } from "../../../config";
+import { paths, repositoryBinding, BUILD_ID } from "../../../config";
 import { contextWindow } from "../../../providers/catalog";
 import { effectiveModel } from "../../data/projects";
 import type { Orchestrator, OrchestratorDeps } from "./orchestrator";
@@ -87,7 +88,7 @@ export function watchedSleep(dirs: string[]): { sleep: (ms: number) => Promise<v
 }
 
 async function publish(d: Daemon, state: DaemonState): Promise<void> {
-  await writeStatus(d.o.project, { pid: process.pid, run: d.o.run, state, since: new Date().toISOString(), turns: d.turns,
+  await writeStatus(d.o.project, { build: BUILD_ID, pid: process.pid, run: d.o.run, state, since: new Date().toISOString(), turns: d.turns,
     ...(d.context ? { context: d.context } : {}), ...(d.error ? { error: d.error } : {}) }).catch(error => d.o.log(`orchestrator: could not publish status: ${error}`));
 }
 
@@ -151,6 +152,7 @@ async function runWatchers(d: Daemon): Promise<void> {
   const now = d.o.now();
   if (now - d.watchedAt < d.o.watchMs) return;
   d.watchedAt = now;
+  await reconcileProcesses(d.o.project).catch(error => d.o.log(`process recovery: ${error}`));
   await Promise.all([d.watchdog, d.merges].map(w => w(d.o.project).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`))));
 }
 
@@ -184,9 +186,9 @@ async function step(d: Daemon): Promise<DaemonOutcome | undefined> {
   await d.o.sleep(d.o.pollMs);
 }
 
-/** A deleted project: its directory, or its binding (repository.json, or a legacy clone), is gone. The daemon's own late writes (status, acks) cannot make it look present again. */
+/** A deleted project: its directory, or its binding (SQLite repository record, or a legacy clone), is gone. The daemon's own late writes (status, acks) cannot make it look present again. */
 export const projectGone = (project: string): boolean =>
-  !existsSync(paths.project(project)) || (!existsSync(paths.repository(project)) && !existsSync(join(paths.project(project), "repo")));
+  !existsSync(paths.project(project)) || (!repositoryBinding(project) && !existsSync(join(paths.project(project), "repo")));
 
 /** Run the loop until a stop request, project deletion or (exitWhenIdle) nothing left to do. */
 export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> {

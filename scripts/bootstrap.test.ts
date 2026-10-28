@@ -14,7 +14,7 @@ async function fixture() {
   for (const path of [home, bin, source, cwd, join(source, "scripts"), join(source, "src"), join(source, "src/core"), join(source, "src/core/install"), join(source, "src/config")]) {
     await mkdir(path, { mode: 0o755 });
   }
-  await cp(join(root, "src/config/layout.ts"), join(source, "src/config/layout.ts"));
+  await cp(join(root, "src/config"), join(source, "src/config"), { recursive: true });
   await cp(join(root, "scripts/install.ts"), join(source, "scripts/install.ts"));
   await cp(join(root, "src/core/install/installation.ts"), join(source, "src/core/install/installation.ts"));
   await writeFile(join(source, "package.json"), JSON.stringify({ scripts: { "install:local": "bun scripts/install.ts", build: "bun build-fixture.ts" } }));
@@ -114,16 +114,17 @@ test("existing legacy state refuses bootstrap and preserves private files", asyn
   await writeFile(join(legacy, "auth", "saved"), "fixture-private");
   const result = await f.run();
   expect(result.code).toBe(1);
-  expect(result.output).toContain("manual offline migration");
+  expect(result.output).toContain("fresh-home setup");
   expect(await readFile(join(legacy, "auth", "saved"), "utf8")).toBe("fixture-private");
 });
 
-test("existing config-only state refuses before clone", async () => {
-  const f = await fixture();
-  await mkdir(join(f.home, ".orca"));
-  await writeFile(join(f.home, ".orca/config.toml"), "fixture-settings");
-  const result = await f.run();
-  expect(result.code).toBe(1); expect(result.output).toContain("manual offline migration");
-  expect(await readFile(join(f.home, ".orca/config.toml"), "utf8")).toBe("fixture-settings");
-  expect(await Bun.file(join(f.dir, "git.json")).exists()).toBe(false);
-});
+for (const saved of ["config.toml", ".runtime/config.toml", ".runtime/layout.json", ".runtime/auth/saved.json"]) {
+  test(`existing ${saved} refuses bootstrap before clone`, async () => {
+    const f = await fixture(), file = join(f.home, ".orca", saved);
+    await Bun.write(file, "fixture-settings");
+    const result = await f.run();
+    expect(result.code).toBe(1); expect(result.output).toContain("fresh-home setup");
+    expect(await readFile(file, "utf8")).toBe("fixture-settings");
+    expect(await Bun.file(join(f.dir, "git.json")).exists()).toBe(false);
+  });
+}

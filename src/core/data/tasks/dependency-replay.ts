@@ -2,7 +2,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, sha } from '../../../protocol/tasks';
+import { check, sha } from "../../../protocol/task";
 import { gitAncestry } from './dependency-git';
 import type { StackBase } from './dependency-policy';
 

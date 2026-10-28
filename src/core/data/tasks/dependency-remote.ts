@@ -1,5 +1,5 @@
 /** Bounded argv-only remote operations for the supported task publication path. */
-import { check, sha } from '../../../protocol/tasks';
+import { check, sha } from "../../../protocol/task";
 import { dependencyGit } from './dependency-replay';
 import { run } from '../../proc';
 export async function dependencyGh(cwd: string, args: string[]): Promise<string> {

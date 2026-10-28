@@ -1,3 +1,4 @@
+import { paths } from "../../../config";
 import { open } from "../../data/transcripts/transcript";
 import { budget } from "../../data/memory/compaction";
 import { entryText } from "../../data/memory/archive";
@@ -5,7 +6,7 @@ import { restore } from "../../../tui/conversation/restore";
 import { render } from "../../../tui/conversation/view";
 import { historyRows } from "../../../tui/conversation/lines";
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
@@ -19,6 +20,7 @@ import type { Tool, ToolContext } from "../../tools/registry";
 
 const home = mkdtempSync(join(tmpdir(), "orca-agent-"));
 process.env.ORCA_HOME = home;
+mkdirSync(paths.project("p"), { recursive: true });
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const user = (text: string): NewEntry => ({ type: "message", message: { role: "user", content: text } });
@@ -172,7 +174,7 @@ test("cancelled tool batch pairs every call, skips later tools, and is resumable
     { type: "tool_result", tool_use_id: "a", content: "cancelled by user", is_error: true },
     { type: "tool_result", tool_use_id: "b", content: "cancelled by user", is_error: true },
   ]);
-  const { paired } = await import("../../data/memory/tool-pairs");
+  const { paired } = await import("../../data/transcripts/tool-pairs");
   expect(paired(messages)).toBe(true);
   await transcript.append(user("continue"));
   const next = fakeProvider([[text("resumed")]]);

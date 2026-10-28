@@ -52,6 +52,7 @@ test("two writers interleave whole entries", async () => {
 
 test("past twice the cap the file is rewritten to the newest entries, atomically; a failed rewrite leaves no temp file", async () => {
   mkdirSync(paths.project("big"), { recursive: true });
+  mkdirSync(paths.runtimeProject("big"), { recursive: true });
   writeFileSync(paths.inputHistory("big"), Array.from({ length: COMPACT_AT - 1 }, (_, i) => JSON.stringify(`m${i}`) + "\n").join(""));
   const loaded = await loadHistory("big");
   expect(loaded.entries.length).toBe(MAX_INPUT_HISTORY); // trimmed on load

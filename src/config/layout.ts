@@ -25,20 +25,20 @@ export function assertLayout(root: string): void {
   if (legacyEntries(root).length) fail();
   const marker = join(runtime, "layout.json");
   if (existsSync(marker)) {
-    requireMarker(marker, "version", 2);
+    requireMarker(marker, "version", 3);
   } else {
     // Existing state without a marker requires an explicit offline decision too.
     if (["projects", "memory.sqlite", "config.toml", "auth"].some(n => existsSync(join(root, n)))) fail();
     mkdirSync(runtime, { recursive: true, mode: 0o700 });
-    writeFileSync(marker, JSON.stringify({ version: 2 }) + "\n", { flag: "wx", mode: 0o600 });
+    writeFileSync(marker, JSON.stringify({ version: 3 }) + "\n", { flag: "wx", mode: 0o600 });
   }
   if (!lstatSync(runtime).isDirectory() || lstatSync(runtime).isSymbolicLink()) fail();
   // Rollback is safe only before the new layout has been used.
-  if (!existsSync(join(runtime, "activated"))) writeFileSync(join(runtime, "activated"), "2\n", { mode: 0o600, flag: "wx" });
+  if (!existsSync(join(runtime, "activated"))) writeFileSync(join(runtime, "activated"), "3\n", { mode: 0o600, flag: "wx" });
 }
 
 function fail(): never {
-  throw new Error("Orca layout needs manual offline migration/recovery. Stop all participants and prevent old launches; see docs/ORCA_HOME.md and scripts/migrate-layout.ts. No automatic migration was performed.");
+  throw new Error("Orca layout needs manual offline migration/recovery. Stop all participants and prevent old launches; layout 3 requires a fresh home; preserve the stopped old home as a backup and see docs/ORCA_HOME.md. No automatic migration was performed.");
 }
 function requireMarker(file: string, key: string, expected: unknown) {
   try { if (JSON.parse(readFileSync(file, "utf8"))[key] !== expected) fail(); }

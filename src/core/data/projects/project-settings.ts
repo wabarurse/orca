@@ -1,22 +1,15 @@
-import { rename, unlink } from "node:fs/promises";
-import { join } from "node:path";
-import { paths } from "../../../config";
+import { readProjectState, writeProjectState } from "../../../config";
 import { modelCapabilities, type Effort } from "../../../providers/catalog";
 import { assertSettingsShape, validateSettings, type RequestSettings } from "../../../providers/catalog";
 import { effectiveModel } from "./project-model";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";
 
 type SavedSettings = Record<string, unknown>;
-const settingsPath = (project: string) => join(paths.project(project), "model-settings.json");
 async function readSettings(project: string): Promise<SavedSettings> {
-  try {
-    const value: unknown = JSON.parse(await Bun.file(settingsPath(project)).text());
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid project model settings");
-    return value as SavedSettings;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw error;
-  }
+  const saved = readProjectState<SavedSettings>(project, "model-settings");
+  const value = saved === undefined ? {} : saved;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid project model settings");
+  return value;
 }
 function selectedSettings(saved: SavedSettings, model: string): RequestSettings {
   const entry = Object.hasOwn(saved, model) ? saved[model] : {};
@@ -59,13 +52,8 @@ async function commitSettings(project: string, model: string, patch: RequestSett
   const entry = { ...withSupportedEffort(saved, model).settings, ...patch };
   validateSettings(model, entry, modelCapabilities(model).effort);
   const next = { ...saved, [model]: entry };
-  const path = settingsPath(project);
-  const temp = `${path}.${crypto.randomUUID()}.tmp`;
-  try {
-    await Bun.write(temp, JSON.stringify(next) + "\n", { createPath: false });
-    assertProjectIdentity(project, identity, "saving settings");
-    await rename(temp, path);
-  } finally { await unlink(temp).catch(() => {}); }
+  assertProjectIdentity(project, identity, "saving settings");
+  writeProjectState(project, "model-settings", next);
 }
 export async function effortCommand(project: string, arg: string): Promise<string> {
   const identity = projectIdentity(project);

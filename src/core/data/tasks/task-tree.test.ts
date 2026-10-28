@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../../config/config";
-import { taskDependencies, taskTreeView, type Task } from "../../../protocol/tasks";
+import { taskDependencies, taskTreeView, type Task } from "../../../protocol/task/tasks";
 import { archiveMergedTasks, getTask, registerTask, setTaskAttention } from "./tasks";
 
 const home = mkdtempSync(join(tmpdir(), "task-tree-"));

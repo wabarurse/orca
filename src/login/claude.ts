@@ -13,7 +13,7 @@ const SCOPES = "user:profile user:inference user:sessions:claude_code";
 const REFRESH_MARGIN_MS = 120_000;
 
 export type { OAuthTokens as ClaudeTokens } from "./oauth";
-const authDir = () => join(paths.root, "auth", "anthropic");
+const authDir = () => join(paths.runtime, "auth", "anthropic");
 
 export const claudeCredentialsPath = (profile: string) => join(authDir(), `${validateProfile(profile)}.json`);
 

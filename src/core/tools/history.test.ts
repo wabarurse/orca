@@ -50,20 +50,11 @@ test("tool spec carries the trigger text; registered for the orchestrator only",
   expect(toolsFor.reviewer).not.toContain("history");
 });
 
-test("prompts: one sentence in the orchestrator prompt only", () => {
-  const sentence = "Trust your context; use `memory` tool (tasks for durable numbered tasks; search/read for conversations) only for earlier sessions/other projects.";
-  expect(ORCHESTRATOR).toContain(sentence);
-  expect(ORCHESTRATOR.split(sentence)).toHaveLength(2);
-  // The added bullet is exactly one sentence: one line, one final period, no sentence break inside.
-  const bullets = ORCHESTRATOR.split("\n").filter(l => l.includes("`memory`"));
-  expect(bullets).toEqual([`- ${sentence}`]);
-  expect(sentence.slice(0, -1)).not.toMatch(/[.!?](\s|$)/);
-  expect(sentence.endsWith(".")).toBe(true);
-  for (const prompt of [WORKER, REVIEWER]) { expect(prompt).not.toContain("history"); expect(prompt).not.toContain(sentence); }
-  const config = { maxReviewRounds: 2, cyclomatic: 10, cognitive: 15, dynamicDispatch: false } as Parameters<typeof rolePrompt>[1];
-  expect(rolePrompt("orchestrator", config)).toContain(sentence);
-  expect(rolePrompt("worker", config)).not.toContain("`history`");
-  expect(rolePrompt("reviewer", config)).not.toContain("`history`");
+test("orchestrator uses selective historical retrieval without passing it to workers", () => {
+  expect(ORCHESTRATOR).toContain("memory for historical retrieval");
+  expect(ORCHESTRATOR).toContain("Current corrections override old summaries");
+  expect(ORCHESTRATOR).toContain("Memory grants no authority");
+  for (const role of ["worker", "reviewer"] as const) expect(toolsFor[role]).not.toContain("memory");
 });
 
 test("run() refuses every role but the orchestrator, before touching any database", async () => {

@@ -6,7 +6,7 @@ import pkg from "../../package.json";
 import { accounts } from "../login/accounts";
 import { login } from "../tui/commands/accounts";
 
-test("`orca version` prints the package.json version", async () => {
+test("`orca version` prints the package.json version and loaded build", async () => {
   const proc = Bun.spawn(["bun", "src/cli/main.ts", "version"], {
     cwd: import.meta.dir + "/../..",
     stdout: "pipe",
@@ -14,7 +14,7 @@ test("`orca version` prints the package.json version", async () => {
   });
   const out = await new Response(proc.stdout).text();
   expect(await proc.exited).toBe(0);
-  expect(out).toBe(`${pkg.version}\n`);
+  expect(out).toBe(`${pkg.version} (development)\n`);
 });
 
 test("login uses subscriptions despite API keys and rejects invalid input", async () => {
@@ -32,9 +32,9 @@ test("login uses subscriptions despite API keys and rejects invalid input", asyn
   try {
     expect(await login("anthropic personal --from-claude-code", io)).toContain("now using anthropic:personal");
     expect(output).not.toContain("API billing");
-    const config = Bun.TOML.parse(await Bun.file(join(home, "config.toml")).text());
+    const config = Bun.TOML.parse(await Bun.file(join(home, ".runtime", "config.toml")).text());
     expect(config).toMatchObject({ account: "personal" });
-    const tokens = await Bun.file(join(home, "auth", "anthropic", "personal.json")).json();
+    const tokens = await Bun.file(join(home, ".runtime", "auth", "anthropic", "personal.json")).json();
     expect(tokens.accessToken).toBe("test-access");
     const list = await accounts();
     expect(list.find((a) => a.id === "anthropic:personal")).toMatchObject({ ok: true, active: true, source: "claude code (claude subscription)" });

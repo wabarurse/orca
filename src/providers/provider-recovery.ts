@@ -2,8 +2,7 @@ import { boundedModelRequest } from "./bounded-request";
 import type { RequestScope } from "./bounded-transport";
 import { withTransientRetries, type RetryOptions } from "./retry";
 
-/** Internal constructor-only gate. Account factories deliberately do not enable it.
- * Durable diagnostic wiring must land before production activation. */
+/** Account factories enable bounded recovery and record sanitized retry diagnostics. */
 export type RecoveryPolicy = {
   enabled: true;
   idleMs?: number;

@@ -1,7 +1,7 @@
-import { publicTaskStatus } from "../../protocol/task-ledger";
-import { taskPublicationMilestone } from "../../protocol/tasks";
+import { publicTaskStatus } from "../../protocol/task";
+import { taskPublicationMilestone } from "../../protocol/task";
 // Read-only presentation of the durable registry. Never inspect agents/transcripts.
-import { taskPR, taskStatusLabels, type TaskRow } from "../../protocol";
+import { taskPR, taskStatusLabels, type TaskRow } from "../../protocol/task";
 import { wordWrap } from "../components";
 import { bold, plainText, visibleLength, wrap } from "../components";
 

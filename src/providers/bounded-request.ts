@@ -56,7 +56,7 @@ async function runAttempt<T>(execute: (scope: RequestScope) => Promise<T>, deadl
   }
 }
 
-/** DORMANT: not imported by providers. One executor owns the whole completion, not just headers.
+/** Enabled by the account factories. One executor owns the whole completion, not just headers.
  * Integration MUST disable SDK retries, preserve deliberate 401 refresh separately, use scoped fetch
  * and signal, and await stream completion. Never nest this around existing withTransientRetries.
  * Headers and nonempty transport bytes (including SSE heartbeat/reasoning/tools) reset idle;

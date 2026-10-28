@@ -15,7 +15,10 @@ setDefaultTimeout(30_000);
 const { ghMerged, githubRepo, mergeNotice, mergeWatcher, originRepo, MERGE_POLL_MS, STALE_CLAIM_MS } = await import("./merges");
 const { beginRun, readRun, watchdog } = await import("./exits");
 const { afterExit } = await import("../../exec/after-exit");
-const { drain, put } = await import("../data/inbox/inbox");
+const { drain: allDeliveries, put } = await import("../data/inbox/inbox");
+// These assertions concern merge/exit notices; durable PR-change observations
+// are tested separately by adaptive-workflow.test.ts.
+const drain: typeof allDeliveries = async (...args) => (await allDeliveries(...args)).filter(m => !m.event);
 const { ensureWorktree, slug } = await import("./runner");
 const { paths } = await import("../../config/config");
 type MergedPR = import("./merges").MergedPR;
@@ -54,7 +57,7 @@ async function branch(b: string): Promise<{ wt: string; oid: string }> {
   const wt = await ensureWorktree(project, b);
   writeFileSync(join(wt, `${slug(b)}.txt`), "work\n");
   await $`git -C ${wt} add . && git -C ${wt} commit -qm work && git -C ${wt} push -q origin ${b}`.quiet();
-  mkdirSync(join(paths.project(project), "transcripts"), { recursive: true });
+  mkdirSync(join(paths.project(project), "transcript"), { recursive: true });
   for (const id of [`worker-${slug(b)}`, `reviewer-${slug(b)}`]) {
     writeFileSync(paths.transcript(project, id), "{}\n");
     await put(project, id, { from: "orchestrator", text: "hi" });
@@ -278,7 +281,7 @@ describe("left alone", () => {
     await $`git -C ${repo} push -q origin main:trunk`.quiet();
     await $`git -C ${repo} fetch -q origin`.quiet();
     await $`git -C ${repo} remote set-head origin trunk`.quiet();
-    mkdirSync(join(paths.project(project), "transcripts"), { recursive: true });
+    mkdirSync(join(paths.project(project), "transcript"), { recursive: true });
     for (const b of ["main", "trunk", "master"]) writeFileSync(paths.transcript(project, `worker-${b}`), "{}\n");
     const killed: string[] = [];
     const check = watch([pr(1, "main"), pr(2, "HEAD"), pr(3, "trunk"), pr(4, "master")], { live: async () => ["orchestrator", "worker-main", "worker-trunk"], kill: async (_p, w) => { killed.push(w); } });
@@ -532,7 +535,7 @@ test("malformed/foreign merged lookup never removes task rows; unassociated newe
 });
 
 describe("the other open PRs after a merge", () => {
-  type Obs = import("../../protocol/tasks").PRObservation;
+  type Obs = import("../../protocol/task/tasks").PRObservation;
   const open = (num: number, b: string, mergeable?: Obs["mergeable"], state: Obs["state"] = "OPEN"): Obs =>
     ({ pr: { repository: "o/r", number: num, url: url(num), head: NO_OID }, branch: b, state, ready: false, checks: "unknown", ...(mergeable ? { mergeable } : {}) });
   /** A task with PR #num on branch b, observed as `o`. */

@@ -2,6 +2,9 @@ import { killGroup } from "../../proc";
 import { loadConfig } from "../../../config";
 import { outputArtifact, OutputPreview } from "./output";
 import type { Tool } from "../registry";
+import { launchProcess } from "../../data/processes";
+import { cliCommand, sessionId } from "../../tmux";
+import { shellCommand } from "../../execution";
 
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 // A model nudge, not a security boundary. Shell commands retain the user's privileges.
@@ -24,7 +27,10 @@ export const bash: Tool = {
       type: "object",
       properties: {
         command: { type: "string" },
-        timeout_ms: { type: "integer", minimum: 1, maximum: MAX_TIMEOUT_MS, description: "Maximum command runtime in milliseconds; on timeout the shell and its child processes are killed and partial output is returned. Default: 600000 (10 minutes). Use a shorter timeout for quick checks." },
+        background: { type: "boolean", description: "Return a supervised process handle immediately; completion is sent to your inbox." },
+        yield_ms: { type: "integer", minimum: 0, maximum: 30000, description: "Return after this interval while the supervised command continues. Separate from timeout_ms." },
+        ready_url: { type: "string", description: "Optional localhost HTTP readiness probe for a background service. A successful probe sends a ready event." },
+        timeout_ms: { type: "integer", minimum: 0, maximum: MAX_TIMEOUT_MS, description: "Maximum command runtime; timeout kills the process group. Default 600000. Zero is allowed only for supervised background services that must be explicitly stopped." },
         independent: { type: "boolean", description: "This read-only command has no dependency or conflicting effects with other calls in this batch. Default false." },
         max_output_bytes: { type: "integer", minimum: 512, maximum: 65536, description: "Requested preview limit, bounded by the configured maximum. Default: preserve normal output, shorten oversized output to 4 KiB." },
       }, required: ["command"],
@@ -34,12 +40,24 @@ export const bash: Tool = {
     const command = String(input.command ?? "");
     if (SUDO.test(command)) return "refused: sudo is not allowed";
     const timeout = input.timeout_ms;
-    if (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > MAX_TIMEOUT_MS)) throw new Error("timeout_ms must be an integer from 1 to 600000");
+    if (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 0 || timeout > MAX_TIMEOUT_MS || (timeout === 0 && input.background !== true && input.yield_ms === undefined))) throw new Error("timeout_ms must be 1–600000; zero requires a supervised background command");
     const timeoutMs = timeout ?? MAX_TIMEOUT_MS;
     const requested = input.max_output_bytes;
     if (requested !== undefined && (typeof requested !== "number" || !Number.isSafeInteger(requested) || requested < 512 || requested > 65536)) throw new Error("max_output_bytes must be an integer from 512 to 65536");
     ctx.signal?.throwIfAborted();
     const config = await loadConfig();
+    if (input.background === true || input.yield_ms !== undefined) {
+      if (input.yield_ms !== undefined && (typeof input.yield_ms !== "number" || !Number.isSafeInteger(input.yield_ms) || input.yield_ms < 0 || input.yield_ms > 30000)) throw new Error("yield_ms must be 0–30000");
+      const yieldMs = input.background === true ? 0 : Number(input.yield_ms);
+      if (!Number.isSafeInteger(yieldMs) || yieldMs < 0 || yieldMs > 30000) throw new Error("yield_ms must be 0–30000");
+      const readyUrl = input.ready_url === undefined ? undefined : new URL(String(input.ready_url));
+      if (readyUrl && (!['http:', 'https:'].includes(readyUrl.protocol) || !['localhost', '127.0.0.1', '[::1]'].includes(readyUrl.hostname))) throw new Error("ready_url must be a localhost HTTP URL");
+      const at = new Date().toISOString();
+      return JSON.stringify(await launchProcess({ id: crypto.randomUUID(), project: ctx.project, owner: sessionId(ctx.role, ctx.branch),
+        role: ctx.role, branch: ctx.branch, run: ctx.run, call: ctx.callId, cwd: ctx.cwd, command,
+        createdAt: at, updatedAt: at, state: "starting", timeoutMs: timeoutMs, maxBytes: config.maxToolOutputBytes,
+        notify: true, events: [], ...(readyUrl ? { readyUrl: readyUrl.toString() } : {}) }, cliCommand(), yieldMs, ctx.signal));
+    }
     const cap = Math.min(config.maxToolResultBytes, Number(requested ?? config.maxToolResultBytes));
     const preview = new OutputPreview(cap);
     const artifact = await outputArtifact(ctx.project);
@@ -47,7 +65,7 @@ export const bash: Tool = {
     try {
       if (Buffer.byteLength(artifact.partialPath) + 240 > cap) throw new Error("tool output path exceeds preview budget; increase max_output_bytes and maxToolResultBytes");
       ctx.signal?.throwIfAborted();
-      const proc = Bun.spawn(["sh", "-c", `exec 2>&1\n${command}`], { cwd: ctx.cwd, detached: true, stdout: "pipe", stdin: "ignore" });
+      const proc = Bun.spawn(await shellCommand(`exec 2>&1\n${command}`, ctx.cwd, ctx.role === "reviewer"), { cwd: ctx.cwd, detached: true, stdout: "pipe", stdin: "ignore" });
       const kill = () => killGroup(proc);
       const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
       process.once("exit", kill);

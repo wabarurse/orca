@@ -1,6 +1,6 @@
-import { publicTaskStatus } from "../../protocol/task-ledger";
-import { taskPublicationMilestone } from "../../protocol/tasks";
-import { check, type Task, type TaskTreeView } from "../../protocol/tasks";
+import { publicTaskStatus } from "../../protocol/task";
+import { taskPublicationMilestone } from "../../protocol/task";
+import { check, type Task, type TaskTreeView } from "../../protocol/task";
 import { cells, plainText, visibleLength, wordWrap, wrap } from "./text";
 import { treeTasks, type TreeTask } from "./task-tree-data";
 

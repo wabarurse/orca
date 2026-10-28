@@ -31,9 +31,9 @@ export function elapsedMs(a: Pick<AgentInfo, "live" | "startedAt" | "endedAt">, 
 /** The /agents row text for one agent: "name  live 3m 12s" (clock bold) or "name  finished 14m 02s" (dim). */
 export function agentRow(a: AgentInfo, now: number): string {
   const ms = elapsedMs(a, now);
-  if (ms === null) return `${a.name}  ${dim(a.live ? "live" : "finished")}`;
+  if (ms === null) return `${a.name}  ${dim(a.live ? a.activity ?? "live" : "finished")}`;
   const text = formatElapsed(ms);
-  if (a.live) return `${a.name}  ${dim("live")} ${bold(text.padEnd(CLOCK_WIDTH))}`;
+  if (a.live) return `${a.name}  ${dim(a.activity ?? "live")} ${bold(text.padEnd(CLOCK_WIDTH))}`;
   return `${a.name}  ${dim(`finished ${(a.approximateEnd ? "~" : "") + text}`.padEnd(CLOCK_WIDTH + 9))}`;
 }
 

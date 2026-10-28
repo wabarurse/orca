@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { paths, saveConfig, loadConfig } from "../../../config/config";
+import { paths, saveConfig, loadConfig, writeProjectState } from "../../../config";
 import { effectiveModel, saveProjectModel, projectModelResolver } from "./project-model";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
@@ -26,7 +26,7 @@ test("project override is atomic, validated and leaves the global default and ot
   await expect(saveProjectModel("one", "bad\nmodel")).rejects.toThrow("invalid model");
   await expect(saveProjectModel("../escape", "gpt-test")).rejects.toThrow("invalid project");
   expect(await effectiveModel("one")).toBe("claude-test");
-  await Bun.write(join(paths.project("one"), "model"), "\n");
+  writeProjectState("one", "model", "");
   await expect(effectiveModel("one")).rejects.toThrow("invalid model");
 });
 

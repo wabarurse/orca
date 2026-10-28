@@ -1,10 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgent, type AgentDeps } from "../../agent-loop/loop/agent";
 import { compact, budget, outputCap } from "./compaction";
-import { paired } from "./tool-pairs";
+import { paired } from "../transcripts/tool-pairs";
 import { open, type Transcript } from "../transcripts/transcript";
 import { text, toolUse } from "../../../test/fake-provider";
 import type { CompleteRequest, Provider, Turn } from "../../../providers/provider";
@@ -16,7 +16,7 @@ afterEach(() => { process.env.ORCA_HOME = home; dirs.splice(0).forEach(d => rmSy
 const end = (s = "Goal: preserve requirements. Later amendment: use green. Progress: implemented. Next: test."): Turn => ({ content: [text(s)], stop: "end", completion: "end_turn" });
 function provider(fn: (r: CompleteRequest) => Promise<Turn>): Provider { return { name: "anthropic", complete: fn, models: async () => [] }; }
 async function fixture(fn: (r: CompleteRequest) => Promise<Turn> = async () => end()) {
-  const dir = mkdtempSync(join(tmpdir(), "review-compact-")); dirs.push(dir); process.env.ORCA_HOME = dir;
+  const dir = mkdtempSync(join(tmpdir(), "review-compact-")); dirs.push(dir); process.env.ORCA_HOME = dir; mkdirSync(join(dir, "projects/p"), { recursive: true });
   const transcript = open(join(dir, "transcript.jsonl"));
   const original = "requirements " + "x".repeat(3000) + " DO NOT DROP FINAL REQUIREMENT";
   for (const [role, content] of [["user", original], ["assistant", "old progress " + "z".repeat(33000)], ["user", "Later amendment: use green"], ["assistant", "done"], ["user", "next task"]] as const) await transcript.append({ type: "message", message: { role, content } });
@@ -174,7 +174,7 @@ test("Anthropic carries terminal reason and cache-inclusive usage while retainin
   const client = { messages: { stream: (request: any, opts: any) => { sent = request; options = opts; return { on() {}, finalMessage: async () => ({ content: [text("partial")], stop_reason: reason, usage: { input_tokens: 100, cache_read_input_tokens: 200, cache_creation_input_tokens: 300 } }) }; } } };
   const p = anthropic(client as any);
   const request: CompleteRequest = { model: "claude-opus-5", settings: { effort: "high", fast: true }, system: "role", messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "foreign", signature: JSON.stringify({ provider: "codex" }) }, text("ok")] }], tools: [], maxTokens: 2048, onText() {} };
-  const result = await p.complete(request); expect(result.completion).toBe("max_tokens"); expect(result.inputTokens).toBe(600); expect(result.stop).toBe("end");
+  const result = await p.complete(request); expect(result.completion).toBe("max_tokens"); expect(result.inputTokens).toBe(600); expect(result.stop).toBe("limit");
   expect(sent.messages[0].content).toEqual([text("ok")]); expect(sent.output_config.effort).toBe("high"); expect(sent.speed).toBe("fast"); expect(options.headers["anthropic-beta"]).toContain("fast-mode");
   reason = "refusal"; expect((await p.complete(request)).completion).toBe("refusal");
 });

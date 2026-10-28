@@ -6,10 +6,10 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, re
 import { dirname } from "node:path";
 import { paths, repositoryBinding } from "../../../config";
 import { projectIdentity } from "../projects";
-import { openExistingReadonly } from "../memory/readonly-database";
-import { installTaskLedgerSchema } from "../memory/task-ledger";
-import { canonicalTask, type LedgerTask } from "../../../protocol/task-ledger";
-import type { Task } from "../../../protocol/tasks";
+import { openExistingReadonly } from "../sqlite";
+import { installTaskLedgerSchema } from "../sqlite";
+import { canonicalTask, type LedgerTask } from "../../../protocol/task";
+import type { Task } from "../../../protocol/task";
 
 export interface TaskStore { version: 1; tasks: Task[] }
 interface Row { record_json: string; safety_json: string; removed_at: string | null }

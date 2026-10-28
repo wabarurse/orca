@@ -10,7 +10,7 @@ export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
 export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 export interface CodexTokens extends OAuthTokens { accountId: string }
 
-const authDir = () => join(paths.root, "auth", "openai");
+const authDir = () => join(paths.runtime, "auth", "openai");
 export const codexCredentialsPath = (profile: string) => join(authDir(), `${validateProfile(profile)}.json`);
 export function codexProfiles(): string[] {
   if (!existsSync(authDir())) return [];

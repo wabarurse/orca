@@ -3,9 +3,9 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { paths } from "../../../config";
-import { canonicalTask } from "../../../protocol/task-ledger";
-import type { Task } from "../../../protocol/tasks";
+import { writeProjectState, paths } from "../../../config";
+import { canonicalTask } from "../../../protocol/task/task-ledger";
+import type { Task } from "../../../protocol/task/tasks";
 import { existingTasks, allTasks, getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, removeTask, setTaskDependencies, startTaskRun, stopTaskRun, updateTaskMetadata } from "./tasks";
 import { existingLedgerTasks, searchLedger } from "./ledger-store";
 import { archiveTranscript, queryGlobalHistory, purgeProject } from "../memory/archive";
@@ -149,9 +149,9 @@ for (const replacement of ["project directory", "repository binding"] as const) 
       if (replacement === "project directory") {
         rmSync(paths.project(project), { recursive: true }); mkdirSync(paths.project(project));
       } else {
-        writeFileSync(join(paths.project(project), "repository.json"), JSON.stringify({
+        writeProjectState(project, "repository", {
           version: 1, directory: join(isolated, "different-repo"), branch: "main", worktreeId: crypto.randomUUID(),
-        }));
+        });
       }
       // A valid legacy input must not be imported, backed up or repaired by these readers.
       const projection = JSON.stringify({ version: 1, tasks: [] });

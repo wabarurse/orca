@@ -1,5 +1,5 @@
 import { routineModelRequest } from "./notices";
-import { modelRequestText } from "../../protocol/transcript";
+import { modelRequestText } from "../../protocol";
 // Render a transcript for a terminal and follow it as it grows. This is what
 // picking an agent in /agents shows: the same view the orchestrator page gives you, for any agent.
 

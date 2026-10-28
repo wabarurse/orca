@@ -5,7 +5,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { $ } from "bun";
-import { loadConfig, paths, saveConfig } from "../../../config";
+import { loadConfig, paths, readProjectState, writeProjectState, repositoryBinding, saveConfig } from "../../../config";
 import { checkoutHere } from "./workspace";
 import type { ProjectEntry } from "../../../protocol";
 
@@ -21,13 +21,13 @@ export const validProjectName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /** What the TUI calls a project (status line, project list): its /rename name, else its id. */
 export async function displayName(project: string): Promise<string> {
-  const file = Bun.file(paths.displayName(project));
-  const name = (await file.exists()) ? (await file.text()).trim() : "";
-  return name || project;
+  const name = readProjectState<string>(project, "name");
+  if (name !== undefined && typeof name !== "string") throw new Error("invalid project name");
+  return name?.trim() || project;
 }
 
 /**
- * Give a project a display name. Only the name file changes: the folder, the
+ * Give a project a display name. Only the durable name record changes: the folder, the
  * id, the tmux session and running agents stay as they are, so this is safe
  * at any time. Refused when another project already shows that name.
  */
@@ -37,7 +37,7 @@ export async function setDisplayName(project: string, name: string): Promise<str
   for (const other of await listProjects()) {
     if (other !== project && (other === name || (await displayName(other)) === name)) throw new Error(`another project is already called ${name}`);
   }
-  await Bun.write(paths.displayName(project), name + "\n");
+  writeProjectState(project, "name", name);
   return name;
 }
 
@@ -69,9 +69,10 @@ export function shortRemote(url: string): string {
 
 /** Keep unavailable bound checkouts listed so their conversations remain discoverable. */
 export async function listProjects(): Promise<string[]> {
-  const names = await readdir(paths.project("x").replace(/x$/, "")).catch(() => [] as string[]);
+  const entries = await readdir(paths.projects, { withFileTypes: true }).catch(() => []);
+  const names = entries.filter(e => e.isDirectory() && validProjectName(e.name)).map(e => e.name);
   const out: string[] = [];
-  for (const name of names.sort()) if (existsSync(paths.repository(name)) || existsSync(paths.repo(name))) out.push(name);
+  for (const name of names.sort()) if (repositoryBinding(name) || existsSync(paths.repo(name))) out.push(name);
   return out;
 }
 

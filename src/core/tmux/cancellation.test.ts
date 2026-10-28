@@ -7,7 +7,7 @@ import { paths } from "../../config/config";
 import { runAgent } from "../../exec/run";
 import { open } from "../data/transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../test/fake-provider";
-import { paired } from "../data/memory/tool-pairs";
+import { paired } from "../data/transcripts/tool-pairs";
 import { drain } from "../data/inbox/inbox";
 
 const home = mkdtempSync(join(tmpdir(), "orca-cancellation-"));

@@ -14,7 +14,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ inbox 1
-help · commands & keys                                                  1–9/64
+help · commands & keys                                                  1–9/67
   conversation
   /refresh       reload shared local state; active context waits until idle;
                  never runs work
@@ -89,6 +89,9 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   ↑ / ↓                move between input rows, then project input history
 
   advanced & diagnostics
+  /runtime            loaded builds, context observations and background
+                      commands
+  /usage              measured project tokens, cached input and request time
   /keys               diagnose keys/wheel; ctrl+g keeps draft; esc ends
   /compact            summarize model context; keep full history
   /review-rounds [n]  project review rounds before ci; 0 goes straight to ci"
@@ -109,7 +112,7 @@ Conversation record 30
 └──────────────────────────────────────┘
 2 agents running │ 1 message queued
 inbox 1
-help                           1–8/127
+help                           1–8/134
   conversation
   /refresh
     reload shared local state; active
@@ -240,6 +243,13 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     project input history
 
   advanced & diagnostics
+  /runtime
+    loaded builds, context
+    observations and background
+    commands
+  /usage
+    measured project tokens, cached
+    input and request time
   /keys
     diagnose keys/wheel; ctrl+g keeps
     draft; esc ends
@@ -265,13 +275,13 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 message queued │ inbox 1
-help · commands & keys                                                56–64/64
-  alt+d                delete next word
-  home/end / ctrl+a/e  start / end of current line
-  ctrl+u / ctrl+k      delete to start / end of current line
+help · commands & keys                                                59–67/67
   ↑ / ↓                move between input rows, then project input history
 
   advanced & diagnostics
+  /runtime            loaded builds, context observations and background
+                      commands
+  /usage              measured project tokens, cached input and request time
   /keys               diagnose keys/wheel; ctrl+g keeps draft; esc ends
   /compact            summarize model context; keep full history
   /review-rounds [n]  project review rounds before ci; 0 goes straight to ci

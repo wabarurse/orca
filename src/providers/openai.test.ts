@@ -192,6 +192,23 @@ test("completed streams can reconstruct output from done items in wire order", a
   expect(result.content).toEqual(fromResponses([message, call]));
 });
 
+test("empty terminal output preserves streamed tool calls exactly once", async () => {
+  intercept(async () => codexSSE([
+    { type: "response.output_item.done", output_index: 0, item: call },
+    { type: "response.completed", response: { status: "completed", output: [] } },
+  ]));
+  const result = await openai(async () => fakeCodexTokens()).complete(request());
+  expect(result.stop).toBe("tool_use"); expect(result.content).toEqual(fromResponses([call]));
+});
+
+test("a gap in streamed output fails without returning executable calls", async () => {
+  intercept(async () => codexSSE([
+    { type: "response.output_item.done", output_index: 1, item: call },
+    { type: "response.completed", response: { status: "completed", output: [] } },
+  ]));
+  await expect(openai(async () => fakeCodexTokens()).complete(request())).rejects.toThrow();
+});
+
 test("Codex response.done is accepted only with a successful completion status", async () => {
   intercept(async () => codexSSE([{ type: "response.done", response: { status: "completed", output: [message] } }]));
   expect((await openai(async () => fakeCodexTokens()).complete(request())).stop).toBe("end");
@@ -242,7 +259,7 @@ test("Codex terminal metadata distinguishes refusal and omitted nontext output f
   let output: ResponseOutputItem[] = [message, refusal];
   intercept(async () => codexSSE([{ type: "response.completed", response: { status: "completed", output } }]));
   const p = openai(async () => fakeCodexTokens());
-  expect((await p.complete(request())).completion).toBe("refusal");
+  expect(await p.complete(request())).toMatchObject({ completion: "refusal", stop: "refusal" });
   output = [message, { ...reasoning, encrypted_content: undefined }];
   expect((await p.complete(request())).completion).toBe("completed");
   output = [reasoning, message]; expect((await p.complete(request())).completion).toBe("completed");

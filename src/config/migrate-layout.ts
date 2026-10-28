@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-// Offline operator tool. Acknowledgement is NOT exclusion of old processes.
+// Historical v1→v2 offline operator tool; not a v3 upgrade. Acknowledgement is NOT exclusion of old processes.
 import { cpSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, openSync, closeSync, fsyncSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { legacyEntries, movedRoot, movedProject } from "./layout";

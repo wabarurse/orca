@@ -1,6 +1,6 @@
 import { taskForRun } from "../data/tasks";
-import { provenance } from "../data/tasks/dependency-provenance";
-import { gitAncestry } from "../data/tasks/dependency-git";
+import { provenance } from "../data/tasks";
+import { gitAncestry } from "../data/tasks";
 import { delay, publishLaunch } from "./cancellation";
 import { claim, readRun } from "./exits";
 import { command, run } from "../proc";
@@ -17,6 +17,7 @@ import { $ } from "bun";
 import { paths, repositoryBinding } from "../../config";
 import { assertMainCheckout, assertWorktree } from "../data/projects";
 import { launchEnvironment } from "./launch-environment";
+import { listProcesses, liveProcess } from "../data/processes";
 import type { Role } from "../../protocol";
 
 export interface StartOptions {
@@ -102,6 +103,7 @@ export async function ensureTaskWorktree(opts: StartOptions): Promise<string> {
 }
 
 export async function removeWorktree(project: string, branch: string): Promise<void> {
+  if ((await listProcesses(project)).some(p => p.branch === branch && (liveProcess(p) || p.state === "unknown"))) throw new Error("workspace has active or unknown background processes; reconcile/stop them before removing it");
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));

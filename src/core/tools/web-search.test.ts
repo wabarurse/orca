@@ -12,12 +12,12 @@ function context(search = async (_req: SearchRequest) => result): ToolContext {
   return { ...ctx, selected: { model: "gpt-test", provider: { ...fakeProvider([]), name: "openai", search } } };
 }
 
-test("eight tools; all three role allowlists include web_search", () => {
-  expect(Object.keys(registry)).toHaveLength(8);
+test("all role allowlists include search and enforce scoped capabilities", () => {
+  expect(Object.keys(registry)).toEqual(expect.arrayContaining(["read", "write", "edit", "bash", "process", "context", "remember", "skill", "runtime"]));
   expect(registry.web_search).toBe(web_search);
-  expect(toolsFor.orchestrator).toHaveLength(7);
-  expect(toolsFor.worker).toHaveLength(4);
-  expect(toolsFor.reviewer).toHaveLength(5);
+  expect(toolsFor.worker).toContain("write");
+  expect(toolsFor.reviewer).not.toContain("write");
+  expect(toolsFor.worker).not.toContain("spawn");
   for (const tools of Object.values(toolsFor)) expect(tools).toContain("web_search");
 });
 

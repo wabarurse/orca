@@ -23,7 +23,7 @@ export function stateRoot(home: string, env: NodeJS.ProcessEnv): string {
   const old = join(home, legacy.stateDirectory), current = join(home, ".orca");
   // The new installer can create .orca/app before the old state is migrated.
   // A new app checkout alone must not hide existing accounts or conversations.
-  const currentState = ["config.toml", "auth", "projects"].some(name => present(join(current, name)));
+  const currentState = [".runtime/layout.json", ".runtime/config.toml", ".runtime/auth", "config.toml", "auth", "projects"].some(name => present(join(current, name)));
   return !currentState && present(old) ? old : current;
 }
 

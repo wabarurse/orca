@@ -1,6 +1,6 @@
 /** Supported workflow used by the existing task tool. No shell publication API. */
-import { check, type Task } from '../../../protocol/tasks';
-import type { ToolContext } from '../../tools/registry';
+import { check, type Task } from "../../../protocol/task";
+interface ToolContext { project: string; role: string; run?: string; branch?: string; cwd: string; signal?: AbortSignal }
 import { allTasks, observeTaskPR, withDependencyTaskOwnership } from './tasks';
 import { ghTaskPR, originRepo } from './github';
 import { dependencyClosure, resolveStackBase } from './dependency-policy';

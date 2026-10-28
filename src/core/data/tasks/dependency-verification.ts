@@ -1,7 +1,7 @@
 /** Shared runtime gate for publication AND readiness. Caller holds the project lock. */
 import { realpath } from 'node:fs/promises';
 import { paths } from '../../../config';
-import { check, type Task } from '../../../protocol/tasks';
+import { check, type Task } from "../../../protocol/task";
 import { provenance } from './dependency-provenance';
 import { assertPublication } from './dependency-policy';
 import { ledgerDependencies } from './dependency-ledger';

@@ -3,8 +3,8 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
-import { assertProjectIdentity, withProjectStateLock } from "../projects/state";
-import { check, object } from "../../../protocol";
+import { assertProjectIdentity, withProjectStateLock } from "../projects";
+import { check, object } from "../../../protocol/task";
 
 export interface RunOwner {
   project: string; incarnation: string; branch: string; task: string;
@@ -43,7 +43,7 @@ async function update<T>(owner: RunOwner, action: (s: Store) => T): Promise<T> {
   return withProjectStateLock(owner.project, async () => {
     assertProjectIdentity(owner.project, owner.incarnation, "updating run ownership");
     // Outside the project: recreation must not erase a possibly-live lease.
-    const dir = join(paths.root, "run-ownership"), file = join(dir, `${owner.project}.json`);
+    const dir = join(paths.runtime, "run-ownership"), file = join(dir, `${owner.project}.json`);
     let store: Store;
     try { store = JSON.parse(await readFile(file, "utf8")); }
     catch (e) {

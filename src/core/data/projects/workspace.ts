@@ -1,8 +1,8 @@
 // Bind conversations to a user's checkout; never copy its repository or credentials.
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readdir, rename, rm, rmdir } from "node:fs/promises";
+import { mkdir, readdir, rmdir } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
-import { paths, repositoryBinding, type RepositoryBinding } from "../../../config";
+import { paths, writeProjectState, repositoryBinding, type RepositoryBinding } from "../../../config";
 import { command } from "../../proc";
 
 /** Canonical checkout root, retaining local config and files even when origin exists. */
@@ -54,11 +54,8 @@ export async function initializeWorkspace(project: string, source?: string): Pro
   await requireBranch(directory, branch);
   const binding: RepositoryBinding = { version: 1, directory, branch, worktreeId: crypto.randomUUID() };
   await mkdir(paths.project(project), { recursive: true });
-  const temp = `${paths.repository(project)}.${crypto.randomUUID()}.tmp`;
-  try {
-    await Bun.write(temp, JSON.stringify(binding) + "\n");
-    await rename(temp, paths.repository(project));
-  } finally { await rm(temp, { force: true }); }
+  await mkdir(paths.cache(project), { recursive: true });
+  writeProjectState(project, "repository", binding);
 }
 
 async function originalCheckout(source: string): Promise<string> {

@@ -6,7 +6,7 @@
 // Explicit context-boundary entries reset model context without cutting parent links.
 // history() walks past both for UI replay without duplicating retained turns.
 
-import { paired } from "../memory/tool-pairs";
+import { paired } from "./tool-pairs";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { withStorageLock } from "../storage-lock";
 import type { AppendGuard, Entry, NewEntry } from "../../../protocol";
