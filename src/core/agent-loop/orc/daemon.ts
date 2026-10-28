@@ -59,6 +59,8 @@ interface Daemon {
   watchdog: (project: string) => Promise<unknown>;
   merges: (project: string) => Promise<unknown>;
   watchedAt: number;
+  /** The watcher pass in flight (never rejects); input never waits for it. */
+  watching?: Promise<void>;
   turns: number;
   context?: { model: string; used?: number; window: ReturnType<typeof contextWindow> };
   error?: string;
@@ -148,12 +150,17 @@ async function pollTurn(d: Daemon, signal: AbortSignal): Promise<void> {
   }
 }
 
-async function runWatchers(d: Daemon): Promise<void> {
+/** Start a due watcher pass in the background, one at a time. The merge watcher's pass runs `gh` once per
+ * active task PR (each up to 20s); awaited in `step`, it held input sent to an idle orchestrator until it ended. */
+function runWatchers(d: Daemon): void {
   const now = d.o.now();
-  if (now - d.watchedAt < d.o.watchMs) return;
+  if (d.watching || now - d.watchedAt < d.o.watchMs) return;
   d.watchedAt = now;
-  await reconcileProcesses(d.o.project).catch(error => d.o.log(`process recovery: ${error}`));
-  await Promise.all([d.watchdog, d.merges].map(w => w(d.o.project).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`))));
+  const pass: Promise<void> = (async () => {
+    await reconcileProcesses(d.o.project).catch(error => d.o.log(`process recovery: ${error}`));
+    await Promise.all([d.watchdog, d.merges].map(w => w(d.o.project).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`))));
+  })().catch(error => d.o.log(`orchestrator: watcher failed: ${error}`)).finally(() => { if (d.watching === pass) d.watching = undefined; });
+  d.watching = pass;
 }
 
 /** One turn with its own cancel poll; a failed turn is published, never fatal (input stays, the next message resumes). The live file spans the turn: begun before the status says `turn`, gone before it says `idle`. */
@@ -174,15 +181,19 @@ async function runTurn(d: Daemon): Promise<void> {
   await publish(d, "idle");
 }
 
-/** One pass of the loop: requests, an idle cancel, the watchers, then a turn or a wait. */
+/** One pass of the loop: requests, an idle cancel, a due watcher pass started in the background, then a turn or a wait. */
 async function step(d: Daemon): Promise<DaemonOutcome | undefined> {
   if (d.o.gone()) return "deleted";
   assertLaunch(d);
   if (await handleRequests(d)) return "stopped";
   await takeCancel(d, false);
-  await runWatchers(d);
+  runWatchers(d); // not awaited: input that lands meanwhile starts its turn now
   if (await d.o.session.pending()) { await runTurn(d); return; }
-  if (d.o.exitWhenIdle) return "idle";
+  if (d.o.exitWhenIdle) {
+    await d.watching; // what the watchers queued (exit and merge notices) still runs before an idle exit
+    if (await d.o.session.pending()) { await runTurn(d); return; }
+    return "idle";
+  }
   await d.o.sleep(d.o.pollMs);
 }
 
@@ -208,10 +219,11 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       // A project removed mid-step fails the step (its files vanish under it): that is deletion, not a crash.
       const outcome = await step(d).catch(error => { if (d.o.gone()) return "deleted" as const; throw error; });
       if (!outcome) continue;
+      await d.watching;
       if (outcome !== "deleted") await publish(d, "stopped");
       return outcome;
     }
-  } finally { watched?.close(); }
+  } finally { await d.watching; watched?.close(); }
 }
 
 /** The session's output hooks: the window shows streamed text and tool lines like a worker's, and the live file gets the same events. */

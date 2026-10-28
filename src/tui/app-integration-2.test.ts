@@ -91,9 +91,9 @@ test("header caches model and filters subagent counts; unchanged background fram
   let now = 0;
   const clock: Clock = { now: () => now, every: (fn, ms) => { const tick = { fn, ms }; ticks.push(tick); return () => { ticks.splice(ticks.indexOf(tick), 1); }; } };
   let model = "model-a", reads = 0;
-  const app = new App({ term, clock, pollMs: 100_000, projectModel: async () => { reads++; return model; }, agents: async () => [{ name: "orchestrator", live: true }, { name: "worker-a", live: true }, { name: "reviewer-a", live: true }, { name: "worker-old", live: false }], openOrchestrator: fakeOrchestrators().openOrchestrator });
+  const app = new App({ term, clock, pollMs: 100_000, taskCount: async () => [], projectModel: async () => { reads++; return model; }, agents: async () => [{ name: "orchestrator", live: true }, { name: "worker-a", live: true }, { name: "reviewer-a", live: true }, { name: "worker-old", live: false }], openOrchestrator: fakeOrchestrators().openOrchestrator });
   const running = app.run("header-test");
-  await until(() => term.screen().includes("model-a") && term.screen().includes("2 agents running"));
+  await until(() => term.screen().includes("model-a") && term.screen().includes("2 agents running │ 0 tasks"));
   const readOnce = reads;
   app.frame(); app.frame();
   expect(reads).toBe(readOnce);
@@ -194,15 +194,15 @@ test("sign-in queue attempts every owned message after failures across pages wit
     term.type("/login claude\r");
     await until(() => !!finish);
     term.type("one\rtwo\r");
-    await until(() => app.status(firstPage).includes("2 messages queued"));
+    await until(() => app.frame().queued?.texts.length === 2);
     expect(app.frame().queued?.texts).toEqual(["one", "two"]);
     await app.openPage(`login-other-${failed}`);
     const secondPage = app.page!;
     term.type("three\r");
-    await until(() => app.status(secondPage).includes("1 message queued"));
+    await until(() => app.frame().queued?.texts.length === 1);
     expect(app.frame().queued?.texts).toEqual(["three"]);
     finish();
-    await until(() => attempted.length === 3 && app.status(secondPage).includes("0 messages queued"));
+    await until(() => attempted.length === 3 && !secondPage.sent.length);
     expect(attempted).toEqual(["one", "two", "three"]);
     const displayed = [...firstPage.lines, ...secondPage.lines].map(raw).map(strip);
     for (const text of ["one", "two", "three"]) expect(displayed.filter((l) => l === `> ${text}`).length).toBe(text === failed ? 0 : 1);
@@ -369,7 +369,7 @@ test("current-view resize anchoring ignores unrelated sessions, and tail activit
     expect(app.frame().activity).toBeUndefined(); // background session remains busy
     expect(JSON.stringify(page.lines)).toBe(durable);
   } finally { app.quit(); await running; }
-  expect(term.screen()).not.toMatch(/thinking|working|opening|agents running|messages queued/);
+  expect(term.screen()).not.toMatch(/thinking|working|opening|agents running|\d+ tasks? │/);
 });
 
 test("boxed input and question vertical editing share rendered geometry across resize, retaining the chat draft", async () => {
@@ -520,7 +520,7 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
   expect(exit).toContain("durable record 104");
   expect(exit).toContain("authorized continuation");
   expect(exit).not.toContain("compressed model-only summary");
-  expect(exit).not.toMatch(/thinking…|working…|messages queued|agents running/);
+  expect(exit).not.toMatch(/thinking…|working…|\d+ tasks? │|agents running/);
   expect(term.display.modes.get(1049)).toBe(false);
 });
 

@@ -18,7 +18,7 @@ const plain = (rows: string[]) => rows.map(row => Bun.stripANSI(row).trimEnd()).
 const frame = (cols: number, rows: number, top = 0): Frame => ({
   cols, rows, menu: null,
   input: { prompt: "> ", text: "draft 界", cursor: 5 },
-  status: "2 agents running │ 1 message queued │ inbox 1",
+  status: "2 agents running │ 1 task │ inbox 1",
   help: { lines: helpLines(commands, false, cols), top },
 });
 const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "demo" }], active: 0, model: "example-model · effort default · fast off", directory: "/isolated/demo", remote: "example/repo" }, f.cols, headerHeight(f.rows));

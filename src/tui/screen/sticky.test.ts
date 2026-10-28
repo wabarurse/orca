@@ -218,7 +218,7 @@ test("SGR wheel events scroll without inserting terminal reports into the draft"
 });
 
 test("selected activity and tools live only at the conversation tail, never in either pinned bar", () => {
-  const f = { ...frame(), status: "2 agents running │ 0 messages queued │ 1 question", partial: "partial reply", running: ["⏺ bash(wait)"], activity: "⠋ working…" };
+  const f = { ...frame(), status: "2 agents running │ 0 tasks │ 1 question", partial: "partial reply", running: ["⏺ bash(wait)"], activity: "⠋ working…" };
   const header = chapterRows({ tabs: [{ name: "orch-live" }], active: 0, model: "model · effort high · fast on", directory: "/repo", remote: "host/repo" }, 80, headerHeight(24));
   const s = new FakeScreen(80, 24);
   const first = stickyRows(f, history, header);
@@ -247,7 +247,7 @@ test("native sticky geometry is cell-correct through narrow/tiny resizes, panels
     const s = new FakeScreen(cols, rows);
     let previous: ReturnType<typeof stickyRows> | undefined;
     for (const cursor of [0, 4, 7, text.length, 0]) {
-      const f = { ...frame(cols, rows), input: { prompt: "worker-long-界 > ", text, cursor }, status: "2 agents running │ 1 message queued │ 3 questions", activity: "⠋ thinking…", question: { text: "Which option?", options: ["one", "two"], index: 0, count: 1, mode: "pick" as const } };
+      const f = { ...frame(cols, rows), input: { prompt: "worker-long-界 > ", text, cursor }, status: "2 agents running │ 1 task │ 3 questions", activity: "⠋ thinking…", question: { text: "Which option?", options: ["one", "two"], index: 0, count: 1, mode: "pick" as const } };
       const next = stickyRows(f, ["hello"], header);
       expect(next.rows).toHaveLength(rows);
       expect(next.rows.every(row => Bun.stringWidth(row) <= cols)).toBe(true);

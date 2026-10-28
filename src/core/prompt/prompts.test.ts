@@ -58,6 +58,12 @@ describe("adaptive role contracts", () => {
     expect(p).toContain("review database migrations");
     expect(p).toContain("Honor explicit workflow");
   });
+  test("decisions for the user go through ask, so they reach the Questions inbox", () => {
+    const p = rolePrompt("orchestrator", defaults);
+    expect(p).toContain("in the ask tool so it reaches their Questions inbox (Ctrl+Q)");
+    expect(p).toContain("a list in chat alone is not asking");
+    expect(p).toContain("Ask only for consequential unresolved decisions");
+  });
   test("questions retain authorization and silence rules", () => {
     expect(ask.spec.description).toContain("currently unresolved decision");
     expect(ask.spec.description).toContain("Skip, silence and closing the panel never apply it");

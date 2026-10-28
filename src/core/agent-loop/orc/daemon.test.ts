@@ -67,7 +67,7 @@ test("the loop runs turns on input, the watchers on their interval, answers requ
   expect(await pending(p, "orchestrator")).toBe(false);
   expect(readStatus(p)).toMatchObject({ pid: process.pid, run: "run-1", context: { model: "fake-model" } });
   expect(readStatus(p)!.context!.used).toBeGreaterThan(0);
-  expect(watched).toBe(1); expect(merged).toBe(1);
+  await until(() => watched === 1 && merged === 1); // the pass runs beside the turn, not before it
   await until(() => clock.sleeping() === 1); // idle: parked on the injected sleep
   // Woken early without the interval passing: no watcher run; input is still picked up.
   await put(p, "orchestrator", { from: "user", text: "again" });
@@ -95,6 +95,39 @@ test("the loop runs turns on input, the watchers on their interval, answers requ
   expect((await awaitAck(p, stop, { alive: async () => true })).ok).toBe(true);
   expect(readStatus(p)?.state).toBe("stopped");
   expect(await takeRequests(p)).toEqual([]);
+  session.dispose?.();
+});
+
+test("input sent while the orchestrator is idle starts its turn at once, not after a slow watcher pass (gh per task PR)", async () => {
+  const p = await project("slow-watch");
+  const provider = fakeProvider([[text("first reply")], [text("second reply")]]);
+  const session = await createOrchestrator({ project: p, provider, tools: {}, write() {} });
+  const clock = fakeClock();
+  const gh = deferred();
+  let merges = 0, finished = 0;
+  const running = runDaemon({ project: p, run: "run-w", session, sleep: clock.sleep, now: clock.now, watchMs: 2000, log() {},
+    watchers: { watchdog: async () => {}, merges: async () => { merges++; await gh.promise; finished++; } } });
+  await until(() => merges === 1 && clock.sleeping() === 1); // idle, its first watcher pass still waiting on gh
+  await put(p, "orchestrator", { from: "user", text: "sent while gh runs" });
+  clock.wake();
+  await until(() => readStatus(p)?.turns === 1 && readStatus(p)?.state === "idle");
+  expect(provider.calls).toHaveLength(1);
+  expect(await pending(p, "orchestrator")).toBe(false);
+  expect(finished).toBe(0);
+  // A due interval starts no second pass while one is in flight; input still goes through.
+  await until(() => clock.sleeping() === 1);
+  clock.advance(2000);
+  await put(p, "orchestrator", { from: "user", text: "again" });
+  clock.wake();
+  await until(() => readStatus(p)?.turns === 2 && readStatus(p)?.state === "idle");
+  expect(merges).toBe(1);
+  gh.resolve();
+  await until(() => finished === 1);
+  await until(() => clock.sleeping() === 1);
+  const stop = await request(p, { kind: "stop" });
+  clock.wake();
+  expect(await running).toBe("stopped");
+  expect((await awaitAck(p, stop, { alive: async () => true })).ok).toBe(true);
   session.dispose?.();
 });
 
