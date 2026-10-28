@@ -311,7 +311,7 @@ test("indexing is batched and resumable: an interruption keeps whole batches and
   expect(globalRows("SELECT rowid FROM entry_search WHERE entry_search MATCH 'message'")).toHaveLength(total);
 });
 
-test("turn-end indexing is abandoned after a fixed limit, even queued behind the project lock", async () => {
+test("/clear's best-effort indexing is abandoned after a fixed limit, even queued behind the project lock", async () => {
   home();
   await project("alpha", ["one"]);
   const held = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();

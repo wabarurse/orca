@@ -975,12 +975,19 @@ holds authoritative task records, project bindings, preferences and decisions.
 a projection, not a replacement for the ledger. Corrupt or unsafe database files
 block operations that require project authority; archive-only failures can be
 reported without failing an otherwise valid turn.
-Indexing happens at compaction, `/clear`, query time and at the end of each
-orchestrator turn. Turn-end (and `/clear`) indexing is best effort: it is bounded
-(the whole operation, including waiting for the project lock, is abandoned after
-about 3 seconds, and SQLite waits are capped at 1 second), it may therefore skip,
-and it only reports a problem; it never fails or meaningfully delays the turn.
-The next archive catches up. Large inserts are committed in batches of 200 entries
+Indexing happens only where context is replaced: at compaction (before the
+summary job starts and again before it is published; a failure there keeps the
+original history) and at `/clear`, whose cleared messages leave the context just
+as compacted ones do. Turns, tools and searches never index: `task
+search_history`/`read_history` and `history` only read, so anything since the
+last compaction is not searchable (it is still in the live context). `/clear`
+indexing is best effort: it is bounded (the whole operation, including waiting
+for the project lock, is abandoned after about 3 seconds, and SQLite waits are
+capped at 1 second), it may therefore skip, and it only reports a problem; it
+never fails or meaningfully delays the clear. The next compaction catches up: it
+resumes after the last indexed entry over the whole transcript, entries before a
+`/clear` boundary included. The durable task ledger is separate and still saves
+on every task change. Large inserts are committed in batches of 200 entries
 with the event loop yielded in between. Reading a
 project's transcript and registry still happens under that project's state lock
 and identity check. Inbox delivery and task IDs/status semantics are unchanged.
@@ -1068,11 +1075,11 @@ orchestrator transcripts are indexed.
 `history` crosses `/clear` boundaries and project boundaries: every project, every
 epoch, `agent = orchestrator`, **except the caller's own current session** (this
 project, the current `/clear` epoch, and that scope's tasks). Reading an entry of
-the current session is refused with a pointer to `task read_history`. Before each
-query the caller's own transcript is archived first (a write to its own project's
-rows only; an empty transcript is not archived and creates no file), so a
-just-cleared epoch is searchable immediately. Other projects appear as far as they
-have been indexed (turn end, `/clear`, startup backfill); the result reports
+the current session is refused with a pointer to `task read_history`. A query
+never archives anything, the caller's own transcript included: every project,
+the caller's too, appears as far as it has been indexed (compaction, `/clear`,
+startup backfill), so a just-cleared epoch is searchable once its `/clear`
+indexing succeeded; the result reports
 `indexedThrough` (the latest indexing time) and `projectsIndexed`, both counting
 the caller's own project as well, plus `backfill in progress` while
 `meta.backfill_version` is missing.

@@ -55,7 +55,9 @@ JSONL or tasks.json: one global `~/.orca/memory.sqlite` (WAL, mode `0600`)
 shared by all projects, with `project` and `agent` columns on every row, holding
 only orchestrator transcripts and task records. Old per-project `memory.sqlite`
 files are migrated by a background backfill and deleted only after the rebuilt
-rows verify identical. Search/read results are bounded historical text and
+rows verify identical. Rows are written only at compaction and `/clear`;
+searches only read, so messages since the last compaction are not searchable
+(they are still in context). Search/read results are bounded historical text and
 restricted to this project, the orchestrator and the current `/clear` scope; clear
 does not delete bytes or receipts. See the
 [reference rolling-memory section](REFERENCE.md#orchestrator-rolling-memory) for tool

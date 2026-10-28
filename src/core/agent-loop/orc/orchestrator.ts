@@ -221,6 +221,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
           authorization.throwIfAborted();
           await check(true);
           rolling.reset();
+          // A clear replaces the context like a compaction: index what it drops, so it stays searchable.
           await archiveBestEffort(deps.project, transcript, memoryLog(deps), true);
           // Only rebuildable project cache is disposable; original evidence stays outside it.
           await rm(paths.cache(deps.project), { recursive: true, force: true });
@@ -289,9 +290,8 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     else if (state.takeRequest()) await agent.compact();
     else await agent.maintain();
     if (deps.joinRolling && await rolling.finish(signal)) await agent.maintain();
-    const sent = await replies(deps.project, transcript);
-    await archiveBestEffort(deps.project, transcript, memoryLog(deps));
-    return sent;
+    // No indexing here: the searchable archive is written only where context is replaced (compaction, /clear).
+    return await replies(deps.project, transcript);
   } catch (error) {
     if (!signal.aborted) throw error;
     return [];
