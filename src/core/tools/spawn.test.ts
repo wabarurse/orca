@@ -9,7 +9,7 @@ import { open } from "../data/transcripts/transcript";
 import type { ToolContext } from "./registry";
 import { message } from "./message";
 import { makeSpawn as realSpawn } from "./spawn";
-import { registerTask, stopTaskRun, taskForRun } from "../data/tasks/tasks";
+import { getTask, registerTask, stopTaskRun, taskForRun } from "../data/tasks/tasks";
 // Legacy spawn behavior tests use explicit authorized records and simulated finished runs.
 const taskIds = new Map<string, string>();
 function makeSpawn(...args: Parameters<typeof realSpawn>) {
@@ -100,11 +100,11 @@ describe("one agent per branch", () => {
   const chain = (id: string) => open(paths.transcript("q", id)).chain();
   const qctx: ToolContext = { project: "q", role: "orchestrator", cwd: "/" };
 
-  test("a live agent on the branch refuses, leaving the transcript unchanged", async () => {
+  test("a live agent of the other role refuses after waiting, leaving the transcript unchanged", async () => {
     const { r, asked, starts } = runner([["reviewer-busy"]]);
     const t0 = Date.now();
     const out = await makeSpawn(r, wait).run({ prompt: "follow-up", branch: "busy" }, qctx);
-    expect(out).toBe("refused: reviewer-busy is still running on busy; message it, or spawn again after it reports or exits");
+    expect(out).toBe("refused: reviewer-busy is still running on busy and one agent works on a branch at a time, so this worker prompt was not delivered; message reviewer-busy instead, or spawn the worker again after reviewer-busy reports and exits");
     expect(Date.now() - t0).toBeGreaterThanOrEqual(250); // it waited first
     expect(asked[0]).toEqual(["worker-busy", "reviewer-busy"]);
     expect(asked.length).toBeGreaterThan(2);
@@ -113,10 +113,50 @@ describe("one agent per branch", () => {
   });
 
   test("a live agent that finishes while spawn waits: spawn goes ahead", async () => {
-    const { r, starts } = runner([["worker-soon"], ["worker-soon"], []]);
+    const { r, starts } = runner([["reviewer-soon"], ["reviewer-soon"], []]);
     expect(await makeSpawn(r, wait).run({ prompt: "next task", branch: "soon" }, qctx)).toBe("worker-soon");
     expect(starts).toEqual([{ project: "q", role: "worker", branch: "soon", run: expect.any(String) }]);
     expect((await chain("worker-soon")).map((m) => m.content)).toEqual(["Branch: soon\n\nnext task"]);
+  });
+
+  test("a live agent of the same role (reported, supervising a dev server) receives the prompt instead of a refusal", async () => {
+    const { r, asked, starts } = runner([[]]);
+    const tool = makeSpawn(r, wait);
+    expect(await tool.run({ prompt: "build variants", branch: "live" }, qctx)).toBe("worker-live");
+    r.running = async (_p, ids) => { asked.push(ids); return ["worker-live"]; };
+    const out = await tool.run({ prompt: "the user picked variant B", branch: "live" }, qctx);
+    expect(out).toStartWith("delivered to running worker-live; it continues on live in its current run (task #");
+    expect(asked).toEqual([["worker-live", "reviewer-live"], ["worker-live", "reviewer-live"], ["worker-live"]]); // no wait: one check, then the post-delivery check
+    expect(starts).toHaveLength(1);
+    expect((await drain("q", "worker-live")).map((m) => [m.from, m.text])).toEqual([["orchestrator", "the user picked variant B"]]);
+    expect((await chain("worker-live")).map((m) => m.content)).toEqual(["Branch: live\n\nbuild variants"]);
+  });
+
+  test("delivery to a live agent is refused, actionably, for fresh, another task or another review mode", async () => {
+    const { r, starts } = runner([[]]);
+    const first = await getTask("q", (await registerTask("q", { name: "Live task", summary: "Authorized", branch: "guarded", authorized: true })).id);
+    const other = await getTask("q", (await registerTask("q", { name: "Other task", summary: "Authorized", branch: "guarded", authorized: true })).id);
+    const tool = realSpawn(r, wait);
+    expect(await tool.run({ prompt: "start", branch: "guarded", role: "reviewer", reviewMode: "review", taskId: first.id }, qctx)).toBe("reviewer-guarded");
+    r.running = async () => ["reviewer-guarded"];
+    const fresh = await tool.run({ prompt: "again", branch: "guarded", role: "reviewer", reviewMode: "review", taskId: first.id, fresh: true }, qctx);
+    expect(fresh).toStartWith("refused: fresh=true needs an idle reviewer, but reviewer-guarded is still running on guarded; spawn again without fresh");
+    const wrongTask = await tool.run({ prompt: "again", branch: "guarded", role: "reviewer", reviewMode: "review", taskId: other.id }, qctx);
+    expect(wrongTask).toStartWith(`refused: reviewer-guarded is running on guarded for task #${first.number} (${first.id}), not task #${other.number} (${other.id}); a running agent keeps its task. Spawn again with taskId ${first.id}`);
+    const wrongMode = await tool.run({ prompt: "again", branch: "guarded", role: "reviewer", reviewMode: "watch-ci", taskId: first.id }, qctx);
+    expect(wrongMode).toStartWith("refused: reviewer-guarded is running in review mode on guarded, not watch-ci; spawn again with reviewMode review");
+    expect(await pending("q", "reviewer-guarded")).toBe(false);
+    expect(await tool.run({ prompt: "round two", branch: "guarded", role: "reviewer", reviewMode: "review", taskId: first.id }, qctx)).toStartWith("delivered to running reviewer-guarded");
+    expect(starts).toHaveLength(1);
+  });
+
+  test("an agent that exits right after delivery is started again on the queued prompt alone", async () => {
+    const { r, starts } = runner([["worker-gone"], []]);
+    const out = await realSpawn(r, wait).run({ prompt: "late follow-up", branch: "gone" }, qctx);
+    expect(out).toBe("worker-gone: it exited before reading the prompt, so it was started again on gone with the prompt queued");
+    expect(starts).toEqual([{ project: "q", role: "worker", branch: "gone", run: expect.any(String) }]);
+    expect((await chain("worker-gone")).map((m) => m.content)).toEqual(["[orchestrator] late follow-up"]);
+    expect(await pending("q", "worker-gone")).toBe(false);
   });
 
   test("tmux could not be asked: spawn preserves branch ownership", async () => {
@@ -151,7 +191,7 @@ test("cancelling spawn during its live-agent wait never starts a replacement", a
   let checked!: () => void;
   const ready = new Promise<void>(resolve => { checked = resolve; });
   let starts = 0;
-  const tool = makeSpawn({ async start() { starts++; }, async stop() {}, async running() { checked(); return ["worker-busy"]; } });
+  const tool = makeSpawn({ async start() { starts++; }, async stop() {}, async running() { checked(); return ["reviewer-busy"]; } });
   const running = tool.run({ prompt: "work", branch: "busy" }, { project: "cancel-spawn", role: "orchestrator", cwd: home, signal: controller.signal });
   await ready;
   controller.abort(new Error("cancelled"));
