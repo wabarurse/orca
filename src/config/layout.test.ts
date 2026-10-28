@@ -69,6 +69,36 @@ test("installed path is runtime app; old installation requires explicit migratio
   mkdirSync(join(root, ".orca/app"), { recursive: true });
   expect(() => installedApp(root)).toThrow("offline layout migration");
 });
+
+for (const activated of [false, true]) test(`startup makes an installer-created runtime private (${activated ? "existing" : "fresh"} layout)`, () => {
+  const runtime = join(root, ".runtime");
+  if (activated) assertLayout(root);
+  mkdirSync(join(runtime, "app"), { recursive: true });
+  chmodSync(runtime, 0o755); // The bootstrap's umask 022 used to create this mode.
+  const evidence = join(runtime, activated ? "queued-message" : "app/checkout");
+  writeFileSync(evidence, "preserved");
+  assertLayout(root);
+  expect(lstatSync(runtime).mode & 0o777).toBe(0o700);
+  expect(readFileSync(evidence, "utf8")).toBe("preserved");
+  expect(JSON.parse(readFileSync(join(runtime, "layout.json"), "utf8")).version).toBe(3);
+  assertLayout(root); // Repeated startup keeps both state and private permissions.
+  expect(readFileSync(evidence, "utf8")).toBe("preserved");
+});
+
+for (const invalid of ["legacy", "writable", "linked"] as const) test(`runtime permission repair refuses ${invalid} state without changing it`, () => {
+  const runtime = join(root, ".runtime");
+  const actual = invalid === "linked" ? mkdtempSync(join(suite, "linked-runtime-")) : runtime;
+  mkdirSync(actual, { recursive: true });
+  const mode = invalid === "writable" ? 0o777 : 0o755;
+  chmodSync(actual, mode);
+  if (invalid === "linked") symlinkSync(actual, runtime);
+  const marker = JSON.stringify({ version: invalid === "legacy" ? 2 : 3 });
+  writeFileSync(join(actual, "layout.json"), marker);
+  expect(() => assertLayout(root)).toThrow();
+  expect(lstatSync(actual).mode & 0o777).toBe(mode);
+  expect(readFileSync(join(actual, "layout.json"), "utf8")).toBe(marker);
+  expect(existsSync(join(actual, "activated"))).toBe(false);
+});
 test("partial backups require inspection; no source or backup evidence removed", () => {
   legacy();
   mkdirSync(join(root, ".runtime/migration-backup/app"), { recursive: true });

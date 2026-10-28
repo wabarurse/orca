@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { present as existsSync, safeDirectory, safeFile } from "./layout-safety";
@@ -24,15 +24,19 @@ export function assertLayout(root: string): void {
   if (existsSync(journal)) requireMarker(journal, "phase", "complete");
   if (legacyEntries(root).length) fail();
   const marker = join(runtime, "layout.json");
-  if (existsSync(marker)) {
+  const initialized = existsSync(marker);
+  if (initialized) {
     requireMarker(marker, "version", 3);
   } else {
     // Existing state without a marker requires an explicit offline decision too.
     if (["projects", "memory.sqlite", "config.toml", "auth"].some(n => existsSync(join(root, n)))) fail();
-    mkdirSync(runtime, { recursive: true, mode: 0o700 });
-    writeFileSync(marker, JSON.stringify({ version: 3 }) + "\n", { flag: "wx", mode: 0o600 });
   }
-  if (!lstatSync(runtime).isDirectory() || lstatSync(runtime).isSymbolicLink()) fail();
+  mkdirSync(runtime, { recursive: true, mode: 0o700 });
+  // mkdir's mode does not change an existing directory. Older installers created
+  // .runtime at 0755, which the private tmux socket refuses. Repair only a validated
+  // owned directory after rejecting legacy state, before activating or launching.
+  if ((safeDirectory(runtime).mode & 0o777) !== 0o700) chmodSync(runtime, 0o700);
+  if (!initialized) writeFileSync(marker, JSON.stringify({ version: 3 }) + "\n", { flag: "wx", mode: 0o600 });
   // Rollback is safe only before the new layout has been used.
   if (!existsSync(join(runtime, "activated"))) writeFileSync(join(runtime, "activated"), "3\n", { mode: 0o600, flag: "wx" });
 }

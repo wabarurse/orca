@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -20,7 +20,10 @@ const repo = paths.repo(project);
 const hasTmux = Bun.which("tmux") !== null;
 
 beforeAll(async () => {
-  // Match the CLI entry gate on a fresh home, before creating project state.
+  // Match an installed home: cloning the app used to leave .runtime at 0755.
+  // Exercise the CLI gate before the real tmux/daemon launches below.
+  mkdirSync(join(home, ".runtime/app"), { recursive: true });
+  chmodSync(join(home, ".runtime"), 0o755);
   const { assertLayout } = await import("../../config/layout");
   assertLayout(home);
   await $`mkdir -p ${repo}`.quiet();
