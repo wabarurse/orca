@@ -55,14 +55,29 @@ async function commitSettings(project: string, model: string, patch: RequestSett
   assertProjectIdentity(project, identity, "saving settings");
   writeProjectState(project, "model-settings", next);
 }
-export async function effortCommand(project: string, arg: string): Promise<string> {
+/** A validated /effort or /fast value for the project's model when the command ran; `save` writes exactly that model (it fails if the model changed meanwhile). */
+export interface SettingChange { setting: "effort" | "fast"; model: string; value: string; save(): Promise<string> }
+/** `/effort [arg]` / `/fast [arg]`: the report when `arg` is empty, otherwise the change, validated before anything is saved. */
+export async function settingChange(project: string, setting: SettingChange["setting"], arg: string): Promise<string | SettingChange> {
   const identity = projectIdentity(project);
   const model = await effectiveModel(project);
-  if (!arg) {
-    const current = await effectiveSettings(project, model);
-    return `effort for ${model}: ${current.effort ?? "default (backend default)"}; supported: ${["default", ...modelCapabilities(model).effort].join(", ")}`;
+  const current = arg ? undefined : await effectiveSettings(project, model);
+  if (setting === "effort") {
+    if (current) return `effort for ${model}: ${current.effort ?? "default (backend default)"}; supported: ${["default", ...modelCapabilities(model).effort].join(", ")}`;
+    validateSettings(model, { effort: arg === "default" ? undefined : arg as Effort }, modelCapabilities(model).effort);
+    return { setting, model, value: arg, save: () => setEffort(project, model, arg, identity) };
   }
-  return setEffort(project, model, arg, identity);
+  if (current) return `fast for ${model}: ${current.fast ? "on" : "off"}; ${modelCapabilities(model).fast ? "supported (premium usage/entitlement may apply)" : "on unsupported on this endpoint"}`;
+  if (arg !== "on" && arg !== "off") throw new Error("usage: /fast [on|off]");
+  validateSettings(model, { fast: arg === "on" });
+  return { setting, model, value: arg, save: async () => {
+    await saveProjectSettings(project, model, { fast: arg === "on" }, identity);
+    return `fast for ${model}: ${arg}; ${SETTING_SEMANTICS}${arg === "on" ? "; premium usage/entitlement may apply" : ""}`;
+  } };
+}
+export async function effortCommand(project: string, arg: string): Promise<string> {
+  const change = await settingChange(project, "effort", arg);
+  return typeof change === "string" ? change : change.save();
 }
 /** Saves effort for exactly `model` (it fails if the project's model changed meanwhile), so a picker opened for one model cannot write another's. */
 export async function setEffort(project: string, model: string, arg: string, identity: string): Promise<string> {
@@ -70,11 +85,7 @@ export async function setEffort(project: string, model: string, arg: string, ide
   return `effort for ${model}: ${arg}; ${SETTING_SEMANTICS}`;
 }
 export async function fastCommand(project: string, arg: string): Promise<string> {
-  const identity = projectIdentity(project);
-  const model = await effectiveModel(project);
-  if (!arg) return `fast for ${model}: ${(await effectiveSettings(project, model)).fast ? "on" : "off"}; ${modelCapabilities(model).fast ? "supported (premium usage/entitlement may apply)" : "on unsupported on this endpoint"}`;
-  if (arg !== "on" && arg !== "off") throw new Error("usage: /fast [on|off]");
-  await saveProjectSettings(project, model, { fast: arg === "on" }, identity);
-  return `fast for ${model}: ${arg}; ${SETTING_SEMANTICS}${arg === "on" ? "; premium usage/entitlement may apply" : ""}`;
+  const change = await settingChange(project, "fast", arg);
+  return typeof change === "string" ? change : change.save();
 }
 const SETTING_SEMANTICS = "saved for this project/model; applies before each agent’s next model request; running tools finish; failed/stopped turns need another message to resume; exited agents require restart";

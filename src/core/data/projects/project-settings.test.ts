@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, saveConfig, readProjectState, writeProjectState } from "../../../config";
-import { effectiveSettings, effectiveSettingsReport, effortCommand, fastCommand, saveProjectSettings } from "./project-settings";
+import { effectiveSettings, effectiveSettingsReport, effortCommand, fastCommand, saveProjectSettings, settingChange } from "./project-settings";
 import { validateSettings } from "../../../providers/catalog/settings";
 import { clearCatalogEfforts, rememberCatalogEfforts } from "../../../providers/catalog/capabilities";
 import { clearCatalogLimits } from "../../../providers/catalog/context-window";
@@ -37,6 +37,21 @@ test("query/set/default/off preserve backend defaults and isolate project/model 
   expect(await effectiveSettings("other", "gpt-6-astra")).toEqual({});
   await effortCommand("settings", "default"); await fastCommand("settings", "off");
   expect(await effectiveSettings("settings", "gpt-6-astra")).toEqual({ fast: false });
+});
+
+test("settingChange validates before confirmation and saves exactly the model it was asked for", async () => {
+  await setup("change", "claude-sonnet-4-6");
+  expect(await settingChange("change", "effort", "")).toContain("effort for claude-sonnet-4-6: default");
+  await expect(settingChange("change", "effort", "ultra")).rejects.toThrow("unsupported");
+  await expect(settingChange("change", "fast", "on")).rejects.toThrow("unsupported");
+  await expect(settingChange("change", "fast", "yes")).rejects.toThrow("usage");
+  const change = await settingChange("change", "effort", "high");
+  if (typeof change === "string") throw new Error("expected a change");
+  expect([change.setting, change.model, change.value]).toEqual(["effort", "claude-sonnet-4-6", "high"]);
+  expect(readProjectState("change", "model-settings")).toBeUndefined(); // nothing saved until confirmed
+  await saveProjectModel("change", "gpt-6-astra");
+  await expect(change.save()).rejects.toThrow("model changed while saving settings");
+  expect(readProjectState("change", "model-settings")).toBeUndefined();
 });
 
 test("unsupported effort/fast/model refusals leave saved state unchanged", async () => {

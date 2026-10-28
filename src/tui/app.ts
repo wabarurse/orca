@@ -7,7 +7,7 @@ import { contextStatus, dispatchStatus, reviewStatus } from "./header";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
 import { refreshTaskInboxData, taskInboxLines, type TaskInboxData } from "./footer";
 import { cancelSession } from "../core/tmux";
-import { effortCommand, fastCommand, effectiveSettings, setEffort } from "../core/data/projects";
+import { settingChange, effectiveSettings, setEffort } from "../core/data/projects";
 import type { RequestSettings } from "../providers/catalog";
 // Sticky top and bottom bars around a scrollable conversation. Only changed
 // screen rows are redrawn; on exit the active transcript is printed back to
@@ -23,7 +23,7 @@ import { listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
 import type { AgentInfo } from "../protocol";
 import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
-import { effortChoices, modelChoices, setModel, type Choice } from "./commands";
+import { effortChoices, modelChoices, setModel, switchAllMenu, type Choice } from "./commands";
 import { reviewRounds, dynamicDispatch } from "./commands";
 import { paths, validRounds } from "../config";
 import { projectIdentity } from "../core/data/projects";
@@ -1461,8 +1461,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "user inbox: tasks / questions; shift+tab switches sections, esc/tab closes" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "browse and follow agent conversations" } }],
-    ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, effortCommand) : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
-    ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
+    ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
+    ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear conversation, context and cache after confirmation" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
     ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [id]", description: "choose or set the project model" } }],
@@ -1567,10 +1567,21 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     return this.newPage(name, directory);
   }
 
-  private async requestSetting(page: Page | undefined, args: string, command: typeof effortCommand): Promise<void> {
+  /** /effort <level|default>, /fast [on|off]: a report saves nothing; a change is validated, then confirmed like /model. */
+  private async requestSetting(page: Page | undefined, args: string, setting: "effort" | "fast"): Promise<void> {
+    const operation = ++this.modelGeneration;
     if (!page) return this.note(dim("open a project before changing its model settings"));
-    this.note(await command(page.project, args), page);
-    await this.refreshHeader(page);
+    const change = await settingChange(page.project, setting, args);
+    return typeof change === "string" ? this.note(change, page) : this.saveSetting(page, operation, `set ${setting} for ${change.model} to ${change.value}?`, change.save);
+  }
+
+  /** A confirmed /effort or /fast save: its result or refusal is a note on the captured page. */
+  private saveSetting(page: Page, operation: number, question: string, save: () => Promise<string>): Promise<void> {
+    return this.confirmAll(page, operation, question, async () => {
+      if (!this.modelPageCurrent(page, operation)) return;
+      this.note(await save().catch((err) => dim(err instanceof Error ? err.message : String(err))), page);
+      await this.refreshHeader(page);
+    });
   }
 
   /** /effort opens the picker for the project's current model; it saves for exactly that model. */
@@ -1585,12 +1596,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (this.notes.delete(page)) this.draw();
     if (!this.modelPageCurrent(page, operation)) return;
     if (picker.note) this.note(picker.note, page);
-    this.openMenu(`effort for ${picker.model}   (/effort <level|default> sets directly)`, picker.choices, async (level) => {
-      if (!this.modelPageCurrent(page, operation)) return;
-      try { this.note(await setEffort(page.project, picker.model, level, identity), page); }
-      catch (err) { return this.note(dim(err instanceof Error ? err.message : String(err)), page); }
-      await this.refreshHeader(page);
-    }, operation);
+    this.openMenu(`effort for ${picker.model}   (/effort <level|default> sets directly)`, picker.choices, (level) => this.saveSetting(page, operation, `set effort for ${picker.model} to ${level}?`, () => setEffort(page.project, picker.model, level, identity)), operation);
   }
 
   /** /model opens the menu; /model <id> sets any id. */
@@ -1606,25 +1612,19 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     return operation === this.modelGeneration && this.page === page && this.pages.includes(page) && !page.deleting;
   }
 
-  private async modelAgents(project: string): Promise<string[] | null> {
-    try { return await (this.deps.modelAgents ?? liveAgentsOrNull)(project); }
-    catch { return null; }
-  }
-
   private async switchModel(page: Page, id: string, operation: number, identity: string): Promise<void> {
     validateModel(id);
+    await this.confirmAll(page, operation, `switch this project to ${id}?`, () => this.commitModel(page, id, operation, identity));
+  }
+
+  /** A change every agent reads before its next request (/model, /effort, /fast): saved at once unless workers or reviewers run, else after "switch all". */
+  private async confirmAll(page: Page, operation: number, question: string, save: () => Promise<void>): Promise<void> {
     if (!this.modelPageCurrent(page, operation)) return;
-    const agents = await this.modelAgents(page.project);
+    const agents = await Promise.try(this.deps.modelAgents ?? liveAgentsOrNull, page.project).catch(() => null);
     if (!this.modelPageCurrent(page, operation)) return;
     if (agents === null) return this.note(dim("could not determine running agents; try again"), page);
-    const workers = agents.filter((name) => name.startsWith("worker-")).length;
-    const reviewers = agents.filter((name) => name.startsWith("reviewer-")).length;
-    const save = () => this.commitModel(page, id, operation, identity);
-    if (!workers && !reviewers) return save();
-    this.openMenu(`switch this project to ${id}? applies to orchestrator, ${workers} workers and ${reviewers} reviewers. running tools finish; agents switch before their next model request.`, [
-      { value: false, label: "cancel", current: true },
-      { value: true, label: "switch all" },
-    ], async (confirmed) => { if (confirmed) await save(); }, operation);
+    const confirm = switchAllMenu(question, agents);
+    return confirm ? this.openMenu(confirm.title, confirm.choices, async (confirmed) => { if (confirmed) await save(); }, operation) : save();
   }
 
   private async commitModel(page: Page, id: string, operation: number, identity: string): Promise<void> {
