@@ -720,6 +720,27 @@ test("task tree cycling reveals long independent registries without changing cha
   } finally { app.quit(); await running; }
 });
 
+test("task tree r re-reads the real ledger and says when it refreshed; dots follow the new status", async () => {
+  const { registerTask, setTaskAttention } = await import("../core/data/tasks/tasks");
+  const project = "tree-r-refresh";
+  mkdirSync(paths.project(project), { recursive: true });
+  const first = await registerTask(project, { name: "First", summary: "s", branch: "feat/a", authorized: true });
+  const term = fakeTerm(100, 30), fake = fakeOrchestrators();
+  const app = new App({ term, pollMs: 100_000, agents: async () => [], openOrchestrator: fake.openOrchestrator });
+  const running = app.run(project), screen = () => term.display.screen().join("\n");
+  try {
+    await until(() => !!app.page); term.type("\x14");
+    await until(() => screen().includes("#1 ● First"));
+    expect(term.raw()).toContain("\x1b[90m●");
+    await registerTask(project, { name: "Second", summary: "s", branch: "feat/b", authorized: true });
+    await setTaskAttention(project, first.id, { kind: "blocked", reason: "stopped" }, first.revision);
+    term.type("r"); // no poll, no refreshSessions: only the key
+    await until(() => screen().includes("#2 ● Second"));
+    await until(() => /Refreshed \d\d:\d\d:\d\d/.test(screen()));
+    expect(term.raw()).toContain("\x1b[31m●");
+  } finally { app.quit(); await running; }
+});
+
 for (const width of [80, 120]) test(`persistent task tree real App ${width}: confirmed merged d retains SQL and numbering`, async () => {
   const { registerTask, observeTaskPR, getTask, listTasks, setTaskDependencies } = await import("../core/data/tasks/tasks");
   const { searchLedger } = await import("../core/data/tasks/ledger-store");
