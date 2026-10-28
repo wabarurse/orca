@@ -1341,11 +1341,14 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.showMenu(menu);
   }
 
-  private async accountsMenu(): Promise<void> {
+  private async accountsMenu(page?: Page): Promise<void> {
     this.modelGeneration++;
-    this.openMenu("accounts: enter uses one or signs it in", await accountChoices(dim), async (account) => {
-      if (account.ok) return this.note(await useAccount(account));
-      await this.login(`${account.provider} ${account.id.split(":")[1]}`);
+    if (!page) return this.note(dim("open a project before choosing its account"));
+    const identity = projectIdentity(page.project);
+    this.openMenu("accounts: enter uses one for this project or signs it in", await accountChoices(dim, page.project), async (account) => {
+      if (!account.ok) return this.login(`${account.provider} ${account.profile}`, page, true);
+      try { this.note(await useAccount(account, page.project, identity), page); await this.refreshHeader(page); }
+      catch (err) { this.note(dim(err instanceof Error ? err.message : String(err)), page); }
     });
   }
 
@@ -1405,13 +1408,13 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     for (const p of this.pages) if (!p.busy && !p.deleting) p.orch.pending().then((has) => { if (has) this.runTurn(p); }).catch(() => {});
   }
 
-  private async login(arg: string): Promise<void> {
+  private async login(arg: string, page?: Page, select = false): Promise<void> {
     if (this.loggingIn) return this.note(dim("already signing in; /quit cancels"));
     this.loggingIn = true;
     this.note(dim("signing in… (/quit cancels)"));
     let ok = false;
     try {
-      const result = await (this.deps.login ?? login)(arg, { write: (s) => this.note(s.replace(/\n$/, "")), signal: this.loginAbort.signal });
+      const result = await (this.deps.login ?? login)(arg, { write: (s) => this.note(s.replace(/\n$/, "")), signal: this.loginAbort.signal }, page && { name: page.project, select });
       ok = !result.startsWith("usage:");
       this.note(result);
     } catch (err) { this.note(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
@@ -1466,8 +1469,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear conversation, context and cache after confirmation" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
     ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [id]", description: "choose or set the project model" } }],
-    ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
-    ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
+    ["/accounts", { run: (_, page) => this.accountsMenu(page), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
+    ["/login", { args: true, run: (args, page) => this.login(args, page), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
     ["/review-rounds", { args: true, run: (args, page) => this.flowCommand(page, args, reviewRounds), help: { group: "advanced", label: "/review-rounds [n]", description: "project review rounds before ci; 0 goes straight to ci" } }],
     ["/dynamic-dispatch", { args: true, run: (args, page) => this.flowCommand(page, args, dynamicDispatch), help: { group: "settings", label: "/dynamic-dispatch [on|off]", description: "show or set the project's dynamic dispatch" } }],
     ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "inbox questions (ctrl+q); enter answers or picks skip; shift+tab tasks" } }],

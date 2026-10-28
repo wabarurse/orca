@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { accounts } from "./accounts";
 import { provider } from "../providers/account";
 import { CLAUDE_BETAS, CLAUDE_TOKEN_URL, saveClaudeTokens } from "./claude";
-import { saveConfig } from "../config/config";
 import { clearCatalogEfforts, modelCapabilities } from "../providers/catalog/capabilities";
 import { saveCodexTokens } from "./codex";
 import { fakeCodexTokens } from "../test/codex";
@@ -69,7 +68,6 @@ function interceptFetch(handler: (request: Request) => Promise<Response>) {
 
 test("subscription requests use Bearer auth, Claude Code compatibility, streaming tools and model discovery", async () => {
   await saveProfile("personal");
-  await saveConfig({ account: "personal" });
   // None of the SDK's implicit developer-platform settings may override a subscription.
   process.env.ANTHROPIC_AUTH_TOKEN = "wrong-platform-token";
   process.env.ANTHROPIC_PROFILE = "wrong-profile";
@@ -81,7 +79,7 @@ test("subscription requests use Bearer auth, Claude Code compatibility, streamin
       capabilities: { effort: { supported: true, low: { supported: true }, medium: { supported: false }, high: { supported: true }, xhigh: null, max: { supported: true } } } }], has_more: false, first_id: "claude-test", last_id: "claude-test" });
     return streamResponse();
   });
-  const client = await provider("anthropic");
+  const client = await provider("anthropic", { profile: "personal" });
   let text = "";
   const req = turn((delta) => { text += delta; });
   const result = await client.complete(req);
@@ -106,7 +104,6 @@ test("subscription requests use Bearer auth, Claude Code compatibility, streamin
 
 test("API keys cannot override Claude Code subscription credentials", async () => {
   await saveProfile("personal");
-  await saveConfig({ account: "personal" });
   process.env.ANTHROPIC_API_KEY = "test-api-key";
   process.env.ANTHROPIC_AUTH_TOKEN = "unused-token";
   process.env.ANTHROPIC_CUSTOM_HEADERS = "X-Api-Key: unused-custom-key";
@@ -115,10 +112,10 @@ test("API keys cannot override Claude Code subscription credentials", async () =
     request = incoming;
     return streamResponse();
   });
-  const listed = await accounts();
+  const listed = await accounts({ provider: "anthropic", profile: "personal" });
   expect(listed.find((a) => a.id === "anthropic:env")).toBeUndefined();
   expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(true);
-  await (await provider("anthropic")).complete(turn());
+  await (await provider("anthropic", { profile: "personal" })).complete(turn());
   expect(request!.headers.get("x-api-key")).toBeNull();
   expect(request!.headers.get("authorization")).toBe("Bearer subscription-access");
   expect(request!.headers.get("anthropic-beta")).toBe(CLAUDE_BETAS);
@@ -129,9 +126,10 @@ test("environment and legacy saved API keys cannot authenticate either provider"
   process.env.ANTHROPIC_API_KEY = "unused-anthropic-key";
   process.env.OPENAI_API_KEY = "unused-openai-key";
   await Bun.write(join(home, "credentials.json"), JSON.stringify({ openai: "unused-saved-key" }));
-  await expect(provider("anthropic")).rejects.toThrow("not signed in");
-  await expect(provider("openai")).rejects.toThrow("not signed in");
+  await expect(provider("anthropic", { profile: "none" })).rejects.toThrow("not signed in");
+  await expect(provider("openai", { profile: "none" })).rejects.toThrow("not signed in");
   expect((await accounts()).every((account) => !account.ok && !account.active)).toBe(true);
+  expect((await accounts({ provider: "openai", profile: "default" })).filter((account) => account.active)).toHaveLength(1);
 });
 
 test("Codex account selection stays independent of Claude and ignores API credentials", async () => {
@@ -144,11 +142,12 @@ test("Codex account selection stays independent of Claude and ignores API creden
   await saveProfile("personal");
   await saveCodexTokens("work", fakeCodexTokens("work-account"));
   await saveCodexTokens("personal", fakeCodexTokens("personal-account"));
-  await saveConfig({ account: "personal", openaiAccount: "work" });
-  const listed = await accounts();
-  expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(true);
+  const listed = await accounts({ provider: "openai", profile: "work" });
+  expect(listed.filter((a) => a.active).map((a) => a.id)).toEqual(["openai:work"]); // one selected account across both providers
   expect(listed.find((a) => a.id === "openai:work")).toMatchObject({ active: true, source: "codex (chatgpt subscription)" });
+  expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(false);
   expect(listed.find((a) => a.id === "openai:personal")?.active).toBe(false);
+  expect((await accounts()).some((a) => a.active)).toBe(false); // no project, no selection
   interceptFetch(async (request) => {
     expect(request.url).toStartWith("https://chatgpt.com/backend-api/codex/models?");
     expect(request.headers.get("chatgpt-account-id")).toBe("work-account");
@@ -158,9 +157,8 @@ test("Codex account selection stays independent of Claude and ignores API creden
     expect(request.headers.get("openai-project")).toBeNull();
     return Response.json({ models: [{ slug: "gpt-test", visibility: "list" }] });
   });
-  expect(await (await provider("openai")).models()).toEqual(["gpt-test"]);
-  await saveConfig({ openaiAccount: "missing" });
-  await expect(provider("openai")).rejects.toThrow("not signed in");
+  expect(await (await provider("openai", { profile: "work" })).models()).toEqual(["gpt-test"]);
+  await expect(provider("openai", { profile: "missing" })).rejects.toThrow("not signed in");
 });
 
 test("custom Anthropic Authorization headers cannot select a different authentication flow", async () => {
@@ -183,7 +181,7 @@ test("a 401 refreshes the subscription token once and retries with the rotated t
     if (authorizations.length === 1) return Response.json({ type: "error", error: { type: "authentication_error", message: "Expired" } }, { status: 401 });
     return streamResponse();
   });
-  await (await provider("anthropic")).complete(turn());
+  await (await provider("anthropic", { profile: "default" })).complete(turn());
   expect(refreshes).toBe(1);
   expect(authorizations).toEqual(["Bearer subscription-access", "Bearer rotated-access"]);
 });
@@ -196,16 +194,13 @@ test("profile switching updates credentials; missing selection cannot fall back 
     used.push(request.headers.get("authorization"));
     return streamResponse();
   });
-  await saveConfig({ account: "one" });
-  const first = await provider("anthropic");
-  await saveConfig({ account: "two" });
+  const first = await provider("anthropic", { profile: "one" });
   await first.complete(turn());
-  await (await provider("anthropic")).complete(turn());
+  await (await provider("anthropic", { profile: "two" })).complete(turn());
   expect(used).toEqual(["Bearer account-one", "Bearer account-two"]);
-  expect((await accounts()).find((a) => a.id === "anthropic:two")?.active).toBe(true);
-  await saveConfig({ account: "legacy" });
+  expect((await accounts({ provider: "anthropic", profile: "two" })).find((a) => a.id === "anthropic:two")?.active).toBe(true);
   await Bun.write(join(process.env.ANTHROPIC_CONFIG_DIR!, "credentials", "legacy.json"), JSON.stringify({ access_token: "platform-token" }));
-  await expect(provider("anthropic")).rejects.toThrow("not signed in");
-  expect((await accounts()).find((a) => a.id === "anthropic:legacy")).toMatchObject({ ok: false, active: false });
+  await expect(provider("anthropic", { profile: "legacy" })).rejects.toThrow("not signed in");
+  expect((await accounts({ provider: "anthropic", profile: "legacy" })).find((a) => a.id === "anthropic:legacy")).toMatchObject({ ok: false, active: true });
   expect(used).toHaveLength(2);
 });

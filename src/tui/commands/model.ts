@@ -1,12 +1,10 @@
 // /model and /effort: the choices they offer and what picking one saves.
 
-import { accounts, type ProviderName } from "../../login";
 import { provider } from "../../providers";
-import { providerFor } from "../../providers";
 import { modelCapabilities } from "../../providers/catalog";
 import { prefetchContextLimits } from "../../providers/catalog";
 import { loadConfig, saveConfig } from "../../config";
-import { effectiveModel, saveProjectModel, validateModel } from "../../core/data/projects";
+import { accountForModel, effectiveAccount, effectiveModel, saveProjectModel, validateModel } from "../../core/data/projects";
 import { effectiveSettingsReport } from "../../core/data/projects";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }
@@ -20,19 +18,17 @@ export function recentModels(ids: string[], current: string, limit = RECENT_MODE
   return ids.includes(current) && !head.includes(current) ? [...head, current] : head;
 }
 
-/** The newest models of every active provider; errors are reported per provider. */
+/** The newest models of the project's one selected account (another provider's models come with choosing its account in /accounts). */
 export async function modelChoices(dim: (s: string) => string, project?: string): Promise<{ choices: Choice<string>[]; errors: string[]; current: string }> {
   const model = project ? await effectiveModel(project) : (await loadConfig()).model;
+  const account = project ? await effectiveAccount(project) : await accountForModel(model, undefined);
   const choices: Choice<string>[] = [];
   const errors: string[] = [];
-  for (const a of await accounts()) {
-    if (!a.active) continue;
-    try {
-      const ids = await (await provider(a.provider as ProviderName)).models();
-      for (const id of recentModels(ids, model)) choices.push({ value: id, current: id === model, label: `${id}  ${dim(a.provider)}` });
-    } catch (err) {
-      errors.push(`${a.provider}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+  try {
+    const ids = await (await provider(account.provider, { profile: account.profile })).models();
+    for (const id of recentModels(ids, model)) choices.push({ value: id, current: id === model, label: `${id}  ${dim(account.provider)}` });
+  } catch (err) {
+    errors.push(`${account.provider}: ${err instanceof Error ? err.message : String(err)}`);
   }
   return { choices, errors, current: model };
 }
@@ -42,7 +38,7 @@ export async function modelChoices(dim: (s: string) => string, project?: string)
  * built-in table. `note` explains a saved effort the current list lacks (used as default, kept on disk). */
 export async function effortChoices(project: string, load: typeof provider = provider): Promise<{ choices: Choice<string>[]; model: string; current: string; note?: string }> {
   const model = await effectiveModel(project);
-  try { await prefetchContextLimits(await load(providerFor(model))); } catch { /* no account/catalog: built-in levels */ }
+  try { const account = await effectiveAccount(project); await prefetchContextLimits(await load(account.provider, { profile: account.profile })); } catch { /* no account/catalog: built-in levels */ }
   const { settings, dropped } = await effectiveSettingsReport(project, model);
   const current = settings.effort ?? "default";
   const choices = ["default", ...modelCapabilities(model).effort].map((value) => ({ value, label: value, current: value === current }));

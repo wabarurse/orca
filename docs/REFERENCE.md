@@ -157,7 +157,7 @@ to select a model from that provider (↑/↓, Enter; Esc cancels). Login select
 account, not a model; catalog entries may require an entitlement you do not have.
 See [subscription login](#subscription-login) for profiles and
 [existing CLI logins](#existing-cli-logins) for importing a session instead.
-Long conversations use the active account/model for [rolling memory](#orchestrator-rolling-memory);
+Long conversations use the project's account/model for [rolling memory](#orchestrator-rolling-memory);
 no second provider login is needed for a Claude session.
 
 ### 4. Try a small task
@@ -837,8 +837,11 @@ open the provider's subscription sign-in page. Omit the profile name to use
 
 `/accounts`, `/model` and `/effort` open arrow-key menus: ↑↓ then Enter picks an
 account (a signed-out one starts its login), a model, or a reasoning effort for
-the current model; Esc cancels. Each provider's account is selected
-independently. `/model <model-id>` sets a model the menu does not list;
+the current model; Esc cancels. Signing in is global (every project can
+use the account), but selection is per project: `/accounts` marks exactly one
+account, for the current project only. Choosing an account of the other provider
+moves that project to the provider's newest model (`/model` picks another). A
+project that never chose uses its model's provider with the profile it had before. `/model <model-id>` sets a model the menu does not list;
 `/effort <level|default>` sets an effort directly.
 
 Claude models use the selected Claude subscription. Other models use the selected
