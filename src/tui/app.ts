@@ -5,7 +5,7 @@ import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput 
 import type { ImageRef } from "../protocol";
 import { contextStatus, dispatchStatus, reviewStatus } from "./header";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
-import { refreshTaskInboxData, taskInboxLines, type TaskInboxData } from "./footer";
+import { refreshTaskInboxData, TaskCounts, taskInboxLines, type TaskInboxData } from "./footer";
 import { cancelSession } from "../core/tmux";
 import { settingChange, effectiveSettings, setEffort } from "../core/data/projects";
 import type { RequestSettings } from "../providers/catalog";
@@ -67,7 +67,7 @@ export class App {
   get active(): number { return this._active; }
   set active(index: number) {
     if (index !== this._active) { this.taskTree = null; this.clipboardGeneration++; if (this.page) this.questions.hide(this.page); this.cancelClear(); this.modelGeneration++; this.helpTop = null; this.taskInbox = null; }
-    this._active = index;
+    this._active = index; if (this.page) void this.taskCounts.refresh(this.page); // opening or switching to a page reads its task count
   }
   private looseLines: string[] = [];
   input = { text: "", cursor: 0 };
@@ -78,6 +78,7 @@ export class App {
   /** One explicit panel, owned by the captured page object; never reused across projects. */
   private taskInbox: TaskInboxState | null = null;
   private taskTree: TaskTreeState | null = null;
+  private readonly taskCounts = new TaskCounts<Page>(page => (this.deps.taskCount ?? this.deps.tasks ?? listTasks)(page.project), page => this.validPage(page), () => this.draw());
 
   private toggleTaskTree(): void {
     if (this.taskTree) { this.taskTree = null; this.draw(); return; }
@@ -674,13 +675,10 @@ export class App {
   /** Counts only: no shortcuts, repeated identities or transient animation in the footer. */
   status(page: Page): string {
     const agents = page.agentCount ?? 0;
-    const queued = page.sent.length + (this.queued.get(page)?.length ?? 0);
-    const known = (p: Page) => p.questions.loaded && !p.questions.error;
-    const questions = known(page) ? page.questions.open.length : "?";
-    const background = this.pages.filter(p => p !== page);
-    const elsewhere = background.reduce((n, p) => n + (known(p) ? p.questions.open.length : 0), 0);
+    const known = (p: Page) => p.questions.loaded && !p.questions.error, questions = known(page) ? page.questions.open.length : "?";
+    const background = this.pages.filter(p => p !== page), elsewhere = background.reduce((n, p) => n + (known(p) ? p.questions.open.length : 0), 0);
     const unknown = background.some(p => !known(p));
-    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, `${queued} ${queued === 1 ? "message" : "messages"} queued`, `inbox ${questions}${elsewhere || unknown ? ` (+${elsewhere || ""}${unknown ? (elsewhere ? "+?" : "?") : ""} elsewhere)` : ""}`].join(" │ ");
+    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, this.taskCounts.label(page), `inbox ${questions}${elsewhere || unknown ? ` (+${elsewhere || ""}${unknown ? (elsewhere ? "+?" : "?") : ""} elsewhere)` : ""}`].join(" │ ");
   }
 
   /** Only the selected conversation can animate; tool rows already carry their own shimmer. */
@@ -1890,9 +1888,9 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   private async refreshTaskInbox(page = this.page): Promise<void> {
     if (this.taskTree?.page === page) await this.refreshTaskTree();
-    const view = this.taskInbox;
-    if (!view || view.page !== page || !this.taskInboxCurrent(view)) return Promise.resolve();
-    return refreshTaskInboxData(view, () => (this.deps.tasks ?? listTasks)(page.project),
+    const view = this.taskInbox; // the status bar's count follows every poll/session refresh, from the open panel's read when there is one
+    if (!view || view.page !== page || !this.taskInboxCurrent(view)) return page && this.taskCounts.refresh(page);
+    return refreshTaskInboxData(view, () => this.taskCounts.observe(page, (this.deps.tasks ?? listTasks)(page.project)),
       () => this.taskInboxCurrent(view), () => { view.content = undefined; this.draw(); });
   }
 

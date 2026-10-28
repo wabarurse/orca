@@ -538,8 +538,10 @@ separates the conversation (including streaming output) from the entire footer,
 above any queued previews. It is omitted below eight terminal rows or when it
 would take the last conversation row; input and footer panels keep their space.
 The bottom band puts queued prompt previews immediately above the boxed input,
-then grouped running worker/reviewer, queued-message and **Inbox** counts (unanswered questions only); these
-stack on narrow screens. Every menu
+then grouped running worker/reviewer, task and **Inbox** counts (unanswered questions only); these
+stack on narrow screens. `N tasks` is the project's registered tasks not yet archived as merged (the
+rows `/inbox` Tasks lists), read when a page opens or is selected and on the task inbox/tree refresh
+poll, never per frame; `? tasks` until read or after a failed read, never a fabricated 0. Every menu
 and user inbox opens below the input and retains its own key hints. There
 is no persistent shortcut row; Ctrl+B, Ctrl+Q and the other keys still work.
 A running turn's "thinking…/working…" shimmers at the selected conversation's

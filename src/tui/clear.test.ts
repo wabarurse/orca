@@ -62,7 +62,7 @@ test("bare /clear is local, cancel-default and excluded from recall; esc preserv
   await ui.command();
   await until(() => ui.screen.text().includes("clear conversation"));
   const visible = ui.screen.screen().map(Bun.stripANSI);
-  expect(visible.findIndex(row => row.includes("clear conversation"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 messages queued")));
+  expect(visible.findIndex(row => row.includes("clear conversation"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 tasks")));
   for (const key of [{ name: "paste", text: "danger\n/quit" }, { name: "char", text: "y" }, { name: "q", ctrl: true }, { name: "g", ctrl: true }, { name: "enter", alt: true }]) await app.onKey(key);
   expect(app.input).toEqual({ text: "draft 界", cursor: 5 });
   await app.onKey({ name: "escape" });

@@ -13,7 +13,7 @@ Conversation record 30
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
-2 agents running │ 1 message queued │ inbox 1
+2 agents running │ 1 task │ inbox 1
 help · commands & keys                                                  1–9/67
   conversation
   /refresh       reload shared local state; active context waits until idle;
@@ -110,9 +110,8 @@ Conversation record 30
 ┌──────────────────────────────────────┐
 │> draft 界                            │
 └──────────────────────────────────────┘
-2 agents running │ 1 message queued
-inbox 1
-help                           1–8/135
+2 agents running │ 1 task │ inbox 1
+help                           1–9/135
   conversation
   /refresh
     reload shared local state; active
@@ -121,6 +120,7 @@ help                           1–8/135
   /retry-images
     retry unconfirmed image prompts by
     original id; never replay consumed
+    input
 ↑↓ scroll · esc close"
 `;
 
@@ -275,7 +275,7 @@ Conversation record 30
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
-2 agents running │ 1 message queued │ inbox 1
+2 agents running │ 1 task │ inbox 1
 help · commands & keys                                                59–67/67
   ↑ / ↓                move between input rows, then project input history
 

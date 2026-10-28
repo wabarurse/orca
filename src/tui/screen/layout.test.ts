@@ -10,13 +10,13 @@ import { pickFill, setUserFill } from "../components/style";
 
 const bg = "\x1b[48;5;236m";
 afterEach(() => setUserFill(null));
-const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, status: "2 agents running │ 0 messages queued │ 1 question", input: { prompt: "> ", text: "hello\n你好", cursor: 8 }, menu: { title: "models", items: ["one", "two"], index: 0 } });
+const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, status: "2 agents running │ 0 tasks │ 1 question", input: { prompt: "> ", text: "hello\n你好", cursor: 8 }, menu: { title: "models", items: ["one", "two"], index: 0 } });
 
 test("bottom bar input precedes counts and modal; cursor and backgrounds survive append and resize", () => {
   setUserFill(bg);
   const f = frame();
   const r = liveRows(f);
-  expect(r.rows.map(Bun.stripANSI).map((s) => s.trimEnd())).toEqual(["┌──────────────────────────────────────┐", "│> hello                               │", "│  你好                                │", "└──────────────────────────────────────┘", "2 agents running │ 0 messages queued", "1 question", "models", "❯ one", "  two"]);
+  expect(r.rows.map(Bun.stripANSI).map((s) => s.trimEnd())).toEqual(["┌──────────────────────────────────────┐", "│> hello                               │", "│  你好                                │", "└──────────────────────────────────────┘", "2 agents running │ 0 tasks │ 1 question", "models", "❯ one", "  two"]);
   expect([r.cursor, r.col]).toEqual([2, 7]);
   const screen = new FakeScreen(f.cols, f.rows);
   const first = live(f);

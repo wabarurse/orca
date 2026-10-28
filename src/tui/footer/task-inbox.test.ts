@@ -25,7 +25,7 @@ const pr: TaskPR = { repository: "owner/repo", number: 62, url: "https://github.
 const row = (name = "Task one", status: TaskRow["status"] = "queued"): TaskRow => ({ id: name, name, summary: "A brief structured summary", branch: "feat/one", status, pr, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" });
 const plain = (lines: string[]) => lines.map(line => Bun.stripANSI(line).trimEnd()).join("\n");
 const frame = (cols = 100, rows = 24, tasks = [row()]): Frame => ({ cols, rows, menu: null,
-  input: { prompt: "> ", text: "draft 界\nsecond line", cursor: 4 }, status: "0 agents running │ 1 message queued │ inbox 1",
+  input: { prompt: "> ", text: "draft 界\nsecond line", cursor: 4 }, status: "0 agents running │ 1 task │ inbox 1",
   queued: { project: "isolated", texts: ["pending input"] },
   inbox: { ...taskInboxLines({ rows: tasks, loading: false }, cols), top: 0, state: "ready" } });
 const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "isolated" }], active: 0, model: "fake-model", directory: "/isolated/repo", remote: "owner/repo" }, f.cols, headerHeight(f.rows));
@@ -46,7 +46,7 @@ async function setup(extra: Partial<AppDeps> = {}) {
   const sent: { project: string; text: string; inputId?: string }[] = [];
   const receive = new Map<string, (msgs: Message[]) => void>();
   const term: Terminal = { cols: 100, rows: 28, open() {}, close() { closed = true; }, eraseOnExit() {}, onKey() {}, onResize(cb) { resize = cb; }, write(s) { screen.write(s); if (closed) exit += s; } };
-  const app = new App({ term, pollMs: 100_000, projectModel: async () => "fake-model", agents: async () => [], watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0,
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => "fake-model", agents: async () => [], watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0, taskCount: async () => [],
     projects: { live: async () => [], kill: async () => {} },
     openOrchestrator: async (project, _url, _write, inbox) => {
       mkdirSync(paths.repo(project), { recursive: true });
@@ -411,9 +411,9 @@ test("USER inbox badge counts only unanswered questions: unknown, zero, multiple
   }), { app } = ui;
   const a = app.page!;
   a.agentCount = 9; a.sent.push({ inputId: "unconsumed", text: "queued" });
-  expect(app.status(a)).toBe("9 agents running │ 1 message queued │ inbox ?");
+  await until(() => app.status(a) === "9 agents running │ 0 tasks │ inbox ?"); // queued input is a preview, not a count
   await ui.command(); await until(() => app.frame().inbox?.state === "ready");
-  expect(app.status(a)).toEndWith("inbox ?");
+  expect(app.status(a)).toBe("9 agents running │ 15 tasks │ inbox ?"); // the open panel's read sets the count
   known = true; gate.resolve([]); await a.questions.polling;
   expect(app.status(a)).toEndWith("inbox 0");
   await app.openPage("b"); await app.page!.questions.polling;

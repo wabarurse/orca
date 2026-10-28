@@ -92,6 +92,8 @@ export interface AppDeps {
   questions?: QuestionStore;
   /** Active structured task rows; read-only, defaults to the durable registry. */
   tasks?: typeof listTasks;
+  /** The status bar's own `N tasks` read (page open/switch, polls while the Tasks panel is closed); defaults to `tasks`. */
+  taskCount?: typeof listTasks;
   treeTasks?: typeof allTasks;
   removeTask?: typeof removeTask;
   /** How long Enter, digits and typing are ignored after a question first shows (QUESTION_DELAY_MS); tests shorten it. */

@@ -7,7 +7,7 @@ import { finRows, whaleRows } from "./whale";
 
 const plain = (rows: string[]) => rows.map(Bun.stripANSI);
 const chapter: Chapter = { tabs: [{ name: "orch-one" }, { name: "orch-two" }], active: 1, model: "model-a", directory: "/repo", remote: "host/repo" };
-const counts = "2 agents running │ 1 message queued │ 3 questions";
+const counts = "2 agents running │ 1 task │ 3 questions";
 
 test("chapter rules lead with real bracketed pages, selected in text and intensity; no branding or hints", () => {
   const rows = chapterRows(chapter, 80);
@@ -45,7 +45,8 @@ test("Unicode names and long model/path/remote are bounded in true cells, not by
 
 test("count strip groups on wide screens and stacks on narrow screens, without shortcuts or metadata", () => {
   expect(plain(statusRows(counts, 80, 24))).toEqual([counts]);
-  expect(plain(statusRows(counts, 20, 24))).toEqual(["2 agents running", "1 message queued", "3 questions"]);
+  expect(plain(statusRows(counts, 20, 24))).toEqual(["2 agents running", "1 task │ 3 questions"]);
+  expect(plain(statusRows(counts, 16, 24))).toEqual(["2 agents running", "1 task", "3 questions"]);
   expect(statusRows(counts, 80, 2)).toEqual([]);
 });
 

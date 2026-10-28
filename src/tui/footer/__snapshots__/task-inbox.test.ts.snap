@@ -19,7 +19,7 @@ queued 1/1 · orchestrator · isolated
 │> draft 界                                                                                        │
 │  second line                                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
-0 agents running │ 1 message queued │ inbox 1
+0 agents running │ 1 task │ inbox 1
 inbox · [tasks] / questions · read-only                                                      1–2/2
 name               | summary                       | status         | pr link
 Task one           | A brief structured summary    | queued         | https://github.com/owner/repo/
@@ -46,7 +46,7 @@ queued 1/1 · orchestrator · isolated
 │> draft 界                                                                    │
 │  second line                                                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
-0 agents running │ 1 message queued │ inbox 1
+0 agents running │ 1 task │ inbox 1
 inbox · [tasks] / questions · read-only                                  1–2/2
 name           | summary              | status         | pr link
 Task one       | A brief structured   | queued         | https://github.com/owne
@@ -70,7 +70,7 @@ queued 1/1 · orch · isolated
 │> draft 界                            │
 │  second line                         │
 └──────────────────────────────────────┘
-0 agents running │ 1 message queued
+0 agents running │ 1 task
 inbox 1
 inbox · [tasks]                  1–5/5
 name: Task one

@@ -1160,7 +1160,7 @@ test("queued user messages show only when consumed, in order, alongside external
   term.type("two\r");
   await until(() => app.page!.sent.length === 2);
   expect(app.page!.lines.map(raw).join("\n")).not.toContain("> one");
-  expect(strip(app.status(app.page!))).toContain("2 messages queued");
+  expect(app.frame().queued?.texts).toEqual(["one", "two"]);
   inbox(["one", "two", "external"].map((text, i) => ({ from: "user", text, inputId: app.page!.sent[i]?.inputId, ts: "" })));
   expect(app.page!.sent).toEqual([]);
   expect(app.page!.lines.map(raw).map(strip)).toEqual(["> one", "> two", "> external"]);
@@ -1197,13 +1197,13 @@ test("unfinished calls commit red in turns and finished agent transcripts", asyn
 test("scrolling and new output keep both bars fixed, preserve the draft, and follow the latest again at the end", async () => {
   const term = fakeTerm(100, 16);
   const orchs = fakeOrchestrators();
-  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, taskCount: async () => [] });
   const running = app.run("sticky-scroll");
   try {
     await until(() => !!app.page);
     for (let i = 0; i < 60; i++) app.say(`history row ${i}`);
     term.type("my draft");
-    await until(() => term.screen().includes("history row 59"));
+    await until(() => term.screen().includes("history row 59") && term.screen().includes("0 tasks"));
     const top = bodyStart(term);
     const header = term.display.screen().slice(0, top);
     const footer = term.display.screen().slice(-4);
