@@ -139,7 +139,7 @@ export class App {
       return;
     }
     if (k.name === "escape" || k.ctrl && k.name === "t") return this.toggleTaskTree();
-    if (k.name === "char" && k.text === "r") { void this.refreshTaskTree(); return; }
+    if (k.name === "char" && k.text === "r") { void this.manualTreeRefresh(view); return; }
     if (k.name === "char" && k.text === "d") {
       const selected = view.tasks.find(t => t.id === view.selectedId);
       if (!view.error && !view.loading && selected?.archive) { view.confirmRemoval = selected.id; view.notice = undefined; }
@@ -154,6 +154,12 @@ export class App {
       else this.scrollTaskTree(view, rendered, k);
     }
     this.draw();
+  }
+
+  /** `r`: say a re-read started and when it landed; an unchanged registry otherwise changes nothing visible. */
+  private async manualTreeRefresh(view: TaskTreeState): Promise<void> {
+    view.notice = "Refreshing…"; this.draw(); await this.refreshTaskTree();
+    if (this.taskTree === view && view.notice === "Refreshing…") { view.notice = view.error ? undefined : `Refreshed ${new Date(this.clock.now()).toTimeString().slice(0, 8)} · Esc chat`; this.draw(); }
   }
 
   private async confirmTaskRemoval(view: TaskTreeState): Promise<void> {

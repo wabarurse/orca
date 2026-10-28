@@ -1,6 +1,6 @@
 import { publicTaskStatus } from "../../protocol/task";
 import { taskPublicationMilestone } from "../../protocol/task";
-import { check, type Task, type TaskTreeView } from "../../protocol/task";
+import { check, taskStatusLabels, type Task, type TaskTreeView } from "../../protocol/task";
 import { cells, plainText, visibleLength, wordWrap, wrap } from "./text";
 import { treeTasks, type TreeTask } from "./task-tree-data";
 
@@ -94,9 +94,18 @@ function active(task: TreeTask): boolean {
 
 function status(task: TreeTask): string { return publicTaskStatus(task); }
 
+/** Dot colour: merged purple, verified PR out green, stopped (blocked/cancelled/closed) red,
+ * unknown yellow, building/working/reviewing/ready cyan, queued grey. A routine `waiting`
+ * attention never hides progress. The PR milestone stays green even when blocked. */
 function statusColor(task: TreeTask): number {
-  const tone = taskPublicationMilestone(task).tone;
-  return tone === "purple" ? 35 : tone === "green" ? 32 : 90;
+  const milestone = taskPublicationMilestone(task);
+  if (milestone.kind === "merged") return 35;
+  if (milestone.kind === "published") return 32;
+  const kind = task.attention?.kind;
+  if (kind === "blocked" || kind === "cancelled" || kind === "closed") return 31;
+  if (kind === "unknown") return 33;
+  if (active(task) || status(task) === "building" || task.status !== "queued") return 36;
+  return 90;
 }
 
 function activity(task: TreeTask): string {
@@ -145,6 +154,7 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
   });
   const fields: [string, string][] = [
     [`Task #${selected.number ?? tasks.indexOf(selected) + 1} · ${status(selected)}`, selected.name],
+    ["Lifecycle", taskStatusLabels[selected.status]],
     ["UUID", selected.id],
     ["Created", selected.createdAt],
     ["Overview", selected.summary],

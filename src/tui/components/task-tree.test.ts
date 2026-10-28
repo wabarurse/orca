@@ -165,3 +165,27 @@ test("publication is green independently of attention, failed runs or readiness;
   delete t.publication;
   expect(render()).not.toContain("pr open");
 });
+
+test("dot colour follows task status: queued grey, building/working cyan, attention red/yellow, PR green, merged purple", () => {
+  const colours = (t: Task) => { const m = renderTaskTree([t], { cols: 120, rows: 30 }).lines.join("\n").match(/\x1b\[(\d+)m●/); return m && Number(m[1]); };
+  const base = (n: number) => task(n);
+  expect(colours(base(1))).toBe(90);
+  const run = { id: "run", agent: "agent", role: "worker" as const, state: "started" as const, preparedAt: "today", startedAt: "today" };
+  const building = base(2); building.status = "working"; building.runs = [run]; building.checkpoints = { buildingAt: "today" };
+  expect(colours(building)).toBe(36);
+  const reviewing = base(3); reviewing.status = "reviewing"; reviewing.checkpoints = { buildingAt: "today" };
+  reviewing.attention = { kind: "waiting", reason: "awaiting review" };
+  expect(colours(reviewing)).toBe(36); // routine waiting never hides progress
+  for (const [kind, colour] of [["blocked", 31], ["cancelled", 31], ["closed", 31], ["unknown", 33]] as const) {
+    const t = base(4); t.status = "working"; t.runs = [run]; t.attention = { kind, reason: "x" };
+    expect(colours(t)).toBe(colour);
+  }
+  const ready = base(5); ready.pr = pr; ready.status = "ready_to_merge";
+  ready.readiness = { head: pr.head, run: "r", validatedAt: "today", validation: "checked", checks: "passed" };
+  expect(colours(ready)).toBe(36); // ready without verified PR proof is not "PR is out"
+  const open = base(6); open.pr = pr; open.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
+  expect(colours(open)).toBe(32);
+  const merged = base(7); merged.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
+  expect(colours(merged)).toBe(35);
+  expect(renderTaskTree([ready], { cols: 120, rows: 40 }).lines.join("\n")).toContain("Lifecycle: ready to merge");
+});
