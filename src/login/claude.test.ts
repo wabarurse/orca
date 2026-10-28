@@ -65,7 +65,7 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
         expect(authorization.searchParams.get("scope")).toContain("user:inference");
         const target = new URL(authorization.searchParams.get("redirect_uri")!);
         target.hostname = "127.0.0.1";
-        await expectShortLink(written, target.port, authorization.toString(), join(home, "login-url.txt"));
+        await expectShortLink(written, target.port, authorization.toString(), join(home, ".runtime", "login-url.txt"));
         target.search = new URLSearchParams({ code: "test-code", state: "wrong-state" }).toString();
         expect((await fetch(target)).status).toBe(400);
         expect(await readClaudeTokens("personal")).toBeNull();
@@ -93,11 +93,11 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
   expect((await readClaudeTokens("personal"))?.refreshToken).toBe("new-refresh");
   expect(claudeProfiles()).toEqual(["personal"]);
   expect(statSync(claudeCredentialsPath("personal")).mode & 0o777).toBe(0o600);
-  expect(statSync(join(home, "auth", "anthropic")).mode & 0o777).toBe(0o700);
+  expect(statSync(join(home, ".runtime", "auth", "anthropic")).mode & 0o777).toBe(0o700);
   expect(written).not.toContain("new-access");
   expect(written).not.toContain("new-refresh");
   expect(written).not.toContain("code_challenge");
-  expect(existsSync(join(home, "login-url.txt"))).toBe(false);
+  expect(existsSync(join(home, ".runtime", "login-url.txt"))).toBe(false);
 });
 
 test("cancelled login releases its callback port and saves nothing", async () => {
@@ -128,7 +128,7 @@ test("login prints an ssh tunnel hint only over ssh and removes the URL file whe
         openBrowser() { abort.abort(); },
       })).rejects.toThrow("cancelled");
       expect(written.includes("ssh -L")).toBe(ssh);
-      expect(existsSync(join(home, "login-url.txt"))).toBe(false);
+      expect(existsSync(join(home, ".runtime", "login-url.txt"))).toBe(false);
     }
   } finally {
     if (saved.c === undefined) delete process.env.SSH_CONNECTION; else process.env.SSH_CONNECTION = saved.c;
@@ -137,7 +137,7 @@ test("login prints an ssh tunnel hint only over ssh and removes the URL file whe
 });
 
 test("login still works with just the short link when the URL file cannot be written", async () => {
-  mkdirSync(join(home, "login-url.txt")); // a directory in the way makes the write fail
+  mkdirSync(join(home, ".runtime", "login-url.txt"), { recursive: true }); // a directory in the way makes the write fail
   const abort = new AbortController();
   let written = "";
   await expect(loginClaude("default", {
@@ -146,7 +146,7 @@ test("login still works with just the short link when the URL file cannot be wri
   })).rejects.toThrow("cancelled");
   expect(written).toMatch(/http:\/\/localhost:\d+\/login\//);
   expect(written).not.toContain("login-url.txt");
-  expect(statSync(join(home, "login-url.txt")).isDirectory()).toBe(true);
+  expect(statSync(join(home, ".runtime", "login-url.txt")).isDirectory()).toBe(true);
 });
 
 test("cancelling a code exchange aborts the request and preserves the previous login", async () => {

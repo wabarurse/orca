@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { completeInterruptedTools, interruptedMessages, open } from "./transcript";
-import { paired } from "../memory/tool-pairs";
+import { paired } from "../transcripts/tool-pairs";
 import { toResponses } from "../../../providers/openai";
 import { parts } from "../../../tui/conversation/view";
 import { createAgent } from "../../agent-loop/loop/agent";

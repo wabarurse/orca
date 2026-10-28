@@ -40,13 +40,14 @@ for (const path of [home, join(home, '.orca'), join(home, '.orca', '.runtime'), 
   if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid() || s.mode & 0o022)
     fail(`unsafe directory: ${path}; must be owned by you, not a symlink, and not group/world writable`);
 }
-for (const path of [join(home, '.orca', 'app'), join(home, '.parallels'), join(home, '.orca', 'projects'), join(home, '.orca', 'memory.sqlite'), ...['config.toml', 'auth', 'tmux.sock', 'checkout-locks', 'turn-locks', 'project-locks', 'daemon-locks'].map(name => join(home, '.orca', name))]) {
-  try { lstatSync(path); fail('existing state: use the manual offline migration runbook, not bootstrap installation'); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-}
 const app = join(home, '.orca', '.runtime', 'app');
 try { lstatSync(app); fail(`existing app at ${app}; use orca pull for updates, or see docs/REFERENCE.md#installer-ownership-and-recovery`); }
 catch (error) { if (error.code !== 'ENOENT') throw error; }
+for (const path of [join(home, '.orca', 'app'), join(home, '.parallels'), join(home, '.orca', 'projects'), join(home, '.orca', 'memory.sqlite'), ...['.runtime/layout.json', '.runtime/config.toml', '.runtime/auth', 'config.toml', 'auth', 'tmux.sock', 'checkout-locks', 'turn-locks', 'project-locks', 'daemon-locks'].map(name => join(home, '.orca', name))]) {
+  try { lstatSync(path); fail('existing state: see docs/ORCA_HOME.md for fresh-home setup; bootstrap does not migrate'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+
 JS
 
   mkdir -p "$HOME/.orca/.runtime"

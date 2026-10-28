@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { installBinary } from "../../../scripts/install";
 import { open } from "../data/transcripts/transcript";
 import { agentCommand, slug, tmuxSocket } from "../tmux/runner";
+import { assertLayout, paths, writeProjectState, repositoryBinding } from "../../config";
 import pkg from "../../../package.json";
 import { pullFixture } from "../../test/pull-fixture";
 
@@ -25,9 +26,9 @@ function script(name: string, body: string) {
   writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
 }
 /** Run `f` with ORCA_HOME pointing at the relocated state, as the installed processes see it. */
-function withState<T>(f: () => T): T {
+function withState<T>(f: () => T, directory = state): T {
   const previous = process.env.ORCA_HOME;
-  process.env.ORCA_HOME = state;
+  process.env.ORCA_HOME = directory;
   try { return f(); }
   finally { if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous; }
 }
@@ -36,6 +37,7 @@ function resetLog() { writeFileSync(log, ""); }
 
 beforeAll(async () => {
   mkdirSync(home); mkdirSync(state); mkdirSync(bin);
+  assertLayout(state);
   const build = join(root, "build ' directory"); mkdirSync(build);
   const artifact = join(build, "orca");
   const result = await exec([process.execPath, "build", join(source, "src/cli/main.ts"), "--compile", "--outfile", artifact]);
@@ -64,8 +66,9 @@ test("relocated installed CLI preserves help, errors, version, msg and state rel
     expect(result.code).toBe(1); expect(result.err).toContain("usage:");
   }
   for (const args of [[], ["start"]]) expect((await exec([installed, ...args])).err).toContain("interactive terminal");
+  mkdirSync(join(state, "projects", "messages"), { recursive: true });
   expect((await exec([installed, "msg", "messages", "literal ' $() --help"])).code).toBe(0);
-  const inbox = join(state, "projects", "messages", "inbox", "orchestrator");
+  const inbox = join(state, ".runtime", "projects", "messages", "inbox", "orchestrator");
   const files = readdirSync(inbox).filter(f => f.endsWith(".json"));
   expect(files).toHaveLength(1);
   expect(JSON.parse(readFileSync(join(inbox, files[0]!), "utf8")).text).toBe("literal ' $() --help");
@@ -86,11 +89,11 @@ async function seed(project: string, role: "orchestrator" | "worker" | "reviewer
   expect((await exec(["git", "init", "-q", "-b", "main", repo])).code).toBe(0);
   expect((await exec(["git", "-c", "user.name=Test", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "fixture"], repo)).code).toBe(0);
   const worktreeId = crypto.randomUUID();
-  writeFileSync(join(base, "repository.json"), JSON.stringify({ version: 1, directory: repo, branch: "main", worktreeId }));
+  withState(() => writeProjectState(project, "repository", { version: 1, directory: repo, branch: "main", worktreeId }));
   const cwd = role === "orchestrator" ? repo : join(`${repo}.orca-worktrees`, worktreeId, slug(branch));
   if (role !== "orchestrator") expect((await exec(["git", "worktree", "add", "-b", branch, cwd], repo)).code).toBe(0);
   const id = role === "orchestrator" ? role : `${role}-${slug(branch)}`;
-  const t = open(join(base, "transcripts", `${id}.jsonl`));
+  const t = open(join(base, "transcript", `${id}.jsonl`));
   await t.append({ type: "meta", role, model: "m" });
   // Orchestrators require fresh durable input; saved history alone never resumes
   // a turn (the same receipt/ownership contract as an interactive session).
@@ -150,9 +153,9 @@ for (const exit of ["0", "70", "19", "kill"]) {
       expect(followups[0]).toMatchObject({ cwd, home: state, executable: probe });
       expect(followups[0].args).toEqual(["--project", project, "--role", "worker", "--branch", branch, "--run", run, "--code", String(code)]);
     }
-    const inbox = join(base, "inbox", "orchestrator");
+    const inbox = withState(() => join(paths.inbox(project), "orchestrator"));
     expect(existsSync(inbox) ? readdirSync(inbox).filter(f => f.endsWith(".json")) : []).toHaveLength(0);
-    expect(existsSync(join(base, "runs", `worker-${slug(branch)}.${run}.exit`))).toBe(true);
+    expect(existsSync(withState(() => join(paths.runs(project), `worker-${slug(branch)}.${run}.exit`)))).toBe(true);
   });
 }
 
@@ -160,7 +163,7 @@ test("actual installed internal agent and agent-exit settle a startup failure on
   const argv = withState(() => agentCommand({ project: "actual", role: "reviewer", branch }, run, [installed]));
   const result = await exec(argv);
   expect(result.code).toBe(70); expect(result.err).toContain("spawn seeds it");
-  const inbox = join(state, "projects", "actual", "inbox", "orchestrator");
+  const inbox = join(state, ".runtime", "projects", "actual", "inbox", "orchestrator");
   expect(readdirSync(inbox).filter(f => f.endsWith(".json"))).toHaveLength(1);
   expect((await exec([installed, "agent-exit", "--project", "actual", "--role", "reviewer", "--branch", branch, "--run", run, "--code", "70"])).code).toBe(0);
   expect(readdirSync(inbox).filter(f => f.endsWith(".json"))).toHaveLength(1);
@@ -201,7 +204,7 @@ test("bare and explicit installed startup reuse the original checkout with its l
       if (projects.length) expect(current).toEqual(projects);
       projects = current;
       const project = join(isolated, "projects", current[0]!);
-      const binding = JSON.parse(readFileSync(join(project, "repository.json"), "utf8"));
+      const binding = withState(() => repositoryBinding(current[0]!)!, isolated);
       expect(binding.directory).toBe(realpathSync(checkout));
       expect(binding.branch).toBe("main");
       expect(existsSync(join(project, "repo"))).toBe(false);
@@ -224,7 +227,7 @@ test("development CLI re-entry uses absolute Bun without Bun on PATH", async () 
 });
 
 test("local install script builds from its checkout, upgrades fixture HOME, and leaves state untouched", async () => {
-  const sentinel = join(state, "config.toml");
+  const sentinel = join(state, ".runtime", "config.toml");
   writeFileSync(sentinel, "# fixture state, do not edit\n");
   const result = await exec([process.execPath, join(source, "scripts/install.ts")], root);
   expect(result.code).toBe(0);

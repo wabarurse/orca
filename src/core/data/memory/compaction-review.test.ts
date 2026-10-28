@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgent, type AgentDeps } from "../../agent-loop/loop/agent";
 import { compact, budget, outputCap } from "./compaction";
-import { paired } from "./tool-pairs";
+import { paired } from "../transcripts/tool-pairs";
 import { open, type Transcript } from "../transcripts/transcript";
 import { text, toolUse } from "../../../test/fake-provider";
 import type { CompleteRequest, Provider, Turn } from "../../../providers/provider";

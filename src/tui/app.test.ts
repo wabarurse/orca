@@ -1,124 +1,21 @@
-import { png } from "../test/image-fixture";
-import { pendingImageInputs } from "../core/data/images/images";
-import type { ImageRef } from "../protocol/images";
-import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appFixture } from "../test/app-fixture";
+import { readProjectState, writeProjectState } from "../config";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Orchestrator } from "../core/agent-loop/orc/orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../core/data/projects/registry";
 import { loadConfig, paths } from "../config/config";
 import { effectiveFlow } from "../core/data/projects/flow";
-import { AGENTS_TICK_MS, App, helpLines, parseCommand, type Clock, type Line, type ToolEvents } from "./app";
-import { createOrchestrator } from "../core/agent-loop/orc/orchestrator";
-import { drain, put } from "../core/data/inbox/inbox";
-import type { Message } from "../protocol/inbox";
-import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../core/data/inbox/questions";
-import { answeredNote, fileStore, queuedAnswer, type QuestionStore } from "./footer/questions";
-import { MAX_RESTORED_ROWS, userLines } from "./conversation/restore";
-import { historyRows, lineRows } from "./conversation/lines";
-import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
+import { AGENTS_TICK_MS, App, type Clock, type ToolEvents } from "./app";
+import { historyRows } from "./conversation/lines";
+import { text as said } from "../test/fake-provider";
 import { message } from "../core/tools/message";
-import { registerTask } from "../core/data/tasks/tasks";
-import { makeSpawn } from "../core/tools/spawn";
-import { open as openTranscript } from "../core/data/transcripts/transcript";
-import { ESC_DELAY_MS, parseKeys, type Key } from "./components/keys";
-import { realTerminal, type Terminal } from "./components/term";
-import { FakeScreen } from "./components/testing";
-import { bold, dim } from "./components/text";
-import { live as renderLive } from "./footer/render";
-import { setUserFill } from "./components/style";
+import { realTerminal } from "./components/term";
+import { dim } from "./components/text";
 import { Calls } from "./conversation/tools";
 
-const home = mkdtempSync(join(tmpdir(), "orca-tui-"));
-process.env.ORCA_HOME = home;
-afterAll(() => rmSync(home, { recursive: true, force: true }));
-
-/** Anything the fake screen refused (an escape or control a real terminal would misread); checked after every test. */
-const screenErrors: string[] = [];
-afterEach(() => { expect(screenErrors).toEqual([]); screenErrors.length = 0; });
-/** The user background on, whatever the environment says, so every test draws it (and pads the input). */
-const USER_BG = "\x1b[48;5;236m";
-beforeEach(() => setUserFill(USER_BG));
-
-const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
-/** A history line's text: plain lines as they are, markdown as written. */
-const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : l.md);
-
-/** A fake terminal: records every raw write and applies it to a FakeScreen, so `screen()` is the scrollback plus the screen. */
-function fakeTerm(cols = 40, rows = 24) {
-  const handlers: ((k: Key) => void)[] = [];
-  const resizers: (() => void)[] = [];
-  const display = new FakeScreen(cols, rows);
-  const writes: string[] = [];
-  const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; raw(): string; writes: string[]; display: FakeScreen; resize(cols: number, rows: number): void; eraser: string; opened: boolean; closed: boolean } = {
-    cols, rows, opened: false, closed: false, writes, display, eraser: "",
-    eraseOnExit(text) { this.eraser = text; },
-    write: (s) => {
-      writes.push(s);
-      try { display.write(s); } catch (err) { screenErrors.push(String(err)); throw err; }
-    },
-    onKey: (cb) => { handlers.push(cb); },
-    onResize: (cb) => { resizers.push(cb); },
-    resize(c, r) { this.cols = c; this.rows = r; display.resize(c, r); for (const cb of resizers) cb(); },
-    open() { this.opened = true; this.write("\x1b[?1049h"); },
-    close() { this.write("\x1b[?1049l"); this.closed = true; },
-    press: (k) => { for (const h of handlers) h(k); },
-    type: (s) => { for (const k of parseKeys(s)) for (const h of handlers) h(k); },
-    screen: () => display.text(),
-    raw: () => writes.join(""),
-  };
-  return term;
-}
-
-/** The chapter's closing rule separates pinned metadata from the body. */
-const bodyStart = (term: ReturnType<typeof fakeTerm>) => term.display.screen().findIndex(row => /^─+$/.test(row)) + 1;
-const bodyRows = (term: ReturnType<typeof fakeTerm>) => term.display.screen().slice(bodyStart(term));
-
-/** Click the screen row showing `text` (one press and release on the same cell). */
-async function clickRow(app: App, term: ReturnType<typeof fakeTerm>, text: string): Promise<void> {
-  const y = term.display.screen().findIndex(row => row.includes(text)) + 1;
-  expect(y).toBeGreaterThan(0);
-  await app.onKey({ name: "mousedown", x: 3, y });
-  await app.onKey({ name: "mouseup", x: 3, y });
-}
-
-function fakeOrchestrators() {
-  const opened: { project: string; url?: string }[] = [];
-  const said: Record<string, string[]> = {};
-  const writers: Record<string, (t: string) => void> = {};
-  const openOrchestrator = async (project: string, url: string | undefined, write: (t: string) => void, onInbox?: (msgs: Message[]) => void): Promise<Orchestrator> => {
-    mkdirSync(paths.project(project), { recursive: true });
-    opened.push({ project, url });
-    said[project] = [];
-    writers[project] = write;
-    let queued = 0;
-    let consumed = 0;
-    const ids: (string | undefined)[] = [];
-    return {
-      async say(text, _submission, inputId) { said[project]!.push(text); ids.push(inputId); queued++; },
-      async pending() { return queued > 0; },
-      async turn() {
-        queued = 0;
-        onInbox?.(said[project]!.slice(consumed).map((text, i) => ({ from: "user", text, inputId: ids[consumed + i], ts: "" })));
-        consumed = said[project]!.length;
-        write(`${project} says hi\n`);
-        return [{ from: "worker-x", text: "done", ts: "t" }];
-      },
-    };
-  };
-  return { opened, said, writers, openOrchestrator };
-}
-
-const settle = () => Bun.sleep(15);
-/** A real terminal's clock whose background-reply window ends at once, as for a terminal that never answers (term.test.ts covers the window). */
-const NO_REPLY_WINDOW = { now: Date.now, setTimer: (fn: () => void) => { fn(); return () => {}; } };
-/** Wait until `cond` holds, up to two seconds. */
-async function until(cond: () => boolean): Promise<void> {
-  const deadline = Date.now() + 2000;
-  while (!cond() && Date.now() < deadline) await Bun.sleep(5);
-  expect(cond()).toBe(true);
-}
+const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until } = appFixture();
 
 describe("tui app", () => {
   test("orca welcome stays static until submission, then only the header fin animates", async () => {
@@ -329,7 +226,7 @@ describe("tui app", () => {
     expect(page.orch).toBe(orch); // not reopened
     expect(orchs.opened.map((o) => o.project)).toEqual(["named"]);
     expect(existsSync(join(home, "projects", "named", "repo"))).toBe(true);
-    expect(await Bun.file(join(home, "projects", "named", "name")).text()).toBe("login page\n");
+    expect(readProjectState("named", "name")).toBe("login page");
     await until(() => term.screen().includes(">[login page]")); // the selected tab
     expect(await displayName("named")).toBe("login page");
 
@@ -590,7 +487,8 @@ describe("tui app", () => {
     await running;
 
     // Persist the binding as the real openOrchestrator does.
-    await Bun.write(paths.repository("bound"), JSON.stringify({ version: 1, directory: source, branch: "main", worktreeId: crypto.randomUUID() }));
+    mkdirSync(paths.project("bound"), { recursive: true });
+    writeProjectState("bound", "repository", { version: 1, directory: source, branch: "main", worktreeId: crypto.randomUUID() });
     const again = new App({ term: fakeTerm(), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000, source });
     const running2 = again.run();
     await until(() => again.page?.project === "bound");
@@ -919,7 +817,7 @@ describe("tui app", () => {
 
   test("a project with a display name shows it in the list; pin and delete use its id", async () => {
     mkdirSync(join(home, "projects", "sb-orch1", "repo"), { recursive: true });
-    await Bun.write(join(home, "projects", "sb-orch1", "name"), "Shiny app\n");
+    await setDisplayName("sb-orch1", "Shiny app");
     mkdirSync(join(home, "projects", "sb-ren", "repo"), { recursive: true });
     const term = fakeTerm(90);
     const orchs = fakeOrchestrators();

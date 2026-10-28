@@ -39,7 +39,7 @@ export const message: Tool = {
     let delivered = text;
     if (to === "orchestrator" && ctx.role !== "orchestrator" && (text.length > 6000 || input.summary !== undefined)) {
       if (typeof input.summary !== "string" || !input.summary.trim() || input.summary.length > 4000) throw new Error("long report needs a summary under 4000 characters with outcomes, failures and decisions; full text will be saved");
-      const dir = join(paths.project(ctx.project), "reports"); await mkdir(dir, { recursive: true, mode: 0o700 });
+      const dir = join(paths.project(ctx.project), "tool-outputs", "reports"); await mkdir(dir, { recursive: true, mode: 0o700 });
       const file = join(dir, `${crypto.randomUUID()}.txt`); await writeFile(file, text, { mode: 0o600 });
       delivered = `${input.summary}\nFull evidence: ${file}`;
     }

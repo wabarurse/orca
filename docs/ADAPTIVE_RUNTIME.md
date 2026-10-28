@@ -58,11 +58,11 @@ Capacity is 16 live/unknown processes and 512 retained handles per project. Outp
 
 ## Context, instructions and memory
 
-The coordinator's working brief is `projects/<id>/working-context.json`: goal, decisions, result references and the last three human corrections. The brief is limited to 16 KiB; corrections retain bounded verbatim excerpts with links to their original message IDs. Older result/decision entries can be trimmed to make room for a new correction. Original transcripts remain available.
+The coordinator's working brief is a project-scoped `working-context` record in `memory.sqlite`: goal, decisions, result references and the last three human corrections. The brief is limited to 16 KiB; corrections retain bounded verbatim excerpts with links to their original message IDs. Older result/decision entries can be trimmed to make room for a new correction. Original transcripts remain available.
 
 `/clear` resets the active transcript context and the working brief, preserving explicit saved facts. It refuses pending input or active/unknown coordinator-owned commands. The empty brief is published before the transcript boundary; publication failure restores the prior brief. A process crash between those writes can lose the derived brief, but cannot delete original history or reintroduce an old goal after a completed boundary.
 
-Facts live in `preferences.json` (user) and `projects/<id>/knowledge.json` (project). `remember list/save/forget` exposes them. Only the coordinator mutates shared facts and goals; workers propose changes. Explicit facts require a retained human source ID; this validates provenance, not the correctness of the model's interpretation. Inferences remain tentative. Current instructions override saved knowledge, and memory grants no permission.
+User and project facts share `memory.sqlite` with project bindings, names, model settings, decisions and the conversation/task index. `remember list/save/forget` exposes them. Only the coordinator mutates shared facts and goals; workers propose changes. Explicit facts require a retained human source ID; this validates provenance, not the correctness of the model's interpretation. Inferences remain tentative. Current instructions override saved knowledge, and memory grants no permission.
 
 Selection retrieves up to eight relevant facts (or `always.*` preferences) within an 8k-character budget. This first implementation uses lexical matching; it is not semantic retrieval or an automatic preference learner. Each scope holds up to 200 facts. Full memory history remains separately searchable through existing archive tools.
 
@@ -85,6 +85,12 @@ Workers may write their workspace, temporary storage, device files and Git metad
 `/usage` and the `runtime` tool aggregate `.runtime/usage.jsonl`: input/output/cache/reasoning tokens when available, missing usage, retries, tool durations, supervised-process durations and peak observed context. Model calls used for compaction and search are included when instrumented; requests without an attributable project are exposed separately. Overlapping durations cannot be added to get elapsed wall time. Token counts are not a subscription bill, and failed requests may have unknown provider usage. The file is append-only and contains identifiers/measurements, not prompts or command bodies.
 
 The adaptive evaluation uses scripted providers and temporary projects. It establishes runtime behavior, not model judgment, comparison with Claude Code/Codex, or faster/cheaper task completion. Use the separate efficiency evaluation with comparable real tasks and total orchestration/worker overhead before making performance claims.
+
+## Storage and source organization
+
+The public home contains `prompts/`, `tools/`, `skills/`, `projects/`, `memory.sqlite` and `.runtime/`. Each project holds `tasks.json`, rebuildable `cache/`, original `transcript/`, `tool-outputs/` (including detailed worker reports) and `images/`. Global configuration, private credentials, process output, pending delivery and recovery state live under `.runtime/`; that directory is durable, not a cache. See [the storage contract](ORCA_HOME.md) for fresh-home setup and compatibility limits.
+
+`src/config/paths.ts` owns locations and project metadata access; `state-store.ts` owns transactional SQLite records, leaving `config.ts` focused on global configuration. Transcript pairing and shared SQLite helpers are imported from their owning modules; obsolete memory forwarding modules are removed. TUI integration suites share `src/test/app-fixture.ts` for screen, input and fake-orchestrator setup.
 
 ## Source attribution
 

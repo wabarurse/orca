@@ -1,60 +1,6 @@
-// Public state: config.toml, memory.sqlite (+ adjacent WAL/SHM), private auth,
-// prompts/, tools/, reserved skills/, and projects/ (task membership, binding,
-// settings, transcripts/images and historical tool-output evidence).
-// Internal state: .runtime/{app,tmux.sock,*-locks,projects/<id>/{runs,inbox,
-// questions,orchestrator,merged}}. See docs/ORCA_HOME.md for offline upgrade.
-// Checkouts/worktrees stay at their Git-registered locations.
-
-import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
-import { readFileSync } from "node:fs";
-import { stateRoot, worktreeRoot } from "./legacy";
-
-// Read lazily so tests can point ORCA_HOME at a temp dir after import.
-const root = () => stateRoot(homedir(), process.env);
-
-export interface RepositoryBinding { version: 1; directory: string; branch: string; worktreeId: string }
-
-/** Missing means a legacy managed clone; malformed metadata must never fall back to it. */
-export function repositoryBinding(name: string): RepositoryBinding | undefined {
-  let raw: string;
-  try { raw = readFileSync(join(root(), "projects", name, "repository.json"), "utf8"); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  const value = JSON.parse(raw);
-  if (value?.version !== 1 || typeof value.directory !== "string" || !isAbsolute(value.directory) ||
-      typeof value.branch !== "string" || !value.branch || !/^[a-f0-9-]{36}$/.test(value.worktreeId)) {
-    throw new Error(`invalid repository binding for ${name}`);
-  }
-  return value;
-}
-
-function worktrees(name: string): string {
-  const binding = repositoryBinding(name);
-  return binding ? worktreeRoot(binding.directory, binding.worktreeId) : join(root(), "projects", name, "worktrees");
-}
-
-export const paths = {
-  get root() { return root(); },
-  get config() { return join(root(), "config.toml"); },
-  get memory() { return join(root(), "memory.sqlite"); },
-  /** The socket of orca's own tmux server, so a stale user server (started from a since-moved directory) cannot break agent windows. */
-  get runtime() { return join(root(), ".runtime"); },
-  runtimeProject: (name: string) => join(root(), ".runtime", "projects", name),
-  get tmuxSocket() { return join(root(), ".runtime", "tmux.sock"); },
-  daemonLock: (name: string) => join(root(), ".runtime", "daemon-locks", name),
-  orchestrator: (name: string) => join(root(), ".runtime", "projects", name, "orchestrator"),
-  project: (name: string) => join(root(), "projects", name),
-  displayName: (name: string) => join(root(), "projects", name, "name"),
-  inputHistory: (name: string) => join(root(), "projects", name, "input-history"),
-  repository: (name: string) => join(root(), "projects", name, "repository.json"),
-  repo: (name: string) => repositoryBinding(name)?.directory ?? join(root(), "projects", name, "repo"),
-  worktrees,
-  worktree: (name: string, slug: string) => join(worktrees(name), slug),
-  inbox: (name: string) => join(root(), ".runtime", "projects", name, "inbox"),
-  runs: (name: string) => join(root(), ".runtime", "projects", name, "runs"),
-  questions: (name: string) => join(root(), ".runtime", "projects", name, "questions"),
-  transcript: (name: string, id: string) => join(root(), "projects", name, "transcripts", `${id}.jsonl`),
-};
+import { paths } from "./paths";
+// Compatibility for callers within this package; public consumers use config/index.ts.
+export { paths, repositoryBinding, type RepositoryBinding } from "./paths";
 
 export interface Config {
   /** Full access preserves existing installs; workspace uses an OS write sandbox and fails closed if unavailable. */
@@ -75,7 +21,7 @@ export interface Config {
   maxToolOutputBytes: number;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
-  /** Default max review rounds for projects without their own (projects/<id>/settings.json, /review-rounds); 0 skips review and goes straight to CI. */
+  /** Default max review rounds for projects without their own (memory.sqlite project flow, /review-rounds); 0 skips review and goes straight to CI. */
   maxReviewRounds: number;
   /** Default /dynamic-dispatch switch for projects without their own; dormant until the orchestrator reads it. Default off. */
   dynamicDispatch: boolean;
@@ -105,7 +51,7 @@ export const defaults: Config = {
   pinned: [],
 };
 
-/** Most review rounds /review-rounds, settings.json and config.toml accept. */
+/** Most review rounds /review-rounds, project flow records and config.toml accept. */
 export const MAX_REVIEW_ROUNDS = 100;
 
 /** The last parse warning, so a broken file is reported once, not on every load. */

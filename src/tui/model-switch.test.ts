@@ -10,7 +10,7 @@ import { setModel } from "./commands/model";
 import { withProjectStateLock } from "../core/data/projects/state";
 import { effectiveModel } from "../core/data/projects/project-model";
 import { effectiveSettings } from "../core/data/projects/project-settings";
-import { paths, saveConfig } from "../config/config";
+import { paths, saveConfig, writeProjectState } from "../config";
 
 const home = mkdtempSync(join(tmpdir(), "model-ui-"));
 process.env.ORCA_HOME = home;
@@ -114,7 +114,7 @@ for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "revi
     const ui = await setup([], undefined, { modelAgents: undefined });
     try {
       // ENOTDIR is an unreadable transcript directory, regardless of uid.
-      await Bun.write(join(paths.project(ui.project), "transcripts"), "not a directory");
+      await Bun.write(join(paths.project(ui.project), "transcript"), "not a directory");
       ui.type("/model claude-test\r");
       if (result === null || result === "throw") {
         await until(() => ui.app.page!.lines.join("").includes("could not determine running agents; try again"));
@@ -320,7 +320,7 @@ test("header uses the project's startup override and global fallback through the
   let opened = 0;
   const ui = await setup([], undefined, { openOrchestrator: async (project) => {
     mkdirSync(paths.project(project), { recursive: true });
-    if (!opened++) await Bun.write(join(paths.project(project), "model"), "claude-startup\n");
+    if (!opened++) writeProjectState(project, "model", "claude-startup");
     return { async say() {}, async pending() { return false; }, async turn() { return []; } };
   } });
   try {

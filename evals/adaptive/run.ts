@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 const root = resolve(import.meta.dir, "../.."), output = process.argv[2] ? resolve(process.argv[2]!) : await mkdtemp(join(tmpdir(), "orca-adaptive-eval-"));
 await mkdir(output, { recursive: true });
 const cases = [
+  ["durable-state", "src/config/state-store.test.ts"],
+  ["home-layout", "src/config/home-structure.test.ts"],
   ["adaptive-workflows", "src/core/tools/adaptive-workflow.test.ts"],
   ["files-processes-sandbox", "src/core/tools/adaptive.test.ts"],
   ["stream-fidelity", "src/providers/openai.test.ts"],

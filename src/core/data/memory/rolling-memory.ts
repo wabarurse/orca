@@ -5,7 +5,7 @@ import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "..
 import type { Provider } from "../../../providers";
 import { summarizeOlder, taskSnapshot } from "./rolling-summary";
 import type { Task } from "../../../protocol/task";
-import { paired } from "./tool-pairs";
+import { paired } from "../transcripts";
 import type { Transcript } from "../transcripts";
 import type { RollingMemory } from "../../../protocol";
 import { inputEpoch } from "../inbox";

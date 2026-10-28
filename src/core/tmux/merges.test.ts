@@ -57,7 +57,7 @@ async function branch(b: string): Promise<{ wt: string; oid: string }> {
   const wt = await ensureWorktree(project, b);
   writeFileSync(join(wt, `${slug(b)}.txt`), "work\n");
   await $`git -C ${wt} add . && git -C ${wt} commit -qm work && git -C ${wt} push -q origin ${b}`.quiet();
-  mkdirSync(join(paths.project(project), "transcripts"), { recursive: true });
+  mkdirSync(join(paths.project(project), "transcript"), { recursive: true });
   for (const id of [`worker-${slug(b)}`, `reviewer-${slug(b)}`]) {
     writeFileSync(paths.transcript(project, id), "{}\n");
     await put(project, id, { from: "orchestrator", text: "hi" });
@@ -281,7 +281,7 @@ describe("left alone", () => {
     await $`git -C ${repo} push -q origin main:trunk`.quiet();
     await $`git -C ${repo} fetch -q origin`.quiet();
     await $`git -C ${repo} remote set-head origin trunk`.quiet();
-    mkdirSync(join(paths.project(project), "transcripts"), { recursive: true });
+    mkdirSync(join(paths.project(project), "transcript"), { recursive: true });
     for (const b of ["main", "trunk", "master"]) writeFileSync(paths.transcript(project, `worker-${b}`), "{}\n");
     const killed: string[] = [];
     const check = watch([pr(1, "main"), pr(2, "HEAD"), pr(3, "trunk"), pr(4, "master")], { live: async () => ["orchestrator", "worker-main", "worker-trunk"], kill: async (_p, w) => { killed.push(w); } });

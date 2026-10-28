@@ -248,7 +248,7 @@ test("image journal recovery is ordered by publication time, never random UUID o
   const ids = ["ffffffff-ffff-4fff-afff-ffffffffffff", "00000000-0000-4000-a000-000000000000"];
   for (const [n, inputId] of ids.entries()) {
     await saveImageInput(p, { inputId, text: String(n), attachments: [ref] });
-    const path = join(paths.project(p), "image-inputs", `${inputId}.json`);
+    const path = join(paths.project(p), "images", "inputs", `${inputId}.json`);
     const saved = JSON.parse(readFileSync(path, "utf8")); saved.storedAt = `2026-01-01T00:00:0${n}.000Z`;
     writeFileSync(path, JSON.stringify(saved));
   }

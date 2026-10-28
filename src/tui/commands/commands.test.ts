@@ -195,7 +195,7 @@ describe("project list", () => {
       expect((await orderedProjects()).map((p) => p.name)).toEqual(["alpha", "mid", "zeta"]);
       expect(await togglePin("zeta")).toBe(true);
       expect((await loadConfig()).pinned).toEqual(["zeta"]);
-      expect(await Bun.file(join(home, "config.toml")).text()).toContain('pinned = ["zeta"]');
+      expect(await Bun.file(paths.config).text()).toContain('pinned = ["zeta"]');
       expect((await orderedProjects()).map((p) => `${p.pinned ? "*" : ""}${p.name}`)).toEqual(["*zeta", "alpha", "mid"]);
       expect(await togglePin("zeta")).toBe(false);
       expect((await loadConfig()).pinned).toEqual([]);
@@ -226,7 +226,7 @@ describe("project list", () => {
   test("deleteProject removes the directory and its pin, after the hook", async () => {
     await withHome(async (home) => {
       project(home, "doomed");
-      mkdirSync(join(home, "projects", "doomed", "transcripts"), { recursive: true });
+      mkdirSync(join(home, "projects", "doomed", "transcript"), { recursive: true });
       await togglePin("doomed");
       const order: string[] = [];
       const killed: string[] = [];

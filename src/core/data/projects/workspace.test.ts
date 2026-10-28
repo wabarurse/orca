@@ -1,3 +1,4 @@
+import { writeProjectState } from "../../../config";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -206,7 +207,7 @@ test("missing checkout stays discoverable; invalid metadata never silently creat
   expect(await listProjects()).toContain("p");
   await ensureProject("p");
   expect(paths.repo("p")).toBe(repo);
-  await Bun.write(paths.repository("p"), "{}");
+  writeProjectState("p", "repository", {});
   expect(() => repositoryBinding("p")).toThrow("invalid repository binding");
   await expect(ensureProject("p")).rejects.toThrow("invalid repository binding");
 });

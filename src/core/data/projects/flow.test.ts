@@ -2,8 +2,8 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaults, loadConfig, paths, saveConfig } from "../../../config/config";
-import { effectiveFlow, flowSettingsPath, saveProjectFlow, validateFlow } from "./flow";
+import { defaults, loadConfig, paths, readProjectState, writeProjectState, saveConfig } from "../../../config";
+import { effectiveFlow, saveProjectFlow, validateFlow } from "./flow";
 import { projectIdentity, withProjectStateLock } from "./state";
 import { rolePrompt, DYNAMIC_DISPATCH } from "../../prompt/shared";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
@@ -26,7 +26,7 @@ test("config.toml is the default; a project override is atomic, merged and leave
   expect(await effectiveFlow("one")).toEqual({ maxReviewRounds: 0, dynamicDispatch: false }); // the earlier key survives the merge
   expect(await effectiveFlow("other")).toEqual({ maxReviewRounds: 4, dynamicDispatch: true });
   expect(await loadConfig()).toMatchObject({ maxReviewRounds: 4, dynamicDispatch: true });
-  expect(JSON.parse(await Bun.file(flowSettingsPath("one")).text())).toEqual({ maxReviewRounds: 0, dynamicDispatch: false });
+  expect(readProjectState("one", "flow")).toEqual({ maxReviewRounds: 0, dynamicDispatch: false });
   expect(readdirSync(paths.project("one")).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   // An explicitly loaded config is honoured without re-reading the file.
   expect(await effectiveFlow("other", { maxReviewRounds: 9, dynamicDispatch: false })).toEqual({ maxReviewRounds: 9, dynamicDispatch: false });
@@ -36,21 +36,21 @@ test("config.toml is the default; a project override is atomic, merged and leave
 test("invalid patches and ids refuse before writing; malformed saved files fail closed and are never repaired", async () => {
   setup("bad");
   await saveProjectFlow("bad", { maxReviewRounds: 2 });
-  const before = await Bun.file(flowSettingsPath("bad")).text();
+  const before = JSON.stringify(readProjectState("bad", "flow"));
   for (const patch of [{ maxReviewRounds: -1 }, { maxReviewRounds: 101 }, { maxReviewRounds: 1.5 }, { maxReviewRounds: "2" }, { dynamicDispatch: "on" }, { dynamicDispatch: 1 }, { extra: true }, null, [], 3]) {
     await expect(saveProjectFlow("bad", patch as Parameters<typeof saveProjectFlow>[1])).rejects.toThrow(/invalid/);
     expect(() => validateFlow(patch)).toThrow(/invalid/);
   }
   await expect(saveProjectFlow("../escape", { maxReviewRounds: 1 })).rejects.toThrow("invalid project id");
   await expect(saveProjectFlow("missing-dir", { maxReviewRounds: 1 })).rejects.toThrow();
-  expect(await Bun.file(flowSettingsPath("bad")).text()).toBe(before);
+  expect(JSON.stringify(readProjectState("bad", "flow"))).toBe(before);
   for (const raw of ["not json", '{"maxReviewRounds": 101}', '{"dynamicDispatch": "on"}', '{"other": 1}', "[]", "null", '{"maxReviewRounds": 9007199254740993}']) {
-    await Bun.write(flowSettingsPath("bad"), raw);
-    await expect(effectiveFlow("bad")).rejects.toThrow(flowSettingsPath("bad"));
-    await expect(saveProjectFlow("bad", { dynamicDispatch: true })).rejects.toThrow(flowSettingsPath("bad")); // a save never silently repairs it
-    expect(await Bun.file(flowSettingsPath("bad")).text()).toBe(raw);
+    writeProjectState("bad", "flow", raw === "not json" ? raw : JSON.parse(raw));
+    await expect(effectiveFlow("bad")).rejects.toThrow("flow settings");
+    await expect(saveProjectFlow("bad", { dynamicDispatch: true })).rejects.toThrow("flow settings"); // a save never silently repairs it
+    expect(readProjectState("bad", "flow")).toEqual(raw === "not json" ? raw : JSON.parse(raw));
   }
-  await Bun.write(flowSettingsPath("bad"), "{}\n");
+  writeProjectState("bad", "flow", {});
   expect(await effectiveFlow("bad")).toEqual({ maxReviewRounds: defaults.maxReviewRounds, dynamicDispatch: defaults.dynamicDispatch });
 });
 
@@ -63,7 +63,7 @@ test("saves queue in invocation order under the project-state lock and keep both
   const first = saveProjectFlow(project, { maxReviewRounds: 3 });
   const second = saveProjectFlow(project, { dynamicDispatch: true });
   const third = saveProjectFlow(project, { maxReviewRounds: 5 });
-  expect(await Bun.file(flowSettingsPath(project)).exists()).toBe(false); // nothing written while the lock is held
+  expect(readProjectState(project, "flow") !== undefined).toBe(false); // nothing written while the lock is held
   release.resolve();
   await blocker; await first; await second; await third;
   expect(await effectiveFlow(project)).toEqual({ maxReviewRounds: 5, dynamicDispatch: true });
@@ -77,7 +77,7 @@ test("a save captured for a deleted and recreated project refuses instead of res
   await Bun.sleep(5);
   setup(project);
   await expect(saveProjectFlow(project, { maxReviewRounds: 2 }, identity)).rejects.toThrow("project changed");
-  expect(await Bun.file(flowSettingsPath(project)).exists()).toBe(false);
+  expect(readProjectState(project, "flow") !== undefined).toBe(false);
 });
 
 test("the orchestrator's prompt uses its project's review rounds and dispatch per turn, not config.toml's", async () => {

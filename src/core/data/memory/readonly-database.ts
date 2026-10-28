@@ -1,1 +1,0 @@
-export { openExistingReadonly } from '../sqlite';

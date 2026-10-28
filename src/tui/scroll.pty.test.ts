@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open } from "../core/data/transcripts/transcript";
+import { assertLayout } from "../config";
 import { FakeScreen } from "./components/testing";
 
 const END_FRAME = "\x1b[?2026l";
@@ -19,8 +20,9 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
   const home = mkdtempSync(join(tmpdir(), "orca-scroll-pty-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
+    assertLayout(home);
     mkdirSync(join(home, "projects", "probe", "repo"), { recursive: true });
-    const t = open(join(home, "projects", "probe", "transcripts", "orchestrator.jsonl"));
+    const t = open(join(home, "projects", "probe", "transcript", "orchestrator.jsonl"));
     await t.append({ type: "meta", role: "orchestrator", model: "m" });
     await t.append({ type: "message", message: { role: "user", content: "PTY-ORIGINAL-HISTORY" } });
     for (let i = 0; i < 140; i++) await t.append({ type: "message", message: { role: "assistant", content: `PTY-RECORD-${i}` } });
@@ -112,8 +114,9 @@ test("owned PTY: Option+Backspace and a drag sent as separate writes (Terminal.a
   const home = mkdtempSync(join(tmpdir(), "orca-split-pty-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
+    assertLayout(home);
     mkdirSync(join(home, "projects", "probe", "repo"), { recursive: true });
-    const t = open(join(home, "projects", "probe", "transcripts", "orchestrator.jsonl"));
+    const t = open(join(home, "projects", "probe", "transcript", "orchestrator.jsonl"));
     await t.append({ type: "meta", role: "orchestrator", model: "m" });
     await t.append({ type: "message", message: { role: "assistant", content: "PTY-SELECT-ME here" } });
     let output = "";

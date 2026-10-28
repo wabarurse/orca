@@ -1,1 +1,0 @@
-export { paired } from '../transcripts';

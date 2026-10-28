@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 const next = (): RunOwner => ({ ...owner, run: crypto.randomUUID(), role: "reviewer" });
 const proof = (o = owner): TerminationEvidence => ({ owner: o, supervisor: "exited", descendants: "gone", containment: "sealed" });
-const ledger = () => join(paths.root, "run-ownership", `${owner.project}.json`);
+const ledger = () => join(paths.runtime, "run-ownership", `${owner.project}.json`);
 
 test("concurrent worker/reviewer admission has exactly one winner; exact retry is idempotent", async () => {
   const contenders = [owner, ...Array.from({ length: 15 }, next)];

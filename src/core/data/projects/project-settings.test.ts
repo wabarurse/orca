@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { paths, saveConfig } from "../../../config/config";
+import { paths, saveConfig, readProjectState, writeProjectState } from "../../../config";
 import { effectiveSettings, effectiveSettingsReport, effortCommand, fastCommand, saveProjectSettings } from "./project-settings";
 import { validateSettings } from "../../../providers/catalog/settings";
 import { clearCatalogEfforts, rememberCatalogEfforts } from "../../../providers/catalog/capabilities";
@@ -42,16 +42,16 @@ test("query/set/default/off preserve backend defaults and isolate project/model 
 test("unsupported effort/fast/model refusals leave saved state unchanged", async () => {
   await setup("refuse", "claude-sonnet-4-6");
   await effortCommand("refuse", "high");
-  const path = join(paths.project("refuse"), "model-settings.json");
-  const before = await Bun.file(path).text();
+  const target = "refuse";
+  const before = JSON.stringify(readProjectState(target, "model-settings"));
   for (const effort of ["xhigh", "ultra", "banana"]) await expect(effortCommand("refuse", effort)).rejects.toThrow("unsupported");
   await expect(fastCommand("refuse", "on")).rejects.toThrow("unsupported");
   await expect(fastCommand("refuse", "yes")).rejects.toThrow("usage");
-  expect(await Bun.file(path).text()).toBe(before);
+  expect(readProjectState(target, "model-settings")).toEqual(JSON.parse(before!));
   await saveProjectModel("refuse", "unknown-model");
   await expect(effortCommand("refuse", "high")).rejects.toThrow("unsupported");
   await expect(fastCommand("refuse", "on")).rejects.toThrow("unsupported");
-  expect(await Bun.file(path).text()).toBe(before);
+  expect(readProjectState(target, "model-settings")).toEqual(JSON.parse(before!));
 });
 
 test("switching incompatible models omits options and switching back restores explicit preference", async () => {
@@ -87,9 +87,9 @@ test("a catalog that drops a saved effort mid-run omits it from requests instead
     expect(picker.choices).toEqual([{ value: "default", label: "default", current: true }, { value: "low", label: "low", current: false }, { value: "medium", label: "medium", current: false }, { value: "high", label: "high", current: false }]);
     expect(picker.note).toContain("saved effort xhigh is not supported");
     // Patching another field does not carry the dead effort along; the file keeps it until then.
-    expect(JSON.parse(await Bun.file(join(paths.project("catalog-shrink"), "model-settings.json")).text())["gpt-6-astra"]).toEqual({ effort: "xhigh", fast: true });
+    expect(readProjectState<Record<string, unknown>>("catalog-shrink", "model-settings")!["gpt-6-astra"]).toEqual({ effort: "xhigh", fast: true });
     await fastCommand("catalog-shrink", "off");
-    expect(JSON.parse(await Bun.file(join(paths.project("catalog-shrink"), "model-settings.json")).text())["gpt-6-astra"]).toEqual({ fast: false });
+    expect(readProjectState<Record<string, unknown>>("catalog-shrink", "model-settings")!["gpt-6-astra"]).toEqual({ fast: false });
   } finally { clearCatalogEfforts(); }
   await effortCommand("catalog-shrink", "xhigh");
   clearCatalogEfforts();
@@ -145,12 +145,12 @@ for (const [label, entry] of Object.entries({
   fastArray: { fast: [] }, fastObject: { fast: {} },
   unexpected: { effort: "high", extra: true }, numericKeys: { "0": "b", "1": "a", "2": "d" },
 })) {
-  test(`malformed selected entry ${label}: all writes/reset attempts refuse without changing bytes`, async () => {
+  test(`malformed selected entry ${label}: all writes/reset attempts refuse without changing saved data`, async () => {
     const project = `malformed-${label}`;
     await setup(project);
-    const path = join(paths.project(project), "model-settings.json");
+    const target = project;
     const before = `  ${JSON.stringify({ "gpt-6-astra": entry, "claude-opus-5-5": { effort: "low" } }, null, 2)}\n\n`;
-    await Bun.write(path, before);
+    writeProjectState(target, "model-settings", JSON.parse(before));
     const attempts = [
       () => effortCommand(project, "high"), () => effortCommand(project, "default"),
       () => fastCommand(project, "on"), () => fastCommand(project, "off"),
@@ -158,18 +158,18 @@ for (const [label, entry] of Object.entries({
     ];
     for (const attempt of attempts) {
       await expect(attempt()).rejects.toThrow("invalid");
-      expect(await Bun.file(path).text()).toBe(before);
+      expect(readProjectState(target, "model-settings")).toEqual(JSON.parse(before!));
     }
   });
 }
 
 test("default/off can reset well-shaped but no-longer-supported preferences", async () => {
   await setup("valid-reset", "claude-sonnet-4-6");
-  const path = join(paths.project("valid-reset"), "model-settings.json");
-  await Bun.write(path, JSON.stringify({ "claude-sonnet-4-6": { effort: "xhigh", fast: false } }));
+  const target = "valid-reset";
+  writeProjectState(target, "model-settings", JSON.parse(JSON.stringify({ "claude-sonnet-4-6": { effort: "xhigh", fast: false } })));
   await effortCommand("valid-reset", "default");
   expect(await effectiveSettings("valid-reset", "claude-sonnet-4-6")).toEqual({ fast: false });
-  await Bun.write(path, JSON.stringify({ "claude-sonnet-4-6": { effort: "high", fast: true } }));
+  writeProjectState(target, "model-settings", JSON.parse(JSON.stringify({ "claude-sonnet-4-6": { effort: "high", fast: true } })));
   await fastCommand("valid-reset", "off");
   expect(await effectiveSettings("valid-reset", "claude-sonnet-4-6")).toEqual({ effort: "high", fast: false });
 });
@@ -185,9 +185,9 @@ function deferred() {
 test("settings save queued behind model switch rejects old target, preserving both model preferences", async () => {
   const project = "queued-switch";
   await setup(project);
-  const path = join(paths.project(project), "model-settings.json");
+  const target = project;
   const before = '{\n "gpt-6-astra": {"effort":"low"}, "claude-opus-5-5": {"fast":false}\n}\n';
-  await Bun.write(path, before);
+  writeProjectState(target, "model-settings", JSON.parse(before));
   const entered = deferred();
   const release = deferred();
   const blocker = withProjectStateLock(project, async () => { entered.resolve(); await release.promise; });
@@ -199,7 +199,7 @@ test("settings save queued behind model switch rejects old target, preserving bo
   await blocker; await switching;
   expect(String(await saving)).toContain("model changed while saving settings; try again");
   expect(await effectiveModel(project)).toBe("claude-opus-5-5");
-  expect(await Bun.file(path).text()).toBe(before);
+  expect(readProjectState(target, "model-settings")).toEqual(JSON.parse(before!));
 });
 
 for (const effortFirst of [true, false]) {
@@ -219,12 +219,12 @@ for (const effortFirst of [true, false]) {
   });
 }
 
-test("unexpected patch keys are explicit refusals and leave saved bytes intact", async () => {
+test("unexpected patch keys are explicit refusals and leave saved data intact", async () => {
   await setup("patch-refusal");
   await effortCommand("patch-refusal", "high");
-  const path = join(paths.project("patch-refusal"), "model-settings.json");
-  const before = await Bun.file(path).text();
+  const target = "patch-refusal";
+  const before = JSON.stringify(readProjectState(target, "model-settings"));
   const patch = { fast: true, extra: "bad" } as Parameters<typeof saveProjectSettings>[2];
   await expect(saveProjectSettings("patch-refusal", "gpt-6-astra", patch)).rejects.toThrow("unexpected keys: extra");
-  expect(await Bun.file(path).text()).toBe(before);
+  expect(readProjectState(target, "model-settings")).toEqual(JSON.parse(before!));
 });

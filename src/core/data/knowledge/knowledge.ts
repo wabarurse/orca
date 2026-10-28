@@ -1,6 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { paths } from "../../../config";
+import { join } from "node:path";
+import { paths, projectStateScope, readProjectState, readState, updateState } from "../../../config";
 import { withStorageLock } from "../storage-lock";
 
 export interface Fact { key: string; text: string; source: string; confidence: "explicit" | "tentative"; updatedAt: string; project: string }
@@ -8,58 +7,58 @@ export interface WorkingContext {
   goal?: string; decisions?: string[]; results?: { label: string; location: string; revision?: string; evidence?: string; status: "reported" | "verified"; processId?: string; observedAt?: string }[];
   latest?: { id: string; text: string; at: string }[];
 }
-const factPath = (project: string, scope: "user" | "project") => scope === "user" ? join(paths.root, "preferences.json") : join(paths.project(project), "knowledge.json");
-const contextPath = (project: string) => join(paths.project(project), "working-context.json");
-async function json<T>(file: string, fallback: T): Promise<T> {
-  try { return JSON.parse(await readFile(file, "utf8")); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return fallback; throw error; }
+const factScope = (project: string, scope: "user" | "project") => scope === "user" ? "user" : projectStateScope(project);
+// Capture the project incarnation before waiting: an old operation must never
+// publish into a newly created project with the same name.
+const contextLock = (project: string) => join(paths.runtime, "knowledge-locks", project);
+export async function facts(project: string, scope: "user" | "project"): Promise<Fact[]> {
+  return (scope === "project" ? readProjectState<Fact[]>(project, "facts") : readState<Fact[]>(paths.memory, "user", "facts")) ?? [];
 }
-async function publish(file: string, value: unknown) {
-  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = `${file}.${crypto.randomUUID()}.tmp`;
-  await writeFile(tmp, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 }); await rename(tmp, file);
-}
-export const facts = (project: string, scope: "user" | "project") => json<Fact[]>(factPath(project, scope), []);
 export async function remember(project: string, scope: "user" | "project", fact: Fact | { key: string }): Promise<void> {
-  const file = factPath(project, scope);
-  await withStorageLock(`${file}.lock`, async () => {
-    const rows = (await facts(project, scope)).filter(f => f.key !== fact.key);
+  updateState<Fact[]>(paths.memory, factScope(project, scope), "facts", old => {
+    const rows = (old ?? []).filter(f => f.key !== fact.key);
     if ("text" in fact) rows.push(fact);
     if (rows.length > 200) throw new Error("memory capacity reached; consolidate or forget obsolete entries");
-    await publish(file, rows);
+    return rows;
   });
 }
-export const workingContext = (project: string) => json<WorkingContext>(contextPath(project), {});
+export async function workingContext(project: string): Promise<WorkingContext> {
+  return readProjectState<WorkingContext>(project, "working-context") ?? {};
+}
+function publishContext(scope: string, value: WorkingContext): void {
+  if (Buffer.byteLength(JSON.stringify(value)) > 16000) throw new Error("working context exceeds 16 KiB; retain concise decisions and evidence references");
+  updateState<WorkingContext>(paths.memory, scope, "working-context", () => value);
+}
 export async function updateContext(project: string, patch: Partial<WorkingContext>): Promise<WorkingContext> {
-  const file = contextPath(project);
-  return withStorageLock(`${file}.lock`, async () => {
-    const value = { ...await workingContext(project), ...patch };
-    if (Buffer.byteLength(JSON.stringify(value)) > 16000) throw new Error("working context exceeds 16 KiB; retain concise decisions and evidence references");
-    await publish(file, value); return value;
+  const scope = projectStateScope(project);
+  return withStorageLock(contextLock(project), async () => {
+    const value = { ...readState<WorkingContext>(paths.memory, scope, "working-context"), ...patch };
+    publishContext(scope, value); return value;
   });
 }
 /** Publish an empty brief before the transcript boundary, so a crash cannot
  * reintroduce a pre-clear goal. A failed boundary publication restores the brief;
  * a crash between publications can discard the brief, never original history. */
 export async function clearWorkingContext(project: string, commit?: () => Promise<unknown>): Promise<void> {
-  const file = contextPath(project);
-  await withStorageLock(`${file}.lock`, async () => {
-    const previous = await workingContext(project);
-    await publish(file, { decisions: [], results: [], latest: [] });
+  const scope = projectStateScope(project);
+  await withStorageLock(contextLock(project), async () => {
+    const previous = readState<WorkingContext>(paths.memory, scope, "working-context") ?? {};
+    publishContext(scope, { decisions: [], results: [], latest: [] });
     try { await commit?.(); }
-    catch (error) { await publish(file, previous); throw error; }
+    catch (error) { publishContext(scope, previous); throw error; }
   });
 }
 export async function recordCorrection(project: string, correction: { id: string; text: string; at: string }) {
-  const file = contextPath(project);
-  await withStorageLock(`${file}.lock`, async () => {
-    const ctx = await workingContext(project);
+  const scope = projectStateScope(project);
+  await withStorageLock(contextLock(project), async () => {
+    const ctx = readState<WorkingContext>(paths.memory, scope, "working-context") ?? {};
     // Originals remain in the transcript. A bounded verbatim tail keeps newer
     // human corrections separate from inferred preferences and historical summaries.
     const text = correction.text.length > 2000 ? `${correction.text.slice(0, 2000)}\n[continued in source message ${correction.id}]` : correction.text;
     ctx.latest = [...(ctx.latest ?? []).filter(c => c.id !== correction.id), { ...correction, text }].slice(-3);
     while (Buffer.byteLength(JSON.stringify(ctx)) > 16000 && ctx.results?.length) ctx.results.shift();
     while (Buffer.byteLength(JSON.stringify(ctx)) > 16000 && ctx.decisions?.length) ctx.decisions.shift();
-    await publish(file, ctx);
+    publishContext(scope, ctx);
   });
 }
 /** Select only relevant knowledge; explicit current instructions always take precedence.

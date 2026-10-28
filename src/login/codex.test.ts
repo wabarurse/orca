@@ -55,7 +55,7 @@ test("Codex browser login uses its public client ID, PKCE and form token exchang
         const target = new URL(authorization.searchParams.get("redirect_uri")!);
         expect(target.pathname).toBe("/auth/callback");
         target.hostname = "127.0.0.1";
-        await expectShortLink(output, target.port, authorization.toString(), join(home, "login-url.txt"));
+        await expectShortLink(output, target.port, authorization.toString(), join(home, ".runtime", "login-url.txt"));
         target.search = new URLSearchParams({ code: "test-code", state: "wrong" }).toString();
         expect((await fetch(target)).status).toBe(400);
         expect(await readCodexTokens("personal")).toBeNull();
@@ -82,7 +82,7 @@ test("Codex browser login uses its public client ID, PKCE and form token exchang
   expect(statSync(codexCredentialsPath("personal")).mode & 0o777).toBe(0o600);
   expect(output).not.toContain(tokens.accessToken);
   expect(output).not.toContain(tokens.refreshToken);
-  expect(existsSync(join(home, "login-url.txt"))).toBe(false);
+  expect(existsSync(join(home, ".runtime", "login-url.txt"))).toBe(false);
 });
 
 test("Codex refresh is serialized and persists rotated tokens and account routing", async () => {

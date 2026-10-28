@@ -159,7 +159,7 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
   }).toString();
   authorizeURL = url.toString();
   const shortLink = `http://localhost:${server.port}/login/${nonce}`;
-  const urlFile = join(paths.root, "login-url.txt");
+  const urlFile = join(paths.runtime, "login-url.txt");
   let urlFileAttempted = false;
   const fail = (message: string) => {
     const error = new Error(message);

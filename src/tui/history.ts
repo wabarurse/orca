@@ -1,5 +1,5 @@
 // The input history (↑/↓) of one project, kept across restarts like Claude
-// Code's history.jsonl: projects/<id>/input-history, one JSON string per line
+// Code's history.jsonl: .runtime/projects/<id>/input-history, one JSON string per line
 // (an entry may span lines), newest last. Each sent line is one appendFile of
 // one line, so two TUIs on the same project interleave whole entries and never
 // overwrite each other. Loading keeps the newest MAX_INPUT_HISTORY entries; the
@@ -7,7 +7,7 @@
 // that many lines. Only plain messages and a few harmless commands are kept:
 // never /login, a URL with credentials, or anything typed while signing in.
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { appendFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { paths } from "../config";
@@ -65,7 +65,8 @@ export async function loadHistory(project: string): Promise<{ entries: string[];
  */
 export async function appendHistory(project: string, text: string, lines: number): Promise<number> {
   const path = paths.inputHistory(project);
-  if (!existsSync(dirname(path))) return lines;
+  if (!existsSync(paths.project(project))) return lines;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   await appendFile(path, JSON.stringify(text) + "\n");
   if (lines + 1 < COMPACT_AT) return lines + 1;
   return compact(project);

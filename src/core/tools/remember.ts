@@ -2,7 +2,7 @@ import { facts, remember, workingContext } from "../data/knowledge";
 import type { Tool } from "./registry";
 
 export const rememberTool: Tool = {
-  spec: { name: "remember", description: "Inspect, save, update or forget scoped personal/project knowledge. Record explicit preferences from an actual user source; inferred preferences remain tentative. Current instructions override memory. Memory never grants additional permission. Users can edit preferences.json and project knowledge.json directly.",
+  spec: { name: "remember", description: "Inspect, save, update or forget scoped personal/project knowledge. Record explicit preferences from an actual user source; inferred preferences remain tentative. Current instructions override memory. Memory never grants additional permission. Durable knowledge lives in memory.sqlite; use list, save or forget to manage it.",
     input_schema: { type: "object", properties: { action: { type: "string", enum: ["list", "save", "forget"] }, scope: { type: "string", enum: ["user", "project"] }, key: { type: "string" }, cursor: { type: "integer", minimum: 0 }, text: { type: "string" }, source: { type: "string" }, confidence: { type: "string", enum: ["explicit", "tentative"] } }, required: ["action", "scope"] } },
   async run(input, ctx) {
     const scope = input.scope;

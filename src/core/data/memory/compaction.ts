@@ -5,7 +5,7 @@ import type { Tool as ApiTool, MessageParam } from "@anthropic-ai/sdk/resources/
 import type { Provider } from "../../../providers";
 import type { RequestSettings } from "../../../providers/catalog";
 import type { Transcript } from "../transcripts";
-import { paired } from "./tool-pairs";
+import { paired } from "../transcripts";
 import { contextWindow } from "../../../providers/catalog";
 
 /**

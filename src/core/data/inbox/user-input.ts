@@ -4,13 +4,13 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { paths } from "../../../config";
 
 export function inputEpoch(project: string): string {
-  try { return readFileSync(`${paths.project(project)}/input-epoch`, "utf8"); }
+  try { return readFileSync(`${paths.runtimeProject(project)}/input-epoch`, "utf8"); }
   catch { return ""; }
 }
 export function advanceInputEpoch(project: string): string {
   const epoch = crypto.randomUUID();
-  mkdirSync(paths.project(project), { recursive: true });
-  const path = `${paths.project(project)}/input-epoch`;
+  mkdirSync(paths.runtimeProject(project), { recursive: true });
+  const path = `${paths.runtimeProject(project)}/input-epoch`;
   const tmp = `${path}.${epoch}.tmp`;
   try { writeFileSync(tmp, epoch); renameSync(tmp, path); }
   finally { rmSync(tmp, { force: true }); }

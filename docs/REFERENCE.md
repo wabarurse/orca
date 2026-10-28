@@ -1,4 +1,4 @@
-> Existing homes: follow the [offline layout migration](ORCA_HOME.md) before startup or updating. Do not bootstrap over existing state.
+> Layout 3 requires a fresh home; older homes are refused without modification. See [home layout and fresh setup](ORCA_HOME.md). The historical v1→v2 migration is not an upgrade to v3.
 
 # orca reference
 
@@ -19,13 +19,11 @@ it keeps running after the TUI closes): new tmux sessions use the `orca-` prefix
 The installer leaves the old executable and its receipt in place, rather than
 overwriting an unrelated command or changing a running process.
 
-Existing data stays readable without moving it. `ORCA_HOME` takes precedence;
-the old `PARALLELS_HOME` override still works. Without an override, established
-state in `~/.orca` wins; otherwise an existing `~/.parallels` is reused, including
-saved accounts and conversations. Creating only `~/.orca/.runtime/app` does not hide old
-state. Set `ORCA_HOME` explicitly if you keep two separate state stores. Existing
-worker worktrees retain their registered paths, and old saved image references
-remain valid. There is no automatic migration or deletion.
+`ORCA_HOME` takes precedence; the old `PARALLELS_HOME` override is still recognized.
+Without an override, established state in `~/.orca` wins; otherwise an existing
+`~/.parallels` is selected. Selection does not bypass the version gate: old state
+requires its matching old version. Creating only `.runtime/app` does not hide an
+old home. Initialize a fresh home explicitly when switching to layout 3.
 
 `orca pull` also supports an existing dedicated `~/.parallels/app` checkout when
 `~/.orca/.runtime/app` is absent. Builds include a compatibility output for an already
@@ -322,15 +320,16 @@ earlier orca version keep running on your default tmux server; let them report,
 or kill their windows there (`tmux kill-window -t orca-<project>:<agent>`).
 
 `$ORCA_HOME/projects` (default `~/.orca/projects`) stores conversations,
-tasks and a `repository.json` reference, not a new source clone. Discovery uses
+tasks, images and tool output. `memory.sqlite` holds the repository binding and
+project settings. Discovery uses
 the canonical checkout path, so two clones with the same origin stay distinct.
 Multiple conversations sharing a checkout serialize their main-agent turns.
 Remote URLs are no longer cloned by `start` or `/new`: clone locally first and
 pass the directory. Starting outside Git requires an existing project or an
 explicit local checkout; no empty repository is created inside harness state.
 
-Existing clone-based projects remain usable with their original paths and
-history; they are not automatically rebound or deleted. Start from your original
+Older homes remain usable with their matching older Orca version. Layout 3
+requires a fresh home; it never automatically rebinds or deletes old history. Start from your original
 checkout to create a new project using this layout. Normal no-project startup
 also reopens saved projects. Deleting a new project removes its state and clean
 worktrees, preserving the original checkout and local branches; local worker
@@ -805,7 +804,7 @@ origin's default branch are never touched.
 `cyclomatic` (10) and `cognitive` (15). The review-round limit and the
 dynamic-dispatch switch are **per project**: `/review-rounds [n]` shows or sets
 the round count (0 to 100) and `/dynamic-dispatch [on|off]` the switch for the
-current page's project, saved in `projects/<id>/settings.json` under the same
+current page's project, saved as the `flow` record in `memory.sqlite` under the same
 project-state lock as the model. `config.toml`'s values are the defaults for
 every project without an override (a config value outside the range, or a
 `config.toml` that does not parse, falls back to the built-in defaults); the
@@ -813,8 +812,8 @@ commands never write `config.toml`, and other projects are unaffected. 0 rounds
 skips review and sends the worker's branch straight to "watch ci". Each
 orchestrator turn and each worker/reviewer start reads its own project's values,
 so a change applies from that orchestrator's next turn. A malformed
-`settings.json` is refused rather than repaired: the header shows `?` for both
-values and one line names the file (repeated only when the error changes or
+flow record is refused rather than repaired: the header shows `?` for both
+values and one line names the project (repeated only when the error changes or
 recurs after a successful read); a save fails until it is fixed or removed. Without an
 open page the commands only explain (`open a project before changing its
 settings`).
@@ -882,7 +881,7 @@ the link and the callback only exist on the machine running orca. If the short
 link does not work, the full URL is in `$ORCA_HOME/login-url.txt` (0600; the
 message prints only its path). The file is deleted when the login finishes, fails or
 is cancelled.
-Credentials live under `~/.orca/auth/{anthropic,openai}/` in private (0600)
+Credentials live under `~/.orca/.runtime/auth/{anthropic,openai}/` in private (0600)
 files with atomic writes and a per-profile lock shared across workers.
 `ORCA_HOME` relocates orca' state. Failed login and refresh attempts
 preserve the previous credentials.
@@ -950,7 +949,7 @@ Original orchestrator entries and task records are indexed in one private,
 global `memory.sqlite` in the state directory (`~/.orca` by default; mode `0600`, as are its `-wal`/`-shm` files),
 using Bun's built-in SQLite and FTS5. Every project shares the file: `entries`
 carry `project` and `agent` columns (`agent` is always `orchestrator`; worker and
-reviewer transcripts are never indexed and have no database access), `tasks`
+reviewer transcripts are never indexed by this archive), `tasks`
 are keyed by `(project, id)` and carry nullable ISO `started_at`/`ended_at`
 derived from the registry record (`started_at`: the earliest confirmed run
 start, so prepared or failed launches leave it NULL; `ended_at`: the confirmed
@@ -962,9 +961,13 @@ gains the two columns in place on open, filled from each row's `raw` record).
 The file runs in WAL mode with a long busy timeout; writers use
 `BEGIN IMMEDIATE` transactions, so several orchestrators can index concurrently.
 
-JSONL transcripts and `tasks.json` remain authoritative and the index is
-rebuildable: deleting `memory.sqlite` (with its `-wal`/`-shm`) loses nothing, and
-the next archive, query or startup backfill re-creates it from the transcripts.
+JSONL transcripts retain original conversation evidence; the archive tables are
+rebuildable from it and the durable task ledger. The same `memory.sqlite` also
+holds authoritative task records, project bindings, preferences and decisions.
+**Never delete the database or its WAL/SHM to rebuild an index.** `tasks.json` is
+a projection, not a replacement for the ledger. Corrupt or unsafe database files
+block operations that require project authority; archive-only failures can be
+reported without failing an otherwise valid turn.
 Indexing happens at compaction, `/clear`, query time and at the end of each
 orchestrator turn. Turn-end (and `/clear`) indexing is best effort: it is bounded
 (the whole operation, including waiting for the project lock, is abandoned after
@@ -1095,7 +1098,7 @@ to forward an attachment.
 ### Tool output and scheduling
 
 Claude prompt-prefix caching is enabled by default (`anthropicPromptCache = true`
-in `~/.orca/config.toml`). It reuses eligible prefixes without rewriting
+in `~/.orca/.runtime/config.toml`). It reuses eligible prefixes without rewriting
 instructions or history. Cached tokens still occupy context; caching does not
 replace compaction or guarantee faster responses.
 

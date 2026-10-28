@@ -33,8 +33,8 @@ test("offline migration keeps ledger/WAL/SHM/auth/config/task evidence and permi
   expect(readFileSync(join(root, ".runtime/migration-backup/app/package.json"), "utf8")).toBe("retained app/package.json");
   expect(existsSync(join(root, "app"))).toBe(false);
   apply(); // idempotent before activation
-  assertLayout(root);
-  expect(() => apply({ rollback: true })).toThrow("activated");
+  expect(() => assertLayout(root)).toThrow("fresh home"); // v1→v2 utility cannot activate v3
+  apply({ rollback: true });
 });
 test("interrupted moves refuse startup, resume safely and support pre-activation rollback", () => {
   legacy();
@@ -62,7 +62,7 @@ test("mixed paths and insecure roots refuse; new homes version on startup", () =
   legacy(); mkdirSync(join(root, ".runtime/app"), { recursive: true }); expect(() => apply()).toThrow("mixed layout");
   chmodSync(root, 0o777); expect(() => apply()).toThrow("unsafe migration"); chmodSync(root, 0o700);
   const fresh = join(suite, "fresh"); assertLayout(fresh);
-  expect(JSON.parse(readFileSync(join(fresh, ".runtime/layout.json"), "utf8")).version).toBe(2);
+  expect(JSON.parse(readFileSync(join(fresh, ".runtime/layout.json"), "utf8")).version).toBe(3);
 });
 test("installed path is runtime app; old installation requires explicit migration", () => {
   expect(installedApp(root)).toBe(join(root, ".orca/.runtime/app"));
@@ -95,7 +95,7 @@ test("manual migration CLI defaults to plan and uses explicit isolated paths", a
   legacy();
   const proc = Bun.spawn([process.execPath, new URL("../../scripts/migrate-layout.ts", import.meta.url).pathname, "--root", root, "--bin", bin], { env: { ...process.env, ORCA_HOME: root, HOME: root }, stdout: "pipe", stderr: "pipe" });
   const [code, output, errors] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-  expect(code).toBe(0); expect(errors).toBe(""); expect(output).toContain("PLAN ONLY (no writes)");
+  expect(code).toBe(0); expect(errors).toBe(""); expect(output).toContain("PLAN ONLY (no writes)"); expect(output).toContain("Historical v1→v2");
   expect(existsSync(join(root, ".runtime"))).toBe(false);
 });
 test("offline migration leaves a real closed SQLite ledger byte-identical with stable project identity", async () => {

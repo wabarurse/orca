@@ -174,7 +174,7 @@ test("cancelled tool batch pairs every call, skips later tools, and is resumable
     { type: "tool_result", tool_use_id: "a", content: "cancelled by user", is_error: true },
     { type: "tool_result", tool_use_id: "b", content: "cancelled by user", is_error: true },
   ]);
-  const { paired } = await import("../../data/memory/tool-pairs");
+  const { paired } = await import("../../data/transcripts/tool-pairs");
   expect(paired(messages)).toBe(true);
   await transcript.append(user("continue"));
   const next = fakeProvider([[text("resumed")]]);

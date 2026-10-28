@@ -127,7 +127,7 @@ export async function saveImageInput(project: string, input: ImageInput): Promis
     assertProjectIdentity(project, identity);
     await validateRefs(project, input.attachments);
     if (!input.attachments?.length) throw new Error("image prompt must have an attachment");
-    const dir = join(paths.project(project), "image-inputs"); await safeDir(dir, true);
+    const dir = join(paths.project(project), "images", "inputs"); await safeDir(dir, true);
     const path = join(dir, `${input.inputId}.json`), bytes = Buffer.from(JSON.stringify(input));
     if (bytes.length > 65536) throw new Error("image prompt metadata exceeds 64 kib; shorten the text before sending.");
     try {
@@ -141,7 +141,7 @@ export async function saveImageInput(project: string, input: ImageInput): Promis
   });
 }
 export async function pendingImageInputs(project: string, consumed = new Set<string>()): Promise<ImageInput[]> {
-  const dir = join(paths.project(project), "image-inputs");
+  const dir = join(paths.project(project), "images", "inputs");
   try { await safeDir(dir); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return []; throw e; }
   const out: { storedAt: string; input: ImageInput }[] = [];
   for (const name of (await readdir(dir)).sort()) {

@@ -1,3 +1,4 @@
+import { writeProjectState } from "../config";
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -357,7 +358,7 @@ test("manual and passive refresh observe external saved review limits: project o
   await submit("/refresh");
   await Bun.sleep(30);
   expect(header(screen)).toContain("review rounds: 42"); // the override wins over config
-  rmSync(join(paths.project("a"), "settings.json"));
+  writeProjectState("a", "flow", undefined);
   await submit("/refresh");
   await until(() => header(screen).includes("review rounds: 100"));
   // Invalid persisted config settings use loadConfig's existing default, also used by the command.
@@ -368,30 +369,30 @@ test("manual and passive refresh observe external saved review limits: project o
   expect(note(app)).toContain("review rounds: 1");
 });
 
-test("a malformed per-project settings file shows unknown and reports the file; a repaired file recovers", async () => {
+test("a malformed per-project settings record shows unknown and reports the project; a repaired record recovers", async () => {
   const { app, screen, submit } = await setup();
   await until(() => header(screen).includes("review rounds: 1 · dispatch: off"));
-  await Bun.write(join(paths.project("a"), "settings.json"), '{"maxReviewRounds": 101}');
+  writeProjectState("a", "flow", { maxReviewRounds: 101 });
   await submit("/refresh");
   await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
-  const failure = "project settings refresh failed: Error: " + join(paths.project("a"), "settings.json");
+  const failure = "project settings refresh failed: Error: project a flow settings";
   const failures = () => app.page!.lines.filter(line => JSON.stringify(line).includes(failure)).length;
   expect(failures()).toBe(1); // one read, one line for both values
   await submit("/refresh"); await submit("/refresh"); await app.refreshSessions();
   expect(failures()).toBe(1); // the same persisting error is not repeated every poll
-  await Bun.write(join(paths.project("a"), "settings.json"), '{"dynamicDispatch": "on"}');
+  writeProjectState("a", "flow", { dynamicDispatch: "on" });
   await submit("/refresh");
   await until(() => raw(app).includes("invalid dynamic dispatch"));
   expect(failures()).toBe(2); // a different error is reported
-  await expect(submit("/review-rounds 2")).rejects.toThrow("settings.json"); // never silently repaired by a save
-  await Bun.write(join(paths.project("a"), "settings.json"), '{"maxReviewRounds": 2, "dynamicDispatch": true}\n');
+  await expect(submit("/review-rounds 2")).rejects.toThrow("flow settings"); // never silently repaired by a save
+  writeProjectState("a", "flow", { maxReviewRounds: 2, dynamicDispatch: true });
   await submit("/refresh");
   await until(() => header(screen).includes("review rounds: 2 · dispatch: on"));
   // After a success the same error is said again when it recurs.
-  await Bun.write(join(paths.project("a"), "settings.json"), '{"dynamicDispatch": "on"}');
+  writeProjectState("a", "flow", { dynamicDispatch: "on" });
   await submit("/refresh");
   await until(() => failures() === 3);
-  rmSync(join(paths.project("a"), "settings.json"));
+  writeProjectState("a", "flow", undefined);
 });
 
 test("project settings are read once per page per refresh (both values from one read), never during paint", async () => {
@@ -452,9 +453,7 @@ test("a failed review-rounds save never paints the requested value", async () =>
   const { app, screen, submit } = await setup();
   await submit("/review-rounds 7");
   await until(() => header(screen).includes("review rounds: 7"));
-  const file = join(paths.project("a"), "settings.json");
-  rmSync(file);
-  mkdirSync(file); // deterministic write failure, even when run as a privileged test user
+  writeProjectState("a", "flow", "malformed"); // deterministic read/merge failure
   try {
     await expect(submit("/review-rounds 100")).rejects.toThrow();
     expect(header(screen)).toContain("review rounds: 7");
@@ -462,8 +461,7 @@ test("a failed review-rounds save never paints the requested value", async () =>
     expect(note(app)).not.toContain("review rounds set to 100");
     expect(raw(app)).not.toContain("review rounds set to 100");
   } finally {
-    rmSync(file, { recursive: true });
-    await saveProjectFlow("a", { maxReviewRounds: 7 });
+    writeProjectState("a", "flow", { maxReviewRounds: 7 });
   }
 });
 
@@ -514,7 +512,7 @@ test("refresh observes external dispatch changes: a project override, then confi
   await until(() => header(screen).includes("dispatch: on")); // passive poll, config.toml default
   await saveProjectFlow("a", { dynamicDispatch: false });
   await until(() => header(screen).includes("dispatch: off")); // the override wins
-  rmSync(join(paths.project("a"), "settings.json"));
+  writeProjectState("a", "flow", undefined);
   await Bun.write(paths.config, 'model = "fake-model"\ndynamicDispatch = "on"\n');
   await submit("/refresh");
   await until(() => header(screen).includes("dispatch: off"));

@@ -1,3 +1,4 @@
+import { readProjectState } from "../../../config";
 import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,7 +34,7 @@ test("save captures directory generation before queue wait, rejects delete/recre
   release.resolve(); await deleting;
   expect(await rejection).toBeInstanceOf(Error);
   expect(String(await rejection)).toContain("project changed");
-  expect(await Bun.file(join(paths.project(project), "model")).exists()).toBe(false);
+  expect(readProjectState(project, "model") !== undefined).toBe(false);
 });
 
 test("managed deletion and saves share lock: queued save cannot resurrect deleted project", async () => {
@@ -54,7 +55,7 @@ test("managed deletion and saves share lock: queued save cannot resurrect delete
   release.resolve(); await blocked; await deletion;
   expect(await rejection).toBeInstanceOf(Error);
   expect(await effectiveModel(project)).toBe("gpt-global");
-  expect(await Bun.file(join(paths.project(project), "model")).exists()).toBe(false);
+  expect(readProjectState(project, "model") !== undefined).toBe(false);
 });
 
 test("invocation queue prevents overlapping writes from reversing final model", async () => {

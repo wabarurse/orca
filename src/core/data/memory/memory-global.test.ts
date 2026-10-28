@@ -147,13 +147,14 @@ test("task links are per project even when two projects mention the same task uu
   expect(await found("alpha")).toEqual([a.uuid]); expect(await found("beta")).toEqual([b.uuid]);
 });
 
-test("deleting the database and its siblings loses nothing: results are identical after rebuild", async () => {
+test("rebuilding only the archive preserves durable task and project state", async () => {
   home(); mk("alpha", "beta");
   const t = await registerTask("alpha", { name: "Rebuild me", summary: "walrus work", branch: "feat/r", authorized: true });
   await say("alpha", "user", `walrus ${t.id} alpha`); await say("beta", "user", "walrus beta");
   const q = { status: "all", limit: 10 };
   const [a, b] = [await search("alpha", "walrus", q), await search("beta", "walrus", q)];
-  for (const suffix of ["", "-wal", "-shm"]) rmSync(archivePath() + suffix, { force: true });
+  purgeProject("alpha"); purgeProject("beta");
+  expect((await getTask("alpha", t.id)).name).toBe("Rebuild me");
   expect(await search("alpha", "walrus", q)).toEqual(a); expect(await search("beta", "walrus", q)).toEqual(b);
   expect(a.entries).toHaveLength(1);
 });
@@ -223,7 +224,7 @@ test("project delete purges the project's rows, FTS postings included, and keeps
 test("project delete still succeeds when the archive cannot be purged", async () => {
   const dir = home();
   mkdirSync(join(dir, "projects", "gone"), { recursive: true });
-  mkdirSync(archivePath()); // unusable archive
+  const db = new Database(archivePath()); db.exec("PRAGMA user_version=999"); db.close(); // incompatible archive; durable state stays readable
   await deleteProject("gone", { live: async () => [], kill: async () => {} });
   expect(existsSync(paths.project("gone"))).toBe(false);
   expect(() => purgeProject("gone")).toThrow();
@@ -236,8 +237,7 @@ test("a turn indexes the orchestrator transcript; an unusable archive never fail
   const orch = await createOrchestrator({ project: "alpha", transcript, provider: fakeProvider([[text("noted")], [text("second")]]), tools: {}, write: s => { logs.push(s); } });
   await orch.say("hello archive"); await orch.turn();
   expect(rows<{ body: string }>("SELECT body FROM entries WHERE project='alpha' ORDER BY rowid").map(r => r.body).join("\n")).toContain("hello archive");
-  for (const suffix of ["", "-wal", "-shm"]) rmSync(archivePath() + suffix, { force: true });
-  mkdirSync(archivePath());
+  const db = new Database(archivePath()); db.exec("PRAGMA user_version=999"); db.close();
   await orch.say("still works"); await orch.turn();
   expect(transcript.branch().some(e => e.type === "message" && JSON.stringify(e.message).includes("still works"))).toBe(true);
   expect(logs.join("")).toContain("memory index skipped");

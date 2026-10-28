@@ -17,7 +17,7 @@ import { parseMemory, summarizeOlder } from "./rolling-summary";
 import type { RollingMemory } from "../../../protocol/transcript";
 import { existingTasks, observeTaskPR, registerTask, setTaskAttention } from "../tasks/tasks";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import { paired } from "./tool-pairs";
+import { paired } from "../transcripts/tool-pairs";
 import { open } from "../transcripts/transcript";
 import { orchestratorTask as task, task as agentTask } from "../../tools/task";
 

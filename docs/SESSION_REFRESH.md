@@ -88,7 +88,7 @@ preview is local to the submitting window; it is not a global inbox inventory.
   namespace (containers sharing one ORCA_HOME) look dead to `kill(pid, 0)`, so
   takeover is only safe when every orca process shares the host's PID namespace.
 - Transcript reload, parent selection and staged/fsync/rename publication share
-  a per-file lock (`transcripts/<session>.jsonl.lock`). Publication preserves the
+  a per-file lock (`transcript/<session>.jsonl.lock`). Publication preserves the
   exact old byte prefix. Refresh replaces its snapshot only after successful
   reading/parsing; damaged legacy lines are preserved on disk, not replayed.
 - A turn holds two locks outside the project directory for the **whole
@@ -141,8 +141,8 @@ preview is local to the submitting window; it is not a global inbox inventory.
   from acquiring a deleted/recreated project's state.
 - The persisted cancellation epoch also gates other windows' later turns.
   Refresh never changes it. Ctrl+C writes the launch's cancel request
-  (`transcripts/orchestrator.jsonl.cancel`, naming the run in
-  `transcripts/orchestrator.jsonl.launch`); the daemon takes it (renamed aside,
+  (`transcript/orchestrator.jsonl.cancel`, naming the run in
+  `transcript/orchestrator.jsonl.launch`); the daemon takes it (renamed aside,
   so a newer request is never lost), aborts the turn, advances the epoch and
   acknowledges under the request's token. The live daemon owns the launch
   file: it publishes its own run as soon as it holds the daemon lock and
