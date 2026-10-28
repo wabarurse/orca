@@ -35,3 +35,7 @@ See the [install details](docs/REFERENCE.md#2-install-once) to inspect the scrip
 Upgrading an existing installation? See [the rename notes](docs/REFERENCE.md#upgrading-to-orca) to keep your saved logins and conversations.
 
 Existing homes require a coordinated offline upgrade before this version starts: [layout and manual migration](docs/ORCA_HOME.md). Do not run the bootstrap installer to migrate a live home.
+
+Orca uses one adaptive conversation loop: run a small action directly, delegate substantial work with a focused brief, and keep revising the same result. Review and publication remain available when requested. Select a worker in `/agents` and type feedback to it; `/back` returns to the orchestrator. `/runtime` shows loaded build identities and background work; `/usage` shows measured project usage.
+
+See [adaptive execution, personalization and background tools](docs/ADAPTIVE_RUNTIME.md) for the new capabilities, limits and validation instructions.

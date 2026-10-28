@@ -6,6 +6,8 @@ subscription login, provider implementation and tool guidance.
 
 ## Features and behavior
 
+- [Adaptive execution and personalized context](ADAPTIVE_RUNTIME.md)
+
 - [Conversation compaction and rolling memory](COMPACTION.md)
 - [Clipboard images and agent vision](IMAGE_ATTACHMENTS.md)
 - [Model, effort and fast-mode settings](MODEL_SETTINGS.md)

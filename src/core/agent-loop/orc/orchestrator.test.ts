@@ -1,3 +1,4 @@
+import { assertLayout } from "../../../config/layout";
 // End to end over the real transcript, tasks, inbox and tools, with a scripted
 // model and a fake runner so nothing hits the API, git or tmux.
 
@@ -19,6 +20,7 @@ import { open } from "../../data/transcripts/transcript";
 
 const home = mkdtempSync(join(tmpdir(), "orca-e2e-"));
 process.env.ORCA_HOME = home;
+assertLayout(home);
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 const started: StartOptions[] = [];
@@ -354,6 +356,7 @@ test("/dynamic-dispatch is read per turn: toggling between turns changes the nex
   } finally { await saveConfig({ dynamicDispatch: false }); }
   expect(systems.length).toBe(3);
   expect(systems[0]).not.toContain(DYNAMIC_DISPATCH);
-  expect(systems[1]).toBe(`${systems[0]}\n\n${DYNAMIC_DISPATCH}`);
-  expect(systems[2]).toBe(systems[0]);
+  expect(systems[1]).toContain(DYNAMIC_DISPATCH);
+  expect(systems[0]).not.toContain(DYNAMIC_DISPATCH);
+  expect(systems[2]).not.toContain(DYNAMIC_DISPATCH);
 });

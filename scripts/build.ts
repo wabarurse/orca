@@ -9,8 +9,11 @@ import { legacy } from "../src/config/legacy";
 const app = resolve(import.meta.dir, "..");
 const artifact = await prepareArtifact(app);
 const compatibilityArtifact = join(app, "dist", legacy.executable);
+const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: app }).stdout.toString().trim();
+const dirty = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: app }).stdout.toString().trim();
+const buildId = `${revision || "unknown"}${dirty ? "-dirty" : ""}-${new Date().toISOString()}`;
 await owned(compatibilityArtifact);
-const child = Bun.spawn([process.execPath, "build", "src/cli/main.ts", "--compile", "--outfile", artifact], {
+const child = Bun.spawn([process.execPath, "build", "src/cli/main.ts", "--compile", "--define", `ORCA_BUILD_ID=${JSON.stringify(buildId)}`, "--outfile", artifact], {
   cwd: app, stdin: "inherit", stdout: "inherit", stderr: "inherit",
 });
 const code = await child.exited;

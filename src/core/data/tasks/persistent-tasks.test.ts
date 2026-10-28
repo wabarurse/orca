@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { paths } from "../../../config";
-import { canonicalTask } from "../../../protocol/task-ledger";
-import type { Task } from "../../../protocol/tasks";
+import { canonicalTask } from "../../../protocol/task/task-ledger";
+import type { Task } from "../../../protocol/task/tasks";
 import { existingTasks, allTasks, getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, removeTask, setTaskDependencies, startTaskRun, stopTaskRun, updateTaskMetadata } from "./tasks";
 import { existingLedgerTasks, searchLedger } from "./ledger-store";
 import { archiveTranscript, queryGlobalHistory, purgeProject } from "../memory/archive";

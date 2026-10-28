@@ -1,4 +1,4 @@
-import { check, sha, type Task } from '../../../protocol/tasks';
+import { check, sha, type Task } from "../../../protocol/task";
 import type { Checkpoint, StackBase } from './dependency-policy';
 import type { ReplayReceipt } from './dependency-replay';
 

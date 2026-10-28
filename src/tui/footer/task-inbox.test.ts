@@ -19,7 +19,7 @@ import { paths, saveConfig } from "../../config/config";
 import { ask, all as allQuestions } from "../../core/data/inbox/questions";
 import type { Question } from "../../protocol/questions";
 import { archiveMergedTasks, getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun } from "../../core/data/tasks/tasks";
-import { taskStatuses, type TaskPR, type TaskRow } from "../../protocol/tasks";
+import { taskStatuses, type TaskPR, type TaskRow } from "../../protocol/task/tasks";
 
 const pr: TaskPR = { repository: "owner/repo", number: 62, url: "https://github.com/owner/repo/pull/62", head: "a".repeat(40) };
 const row = (name = "Task one", status: TaskRow["status"] = "queued"): TaskRow => ({ id: name, name, summary: "A brief structured summary", branch: "feat/one", status, pr, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" });

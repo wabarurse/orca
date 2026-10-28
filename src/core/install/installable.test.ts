@@ -54,7 +54,7 @@ beforeAll(async () => {
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 test("relocated installed CLI preserves help, errors, version, msg and state relocation without runtime Bun", async () => {
-  expect(await exec([installed, "version"])).toEqual({ code: 0, out: `${pkg.version}\n`, err: "" });
+  expect(await exec([installed, "version"])).toEqual({ code: 0, out: expect.stringMatching(new RegExp(`^${pkg.version.replaceAll(".", "\\.")} \\([^)]+\\)\\n$`)), err: "" });
   for (const args of [["help"], ["--help"], ["-h"], ["start", "--help"], ["pull", "--help"]]) {
     const result = await exec([installed, ...args]);
     expect(result.code).toBe(0); expect(result.out).toContain("orca start");
@@ -220,7 +220,7 @@ test("development CLI re-entry uses absolute Bun without Bun on PATH", async () 
   expect(argv).toContain(process.execPath);
   const result = await exec(argv);
   expect(result.code).toBe(70); expect(result.err).toContain("spawn seeds it");
-  expect((await exec([process.execPath, join(source, "src/cli/main.ts"), "version"])).out).toBe(`${pkg.version}\n`);
+  expect((await exec([process.execPath, join(source, "src/cli/main.ts"), "version"])).out).toMatch(new RegExp(`^${pkg.version.replaceAll(".", "\\.")} \\([^)]+\\)\\n$`));
 });
 
 test("local install script builds from its checkout, upgrades fixture HOME, and leaves state untouched", async () => {
@@ -229,7 +229,7 @@ test("local install script builds from its checkout, upgrades fixture HOME, and 
   const result = await exec([process.execPath, join(source, "scripts/install.ts")], root);
   expect(result.code).toBe(0);
   expect(result.out).toContain("installed");
-  expect((await exec([installed, "version"])).out).toBe(`${pkg.version}\n`);
+  expect((await exec([installed, "version"])).out).toMatch(new RegExp(`^${pkg.version.replaceAll(".", "\\.")} \\([^)]+\\)\\n$`));
   expect(readFileSync(sentinel, "utf8")).toBe("# fixture state, do not edit\n");
   expect(existsSync(join(home, ".orca"))).toBe(false);
   expect(existsSync(join(home, ".zshrc"))).toBe(false);

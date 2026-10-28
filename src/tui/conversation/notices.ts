@@ -6,7 +6,7 @@
 // the rest are conversation lines the user has to read. The informational
 // lines are the strings core emits, imported, so a reword cannot leave one
 // behind; anything not listed stays in the conversation.
-import type { ModelRequestEntry } from "../../protocol/transcript";
+import type { ModelRequestEntry } from "../../protocol";
 import { CANCEL_ACK, COMPACT_ACK } from "../../core/agent-loop/orc";
 import { COMPACTION_STATUS, ROLLING_STATUS } from "../../core/data/memory";
 

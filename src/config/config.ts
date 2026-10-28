@@ -57,6 +57,9 @@ export const paths = {
 };
 
 export interface Config {
+  /** Full access preserves existing installs; workspace uses an OS write sandbox and fails closed if unavailable. */
+  sandbox: "off" | "workspace";
+  orchestratorContextTokens: number;
   model: string;
   compact: boolean;
   contextLimitFallback: number;
@@ -84,6 +87,8 @@ export interface Config {
 }
 
 export const defaults: Config = {
+  sandbox: "off",
+  orchestratorContextTokens: 32000,
   model: "claude-sonnet-5-5",
   compact: true,
   contextLimitFallback: 128000,
@@ -106,14 +111,16 @@ export const MAX_REVIEW_ROUNDS = 100;
 /** The last parse warning, so a broken file is reported once, not on every load. */
 let warned = "";
 
-export async function loadConfig(): Promise<Config> {
+export async function loadConfig(options: { strict?: boolean } = {}): Promise<Config> {
   const file = Bun.file(paths.config);
   if (!(await file.exists())) return defaults;
   let parsed: Partial<Config>;
   try {
     parsed = Bun.TOML.parse(await file.text()) as Partial<Config>;
   } catch (err) {
-    // A broken config.toml must not break every command and turn.
+    // UI reads may recover so the user can repair configuration. Execution must
+    // never silently turn a requested sandbox into full access.
+    if (options.strict) throw new Error(`invalid execution configuration ${paths.config}: ${String(err)}`);
     const warning = `orca: ignoring ${paths.config}: ${err instanceof Error ? err.message : String(err)}`;
     if (warning !== warned) console.error(warning);
     warned = warning;
@@ -124,6 +131,8 @@ export async function loadConfig(): Promise<Config> {
 
 /** Invalid saved values read as their defaults. */
 function withFallbacks(config: Config): Config {
+  if (config.sandbox !== "off" && config.sandbox !== "workspace") throw new Error("sandbox must be off or workspace; no execution fallback is permitted");
+  if (!integerWithin(config.orchestratorContextTokens, 8000, 200000)) config.orchestratorContextTokens = defaults.orchestratorContextTokens;
   if (typeof config.anthropicPromptCache !== "boolean") config.anthropicPromptCache = defaults.anthropicPromptCache;
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;

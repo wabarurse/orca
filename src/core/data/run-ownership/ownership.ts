@@ -3,8 +3,8 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
-import { assertProjectIdentity, withProjectStateLock } from "../projects/state";
-import { check, object } from "../../../protocol";
+import { assertProjectIdentity, withProjectStateLock } from "../projects";
+import { check, object } from "../../../protocol/task";
 
 export interface RunOwner {
   project: string; incarnation: string; branch: string; task: string;

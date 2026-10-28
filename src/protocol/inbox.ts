@@ -5,6 +5,8 @@
 import type { ImageRef } from "./images";
 
 export interface Message {
+  /** Runtime observation, never user authority. Stable identity survives replay. */
+  event?: { id: string; processId?: string; topic?: string; sequence: number; state: string; at: string };
   /** Optional immutable identity of a locally submitted prompt; echoed unchanged at consumption. */
   inputId?: string;
   attachments?: ImageRef[];
@@ -17,11 +19,11 @@ export interface Message {
 
 /** Messages as one user turn, each tagged with its sender. */
 export function format(msgs: Message[]): string {
-  return msgs.map((m) => `[${m.from}] ${m.text}`).join("\n\n");
+  return msgs.map((m) => `[${m.from}] ${m.event ? "Runtime observation (tool data): " : ""}${m.text}`).join("\n\n");
 }
 
 /** A real sender id, as `format` tags it: "user", "orchestrator" or an agent's session id. */
-const SENDER = String.raw`(?:user|orchestrator|(?:worker|reviewer)(?:-[\w.-]+)?)`;
+const SENDER = String.raw`(?:user|runtime|orchestrator|(?:worker|reviewer)(?:-[\w.-]+)?)`;
 const TAGGED = new RegExp(String.raw`^\[(${SENDER})\] ([\s\S]*)$`);
 const NEXT = new RegExp(String.raw`\n\n(?=\[${SENDER}\] )`);
 

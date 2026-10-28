@@ -1,4 +1,6 @@
-import { editableTool } from "../../definitions/tools";
+import { agentKnowledge, clearWorkingContext } from "../../data/knowledge";
+import { listProcesses, liveProcess, controlProcess } from "../../data/processes";
+import { editableTool } from "../../definitions";
 import { budget, type CompactOptions } from "../../data/memory";
 import { contextWindow, type ContextWindow } from "../../../providers/catalog";
 import { contextMessages } from "../../data/transcripts";
@@ -108,7 +110,7 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   const backfill = new AbortController();
   void startMemoryBackfill({ log: memoryLog(deps), signal: backfill.signal });
   let session: Orchestrator;
-  try { session = orchestratorSession(deps, transcript, compactionOptions(await loadConfig())); }
+  try { session = orchestratorSession(deps, transcript, await loadConfig()); }
   catch (error) { backfill.abort(); throw error; }
   const dispose = session.dispose;
   session.dispose = () => { backfill.abort(); dispose?.(); };
@@ -162,9 +164,10 @@ class TurnControl {
   }
   takeRequest = (): boolean => { const value = this.requested; this.requested = false; return value; };
 }
-function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, configured: CompactOptions): Orchestrator {
+function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, config: Config): Orchestrator {
+  const configured = compactionOptions(config);
   const state = new TurnControl(deps.project, transcript);
-  const rolling = new RollingCompactor(deps.project, transcript, deps.rolling);
+  const rolling = new RollingCompactor(deps.project, transcript, { triggerTokens: config.orchestratorContextTokens, tailTokens: 6000, ...deps.rolling });
   // A Page/session cannot acquire ownership of a deleted/recreated project.
   const identity = existsSync(paths.project(deps.project)) ? projectIdentity(deps.project) : undefined;
   const checkIdentity = () => {
@@ -174,6 +177,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
     checkIdentity();
     if (state.running || state.requested || (!ownsTurn && await turnLocksHeld(deps.project))) throw new Error("orchestrator is running or compacting; wait before clearing context");
     if ((await pendingImageInputs(deps.project, transcript.consumed?.().inputs)).length) throw new Error("image input is pending; retry it before clearing context");
+    if ((await listProcesses(deps.project)).some(p => p.owner === "orchestrator" && (liveProcess(p) || p.state === "unknown"))) throw new Error("background commands still own this context; stop or reconcile them before clearing");
     if (state.submitting || await pendingInput(deps.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
   };
   const refresh = async () => {
@@ -217,11 +221,15 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
           await check(true);
           rolling.reset();
           await archiveBestEffort(deps.project, transcript, memoryLog(deps), true);
-          await transcript.append({ type: "context-boundary" }, authorization);
+          await clearWorkingContext(deps.project, () => transcript.append({ type: "context-boundary" }, authorization));
         });
       } finally { state.clearing = undefined; await release?.(); }
     },
-    cancel: () => { rolling.reset(); state.cancel(); },
+    cancel: () => {
+      rolling.reset(); state.cancel();
+      void listProcesses(deps.project).then(ps => Promise.all(ps.filter(p => p.owner === "orchestrator" && liveProcess(p))
+        .map(p => controlProcess(deps.project, p.id, "stop")))).catch(error => deps.write?.(`command cancellation failed: ${String(error)}\n`, true));
+    },
     dispose: () => rolling.dispose(),
     compact: async () => state.compact(),
     submission: () => inputEpoch(deps.project),
@@ -299,6 +307,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
   const config = await loadConfig();
   const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return createAgent({
+    loadContext: query => agentKnowledge(deps.project, paths.repo(deps.project), query),
     signal, requireInbox: true, onContext,
     toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(deps.project, loadProvider),
@@ -306,7 +315,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
     compaction: compactionOptions(config), compactRequested,
     compactBoundary: async (current, manual, maintenance) => {
       if (inputEpoch(deps.project) !== epoch) { rolling.reset(); return; }
-      await rolling.boundary(current, manual, maintenance);
+      await rolling.boundary(current, manual || (config.compact && !maintenance && budget(current, await transcript.chain()) > config.orchestratorContextTokens * 1.5), maintenance);
     },
     system: rolePrompt("orchestrator", { ...config, ...await effectiveFlow(deps.project, config) }), // per turn, so /review-rounds and /dynamic-dispatch apply next turn
     ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project) },

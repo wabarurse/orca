@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { paths } from "../../../config/config";
 import { allTasks, archiveMergedTasks, blockConflictingTask, getTask, invalidateTaskBranch, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun, validateTaskReadiness } from "./tasks";
-import { taskPR, taskStatusLabels, type PRObservation, type Task } from "../../../protocol/tasks";
+import { taskPR, taskStatusLabels, type PRObservation, type Task } from "../../../protocol/task/tasks";
 import { beginRun, recoverTaskRuns, supervise } from "../../tmux/exits";
 import { afterExit } from "../../../exec/after-exit";
 import { cancelSession, Cancelled, publishLaunch } from "../../tmux/cancellation";
@@ -93,14 +93,15 @@ test("same-task retries/reviewer handoffs keep ID; separate task on reusable bra
   expect((await getTask(project, second.id)).status).toBe("working"); expect(await listTasks(project)).toHaveLength(2);
 });
 
-test("spawn requires queued task, never treats runner return as a started worker, and actual supervisor starts it", async () => {
+test("tracked spawn never treats runner return as a started worker, and actual supervisor starts it", async () => {
   let run = "", starts = 0;
   const tool = makeSpawn({ async running() { return []; }, async start(o) { starts++; run = o.run!; }, async stop() {} });
   const ctx = { project, role: "orchestrator" as const, cwd: home };
-  expect(await tool.run({ branch: "feat/x", prompt: "do it" }, ctx)).toContain("taskId");
+  expect(await tool.run({ branch: "one-off", prompt: "do it" }, ctx)).toBe("worker-one-off");
+  expect(await allTasks(project)).toHaveLength(0);
   const t = await registerTask(project, input());
   await tool.run({ taskId: t.id, branch: t.branch, prompt: "do it" }, ctx);
-  expect(starts).toBe(1); expect((await getTask(project, t.id)).status).toBe("queued");
+  expect(starts).toBe(2); expect((await getTask(project, t.id)).status).toBe("queued");
   await beginRun(info(run), 12345);
   expect((await getTask(project, t.id)).status).toBe("working");
   expect((await getTask(project, t.id)).runs[0]?.state).toBe("started");
@@ -370,7 +371,7 @@ test("persisted explicit review intent projects review rounds independently of C
 });
 
 test("publication persists across rereads, attention revisions, close/reopen and merge without readiness", async () => {
-  const { taskPublicationView } = await import("../../../protocol/tasks");
+  const { taskPublicationView } = await import("../../../protocol/task/tasks");
   const t = await registerTask(project, input());
   expect(taskPublicationView(t).milestone.kind).toBe("unknown");
   for (const checks of ["passed", "not_configured", "pending", "failed", "unknown"] as const) {
@@ -403,7 +404,7 @@ test("publication persists across rereads, attention revisions, close/reopen and
 });
 
 test("publication is optional in legacy ready records; new proof preserves ready validation and history", async () => {
-  const { taskPublicationView } = await import("../../../protocol/tasks");
+  const { taskPublicationView } = await import("../../../protocol/task/tasks");
   const t = await ready(), path = join(paths.project(project), "tasks.json");
   const store = structuredClone(t); delete store.publication; delete store.checkpoints?.prOpenAt;
   safety(store);

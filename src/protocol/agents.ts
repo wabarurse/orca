@@ -4,6 +4,7 @@
 export interface AgentInfo {
   name: string;
   live: boolean;
+  activity?: string;
   /** ISO start of the latest run. */
   startedAt?: string;
   /** ISO end of that run; absent while it is live. */

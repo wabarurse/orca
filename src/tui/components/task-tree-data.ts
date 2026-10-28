@@ -1,4 +1,4 @@
-import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type Task, type TaskTreeView } from "../../protocol/tasks";
+import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type Task, type TaskTreeView } from "../../protocol/task";
 
 /** History is intentionally not read or cloned: it is not displayed by this view. */
 export type TreeTask = Omit<Task, "history"> & { dependsOn: string[] };

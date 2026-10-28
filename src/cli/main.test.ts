@@ -6,7 +6,7 @@ import pkg from "../../package.json";
 import { accounts } from "../login/accounts";
 import { login } from "../tui/commands/accounts";
 
-test("`orca version` prints the package.json version", async () => {
+test("`orca version` prints the package.json version and loaded build", async () => {
   const proc = Bun.spawn(["bun", "src/cli/main.ts", "version"], {
     cwd: import.meta.dir + "/../..",
     stdout: "pipe",
@@ -14,7 +14,7 @@ test("`orca version` prints the package.json version", async () => {
   });
   const out = await new Response(proc.stdout).text();
   expect(await proc.exited).toBe(0);
-  expect(out).toBe(`${pkg.version}\n`);
+  expect(out).toBe(`${pkg.version} (development)\n`);
 });
 
 test("login uses subscriptions despite API keys and rejects invalid input", async () => {

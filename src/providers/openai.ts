@@ -125,8 +125,8 @@ export function openai(credentials: ReturnType<typeof codexCredentials>, options
         }, { signal: scope?.signal ?? req.signal, maxRetries: 0 }), scope?.signal ?? req.signal, scope ? () => { if (refreshed) return false; refreshed = true; return true; } : undefined);
         let usage: Turn["usage"];
         const output = await completedOutput(observed(stream as AsyncIterable<CodexStreamEvent>, started), req.onText, false, value => { usage = value; }, !!scope);
-        const content = fromResponses(output);
-        return { completion: summaryCompletion(output), content, ...(usage ? { usage, inputTokens: usage.input } : {}), stop: content.some((block) => block.type === "tool_use") ? "tool_use" : "end" };
+        const content = fromResponses(output), completion = summaryCompletion(output);
+        return { completion, content, ...(usage ? { usage, inputTokens: usage.input } : {}), stop: completion === "refusal" ? "refusal" : content.some((block) => block.type === "tool_use") ? "tool_use" : completion === "nontext" ? "error" : "end" };
       }, { signal: req.signal, what: "codex", model: req.model, notice: req.onNotice, ...options.retry });
     },
     async search(req) {
@@ -228,7 +228,13 @@ function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEven
     return entries.map(([, item]) => item);
   }
   if (event.response.status && event.response.status !== "completed") throw new Error("codex response did not complete successfully.");
-  return event.response.output ?? [...items].sort(([a], [b]) => a - b).map(([, item]) => item);
+  // Codex streams completed items before its terminal envelope, which may carry
+  // output: []. Preserve those items just as Codex's event-driven runtime does:
+  // https://github.com/openai/codex/tree/main/codex-rs/core/src
+  if (event.response.output?.length) return event.response.output;
+  const entries = [...items].sort(([a], [b]) => a - b);
+  if (entries.some(([index], position) => index !== position)) throw new Error("codex returned an incomplete output item sequence; no tools executed.");
+  return entries.map(([, item]) => item);
 }
 
 async function authorizedRequest<T>(credentials: ReturnType<typeof codexCredentials>, run: (client: OpenAI) => Promise<T>, signal?: AbortSignal, allowRefresh: () => boolean = () => true): Promise<T> {

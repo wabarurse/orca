@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { contextStatus, dispatchStatus, reviewStatus } from "./context-status";
 import { reviewProgress } from "../../core/data/tasks/tasks";
-import type { TaskRun } from "../../protocol/tasks";
+import type { TaskRun } from "../../protocol/task/tasks";
 import { chapterRows } from "./chrome";
 import { visibleLength } from "../components/text";
 

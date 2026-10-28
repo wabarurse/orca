@@ -25,7 +25,7 @@ test("defaults track upgrades; edited files survive; deleting resets to current 
 test("visible role/shared Markdown edits reload while mandatory role contracts remain", () => {
   const config = { maxReviewRounds: 1, dynamicDispatch: false, cyclomatic: 10, cognitive: 10 };
   const original = rolePrompt("worker", config);
-  expect(readFileSync(join(home, "prompts/worker.md"), "utf8")).toContain("coding agent");
+  expect(readFileSync(join(home, "prompts/worker.md"), "utf8")).toContain("focused agent");
   writeFileSync(join(home, "prompts/worker.md"), "Prefer very short paragraphs.");
   writeFileSync(join(home, "prompts/shared.md"), "Use project terminology.");
   const changed = rolePrompt("worker", config);

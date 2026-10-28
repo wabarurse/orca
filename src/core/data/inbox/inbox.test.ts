@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../../config/config";
@@ -8,6 +8,7 @@ import { format, parseFormatted } from "../../../protocol/inbox";
 
 const home = mkdtempSync(join(tmpdir(), "orca-inbox-"));
 process.env.ORCA_HOME = home;
+for (const p of ["p1", "p2", "p3", "p4", "p5", "p6"]) mkdirSync(paths.project(p), { recursive: true });
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 test("an empty or missing inbox drains to nothing", async () => {

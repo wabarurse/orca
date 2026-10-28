@@ -1,4 +1,4 @@
-import { searchLedger } from "../data/tasks/ledger-store";
+import { searchLedger } from "../data/tasks";
 import { queryGlobalHistory } from "../data/memory";
 import type { Tool } from "./registry";
 

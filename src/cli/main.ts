@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-import { assertLayout } from "../config/layout";
+import { assertLayout } from "../config";
+import { superviseProcess } from "../core/data/processes";
 // orca / orca start [project] [directory]   open the TUI: one page per orchestrator (binds the original checkout;
 //                                         run inside a git repo to get an orchestrator for it)
 // orca msg <project> <text>        drop a message in the orchestrator's inbox
@@ -16,7 +17,7 @@ import { afterExit } from "../exec";
 import { put } from "../core/data/inbox";
 import { repoHere, validProjectName } from "../core/data/projects";
 import { existsSync } from "node:fs";
-import { paths } from "../config";
+import { paths, BUILD_ID } from "../config";
 import { daemonPid } from "../core/agent-loop/orc";
 import { sessionId } from "../core/tmux";
 import { ensureProject } from "../core/agent-loop/orc";
@@ -53,6 +54,12 @@ function usage(error?: string): never {
 if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 
 switch (cmd) {
+  case "process-supervisor": {
+    const project = flag("project") ?? usage("missing process project");
+    const id = flag("process") ?? usage("missing process identity");
+    await superviseProcess(project, id);
+    break;
+  }
   case undefined:
   case "start": {
     if (rest.length > 2 || rest.some((arg) => arg.startsWith("-"))) usage("expected start [project] [directory]");
@@ -122,7 +129,7 @@ switch (cmd) {
     break;
   case "version":
     if (rest.length) usage("version takes no arguments");
-    console.log(pkg.version);
+    console.log(`${pkg.version} (${BUILD_ID})`);
     break;
   case "help":
   case "--help":

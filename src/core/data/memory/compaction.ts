@@ -13,6 +13,7 @@ import { contextWindow } from "../../../providers/catalog";
  * context settings and the transcript. `AgentDeps` (agent-loop/loop/agent.ts) extends it.
  */
 export interface ContextDeps {
+  ctx?: { project: string; role: string; run?: string };
   signal?: AbortSignal;
   provider?: Provider;
   settings?: RequestSettings;
@@ -144,7 +145,7 @@ async function prepare(deps: ContextDeps, messages: MessageParam[], cut: number)
 async function summarize(deps: ContextDeps, source: MessageParam[], maxTokens: number): Promise<string> {
   requireFits(deps, source, maxTokens, "summarization source");
   if (!deps.provider) throw new Error("no resolved provider");
-  const result = await deps.provider.complete({ signal: deps.signal, model: deps.model, settings: deps.settings, system: deps.system, tools: [], maxTokens, onText: () => {}, messages: source });
+  const result = await deps.provider.complete({ trace: { project: deps.ctx?.project, agent: deps.ctx?.role, run: deps.ctx?.run, purpose: "compaction" }, signal: deps.signal, model: deps.model, settings: deps.settings, system: deps.system, tools: [], maxTokens, onText: () => {}, messages: source });
   deps.signal?.throwIfAborted();
   if (result.stop !== "end" || !["end_turn", "completed"].includes(result.completion ?? "")) throw new Error(`summary did not complete (${result.completion ?? "unknown"})`);
   // Reasoning is normal provider metadata, not part of the saved summary.

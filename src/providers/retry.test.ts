@@ -82,8 +82,8 @@ async function claudeServer(respond: (n: number, request: Request) => Response |
   return { client, requests: () => requests, stop: () => server.stop(true) };
 }
 
-// The SDK keeps one retry of its own (its 401 credentials refresh needs it), silent and first; ours follow it.
-test("Claude: overloaded answers are retried (the SDK's one, then ours, as a transcript note) until one streams", async () => {
+// The harness owns retries; SDK retries are disabled to keep one bounded budget.
+test("Claude: overloaded answers are retried by one harness budget until one streams", async () => {
   const s = await claudeServer(n => n <= 2 ? Response.json({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, { status: 529 })
     : new Response(sse(claudeEvents), { headers: { "content-type": "text/event-stream" } }));
   try {
@@ -91,7 +91,8 @@ test("Claude: overloaded answers are retried (the SDK's one, then ours, as a tra
     const turn = await anthropic(s.client, { retry: { backoffMs: [1, 1, 1] } }).complete(claudeRequest({ onText: t => { text += t; }, onNotice: t => notices.push(t) }));
     expect(turn.stop).toBe("end"); expect(text).toBe("hello");
     expect(s.requests()).toBe(3);
-    expect(notices).toEqual([expect.stringMatching(/^claude request failed \(HTTP 529\); retrying in \d\.\d\ds \(1\/3\)$/)]);
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toContain("(1/3)"); expect(notices[1]).toContain("(2/3)");
   } finally { await s.stop(); }
 });
 
@@ -113,7 +114,7 @@ test("Claude: a cancel during the backoff rejects with the cancellation at once,
     while (!noticed) await Bun.sleep(1);
     controller.abort(reason);
     expect(await result.catch(e => e)).toBe(reason);
-    expect(s.requests()).toBe(2); // the SDK's own retry, then ours was waiting
+    expect(s.requests()).toBe(1); // harness backoff, with no hidden SDK retry
   } finally { await s.stop(); }
 });
 

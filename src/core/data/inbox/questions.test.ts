@@ -5,11 +5,15 @@ import { join } from "node:path";
 import { paths } from "../../../config/config";
 import { drain, pending, pendingInput, userInEpoch } from "./inbox";
 import { advanceInputEpoch } from "./user-input";
-import { all, answer, ask, cleanQuestions, list, skip } from "./questions";
+import { all, answer, ask as realAsk, cleanQuestions, list, skip } from "./questions";
 import { ask as askTool } from "../../tools/ask";
 import { registry } from "../../tools/index";
 import { toolsFor } from "../../tools/registry";
 
+const ask: typeof realAsk = async (project, ...args) => {
+  mkdirSync(paths.project(project), { recursive: true });
+  return realAsk(project, ...args);
+};
 const home = mkdtempSync(join(tmpdir(), "orca-questions-"));
 process.env.ORCA_HOME = home;
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -202,7 +206,7 @@ test("a failed inbox send leaves the question open and answerable", async () => 
 
 test("unreadable or malformed question stores fail visibly instead of fabricating an empty unanswered queue", async () => {
   expect(await list("missing-store")).toEqual([]);
-  mkdirSync(paths.project("bad-store"), { recursive: true });
+  mkdirSync(paths.runtimeProject("bad-store"), { recursive: true });
   writeFileSync(paths.questions("bad-store"), "not a directory");
   await expect(list("bad-store")).rejects.toThrow();
   mkdirSync(paths.questions("broken-question"), { recursive: true });

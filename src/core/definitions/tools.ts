@@ -1,9 +1,14 @@
-import type { Tool } from "../tools/registry";
+import type { Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
+interface Tool { spec: ApiTool }
 import { definition } from "./files";
 
 // Input structure and validation remain trusted. Annotation edits are effective
 // provider schema edits, not executable extensions or new input capabilities.
 function annotations(base: unknown, edited: unknown, path: string): unknown {
+  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary"];
+  if (edited === undefined && added.includes(path)) return base;
+  if (path === "spawn.required" && JSON.stringify(edited) === '["prompt","branch","taskId"]') return base;
+  if (path === "bash.properties.timeout_ms.minimum" && edited === 1 && base === 0) return base;
   // Upgrade older edited schemas without overwriting user annotation files. Only
   // these shipped additions are restored; arbitrary schema mutations still fail.
   if (edited === undefined && ["spawn.properties.baseCommit", "task.properties.commands", "memory.properties.commands"].includes(path)) return base;
@@ -22,6 +27,7 @@ function annotations(base: unknown, edited: unknown, path: string): unknown {
   return base;
 }
 function description(base: unknown, edited: unknown, path: string) {
+  if (edited === undefined) return base; // Newly shipped guidance on an existing field.
   if (typeof edited !== "string" || !edited.trim()) throw new Error(`invalid description: ${path}`);
   // Essential shipped field guidance cannot be erased by an override.
   return edited === base ? base : `${edited}\n${base ?? ""}`;
@@ -38,7 +44,7 @@ function objectAnnotations(a: Record<string, unknown>, edited: unknown, path: st
   }
   return result;
 }
-export function editableTool(tool: Tool, variant = tool.spec.name): Tool {
+export function editableTool<T extends Tool>(tool: T, variant = tool.spec.name): T {
   const defaults = { description: tool.spec.description, input_schema: tool.spec.input_schema };
   const raw = definition(`tools/${variant}.json`, JSON.stringify(defaults, null, 2) + "\n");
   const value = JSON.parse(raw);

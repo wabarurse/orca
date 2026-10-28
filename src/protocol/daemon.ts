@@ -8,6 +8,7 @@ import type { ToolCall, ToolOutcome } from "./toolview";
 
 export type DaemonState = "idle" | "turn" | "stopped";
 export interface DaemonStatus {
+  build?: string;
   pid: number;
   run: string;
   state: DaemonState;

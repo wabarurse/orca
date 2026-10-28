@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { taskTreeView, type Task } from "../../protocol/tasks";
+import { taskTreeView, type Task } from "../../protocol/task/tasks";
 import { navigateOutline, renderTaskTree } from "./task-tree";
 import { plainText, visibleLength } from "./text";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;

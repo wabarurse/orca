@@ -4,7 +4,7 @@ import { archiveTranscript, contextEpoch, transcriptEntries } from "./archive";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import type { Provider } from "../../../providers";
 import { summarizeOlder, taskSnapshot } from "./rolling-summary";
-import type { Task } from "../../../protocol";
+import type { Task } from "../../../protocol/task";
 import { paired } from "./tool-pairs";
 import type { Transcript } from "../transcripts";
 import type { RollingMemory } from "../../../protocol";
@@ -150,7 +150,7 @@ export class RollingCompactor {
     timer.unref();
     // Race even custom providers that ignore AbortSignal; late answers cannot publish.
     const cancelled = new Promise<never>((_resolve, reject) => abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true }));
-    job.promise = Promise.race([summarizeOlder(messages.slice(0, cut), tasks, abort.signal, this.options.loadProvider), cancelled])
+    job.promise = Promise.race([summarizeOlder(messages.slice(0, cut), tasks, abort.signal, this.options.loadProvider, this.project), cancelled])
       .then(memory => { assertProjectIdentity(this.project, identity); job.memory = memory; })
       .catch(error => { job.error = error; })
       .finally(() => { clearTimeout(timer); job.settled = true; });

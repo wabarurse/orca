@@ -36,7 +36,7 @@ export function anthropic(client: Anthropic, options: { recovery?: RecoveryPolic
       return providerRequest(options.recovery, async (started, scope) => {
         const active = scope ? client.withOptions({ maxRetries: 0, logLevel: "off" }) : client;
         const complete = async () => {
-          const stream = active.messages.stream(params, { maxRetries: scope ? 0 : 1,
+          const stream = active.messages.stream(params, { maxRetries: 0,
             middleware: [recovery.middleware(scope)], signal: scope?.signal ?? req.signal,
             ...(req.settings?.fast && req.model !== "claude-opus-5-5" ? { headers: { "anthropic-beta": `${CLAUDE_BETAS},fast-mode-2026-02-01` } } : {}) });
           stream.on("streamEvent", started);
@@ -122,7 +122,9 @@ function completedTurn(message: Message): Turn {
   return { completion: message.stop_reason ?? "unknown", inputTokens,
     ...(usage ? { usage: { input: inputTokens!, cachedInput: usage.cache_read_input_tokens ?? 0,
       cacheWriteInput: usage.cache_creation_input_tokens ?? 0, output: usage.output_tokens } } : {}), content: message.content,
-    stop: message.stop_reason === "tool_use" ? "tool_use" : "end" };
+    stop: message.stop_reason === "tool_use" ? "tool_use" : message.stop_reason === "max_tokens" ? "limit"
+      : message.stop_reason === "pause_turn" ? "pause" : message.stop_reason === "refusal" ? "refusal"
+      : message.stop_reason === "end_turn" || message.stop_reason === "stop_sequence" ? "end" : "error" };
 }
 
 /** Only Codex reasoning is foreign. Claude signed/redacted thinking stays intact,

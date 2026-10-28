@@ -1,3 +1,4 @@
+import { reconcileProcesses } from "../../data/processes";
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
 // (exec/daemon.ts) runs this loop in the `orchestrator` window of the project's
 // tmux session, so turns, rolling memory, the exit watchdog and the merge watcher
@@ -11,7 +12,7 @@ import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
 import { delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux";
 import { exitWatchdog, mergeWatch } from "../../tmux";
-import { paths } from "../../../config";
+import { paths, BUILD_ID } from "../../../config";
 import { contextWindow } from "../../../providers/catalog";
 import { effectiveModel } from "../../data/projects";
 import type { Orchestrator, OrchestratorDeps } from "./orchestrator";
@@ -87,7 +88,7 @@ export function watchedSleep(dirs: string[]): { sleep: (ms: number) => Promise<v
 }
 
 async function publish(d: Daemon, state: DaemonState): Promise<void> {
-  await writeStatus(d.o.project, { pid: process.pid, run: d.o.run, state, since: new Date().toISOString(), turns: d.turns,
+  await writeStatus(d.o.project, { build: BUILD_ID, pid: process.pid, run: d.o.run, state, since: new Date().toISOString(), turns: d.turns,
     ...(d.context ? { context: d.context } : {}), ...(d.error ? { error: d.error } : {}) }).catch(error => d.o.log(`orchestrator: could not publish status: ${error}`));
 }
 
@@ -151,6 +152,7 @@ async function runWatchers(d: Daemon): Promise<void> {
   const now = d.o.now();
   if (now - d.watchedAt < d.o.watchMs) return;
   d.watchedAt = now;
+  await reconcileProcesses(d.o.project).catch(error => d.o.log(`process recovery: ${error}`));
   await Promise.all([d.watchdog, d.merges].map(w => w(d.o.project).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`))));
 }
 

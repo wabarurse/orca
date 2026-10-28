@@ -8,7 +8,7 @@ import { paths, saveConfig } from "../../../config/config";
 import { archivePath, archiveTranscript, database, purgeProject, queryHistory, taskTimes } from "./archive";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { getTask, observeTaskPR, prepareTaskRun, registerTask, startTaskRun, stopTaskRun } from "../tasks/tasks";
-import type { Task } from "../../../protocol/tasks";
+import type { Task } from "../../../protocol/task/tasks";
 import { fakeProvider, text } from "../../../test/fake-provider";
 import { orchestratorTask } from "../../tools/task";
 import { open } from "../transcripts/transcript";

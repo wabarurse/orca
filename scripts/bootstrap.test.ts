@@ -14,7 +14,7 @@ async function fixture() {
   for (const path of [home, bin, source, cwd, join(source, "scripts"), join(source, "src"), join(source, "src/core"), join(source, "src/core/install"), join(source, "src/config")]) {
     await mkdir(path, { mode: 0o755 });
   }
-  await cp(join(root, "src/config/layout.ts"), join(source, "src/config/layout.ts"));
+  await cp(join(root, "src/config"), join(source, "src/config"), { recursive: true });
   await cp(join(root, "scripts/install.ts"), join(source, "scripts/install.ts"));
   await cp(join(root, "src/core/install/installation.ts"), join(source, "src/core/install/installation.ts"));
   await writeFile(join(source, "package.json"), JSON.stringify({ scripts: { "install:local": "bun scripts/install.ts", build: "bun build-fixture.ts" } }));

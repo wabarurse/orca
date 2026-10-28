@@ -3,7 +3,7 @@ import { provider as accountProvider } from "../../../providers";
 import { estimate, requireFits } from "./compaction";
 import { historicalMessages } from "../images";
 import type { Provider } from "../../../providers";
-import type { Task } from "../../../protocol";
+import type { Task } from "../../../protocol/task";
 import type { RollingMemory } from "../../../protocol";
 
 export const SUMMARY_MODEL = "gpt-6-luna";
@@ -65,7 +65,7 @@ function* chunks(source: string): Generator<string> {
   }
 }
 
-export async function summarizeOlder(messages: MessageParam[], tasks: Task[], signal: AbortSignal, load: () => Promise<Provider> = () => accountProvider("openai")): Promise<RollingMemory> {
+export async function summarizeOlder(messages: MessageParam[], tasks: Task[], signal: AbortSignal, load: () => Promise<Provider> = () => accountProvider("openai"), project?: string): Promise<RollingMemory> {
   const provider = await load();
   let memory = empty();
   // Neither reasoning nor image bytes/URLs go to the text-only summary model.
@@ -77,7 +77,7 @@ export async function summarizeOlder(messages: MessageParam[], tasks: Task[], si
     signal.throwIfAborted();
     const input: MessageParam[] = [{ role: "user", content: JSON.stringify({ sourceScope: "older conversation prefix only; recent verbatim tail withheld", sourceEncoding: "JSON messages in chronological order; roles and content block types preserved; sourcePart may split a message", registry: taskSnapshot(relevant), taskIds: relevant.filter(t => !t.archive).map(t => t.id), previousMemory: memory, sourcePart: part }) }];
     requireFits({ model: SUMMARY_MODEL, tools: {}, system: instruction, compaction: {}, transcript: null! }, input, 4096, "rolling summary source");
-    const result = await provider.complete({ signal, model: SUMMARY_MODEL, settings: { effort: "low", fast: false }, system: instruction, messages: input, tools: [], maxTokens: 4096, onText() {} });
+    const result = await provider.complete({ trace: { project, agent: "orchestrator", purpose: "rolling-summary" }, signal, model: SUMMARY_MODEL, settings: { effort: "low", fast: false }, system: instruction, messages: input, tools: [], maxTokens: 4096, onText() {} });
     signal.throwIfAborted();
     if (result.stop !== "end" || !["completed", "end_turn"].includes(result.completion ?? "")) throw new Error(`summary did not complete (${result.completion ?? "unknown"})`);
     const content = result.content.filter(b => b.type !== "thinking" && b.type !== "redacted_thinking");

@@ -25,9 +25,11 @@
 import { originRepo } from "../data/tasks";
 export { githubRepo, originRepo } from "../data/tasks";
 import { archiveMergedTasks, allTasks, blockConflictingTask, observeTaskPR, setTaskAttention } from "../data/tasks";
-import { taskPR } from "../../protocol";
+import { taskPR } from "../../protocol/task";
 import { ghTaskPR } from "../data/tasks";
-import type { PRObservation, Task, TaskPR } from "../../protocol";
+import { observe } from "../data/inbox";
+import { listProcesses, liveProcess } from "../data/processes";
+import type { PRObservation, Task, TaskPR } from "../../protocol/task";
 import { existsSync, linkSync, mkdirSync, statSync } from "node:fs";
 import { readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -270,6 +272,7 @@ async function tipInPR(repo: string, pr: MergedPR): Promise<boolean | null> {
  * tip must be the PR's head or an ancestor of it (no commits the PR lacks).
  */
 async function notThePR(project: string, pr: MergedPR, s: string): Promise<string | null> {
+  if ((await listProcesses(project)).some(p => p.branch === pr.headRefName && (liveProcess(p) || p.state === "unknown"))) return "background processes still own this workspace; inspect/stop them before cleanup";
   const wt = paths.worktree(project, s);
   if (existsSync(wt)) {
     const on = await worktreeOn(wt);
@@ -535,6 +538,10 @@ async function refreshTaskPRs(project: string, repository: string, w: Watcher): 
     if (!observations.has(key)) observations.set(key, await w.d.pr(project, t.pr!).catch(() => null));
     const observation = observations.get(key);
     if (!observation && t.readiness) await setTaskAttention(project, t.id, { kind: "unknown", reason: "pr lookup unavailable; revalidate readiness when github is observable" }, t.revision).catch(() => {});
-    if (observation) await observeTaskPR(project, t.id, observation, t.revision).catch(() => {});
+    if (observation) {
+      await observeTaskPR(project, t.id, observation, t.revision).catch(() => {});
+      const state = { pr: observation.pr, state: observation.state, checks: observation.checks, ready: observation.ready };
+      await observe(project, `pr:${key}`, state, `PR observation changed: ${JSON.stringify(state)}. Reconcile the requested outcome and evidence; this does not authorize merge.`);
+    }
   }
 }

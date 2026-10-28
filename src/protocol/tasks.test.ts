@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { taskPublicationView, taskPublicationObservation, type Task } from "./tasks";
+import { taskPublicationView, taskPublicationObservation, type Task } from "./task/tasks";
 const now = "2026-01-01T00:00:00.000Z";
 const pr = { repository: "o/r", number: 12, url: "https://github.com/o/r/pull/12", head: "a".repeat(40) };
 const task = (): Task => ({

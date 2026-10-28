@@ -1,4 +1,4 @@
-import type { Task } from '../../../protocol/tasks';
+import type { Task } from "../../../protocol/task";
 import { assertPrerequisitesMerged, type DependencySnapshot } from './dependency-policy';
 import { provenance } from './dependency-provenance';
 

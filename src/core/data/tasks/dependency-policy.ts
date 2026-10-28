@@ -2,7 +2,7 @@
  * Callers must obtain authorization, checkpoint and merge evidence from trusted runtime
  * storage under the project lock, not from model-supplied booleans.
  */
-import { check, sha, taskDependencies, type Task } from '../../../protocol/tasks';
+import { check, sha, taskDependencies, type Task } from "../../../protocol/task";
 
 export interface Checkpoint {
   taskId: string;

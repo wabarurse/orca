@@ -98,7 +98,8 @@ test("the orchestrator's prompt uses its project's review rounds and dispatch pe
   expect(systems[0]).not.toContain(DYNAMIC_DISPATCH);
   expect(systems[1]).toContain("At most 7 review rounds;");
   expect(systems[1]).toContain(DYNAMIC_DISPATCH);
-  expect(systems[2]).toBe(systems[1]);
+  expect(systems[2]).toContain("At most 7 review rounds;");
+  expect(systems[2]).toContain(DYNAMIC_DISPATCH); // Shared corrections change between turns.
   expect(rolePrompt("orchestrator", await loadConfig())).toContain("At most 3 review rounds;");
   await saveConfig({ maxReviewRounds: 1, dynamicDispatch: false });
 });

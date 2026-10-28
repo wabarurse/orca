@@ -31,7 +31,7 @@ async function agentTimes(project: string, name: string, live: boolean): Promise
   if (live && state?.endedAt) return {};
   const startedAt = state?.startedAt ?? (await firstEntryTs(paths.transcript(project, name)));
   if (!startedAt) return {};
-  if (live) return { startedAt };
+  if (live) return { startedAt, ...(state?.step === "waiting for background commands" ? { activity: state.step } : {}) };
   if (state?.endedAt) return { startedAt, endedAt: state.endedAt };
   return state?.ts ? { startedAt, endedAt: state.ts, approximateEnd: true } : { startedAt };
 }

@@ -1,3 +1,4 @@
+import { listProcesses, liveProcess } from "../../core/data/processes";
 // /delete: remove a project's state once nothing is running in it.
 
 import { existsSync } from "node:fs";
@@ -47,6 +48,7 @@ export async function deleteProject(name: string, { live = liveAgentsOrNull, sto
     const agents = await live(name);
     if (agents === null) throw new Error("cannot check live agents; project was not deleted");
     if (agents.length) throw new Error(`${name} still has live agents (${agents.join(", ")}); wait for them or stop them first`);
+    if ((await listProcesses(name)).some(p => liveProcess(p) || p.state === "unknown")) throw new Error("project has active or unresolved commands; reconcile them before deleting");
     await stop(name); // the daemon must be gone before its files are, or it writes them back
     await kill(name);
     await withProjectStateLock(name, async () => {

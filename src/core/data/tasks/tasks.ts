@@ -7,7 +7,7 @@ import { paths } from "../../../config";
 import { ledgerTransaction, existingLedgerTasks } from "./ledger-store";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import { clean } from "../inbox";
-import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol";
+import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol/task";
 
 interface Store { version: 1; tasks: Task[] }
 const uuid = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);

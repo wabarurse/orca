@@ -11,7 +11,7 @@ import { paths } from "../../../config";
 import { ARCHIVE_AGENT, BATCH, database, entryText, epochsOf, purgeProject, sync, transcriptEntries } from "./archive";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import { existingTasks } from "../tasks";
-import type { Task } from "../../../protocol";
+import type { Task } from "../../../protocol/task";
 import { open } from "../transcripts";
 import type { Entry } from "../../../protocol";
 

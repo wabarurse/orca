@@ -12,13 +12,15 @@ export interface Turn {
   /** Assistant content, Anthropic-shaped. */
   content: ContentBlock[];
   /** Whether the model wants tools run before it continues. */
-  stop: "end" | "tool_use";
+  stop: "end" | "tool_use" | "limit" | "pause" | "refusal" | "error";
   inputTokens?: number;
   /** Terminal provider reason; absent only for legacy/custom providers. */
   completion?: string;
 }
 
 export interface CompleteRequest {
+  /** Accounting metadata only; never forwarded to the provider. */
+  trace?: { project?: string; agent?: string; run?: string; purpose?: string };
   signal?: AbortSignal;
   settings?: RequestSettings;
   model: string;

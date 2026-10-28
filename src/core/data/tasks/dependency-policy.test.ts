@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Task } from '../../../protocol/tasks';
+import type { Task } from '../../../protocol/task/tasks';
 import { assertPublication, dependencyClosure, gatedPublication, resolveStackBase, type DependencySnapshot, type PublicationState } from './dependency-policy';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const hash = (n: number) => String(n).repeat(40);

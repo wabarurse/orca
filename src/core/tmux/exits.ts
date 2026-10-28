@@ -1,5 +1,5 @@
 import { allTasks, startTaskRun, stopTaskRun, invalidateTaskBranch } from "../data/tasks";
-import type { Task, TaskRun } from "../../protocol";
+import type { Task, TaskRun } from "../../protocol/task";
 import { Cancelled } from "./cancellation";
 // Exit notices: when a worker or reviewer stops without reporting, the
 // orchestrator hears about it through its inbox, at most once per run.
@@ -159,6 +159,7 @@ export async function sendNotice(project: string, id: string, run: string, text:
 
 /** What the agent loop reports as it goes; createAgent calls these. */
 export interface Tracker {
+  waiting?(): Promise<void>;
   /** About to ask the model. */
   model(): Promise<void>;
   /** Best-effort request evidence; latest request replaces the previous one. */
@@ -208,10 +209,11 @@ export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracke
   return {
     state: () => ({ ...s }),
     end: async () => { s.endedAt ??= new Date().toISOString(); await save(); },
+    waiting: () => set({ step: "waiting for background commands" }),
     model: () => set({ step: "model request" }),
     request: (modelRequest) => set({ modelRequest }),
     tool: async (name, input) => {
-      if (name === "bash") await invalidateTaskBranch(project, run);
+      if (["bash", "write", "edit", "process"].includes(name)) await invalidateTaskBranch(project, run);
       const step = describeTool(name, input);
       return set({ step, tool: step, state: "running" });
     },

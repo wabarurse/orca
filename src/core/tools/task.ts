@@ -1,11 +1,11 @@
-import { dependencyAction, dependencyActions } from "../data/tasks/dependency-workflow";
-import { provenance } from "../data/tasks/dependency-provenance";
+import { dependencyAction, dependencyActions } from "../data/tasks";
+import { provenance } from "../data/tasks";
 // Public record and private dispatch/safety envelope are deliberately distinct.
-import { canonicalTask } from "../../protocol/task-ledger";
+import { canonicalTask } from "../../protocol/task";
 import { originRepo, ghTaskPR } from "../data/tasks";
 import { run } from "../proc";
 import { getTask, allTasks, removeTask, updateTaskMetadata, listTasks, observeTaskPR, registerTask, setTaskDependencies, setTaskAttention, taskForRun, validateTaskReadiness } from "../data/tasks";
-import { taskPR, type PRObservation, type Task, type TaskAttention, type TaskPR } from "../../protocol";
+import { taskPR, type PRObservation, type Task, type TaskAttention, type TaskPR } from "../../protocol/task";
 import type { Tool, ToolContext } from "./registry";
 import { queryHistory } from "../data/memory";
 
@@ -40,7 +40,7 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
   return {
     spec: {
       name: "task",
-      description: "Manage the current project's numbered tasks, not cross-session memory. Register authorized work before spawn; reuse the same immutable task for fixes to an unmerged PR. Agents may edit only their active branch task. Explicit DAGs allow local preparation before merges; publish gates push/create on verified prerequisite merges, latest default and matching worker/review evidence. No automatic merge. Generic bash is user-privileged, not a publication sandbox; do not bypass the supported path.",
+      description: "Manage the current project's numbered tasks, not cross-session memory. Registration never authorizes work. Register authorized publication work before spawn; ordinary delegation needs no task; reuse the same immutable task for fixes to an unmerged PR. Agents may edit only their active branch task. Explicit DAGs allow local preparation before merges; publish gates push/create on verified prerequisite merges, latest default and matching worker/review evidence. No automatic merge. Generic bash is user-privileged, not a publication sandbox; do not bypass the supported path.",
       input_schema: {
         type: "object", properties: {
           action: { type: "string", enum: ["create", "update", "remove", "register", "list", "get", "pr", "ready", "attention", "dependencies", ...dependencyActions, ...(options.history ? ["search_history", "read_history"] : [])], description: "list/get: find existing identity and stable project number; dispatch safety is in internal. pr: immediately after publication record repository + number, before CI/validation; refresh before resuming an unmerged PR. Verified OPEN records pr open, not approval, merge permission or current mergeability. ready: watch-ci reviewer matches existing worker checks and review findings to the current clean PR head, validated=true; no reruns/local validation, even without hosted checks; report fully via message. attention: retain stalled/cancelled/closed/unknown work, not process cancellation or authorization to continue. remove: only verified merged membership, with explicit confirmation; SQL history remains. checkpoint: worker records clean immutable code for local stacked development, usable after its run stops. prepare_publication: worker verifies prerequisite merges, safely replays/adopts B-only changes onto latest default retaining recovery refs. checks: worker records already-run affected-check commands and validation on actual clean head. reviewed: review-mode reviewer records completed review using worker evidence, never runs tests. publish: watch-ci reviewer only; dependent tasks require explicit review-mode handoff even at zero review rounds; gated push/create, reconcile remote success and record verified PR; no automatic merge." },

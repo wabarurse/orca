@@ -1,4 +1,4 @@
-import { check, sha } from '../../../protocol/tasks';
+import { check, sha } from "../../../protocol/task";
 import type { Ancestor } from './dependency-policy';
 
 /** Read immutable git objects in this checkout only, never another worker's worktree.

@@ -1,5 +1,6 @@
-import { completeInterruptedTools } from "../../data/transcripts/transcript";
-import { modelRequestText } from "../../../protocol/transcript";
+import { usageScope, usageEvent } from "../../../providers";
+import { completeInterruptedTools } from "../../data/transcripts";
+import { modelRequestText } from "../../../protocol";
 import { materializeImages } from "../../data/images";
 import type { RequestSettings } from "../../../providers/catalog";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
@@ -10,7 +11,7 @@ import type { ContentBlock, ToolResultBlockParam } from "@anthropic-ai/sdk/resou
 import type { projectModelResolver } from "../../data/projects";
 import { budget, compact, outputCap, requireFits, type CompactOptions, type ContextDeps } from "../../data/memory";
 import type { Tracker } from "../../tmux";
-import type { ModelRequestState } from "../../tmux/exits";
+import type { ModelRequestState } from "../../tmux";
 import { consume, content } from "../../data/inbox";
 import type { Message } from "../../../protocol";
 import type { Provider } from "../../../providers";
@@ -21,6 +22,7 @@ import type { Tool, ToolContext } from "../../tools";
 import { callText, resultText, type ToolCall, type ToolOutcome } from "../../../protocol";
 import { scheduleTools } from "./tool-scheduler";
 import type { RollingOptions } from "../../data/memory";
+import { recordCorrection, recordRuntime } from "../../data/knowledge";
 
 export interface AgentOptions {
   project: string;
@@ -36,6 +38,7 @@ export interface AgentOptions {
 }
 
 export interface AgentDeps extends ContextDeps {
+  loadContext?: (query: string) => Promise<string>;
   /** UI observer of the actual safe-boundary request configuration. */
   onContext?: (deps: AgentDeps) => void;
   /** Maximum overlap of calls explicitly marked independent. Other tools are barriers. */
@@ -97,7 +100,10 @@ function isReport(name: string, input: unknown, result: ToolResultBlockParam): b
 async function runTracked(deps: AgentDeps, block: ToolUse, track: (name: string, input: unknown) => Promise<void>): Promise<ToolResultBlockParam> {
   const input = block.input as Record<string, unknown>;
   await track(block.name, input);
-  const result = await runTool(deps, block.name, input);
+  const started = performance.now();
+  const trace = { project: deps.ctx.project, agent: sessionId(deps.ctx.role, deps.ctx.branch), run: deps.ctx.run };
+  const result = await usageScope(trace, () => runTool({ ...deps, ctx: { ...deps.ctx, callId: block.id } }, block.name, input));
+  await usageEvent({ kind: "tool", ...trace, tool: block.name, call: block.id, ok: !result.is_error, durationMs: performance.now() - started });
   if (isReport(block.name, input, result)) await deps.tracker?.reported();
   return { ...result, tool_use_id: block.id };
 }
@@ -137,6 +143,7 @@ async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Pro
     const blocks = content(inbox);
     await deps.transcript.append({ type: "message", inbox,
       message: { role: "user", content: results ? [...results, ...(typeof blocks === "string" ? [{ type: "text" as const, text: blocks }] : blocks)] : blocks } });
+    for (const message of inbox) if (message.from === "user") await recordCorrection(deps.ctx.project, { id: message.inputId ?? message.deliveryId, text: message.text, at: message.ts });
   });
   if (msgs.length) {
     deps.onInbox?.(msgs);
@@ -162,10 +169,13 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
   const { message, estimated } = await (async () => {
     const messages = await deps.transcript.chain();
     const estimated = budget({ ...deps, compaction: undefined }, messages);
+    if (deps.loadContext) await recordRuntime(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch), { run: deps.ctx.run, model: deps.model,
+      system: deps.system ?? "", tools: Object.values(deps.tools).map(t => t.spec), contextTokens: estimated }).catch(() => {});
     if (!deps.provider) throw new Error("agent: no provider or resolver");
     const delivered = await materializeImages(deps.ctx.project, messages);
     const request = {
       signal: deps.signal,
+      trace: { project: deps.ctx.project, agent: sessionId(deps.ctx.role, deps.ctx.branch), run: deps.ctx.run, purpose: "agent" },
       model: deps.model,
       settings: deps.settings,
       system: deps.system,
@@ -198,6 +208,11 @@ async function snapshot(deps: AgentDeps): Promise<AgentDeps> {
   const current = deps.resolveModel ? await deps.resolveModel() : { model: deps.model, provider: deps.provider, settings: deps.settings };
   if (!current.provider) throw new Error("agent: no provider or resolver");
   const selected = { ...deps, ...current, settings: current.settings ? { ...current.settings } : undefined };
+  if (deps.loadContext) {
+    const messages = await deps.transcript.chain();
+    const last = messages.filter(m => m.role === "user" && typeof m.content === "string").at(-1);
+    selected.system = [deps.system, await deps.loadContext(typeof last?.content === "string" ? last.content.slice(-4000) : "")].filter(Boolean).join("\n\n");
+  }
   const configured = { ...selected, requestOutputCap: outputCap(selected) };
   deps.onContext?.(configured);
   return configured;
@@ -232,11 +247,17 @@ async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>)
   deps.signal?.throwIfAborted();
   const consumed = await readInbox(deps);
   if (deps.requireInbox && !consumed) return;
+  let pauses = 0;
   for (;;) {
     const current = await boundary(deps.compactRequested?.() ?? false);
     deps.signal?.throwIfAborted();
     const message = await ask(current, deps.write!);
     if (message.stop === "tool_use") { await toolBatch(current, message.content); continue; }
+    if (message.stop === "pause" && !message.content.some(block => block.type === "tool_use") && ++pauses <= 2) {
+      await deps.transcript.append({ type: "message", message: { role: "user", content: "The provider paused this response. Continue the existing request within its current scope." } });
+      continue;
+    }
+    if (message.stop !== "end") throw new Error(`model stopped (${message.completion ?? message.stop}); partial response retained, task completion is not established`);
     deps.signal?.throwIfAborted();
     if (await readInbox(deps)) continue;
     if (deps.compactRequested?.()) await boundary(true);

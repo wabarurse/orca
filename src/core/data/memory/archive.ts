@@ -7,7 +7,7 @@ import { paths } from "../../../config";
 import { historicalMessages } from "../images";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import { existingTasks } from "../tasks";
-import type { Task } from "../../../protocol";
+import type { Task } from "../../../protocol/task";
 import { open, type Transcript } from "../transcripts";
 import type { Entry } from "../../../protocol";
 

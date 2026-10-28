@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../config/config";
 import { getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, startTaskRun, stopTaskRun } from "../data/tasks/tasks";
-import type { PRObservation } from "../../protocol/tasks";
+import type { PRObservation } from "../../protocol/task/tasks";
 import { rolePrompt } from "../prompt/shared";
 import { defaults } from "../../config/config";
 import { makeTaskTool, orchestratorTask, task as agentTask } from "./task";
@@ -39,7 +39,7 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
   expect(task.status).toBe("queued");
   expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual([task]);
   expect(JSON.parse(await tool.run({ action: "get", taskId: task.id }, ctx())).id).toBe(task.id);
-  expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain('spawn the reviewer with "watch ci" and existing check evidence');
+  expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain("0 review rounds; use watch-ci with existing check evidence");
   expect(rolePrompt("reviewer", defaults)).toContain("Review-only never asserts readiness.");
 });
 
@@ -121,9 +121,9 @@ test("failed explicit PR refresh invalidates previously validated readiness with
 
 test("both exposed task schemas describe executable structured dependencies, not scheduling", async () => {
   for (const exposed of [agentTask, orchestratorTask]) {
-    expect(exposed.spec.input_schema.properties).toMatchObject({ action: { enum: expect.arrayContaining(["dependencies"]) } });
-    expect(exposed.spec.input_schema.properties).toMatchObject({ taskId: { description: expect.stringContaining("dependencies, which requires an explicit taskId") } });
-    expect(exposed.spec.input_schema.properties).toMatchObject({ dependsOn: { type: "array", items: { type: "string" } } });
+    expect(structuredClone(exposed.spec.input_schema.properties)).toMatchObject({ action: { enum: expect.arrayContaining(["dependencies"]) } });
+    expect(structuredClone(exposed.spec.input_schema.properties)).toMatchObject({ taskId: { description: expect.stringContaining("dependencies, which requires an explicit taskId") } });
+    expect(structuredClone(exposed.spec.input_schema.properties)).toMatchObject({ dependsOn: { type: "array", items: { type: "string" } } });
     const description = JSON.stringify(exposed.spec);
     for (const text of ["not free-text notes", "never infer dependencies from text", "no scheduling", "only verified merged membership", "not process cancellation or authorization to continue", "no reruns/local validation", "even without hosted checks"]) expect(description).toContain(text);
     expect(exposed.spec.description!.length).toBeLessThan(600);

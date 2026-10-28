@@ -37,7 +37,10 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
   const identity = projectIdentity(project);
   const full: Message = { ...structuredClone(msg), ...(msg.from === "user" ? { userEpoch: msg.userEpoch ?? inputEpoch(project) } : {}), ts: new Date().toISOString() };
   const n = String(seq++).padStart(6, "0");
-  const name = `${full.ts.replaceAll(":", "-")}-${n}-${crypto.randomUUID().slice(0, 8)}.json`;
+  const name = full.event
+    ? `${full.event.at.replaceAll(":", "-")}-event-${full.event.id}.json`
+    : `${full.ts.replaceAll(":", "-")}-${n}-${crypto.randomUUID().slice(0, 8)}.json`;
+  if (full.event && !/^[a-f0-9-]+$/.test(full.event.id)) throw new Error("invalid runtime event identity");
   const tmp = join(d, `.${name}.tmp`);
   const publish = async () => {
     assertProjectIdentity(project, identity);
