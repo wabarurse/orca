@@ -20,9 +20,8 @@ export interface Page {
   remote: string;
   /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
-  /** Last rendered clear boundary and request status; keep refreshes from reviving old UI state. */
+  /** Last rendered clear boundary; keep refreshes from reviving old conversation state. */
   contextBoundary?: string;
-  statusNotice?: string;
   /** The streaming reply: markdown blocks leave it as they complete; the rest shows raw in the live region. */
   md: MarkdownStream;
   busy: boolean;
@@ -103,7 +102,7 @@ export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; 
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
 /** A transient status note and whether a frame has drawn its row yet (only then does a key clear it). */
-export interface Note { text: string; shown: boolean }
+export interface Note { text: string }
 
 export const realClock: Clock = {
   now: () => Date.now(),

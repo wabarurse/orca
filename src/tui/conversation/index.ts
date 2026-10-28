@@ -4,4 +4,4 @@ export { captureAnchor, resolveAnchor, type HistoryAnchor } from "./anchor";
 export { MarkdownStream } from "./mdstream";
 export { fromUserLines, replyLine, reportLine, restore, unresolvedCalls, userLines } from "./restore";
 export { follow, parts } from "./view";
-export { entryNotice, transcriptStatus, plainToolLine } from "./notices";
+export { entryNotice, plainToolLine } from "./notices";

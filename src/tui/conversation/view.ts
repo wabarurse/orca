@@ -77,11 +77,13 @@ function emit(line: string, out: (s: string, entry: Entry) => void, calls: Map<s
 
 /**
  * Print everything in the transcript, then keep printing new entries until
- * `stop` resolves; `out` gets each entry's text and the entry itself. Reads
+ * `stop` resolves; `out` gets each entry's text and the entry itself. Status
+ * feedback is live only: metadata already on disk when attaching is silent. Reads
  * by byte offset so a partial trailing line waits for its newline.
  */
 export async function follow(path: string, out: (s: string, entry: Entry) => void, stop: Promise<void>, intervalMs = 300, afterDrain: () => void = () => {}, notice?: (text: string) => void): Promise<void> {
   const calls = new Map<string, ToolCall>();
+  const attachedAt = existsSync(path) ? statSync(path).size : 0;
   let offset = 0;
   let done = false;
   stop.then(() => (done = true));
@@ -96,8 +98,11 @@ export async function follow(path: string, out: (s: string, entry: Entry) => voi
       const text = buf.toString();
       const end = text.lastIndexOf("\n");
       if (end === -1) return;
-      offset += Buffer.byteLength(text.slice(0, end + 1));
-      for (const line of text.slice(0, end).split("\n")) emit(line, out, calls, notice);
+      for (const line of text.slice(0, end).split("\n")) {
+        const live = offset >= attachedAt;
+        offset += Buffer.byteLength(line) + 1;
+        emit(line, out, calls, live ? notice : undefined);
+      }
     } finally {
       await fh.close();
     }

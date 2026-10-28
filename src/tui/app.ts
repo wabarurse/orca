@@ -41,7 +41,7 @@ import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } fro
 import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
-import { fromUserLines, replyLine, reportLine, restore, transcriptStatus, plainToolLine, unresolvedCalls, userLines } from "./conversation";
+import { fromUserLines, replyLine, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
 import { bold, dim, fit, sanitize } from "./components";
 import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
 import type { Terminal } from "./components";
@@ -437,26 +437,25 @@ export class App {
    * project list's status, the next keypress clears it; a mouse event does not.
    */
   note(text: string, page = this.page): void {
-    const note: Note = { text, shown: false };
+    const note: Note = { text };
     if (page) this.notes.set(page, note); else this.looseNote = note;
     this.draw();
   }
 
-  /** The next keypress on the page clears its note once a frame has shown it (one set on a background page waits for that frame); scrolling (wheel, page keys) and mouse selection leave it. */
+  /** The next input key clears the note, even before its queued frame paints; scrolling and mouse selection leave it. */
   private clearNote(k: Key): void {
     if (/^(?:wheel|mouse|page)/.test(k.name)) return;
     const page = this.page;
     const note = page ? this.notes.get(page) : this.looseNote;
-    if (!note?.shown) return;
+    if (!note) return;
     if (page) this.notes.delete(page); else this.looseNote = undefined;
     this.draw();
   }
 
-  /** The shown page's note, cut to one row; the frame that takes it marks it shown. */
+  /** The shown page's note, cut to one row. Rendering never changes its lifetime. */
   private noteRow(page: Page | undefined): string | undefined {
     const note = page ? this.notes.get(page) : this.looseNote;
     if (!note) return undefined;
-    note.shown = true;
     return dim(fit(sanitize(note.text.replace(/\s*\n\s*/g, " ")), this.deps.term.cols));
   }
 
@@ -957,16 +956,15 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!entries) return;
     const head = entries.at(-1)?.uuid;
     if (this.renderedHeads.get(page) === head) return;
-    const status = transcriptStatus(entries), cleared = status.boundary !== page.contextBoundary;
-    page.contextBoundary = status.boundary;
+    const boundary = entries.findLast(entry => entry.type === "context-boundary")?.uuid, cleared = boundary !== page.contextBoundary;
+    page.contextBoundary = boundary;
     if (cleared) {
       this.notices.delete(page); this.notes.delete(page); this.openGroups.delete(page.lines);
       if (page === this.page && !page.view) {
         this.pending = []; this.screenHistory = []; this.scrollTop = null; this.scrollAnchor = undefined; this.selection.clear();
       }
     }
-    if (status.notice && status.notice.id !== page.statusNotice) this.note(status.notice.text, page);
-    page.statusNotice = status.notice?.id;
+    // Status is a live event, never restored from saved metadata or re-emitted by refresh.
     page.md.reset(); page.calls.clear();
     const lines = this.restored(page, entries, running);
     // Keep local diagnostics, but don't duplicate what the record holds.

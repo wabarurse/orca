@@ -14,7 +14,7 @@ import type { Orchestrator } from "./orchestrator";
 import { awaitAck, daemonPid, liveStatus, readStatus, request } from "./channel";
 import type { DaemonStatus } from "../../../protocol";
 import { liveReader, type LiveReader } from "./live";
-import type { LiveEvent } from "../../../protocol";
+import type { LiveEvent, LiveKey } from "../../../protocol";
 import { projectIdentity, turnLocksHeld } from "../../data/projects";
 import { local, sessionName, tmux, type Runner } from "../../tmux";
 import { pidAlive } from "../../data";
@@ -126,6 +126,8 @@ interface Client {
   status: (project: string) => Promise<DaemonStatus | undefined>;
   alive: () => Promise<boolean>;
   notice: (text: string) => void;
+  /** Ephemeral events already present at attachment or consumed by this client. */
+  noticeCursor?: LiveKey & { seq: number };
   checkIdentity: () => void;
   following?: Follow;
   disposed: boolean;
@@ -162,6 +164,11 @@ async function tailLive(c: Client, f: Follow, s: DaemonStatus): Promise<void> {
   let synced = false;
   for (const e of f.live.read({ run: s.run, turn: s.turns })) {
     if (e.kind === "start") continue;
+    if (e.kind === "status" || e.kind === "truncated") {
+      const previous = c.noticeCursor;
+      if (previous?.run === s.run && previous.turn === s.turns && e.seq <= previous.seq) continue;
+      c.noticeCursor = { run: s.run, turn: s.turns, seq: e.seq };
+    }
     if (e.head !== f.seen && !synced) { synced = true; await sync(c, f); }
     if (e.head === f.seen) show(c, e);
   }
@@ -264,6 +271,12 @@ export async function createClientOrchestrator(deps: ClientDeps): Promise<Orches
   const { project } = deps;
   const config = await loadConfig();
   const c = client(deps);
+  // Reattach streamed replies/tools, but don't replay old temporary feedback.
+  const attached = await c.status(project).catch(() => undefined);
+  if (attached?.state === "turn") {
+    const key = { run: attached.run, turn: attached.turns };
+    c.noticeCursor = { ...key, seq: liveReader(project).read(key).at(-1)?.seq ?? -1 };
+  }
   return {
     contextUsage: model => contextOf(project, model)?.used,
     contextWindow: model => contextOf(project, model)?.window ?? contextWindow({ fallback: config.contextLimitFallback }, model),

@@ -196,7 +196,9 @@ test("following clients get the turn's live text and tool events through the in-
   expect(readStatus(p)).toMatchObject({ state: "idle", turns: 1 });
   for (const v of [a, b, c]) {
     for (const item of ['text "look"', 'text "ing"', "tool t1 echo", "end t1 true", 'text "done"']) expect(count(v.got, item)).toBeLessThanOrEqual(1);
-    expect(v.got.filter(g => g.startsWith("notice"))).toEqual([]);
+    const notices = v.got.filter(g => g.startsWith("notice"));
+    expect(notices.every(line => line.startsWith("notice [model request] anthropic/fake-model "))).toBe(true);
+    expect(new Set(notices).size).toBe(notices.length); // Each live status is shown at most once.
     expect(v.got.at(-1)).toBe("refresh"); // the final look showed the durable record
     v.client.dispose?.();
   }

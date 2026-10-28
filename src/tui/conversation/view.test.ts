@@ -62,13 +62,27 @@ test("a replies entry shows each message to the user with its sender", () => {
   expect(ps).toEqual(["\x1b[2morchestrator → user:\x1b[0m", { md: "**done**" }]);
 });
 
-test("follow routes runtime metadata to temporary status feedback instead of conversation output", async () => {
+test("follow restores conversation silently and emits only newly appended metadata as one-time feedback", async () => {
   const path = join(home, "status.jsonl"), t = open(path);
   await t.append({ type: "meta", role: "worker", model: "m" });
   await t.append({ type: "message", message: { role: "assistant", content: "actual reply" } });
   await t.append({ type: "model-request", requestId: "r", provider: "anthropic", model: "m", stage: "aborted", startedAt: "x", updatedAt: "y" });
   const lines: string[] = [], notices: string[] = [];
-  await follow(path, line => lines.push(line), Promise.resolve(), 1, () => {}, text => notices.push(text));
-  expect(lines).toEqual(["actual reply"]);
-  expect(notices).toEqual(["worker (m)", "[model request] anthropic/m aborted; started x; updated y"]);
+  let stop!: () => void, drained!: () => void;
+  const stopped = new Promise<void>(resolve => { stop = resolve; });
+  const initial = new Promise<void>(resolve => { drained = resolve; });
+  const running = follow(path, line => lines.push(line), stopped, 5, drained, text => notices.push(text));
+  try {
+    await initial;
+    expect(lines).toEqual(["actual reply"]);
+    expect(notices).toEqual([]);
+    await t.append({ type: "model-request", requestId: "new", provider: "anthropic", model: "m", stage: "completed", startedAt: "a", updatedAt: "b" });
+    for (let i = 0; i < 100 && !notices.length; i++) await Bun.sleep(5);
+    expect(notices).toEqual(["[model request] anthropic/m completed; started a; updated b"]);
+    await Bun.sleep(20);
+    expect(notices).toHaveLength(1);
+  } finally { stop(); await running; }
+  notices.length = 0;
+  await follow(path, () => {}, Promise.resolve(), 1, () => {}, text => notices.push(text));
+  expect(notices).toEqual([]); // Reattaching must not replay the just-seen event.
 });
