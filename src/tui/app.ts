@@ -24,7 +24,7 @@ import type { AgentInfo } from "../protocol";
 import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
 import { effortChoices, modelChoices, setModel, type Choice } from "./commands";
-import { reviewRounds, dynamicDispatch, DYNAMIC_DISPATCH_USAGE, REVIEW_ROUNDS_USAGE } from "./commands";
+import { reviewRounds, dynamicDispatch } from "./commands";
 import { paths, validRounds } from "../config";
 import { projectIdentity } from "../core/data/projects";
 import { validateModel, effectiveModel } from "../core/data/projects";
@@ -41,7 +41,7 @@ import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } fro
 import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
-import { fromUserLines, replyLine, reportLine, restore, transientNotice, unresolvedCalls, userLines } from "./conversation";
+import { fromUserLines, replyLine, reportLine, restore, transcriptStatus, plainToolLine, unresolvedCalls, userLines } from "./conversation";
 import { bold, dim, fit, sanitize } from "./components";
 import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
 import type { Terminal } from "./components";
@@ -228,9 +228,9 @@ export class App {
   }
   private async pasteImage(): Promise<void> {
     const page = this.page;
-    if (!page || page.view || page.questions.expanded) return this.say(dim("open a project chat before attaching an image (not a question answer)."));
-    if (this.clipboardReading) return this.say(dim("an image read is already in progress; ctrl+v again when it finishes."));
-    if (this.images(page).length >= MAX_IMAGES) return this.say(dim("at most 4 images per prompt; ctrl+y removes the last image."));
+    if (!page || page.view || page.questions.expanded) return this.note(dim("open a project chat before attaching an image (not a question answer)."));
+    if (this.clipboardReading) return this.note(dim("an image read is already in progress; ctrl+v again when it finishes."));
+    if (this.images(page).length >= MAX_IMAGES) return this.note(dim("at most 4 images per prompt; ctrl+y removes the last image."));
     const generation = ++this.clipboardGeneration;
     this.clipboardReading = true;
     try {
@@ -242,7 +242,7 @@ export class App {
       if (!this.imageOwner(page, generation)) return;
       this.draftImages.set(page, [...this.images(page), ref]);
     } catch (error) {
-      if (this.imageOwner(page, generation)) this.say(dim(`image not attached: ${error instanceof Error ? error.message : error}`), page);
+      if (this.imageOwner(page, generation)) this.note(dim(`image not attached: ${error instanceof Error ? error.message : error}`), page);
     } finally { this.clipboardReading = false; this.draw(); }
   }
   private removeImage(): void {
@@ -259,10 +259,10 @@ export class App {
     }
   }
   private async retryImages(page?: Page): Promise<void> {
-    if (!page || page.view || this.loggingIn) return this.say(dim("open project chat and finish sign-in before retrying images."));
+    if (!page || page.view || this.loggingIn) return this.note(dim("open project chat and finish sign-in before retrying images."));
     await this.recoverImages(page);
     for (const item of [...page.sent]) if (item.attachments?.length && item.retry) {
-      await this.send(page, item.text, item.submission, item.inputId, item.attachments).catch(error => this.say(dim(String(error)), page));
+      await this.send(page, item.text, item.submission, item.inputId, item.attachments).catch(error => this.note(dim(String(error)), page));
     }
     this.runTurn(page);
   }
@@ -333,7 +333,7 @@ export class App {
       opening: () => { app.cancelClear(); app.modelGeneration++; app.taskInbox = null; app.helpTop = null; app.menu = null; app.projectList = null; },
       get input() { return app.input; },
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
-      say: (line, page) => app.toPage(page as Page, [line]),
+      say: (line, page) => app.note(line, page as Page),
       note: (text, page) => app.note(text, page as Page),
       queue: (page, inputId, text) => { (page as Page).sent.push({ inputId, text, question: true }); app.draw(); },
       unqueue: (page, inputId) => { const sent = (page as Page).sent; const at = sent.findIndex(m => m.inputId === inputId); if (at !== -1) sent.splice(at, 1); },
@@ -355,7 +355,7 @@ export class App {
     const { term } = this.deps;
     term.open();
     const restoreConsole = this.captureConsole();
-    term.onKey((k) => { this.onKey(k).catch((err) => this.say(`error: ${err instanceof Error ? err.message : String(err)}`)); });
+    term.onKey((k) => { this.onKey(k).catch((err) => this.note(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     term.onResize(() => this.resized());
     const poll = setInterval(() => {
       if (this.page) this.checkLive(this.page.project);
@@ -395,7 +395,7 @@ export class App {
     if (project) { await this.openPage(project, url); return; }
     for (const name of await listProjects()) {
       try { await this.openPage(name); }
-      catch (error) { this.say(`could not open ${name}: ${error instanceof Error ? error.message : String(error)}`); }
+      catch (error) { this.note(`could not open ${name}: ${error instanceof Error ? error.message : String(error)}`); }
     }
     const source = this.deps.source;
     if (source) {
@@ -408,14 +408,14 @@ export class App {
   }
 
   /**
-   * Route console output (e.g. the config loader's warning) into conversation
-   * history while the TUI runs, so nothing writes behind the pinned renderer's
+   * Route console output (e.g. the config loader's warning) to temporary status
+   * feedback while the TUI runs, so nothing writes behind the pinned renderer's
    * back. Returns the undo.
    */
   private captureConsole(): () => void {
     const methods = ["log", "info", "warn", "error", "debug"] as const;
     const saved = methods.map((m) => console[m]);
-    for (const m of methods) console[m] = (...args: unknown[]) => { for (const l of format(...args).split("\n")) this.say(l); };
+    for (const m of methods) console[m] = (...args: unknown[]) => { for (const l of format(...args).split("\n")) this.note(l); };
     return () => methods.forEach((m, i) => { console[m] = saved[i]!; });
   }
 
@@ -431,7 +431,7 @@ export class App {
   }
 
   /**
-   * An informational status note ("model set to …", a rename, what the daemon
+   * Runtime feedback ("model set to …", a rename, what the daemon
    * keeper did): one dim row directly above the composer, replacing the page's
    * previous note, never in the conversation or its restored history. Like the
    * project list's status, the next keypress clears it; a mouse event does not.
@@ -442,7 +442,7 @@ export class App {
     this.draw();
   }
 
-  /** The next keypress on the page clears its note once a frame has shown it (one set while the Inbox panel had its row, or on a background page, waits for that frame); scrolling (wheel, page keys) and mouse selection leave it. */
+  /** The next keypress on the page clears its note once a frame has shown it (one set on a background page waits for that frame); scrolling (wheel, page keys) and mouse selection leave it. */
   private clearNote(k: Key): void {
     if (/^(?:wheel|mouse|page)/.test(k.name)) return;
     const page = this.page;
@@ -506,12 +506,9 @@ export class App {
     return historyRows(lines, this.deps.term.cols, previous);
   }
 
-  /**
-   * Streamed output. Model text is markdown: each block goes into the history
-   * once complete, the rest waits in `page.md` (shown raw in the live region).
-   * `plain` text (tool calls) ends the markdown and is shown as is.
-   */
+  /** Model text and legacy tool output remain in conversation; runtime status uses the footer. */
   private stream(page: Page, text: string, plain = false): void {
+    if (plain && !plainToolLine(text)) return this.note(text, page);
     page.streamed = true;
     if (!plain) return this.toPage(page, page.md.feedLines(text));
     this.endPartial(page);
@@ -553,7 +550,7 @@ export class App {
     const status = this.started && page ? this.status(page) : null;
     const refs = this.images(page);
     const showImages = refs.length > 0 && !page?.questions.expanded;
-    const note = page?.questions.expanded ? undefined : this.noteRow(page); // like the images row: the open inbox panel has the rows
+    const note = this.noteRow(page); // Errors must remain visible while answering questions too.
     const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0) + (note ? 1 : 0));
     if (showImages) {
       area.lines.unshift(dim(`${imageLabels(refs)} · ctrl+y remove last`.slice(0, this.deps.term.cols)));
@@ -653,16 +650,16 @@ export class App {
       const line = `project settings refresh failed: ${err}`;
       if (this.flowErrors.get(page) === line) return;
       this.flowErrors.set(page, line);
-      this.say(dim(line), page);
+      this.note(dim(line), page);
     }
   }
 
-  /** Saves show as a transient note; usage refusals and the no-page explanation stay in the conversation. */
-  private flowCommand(page: Page | undefined, args: string, command: typeof reviewRounds, usage: string): Promise<void> | void {
-    if (!page) return this.say(dim(NO_PAGE_FOR_SETTINGS));
+  /** Settings feedback, including refusals, uses the temporary status row. */
+  private flowCommand(page: Page | undefined, args: string, command: typeof reviewRounds): Promise<void> | void {
+    if (!page) return this.note(dim(NO_PAGE_FOR_SETTINGS));
     this.bumpFlow(page); // invalidate observations started before this save
     return command(page.project, args).then(async result => {
-      if (result === usage) this.say(dim(result), page); else this.note(result, page);
+      this.note(result, page);
       await this.refreshFlow(page); // read the saved value, never infer success from input
     });
   }
@@ -833,7 +830,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       const note = `error drawing the screen: ${err instanceof Error ? err.message : String(err)}`;
       this.screen = undefined;
       if (this.started) this.needReprint = true;
-      if (note !== this.drawError) { this.drawError = note; this.say(dim(note)); }
+      if (note !== this.drawError) { this.drawError = note; this.note(dim(note)); }
     }
   }
 
@@ -904,7 +901,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
           ...this.pages.map(page => this.refreshPage(page, forced)),
           ...this.pages.map(page => this.pollFlow(page)),
         ]);
-        await this.refreshProjects().catch(err => this.say(dim(`refresh projects failed: ${err}`)));
+        await this.refreshProjects().catch(err => this.note(dim(`refresh projects failed: ${err}`)));
         await this.refreshTaskInbox();
       } while (this.refreshAgain && !this.closed);
     }).finally(() => { this.refreshing = undefined; });
@@ -942,7 +939,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       const failed = results.find(r => r.status === "rejected");
       if (failed?.status === "rejected") throw failed.reason;
     } catch (error) {
-      if (this.validPage(page)) this.say(dim(`refresh failed (input retained): ${error instanceof Error ? error.message : String(error)}`), page);
+      if (this.validPage(page)) this.note(dim(`refresh failed (input retained): ${error instanceof Error ? error.message : String(error)}`), page);
     }
     this.draw();
   }
@@ -953,21 +950,31 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
    * supersede what the live events showed, so the stream's partial text and
    * running calls are dropped with the old rendering (the events still ahead of
    * the record follow again through the same hooks). */
-  private syncTranscript(page: Page): void {
+  private syncTranscript(page: Page, running = page.busy): void {
     const consumed = page.orch.consumed?.();
     if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
     const entries = page.orch.entries?.();
     if (!entries) return;
     const head = entries.at(-1)?.uuid;
     if (this.renderedHeads.get(page) === head) return;
+    const status = transcriptStatus(entries), cleared = status.boundary !== page.contextBoundary;
+    page.contextBoundary = status.boundary;
+    if (cleared) {
+      this.notices.delete(page); this.notes.delete(page); this.openGroups.delete(page.lines);
+      if (page === this.page && !page.view) {
+        this.pending = []; this.screenHistory = []; this.scrollTop = null; this.scrollAnchor = undefined; this.selection.clear();
+      }
+    }
+    if (status.notice && status.notice.id !== page.statusNotice) this.note(status.notice.text, page);
+    page.statusNotice = status.notice?.id;
     page.md.reset(); page.calls.clear();
-    const lines = this.restored(page, entries, page.busy);
+    const lines = this.restored(page, entries, running);
     // Keep local diagnostics, but don't duplicate what the record holds.
     const saved = new Set(lines.map(line => JSON.stringify(line)));
     const notes = (this.notices.get(page) ?? []).filter(line => !saved.has(JSON.stringify(line)));
     this.notices.set(page, notes);
     const next = [...lines, ...notes];
-    this.carryOpen(page.lines, next);
+    if (!cleared) this.carryOpen(page.lines, next);
     const anchor = this.relocatedAnchor(page, next);
     page.lines = next;
     if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(this.shown(page), this.deps.term.cols, anchor); }
@@ -1002,14 +1009,6 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     return restore(entries, this.deps.term.cols, Infinity, omit);
   }
 
-  private restorePage(page: Page, running: boolean): void {
-    const entries = page.orch.entries?.() ?? [];
-    // All saved conversation must be scrollable before exit, including originals
-    // before model compaction. Cache rendered rows in viewport(); only the visible
-    // slice is drawn on keys/ticks, rather than capping access to older messages.
-    page.lines = [...this.restored(page, entries, running), ...page.lines];
-  }
-
   async openPage(project: string, url?: string): Promise<Page> {
     this.clipboardGeneration++;
     this.modelGeneration++;
@@ -1019,12 +1018,12 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       return this.pages[existing]!;
     }
     const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null, calls: new Calls() };
-    // The daemon's informational acknowledgements and progress (a cancel, compaction) are transient notes; its errors and warnings stay on the page.
-    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => transientNotice(text) ? this.note(text, page) : this.say(dim(text), page) };
+    // Runtime status belongs above the input, including failures and aborted requests.
+    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => this.note(text, page) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     // A turn already running elsewhere (the daemon's) shows its unfinished calls live, not as interrupted.
-    this.restorePage(page, await page.orch.pending().catch(() => false));
+    this.syncTranscript(page, await page.orch.pending().catch(() => false));
     this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
     const saved = await loadHistory(project);
     page.inputHistory = saved.entries;
@@ -1038,7 +1037,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     page.model = await this.readModel(project);
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
-    catch (error) { this.say(dim(`image recovery failed: ${error}`), page); }
+    catch (error) { this.note(dim(`image recovery failed: ${error}`), page); }
     await this.pollFlow(page);
     this.pages.push(page);
     this.active = this.pages.length - 1;
@@ -1084,26 +1083,26 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** Start a conversation in the given local directory, else the original launch checkout. */
   async newPage(name?: string, url?: string): Promise<void> {
     const shown = await this.shownNames();
-    if (name && [...shown].some(([id, n]) => id !== name && n === name)) return this.say(dim(`another project is already called ${name}`));
+    if (name && [...shown].some(([id, n]) => id !== name && n === name)) return this.note(dim(`another project is already called ${name}`));
     const project = name ?? newProjectName([...shown.keys(), ...shown.values()]);
     try {
       const page = await this.openPage(project, url ?? this.deps.source ?? undefined);
       if (!name) this.note("/rename <name> to rename", page);
-    } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`); }
+    } catch (err) { this.note(`error: ${err instanceof Error ? err.message : String(err)}`); }
   }
 
   /** Set the page's display name; the project folder, id and running agents are untouched, so this works mid-turn. */
   async renamePage(to: string): Promise<void> {
     const page = this.page;
     if (!page) return;
-    if (!to) return this.say(dim("usage: /rename <name>"));
-    if (this.pages.some((p) => p !== page && (p.name === to.trim() || p.project === to.trim()))) return this.say(dim(`another page is already called ${to.trim()}`));
+    if (!to) return this.note(dim("usage: /rename <name>"));
+    if (this.pages.some((p) => p !== page && (p.name === to.trim() || p.project === to.trim()))) return this.note(dim(`another page is already called ${to.trim()}`));
     try {
       const from = page.name;
       page.name = await setDisplayName(page.project, to);
       this.note(`${from} → ${page.name}`, page);
       if (this.projectList) await this.refreshProjects();
-    } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`, page); }
+    } catch (err) { this.note(`error: ${err instanceof Error ? err.message : String(err)}`, page); }
   }
 
   // --- project list -----------------------------------------------------------
@@ -1179,7 +1178,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   private async openFromProjects(name: string): Promise<void> {
     this.projectList = null;
-    try { await this.openPage(name); } catch (err) { this.say(`error: ${err instanceof Error ? err.message : String(err)}`); }
+    try { await this.openPage(name); } catch (err) { this.note(`error: ${err instanceof Error ? err.message : String(err)}`); }
   }
 
   private async pinFromProjects(entry: ProjectEntry): Promise<void> {
@@ -1245,7 +1244,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     } catch (err) {
       failed = true;
       this.endPartial(page);
-      this.say(`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. send another message to resume with retained history; changing model alone does not retry. exited agents require restart.`, page);
+      this.note(`${bold("error")} ${err instanceof Error ? err.message : String(err)}; turn stopped. send another message to resume with retained history; changing model alone does not retry. exited agents require restart.`, page);
     } finally { this.endTurn(page, failed); }
   }
 
@@ -1311,7 +1310,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const list = this.deps.agents ?? listAgents;
     let agents = await list(page.project);
     if (!current()) return;
-    if (!agents.length) return this.say(dim("no agents yet"));
+    if (!agents.length) return this.note(dim("no agents yet"));
     const rowsAt = (now: number) => agents.map((a) => agentRow(a, now));
     this.beginMenu(operation);
     const menu: ActiveMenu = {
@@ -1351,8 +1350,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const { choices, errors } = await (this.deps.modelChoices ?? modelChoices)(dim, page.project);
     if (this.notes.delete(page)) this.draw();
     if (!this.modelPageCurrent(page, operation)) return;
-    for (const e of errors) this.say(dim(e));
-    if (!choices.length) return this.say(dim("no models available; sign in with /login first"));
+    for (const e of errors) this.note(dim(e));
+    if (!choices.length) return this.note(dim("no models available; sign in with /login first"));
     this.openMenu("switch model   (/model <id> for any other id)", choices, async (id) => this.switchModel(page, id, operation, identity), operation);
   }
 
@@ -1361,8 +1360,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live, calls: new Calls() }));
     const view = page.view!;
     if (page === this.page) this.reprint();
-    this.say(dim("esc or /back returns"), page);
-    await follow(paths.transcript(page.project, name), (_s, entry) => this.toView(page, view, view.calls.absorb(parts(entry) ?? [])), stopped, 300, () => { if (!view.live) this.toView(page, view, view.calls.interrupt()); });
+    this.note(dim("esc or /back returns"), page);
+    await follow(paths.transcript(page.project, name), (_s, entry) => this.toView(page, view, view.calls.absorb(parts(entry) ?? [])), stopped, 300, () => { if (!view.live) this.toView(page, view, view.calls.interrupt()); }, text => this.note(text, page));
     if (page.view === view) {
       page.view = null;
       if (page === this.page) this.reprint();
@@ -1380,7 +1379,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     }
   }
 
-  /** Start the project's orchestrator daemon when none is alive: what it did (a transient note), or why it could not (a line on the page). */
+  /** Start the project's orchestrator daemon when none is alive: what it did or why it could not, as temporary feedback. */
   private async ensureDaemon(project: string): Promise<{ line: string; failed: boolean } | undefined> {
     if (!this.deps.ensureDaemon) return;
     try { const line = await this.deps.ensureDaemon(project); return line ? { line, failed: false } : undefined; }
@@ -1394,7 +1393,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!outcome.failed) { this.daemonLines.delete(page); return this.note(outcome.line, page); }
     if (this.daemonLines.get(page) === outcome.line) return;
     this.daemonLines.set(page, outcome.line);
-    this.say(dim(outcome.line), page);
+    this.note(dim(outcome.line), page);
   }
 
   /** Start a turn on every idle page whose orchestrator has unread messages. */
@@ -1403,15 +1402,15 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   private async login(arg: string): Promise<void> {
-    if (this.loggingIn) return this.say(dim("already signing in; /quit cancels"));
+    if (this.loggingIn) return this.note(dim("already signing in; /quit cancels"));
     this.loggingIn = true;
-    this.say(dim("signing in… (/quit cancels)"));
+    this.note(dim("signing in… (/quit cancels)"));
     let ok = false;
     try {
-      const result = await (this.deps.login ?? login)(arg, { write: (s) => this.say(s.replace(/\n$/, "")), signal: this.loginAbort.signal });
+      const result = await (this.deps.login ?? login)(arg, { write: (s) => this.note(s.replace(/\n$/, "")), signal: this.loginAbort.signal });
       ok = !result.startsWith("usage:");
-      this.say(result);
-    } catch (err) { this.say(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
+      this.note(result);
+    } catch (err) { this.note(`login failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { this.loggingIn = false; }
     // Text typed meanwhile was held back: send it now, or drop it when sign-in failed.
     await this.drainLogin(ok);
@@ -1425,15 +1424,16 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   private async drainLoginPage(page: Page, texts: { text: string; submission?: string; inputId: string; attachments?: ImageRef[] }[], ok: boolean): Promise<void> {
-    if (!ok) this.say(dim(texts.some(m => m.attachments?.length) ? "sign-in failed; image prompts retained for /retry-images" : `sign-in failed; dropped ${texts.length} queued message(s)`), page);
+    const failure = texts.some(m => m.attachments?.length) ? "sign-in failed; image prompts retained for /retry-images" : `sign-in failed; dropped ${texts.length} queued message(s)`;
     while (texts.length) {
       const { text, submission, inputId, attachments } = texts.shift()!; // ownership transfers to send (Page.sent), or an explicit drop report
       if (ok && this.pages.includes(page)) await this.send(page, text, submission, inputId, attachments).catch(() => {});
       else {
         if (attachments?.length) page.sent.push({ text, submission, inputId, attachments, retry: true });
-        this.say(dim(`not sent after sign-in (${page.name}): ${text}${imageLabels(attachments)}${attachments?.length ? "; /retry-images" : ""}`), this.pages.includes(page) ? page : this.page);
+        this.note(dim(`not sent after sign-in (${page.name}): ${text}${imageLabels(attachments)}${attachments?.length ? "; /retry-images" : ""}`), this.pages.includes(page) ? page : this.page);
       }
     }
+    if (!ok) this.note(failure, this.pages.includes(page) ? page : this.page);
     if (!texts.length && this.queued.get(page) === texts) this.queued.delete(page);
   }
 
@@ -1445,12 +1445,12 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
    * login() itself). Table order is the order within a /help group.
    */
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
-    ["/runtime", { needsPage: true, run: async (_, page) => this.say(await runtimeText(page!.project)), help: { group: "advanced", label: "/runtime", description: "loaded builds, context observations and background commands" } }],
-    ["/usage", { needsPage: true, run: async (_, page) => this.say(await usageText(page!.project)), help: { group: "advanced", label: "/usage", description: "measured project tokens, cached input and request time" } }],
+    ["/runtime", { needsPage: true, run: async (_, page) => this.note(await runtimeText(page!.project)), help: { group: "advanced", label: "/runtime", description: "loaded builds, context observations and background commands" } }],
+    ["/usage", { needsPage: true, run: async (_, page) => this.note(await usageText(page!.project)), help: { group: "advanced", label: "/usage", description: "measured project tokens, cached input and request time" } }],
     ["/refresh", { run: () => this.refreshSessions(), help: { group: "conversation", label: "/refresh", description: "reload shared local state; active context waits until idle; never runs work" } }],
     ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "browse projects: enter opens, p pins, d deletes" } }],
     ["/retry-images", { run: (_, page) => this.retryImages(page), help: { group: "conversation", label: "/retry-images", description: "retry unconfirmed image prompts by original id; never replay consumed input" } }],
-    ["/keys", { run: () => { this.keyEcho = true; this.say(dim("press keys; esc ends")); }, help: { group: "advanced", label: "/keys", description: "diagnose keys/wheel; ctrl+g keeps draft; esc ends" } }],
+    ["/keys", { run: () => { this.keyEcho = true; this.note(dim("press keys; esc ends")); }, help: { group: "advanced", label: "/keys", description: "diagnose keys/wheel; ctrl+g keeps draft; esc ends" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "change display name only; project id stays fixed" } }],
     ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [directory]", description: "create a project page" } }],
     ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "close this page; keep its project and history" } }],
@@ -1459,22 +1459,22 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "browse and follow agent conversations" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, effortCommand) : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, fastCommand), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
-    ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear model context after confirmation; keep full history" } }],
+    ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear conversation, context and cache after confirmation" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
     ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [id]", description: "choose or set the project model" } }],
     ["/accounts", { run: () => this.accountsMenu(), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args) => this.login(args), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
-    ["/review-rounds", { args: true, run: (args, page) => this.flowCommand(page, args, reviewRounds, REVIEW_ROUNDS_USAGE), help: { group: "advanced", label: "/review-rounds [n]", description: "project review rounds before ci; 0 goes straight to ci" } }],
-    ["/dynamic-dispatch", { args: true, run: (args, page) => this.flowCommand(page, args, dynamicDispatch, DYNAMIC_DISPATCH_USAGE), help: { group: "settings", label: "/dynamic-dispatch [on|off]", description: "show or set the project's dynamic dispatch" } }],
+    ["/review-rounds", { args: true, run: (args, page) => this.flowCommand(page, args, reviewRounds), help: { group: "advanced", label: "/review-rounds [n]", description: "project review rounds before ci; 0 goes straight to ci" } }],
+    ["/dynamic-dispatch", { args: true, run: (args, page) => this.flowCommand(page, args, dynamicDispatch), help: { group: "settings", label: "/dynamic-dispatch [on|off]", description: "show or set the project's dynamic dispatch" } }],
     ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "inbox questions (ctrl+q); enter answers or picks skip; shift+tab tasks" } }],
-    ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.say(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "return from agent view (also esc)", viewOnly: true } }],
+    ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.note(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "return from agent view (also esc)", viewOnly: true } }],
     ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "commands and keyboard shortcuts; esc closes" } }],
   ]);
 
   /** Clear is a local modal, never a prompt or a scheduled model turn. */
   private async clearCommand(page?: Page): Promise<void> {
     this.cancelClear();
-    if (!page) return this.say(dim("open a project before clearing context"));
+    if (!page) return this.note(dim("open a project before clearing context"));
     let operation: ClearConfirmation | undefined;
     try {
       this.checkClearPage(page);
@@ -1487,15 +1487,15 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       this.taskInbox = null;
       this.projectList = null;
       this.menu = operation.menu = {
-        title: dim(`clear model context for ${page.name}? history/files/agents stay. ↑↓ enter · esc`),
-        items: ["cancel", "clear context"], index: 0,
+        title: dim(`clear conversation, context and cache for ${page.name}? saved transcript stays. ↑↓ enter · esc`),
+        items: ["cancel", "clear conversation"], index: 0,
         pick: index => { if (index === 1) return this.confirmClear(operation!); this.cancelClear(); this.draw(); },
       };
       this.draw();
     } catch (error) {
       if (!operation || this.clearCurrent(operation)) {
         this.cancelClear();
-        this.say(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), page);
+        this.note(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), page);
       }
     }
   }
@@ -1530,9 +1530,10 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       if (projectIdentity(page.project) !== operation.identity) throw new Error("project changed; reopen it before clearing context");
       // Backend rechecks inside its publication lock and blocks overlapping turns.
       await page.orch.clear!(operation.controller.signal);
-      this.say(dim("model context cleared. saved history, files and agents are unchanged."), page);
+      this.syncTranscript(page);
+      this.note("conversation, model context and cache cleared.", page);
     } catch (error) {
-      if (this.clearCurrent(operation)) this.say(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), page);
+      if (this.clearCurrent(operation)) this.note(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), page);
     } finally {
       if (this.clearing === operation) this.cancelClear();
       this.draw();
@@ -1558,12 +1559,12 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** /new [name] [directory]: the name must be a valid project id. */
   private newCommand(args: string): Promise<void> | void {
     const [, name, directory] = args.trim().match(/^(\S+)(?:\s+([\s\S]+))?$/) ?? [];
-    if (name && !validProjectName(name)) return this.say(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
+    if (name && !validProjectName(name)) return this.note(dim("project ids are letters, digits, . _ or -; /rename sets a free-form name"));
     return this.newPage(name, directory);
   }
 
   private async requestSetting(page: Page | undefined, args: string, command: typeof effortCommand): Promise<void> {
-    if (!page) return this.say(dim("open a project before changing its model settings"));
+    if (!page) return this.note(dim("open a project before changing its model settings"));
     this.note(await command(page.project, args), page);
     await this.refreshHeader(page);
   }
@@ -1571,19 +1572,19 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** /effort opens the picker for the project's current model; it saves for exactly that model. */
   private async effortMenu(page?: Page): Promise<void> {
     const operation = ++this.modelGeneration;
-    if (!page) return this.say(dim("open a project before changing its model settings"));
+    if (!page) return this.note(dim("open a project before changing its model settings"));
     const identity = projectIdentity(page.project);
     this.note("fetching effort levels…", page);
     let picker: Awaited<ReturnType<typeof effortChoices>>;
     try { picker = await (this.deps.effortChoices ?? effortChoices)(page.project); }
-    catch (err) { this.notes.delete(page); return this.say(dim(err instanceof Error ? err.message : String(err)), page); }
+    catch (err) { this.notes.delete(page); return this.note(dim(err instanceof Error ? err.message : String(err)), page); }
     if (this.notes.delete(page)) this.draw();
     if (!this.modelPageCurrent(page, operation)) return;
     if (picker.note) this.note(picker.note, page);
     this.openMenu(`effort for ${picker.model}   (/effort <level|default> sets directly)`, picker.choices, async (level) => {
       if (!this.modelPageCurrent(page, operation)) return;
       try { this.note(await setEffort(page.project, picker.model, level, identity), page); }
-      catch (err) { return this.say(dim(err instanceof Error ? err.message : String(err)), page); }
+      catch (err) { return this.note(dim(err instanceof Error ? err.message : String(err)), page); }
       await this.refreshHeader(page);
     }, operation);
   }
@@ -1591,7 +1592,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** /model opens the menu; /model <id> sets any id. */
   private async modelCommand(id: string, page?: Page): Promise<void> {
     const operation = ++this.modelGeneration;
-    if (!page) return this.say(dim("open a project before changing its model"));
+    if (!page) return this.note(dim("open a project before changing its model"));
     const identity = projectIdentity(page.project);
     if (!id) return this.modelMenu(page, operation, identity);
     await this.switchModel(page, id, operation, identity);
@@ -1611,7 +1612,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!this.modelPageCurrent(page, operation)) return;
     const agents = await this.modelAgents(page.project);
     if (!this.modelPageCurrent(page, operation)) return;
-    if (agents === null) return this.say(dim("could not determine running agents; try again"), page);
+    if (agents === null) return this.note(dim("could not determine running agents; try again"), page);
     const workers = agents.filter((name) => name.startsWith("worker-")).length;
     const reviewers = agents.filter((name) => name.startsWith("reviewer-")).length;
     const save = () => this.commitModel(page, id, operation, identity);
@@ -1631,7 +1632,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.note(result, page);
     await this.refreshHeader(page);
     // The daemon reads the saved model at its next request; its acknowledgement replaces the note when it arrives.
-    void page.orch.observeModel?.(id).then(ack => this.note(`orchestrator: ${ack}`, page), error => this.say(dim(`orchestrator did not acknowledge the model: ${error instanceof Error ? error.message : String(error)}`), page));
+    void page.orch.observeModel?.(id).then(ack => this.note(`orchestrator: ${ack}`, page), error => this.note(dim(`orchestrator did not acknowledge the model: ${error instanceof Error ? error.message : String(error)}`), page));
   }
 
   /**
@@ -1669,7 +1670,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       void this.refreshSessions();
       this.queued.set(page, texts);
       if (attachments.length) await saveImageInput(page.project, { text, submission, inputId, attachments });
-      return this.say(dim("queued; runs after sign-in"), page);
+      return this.note(dim("queued; runs after sign-in"), page);
     }
     await this.send(page, text, submission, inputId, attachments);
     this.runTurn(page);
@@ -1685,7 +1686,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (page?.view) {
       const view = page.view;
       await (this.deps.cancelAgent ?? cancelSession)(page.project, view.name);
-      this.toView(page, view, [dim("stopping selected agent. press ctrl+c again within 2 seconds to exit.")]);
+      this.note("stopping selected agent. press ctrl+c again within 2 seconds to exit.", page);
     } else {
       page?.orch.cancel?.();
       // A transient note; the daemon's acknowledgement replaces it (same row) and the header's fin stops once the turn ends.
@@ -1798,7 +1799,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const text = this.selection.text();
     if (!text) return;
     try { await (this.deps.clipboardText ?? writeClipboardText)(text); }
-    catch (error) { this.say(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
+    catch (error) { this.note(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
   }
 
   async onKey(k: Key): Promise<void> {
@@ -1938,9 +1939,9 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   /** /keys: show each key as parsed; Esc ends. */
   private echoKey(k: Key): void {
-    if (k.name !== "escape") return this.say(dim(JSON.stringify(k)));
+    if (k.name !== "escape") return this.note(dim(JSON.stringify(k)));
     this.keyEcho = false;
-    this.say(dim("done"));
+    this.note(dim("done"));
   }
 
   /** Keys while a menu is open: ↑ Ctrl+P k up, ↓ j down, Enter picks, Esc q cancels; the rest do nothing. */
@@ -1967,11 +1968,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const text = this.input.text.replace(/^\s*\n/, "").trimEnd();
     const attachments = this.images();
     if (attachments.length && text.trimStart().startsWith("/")) {
-      this.say(dim("draft images are not sent with slash commands. ctrl+y removes the last image; esc clears this draft."));
+      this.note(dim("draft images are not sent with slash commands. ctrl+y removes the last image; esc clears this draft."));
       return this.draw();
     }
-    if (attachments.length && Buffer.byteLength(text) > 60000) return this.say(dim("image prompt text exceeds 60,000 bytes; shorten it before sending. draft retained."));
-    if (attachments.length && this.page?.view) return this.say(dim("return to project chat before sending images."));
+    if (attachments.length && Buffer.byteLength(text) > 60000) return this.note(dim("image prompt text exceeds 60,000 bytes; shorten it before sending. draft retained."));
+    if (attachments.length && this.page?.view) return this.note(dim("return to project chat before sending images."));
     if (this.page) this.draftImages.delete(this.page);
     if (text !== "/help" && text !== "/inbox" && text !== "/questions" && text !== "/refresh") this.scrollTop = null;
     this.input = { text: "", cursor: 0 };
@@ -2026,7 +2027,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       const at = page.sent.indexOf(sent);
       if (attachments.length) sent.retry = true;
       else if (at !== -1) page.sent.splice(at, 1);
-      this.say(dim(`not sent: ${text}${imageLabels(attachments)}${attachments.length ? "; retained in this window for /retry-images" : ""}`), page);
+      this.note(dim(`not sent: ${text}${imageLabels(attachments)}${attachments.length ? "; retained in this window for /retry-images" : ""}`), page);
       throw err;
     } finally { this.draw(); }
   }
@@ -2041,11 +2042,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (page.inputHistory === before) return;
     page.savingHistory = page.savingHistory
       .then(async () => { page.historyLines = await appendHistory(page.project, text, page.historyLines); })
-      .catch((err) => this.say(dim(`could not save input history: ${err instanceof Error ? err.message : String(err)}`), page));
+      .catch((err) => this.note(dim(`could not save input history: ${err instanceof Error ? err.message : String(err)}`), page));
   }
 
   private recall(dir: -1 | 1): void {
-    if (this.images().length) return this.say(dim("remove draft images (ctrl+y) before recalling a different prompt from history."));
+    if (this.images().length) return this.note(dim("remove draft images (ctrl+y) before recalling a different prompt from history."));
     const page = this.page;
     if (this.historyPage !== page) { this.historyPage = page; this.historyAt = -1; }
     const history = page?.inputHistory ?? this.looseHistory;

@@ -254,7 +254,7 @@ describe("orchestrator questions", () => {
   const statusOf = async (project: string) => (await allQuestions(project)).map((q) => [q.text, q.status, q.answer ?? null]);
   /** An app on `project` with a fake orchestrator whose inbox callback is kept, no question delay unless given. */
   async function start(project: string, extra: Partial<ConstructorParameters<typeof App>[0]> = {}) {
-    const term = fakeTerm(70, 16);
+    const term = fakeTerm(70, 24); // Leave room for the temporary status row and question choices.
     const orchs = fakeOrchestrators();
     let onInbox: ((msgs: Message[]) => void) | undefined;
     const openOrchestrator = async (p: string, u: string | undefined, w: (t: string, plain?: boolean) => void, inbox?: (msgs: Message[]) => void) => { onInbox = inbox; return orchs.openOrchestrator(p, u, w); };
@@ -294,7 +294,7 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("❯ 1. postgres"));
     term.type("2");
     await until(() => live(term).includes("? Port?"));
-    expect([note(app).includes("Which db?"), app.frame().queued?.texts]).toEqual([false, ["? Which db? → sqlite"]]); // the note waits under the open panel, like the images row
+    expect([note(app).includes("Which db?"), app.frame().queued?.texts]).toEqual([true, ["? Which db? → sqlite"]]); // Status remains above input while the next question is open
     term.type("9");
     await until(() => live(term).includes("answer> 9"));
     expect(app.page!.questions.open).toHaveLength(1);
@@ -387,7 +387,7 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("❯ skip — remove from inbox"));
     term.press({ name: "enter" });
     await until(() => live(term).includes("? Host?") && live(term).includes("  skip — remove from inbox"));
-    expect(term.screen()).not.toContain("? Port? →"); // no line, and the note waits under the open panel
+    expect(note(app)).toContain("? Port? → skipped"); // Temporary feedback is visible above the answer input
     term.press({ name: "down" }); // a question without options: own answer, then skip
     term.press({ name: "enter" });
     await until(() => term.screen().includes("? Host? → skipped, removed from inbox"));
@@ -541,7 +541,8 @@ describe("orchestrator questions", () => {
     term.press({ name: "enter" });
     await until(() => term.screen().includes("already closed elsewhere; your answer was not sent"));
     expect(app.input.text).toBe("");
-    expect(app.page!.lines.map(raw).join(" ")).toContain("unsent answer: mine");
+    expect(app.page!.lines.map(raw).join(" ")).not.toContain("unsent answer: mine");
+    expect(note(app)).toContain("already closed elsewhere");
     await until(() => !app.questions.view());
     term.press({ name: "escape" });
     term.press({ name: "q", ctrl: true });
@@ -552,7 +553,7 @@ describe("orchestrator questions", () => {
     await answerQuestion("qa-race", second!.id, "81");
     await until(() => live(term).includes(PICK));
     term.press({ name: "enter" });
-    await until(() => term.screen().split("already closed elsewhere").length === 3);
+    await until(() => term.screen().split("already closed elsewhere").length === 2);
     inbox(await drain("qa-race", "orchestrator"));
     await settle(); expect(term.screen()).not.toContain('? Use "a": or (b)? → 81');
     // Answered here: the note, and nothing when read.
@@ -719,7 +720,8 @@ describe("orchestrator questions", () => {
     await until(() => term.screen().includes("Noted, sqlite."));
     await until(() => !app.page!.busy);
     const shown = app.page!.lines;
-    expect([shown.map(raw), note(app).includes(answeredNote('Use "a": or (b)?', "sqlite"))]).toEqual([["Noted, sqlite."], true]);
+    expect(shown.map(raw)).toEqual(["Noted, sqlite."]);
+    expect(note(app)).toContain("completed");
     await stop();
 
     const again = await start("qa-restore", { openOrchestrator: open, pollMs: 100_000 });
@@ -834,8 +836,10 @@ describe("command and key tables", () => {
     await until(() => !!app.page);
     term.type("/login codex\r");
     await until(() => app.loggingIn);
-    term.type("/login openai\r/keys\r");
-    await until(() => app.keyEcho && term.screen().includes("already signing in"));
+    term.type("/login openai\r");
+    await until(() => term.screen().includes("already signing in"));
+    term.type("/keys\r");
+    await until(() => app.keyEcho && term.screen().includes("press keys; esc ends"));
     term.press({ name: "escape" });
     term.type("hi\r");
     await until(() => term.screen().includes("queued; runs after sign-in"));

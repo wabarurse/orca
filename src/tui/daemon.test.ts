@@ -96,9 +96,9 @@ test("a keeper failure is reported on the page and retried on later polls; quitt
   let fail = true;
   const attempts: number[] = [];
   const { app, calls } = await setup({ ensureDaemon: async () => { attempts.push(Date.now()); if (fail) throw new Error("tmux not found"); return undefined; } });
-  await until(() => text(app).includes("orchestrator is not running: tmux not found"));
+  await until(() => note(app).includes("orchestrator is not running: tmux not found"));
   await until(() => attempts.length > 3);
-  expect(text(app).match(/tmux not found/g)).toHaveLength(1); // the same failure is not repeated every poll
+  expect(note(app).match(/tmux not found/g)).toHaveLength(1); // the same failure is not repeated every poll
   fail = false;
   const before = attempts.length;
   await until(() => attempts.length > before + 1);
@@ -117,7 +117,7 @@ test("without a keeper (tests, legacy), pages open and the model acknowledgement
   expect(text(app)).not.toContain("model claude-opus-5-5");
 });
 
-test("the daemon's cancel acknowledgement and compaction progress are transient notes (the ack replaces ctrl+c's hint); its failures stay on the page; a second ctrl+c still exits", async () => {
+test("the daemon's cancel acknowledgement and compaction progress are transient notes (the ack replaces ctrl+c's hint); failures use the same row; a second ctrl+c still exits", async () => {
   let notice!: (text: string) => void;
   let closed = false;
   const calls: string[] = [];
@@ -145,11 +145,15 @@ test("the daemon's cancel acknowledgement and compaction progress are transient 
   }
   await app.onKey({ name: "char", text: "x" }); // the next key clears the note
   expect(note(app)).not.toContain("compaction");
-  for (const line of ["compaction failed: summary exceeds output budget", "background compaction failed; original history kept: rolling summary timed out", "orchestrator: turn failed: boom; send another message to resume with retained history", "cancel not acknowledged: daemon gone"]) notice(line);
-  expect(note(app)).not.toContain("compaction"); // not notes
-  expect(text(app).split("\n")).toEqual(["compaction failed: summary exceeds output budget", "background compaction failed; original history kept: rolling summary timed out", "orchestrator: turn failed: boom; send another message to resume with retained history", "cancel not acknowledged: daemon gone"]);
+  for (const line of ["compaction failed: summary exceeds output budget", "background compaction failed; original history kept: rolling summary timed out", "orchestrator: turn failed: boom; send another message to resume with retained history", "cancel not acknowledged: daemon gone"]) {
+    notice(line);
+    expect(note(app)).toContain(line.slice(0, 70));
+    expect(text(app)).toBe("");
+  }
   await app.commands.get("/refresh")!.run("", page);
-  expect(text(app)).toContain("compaction failed"); // retained page notices survive a re-sync
+  expect(text(app)).toBe("");
+  await app.onKey({ name: "char", text: "y" });
+  expect(note(app)).not.toContain("daemon gone");
   expect(closed).toBe(false);
   now += 5000;
   await app.onKey({ name: "c", ctrl: true }); // long after the last press: the first press again

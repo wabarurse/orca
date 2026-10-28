@@ -23,7 +23,7 @@ help · commands & keys                                                  1–9/6
   /inbox         user inbox: tasks / questions; shift+tab switches sections,
                  esc/tab closes
   /agents        browse and follow agent conversations
-  /clear         clear model context after confirmation; keep full history
+  /clear         clear conversation, context and cache after confirmation
 ↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;
 
@@ -36,7 +36,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   /inbox         user inbox: tasks / questions; shift+tab switches sections,
                  esc/tab closes
   /agents        browse and follow agent conversations
-  /clear         clear model context after confirmation; keep full history
+  /clear         clear conversation, context and cache after confirmation
   /questions     inbox questions (ctrl+q); enter answers or picks skip;
                  shift+tab tasks
   /help          commands and keyboard shortcuts; esc closes
@@ -142,8 +142,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     browse and follow agent
     conversations
   /clear
-    clear model context after
-    confirmation; keep full history
+    clear conversation, context and
+    cache after confirmation
   /questions
     inbox questions (ctrl+q); enter
     answers or picks skip; shift+tab

@@ -1,35 +1,21 @@
-// Which of the daemon's status lines are informational. The orchestrator
-// daemon reports through one channel (client.ts `notice`): its acknowledgements
-// (a cancel, /compact), compaction progress and completion, and also failures,
-// warnings and the live reader's problems. The first kind is a transient note
-// above the composer (App.note: replaced by the next, cleared by the next key);
-// the rest are conversation lines the user has to read. The informational
-// lines are the strings core emits, imported, so a reword cannot leave one
-// behind; anything not listed stays in the conversation.
-import type { ModelRequestEntry } from "../../protocol";
-import { CANCEL_ACK, COMPACT_ACK } from "../../core/agent-loop/orc";
-import { COMPACTION_STATUS, ROLLING_STATUS } from "../../core/data/memory";
+import { modelRequestText, type Entry } from "../../protocol";
 
-/** The acknowledgements as the client words them (client.ts `cancel`, `compact`), and the fixed compaction lines. */
-const EXACT = new Set<string>([
-  `orchestrator: ${CANCEL_ACK.turn}`, `orchestrator: ${CANCEL_ACK.idle}`, `orchestrator: ${COMPACT_ACK}`,
-  COMPACTION_STATUS.started, COMPACTION_STATUS.done, ROLLING_STATUS.started, ROLLING_STATUS.unchanged,
-]);
-/** Background compaction's completion carries its token counts (notices.test.ts checks it against ROLLING_STATUS.done). */
-const DONE = /^compaction complete: ~\d+ → ~\d+ history tokens; recent messages unchanged\.$/;
-
-/** Routine request metadata remains in the transcript, not conversational history.
- * Errors/aborts are deliberately excluded: unknown outcomes must remain visible. */
-export function routineModelRequest(stage: ModelRequestEntry["stage"]): boolean {
-  return stage === "preparing" || stage === "provider-wait" || stage === "completed";
+/** Runtime metadata is status feedback, never a conversation message. */
+export function entryNotice(entry: Entry): string | undefined {
+  if (entry.type === "model-request") return modelRequestText(entry);
+  if (entry.type === "meta") return `${entry.role}${entry.branch ? ` on ${entry.branch}` : ""} (${entry.model || "default model"})`;
+  if (entry.type === "summary") return "earlier conversation summarized";
+  if (entry.type === "tool-recovery") return "interrupted tool calls completed as errors; outcome unknown—reconcile before retrying";
 }
 
-// Match the complete diagnostic format, not retry/failure messages or arbitrary
-// lines containing a stage name. The live bridge transports this as plain status.
-const REQUEST_PROGRESS = /^\[model request\] \S+\/\S+ (preparing|provider-wait|completed); started \S+; updated \S+$/;
-
-/** Whether a daemon status line is informational: shown as the transient note, not a conversation line. */
-export function transientNotice(text: string): boolean {
-  const line = text.trim();
-  return EXACT.has(line) || DONE.test(line) || REQUEST_PROGRESS.test(line);
+/** Restored metadata shares the live status row, scoped to the latest clear. */
+export function transcriptStatus(entries: Entry[]) {
+  const boundary = entries.findLastIndex(entry => entry.type === "context-boundary");
+  const at = entries.findLastIndex(entry => entryNotice(entry) !== undefined);
+  const entry = at > boundary ? entries[at] : undefined;
+  return { boundary: entries[boundary]?.uuid,
+    notice: entry ? { id: entry.uuid, text: entryNotice(entry)! } : undefined };
 }
+
+/** Compatibility for agents without structured tool hooks: tool output is conversation content. */
+export const plainToolLine = (text: string) => /^(?:⏺|▸|⎿) /.test(Bun.stripANSI(text).trimStart());

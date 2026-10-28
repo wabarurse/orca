@@ -1,5 +1,5 @@
 import { writeProjectState } from "../config";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -173,7 +173,7 @@ test("failed refresh cannot fail an already published prompt, and a failed send 
   await app.refreshSessions();
   expect(await pending("a", "orchestrator")).toBe(true);
   expect(page.sent.map(m => m.inputId)).toEqual([id]);
-  expect(raw(app)).toContain("refresh read failed");
+  expect(note(app)).toContain("refresh read failed");
   page.orch.say = async () => { throw Error("write failed"); };
   await expect(submit("same")).rejects.toThrow("write failed");
   expect(page.sent.map(m => m.inputId)).toEqual([id]);
@@ -341,7 +341,7 @@ test("review rounds are per project: they start at config.toml's value, a comman
   }
   for (const arg of ["-1", "101", "1.5", "bad", "0100"]) {
     await submit(`/review-rounds ${arg}`);
-    expect(raw(app)).toContain("usage: /review-rounds"); // refusals stay in the conversation
+    expect(note(app)).toContain("usage: /review-rounds"); // refusals use the status row
     expect((await effectiveFlow("b")).maxReviewRounds).toBe(7);
     expect(header(screen)).toContain("review rounds: 7");
   }
@@ -372,17 +372,18 @@ test("manual and passive refresh observe external saved review limits: project o
 test("a malformed per-project settings record shows unknown and reports the project; a repaired record recovers", async () => {
   const { app, screen, submit } = await setup();
   await until(() => header(screen).includes("review rounds: 1 · dispatch: off"));
+  const notices = spyOn(app, "note");
   writeProjectState("a", "flow", { maxReviewRounds: 101 });
   await submit("/refresh");
   await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
   const failure = "project settings refresh failed: Error: project a flow settings";
-  const failures = () => app.page!.lines.filter(line => JSON.stringify(line).includes(failure)).length;
+  const failures = () => notices.mock.calls.filter(([line]) => line.includes(failure)).length;
   expect(failures()).toBe(1); // one read, one line for both values
   await submit("/refresh"); await submit("/refresh"); await app.refreshSessions();
   expect(failures()).toBe(1); // the same persisting error is not repeated every poll
   writeProjectState("a", "flow", { dynamicDispatch: "on" });
   await submit("/refresh");
-  await until(() => raw(app).includes("invalid dynamic dispatch"));
+  await until(() => notices.mock.calls.some(([line]) => line.includes("invalid dynamic dispatch")));
   expect(failures()).toBe(2); // a different error is reported
   await expect(submit("/review-rounds 2")).rejects.toThrow("flow settings"); // never silently repaired by a save
   writeProjectState("a", "flow", { maxReviewRounds: 2, dynamicDispatch: true });
@@ -413,7 +414,7 @@ test("unavailable or invalid review snapshots show unknown rather than an invent
   let state: number | Error = new Error("Fixture Read FAILED");
   const { app, screen } = await setup({ flowSettings: async () => { if (state instanceof Error) throw state; return { maxReviewRounds: state, dynamicDispatch: false }; } });
   await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
-  expect(raw(app)).toContain("project settings refresh failed: Error: Fixture Read FAILED");
+  expect(note(app)).toContain("project settings refresh failed: Error: Fixture Read FAILED");
   for (const value of [9, NaN, 101, -1, 1.5, 0]) {
     state = value;
     await app.refreshSessions();
@@ -423,7 +424,7 @@ test("unavailable or invalid review snapshots show unknown rather than an invent
   state = new Error("Later Read FAILED");
   await app.refreshSessions();
   await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
-  expect(raw(app)).toContain("project settings refresh failed: Error: Later Read FAILED");
+  expect(note(app)).toContain("project settings refresh failed: Error: Later Read FAILED");
   state = 1; // cleanup's refresh can succeed
 });
 
@@ -500,7 +501,7 @@ test("dynamic dispatch is per project: starts off, a command changes only the cu
   await submit("/dynamic-dispatch");
   expect(note(app)).toContain("dynamic dispatch: on");
   await submit("/dynamic-dispatch maybe");
-  expect(raw(app)).toContain("usage: /dynamic-dispatch [on|off]");
+  expect(note(app)).toContain("usage: /dynamic-dispatch [on|off]");
   expect((await effectiveFlow("b")).dynamicDispatch).toBe(true);
   expect(header(screen)).toContain("dispatch: on");
 });
@@ -523,7 +524,7 @@ test("unavailable dispatch snapshots show unknown, read once per page per refres
   let reads = 0;
   const { app, screen } = await setup({ flowSettings: async () => { reads++; if (state instanceof Error) throw state; return { maxReviewRounds: 1, dynamicDispatch: state }; } });
   await until(() => header(screen).includes("dispatch: ?"));
-  expect(raw(app)).toContain("project settings refresh failed: Error: Dispatch Read FAILED");
+  expect(note(app)).toContain("project settings refresh failed: Error: Dispatch Read FAILED");
   state = true;
   await app.refreshSessions();
   await until(() => header(screen).includes("dispatch: on"));

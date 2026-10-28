@@ -65,10 +65,10 @@ sending an oversized or text-only request. A failed/stale checkpoint leaves
 original context intact. No image-count reduction, automatic image eviction or
 unbounded context is promised; see [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md).
 
-## Clear model context (not saved history)
+## Clear conversation and cache
 
 `/clear` takes no arguments and opens a **local, Cancel-default** confirmation
-in the existing bottom menu area. Enter alone cancels. Select **Clear context**
+in the existing bottom menu area. Enter alone cancels. Select **Clear conversation**
 with an arrow, then Enter to confirm. Escape or Ctrl+C cancels without changing
 chat/answer drafts or saved history. Typing, pastes and question shortcuts cannot
 leak through the modal. Switching/closing pages, opening another menu, or resizing
@@ -76,9 +76,11 @@ invalidates it; even a tiny/hidden modal still owns its keys. `/clear` is delibe
 excluded from input recall. In a worker/reviewer view it refuses: `/back` first.
 With no project open it explains rather than creating one.
 
-This clears only the active orchestrator's **model conversation context**. It does
-not erase disk/UI/exit history, project identity, files/worktrees, model/settings,
-accounts, questions/task records, worker/reviewer sessions, or any inbox. Normal
+This clears the active orchestrator's model context, conversation display, rendered
+row cache and rebuildable project `cache/`. Refresh, reopening, other attached
+clients and exit replay show only conversation entries after the latest clear.
+Saved transcripts, persistent memory, project identity, files/worktrees, model/settings,
+accounts, questions/task records, worker/reviewer sessions and inboxes are retained. Normal
 system instructions and tool definitions are still supplied on the next request.
 Clearing does not call a provider, schedule a turn/compaction, retry a failed turn,
 restart a session, or resume a cancelled orchestrator.
@@ -95,7 +97,8 @@ checked, and publication uses the shared project-state lock.
 The transcript appends an explicit `context-boundary` record with its parent still
 pointing to the previous head. This is neither an empty summary nor a new root.
 After reopen, `chain()` and `branch()` start **after** the latest boundary;
-`history()` still walks through it to all original entries. The marker itself is
+`history()` still walks through it to all original entries; the TUI filters at the
+latest boundary before rendering. The marker itself is
 not model content or a visible chat message. Later worker compaction only pins the first
 original task **after** that boundary, including across repeated compactions;
 checkpoint retrieval warnings explicitly exclude earlier epochs. Clearing is not
@@ -103,7 +106,9 @@ secure deletion: old context remains readable in saved history/files, and agents
 may independently send reports referring to earlier work.
 
 The same staged/fsync/rename protocol below protects the boundary. Pre-publication
-failure or cancellation leaves the prior bytes/head/context usable. After rename,
+failure or cancellation leaves the prior bytes/head/context usable. Rebuildable
+cache may already have been evicted; a cache cleanup failure prevents the boundary
+from being committed. After rename,
 the clear is committed even if a late cancellation arrives; directory durability
 failure is a warning, not a rollback. The session blocks overlapping turns and
 compaction while publishing. Local `say()` during publication cancels a not-yet-

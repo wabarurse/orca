@@ -1,5 +1,4 @@
-import { routineModelRequest } from "./notices";
-import { modelRequestText } from "../../protocol";
+import { afterContextBoundary } from "../../core/data/transcripts";
 import { imageLabels } from "../../core/data/images";
 import type { Message } from "../../protocol";
 // Rebuild a page's history from its orchestrator's transcript, like
@@ -13,7 +12,7 @@ import type { Message } from "../../protocol";
 // turn. Full tool results and thinking were never shown, so they stay hidden.
 // The caller chooses the entries: full Transcript.history() for the UI, or a
 // model branch (which can lead with a summary). The live UI uses Infinity so
-// every original message remains scrollable; finite budgets are explicit previews.
+// every original message after the latest clear remains scrollable; finite budgets are previews.
 //
 // Known differences from the live page:
 // - A user message typed mid-turn showed live where it was typed; restored, it
@@ -34,12 +33,9 @@ import type { Message } from "../../protocol";
 //   answer until the orchestrator read it. Questions still open are not in the
 //   transcript: the Ctrl+Q queue shows them from questions/, where answered
 //   and skipped files are kept too. Silent skips only update questions/.
-// - Errors, command output (/help, /agents, …), page notices ("queued; runs
-//   after sign-in") and anything else the app itself said are not in the
-//   transcript and are not restored. Informational status notes ("model set
-//   to …", a rename, "orchestrator was not running; restarted", an answered or
-//   skipped question) are not even page lines: App shows them as one transient
-//   row above the composer (`App.note`).
+// - Runtime diagnostics and command feedback use one temporary row above the
+//   composer (`App.note`). They never become conversation lines.
+
 
 import { parseFormatted } from "../../protocol";
 import type { Entry, MessageEntry } from "../../protocol";
@@ -50,9 +46,6 @@ import { bold, dim, wrap } from "../components";
 
 /** Default budget for bounded previews; the live page explicitly restores all rows. */
 export const MAX_RESTORED_ROWS = 200;
-
-/** The note leading a history that a summary replaced. */
-export const SUMMARIZED = dim("… earlier conversation summarized");
 
 /** The note leading a capped history. */
 export const earlier = (n: number) => dim(`… ${n} earlier ${n === 1 ? "message" : "messages"}`);
@@ -89,7 +82,7 @@ export function reportLine(from: string, text: string): Line {
 export const replyLine = (from: string, text: string): Line => ({ md: text, label: bold(from) });
 
 /** One message as the page shows it, laid out only when needed. */
-interface Item { lines: () => Line[]; summary?: boolean }
+interface Item { lines: () => Line[] }
 
 const now = (lines: Line[]): Item => ({ lines: () => lines });
 
@@ -186,6 +179,7 @@ function assistantEntry(content: MessageEntry["message"]["content"], sent: Set<s
  * left out (the turn is still running them) instead of showing interrupted.
  */
 export function restoreItems(chain: Entry[], omit?: Set<string>): Item[] {
+  chain = afterContextBoundary(chain);
   const firstReplies = chain.findIndex((e) => e.type === "replies");
   const legacy = firstReplies === -1 ? chain.length : firstReplies;
   const sent = sentIds(chain.slice(0, legacy));
@@ -205,8 +199,6 @@ function release(state: Fold): Fold {
 
 /** One entry of the branch into the items. `sent` is empty past the first `replies` entry: from there they hold the replies. */
 function step(state: Fold, e: Entry, sent: Set<string>): void {
-  if (e.type === "model-request" && !routineModelRequest(e.stage)) state.items.push(now([dim(modelRequestText(e))]));
-  if (e.type === "summary") state.items.push({ lines: () => [SUMMARIZED], summary: true });
   // The run that recorded these also made the held message calls: the entry has them, so they are not shown twice.
   if (e.type === "replies") {
     state.held = [];
@@ -237,13 +229,13 @@ export function restore(chain: Entry[], cols: number, maxRows = MAX_RESTORED_ROW
   let from = items.length;
   while (from > 0) {
     const lines = items[from - 1]!.lines();
-    const omitted = items.slice(0, from - 1).filter((it) => !it.summary).length;
+    const omitted = from - 1;
     const combined = [...(from > 1 ? [earlier(omitted)] : []), ...lines, ...shown.flat()];
     const n = historyRows(combined, cols).reduce((n, row) => n + wrap(row, cols).length, 0);
     if (shown.length && n > maxRows) break;
     shown.unshift(lines);
     from--;
   }
-  const dropped = items.slice(0, from).filter((it) => !it.summary).length;
+  const dropped = from;
   return [...(from > 0 ? [earlier(dropped)] : []), ...shown.flat()];
 }

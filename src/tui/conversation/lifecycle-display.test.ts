@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { modelRequestText, type Entry, type ModelRequestEntry } from "../../protocol/transcript";
-import { transientNotice } from "./notices";
+import { entryNotice } from "./notices";
 import { restore } from "./restore";
 import { parts, render } from "./view";
 import { Calls, collapseCalls, groupStart } from "./tools";
@@ -15,7 +15,7 @@ const batch = (id: string): Entry[] => [
   { ...base, type: "message", message: { role: "assistant", content: [{ type: "tool_use", id, name: "bash", input: { command: `echo ${id}` } }] } },
   { ...base, type: "message", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } },
 ];
-const progress = [lifecycle("preparing"), lifecycle("provider-wait"), lifecycle("completed")];
+const progress = [lifecycle("preparing"), lifecycle("provider-wait"), lifecycle("completed"), lifecycle("error"), lifecycle("aborted")];
 const text = (lines: Line[]) => Bun.stripANSI(historyRows(collapseCalls(lines), 120).join("\n"));
 
 test("live status and transcript replay leave consecutive finished calls collapsed and expandable", () => {
@@ -25,7 +25,7 @@ test("live status and transcript replay leave consecutive finished calls collaps
   for (const entry of entries) {
     if (entry.type === "model-request") {
       // App's live notice routing: progress updates the transient note only.
-      expect(transientNotice(`${modelRequestText(entry)}\n`)).toBe(true);
+      expect(entryNotice(entry)).toBe(modelRequestText(entry));
       expect(parts(entry)).toBeNull();
       expect(render(entry)).toBeNull();
     } else live.push(...followed.absorb(parts(entry) ?? []));
@@ -45,21 +45,12 @@ test("live status and transcript replay leave consecutive finished calls collaps
   expect(text(live)).toBe("▸ 2 tool calls · bash ×2");
 });
 
-test("assistant text, request errors and aborted outcomes remain group boundaries in both history paths", () => {
+test("assistant text remains a group boundary in both history paths", () => {
   const assistant: Entry = { ...base, type: "message", message: { role: "assistant", content: "Let me explain." } };
-  for (const boundary of [assistant, lifecycle("error"), lifecycle("aborted")]) {
-    const entries = [...batch("one"), boundary, ...batch("two")];
-    const calls = new Calls();
-    const followed = entries.flatMap(e => calls.absorb(parts(e) ?? []));
-    for (const lines of [followed, restore(entries, 120, Infinity)]) {
-      expect(text(lines)).not.toContain("2 tool calls");
-      expect(text(lines)).toContain(boundary.type === "model-request" ? modelRequestText(boundary) : "Let me explain.");
-    }
-    if (boundary.type === "model-request") expect(transientNotice(modelRequestText(boundary))).toBe(false);
+  const entries = [...batch("one"), assistant, ...batch("two")];
+  const calls = new Calls();
+  for (const lines of [entries.flatMap(e => calls.absorb(parts(e) ?? [])), restore(entries, 120, Infinity)]) {
+    expect(text(lines)).not.toContain("2 tool calls");
+    expect(text(lines)).toContain("Let me explain.");
   }
-  for (const notice of [
-    "model request failed (timeout); retrying: attempt 2, nextRetryAt tomorrow",
-    "background compaction failed; original history kept: unknown task in memory",
-    "[model request] openai/m completed; started x; updated y additional failure",
-  ]) expect(transientNotice(notice)).toBe(false);
 });

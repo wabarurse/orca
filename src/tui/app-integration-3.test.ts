@@ -141,7 +141,7 @@ describe("clipboard image drafts and immutable queue ownership (isolated fixture
       await f.app.onKey({ name: "char", text: "retained" }); await f.app.onKey(v);
       fail = true; await f.app.onKey(v);
       expect(f.app.input.text).toBe("retained"); expect(f.app.frame().inputArea!.lines.join("\n")).toContain("image 1");
-      expect(f.app.page!.lines.map(raw).join("\n")).toContain("fixture clipboard unavailable");
+      expect(f.app.frame().inputArea!.lines.join("\n")).toContain("fixture clipboard unavailable");
       fail = false; for (let n = 0; n < 4; n++) await f.app.onKey(v);
       expect(reads).toBe(5); expect(f.app.frame().inputArea!.lines.join("\n")).toContain("image 4");
       f.app.openMenu("fixture", [{ value: "x", label: "x" }], () => {});
@@ -286,7 +286,7 @@ test('automatic copy errors stay visible, highlight supports explicit retry; mot
     expect(copied).toEqual([]);
     await down(); await up(); await up();
     expect(copied).toEqual(['COPY-ME']);
-    expect(app.page!.lines.map(raw).join('\n')).toContain('copy failed: fixture desktop unavailable');
+    expect(app.frame().inputArea!.lines.join('\n')).toContain('copy failed: fixture desktop unavailable');
     await app.onKey({ name: 'o', ctrl: true });
     expect(copied).toEqual(['COPY-ME', 'COPY-ME']);
   } finally { app.quit(); await running; }

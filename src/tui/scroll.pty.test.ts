@@ -76,11 +76,12 @@ test("owned PTY: full saved history scrolls between pinned bars without mode cha
     // Automatic copy uses the same SSH-guarded backend as explicit re-copy.
     child.terminal!.write("\x0f"); // explicit Ctrl+O, not Cmd-C
     await Bun.sleep(40);
-    child.terminal!.write("\x1b"); // clear highlight, preserve draft
-    await Bun.sleep(40);
-    child.terminal!.write("\x1b[<65;10;8M".repeat(120));
     await until(() => screen().some(row => row.includes("copy failed:")));
     expect(screen().join("\n")).toContain("unavailable over ssh");
+    child.terminal!.write("\x1b"); // clear highlight and temporary feedback, preserve draft
+    await Bun.sleep(40);
+    child.terminal!.write("\x1b[<65;10;8M".repeat(120));
+    await until(() => !screen().some(row => row.includes("copy failed:")));
     expect(screen().slice(-5)).toEqual(footer);
     // Clear only this synthetic fixture's draft, then exit through the real command.
     child.terminal!.write("\x1b");
