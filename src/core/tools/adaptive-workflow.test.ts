@@ -16,6 +16,7 @@ import { beginRun } from "../tmux/exits";
 import type { Runner, StartOptions } from "../tmux/runner";
 import { editableTool } from "../definitions";
 import { bash } from "./bash/bash";
+import { message } from "./message";
 import type { ToolContext } from "./registry";
 
 let home: string, prior: string | undefined, cwd: string, ctx: ToolContext;
@@ -43,6 +44,66 @@ test("ordinary delegation and repeated feedback keep one branch without tasks, r
   expect(t.all?.().filter(e => e.type === "message")).toHaveLength(3);
   expect(r.starts.map(s => s.branch)).toEqual(["work-import", "work-import", "work-import"]);
   expect(await allTasks("p")).toEqual([]);
+});
+
+// Scripted providers exercise isolation/delivery, not the model's delegation judgment.
+test("delegated detail stays with its worker and corrections return to the same owner", async () => {
+  const r = runner(), spawn = makeSpawn(r.value);
+  const brief = "Determine why the importer fails; fix and validate within scope; report concise evidence.";
+  const correction = "Preserve the output folder; handle blank input too.";
+  const coordinator = fakeProvider([
+    [toolUse("delegate", "spawn", { prompt: brief, branch: "import" })], [text("Started")],
+    [text("The importer is fixed; one external check remains unavailable.")],
+    [toolUse("feedback", "spawn", { prompt: correction, branch: "import" })], [text("Updating")],
+  ]);
+  const orch = await createOrchestrator({ project: "p", provider: coordinator, tools: { spawn, message }, write() {} });
+  try {
+    await orch.say("Fix the importer. Coordinator-only conversation detail.");
+    await orch.turn();
+    const transcript = open(paths.transcript("p", "worker-import"));
+    expect(JSON.stringify(await transcript.chain())).not.toContain("Coordinator-only conversation detail");
+    const detail = "Intermediate worker evidence 🐋\n".repeat(300);
+    const summary = "abc123: importer fixed; fixture check passed. External service check unavailable; user decision needed before deployment. Evidence follows.";
+    const worker = fakeProvider([
+      [toolUse("inspect", "inspect", {})],
+      [toolUse("report", "message", { to: "orchestrator", text: detail, summary })], [text("Reported")],
+    ]);
+    const agent = createAgent({ model: "test", provider: worker, transcript, ctx: { ...ctx, role: "worker", branch: "import" }, compaction: { enabled: false }, tools: {
+      inspect: { spec: { name: "inspect", input_schema: { type: "object" } }, run: async () => detail }, message,
+    }, write() {} });
+    await agent.run();
+    expect(JSON.stringify(worker.calls[1]!.messages)).toContain("Intermediate worker evidence");
+    await orch.turn();
+    const retained = JSON.stringify(coordinator.calls[2]!.messages);
+    expect(retained).toContain(summary);
+    expect(retained).toContain("Full evidence:");
+    expect(retained).not.toContain("Intermediate worker evidence");
+
+    await orch.say(correction);
+    await orch.turn();
+    await transcript.refresh?.();
+    expect(JSON.stringify(await transcript.chain())).toContain(correction);
+    expect(JSON.stringify(await transcript.chain())).toContain("Intermediate worker evidence");
+    expect(r.starts.map(s => [s.role, s.branch])).toEqual([["worker", "import"], ["worker", "import"]]);
+    expect(await allTasks("p")).toEqual([]);
+  } finally { orch.dispose?.(); }
+});
+
+test("a bounded direct command completes without worker, task, review or CI stages", async () => {
+  await mkdir(paths.repo("p"), { recursive: true });
+  const r = runner();
+  const provider = fakeProvider([[toolUse("one-off", "bash", { command: "printf bounded-result" })], [text("Done")]]);
+  const orch = await createOrchestrator({ project: "p", provider, tools: { bash, spawn: makeSpawn(r.value) }, write() {} });
+  try {
+    await orch.say("Run this one command");
+    await orch.turn();
+    const results = provider.calls[1]!.messages.flatMap(m => typeof m.content === "string" ? [] : m.content)
+      .filter(b => b.type === "tool_result" && b.tool_use_id === "one-off");
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ content: "bounded-result" });
+    expect(r.starts).toEqual([]);
+    expect(await allTasks("p")).toEqual([]);
+  } finally { orch.dispose?.(); }
 });
 
 test("human feedback resumes an idle untracked worker and informs the coordinator without impersonating a user", async () => {

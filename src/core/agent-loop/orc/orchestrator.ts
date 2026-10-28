@@ -48,7 +48,7 @@ export interface OrchestratorDeps {
   loadProvider?: Parameters<typeof projectModelResolver>[1];
   tools?: Record<string, Tool>;
   transcript?: Transcript;
-  /** Separate summary connection; production uses the configured OpenAI account. */
+  /** Summary overrides; production reuses the foreground's resolved provider/account. */
   rolling?: RollingOptions;
   /** Streamed model text; `plain` marks tool lines, which are not markdown. */
   write?: (text: string, plain?: boolean) => void;

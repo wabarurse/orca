@@ -7,6 +7,7 @@ import { promptDefinitions } from "./prompts";
 import { editableTool } from "./tools";
 import { toolsFor, type Tool } from "../tools/registry";
 import { rolePrompt } from "../prompt/shared";
+import { message } from "../tools/message";
 const root = mkdtempSync(join(tmpdir(), "orca-definitions-"));
 const old = process.env.ORCA_HOME;
 let home: string;
@@ -96,4 +97,25 @@ test('edited task schemas retain annotations while upgrading publication actions
   expect(result.spec.description).toContain('My task guidance');
   expect(JSON.stringify(result.spec.input_schema)).toContain('prepare_publication');
   expect(JSON.stringify(result.spec.input_schema)).toContain('commands');
+});
+
+test("edited legacy message definitions gain the report bound without losing annotations", () => {
+  editableTool(message);
+  const file = join(home, "tools/message.json");
+  const edited = JSON.parse(readFileSync(file, "utf8"));
+  delete edited.input_schema.properties.summary.minLength;
+  delete edited.input_schema.properties.summary.maxLength;
+  edited.description = "Use concise project terminology.";
+  edited.input_schema.properties.summary.description = "Include a reproducible example.";
+  const source = JSON.stringify(edited);
+  writeFileSync(file, source);
+
+  const loaded = editableTool(message);
+  expect(loaded.spec.description).toContain("Use concise project terminology.");
+  expect(loaded.spec.input_schema.properties).toMatchObject({ summary: { minLength: 1, maxLength: 2000 } });
+  expect(JSON.stringify(loaded.spec.input_schema)).toContain("Include a reproducible example.");
+  expect(readFileSync(file, "utf8")).toBe(source);
+  edited.input_schema.properties.summary.maxLength = 9000;
+  writeFileSync(file, JSON.stringify(edited));
+  expect(() => editableTool(message)).toThrow("immutable tool schema");
 });
