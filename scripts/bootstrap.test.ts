@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -50,6 +50,7 @@ test("piped installer installs from any directory and refuses an existing app", 
   await writeFile(join(f.home, ".bashrc"), "# user settings\n", { mode: 0o644 });
   const result = await f.run();
   expect(result.output).toContain("orca installed"); expect(result.code).toBe(0);
+  expect((await stat(join(f.home, ".orca/.runtime"))).mode & 0o777).toBe(0o700);
   const executable = join(f.home, ".local/bin/orca");
   const receipt = JSON.parse(await readFile(join(f.home, ".local/bin/.orca-install.json"), "utf8"));
   const bytes = await Bun.file(executable).bytes();

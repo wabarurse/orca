@@ -50,7 +50,7 @@ for (const path of [join(home, '.orca', 'app'), join(home, '.parallels'), join(h
 
 JS
 
-  mkdir -p "$HOME/.orca/.runtime"
+  mkdir -p -m 700 "$HOME/.orca/.runtime"
   echo 'orca install: downloading the app…'
   GIT_TERMINAL_PROMPT=0 git clone --branch main --single-branch https://github.com/wabarurse/parallels.git "$HOME/.orca/.runtime/app"
   cd "$HOME/.orca/.runtime/app"
