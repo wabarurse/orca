@@ -30,14 +30,14 @@ test("login uses subscriptions despite API keys and rejects invalid input", asyn
   let output = "";
   const io = { write: (s: string) => { output += s; }, signal: new AbortController().signal };
   try {
-    expect(await login("anthropic personal --from-claude-code", io)).toContain("now using anthropic:personal");
+    expect(await login("anthropic personal --from-claude-code", io)).toContain("signed in to anthropic:personal");
     expect(output).not.toContain("API billing");
-    const config = Bun.TOML.parse(await Bun.file(join(home, ".runtime", "config.toml")).text());
-    expect(config).toMatchObject({ account: "personal" });
+    // Sign-in is global credentials only: it selects nothing and writes no account setting.
+    expect(await Bun.file(join(home, ".runtime", "config.toml")).exists()).toBe(false);
     const tokens = await Bun.file(join(home, ".runtime", "auth", "anthropic", "personal.json")).json();
     expect(tokens.accessToken).toBe("test-access");
     const list = await accounts();
-    expect(list.find((a) => a.id === "anthropic:personal")).toMatchObject({ ok: true, active: true, source: "claude code (claude subscription)" });
+    expect(list.find((a) => a.id === "anthropic:personal")).toMatchObject({ ok: true, active: false, source: "claude code (claude subscription)" });
     expect(await login("codex --api-key", io)).toBe("usage: /login openai [profile] [--from-codex]");
     expect(output).not.toContain("OpenAI API key");
     await expect(login("anthropic ../outside --from-claude-code", io)).rejects.toThrow("profile must");

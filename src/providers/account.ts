@@ -1,4 +1,4 @@
-// The Provider for the active account of a provider name: Claude Code tokens
+// The Provider for a provider name and profile (the project's selected account): Claude Code tokens
 // behind the Anthropic SDK, or Codex tokens behind the OpenAI client.
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -11,9 +11,10 @@ import { openai } from "./openai";
 import type { Provider } from "./provider";
 import { metered, recordRetry } from "./usage";
 
-export async function provider(name: ProviderName, options: { promptCache?: boolean } = {}): Promise<Provider> {
+/** `options.profile` is the asking project's selected profile (see core/data/projects/project-account.ts); there is no global active account. */
+export async function provider(name: ProviderName, options: { promptCache?: boolean; profile?: string } = {}): Promise<Provider> {
   const config = await loadConfig();
-  const profile = activeProfile(name === "anthropic" ? config.account : config.openaiAccount);
+  const profile = activeProfile(options.profile ?? "");
   if (name === "anthropic") {
     // The SDK otherwise lets this legacy environment hook replace OAuth auth.
     if (process.env.ANTHROPIC_CUSTOM_HEADERS?.split("\n").some((line) => /^\s*authorization\s*:/i.test(line))) {

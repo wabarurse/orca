@@ -1,7 +1,8 @@
 # Project model, effort, and fast mode
 
-`/model [id]` selects this project's model. The picker and explicit id share a
-single path. Live worker/reviewer **tmux windows**, not transcript filenames,
+`/model` selects this project's model from a picker of the models offered by
+the project's selected account (one provider; `/accounts` switches provider).
+There is no id argument. Live worker/reviewer **tmux windows**, not transcript filenames,
 require confirmation; failed/unknown liveness refuses the change. A known
 missing tmux session is empty and may switch immediately. No project means an
 explanation, never an implicit new project or global-default write.
