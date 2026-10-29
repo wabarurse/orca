@@ -29,7 +29,7 @@ import { rolePrompt } from "../../prompt";
 import { effectiveFlow } from "../../data/projects";
 import type { Provider } from "../../../providers";
 import { registry } from "../../tools";
-import { toolsFor, type Tool } from "../../tools";
+import { toolsFor, type Tool, type ToolResult } from "../../tools";
 import { open, type Transcript } from "../../data/transcripts";
 import type { Entry } from "../../../protocol";
 import { RollingCompactor, type RollingOptions } from "../../data/memory";
@@ -46,7 +46,7 @@ export interface OrchestratorDeps {
   put?: typeof put;
   provider?: Provider;
   loadProvider?: Parameters<typeof projectModelResolver>[1];
-  tools?: Record<string, Tool>;
+  tools?: Record<string, Tool<ToolResult>>;
   transcript?: Transcript;
   /** Summary overrides; production reuses the foreground's resolved provider/account. */
   rolling?: RollingOptions;
@@ -302,7 +302,7 @@ async function replies(project: string, transcript: Transcript): Promise<Message
     messages: inbox.map(({ from, text }) => ({ from, text })) }));
 }
 
-function orchestratorTools(overrides?: Record<string, Tool>): Record<string, Tool> {
+function orchestratorTools(overrides?: Record<string, Tool<ToolResult>>): Record<string, Tool<ToolResult>> {
   if (overrides) return overrides;
   return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, editableTool(name === "task" ? orchestratorTask : registry[name]!, name === "task" ? "task-orchestrator" : name)]] : []));
 }

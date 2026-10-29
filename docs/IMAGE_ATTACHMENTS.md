@@ -118,8 +118,9 @@ and validated into actual **Anthropic base64 PNG image blocks**. Claude receives
 these blocks, interleaved with the prompt and attachment-ID labels. Codex/OpenAI
 Responses receives equivalent ordered **`input_image` data URLs**, alongside
 `input_text` in the same user item. No filename-only substitute is sent. Unresolved
-references, unsupported/nested tool-result image inputs and assistant image inputs
-fail explicitly rather than disappearing in a text serializer.
+references, invalid image bytes and assistant image inputs fail explicitly rather
+than disappearing in a text serializer; images nested in a tool result (see
+"Images read by a tool") are serialized for both providers.
 
 Orca attempts image requests with every selectable model, including unknown IDs
 and aliases, without a model-name allowlist. This does **not** guarantee provider
@@ -145,11 +146,39 @@ Forwarded worker/reviewer inbox/initial context uses the same actual pixel
 materialization and both provider serializers. Worktrees/tasks/branch semantics
 and tool call/result pairing are unchanged. No implicit sharing of all past images.
 
+## Images read by a tool
+
+`read` on an image file returns the image itself, so an agent can look at a
+screenshot it just took. The format comes from the file's magic bytes (PNG,
+JPEG, GIF, WebP), never its name. The file must stay within the workspace and
+evidence directories, at most **4 MiB** and **4096 × 4096**; PNG gets the full
+structural validation, JPEG/GIF/WebP signature and header dimensions. Larger
+images fail with a downscale command to run first (`sips -Z 1568 in.png --out
+in-small.png` on macOS, `magick … -resize 1568x1568` elsewhere).
+
+The bytes are saved to the project image store exactly as clipboard images are
+(`images/<id>.<ext>`), and the tool result is a text block (path, revision,
+type, width, height, bytes, `attachment_id`) followed by a scoped image block,
+both inside the `tool_result`. Transcripts never hold the bytes. Before a
+request they are materialized like prompt images: Claude receives the base64
+image block nested in its `tool_result`, which the Messages API admits; Codex /
+OpenAI Responses receives a `function_call_output` whose `output` is an
+`input_text` + `input_image` (data URL) list, the form Codex's own image tool
+uses. There is no model-name vision gate: a model or account that rejects image
+input fails through the normal provider error path, without a text-only retry.
+The attachment ID can be forwarded with `spawn`/`message` like a prompt image.
+
+Prompt images always count against the 16 MiB request cap and are never
+dropped. Tool-read images fill the remaining space newest first; an older one
+that no longer fits is replaced, in that request only, by a note to read the
+file again. Summaries and rolling memory do not retain tool-read images: their
+marker says the file can be read again.
+
 ## Context budgeting and integration contract
 
 Each image contributes a **6,000-token operational allowance**, rather than
 counting base64 as prose. This is not a provider tokenizer or guaranteed maximum.
-Materialized context has a **16 MiB encoded-PNG-byte total cap**; base64 transport
+Materialized context has a **16 MiB encoded-image-byte total cap**; base64 transport
 is larger. Multiple prompts and repeated forwarding of the same image count
 separately. Large accumulated histories can therefore block another request.
 
@@ -176,7 +205,7 @@ The global SQLite `~/.orca/memory.sqlite` (rows keyed by project and agent) keep
 orchestrator can use `task search_history` (including an attachment UUID query)
 and paged `read_history` to recover prompt/ID associations **within the current
 clear scope**. Search/read results are historical **text**, not new images or new
-permissions. Pixels remain directly inspectable in retained context, so no extra
+permissions. Pixels remain directly inspectable in retained context, so no history
 image-read tool or implicit cross-task image sharing is needed. Explicit
 spawn/message forwarding still requires a real original image in the sender's
 current context epoch, not merely a retrieved or guessed UUID. After `/clear`,

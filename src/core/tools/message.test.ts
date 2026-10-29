@@ -48,7 +48,7 @@ test.each(["worker", "reviewer"] as const)("%s reports enforce the boundary with
   expect(reports[0]).not.toContain(full);
   const path = reports[0]!.split("\nFull evidence: ")[1]!;
   expect(await readFile(path, "utf8")).toBe(full);
-  const evidence = JSON.parse(await read.run({ path, lines: 1 }, { ...ctx, role: "orchestrator" }));
+  const evidence = JSON.parse(await read.run({ path, lines: 1 }, { ...ctx, role: "orchestrator" }) as string);
   expect(evidence.content).toContain("Failure on revision abc123: résumé 🐋");
 });
 

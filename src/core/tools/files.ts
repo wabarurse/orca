@@ -1,10 +1,12 @@
 import { repositoryInstructions } from "../data/knowledge";
 import { createHash } from "node:crypto";
-import { chmod, link, lstat, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { paths } from "../../config";
+import { MAX_IMAGE_BYTES, sniffImage, validateImage, type ImageMime } from "../../providers";
 import { withStorageLock } from "../data";
-import type { Tool, ToolContext } from "./registry";
+import { imageBlock, saveImage } from "../data/images";
+import type { Tool, ToolContext, ToolResult } from "./registry";
 
 const MAX_FILE = 2 * 1024 * 1024;
 const revision = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
@@ -31,20 +33,73 @@ async function filePath(input: unknown, ctx: ToolContext, writing = false): Prom
   return canonical;
 }
 
+/** The first bytes, enough to recognise a file's format. */
+async function head(path: string): Promise<Buffer> {
+  const file = await open(path, "r");
+  try { const bytes = Buffer.alloc(16); const { bytesRead } = await file.read(bytes, 0, 16, 0); return bytes.subarray(0, bytesRead); }
+  finally { await file.close(); }
+}
+const q = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
+/** Binary formats an agent meets, by magic bytes, with a command that inspects each.
+ * They only name a file already found binary (NUL bytes or not UTF-8), never decide it. */
+const BINARIES: { name: string; test: (b: Buffer) => boolean; hint: (path: string) => string }[] = [
+  { name: "pdf", test: b => b.toString("latin1", 0, 5) === "%PDF-", hint: p => `pdftotext ${q(p)} - | head -200` },
+  { name: "zip archive", test: b => b.toString("latin1", 0, 4) === "PK\x03\x04", hint: p => `unzip -l ${q(p)}` },
+  { name: "gzip archive", test: b => b[0] === 0x1f && b[1] === 0x8b, hint: p => `gzip -dc ${q(p)} | head -200` },
+  { name: "sqlite database", test: b => b.toString("latin1", 0, 15) === "SQLite format 3", hint: p => `sqlite3 -readonly ${q(p)} .schema` },
+  { name: "tiff/bmp/heic image", test: b => ["II*\0", "MM\0*"].includes(b.toString("latin1", 0, 4)) || b.toString("latin1", 0, 2) === "BM" || /^ftyp(heic|heix|mif1)/.test(b.toString("latin1", 4, 12)),
+    hint: p => `sips -s format png ${q(p)} --out /tmp/converted.png (macOS), then read the png` },
+  { name: "executable", test: b => b.toString("latin1", 0, 4) === "\x7fELF" || [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe].includes(b.length >= 4 ? b.readUInt32BE(0) : 0), hint: p => `file ${q(p)}; strings ${q(p)} | head -100` },
+];
+function binary(path: string, start: Buffer): Error {
+  const image = sniffImage(start), known = BINARIES.find(b => b.test(start));
+  if (image) return new Error(`binary file (${image.slice(6)} image); read returns it as an image, but it cannot be changed as text`);
+  return new Error(known ? `binary file (${known.name}); use a command such as \`${known.hint(path)}\``
+    : `binary file (unknown type); inspect it with a bounded command such as \`file ${q(path)}; xxd ${q(path)} | head -40\``);
+}
 async function contents(path: string): Promise<Buffer> {
   const s = await lstat(path);
-  if (!s.isFile() || s.size > MAX_FILE) throw new Error("file is not a regular text file under 2 MiB; use a bounded command");
+  if (!s.isFile()) throw new Error("path is not a regular file");
+  if (s.size > MAX_FILE) throw new Error(`file is ${mib(s.size)}, over the 2 MiB read limit; read a range with a bounded command such as \`sed -n '1,200p' ${q(path)}\``);
   const data = await readFile(path);
-  if (data.length > MAX_FILE || data.includes(0)) throw new Error("binary or oversized file; use an appropriate command");
-  try { new TextDecoder("utf-8", { fatal: true }).decode(data); } catch { throw new Error("file is not UTF-8; use an encoding-aware command"); }
+  if (data.length > MAX_FILE) throw new Error("file grew past the 2 MiB read limit; read a range with a bounded command");
+  const start = data.subarray(0, 16);
+  if (sniffImage(start) || data.includes(0)) throw binary(path, start);
+  try { new TextDecoder("utf-8", { fatal: true }).decode(data); }
+  catch {
+    if (BINARIES.some(b => b.test(start))) throw binary(path, start);
+    throw new Error(`file is not UTF-8; use an encoding-aware command such as \`iconv -f latin1 -t utf-8 ${q(path)} | head -200\``);
+  }
   return data;
+}
+const mib = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+
+/** An image file returned as an image: stored in the project image store (as clipboard
+ * images are) and delivered as an image block inside the tool_result. */
+async function readImage(path: string, mime: ImageMime, ctx: ToolContext): Promise<ToolResult> {
+  const format = mime.slice(6), small = path.slice(0, path.length - extname(path).length) + `-small${extname(path) || ".png"}`;
+  const downscale = `downscale a copy and read that, e.g. \`sips -Z 1568 ${q(path)} --out ${q(small)}\` (macOS) or \`magick ${q(path)} -resize 1568x1568 ${q(small)}\``;
+  const s = await lstat(path);
+  if (s.size > MAX_IMAGE_BYTES) throw new Error(`${format} image is ${mib(s.size)}, over the 4 MiB image limit; ${downscale}`);
+  const data = await readFile(path);
+  if (data.length > MAX_IMAGE_BYTES) throw new Error(`${format} image grew past the 4 MiB image limit; ${downscale}`);
+  let size: { width: number; height: number };
+  try { size = validateImage(data, mime); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(/dimensions/.test(message) ? `${format} ${message.replace(/\.$/, "")}; ${downscale}` : `${format} image cannot be sent: ${message}`);
+  }
+  const ref = await saveImage(ctx.project, data, mime);
+  const meta = { path, instructions: await repositoryInstructions(ctx.cwd, dirname(path), true), revision: revision(data), type: mime, ...size, bytes: data.length, attachment_id: ref.id };
+  return [{ type: "text", text: JSON.stringify(meta) }, imageBlock(ref)];
 }
 
 async function mutate(path: string, expected: unknown, transform: (old: string) => string, create: boolean) {
   const lock = join(paths.runtime, "file-locks", revision(path));
   return withStorageLock(lock, async () => {
     const old = await contents(path).catch(error => { if (create && error.code === "ENOENT") return undefined; throw error; });
-    if (create && old) throw new Error("file exists; read it and provide expected_revision to replace it");
+    // The current revision makes the retry direct; replacing still names exactly that content (compare-and-swap).
+    if (create && old) throw new Error(`file exists (revision ${revision(old)}). To replace all of it, retry write with expected_revision "${revision(old)}"; to change part of it, use edit. Read it first if you have not seen its current content.`);
     if (!create && (typeof expected !== "string" || !old || revision(old) !== expected)) throw new Error("file changed or expected_revision is missing; read the current file before editing");
     const next = transform(old?.toString("utf8") ?? "");
     if (Buffer.byteLength(next) > MAX_FILE) throw new Error("write exceeds 2 MiB");
@@ -62,12 +117,15 @@ async function mutate(path: string, expected: unknown, transform: (old: string) 
   });
 }
 
-export const read: Tool = {
+export const read: Tool<ToolResult> = {
   parallel: () => true,
-  spec: { name: "read", description: "Read a UTF-8 file in your workspace or saved evidence. Returns numbered lines, a revision for write/edit, and a continuation line. Output is bounded; do not assume the preview is the whole file.",
+  spec: { name: "read", description: "Read a UTF-8 file in your workspace or saved evidence. Returns numbered lines, a revision for write/edit, and a continuation line. Output is bounded; do not assume the preview is the whole file. Images (png, jpeg, gif, webp; up to 4 MiB and 4096×4096) are returned as images you can see, with their size and an attachment_id; line options do not apply.",
     input_schema: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer", minimum: 1 }, lines: { type: "integer", minimum: 1, maximum: 500 } }, required: ["path"] } },
   async run(input, ctx) {
-    const path = await filePath(input.path, ctx), data = await contents(path);
+    const path = await filePath(input.path, ctx);
+    const image = sniffImage(await head(path));
+    if (image) return readImage(path, image, ctx);
+    const data = await contents(path);
     const start = input.start_line ?? 1, count = input.lines ?? 150;
     if (!Number.isInteger(start) || Number(start) < 1 || !Number.isInteger(count) || Number(count) < 1 || Number(count) > 500) throw new Error("invalid line range");
     const lines = data.toString("utf8").split("\n"), selected: string[] = [];
@@ -83,7 +141,7 @@ export const read: Tool = {
 };
 
 export const write: Tool = {
-  spec: { name: "write", description: "Create a UTF-8 file, or replace it with expected_revision from read. The parent directory must exist. Existing content is never overwritten without a matching revision.",
+  spec: { name: "write", description: "Create a UTF-8 file, or replace it with expected_revision from read. The parent directory must exist. Existing content is never overwritten without a matching revision; writing to an existing path without one fails and reports its current revision, to retry with or to use edit instead.",
     input_schema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" }, expected_revision: { type: "string" } }, required: ["path", "content"] } },
   async run(input, ctx) {
     if (typeof input.content !== "string") throw new Error("content must be a string");

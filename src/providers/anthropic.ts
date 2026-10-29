@@ -139,7 +139,11 @@ export function claudeMessages(messages: MessageParam[]): MessageParam[] {
       if (message.role !== "user") throw new Error("assistant image input is unsupported.");
       validatedBase64(block);
     }
-    if (block.type === "tool_result" && Array.isArray(block.content) && block.content.some(b => b.type === "image")) throw new Error("nested tool images are unsupported; forward structured attachments instead.");
+    // A tool's image result (`read` of an image) goes inside its tool_result, as the Messages API admits.
+    if (block.type === "tool_result" && Array.isArray(block.content)) for (const item of block.content) if (item.type === "image") {
+      if (message.role !== "user") throw new Error("assistant image input is unsupported.");
+      validatedBase64(item);
+    }
   }
   return messages.map((message) => ({
     ...message,

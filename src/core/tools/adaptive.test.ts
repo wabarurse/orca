@@ -11,6 +11,8 @@ import { cliCommand } from '../tmux';
 import { facts, remember, selectedKnowledge, recordCorrection, workingContext } from '../data/knowledge';
 import { message } from './message';
 import type { ToolContext } from './registry';
+import { materializeImages } from '../data/images';
+import { png } from '../../test/image-fixture';
 
 let home: string, cwd: string, ctx: ToolContext, previous: string | undefined;
 beforeEach(async () => {
@@ -36,14 +38,43 @@ function record(command: string, timeoutMs = 2000) {
 }
 test('read/edit/write preserve newer content, reject ambiguous edits and create collisions', async () => {
   await write.run({ path: 'sample.txt', content: 'one\ntwo\n' }, ctx);
-  const initial = JSON.parse(await read.run({ path: 'sample.txt', lines: 1 }, ctx));
+  const initial = JSON.parse(await read.run({ path: 'sample.txt', lines: 1 }, ctx) as string);
   expect(initial.next_line).toBe(2);
   await edit.run({ path: 'sample.txt', expected_revision: initial.revision, old_text: 'two', new_text: 'three' }, ctx);
   await expect(edit.run({ path: 'sample.txt', expected_revision: initial.revision, old_text: 'one', new_text: 'lost' }, ctx)).rejects.toThrow('changed');
   await expect(write.run({ path: 'sample.txt', content: 'lost' }, ctx)).rejects.toThrow('exists');
   expect(await readFile(join(cwd, 'sample.txt'), 'utf8')).toBe('one\nthree\n');
-  const now = JSON.parse(await read.run({ path: 'sample.txt' }, ctx));
+  const now = JSON.parse(await read.run({ path: 'sample.txt' }, ctx) as string);
   await expect(edit.run({ path: 'sample.txt', expected_revision: now.revision, old_text: '\n', new_text: '' }, ctx)).rejects.toThrow('exactly one');
+});
+test('write on an existing file names its current revision; retrying with it replaces, a stale one never does', async () => {
+  await write.run({ path: 'exists.txt', content: 'first\n' }, ctx);
+  const current = JSON.parse(await read.run({ path: 'exists.txt' }, ctx) as string).revision;
+  const refusal = await write.run({ path: 'exists.txt', content: 'second\n' }, ctx).then(() => '', (e: Error) => e.message);
+  expect(refusal).toContain(`expected_revision "${current}"`);
+  expect(refusal).toContain('edit');
+  expect(await readFile(join(cwd, 'exists.txt'), 'utf8')).toBe('first\n');
+  await write.run({ path: 'exists.txt', content: 'second\n', expected_revision: current }, ctx);
+  expect(await readFile(join(cwd, 'exists.txt'), 'utf8')).toBe('second\n');
+  await expect(write.run({ path: 'exists.txt', content: 'third\n', expected_revision: current }, ctx)).rejects.toThrow('changed');
+  expect(await readFile(join(cwd, 'exists.txt'), 'utf8')).toBe('second\n');
+});
+test('read returns an image file as a scoped image block, sniffed by bytes not name, and names other binaries', async () => {
+  await writeFile(join(cwd, 'shot.dat'), png(3, 2));
+  const result = await read.run({ path: 'shot.dat' }, ctx);
+  if (!Array.isArray(result)) throw new Error('expected image content');
+  const [meta, image] = result;
+  if (meta?.type !== 'text' || image?.type !== 'image' || image.source.type !== 'url') throw new Error('expected text then a scoped image');
+  expect(JSON.parse(meta.text)).toMatchObject({ type: 'image/png', width: 3, height: 2, bytes: png(3, 2).length });
+  expect(image.source.url).toContain(JSON.parse(meta.text).attachment_id);
+  expect(JSON.stringify(result)).not.toContain(png(3, 2).toString('base64')); // the transcript holds a reference, never bytes
+  const [delivered] = await materializeImages('test', [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call', content: result }] }]);
+  expect(JSON.stringify(delivered)).toContain(png(3, 2).toString('base64'));
+  await writeFile(join(cwd, 'huge.png'), png(4097, 1));
+  await expect(read.run({ path: 'huge.png' }, ctx)).rejects.toThrow('sips -Z 1568');
+  await writeFile(join(cwd, 'paper.pdf'), Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.from([0, 0xff, 0xfe])]));
+  await expect(read.run({ path: 'paper.pdf' }, ctx)).rejects.toThrow('binary file (pdf); use a command such as `pdftotext');
+  await expect(write.run({ path: 'shot.dat', content: 'x', expected_revision: JSON.parse(meta.text).revision }, ctx)).rejects.toThrow('png image');
 });
 test('file tools refuse symlinks, outside writes and reviewer mutations', async () => {
   await writeFile(join(home, 'outside'), 'secret'); await symlink(join(home, 'outside'), join(cwd, 'link'));

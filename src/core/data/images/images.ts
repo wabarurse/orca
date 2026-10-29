@@ -5,14 +5,18 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ImageBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { paths } from "../../../config";
 import { legacy } from "../../../config";
-import { MAX_IMAGE_BYTES, validateImage } from "../../../providers";
+import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../providers";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import type { ImageInput, ImageRef } from "../../../protocol";
 
 export const MAX_IMAGES = 4;
+/** Encoded image bytes one model request may carry. */
+const MAX_CONTEXT_IMAGE_BYTES = 16 * 1024 * 1024;
+/** Stored file extension per format; PNG first (clipboard images and every older store). */
+const EXTENSIONS: Record<ImageMime, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 function scope(project: string): string {
@@ -47,7 +51,7 @@ async function atomic(path: string, bytes: Uint8Array): Promise<void> {
     try { await directory.sync(); } finally { await directory.close(); }
   } finally { await unlink(temp).catch(() => {}); }
 }
-export async function saveImage(project: string, bytes: Uint8Array, mime?: string): Promise<ImageRef> {
+export async function saveImage(project: string, bytes: Uint8Array, mime = "image/png"): Promise<ImageRef> {
   if (bytes.length > MAX_IMAGE_BYTES) throw new Error("image must be at most 4 mib.");
   bytes = Buffer.from(bytes); // Caller mutations cannot change bytes after validation/queueing.
   validateImage(bytes, mime);
@@ -55,19 +59,33 @@ export async function saveImage(project: string, bytes: Uint8Array, mime?: strin
   return withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
     await safeDir(imageDir(project), true);
-    await atomic(join(imageDir(project), `${ref.id}.png`), bytes);
+    await atomic(join(imageDir(project), `${ref.id}.${EXTENSIONS[mime as ImageMime]}`), bytes);
     return ref;
   });
 }
+/** The stored bytes and their format. The extension is a lookup aid; the format is
+ * the bytes' own (sniffed) and must agree with it. */
+async function readStored(project: string, id: string): Promise<{ bytes: Buffer; mime: ImageMime }> {
+  for (const [mime, extension] of Object.entries(EXTENSIONS) as [ImageMime, string][]) {
+    let bytes: Buffer;
+    try { bytes = await readSafe(join(imageDir(project), `${id}.${extension}`), MAX_IMAGE_BYTES); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    return { bytes, mime };
+  }
+  throw Object.assign(new Error(`image ${id} is missing from the project image store.`), { code: "ENOENT" });
+}
 export async function loadImage(project: string, ref: ImageRef): Promise<Buffer> {
+  return (await loadTypedImage(project, ref)).bytes;
+}
+async function loadTypedImage(project: string, ref: ImageRef): Promise<{ bytes: Buffer; mime: ImageMime }> {
   assertRef(ref);
   if (ref.scope !== scope(project)) throw new Error("image belongs to another/deleted project.");
   await safeDir(imageDir(project));
-  const bytes = await readSafe(join(imageDir(project), `${ref.id}.png`), MAX_IMAGE_BYTES);
+  const { bytes, mime } = await readStored(project, ref.id);
   if (hash(bytes) !== ref.sha256) throw new Error(`image ${ref.id} changed or is corrupt.`);
-  validateImage(bytes);
+  validateImage(bytes, mime);
   if (ref.scope !== scope(project)) throw new Error("project changed while reading image.");
-  return bytes;
+  return { bytes, mime };
 }
 export async function validateRefs(project: string, refs: ImageRef[] | undefined): Promise<void> {
   if (refs === undefined) return;
@@ -93,25 +111,47 @@ export function imageContent(text: string, refs: ImageRef[] = []): MessageParam[
     { type: "text" as const, text: `[Image ${i + 1}; attachment_id=${ref.id}]` }, imageBlock(ref),
   ])];
 }
+/** Scoped references become base64 blocks just before a request. Prompt images are
+ * never dropped: over the cap the request is refused. Images a tool read (`read`;
+ * nested in a tool_result, their file can be read again) fill what remains newest
+ * first; older ones give way to a text note instead of blocking the agent. */
 export async function materializeImages(project: string, messages: MessageParam[]): Promise<MessageParam[]> {
+  const loaded = new Map<ImageBlockParam, { bytes: Buffer; mime: ImageMime }>();
+  const load = async (block: ImageBlockParam): Promise<number> => {
+    const ref = blockRef(block);
+    if (!ref) throw new Error("unscoped image in saved context; image delivery refused.");
+    const image = await loadTypedImage(project, ref);
+    loaded.set(block, image);
+    return image.bytes.length;
+  };
   let total = 0;
-  const out: MessageParam[] = [];
+  const toolImages: ImageBlockParam[] = [];
   for (const message of messages) {
-    if (typeof message.content === "string") { out.push(message); continue; }
-    const content: Exclude<MessageParam["content"], string> = [];
+    if (typeof message.content === "string") continue;
     for (const block of message.content) {
-      if (block.type !== "image") { content.push(block); continue; }
+      if (block.type === "tool_result" && message.role === "user" && Array.isArray(block.content)) {
+        for (const item of block.content) if (item.type === "image") toolImages.push(item);
+      }
+      if (block.type !== "image") continue;
       if (message.role !== "user") throw new Error("assistant image input is unsupported.");
-      const ref = blockRef(block);
-      if (!ref) throw new Error("unscoped image in saved context; image delivery refused.");
-      const bytes = await loadImage(project, ref);
-      total += bytes.length;
-      if (total > 16 * 1024 * 1024) throw new Error("image context exceeds 16 mib of encoded image bytes. no image was discarded. use an explicit /clear for a new task; original history is preserved.");
-      content.push({ type: "image", source: { type: "base64", media_type: "image/png", data: bytes.toString("base64") } });
+      total += await load(block);
+      if (total > MAX_CONTEXT_IMAGE_BYTES) throw new Error("image context exceeds 16 mib of encoded image bytes. no image was discarded. use an explicit /clear for a new task; original history is preserved.");
     }
-    out.push({ ...message, content });
   }
-  return out;
+  for (const block of toolImages.reverse()) {
+    const size = await load(block);
+    if (total + size > MAX_CONTEXT_IMAGE_BYTES) { loaded.delete(block); break; }
+    total += size;
+  }
+  const deliver = (block: ImageBlockParam): ImageBlockParam | TextBlockParam => {
+    const image = loaded.get(block);
+    if (image) return { type: "image", source: { type: "base64", media_type: image.mime, data: image.bytes.toString("base64") } };
+    return { type: "text", text: `[Image omitted from this request: this context's images exceed 16 MiB (attachment_id=${blockRef(block)?.id ?? "unknown"}). Read the file again to inspect it.]` };
+  };
+  return messages.map(message => typeof message.content === "string" ? message : { ...message, content: message.content.map(block =>
+    block.type === "image" && message.role === "user" ? deliver(block)
+    : block.type === "tool_result" && message.role === "user" && Array.isArray(block.content) ? { ...block, content: block.content.map(item => item.type === "image" ? deliver(item) : item) }
+    : block) });
 }
 // Match inbox FIFO policy: publication order within this process, arbitrary tie
 // order between independent processes. Retries keep the first stored timestamp.
