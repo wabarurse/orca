@@ -252,11 +252,11 @@ test("real orchestrator ignores old 32k/48k thresholds and respects failed-summa
 
 test("a failed summary at the hard limit never calls the foreground model", async () => {
   const { deps, foreground, transcript, controller } = await fixture();
-  const rolling = controller(fakeProvider([[text("invalid memory")]]));
+  const rolling = controller(fakeProvider([[text("invalid memory")], [text("still invalid")]]));
   deps.compaction = { contextLimit: 20000, outputReserve: 2000 };
   deps.compactBoundary = (d, m) => rolling.boundary(d, m);
   const before = await Bun.file(transcript.path).text();
-  await expect(createAgent(deps).run()).rejects.toThrow("context blocked");
+  await expect(createAgent(deps).run()).rejects.toThrow("context blocked: compaction failed: summary validation failed after 2 attempts: summary is not valid JSON");
   expect(foreground.calls).toHaveLength(0); expect(await Bun.file(transcript.path).text()).toBe(before);
 });
 
@@ -272,7 +272,8 @@ for (const mode of ["malformed", "incomplete", "timeout", "credentials"] as cons
   const rolling = controller(provider, { timeoutMs: 10 }), before = await Bun.file(transcript.path).text();
   await rolling.boundary(deps, true);
   await rolling.boundary(deps);
-  expect(calls).toBe(1); expect(await Bun.file(transcript.path).text()).toBe(before); expect(rolling.ready()).toBe(false);
+  expect(calls).toBe(mode === "malformed" || mode === "incomplete" ? 2 : 1);
+  expect(await Bun.file(transcript.path).text()).toBe(before); expect(rolling.ready()).toBe(false);
 });
 
 test("archive failure prevents replacement but a fitting foreground request can continue", async () => {
@@ -455,6 +456,7 @@ test("a finished summary that was not published is reused for its unchanged pref
   const part = (call: CompleteRequest) => JSON.parse(call.messages[0]!.content as string) as { previousMemory: RollingMemory; sourcePart: string };
   await rolling.boundary(current, true);
   expect(calls).toHaveLength(1); expect(notices.join("")).toContain(ROLLING_STATUS.unchanged);
+  expect((rolling as unknown as { failures: number }).failures).toBe(0); // a decline does not extend the failure deferral
   await rolling.boundary(current, true);
   expect(calls).toHaveLength(1); // same prefix: the finished summary is reused, no model call
   expect(small.branch().some(e => e.type === "summary")).toBe(false);
@@ -485,7 +487,7 @@ test("structured summaries accept only {summary, pending} within bounds", () => 
   expect(() => parseMemory(JSON.stringify(memory({ summary: ["x".repeat(1100)] })))).toThrow("invalid memory");
   expect(() => parseMemory(JSON.stringify(memory({ summary: Array(33).fill("x") })))).toThrow("invalid memory");
   expect(() => parseMemory(JSON.stringify(memory({ pending: Array(17).fill("x") })))).toThrow("invalid memory");
-  expect(() => parseMemory("x".repeat(12000))).toThrow("budget");
+  expect(() => parseMemory("x".repeat(70000))).toThrow("budget");
 });
 
 test("legacy {user, project, pending, tasks} memory loads without throwing and seeds the next summary; task notes are dropped", async () => {
@@ -632,4 +634,21 @@ test("summary source preserves speaker and block provenance rather than interpre
   expect(calls[0]!.system).toContain("Assistant plans, refusals and inferred restrictions are not user decisions");
   expect(calls[0]!.system).toContain("Tie next steps to the latest user request visible in this prefix");
   expect(calls[0]!.system).toContain("preserve unrelated explicit limits");
+});
+
+
+test("hard limits bypass the failure deferral after cooldown, while ordinary turns defer", async () => {
+  const { deps, transcript, controller } = await fixture(), worker = gated(), rolling = controller(worker.provider);
+  deps.compaction = { contextLimit: 60000 };
+  const internals = rolling as unknown as { retryAfter: number; deferUntil: number; failures: number };
+  internals.failures = 6; internals.deferUntil = Date.now() + 30 * 60000; internals.retryAfter = 0;
+  await rolling.boundary(deps);
+  expect(worker.calls).toHaveLength(0);
+  const estimated = budget(deps, await transcript.chain());
+  deps.compaction.measured = { model: deps.model, input: 50000, estimated };
+  const waiting = rolling.boundary(deps); await worker.entered;
+  worker.release(); await waiting;
+  expect(worker.calls).toHaveLength(1);
+  expect(transcript.branch()[0]?.type).toBe("summary");
+  expect(internals.failures).toBe(0); expect(internals.deferUntil).toBe(0);
 });

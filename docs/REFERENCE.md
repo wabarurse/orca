@@ -972,7 +972,8 @@ while the worker runs, survives unchanged. The TUI can publish a ready summary
 while idle without making another foreground model request. Summary requests have
 no tools, use low effort when supported, and split large sources into bounded UTF-8 parts. The
 worker has a two-minute deadline per summary request (not per summary) and an automatic retry
-cooldown of 30 seconds, doubling per consecutive failure up to 30 minutes; an unpublished
+cooldown of 30 seconds, plus a failure deferral doubling up to 30 minutes for background work;
+a hard context limit bypasses the deferral and manual `/compact` bypasses both. An unpublished
 finished summary is reused for its unchanged prefix instead of being summarized again.
 Closing the page or exiting the TUI cancels its worker. Shared cancellation,
 `/clear`, or another session's checkpoint invalidates stale summary work. Refresh
