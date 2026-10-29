@@ -14,9 +14,10 @@ export async function forwardImages(input: unknown, ctx: ToolContext): Promise<I
   const allowed = new Map<string, ImageRef>();
   for (const entry of afterContextBoundary(transcript.history!())) {
     if (entry.type !== "message" || entry.message.role !== "user" || !Array.isArray(entry.message.content)) continue;
-    for (const block of entry.message.content) if (block.type === "image") {
-      const ref = blockRef(block); if (ref) allowed.set(ref.id, ref);
-    }
+    // Prompt images, and images a tool (`read`) returned inside its tool_result.
+    const images = entry.message.content.flatMap(block => block.type === "image" ? [block]
+      : block.type === "tool_result" && Array.isArray(block.content) ? block.content.filter(item => item.type === "image") : []);
+    for (const block of images) { const ref = blockRef(block); if (ref) allowed.set(ref.id, ref); }
   }
   const refs = input.map(id => { const ref = allowed.get(id); if (!ref) throw new Error(`image ${id} was not received in this agent's current context.`); return ref; });
   await validateRefs(ctx.project, refs);

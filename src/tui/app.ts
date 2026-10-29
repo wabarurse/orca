@@ -83,7 +83,7 @@ export class App {
   private toggleTaskTree(): void {
     if (this.taskTree) { this.taskTree = null; this.draw(); return; }
     if (!this.page || this.clearing || this.keyEcho) return;
-    this.taskTree = { page: this.page, tasks: [], collapsed: new Set(), frame: 0, graphX: 0, graphY: 0, detailY: 0, loading: true };
+    this.taskTree = { page: this.page, tasks: [], collapsed: new Set(), frame: 0, graphY: 0, detailY: 0, loading: true };
     void this.refreshTaskTree();
     this.draw();
   }
@@ -121,11 +121,11 @@ export class App {
     view.rendered = rendered;
     view.revealSelected = false;
     if (!view.error && !view.loading) view.selectedId = rendered.selectedId;
-    view.graphX = rendered.graph.x; view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
+    view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
     const controls = [view.confirmRemoval ? "Remove merged task from list? y confirm / n cancel (SQL retained)" : view.notice ?? "Ctrl+T/Esc chat · r refresh · d remove merged · terminal gesture opens PR links",
-      view.detailsFocused ? "Details: ↑↓ scroll · ← list" : "↑↓ select · ← fold/parent · → expand/details"].map(line => fit(line, cols));
+      view.detailsFocused ? "Details: ↑↓ scroll · ← list" : "↑↓ select · ← fold/parent · → unfold/details · Shift+Tab next"].map(line => fit(line, cols));
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
     return { rows: [...content, ...controls].slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0,
       bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };

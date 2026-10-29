@@ -1,15 +1,17 @@
 import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ImageRef } from "../../../protocol/images";
 import { paths } from "../../../config/config";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { content, consume, pending, put } from "../inbox/inbox";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
 import { imageBlock, imageContent, loadImage, materializeImages, pendingImageInputs, saveImage, saveImageInput, validateRefs } from "./images";
-import { MAX_IMAGE_BYTES, validatedBase64, validateImage } from "../../../providers/images";
+import { MAX_IMAGE_BYTES, sniffImage, validatedBase64, validateImage } from "../../../providers/images";
 import { forwardImages } from "../../tools/attachments";
 import { message } from "../../tools/message";
 import { makeSpawn } from "../../tools/spawn";
@@ -45,7 +47,8 @@ test("saved pre-rename image references still materialize, while new references 
 
 test("PNG validation rejects invalid MIME, empty/truncated, wrong CRC, excessive bytes/dimensions, and compressed bombs", () => {
   expect(validateImage(png())).toEqual({ width: 1, height: 1 });
-  expect(() => validateImage(png(), "image/jpeg")).toThrow("unsupported");
+  expect(() => validateImage(png(), "image/tiff")).toThrow("unsupported");
+  expect(() => validateImage(png(), "image/jpeg")).toThrow("do not match");
   expect(() => validateImage(Buffer.alloc(0))).toThrow();
   expect(() => validateImage(png().subarray(0, 20))).toThrow();
   expect(() => validateImage(Buffer.alloc(MAX_IMAGE_BYTES + 1))).toThrow("4 mib");
@@ -256,14 +259,62 @@ test("image journal recovery is ordered by publication time, never random UUID o
 });
 
 
-test("provider serializers refuse assistant and nested tool images rather than dropping or flattening them", () => {
+test("provider serializers refuse assistant images and carry a tool's image result (read) to both providers", () => {
   const block = { type: "image" as const, source: { type: "base64" as const, media_type: "image/png" as const, data: png().toString("base64") } };
   const assistant: MessageParam[] = [{ role: "assistant", content: [block] }];
-  const nested: MessageParam[] = [{ role: "user", content: [{ type: "tool_result", tool_use_id: "fixture", content: [block] }] }];
-  for (const serialize of [claudeMessages, toResponses]) {
-    expect(() => serialize(assistant)).toThrow("assistant image");
-    expect(() => serialize(nested)).toThrow("nested tool images");
-  }
+  const nested: MessageParam[] = [{ role: "user", content: [{ type: "tool_result", tool_use_id: "fixture", content: [{ type: "text", text: "meta" }, block] }] }];
+  for (const serialize of [claudeMessages, toResponses]) expect(() => serialize(assistant)).toThrow("assistant image");
+  expect(claudeMessages(nested)).toEqual(nested);
+  expect(toResponses(nested)).toEqual([{ type: "function_call_output", call_id: "fixture", output: [
+    { type: "input_text", text: "meta" }, { type: "input_image", image_url: `data:image/png;base64,${block.source.data}`, detail: "auto" },
+  ] }]);
+  const unresolved: MessageParam[] = [{ role: "user", content: [{ type: "tool_result", tool_use_id: "fixture", content: [{ type: "image", source: { type: "url", url: "orca-image:x" } }] }] }];
+  for (const serialize of [claudeMessages, toResponses]) expect(() => serialize(unresolved)).toThrow("not resolved");
+});
+
+test("magic-byte sniffing and header checks for jpeg, gif and webp; tool-read images yield to prompt images under the request cap", async () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0, 2, 0, 3, 1, 1, 0x11, 0, 0xff, 0xd9]);
+  const gif = Buffer.concat([Buffer.from("GIF89a"), Buffer.from([5, 0, 6, 0, 0, 0, 0, 0x3b])]);
+  expect(sniffImage(png())).toBe("image/png"); expect(sniffImage(jpeg)).toBe("image/jpeg"); expect(sniffImage(gif)).toBe("image/gif");
+  expect(sniffImage(Buffer.from("%PDF-1.7"))).toBeUndefined();
+  expect(validateImage(jpeg, "image/jpeg")).toEqual({ width: 3, height: 2 });
+  expect(validateImage(gif, "image/gif")).toEqual({ width: 5, height: 6 });
+  expect(() => validateImage(jpeg.subarray(0, 8), "image/jpeg")).toThrow("frame header");
+  const p = project(), ref = await saveImage(p, jpeg, "image/jpeg");
+  const [loaded] = await materializeImages(p, [{ role: "user", content: [{ type: "tool_result", tool_use_id: "a", content: [imageBlock(ref)] }] }]);
+  expect(JSON.stringify(loaded)).toContain(`"media_type":"image/jpeg","data":"${jpeg.toString("base64")}"`);
+  // Five ~4 MB (incompressible) images exceed the 16 MiB request cap: as prompt images that
+  // refuses the request; read by a tool, the oldest gives way to a note instead.
+  const scan = randomBytes(1000 * (1000 * 4 + 1));
+  for (let y = 0; y < 1000; y++) scan[y * (1000 * 4 + 1)] = 0;
+  const big = png(1000, 1000, 0, scan), refs = [];
+  for (let i = 0; i < 5; i++) refs.push(await saveImage(p, big));
+  const tool = (r: typeof ref, i: number): MessageParam => ({ role: "user", content: [{ type: "tool_result", tool_use_id: `call-${i}`, content: [imageBlock(r)] }] });
+  const out = JSON.stringify(await materializeImages(p, refs.map(tool)));
+  expect(out.split("Image omitted from this request").length).toBe(2);
+  expect(out).toContain(`attachment_id=${refs[0]!.id}`);
+  await expect(materializeImages(p, [{ role: "user", content: refs.map(imageBlock) }])).rejects.toThrow("16 mib");
+});
+
+test("a request carries at most 20 images: prompt images first, then the newest tool-read images; older ones become the note", async () => {
+  const p = project(), small = await saveImage(p, png()), tiny = png().toString("base64");
+  const tool = (r: ImageRef, i: number): MessageParam => ({ role: "user", content: [{ type: "tool_result", tool_use_id: `call-${i}`, content: [imageBlock(r)] }] });
+  const images = (messages: MessageParam[]) => JSON.stringify(messages).split(`"data":"${tiny}"`).length - 1;
+  const notes = (messages: MessageParam[]) => JSON.stringify(messages).split("Image omitted from this request").length - 1;
+  // 25 tiny tool images are far under 16 MiB, yet only the newest 20 are delivered.
+  const refs: ImageRef[] = []; for (let i = 0; i < 25; i++) refs.push(await saveImage(p, png()));
+  const out = await materializeImages(p, refs.map(tool));
+  expect(images(out)).toBe(20); expect(notes(out)).toBe(5);
+  const text = JSON.stringify(out);
+  for (const r of refs.slice(0, 5)) expect(text).toContain(`attachment_id=${r.id}`); // the five oldest
+  for (const r of refs.slice(5)) expect(text).not.toContain(`attachment_id=${r.id}`);
+  expect(text).toContain("20 images or 16 MiB");
+  // Prompt images count first (and are never dropped): 4 prompt + 25 tool → 4 + 16 images.
+  const mixed = await materializeImages(p, [{ role: "user", content: [small, small, small, small].map(imageBlock) }, ...refs.map(tool)]);
+  expect(images(mixed)).toBe(20); expect(notes(mixed)).toBe(9);
+  expect(JSON.stringify(mixed).split(`"source":{"type":"base64"`).length - 1).toBe(20);
+  // Exactly 20 tool images need no note.
+  expect(notes(await materializeImages(p, refs.slice(0, 20).map(tool)))).toBe(0);
 });
 
 // Exercise the actual Claude adapter without credentials or network requests.
