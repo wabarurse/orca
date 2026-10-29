@@ -8,7 +8,8 @@ import { paths, saveConfig } from "../../../config/config";
 import { pending, put } from "../inbox/inbox";
 import { queryHistory } from "./archive";
 import { createOrchestrator, type Orchestrator } from "../../agent-loop/orc/orchestrator";
-import { RollingCompactor } from "./rolling-memory";
+import { RollingCompactor, rollingCut } from "./rolling-memory";
+import { estimate } from "./compaction";
 import type { CompleteRequest, Provider } from "../../../providers/provider";
 import { fakeProvider, text } from "../../../test/fake-provider";
 import { open, type Transcript } from "../transcripts/transcript";
@@ -61,9 +62,26 @@ async function until(check: () => boolean | Promise<boolean>) {
   throw new Error("test condition did not settle");
 }
 
+test("orchestrator session inherits the 50k tail without a hidden session override", async () => {
+  const { transcript, foreground, session } = await fixture(), worker = summary();
+  for (let i = 0; i < 60; i++) await transcript.append({ type: "message", message: { role: i % 2 ? "assistant" : "user", content: `Recent ${i}: ` + "x".repeat(3000) } });
+  const before = await transcript.chain(), originals = transcript.history!(), cut = rollingCut(before, 50000);
+  expect(cut).toBeGreaterThan(0);
+  const orch = await session(worker, { rolling: { loadProvider: async () => worker.provider } });
+  worker.released.resolve();
+  await orch.compact!(); await orch.turn();
+  const loaded = open(transcript.path), after = await loaded.chain();
+  expect(loaded.branch()[0]?.type).toBe("summary");
+  expect(after.slice(1)).toEqual(before.slice(cut));
+  expect(estimate(after.slice(1))).toBeGreaterThan(47000);
+  expect(estimate(after.slice(1))).toBeLessThan(50000);
+  expect(loaded.history!()).toEqual(originals);
+  expect(foreground.calls).toHaveLength(0);
+});
+
 test("refresh/idle checkpoint keeps exact cross-window receipts and newer input; residue cannot run a model", async () => {
   const { project, transcript, foreground, session } = await fixture(), worker = summary();
-  const sender = await session(worker), receiver = await session(worker, { rolling: { triggerTokens: 1e9, tailTokens: 20000, loadProvider: async () => worker.provider } });
+  const sender = await session(worker), receiver = await session(worker, { rolling: { triggerTokens: 1e9, tailTokens: 50000, loadProvider: async () => worker.provider } });
   await sender.say("same", undefined, "one"); await sender.turn(); await worker.entered.promise;
   await sender.say("same", undefined, "two"); await receiver.turn();
   const history = receiver.entries!();

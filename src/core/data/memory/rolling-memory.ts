@@ -44,6 +44,22 @@ interface Finished {
 /** Attempts cool down for 30s. Real failures also defer background retries up to
  * 30 minutes, but a hard context limit bypasses that extra deferral. */
 const RETRY_MS = 30000, MAX_RETRY_MS = 30 * 60000;
+/** Cost-vs-recall rationale and experiment limitations: docs/COMPACTION.md. */
+const DEFAULT_TRIGGER_FRACTION = .25, DEFAULT_TAIL_TOKENS = 50000;
+/** The trigger: the configured fraction of the window (or an explicit `triggerTokens`),
+ * never above the safe input capacity the output reserve leaves. */
+function triggerFor(deps: ContextDeps, options: RollingOptions): number {
+  const limit = contextLimit(deps.compaction ?? {}, deps.model);
+  const safeInput = .8 * limit - outputCap(deps);
+  return Math.min(options.triggerTokens ?? limit * DEFAULT_TRIGGER_FRACTION, safeInput);
+}
+/** Keep the requested tail unless it reaches the effective trigger; then target half
+ * the trigger to leave room for older history (200k window → 25k, 128k → 16k).
+ * This is a token target, not a hard cap: rollingCut keeps the newest exchange whole. */
+function tailFor(trigger: number, options: RollingOptions): number {
+  const requested = options.tailTokens ?? DEFAULT_TAIL_TOKENS;
+  return requested < trigger ? requested : Math.max(0, Math.floor(trigger / 2));
+}
 type Outcome = "published" | "declined" | "failed";
 
 /** Keep a recent tail near the target, always retaining the newest complete exchange. */
@@ -165,15 +181,13 @@ export class RollingCompactor {
     // stale checkpoint must not cause inference merely because polling refreshed.
     if (maintenance) return;
     const messages = await this.transcript.chain();
-    const limit = contextLimit(deps.compaction ?? {}, deps.model);
-    const safeInput = .8 * limit - outputCap(deps);
     // This controller is orchestrator-only. Workers/reviewers keep the separate
     // foreground compaction policy. Reserve headroom still bounds small windows.
-    const trigger = Math.min(this.options.triggerTokens ?? limit * .5, safeInput);
+    const trigger = triggerFor(deps, this.options);
     // A blocked foreground cannot make progress during a long background deferral.
     const due = Date.now() >= this.retryAfter && (Date.now() >= this.deferUntil || !fits(deps, messages));
     if (!this.job && (manual || (budget(deps, messages) >= trigger && due))) {
-      await this.start(deps, messages);
+      await this.start(deps, messages, tailFor(trigger, this.options));
     }
     if (this.job && (manual || !fits(deps, messages))) {
       const job = this.job;
@@ -190,8 +204,8 @@ export class RollingCompactor {
     finally { signal?.removeEventListener("abort", cancel); }
   }
 
-  private async start(deps: ContextDeps, messages: MessageParam[]): Promise<void> {
-    const cut = rollingCut(messages, this.options.tailTokens ?? 20000);
+  private async start(deps: ContextDeps, messages: MessageParam[], tailTokens: number): Promise<void> {
+    const cut = rollingCut(messages, tailTokens);
     if (!cut) { this.retryAfter = Date.now() + RETRY_MS; return; }
     const identity = projectIdentity(this.project), generation = this.generation;
     const epoch = inputEpoch(this.project);

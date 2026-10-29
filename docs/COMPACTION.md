@@ -28,13 +28,34 @@ orchestrator-only `history` tool searches earlier sessions and other projects, s
 ## Orchestrator rolling memory and history
 
 `rolling-memory.ts` starts one background summarizer per orchestrator session at
-**50% of the selected model's context window** (~500,000 input tokens on a 1M
-model), or earlier if output reserves leave less safe input capacity. Workers and
-reviewers retain their existing foreground compaction policy. The old absolute
-`orchestratorContextTokens` configuration key is ignored.
+**25% of the selected model's context window** (~250,000 input tokens on a 1M
+model, 50,000 on a 200k model), or earlier if output reserves leave less safe
+input capacity (`triggerTokens` overrides the fraction with an absolute number).
+Workers and reviewers retain their existing foreground compaction policy. The old
+absolute `orchestratorContextTokens` configuration key is ignored.
 
-The orchestrator keeps roughly 6,000 recent tokens, never splitting a tool
-exchange, and always keeps the newest whole exchange even if oversized.
+The orchestrator keeps roughly **50,000 recent tokens verbatim** (`tailTokens`),
+never splitting a tool exchange, and always keeps the newest whole exchange even
+if oversized. If the requested tail is at least the effective trigger (including
+its safe-input cap), the tail target falls back to half that trigger, rounded down
+and bounded at zero. Thus a 200k window targets 25k rather than retaining all 50k
+at its trigger; the 128k fallback targets 16k. A 240k window still keeps 50k below
+its 60k trigger. Explicit `triggerTokens`/`tailTokens` overrides remain supported,
+subject to the same guards. Fixed prompt/tool overhead and a newest oversized
+exchange can still leave no older messages to summarize; this is a tail target,
+not a promise of a successful summary or a hard cap on indivisible exchanges.
+
+The rationale is the cost-vs-recall experiment on branch
+`experiment-rolling-compaction` (`out/compaction-experiment/REPORT.md`, 2026-10-29):
+on one real 1,116-message transcript with a 1M window and opus-5-5 low summarizer,
+25%/50k achieved 89%/78%/80% recall at the three checkpoints and carried 84.8M
+context tokens over 552 turns. At the end, 50%/20k achieved 63% and carried
+135.6M; 40%/100k achieved 74% and carried 121.2M. Those two had not compacted at
+the first checkpoint (full-context recall was 100%), so 25%/50k did not beat them
+there. Fixed 160k/30k carried less (60.2M) but had lower recall (72%/73%/61%).
+25%/50k used the least summarizer input in this comparison; these single-corpus
+results are not a general recall guarantee. The summarizer remains the project's
+model at low effort when supported.
 Summarization reuses the account and model resolved for the foreground request,
 with low effort when supported, fast mode off, no tools, bounded UTF-8 source
 chunks, a two-minute deadline per summary request (a large prefix is many
