@@ -3,6 +3,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../config";
 import type { CompleteRequest, Provider } from "./provider";
+import { ModelRequestError } from "./bounded-request";
 
 type Trace = NonNullable<CompleteRequest["trace"]>;
 const scope = new AsyncLocalStorage<{ trace: Trace; id?: string; pending: Promise<void>[] }>();
@@ -24,16 +25,22 @@ export function recordRetry(provider: string, event: unknown): void {
 }
 
 export function metered(provider: Provider): Provider {
+  const identity = { provider: provider.name, account: provider.account };
+  const failure = (error: unknown) => error instanceof ModelRequestError ? { errorKind: error.kind, httpStatus: error.status } : {};
+  const attributed = (error: unknown) => {
+    if (provider.account && error instanceof ModelRequestError) error.message = `${provider.account}: ${error.message}`;
+    return error;
+  };
   return { ...provider,
     ...(provider.search ? { search: async (request: Parameters<NonNullable<Provider["search"]>>[0]) => {
       const started = performance.now(), trace = scope.getStore()?.trace;
       try {
         const result = await provider.search!(request);
-        await usageEvent({ kind: "model", ...trace, purpose: "web-search", provider: provider.name, model: request.model, ok: true, durationMs: performance.now() - started });
+        await usageEvent({ kind: "model", ...trace, purpose: "web-search", ...identity, model: request.model, ok: true, durationMs: performance.now() - started });
         return result;
       } catch (error) {
-        await usageEvent({ kind: "model", ...trace, purpose: "web-search", provider: provider.name, model: request.model, ok: false, durationMs: performance.now() - started });
-        throw error;
+        await usageEvent({ kind: "model", ...trace, purpose: "web-search", ...identity, model: request.model, ok: false, ...failure(error), durationMs: performance.now() - started });
+        throw attributed(error);
       }
     } } : {}),
     complete(request) {
@@ -41,14 +48,14 @@ export function metered(provider: Provider): Provider {
       return scope.run({ trace, id, pending: [] }, async () => {
         try {
           const result = await provider.complete(request);
-          await usageEvent({ kind: "model", id, provider: provider.name, model: request.model, ...trace,
+          await usageEvent({ kind: "model", id, ...identity, model: request.model, ...trace,
             durationMs: Math.round(performance.now() - started), usage: result.usage, stop: result.stop,
             contextTokens: result.inputTokens, ok: true });
           return result;
         } catch (error) {
-          await usageEvent({ kind: "model", id, provider: provider.name, model: request.model, ...trace,
-            durationMs: Math.round(performance.now() - started), ok: false, cancelled: request.signal?.aborted === true });
-          throw error;
+          await usageEvent({ kind: "model", id, ...identity, model: request.model, ...trace,
+            durationMs: Math.round(performance.now() - started), ok: false, ...failure(error), cancelled: request.signal?.aborted === true });
+          throw attributed(error);
         } finally { await Promise.all(scope.getStore()!.pending); }
       });
     },

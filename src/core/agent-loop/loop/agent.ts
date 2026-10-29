@@ -18,7 +18,7 @@ import type { Provider } from "../../../providers";
 import { sessionId } from "../../tmux";
 import type { Transcript } from "../../data/transcripts";
 import type { Role } from "../../../protocol";
-import type { Tool, ToolContext } from "../../tools";
+import type { Tool, ToolContext, ToolResult } from "../../tools";
 import { callText, resultText, type ToolCall, type ToolOutcome } from "../../../protocol";
 import { scheduleTools } from "./tool-scheduler";
 import type { RollingOptions } from "../../data/memory";
@@ -57,7 +57,7 @@ export interface AgentDeps extends ContextDeps {
   /** Resolve before budgeting, not just before the normal request. */
   resolveModel?: () => Promise<{ model: string; provider: Provider; settings?: RequestSettings }>;
   transcript: Transcript;
-  tools: Record<string, Tool>;
+  tools: Record<string, Tool<ToolResult>>;
   model: string;
   /** System prompt for the role; omitted in tests. */
   system?: string;
@@ -123,6 +123,10 @@ function echo(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
   };
 }
 
+/** A result's text for the UI; image blocks (a `read` image) are shown by their text alone. */
+const resultBody = (result: ToolResultBlockParam): string => typeof result.content === "string" ? result.content
+  : (result.content ?? []).map(block => block.type === "text" ? block.text : "").filter(Boolean).join("\n");
+
 /** Preserve result order; optionally overlap independent calls between barriers. */
 async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: string, plain?: boolean) => void): Promise<ToolResultBlockParam[]> {
   const show = echo(deps, write);
@@ -139,7 +143,7 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
     const call: ToolCall = { id: block.id, name: block.name, input: block.input };
     show.start(call);
     const result = await runTracked(deps, block, track);
-    show.end(call, { id: block.id, ok: !result.is_error, text: String(result.content ?? "") });
+    show.end(call, { id: block.id, ok: !result.is_error, text: resultBody(result) });
     return result;
   }, deps.toolConcurrency ?? 1);
 }

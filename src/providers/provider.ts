@@ -36,6 +36,8 @@ export interface CompleteRequest {
 
 export interface Provider {
   name: ProviderName;
+  /** Local, non-secret account identity. Never sent to the model API. */
+  account?: string;
   complete(req: CompleteRequest): Promise<Turn>;
   /** Isolated native search on this same subscription connection. No history is sent. */
   search?(req: SearchRequest): Promise<SearchResult>;

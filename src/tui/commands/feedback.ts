@@ -26,7 +26,7 @@ export async function sendAgentFeedback(project: string, agent: string, text: st
     const result = await (deps.spawn ?? registry.spawn!).run({ prompt: `New user feedback (source ${inputId}): ${text}`, branch: state.branch,
       role: state.role, ...(task ? { taskId: task.id } : {}), ...(state.role === "reviewer" ? { reviewMode: "review" } : {}) },
       { project, role: "orchestrator", cwd: paths.repo(project) });
-    if (result.startsWith("refused:")) throw new Error(result);
+    if (typeof result === "string" && result.startsWith("refused:")) throw new Error(result);
   }
   await put(project, "orchestrator", { from: "runtime", text: `User feedback ${inputId} was delivered to ${agent}: ${text}\nThe worker owns the continuation; coordinate only if needed.` });
   return `${live.includes(agent) ? "delivered to" : "resumed"} ${agent}`;
