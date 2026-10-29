@@ -70,8 +70,8 @@ export async function loadConfig(options: { strict?: boolean } = {}): Promise<Co
     warned = warning;
     return defaults;
   }
-  // The orchestrator now uses half of the selected model's window. Do not let
-  // a saved absolute target restore the old 32k policy or persist it on save.
+  // The orchestrator now compacts at a fraction of the selected model's window (rolling-memory.ts).
+  // Do not let a saved absolute target restore the old 32k policy or persist it on save.
   delete (parsed as Record<string, unknown>).orchestratorContextTokens;
   return withFallbacks({ ...defaults, ...parsed });
 }

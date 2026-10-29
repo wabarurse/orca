@@ -941,13 +941,19 @@ inference require validation with your account; automated tests use fake tokens.
 
 ### Orchestrator rolling memory
 
-The orchestrator starts a background summary at **50% of the selected model's
-context window** (roughly 500,000 input tokens on a 1M-context model, 100,000 on a
+The orchestrator starts a background summary at **25% of the selected model's
+context window** (roughly 250,000 input tokens on a 1M-context model, 50,000 on a
 200k model), capped lower only when the output reserve leaves less safe input
-capacity. It keeps roughly the newest **6,000 tokens verbatim**, including complete
-tool exchanges. An oversized newest exchange stays intact. Workers and reviewers
-keep their existing compaction behavior. Legacy `orchestratorContextTokens`
-values are ignored.
+capacity. It keeps roughly the newest **50,000 tokens verbatim**, including complete
+tool exchanges. If the requested tail reaches or exceeds the effective trigger,
+its target falls back to half that trigger (25,000 on a 200k model, 16,000 on the
+128k fallback); otherwise the requested tail is unchanged. `triggerTokens` and
+`tailTokens` overrides use the same guards. An oversized newest exchange stays
+intact even above the target; a summarizable older prefix is not guaranteed. These defaults
+come from the cost-vs-recall experiment in `out/compaction-experiment/REPORT.md` on
+branch `experiment-rolling-compaction` (see [COMPACTION](COMPACTION.md#orchestrator-rolling-memory-and-history)).
+Workers and reviewers keep their existing compaction behavior. Legacy
+`orchestratorContextTokens` values are ignored.
 
 The compacted memory has exactly three parts, rendered in this order:
 

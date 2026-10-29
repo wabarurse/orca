@@ -143,7 +143,7 @@ test("hard-limit boundary waits for one worker and never sends an oversized fore
   expect(estimate(foreground.calls[0]!.messages)).toBeLessThan(5000);
 });
 
-test("orchestrator trigger is 50% of the model window, capped by safe input; explicit triggerTokens wins", async () => {
+test("orchestrator trigger is 25% of the model window, capped by safe input; explicit triggerTokens wins", async () => {
   const { deps, transcript } = await fixture();
   let calls = 0;
   const provider: Provider = { name: "openai", models: async () => [], complete: async () => { calls++; return answer(); } };
@@ -158,38 +158,67 @@ test("orchestrator trigger is 50% of the model window, capped by safe input; exp
     rolling.reset();
     return calls > before;
   };
-  // 1M window: 500k by default; the old 32k/48k overrides must not apply.
+  // 1M window: 250k by default; the old 32k/48k overrides must not apply.
   expect(await probe("claude-opus-5-5", {}, 150000)).toBe(false);
-  expect(await probe("claude-opus-5-5", {}, 499999)).toBe(false);
-  expect(await probe("claude-opus-5-5", {}, 500000)).toBe(true);
-  // The 50k trigger yields to the 40k safe input ceiling when output reserves require it.
-  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 39999)).toBe(false);
-  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 40000)).toBe(true);
-  // An explicit absolute trigger replaces the percentage in both directions.
+  expect(await probe("claude-opus-5-5", {}, 249999)).toBe(false);
+  expect(await probe("claude-opus-5-5", {}, 250000)).toBe(true);
+  // The 25k trigger yields to the 20k safe input ceiling when output reserves require it.
+  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 60000 }, 19999)).toBe(false);
+  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 60000 }, 20000)).toBe(true);
+  // An explicit absolute trigger replaces the percentage in both directions, but still respects safe input.
   expect(await probe("claude-opus-5-5", {}, 150000, { triggerTokens: 100000 })).toBe(true);
   expect(await probe("claude-opus-5-5", {}, 450000, { triggerTokens: 600000 })).toBe(false);
+  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 39999, { triggerTokens: 90000 })).toBe(false);
+  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 40000, { triggerTokens: 90000 })).toBe(true);
 });
 
-test("default trigger retains about 20k verbatim through repeated cycles and restart", async () => {
+test("default trigger retains about 50k verbatim through repeated cycles and restart", async () => {
   const { project, deps } = await fixture();
   deps.transcript = open(paths.transcript(project, "long-orchestrator"));
-  deps.compaction = { contextLimit: 240000 }; // 50% orchestrator trigger = 120k input tokens
+  deps.compaction = { contextLimit: 240000 }; // 25% trigger = 60k; the 50k tail remains below it.
   let calls = 0;
   const provider: Provider = { name: "openai", models: async () => [], complete: async () => { calls++; return answer(); } };
   for (let cycle = 0; cycle < 3; cycle++) {
     const rolling = new RollingCompactor(project, deps.transcript, { loadProvider: async () => provider }); compacters.push(rolling);
     for (let i = 0; i < 90; i++) await deps.transcript.append({ type: "message", message: { role: i % 2 ? "assistant" : "user", content: `Cycle ${cycle} item ${i}: ` + "x".repeat(4000) } });
-    const before = await deps.transcript.chain(), cut = rollingCut(before, 20000), originals = deps.transcript.history!();
-    expect(estimate(before)).toBeGreaterThan(120000);
-    await rolling.boundary(deps); await settle(rolling); await rolling.boundary(deps);
+    const before = await deps.transcript.chain(), cut = rollingCut(before, 50000), originals = deps.transcript.history!();
+    expect(estimate(before)).toBeGreaterThan(60000);
+    // Later cycles can cross safe input with the larger tail; boundary may already join/publish.
+    await rolling.boundary(deps); await rolling.finish(); await rolling.boundary(deps, false, true);
     const after = await deps.transcript.chain();
     expect(after.slice(1)).toEqual(before.slice(cut));
-    expect(estimate(after)).toBeLessThan(22000); expect(estimate(after.slice(1))).toBeGreaterThan(17000);
+    expect(estimate(after)).toBeLessThan(52000); expect(estimate(after.slice(1))).toBeGreaterThan(47000);
     expect(deps.transcript.history!()).toEqual(originals);
     deps.transcript = open(deps.transcript.path);
     expect(await deps.transcript.chain()).toEqual(after);
   }
   expect(calls).toBe(8); // Two parts initially, then three as each older prefix includes the previous tail.
+});
+
+for (const sample of [
+  { label: "200k window: tail equals trigger", limit: 200000, trigger: 50000, tail: 25000, options: {} },
+  { label: "128k window: tail exceeds trigger", limit: 128000, trigger: 32000, tail: 16000, options: {} },
+  { label: "safe-input cap below percentage", limit: 100000, reserve: 60000, trigger: 20000, tail: 10000, options: {} },
+  { label: "explicit trigger below default tail", limit: 240000, trigger: 40000, tail: 20000, options: { triggerTokens: 40000 } },
+  { label: "explicit tail below trigger stays unchanged", limit: 240000, trigger: 60000, tail: 40000, options: { tailTokens: 40000 } },
+  { label: "explicit tail above trigger is guarded", limit: 240000, trigger: 60000, tail: 30000, options: { tailTokens: 80000 } },
+]) test(`rolling tail guard: ${sample.label}`, async () => {
+  const { project, deps } = await fixture();
+  deps.transcript = open(paths.transcript(project, "guarded-tail"));
+  deps.compaction = { contextLimit: sample.limit, outputReserve: sample.reserve };
+  const provider: Provider = { name: "openai", models: async () => [], complete: async () => answer() };
+  const rolling = new RollingCompactor(project, deps.transcript, { ...sample.options, loadProvider: async () => provider }); compacters.push(rolling);
+  for (let i = 0; i < sample.trigger / 1000; i++) await deps.transcript.append({ type: "message", message: { role: i % 2 ? "assistant" : "user", content: `${i}: ` + "x".repeat(3000) } });
+  const before = await deps.transcript.chain(), originals = deps.transcript.history!();
+  expect(budget(deps, before)).toBeGreaterThanOrEqual(sample.trigger);
+  const cut = rollingCut(before, sample.tail);
+  expect(cut).toBeGreaterThan(0);
+  await rolling.boundary(deps); await rolling.finish(); await rolling.boundary(deps, false, true);
+  expect(deps.transcript.branch()[0]?.type).toBe("summary");
+  const after = await deps.transcript.chain();
+  expect(after.slice(1)).toEqual(before.slice(cut));
+  expect(estimate(after.slice(1))).toBeLessThan(sample.trigger);
+  expect(deps.transcript.history!()).toEqual(originals);
 });
 
 test("disabled automatic compaction does no archive or inference work; manual still works", async () => {
@@ -221,7 +250,8 @@ test("Claude-only compaction uses the resolved account/model without another log
 
 test("real orchestrator ignores old 32k/48k thresholds and respects failed-summary cooldown", async () => {
   const { project, transcript } = await fixture();
-  await Bun.write(paths.config, 'model = "unlisted-model"\ncontextLimitFallback = 200000\norchestratorContextTokens = 32000\n');
+  // A 400k fallback gives a 100k trigger; the old 32k/48k targets still must not apply.
+  await Bun.write(paths.config, 'model = "unlisted-model"\ncontextLimitFallback = 400000\norchestratorContextTokens = 32000\n');
   await transcript.append({ type: "message", message: { role: "user", content: "extra findings ".repeat(9000) } });
   await transcript.append({ type: "message", message: { role: "assistant", content: "recent reply" } });
   expect(estimate(await transcript.chain())).toBeGreaterThan(48000);
@@ -235,12 +265,12 @@ test("real orchestrator ignores old 32k/48k thresholds and respects failed-summa
   } };
   const orch = await createOrchestrator({ project, transcript, provider, tools: {}, write: s => notices.push(s) });
   try {
-    await orch.say("continue below half"); await orch.turn();
+    await orch.say("continue below quarter"); await orch.turn();
     expect(calls.filter(c => c.trace?.purpose === "rolling-summary")).toHaveLength(0);
     await transcript.append({ type: "message", message: { role: "user", content: "more findings ".repeat(9000) } });
     await transcript.append({ type: "message", message: { role: "assistant", content: "latest reply" } });
     expect(estimate(await transcript.chain())).toBeGreaterThan(100000);
-    await orch.say("continue above half"); await orch.turn();
+    await orch.say("continue above quarter"); await orch.turn();
     await Bun.sleep(1);
     await orch.say("continue after failure"); await orch.turn();
     await orch.say("continue in cooldown"); await orch.turn();
