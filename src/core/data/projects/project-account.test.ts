@@ -7,7 +7,7 @@ import { accounts } from "../../../login";
 import { fakeProvider } from "../../../test/fake-provider";
 import { accountChoices, login, useAccount } from "../../../tui/commands";
 import { accountForModel, effectiveAccount, saveProjectAccount, seedProjectAccount } from "./project-account";
-import { projectModelResolver, saveProjectModel } from "./project-model";
+import { effectiveModel, projectModelResolver, saveProjectModel, saveRoleModel } from "./project-model";
 
 const home = mkdtempSync(join(tmpdir(), "project-account-"));
 process.env.ORCA_HOME = home;
@@ -93,6 +93,21 @@ test("switching back to a provider restores the last model this project used the
   // Memory is per project.
   expect(readProjectState("back-other", "provider-models")).toBeUndefined();
   expect(await useAccount({ provider: "openai", profile: "w" }, "back-other", undefined, catalog(["gpt-newest", "gpt-5"]))).toContain("to gpt-newest");
+});
+
+test("/accounts to another provider leaves the role overrides dormant (kept per provider); switching back restores them", async () => {
+  project("roles-account");
+  await saveProjectModel("roles-account", "claude-opus-5");
+  await saveRoleModel("roles-account", "worker", "claude-sonnet-5");
+  const catalog = (ids: string[]) => async () => ({ ...fakeProvider([]), models: async () => ids });
+  await useAccount({ provider: "openai", profile: "w" }, "roles-account", undefined, catalog(["gpt-6-astra"]));
+  expect(await effectiveModel("roles-account", "worker")).toBe("gpt-6-astra"); // the Claude override never reaches an OpenAI account
+  expect(readProjectState("roles-account", "role-models")).toEqual({ anthropic: { worker: "claude-sonnet-5" } });
+  const load = (async (name: string, options?: { profile?: string }) => ({ ...fakeProvider([]), name, profile: options?.profile })) as never;
+  expect((await projectModelResolver("roles-account", load, "worker")()).model).toBe("gpt-6-astra");
+  await useAccount({ provider: "anthropic", profile: "p" }, "roles-account", undefined, catalog(["claude-opus-5", "claude-sonnet-5"]));
+  expect(await effectiveModel("roles-account")).toBe("claude-opus-5");
+  expect(await effectiveModel("roles-account", "worker")).toBe("claude-sonnet-5");
 });
 
 test("every provider call of a project loads that project's account, not a global one", async () => {

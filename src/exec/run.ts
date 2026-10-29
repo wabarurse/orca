@@ -65,7 +65,7 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
 
 async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: Tracker): Promise<void> {
   const config = await loadConfig();
-  const model = await effectiveModel(opts.project);
+  const model = await effectiveModel(opts.project, opts.role); // this role's model: its /model override, else the project model
   // One transcript per role per branch, so a restart resumes it. spawn seeds
   // it with the prompt before starting this process.
   const transcript = open(paths.transcript(opts.project, sessionId(opts.role, opts.branch)));
@@ -84,7 +84,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: T
     signal,
     loadContext: query => agentKnowledge(opts.project, process.cwd(), query),
     toolConcurrency: config.toolConcurrency,
-    resolveModel: projectModelResolver(opts.project, opts.loadProvider),
+    resolveModel: projectModelResolver(opts.project, opts.loadProvider, opts.role), // worker or reviewer: that role's override applies
     transcript,
     tools,
     model,

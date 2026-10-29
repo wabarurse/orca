@@ -4,7 +4,9 @@ import { provider } from "../../providers";
 import { modelCapabilities } from "../../providers/catalog";
 import { prefetchContextLimits } from "../../providers/catalog";
 import { loadConfig, saveConfig } from "../../config";
-import { accountForModel, effectiveAccount, effectiveModel, saveProjectModel, validateModel } from "../../core/data/projects";
+import { accountForModel, effectiveAccount, effectiveModel, roleOverrides, saveProjectModel, validateModel } from "../../core/data/projects";
+import type { Role } from "../../protocol";
+import { accountId } from "../../login";
 import { effectiveSettingsReport } from "../../core/data/projects";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }
@@ -45,10 +47,30 @@ export async function effortChoices(project: string, load: typeof provider = pro
   return { choices, model, current, ...(dropped ? { note: `saved effort ${dropped} is not supported for ${model} by the current capability list; requests use the default until another level is chosen` } : {}) };
 }
 
+export const NEXT_REQUEST = "running tools finish; failed/stopped turns need another message to resume; exited agents require restart";
+
+/** "All agents": the project model, which also clears the role overrides of its provider (saveProjectModel). */
 export async function setModel(id: string, project?: string, identity?: string): Promise<string> {
   validateModel(id);
   if (project) await saveProjectModel(project, id, identity);
   else await saveConfig({ model: id }); // Retain the programmatic global-default API.
-  return `model set to ${id} (applies before each agent’s next model request; running tools finish; failed/stopped turns need another message to resume; exited agents require restart)`;
+  return `model set to ${id} (applies before each agent’s next model request; ${NEXT_REQUEST})`;
+}
+
+export type RoleModels = Partial<Record<Role, string>>;
+/** The role overrides that apply with project model `model` (core roleOverrides); none when they cannot be read, for display only. */
+export function activeRoles(project: string, model: string): RoleModels {
+  try { return roleOverrides(project, model); } catch { return {}; }
+}
+const SHORT: Readonly<Record<Role, string>> = { orchestrator: "orch", worker: "workers", reviewer: "reviewers" };
+/** The header's model field: each role's effective model (its override from roleOverrides, else the project model), compact when
+ * every role uses the project model: `claude-opus-5-5 · all roles`, else `orch opus · workers sonnet · reviewers haiku`. */
+export function roleModelsLabel(model: string, roles: RoleModels | undefined): string {
+  const per = (["orchestrator", "worker", "reviewer"] as const).map((role) => [SHORT[role], roles?.[role] ?? model] as const);
+  return per.every(([, m]) => m === model) ? `${model} · all roles` : per.map(([who, m]) => `${who} ${m}`).join(" · ");
+}
+/** The header's account: the project's selected account as provider:profile; undefined when it cannot be read (shown as nothing). */
+export function pageAccount(project: string): Promise<string | undefined> {
+  return effectiveAccount(project).then(accountId, () => undefined);
 }
 
