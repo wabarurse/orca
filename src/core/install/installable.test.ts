@@ -82,6 +82,16 @@ test("relocated compiled image pipeline embeds native fixture script, storage an
   expect(result.out).not.toContain("base64");
 });
 
+test("compiled reload detaches its helper and records completion in the selected state home", async () => {
+  const isolated = join(root, "reload-state"), progress = join(isolated, ".runtime", "updates.log");
+  const result = await exec([installed, "reload"], root, { ORCA_HOME: isolated });
+  expect(result.code).toBe(0); expect(result.err).toBe("");
+  expect(result.out).toContain("global session update scheduled");
+  await until(() => existsSync(progress) && readFileSync(progress, "utf8").includes("update handoffs finished"));
+  expect(existsSync(join(isolated, ".runtime", "update-lock"))).toBe(false);
+  expect(existsSync(join(home, ".orca"))).toBe(false);
+});
+
 const branch = "feat/it's-$space", run = "run-'$space";
 async function seed(project: string, role: "orchestrator" | "worker" | "reviewer") {
   const base = join(state, "projects", project), repo = join(root, `original-${project}`);
@@ -281,7 +291,7 @@ exec ${quote(process.execPath)} ${quote(boundary)} ${tool} "$@"
     });
     expect({ code: result.code, err: result.err, status: await f.g(f.app, "status", "--porcelain") }).toEqual({ code: 0, err: "", status: "" });
     expect(result.out).toContain(`installed ${f.target} from ${f.after}`);
-    expect(result.out).toContain("existing processes were not restarted");
+    expect(result.out).toContain("scheduling global orchestrator updates next");
     expect(await f.g(f.app, "rev-parse", "HEAD")).toBe(f.after);
     expect(new Bun.CryptoHasher("sha256").update(readFileSync(f.target)).digest("hex")).not.toBe(oldHash);
     expect(await exec([f.target, "version"], f.caller)).toEqual({ code: 0, out: "updated standalone fixture\n", err: "" });

@@ -3,8 +3,9 @@ import { exhaustedQuota, transientFailure, withTransientRetries, type RetryOptio
 
 export const MODEL_REQUEST_LIMITS = { totalMs: 600_000, idleMs: 90_000 } as const;
 export class ModelRequestError extends Error {
-  constructor(readonly kind: "total-timeout" | "idle-timeout" | "quota" | "interrupted" | "exhausted" | "permanent") {
-    super(`Model request ${kind}. Check connection or provider account/settings, then explicitly resume; no automatic fallback.`);
+  constructor(readonly kind: "total-timeout" | "idle-timeout" | "quota" | "interrupted" | "exhausted" | "permanent", readonly status?: number) {
+    const detail = status === 429 ? "HTTP 429: provider rate limit; remaining account allowance is unknown" : status ? `HTTP ${status}` : undefined;
+    super(`Model request ${kind}${detail ? ` (${detail})` : ""}. Check connection or provider account/settings, then explicitly resume; no automatic fallback.`);
     this.name = "ModelRequestError";
   }
 }
@@ -40,7 +41,9 @@ function requestDeadline(options: Options) {
 function terminalError(error: unknown, consumed: boolean): ModelRequestError {
   // Existing retry helper maps quota to a sanitized Error; never include raw payloads.
   if (exhaustedQuota(error) || (error instanceof Error && error.message.startsWith("model: quota exhausted"))) return new ModelRequestError("quota");
-  return new ModelRequestError(consumed ? "interrupted" : transientFailure(error) ? "exhausted" : "permanent");
+  const raw = (error as { status?: unknown })?.status;
+  const status = typeof raw === "number" && Number.isInteger(raw) && raw >= 400 && raw <= 599 ? raw : undefined;
+  return new ModelRequestError(consumed ? "interrupted" : transientFailure(error) ? "exhausted" : "permanent", status);
 }
 
 async function runAttempt<T>(execute: (scope: RequestScope) => Promise<T>, deadline: ReturnType<typeof requestDeadline>, transport: RequestScope["fetch"], started: () => void): Promise<T> {

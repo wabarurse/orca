@@ -1388,7 +1388,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   private async ensureDaemon(project: string): Promise<{ line: string; failed: boolean } | undefined> {
     if (!this.deps.ensureDaemon) return;
     try { const line = await this.deps.ensureDaemon(project); return line ? { line, failed: false } : undefined; }
-    catch (error) { return { line: `orchestrator is not running: ${error instanceof Error ? error.message : String(error)}`, failed: true }; }
+    catch (error) { return { line: `orchestrator unavailable: ${error instanceof Error ? error.message : String(error)}`, failed: true }; }
   }
   /** A repeated failure (a start that keeps failing) is shown once, not once per poll; every (rate-limited) start or restart is noted. */
   private readonly daemonLines = new WeakMap<Page, string>();

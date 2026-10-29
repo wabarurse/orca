@@ -248,7 +248,7 @@ test("failed checkpoint publication keeps committed prompts/receipts without res
   expect(foreground.calls).toHaveLength(2);
 });
 
-test("history retrieval waits for a concurrent clear's project-state transaction and uses its new scope", async () => {
+test("history retrieval reads the committed scope during a concurrent clear and switches after publication", async () => {
   const { project, transcript, session } = await fixture(), worker = summary(), entered = gate(), released = gate();
   const wrapped: Transcript = { ...transcript, append: async (entry, signal, guard) => {
     if (entry.type === "context-boundary") { entered.resolve(); await released.promise; }
@@ -256,9 +256,10 @@ test("history retrieval waits for a concurrent clear's project-state transaction
   } };
   const orch = await session(worker, { transcript: wrapped });
   const clearing = orch.clear!(); await entered.promise;
-  let read = false;
-  const query = queryHistory(project, { action: "search_history", query: "old original evidence" }).then(value => { read = true; return JSON.parse(value); });
-  await Bun.sleep(2); expect(read).toBe(false);
-  released.resolve(); await clearing;
-  expect((await query).entries).toEqual([]); expect(worker.calls).toHaveLength(0);
+  try {
+    const before = JSON.parse(await queryHistory(project, { action: "search_history", query: "old original evidence" }));
+    expect(before.entries.length).toBeGreaterThan(0);
+  } finally { released.resolve(); await clearing; }
+  const after = JSON.parse(await queryHistory(project, { action: "search_history", query: "old original evidence" }));
+  expect(after.entries).toEqual([]); expect(worker.calls).toHaveLength(0);
 });

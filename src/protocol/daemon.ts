@@ -22,7 +22,7 @@ export interface DaemonStatus {
   error?: string;
 }
 export type Command = { kind: "clear" } | { kind: "compact" } | { kind: "model"; model: string } | { kind: "stop" };
-export interface Request { id: string; ts: string; command: Command }
+export interface Request { id: string; ts: string; command: Command; /** Optional exact daemon incarnation, used by update handoffs. */ run?: string }
 export interface Ack { id: string; ok: boolean; message: string; at: string }
 
 /** What happened during the turn, after the transcript entry `head` (the daemon's head when it happened). */

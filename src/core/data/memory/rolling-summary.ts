@@ -58,8 +58,10 @@ function* chunks(source: string): Generator<string> {
   }
 }
 
-/** Summarize the rest of the older prefix, merged with the previous checkpoint's memory (`previous`). */
-export async function summarizeOlder(messages: MessageParam[], signal: AbortSignal, target: SummaryTarget, options: { project?: string; previous?: RollingMemory } = {}): Promise<RollingMemory> {
+/** Summarize the rest of the older prefix, merged with the previous checkpoint's memory (`previous`).
+ * `onPart` reports each completed part: a long prefix is many sequential requests, so callers
+ * time out a stalled request, never the whole summary (rolling-memory.ts start). */
+export async function summarizeOlder(messages: MessageParam[], signal: AbortSignal, target: SummaryTarget, options: { project?: string; previous?: RollingMemory; onPart?: () => void } = {}): Promise<RollingMemory> {
   // Reuse the resolved foreground account/model: Claude-only installations must
   // not need a second provider login just to keep their conversation bounded.
   const provider = await target.loadProvider();
@@ -92,6 +94,7 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
     const content = result.content.filter(b => b.type !== "thinking" && b.type !== "redacted_thinking");
     if (content.some(b => b.type !== "text")) throw new Error("summary must contain only text");
     memory = parseMemory(content.map(b => b.type === "text" ? b.text : "").join("\n"));
+    options.onPart?.();
   }
   return memory;
 }
