@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { paths } from "../../../config/config";
 import { drain, pending, pendingInput, userInEpoch } from "./inbox";
 import { advanceInputEpoch } from "./user-input";
-import { all, answer, ask as realAsk, cleanQuestions, list, skip } from "./questions";
+import { all, answer, ask as realAsk, cleanQuestions, list, skip, withdraw } from "./questions";
 import { ask as askTool } from "../../tools/ask";
 import { registry } from "../../tools/index";
 import { toolsFor } from "../../tools/registry";
@@ -217,4 +217,77 @@ test("unreadable or malformed question stores fail visibly instead of fabricatin
   expect(await Bun.file(file).json()).toEqual({ id: "q", status: "mystery" }); // no reset/migration
   writeFileSync(file, JSON.stringify({ id: "q", text: "Q?", ts: "t", status: "answered", answer: 123 }));
   await expect(list("broken-question")).rejects.toThrow("invalid question record");
+});
+
+test("the orchestrator's close withdraws with a reason: no reply, no answer, scoped to its project", async () => {
+  const [a, b] = await ask("wd1", [{ text: "Which DB?", default: "sqlite" }, { text: "Port?" }]);
+  const [other] = await ask("wd1-other", [{ text: "Elsewhere?" }]);
+  expect(await withdraw("wd1", a!.id, "answered in chat")).toEqual({ ...a!, status: "skipped", reason: "answered in chat" });
+  expect((await list("wd1")).map(q => q.id)).toEqual([b!.id]);
+  expect((await all("wd1"))[0]).toEqual({ ...a!, status: "skipped", reason: "answered in chat" });
+  expect((await all("wd1"))[0]!.answer).toBeUndefined();
+  expect(await drain("wd1", "orchestrator")).toEqual([]);
+  expect(await pendingInput("wd1", "orchestrator")).toBe(false);
+  await expect(withdraw("wd1", other!.id, "outdated")).rejects.toThrow("no question");
+  expect(await list("wd1-other")).toEqual([other!]);
+  await expect(withdraw("wd1", b!.id, "  ")).rejects.toThrow("needs a reason");
+  await expect(withdraw("wd1", b!.id, "x".repeat(201))).rejects.toThrow("over 200");
+  await expect(withdraw("wd1", a!.id, "again")).rejects.toThrow("already skipped");
+  await expect(withdraw("wd1", "../x", "r")).rejects.toThrow("bad question id");
+});
+
+test("a user's answer wins over the orchestrator's close, either way round, and is delivered once", async () => {
+  // Answered first: the close is refused and the answer stays.
+  const [q1] = await ask("wd2", [{ text: "Ship?" }]);
+  await answer("wd2", q1!.id, "yes");
+  await expect(withdraw("wd2", q1!.id, "outdated")).rejects.toThrow("already answered");
+  expect((await all("wd2"))[0]).toMatchObject({ status: "answered", answer: "yes" });
+  expect((await drain("wd2", "orchestrator")).length).toBe(1);
+  // Withdrawn first: a later answer is still recorded and delivered, once.
+  const [q2] = await ask("wd3", [{ text: "Color?" }]);
+  await withdraw("wd3", q2!.id, "answered in chat");
+  const saved = await answer("wd3", q2!.id, "blue");
+  expect(saved).toMatchObject({ status: "answered", answer: "blue", reason: "answered in chat" });
+  expect((await drain("wd3", "orchestrator")).map(m => m.text)).toEqual([`[${q2!.id}] answer to "Color?": blue`]);
+  await expect(answer("wd3", q2!.id, "red")).rejects.toThrow("already answered");
+  await expect(withdraw("wd3", q2!.id, "again")).rejects.toThrow("already answered");
+  expect(await drain("wd3", "orchestrator")).toEqual([]);
+  // A user's own Skip or delete is never answerable later.
+  const [q3] = await ask("wd4", [{ text: "Skip me?" }]);
+  await skip("wd4", q3!.id);
+  await expect(answer("wd4", q3!.id, "late")).rejects.toThrow("already skipped");
+});
+
+test("concurrent answer and close: the answer is always delivered exactly once", async () => {
+  for (let i = 0; i < 20; i++) {
+    const project = `wd-race-${i}`;
+    const [q] = await ask(project, [{ text: "Race?" }]);
+    const actions = [() => answer(project, q!.id, "explicit"), () => withdraw(project, q!.id, "outdated")];
+    if (i % 2) actions.reverse();
+    const results = await Promise.allSettled(actions.map(action => action()));
+    expect(results.some(r => r.status === "fulfilled")).toBe(true);
+    expect((await all(project))[0]).toMatchObject({ status: "answered", answer: "explicit" });
+    expect((await drain(project, "orchestrator")).map(m => m.text)).toEqual([`[${q!.id}] answer to "Race?": explicit`]);
+    expect(await list(project)).toEqual([]);
+  }
+});
+
+test("the ask tool lists pending questions and closes ids with a reason; an answer the user gave first is quoted", async () => {
+  const ctx = { project: "wd5", cwd: "/", role: "orchestrator" as const };
+  expect(await askTool.run({ action: "list" }, ctx)).toBe("no pending questions");
+  const [a, b, c] = await ask("wd5", [{ text: "A?", options: ["x", "y"], default: "x" }, { text: "B?" }, { text: "C?" }]);
+  const listed = await askTool.run({ action: "list" }, ctx);
+  expect(listed).toStartWith("3 pending, oldest first:\n");
+  expect(listed).toContain(`- ${a!.id} (asked ${a!.ts}): A? [options: x | y] [default: x]`);
+  await answer("wd5", c!.id, "done");
+  await drain("wd5", "orchestrator");
+  const out = await askTool.run({ action: "close", ids: [a!.id, b!.id, c!.id, "missing"], reason: "answered in chat" }, ctx);
+  expect(out).toBe(`closed 2 of 4:\nclosed ${a!.id}\nclosed ${b!.id}\nnot closed ${c!.id}: the user already answered: done\nnot closed missing: no question missing`);
+  expect(await list("wd5")).toEqual([]);
+  expect(await drain("wd5", "orchestrator")).toEqual([]);
+  expect(await askTool.run({ action: "close", ids: [], reason: "r" }, ctx)).toStartWith("refused");
+  expect(await askTool.run({ action: "close", ids: ["x"] }, ctx)).toBe("refused: close needs a short reason");
+  expect(await askTool.run({ action: "close", ids: Array.from({ length: 21 }, (_, i) => `q${i}`), reason: "r" }, ctx)).toBe("refused: over 20 ids in one close");
+  expect(await askTool.run({ action: "nope" }, ctx)).toBe("refused: unknown action nope");
+  expect(await askTool.run({ action: "list" }, { ...ctx, role: "worker", branch: "b" })).toStartWith("refused");
 });

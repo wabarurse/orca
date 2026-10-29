@@ -2,7 +2,10 @@
 // the count; Ctrl+Q or /questions opens the oldest question BELOW the input.
 // Esc/Tab/Ctrl+Q closes without answering/skipping and restores the saved chat
 // draft; a typed answer remains with the question for reopening. Selecting
-// skip and pressing Enter is the only skip action. Menus take precedence.
+// skip and pressing Enter skips; Ctrl+D deletes the shown question directly
+// (outdated, or already answered in chat): the same silent durable removal,
+// from either mode, with any typed answer reported, never moved on. Menus take
+// precedence.
 //
 // Modes: pick (options/skip, empty input); answer (answer> edits the answer);
 // chat (panel closed, empty queue, or an agent view). Opening saves the chat
@@ -11,9 +14,11 @@
 // neither buffer is silently replaced or moved to the next question.
 // Enter/digits/typing have a short guard after opening. The #45 closing guard
 // keeps polls from mistaking our own in-flight answer for an external close.
-// A settled question leaves no conversation line: an answer or skip here is
-// one transient note above the composer ("? <question> → <answer>"), and the
-// reply the orchestrator later reads is left out of the page (restore.ts).
+// A settled question leaves no conversation line: an answer, skip or delete
+// here is one transient note above the composer ("? <question> → <answer>"),
+// and the reply the orchestrator later reads is left out of the page
+// (restore.ts). The orchestrator withdrawing a question (ask close) is a close
+// elsewhere like any other.
 
 import { stat } from "node:fs/promises";
 import { paths } from "../../config";
@@ -68,9 +73,9 @@ export interface PageQuestions {
   /** The head question last shown, and until when (host clock) Enter, digits and typing are ignored. */
   shownHead: string | undefined;
   readyAt: number;
-  /** An answer or skip in flight. */
-  closing: false | "answer" | "skip";
-  /** Ids answered or skipped here: never shown again by a stale read. */
+  /** An answer, skip or delete in flight. */
+  closing: false | CloseKind;
+  /** Ids answered, skipped or deleted here: never shown again by a stale read. */
   mine: Set<string>;
 }
 
@@ -106,15 +111,14 @@ export interface QuestionHost {
 const EMPTY: EditState = { text: "", cursor: 0 };
 /** How long Enter, digits and typing are ignored after a question first shows. */
 export const QUESTION_DELAY_MS = 500;
-export const QUESTION_PROGRESS = { answer: "sending answer…", skip: "removing from inbox…" };
+/** How the user settles the shown question: an explicit answer, Skip (Enter on its row) or delete (Ctrl+D). */
+export type CloseKind = "answer" | "skip" | "delete";
+export const QUESTION_PROGRESS: Record<CloseKind, string> = { answer: "sending answer…", skip: "removing from inbox…", delete: "deleting from inbox…" };
+const REMOVED = { skip: "skipped, removed from inbox", delete: "deleted, removed from inbox" };
 
-/** An answered or skipped question as the page notes it: "? <question> → <answer>"; a skip says it was removed, never that a default applied. */
-export const answeredNote = (question: string, answer: string | null): string => `? ${plainText(question)} → ${plainText(answer ?? "skipped, removed from inbox")}`;
-
-/** UI-only feedback for the close. */
-function closeFeedback(question: string, answer: string | null): { kind: "answer" | "skip"; line: string } {
-  return { kind: answer === null ? "skip" : "answer", line: answeredNote(question, answer) };
-}
+/** An answered, skipped or deleted question as the page notes it: "? <question> → <answer>"; a skip or delete says it was removed, never that a default applied. */
+export const answeredNote = (question: string, answer: string | null, removal: "skip" | "delete" = "skip"): string =>
+  `? ${plainText(question)} → ${plainText(answer ?? REMOVED[removal])}`;
 
 const QUEUE_CHARS = 60;
 /** A sent answer as the prompt queue previews it: the question (cut at 60 characters) and the answer. */
@@ -144,6 +148,8 @@ const plain = (k: Key) => !k.ctrl && !k.alt && !k.shift;
 const typing = (k: Key) => (k.name === "char" || k.name === "paste") && !k.ctrl && !k.alt;
 /** The named keys a shown question takes. */
 const TAKEN = new Set(["up", "down", "enter", "escape", "tab"]);
+/** Ctrl+D deletes the shown question: no editing key uses it, so it never clashes with typing an answer. */
+const deleteKey = (k: Key) => k.name === "d" && !!k.ctrl && !k.alt && !k.shift;
 
 export class Questions {
   /** Which page's which mode the input was last synced to. */
@@ -328,7 +334,7 @@ export class Questions {
     if (mode === "chat") return false;
     if (page!.questions.closing) return true;
     if (typing(k)) return mode === "pick" || !this.ready(page!.questions);
-    return plain(k) && TAKEN.has(k.name);
+    return deleteKey(k) || plain(k) && TAKEN.has(k.name);
   }
 
   /** A key `takes` said yes to. */
@@ -339,7 +345,8 @@ export class Questions {
     if (page.questions.closing) return;
     const named = this.keys[k.name];
     if (named) return named(page);
-    if (!this.ready(page.questions)) return; // Enter, digits and typing wait out the delay
+    if (!this.ready(page.questions)) return; // Enter, Ctrl+D, digits and typing wait out the delay
+    if (deleteKey(k)) return this.remove(page);
     if (k.name === "enter") return this.enter(page);
     return this.type(page, k.text ?? "");
   }
@@ -360,7 +367,7 @@ export class Questions {
   private type(page: QuestionPage, text: string): Promise<void> | void {
     const q = page.questions;
     const n = /^[1-9]$/.test(text) ? Number(text) : 0;
-    if (n && n <= optionCount(q)) return this.close(page, head(q)!.options![n - 1]!);
+    if (n && n <= optionCount(q)) return this.close(page, head(q)!.options![n - 1]!).then(() => {});
     q.index = ownRow(q);
     this.sync();
     this.host.input = ed.insert(this.host.input, text);
@@ -386,7 +393,7 @@ export class Questions {
   /** Enter: the selected option or skip, or the typed answer once it passes questions.clean (a known command runs instead). */
   private async enter(page: QuestionPage): Promise<void> {
     const q = page.questions;
-    if (this.shown.mode === "pick") return this.close(page, q.index > ownRow(q) ? null : head(q)!.options![q.index]!);
+    if (this.shown.mode === "pick") { await this.close(page, q.index > ownRow(q) ? null : head(q)!.options![q.index]!); return; }
     const text = this.host.input.text.trim();
     if (this.host.isCommand(text)) { this.host.input = EMPTY; return this.host.run(text); }
     let answer: string;
@@ -396,17 +403,30 @@ export class Questions {
       return this.host.say(dim(`not sent: ${plainText(message(err))}`), page);
     }
     if (!answer) return this.host.say(dim("type an answer, or choose skip"), page);
-    return this.close(page, answer);
+    await this.close(page, answer);
   }
 
-  /** Answer (or, with null, skip) the shown question; its "? … → …" is the page's transient note. Closed elsewhere: said, and a typed answer is kept. */
-  private async close(page: QuestionPage, answer: string | null): Promise<void> {
+  /** Ctrl+D: delete the shown question like Skip, from either mode. A typed answer is not sent: once deleted it is reported, never moved to the next question. */
+  private async remove(page: QuestionPage): Promise<void> {
+    const typed = this.typed(page).text.trim();
+    const settled = await this.close(page, null, "delete");
+    if (settled && typed) this.host.say(dim(plainText(`deleted without sending; your unsent answer: ${typed}`)), page);
+  }
+
+  /**
+   * Answer the shown question, or with null remove it (`removal`: skip or
+   * delete); its "? … → …" is the page's transient note. Closed elsewhere:
+   * said, and a typed answer is kept. Whether this close settled the question.
+   */
+  private async close(page: QuestionPage, answer: string | null, removal: "skip" | "delete" = "skip"): Promise<boolean> {
     const q = page.questions;
     const h = head(q);
-    if (!h || q.closing || !this.valid(page)) return;
-    const feedback = closeFeedback(h.text, answer);
-    q.closing = feedback.kind;
+    if (!h || q.closing || !this.valid(page)) return false;
+    const kind: CloseKind = answer === null ? removal : "answer";
+    const line = answeredNote(h.text, answer, removal);
+    q.closing = kind;
     const inputId = crypto.randomUUID();
+    let settled = false;
     this.host.draw();
     try {
       if (answer === null) await this.store.skip(page.project, h.id);
@@ -417,14 +437,15 @@ export class Questions {
         this.host.submitted?.();
         await sending;
       }
-      if (!this.valid(page)) return;
+      if (!this.valid(page)) return false;
+      settled = true;
       q.mine.add(h.id);
-      this.host.note(feedback.line, page);
+      this.host.note(line, page);
       this.reset(page);
     } catch (err) {
-      if (!this.valid(page)) return;
+      if (!this.valid(page)) return false;
       this.host.unqueue?.(page, inputId);
-      if (!closedElsewhere(err)) return this.host.say(dim(`could not ${answer === null ? "skip" : "answer"}: ${plainText(message(err))}`), page);
+      if (!closedElsewhere(err)) { this.host.say(dim(`could not ${kind}: ${plainText(message(err))}`), page); return false; }
       this.keepTyped(page, "already closed elsewhere; your answer was not sent");
     } finally {
       q.closing = false;
@@ -434,6 +455,7 @@ export class Questions {
     if (!q.open.length) q.expanded = false;
     this.sync();
     this.host.draw();
+    return settled;
   }
 
   /** Close until explicit reopening, even if new questions arrive. */

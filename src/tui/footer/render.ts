@@ -155,8 +155,8 @@ export function projectRows(p: ProjectList, height: number): string[] {
 }
 
 export const QUESTION_HINTS: Record<QuestionMode, string> = {
-  pick: "↑↓ or 1–9 choose · enter pick · type to answer · esc/tab later",
-  answer: "enter send · esc/tab close",
+  pick: "↑↓/1–9 choose · enter pick · type answer · ctrl+d delete · esc later",
+  answer: "enter send · ctrl+d delete · esc/tab close",
 };
 export const OWN_ANSWER = "type your own answer";
 export const skipRow = () => "skip — remove from inbox";

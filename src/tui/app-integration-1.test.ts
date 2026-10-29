@@ -8,7 +8,7 @@ import { App, helpLines, parseCommand, type Clock, type ToolEvents } from "./app
 import { createOrchestrator } from "../core/agent-loop/orc/orchestrator";
 import { drain, put } from "../core/data/inbox/inbox";
 import type { Message } from "../protocol/inbox";
-import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../core/data/inbox/questions";
+import { all as allQuestions, answer as answerQuestion, ask as askQuestions, withdraw as withdrawQuestion } from "../core/data/inbox/questions";
 import { answeredNote, fileStore, queuedAnswer, type QuestionStore } from "./footer/questions";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../core/tools/message";
@@ -246,8 +246,8 @@ describe("restored pages", () => {
 });
 
 describe("orchestrator questions", () => {
-  const PICK = "↑↓ or 1–9 choose · enter pick · type to answer · esc/tab later";
-  const ANSWER = "enter send · esc/tab close";
+  const PICK = "↑↓/1–9 choose · enter pick · type answer · ctrl+d delete · esc later";
+  const ANSWER = "enter send · ctrl+d delete · esc/tab close";
   const GUARD = "send or clear your message to answer";
   const live = (term: ReturnType<typeof fakeTerm>) => term.display.screen().join("\n"), note = (app: App) => strip(app.frame().inputArea!.lines.join("\n"));
   const ask1 = (project: string, text: string, options?: string[], def?: string) => askQuestions(project, [{ text, ...(options ? { options } : {}), ...(def ? { default: def } : {}) }]);
@@ -397,6 +397,40 @@ describe("orchestrator questions", () => {
     expect(app.status(app.page!)).toEndWith("inbox 0");
     expect([app.page!.lines, note(app).includes(answeredNote("Host?", null))]).toEqual([[], true]); // a skip is a transient note, never a line or a default
     expect(app.input.text).toBe("");
+    await stop();
+  });
+
+  test("ctrl+d deletes the shown question from either mode without a reply; drafts survive; an agent close updates the count", async () => {
+    const [, , name] = await askQuestions("qa-del", [{ text: "Port?", options: ["80"] }, { text: "Host?" }, { text: "Name?" }]);
+    const { term, app, stop } = await start("qa-del");
+    await until(() => live(term).includes("? Port? (1 of 3)"));
+    term.press({ name: "escape" });
+    await until(() => !live(term).includes("? Port?"));
+    term.type("chat draft");
+    term.press({ name: "d", ctrl: true }); // chat mode: not a question key, the draft is untouched
+    expect(await statusOf("qa-del")).toEqual([["Port?", "open", null], ["Host?", "open", null], ["Name?", "open", null]]);
+    term.press({ name: "q", ctrl: true });
+    await until(() => live(term).includes("? Port? (1 of 3)") && live(term).includes("ctrl+d delete"));
+    term.press({ name: "d", ctrl: true }); // pick mode
+    await until(() => live(term).includes("? Host? (1 of 2)"));
+    expect(note(app)).toContain(answeredNote("Port?", null, "delete"));
+    expect(answeredNote("Port?", null, "delete")).toBe("? Port? → deleted, removed from inbox");
+    term.type("unsent");
+    await until(() => live(term).includes("answer> unsent"));
+    term.press({ name: "d", ctrl: true }); // answer mode: deleted, the typed answer reported, never sent or moved on
+    await until(() => live(term).includes("? Name?") && term.screen().includes("deleted without sending; your unsent answer: unsent"));
+    expect(app.input.text).toBe("");
+    expect(await statusOf("qa-del")).toEqual([["Port?", "skipped", null], ["Host?", "skipped", null], ["Name?", "open", null]]);
+    expect(await drain("qa-del", "orchestrator")).toEqual([]);
+    expect(app.page!.sent).toEqual([]);
+    expect(app.status(app.page!)).toEndWith("inbox 1");
+    term.press({ name: "escape" });
+    await until(() => !live(term).includes("? Name?"));
+    expect(app.input.text).toBe("chat draft");
+    await withdrawQuestion("qa-del", name!.id, "answered in chat"); // the orchestrator's ask close
+    await until(() => app.status(app.page!).endsWith("inbox 0"));
+    expect(await drain("qa-del", "orchestrator")).toEqual([]);
+    expect(app.input.text).toBe("chat draft");
     await stop();
   });
 

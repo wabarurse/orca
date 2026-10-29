@@ -21,13 +21,17 @@ describe("ask policy", () => {
     expect(description).toMatch(/'shall I continue\?' when continuation is already authorized/);
   });
 
-  test("uses known context and chat answers without inventing queue-management capabilities", () => {
+  test("uses known context and chat answers, and closes questions answered in chat or outdated", () => {
     expect(description).toMatch(/Before asking, use known project requirements, conversation/);
     expect(description).toMatch(/any known pending question IDs\/content to avoid duplicating unanswered questions/);
     expect(description).toMatch(/Honor clear answers and authorization already given in chat/);
     expect(description).toMatch(/do not repeat approvals just because they were not clicked in Ctrl\+Q/);
-    expect(description).toContain("cannot list or close pending questions");
-    expect(description).toContain("chat replies do not close them");
+    expect(description).not.toContain("cannot list or close");
+    expect(description).toContain("Chat replies do not close questions by themselves");
+    expect(description).toMatch(/action list shows this project's pending questions/);
+    expect(description).toMatch(/answers one in chat, or it becomes outdated, close it/);
+    expect(description).toMatch(/sends no reply and records no answer/);
+    expect(description).toMatch(/their answer always wins/);
   });
 
   test("batches only necessary related decisions and continues unaffected work asynchronously", () => {
@@ -51,9 +55,10 @@ describe("ask policy", () => {
     expect(ask.spec.input_schema).toEqual({
       type: "object",
       properties: {
+        action: { type: "string", enum: ["ask", "list", "close"], description: expect.stringContaining("ask (default)") },
         questions: {
           type: "array",
-          description: "At most 10.",
+          description: "ask: at most 10.",
           items: {
             type: "object",
             properties: {
@@ -67,8 +72,10 @@ describe("ask policy", () => {
             required: ["text"],
           },
         },
+        ids: { type: "array", items: { type: "string" }, description: expect.stringContaining("at most 20") },
+        reason: { type: "string", description: expect.stringContaining("At most 200 chars") },
       },
-      required: ["questions"],
+      required: [],
     });
   });
 });

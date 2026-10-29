@@ -8,6 +8,7 @@ import { editableTool } from "./tools";
 import { toolsFor, type Tool } from "../tools/registry";
 import { rolePrompt } from "../prompt/shared";
 import { message } from "../tools/message";
+import { ask } from "../tools/ask";
 const root = mkdtempSync(join(tmpdir(), "orca-definitions-"));
 const old = process.env.ORCA_HOME;
 let home: string;
@@ -118,4 +119,20 @@ test("edited legacy message definitions gain the report bound without losing ann
   edited.input_schema.properties.summary.maxLength = 9000;
   writeFileSync(file, JSON.stringify(edited));
   expect(() => editableTool(message)).toThrow("immutable tool schema");
+});
+
+test("an edited legacy ask definition gains list/close without losing annotations", () => {
+  const legacy: Tool = { ...ask, spec: { name: "ask", description: "Ask contract", input_schema: { type: "object", properties: { questions: { type: "array", description: "At most 10.", items: { type: "object" } } }, required: ["questions"] } } };
+  editableTool(legacy);
+  const file = join(home, "tools/ask.json");
+  const edited = JSON.parse(readFileSync(file, "utf8")); edited.description = "My ask guidance";
+  writeFileSync(file, JSON.stringify(edited));
+  const upgraded: Tool = { ...legacy, spec: { ...legacy.spec, input_schema: { type: "object", properties: {
+    action: { type: "string", enum: ["ask", "list", "close"] }, questions: { type: "array", description: "At most 10.", items: { type: "object" } },
+    ids: { type: "array", items: { type: "string" } }, reason: { type: "string" },
+  }, required: [] } } };
+  const loaded = editableTool(upgraded);
+  expect(loaded.spec.description).toContain("My ask guidance");
+  expect(loaded.spec.input_schema.required).toEqual([]);
+  expect(Object.keys(loaded.spec.input_schema.properties as object)).toEqual(["action", "questions", "ids", "reason"]);
 });

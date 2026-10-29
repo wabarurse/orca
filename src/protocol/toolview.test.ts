@@ -13,6 +13,8 @@ test("labels: a short human summary of the input per tool, the first string argu
   expect(toolLabel("complexity", { base: "main" })).toBe("complexity(changed files vs main)");
   expect(toolLabel("ask", { questions: [{ text: "Which db?" }] })).toBe("ask(Which db?)");
   expect(toolLabel("ask", { questions: [{ text: "Which db?" }, { text: "Port?" }] })).toBe("ask(2 questions: Which db?)");
+  expect(toolLabel("ask", { action: "list" })).toBe("ask(list)");
+  expect(toolLabel("ask", { action: "close", ids: ["a", "b"], reason: "answered in chat" })).toBe("ask(close 2: answered in chat)");
   expect(toolLabel("fetch", { n: 3, url: "https://x.y\n" })).toBe("fetch(https://x.y)");
   expect(toolLabel("odd", null)).toBe("odd()");
   expect(toolLabel("bash", "not an object")).toBe("bash()");

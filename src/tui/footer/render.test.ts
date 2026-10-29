@@ -294,16 +294,16 @@ describe("sanitize", () => {
 });
 
 describe("questions", () => {
-  const PICK = "↑↓ or 1–9 choose · enter pick · type to answer · esc/tab later";
+  const PICK = "↑↓/1–9 choose · enter pick · type answer · ctrl+d delete · esc later";
   const q = (over: Partial<QuestionView> = {}): QuestionView => ({ text: "Which db?", options: ["postgres", "sqlite"], index: 0, default: "sqlite", count: 1, mode: "pick", ...over });
 
   test("a question with options: text, numbered options, type your own, skip describing silent removal, the hint for the mode", () => {
     expect(questionRows(q(), 70, 10).map(strip)).toEqual(["? Which db?", "❯ 1. postgres", "  2. sqlite", "  type your own answer", "  skip — remove from inbox", PICK]);
-    expect(questionRows(q({ index: 2, count: 3, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "  skip — remove from inbox", "enter send · esc/tab close"]);
+    expect(questionRows(q({ index: 2, count: 3, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "  skip — remove from inbox", "enter send · ctrl+d delete · esc/tab close"]);
   });
 
   test("a question without options: type your own answer, then the same silent skip without a default", () => {
-    expect(questionRows(q({ options: [], default: undefined, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db?", "❯ type your own answer", "  skip — remove from inbox", "enter send · esc/tab close"]);
+    expect(questionRows(q({ options: [], default: undefined, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db?", "❯ type your own answer", "  skip — remove from inbox", "enter send · ctrl+d delete · esc/tab close"]);
   });
 
   test("long text word-wraps", () => {
