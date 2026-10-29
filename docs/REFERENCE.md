@@ -187,7 +187,14 @@ branch/worktree cleanup, including removal of ignored files.
   still open counts as running. An agent killed hard (no recorded end) shows
   `~` and ends at the run state's last update; an agent started before clocks
   existed starts at its first transcript entry. A respawn on the same branch
-  restarts the clock. The attached view's header has no clock. `/back` returns to
+  restarts the clock. The attached view's header has no clock. Live agents come
+  first, then the most recently active. By default the list shows live agents and
+  finished ones active in the last 24 hours or whose task is not merged, removed,
+  closed or cancelled yet; `+N older hidden` counts the rest, and `a` shows them
+  all (again to hide). `d` then `y` removes the selected finished agent's row, `D`
+  then `y` every finished one; a live agent is refused. Removing records a marker
+  in project state (`archived-agents`); transcripts, run files and history stay,
+  and an agent started again on that name shows again. `/back` returns to
   the orchestrator. `/inbox` shows registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
 - Ctrl+C cancels the current turn; `/quit` exits. The orchestrator daemon and
   background workers/reviewers keep running; see [Using the TUI](#using-the-tui)

@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listAgents, agentWindows } from "../../core/tmux/liveness";
+import { archiveAgents, listAgents, agentWindows, openTaskAgents } from "../../core/tmux/liveness";
 import { deleteProject } from "./project";
 import { displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "../../core/data/projects/registry";
 import { DYNAMIC_DISPATCH_USAGE, dynamicDispatch, REVIEW_ROUNDS_USAGE, reviewRounds } from "./settings";
 import { recentModels } from "./model";
 import { loadConfig, paths, saveConfig } from "../../config/config";
+import { readProjectState } from "../../config/paths";
 import { effectiveFlow } from "../../core/data/projects/flow";
 import { tmux } from "../../core/tmux/runner";
 
@@ -276,7 +277,13 @@ describe("listAgents", () => {
     mkdirSync(paths.runs(project), { recursive: true });
     writeFileSync(join(paths.runs(project), `${name}.json`), JSON.stringify({ run: "r", pid: 1, role: "worker", state: "running", step: "", tool: "", ts: "2024-05-01T10:30:00.000Z", ...patch }));
   };
-  const by = (list: Awaited<ReturnType<typeof listAgents>>, name: string) => list.find((a) => a.name === name);
+  /** The row without lastActiveAt (a transcript's mtime is the test's own time); its own tests check it. */
+  const by = (list: Awaited<ReturnType<typeof listAgents>>, name: string) => {
+    const found = list.find((a) => a.name === name);
+    if (!found) return found;
+    const { lastActiveAt: _, ...row } = found;
+    return row;
+  };
 
   test("live and finished agents carry their latest run's times; the orchestrator is not listed", async () => {
     await withProject(async (project) => {
@@ -344,6 +351,71 @@ describe("listAgents", () => {
       expect(by(list, "worker-f")).toEqual({ name: "worker-f", live: false, startedAt: "2024-05-01T08:00:00.000Z" });
       for (const n of ["worker-n", "worker-e", "worker-g"]) expect(by(list, n)).toEqual({ name: n, live: false });
     });
+  });
+
+  test("rows sort live first, then by latest activity: a finished run's end, else the transcript's last write", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => ["worker-live"];
+      for (const n of ["worker-old", "worker-new", "worker-live", "worker-bare"]) transcript(project, n, "2024-05-01T08:00:00.000Z");
+      state(project, "worker-old", { startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-01T09:00:00.000Z" });
+      state(project, "worker-new", { startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-02T09:00:00.000Z" });
+      state(project, "worker-live", { startedAt: "2024-05-01T08:00:00.000Z" });
+      const list = await listAgents(project);
+      expect(list.map((a) => a.name)).toEqual(["worker-live", "worker-bare", "worker-new", "worker-old"]); // worker-bare: mtime is now
+      expect(list.find((a) => a.name === "worker-new")!.lastActiveAt).toBe("2024-05-02T09:00:00.000Z");
+      for (const n of ["worker-live", "worker-bare"]) expect(Date.parse(list.find((a) => a.name === n)!.lastActiveAt!)).toBeGreaterThan(Date.parse("2025-01-01"));
+      expect(list.some((a) => a.openTask || a.archived)).toBe(false); // no ledger: no task keeps a row, nothing removed
+    });
+  });
+
+  test("a removed finished row is marked in project state, its transcript stays, and starting it again lists it again", async () => {
+    await withProject(async (project) => {
+      tmux.listWindows = async () => ["worker-live"];
+      for (const n of ["worker-done", "worker-live"]) transcript(project, n, "2024-05-01T08:00:00.000Z");
+      state(project, "worker-done", { startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-01T09:00:00.000Z" });
+      const result = await archiveAgents(project, ["worker-done", "worker-live", "orchestrator", "../x", "worker-done"], async () => ["worker-live"]);
+      expect(result).toEqual({ archived: ["worker-done"], live: ["worker-live"] }); // a live agent is refused; non-agents ignored
+      expect(Object.keys(readProjectState<Record<string, string>>(project, "archived-agents")!)).toEqual(["worker-done"]);
+      expect(existsSync(paths.transcript(project, "worker-done"))).toBe(true);
+      const list = await listAgents(project);
+      expect(by(list, "worker-done")).toMatchObject({ live: false, archived: true });
+      expect(by(list, "worker-live")?.archived).toBeUndefined();
+      // Removing again keeps the record valid; a new run started after the removal shows the agent again.
+      expect(await archiveAgents(project, ["worker-done"], async () => [])).toEqual({ archived: ["worker-done"], live: [] });
+      state(project, "worker-done", { startedAt: new Date(Date.now() + 60_000).toISOString() });
+      expect(by(await listAgents(project), "worker-done")?.archived).toBeUndefined();
+      // A live window always shows, even before its new run records a start.
+      state(project, "worker-done", { startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-01T09:00:00.000Z" });
+      await archiveAgents(project, ["worker-done"], async () => []);
+      tmux.listWindows = async () => ["worker-done"];
+      expect(by(await listAgents(project), "worker-done")).toMatchObject({ live: true });
+      expect(by(await listAgents(project), "worker-done")?.archived).toBeUndefined();
+    });
+  });
+
+  test("removal refuses when tmux cannot be asked, writing nothing", async () => {
+    await withProject(async (project) => {
+      transcript(project, "worker-done", "2024-05-01T08:00:00.000Z");
+      await expect(archiveAgents(project, ["worker-done"], async () => null)).rejects.toThrow("could not determine running agents");
+      expect(readProjectState(project, "archived-agents")).toBeUndefined();
+    });
+  });
+
+  test("an agent's latest task decides whether it keeps a row: open unless merged, removed, closed or cancelled", () => {
+    const run = (agent: string, preparedAt: string) => ({ id: preparedAt, agent, role: "worker" as const, state: "stopped" as const, preparedAt });
+    const pr = { repository: "o/r", number: 1, url: "https://github.com/o/r/pull/1", head: "a".repeat(40) };
+    const agents = openTaskAgents([
+      { runs: [run("worker-open", "2024-05-01T08:00:00.000Z"), run("reviewer-open", "2024-05-01T09:00:00.000Z")] },
+      { runs: [run("worker-merged", "2024-05-01T08:00:00.000Z")], archive: { reason: "merged", mergedAt: "2024-05-02T08:00:00.000Z", archivedAt: "2024-05-02T08:00:00.000Z", pr } },
+      { runs: [run("worker-gone", "2024-05-01T08:00:00.000Z")], removedAt: "2024-05-02T08:00:00.000Z" },
+      { runs: [run("worker-closed", "2024-05-01T08:00:00.000Z")], attention: { kind: "closed", reason: "pr closed" } },
+      { runs: [run("worker-cancelled", "2024-05-01T08:00:00.000Z")], attention: { kind: "cancelled", reason: "user" } },
+      { runs: [run("worker-blocked", "2024-05-01T08:00:00.000Z")], attention: { kind: "blocked", reason: "ci" } },
+      // The same agent name on a newer task: the newest run's task decides.
+      { runs: [run("worker-reused", "2024-05-01T08:00:00.000Z")] },
+      { runs: [run("worker-reused", "2024-05-03T08:00:00.000Z")], attention: { kind: "closed", reason: "pr closed" } },
+    ]);
+    expect([...agents].sort()).toEqual(["reviewer-open", "worker-blocked", "worker-open"]);
   });
 
   test("only the first transcript line is read", async () => {
