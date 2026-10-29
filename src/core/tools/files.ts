@@ -64,10 +64,11 @@ async function contents(path: string): Promise<Buffer> {
   const data = await readFile(path);
   if (data.length > MAX_FILE) throw new Error("file grew past the 2 MiB read limit; read a range with a bounded command");
   const start = data.subarray(0, 16);
-  if (sniffImage(start) || data.includes(0)) throw binary(path, start);
+  // Plain UTF-8 text is text whatever its first bytes resemble (a note starting "GIF89a").
+  if (data.includes(0)) throw binary(path, start);
   try { new TextDecoder("utf-8", { fatal: true }).decode(data); }
   catch {
-    if (BINARIES.some(b => b.test(start))) throw binary(path, start);
+    if (sniffImage(start) || BINARIES.some(b => b.test(start))) throw binary(path, start);
     throw new Error(`file is not UTF-8; use an encoding-aware command such as \`iconv -f latin1 -t utf-8 ${q(path)} | head -200\``);
   }
   return data;
