@@ -72,8 +72,10 @@ a SQLite-consistent backup, not just `tasks.json`, before operational rollout.
 Task tool register/get/list/dependencies accept stable project numbers where
 appropriate; canonical dependency edges remain UUIDs. Title/summary are editable.
 The tool exposes public fields separately from private dispatch/readiness details.
-Ctrl+T includes merged tasks, retains navigation and `r`, polls automatically and
-preserves selection. `d` asks for confirmation and only removes a verified merged
+Ctrl+T shows the dependency tree (`├─ └─` connectors to the first prerequisite,
+`+#n` for the others, `▾▸` folding, a status dot and one plain label per row, the
+worker → review → PR → merged track in the details), includes merged tasks, retains
+navigation and `r`, polls automatically and preserves selection. `d` asks for confirmation and only removes a verified merged
 task's list membership; the SQL record, dependency edges and number are retained.
 Visible PR URLs and OSC8 hyperlinks remain available (terminal gesture behavior
 is terminal-specific; no physical Cmd-gesture verification is claimed).
