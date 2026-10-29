@@ -96,7 +96,7 @@ test("a keeper failure is reported on the page and retried on later polls; quitt
   let fail = true;
   const attempts: number[] = [];
   const { app, calls } = await setup({ ensureDaemon: async () => { attempts.push(Date.now()); if (fail) throw new Error("tmux not found"); return undefined; } });
-  await until(() => note(app).includes("orchestrator is not running: tmux not found"));
+  await until(() => note(app).includes("orchestrator unavailable: tmux not found"));
   await until(() => attempts.length > 3);
   expect(note(app).match(/tmux not found/g)).toHaveLength(1); // the same failure is not repeated every poll
   fail = false;

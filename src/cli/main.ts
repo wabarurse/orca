@@ -12,13 +12,13 @@ import { superviseProcess } from "../core/data/processes";
 
 import { pullHarness } from "../core/install";
 import pkg from "../../package.json";
-import { runAgent } from "../exec";
+import { runAgent, scheduleReload, activateInstalled } from "../exec";
 import { afterExit } from "../exec";
 import { put } from "../core/data/inbox";
 import { repoHere, validProjectName } from "../core/data/projects";
 import { existsSync } from "node:fs";
 import { paths, BUILD_ID } from "../config";
-import { daemonPid } from "../core/agent-loop/orc";
+import { daemonPid, reloadRunningDaemons, requireCurrentDaemon } from "../core/agent-loop/orc";
 import { sessionId } from "../core/tmux";
 import { ensureProject } from "../core/agent-loop/orc";
 import { createClientOrchestrator, daemonKeeper, stopDaemon } from "../core/agent-loop/orc";
@@ -27,7 +27,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "msg", "stop", "agent", "agent-exit", "pull"].includes(cmd ?? "")) assertLayout(paths.root);
+if (["", "start", "msg", "stop", "agent", "agent-exit", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root);
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -45,6 +45,7 @@ function usage(error?: string): never {
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
+  orca reload                     apply the installed build to running orchestrators after their current turns
   orca help | --help
   orca agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
   orca agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>`);
@@ -83,6 +84,7 @@ switch (cmd) {
   case "msg": {
     const [project, ...words] = rest;
     if (!project || words.length === 0) usage("expected msg <project> <text>");
+    await requireCurrentDaemon(project);
     await put(project, "orchestrator", { from: "user", text: words.join(" ") });
     break;
   }
@@ -121,11 +123,22 @@ switch (cmd) {
   }
   case "pull":
     if (rest.length) usage("pull takes no arguments; it only updates ~/.orca/.runtime/app");
-    try { await pullHarness(); }
+    try {
+      const binary = await pullHarness();
+      await activateInstalled(binary);
+    }
     catch (error) {
       console.error(`orca pull: ${error instanceof Error ? error.message : String(error)}\nthe installed executable was not replaced on failure; the harness checkout/dependencies may have advanced. inspect the error and retry after resolving it.`);
       process.exitCode = 1;
     }
+    break;
+  case "reload":
+    if (rest.length) usage("reload takes no arguments; it applies the installed build to all running orchestrators");
+    console.log(scheduleReload());
+    break;
+  case "apply-update":
+    if (rest.length) usage("apply-update takes no arguments");
+    await reloadRunningDaemons();
     break;
   case "version":
     if (rest.length) usage("version takes no arguments");

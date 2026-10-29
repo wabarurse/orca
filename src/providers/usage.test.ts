@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { metered, recordRetry, usageEvent, usageScope } from "./usage";
 import { usageSummary } from "../core/data/knowledge";
 import { fakeProvider, text } from "../test/fake-provider";
+import { ModelRequestError } from "./bounded-request";
 let home: string, prior: string | undefined;
 afterEach(async () => { if (prior === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = prior; if (home) await rm(home, { recursive: true, force: true }); });
 test("accounting includes foreground, summaries, tools, search and retries without recording payloads", async () => {
@@ -20,4 +21,12 @@ test("accounting includes foreground, summaries, tools, search and retries witho
   expect((await usageSummary("other")).requests).toBe(0);
   const log = await readFile(join(home, ".runtime/usage.jsonl"), "utf8");
   expect(log).not.toContain("private"); expect(log).toContain("rolling-summary"); expect(log).toContain("web-search");
+});
+
+test("failure diagnostics identify the selected account and HTTP status without exposing payloads", async () => {
+  prior = process.env.ORCA_HOME; home = await mkdtemp(join(tmpdir(), "orca-usage-error-")); process.env.ORCA_HOME = home;
+  const provider = metered({ ...fakeProvider([]), account: "anthropic:personal", complete: async () => { throw new ModelRequestError("exhausted", 429); } });
+  await expect(provider.complete({ model: "test", messages: [], tools: [], maxTokens: 10, onText() {} })).rejects.toThrow("anthropic:personal: Model request exhausted (HTTP 429");
+  const events = (await readFile(join(home, ".runtime/usage.jsonl"), "utf8")).trim().split("\n").map(s => JSON.parse(s));
+  expect(events[0]).toMatchObject({ account: "anthropic:personal", errorKind: "exhausted", httpStatus: 429, ok: false });
 });

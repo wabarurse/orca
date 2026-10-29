@@ -100,6 +100,13 @@ test("partial successful body never replays on transient failure", async () => {
   expect(caught.kind).toBe("interrupted"); expect(calls).toBe(1); expect(timers.size).toBe(0);
 });
 
+test("exhausted rate limits retain the numeric HTTP status, never the provider body or a fabricated quota diagnosis", async () => {
+  const error = await result(boundedModelRequest(async () => { throw fail(429); }, { backoffMs: [] }));
+  expect(error).toMatchObject({ kind: "exhausted", status: 429 });
+  expect(error.message).toContain("remaining account allowance is unknown");
+  expect(error.message).not.toContain("SECRET");
+});
+
 test("caller cancellation wins same-turn timeout and already-aborted never executes", async () => {
   clock(); const caller = new AbortController(); let calls = 0;
   const execute = async () => { calls++; return new Promise<never>(() => {}); };

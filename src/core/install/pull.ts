@@ -88,7 +88,7 @@ export interface PullOptions {
   write?: (text: string) => void;
 }
 
-export async function pullHarness(options: PullOptions = {}): Promise<void> {
+export async function pullHarness(options: PullOptions = {}): Promise<string> {
   const home = options.home ?? homedir(), command = options.command ?? updateCommand, write = options.write ?? console.log;
   const app = await appDirectory(home), env = updateEnvironment(app, home);
   const git = need("git"), bun = need("bun");
@@ -127,7 +127,7 @@ export async function pullHarness(options: PullOptions = {}): Promise<void> {
     return "main";
   }
 
-  await withInstallation(home, true, async installation => {
+  return withInstallation(home, true, async installation => {
     await identity();
     await clean();
     await safeBuildPaths(app);
@@ -164,6 +164,7 @@ export async function pullHarness(options: PullOptions = {}): Promise<void> {
     await clean();
     if (await branch() !== beforeBranch || await checkedGit("rev-parse", "HEAD") !== target) throw new Error("harness checkout changed during build; refusing installation");
     await installation.replace(artifact);
-    write(`installed ${installation.target} from ${target}. existing processes were not restarted; update between active runs.`);
+    write(`installed ${installation.target} from ${target}. scheduling global orchestrator updates next.`);
+    return installation.target;
   });
 }
