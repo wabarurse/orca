@@ -5,14 +5,17 @@ import { tmpdir } from "node:os";
 import { parseMemory, summarizeOlder } from "./rolling-summary";
 import { RollingCompactor } from "./rolling-memory";
 import { createAgent, type AgentDeps } from "../../agent-loop/loop/agent";
-import { budget } from "./compaction";
+import { budget, estimate } from "./compaction";
 import { open } from "../transcripts/transcript";
 import { paths } from "../../../config";
 import type { CompleteRequest, Provider, Turn } from "../../../providers/provider";
 import { text } from "../../../test/fake-provider";
 
 const valid = { summary: ["User requires preserving history."], pending: ["Finish the requested change."] };
-const tooLong = { summary: Array(12).fill("x".repeat(900)), pending: [] };
+const tooLong = { summary: Array(16).fill("x".repeat(900)), pending: [] };
+// This is above the prose length target but below the unchanged token budget.
+// #179 incorrectly rejected it despite enough room to carry every pending item.
+const aboveTarget = { summary: Array.from({ length: 10 }, (_, i) => `Verified outcome ${i}: ` + "x".repeat(830)), pending: ["User still requires review and validation before publication."] };
 const answer = (value: unknown): Turn => ({ content: [text(JSON.stringify(value))], stop: "end", completion: "completed" });
 const source = [{ role: "user" as const, content: "Preserve history. Implement the requested change." }];
 function scripted(turns: (Turn | Error)[]) {
@@ -32,6 +35,28 @@ test("formatting and escaped spellings do not inflate the stored memory budget",
   expect(parseMemory(escaped).summary[0]).toBe("a".repeat(900));
   expect(() => parseMemory(JSON.stringify(tooLong))).toThrow("memory exceeds output budget");
   expect(() => parseMemory(JSON.stringify({ summary: Array(5).fill("漢".repeat(900)), pending: [] }))).toThrow("memory exceeds output budget");
+});
+
+test("the character target never rejects or trims memory within the token budget", async () => {
+  expect(JSON.stringify(aboveTarget).length).toBeGreaterThan(8000);
+  expect(estimate(aboveTarget)).toBeLessThan(4096);
+  expect(parseMemory(JSON.stringify(aboveTarget))).toEqual(aboveTarget);
+  const f = scripted([answer(aboveTarget)]);
+  expect(await summarizeOlder(source, new AbortController().signal, f.target)).toEqual(aboveTarget);
+  expect(f.calls).toHaveLength(1); // no needless repair request
+});
+
+test("memory admission has one token boundary, including UTF-8 and JSON overhead", () => {
+  const atLimit = { summary: Array(12).fill("x".repeat(1000)), pending: ["y".repeat(128)] };
+  expect(estimate(atLimit)).toBe(4096);
+  expect(parseMemory(JSON.stringify(atLimit))).toEqual(atLimit);
+  atLimit.pending[0] += "yyy";
+  expect(estimate(atLimit)).toBe(4097);
+  expect(() => parseMemory(JSON.stringify(atLimit))).toThrow("4097 estimated tokens > 4096");
+  // Fewer characters do not imply less model input when they occupy more bytes.
+  const unicode = { summary: Array(5).fill("漢".repeat(900)), pending: [] };
+  expect(JSON.stringify(unicode).length).toBeLessThan(8000);
+  expect(() => parseMemory(JSON.stringify(unicode))).toThrow("estimated tokens > 4096");
 });
 
 for (const [name, invalid] of [
@@ -108,6 +133,27 @@ test("oversized memory is repaired before a smaller model's foreground request, 
   expect(JSON.stringify(calls.at(-1)!.messages)).toContain("Latest correction");
   expect(transcript.history!().slice(0, original.length)).toEqual(original);
   expect(budget(deps, calls.at(-1)!.messages) + calls.at(-1)!.maxTokens).toBeLessThan(160000);
+});
+
+test("history over the model window recovers with summaries above the character target, without repairs", async () => {
+  const transcript = await history(), original = transcript.history!(), calls: CompleteRequest[] = [];
+  const provider: Provider = { name: "openai", models: async () => [], complete: async request => {
+    calls.push(request);
+    return request.trace?.purpose === "agent" ? { ...answer(valid), content: [text("continued")] } : answer(aboveTarget);
+  } };
+  const rolling = new RollingCompactor("p", transcript); controllers.push(rolling);
+  const deps: AgentDeps = { transcript, model: "gpt-6-astra", provider, tools: {}, ctx: { project: "p", role: "orchestrator", cwd: paths.project("p") },
+    compaction: { contextLimit: 272000 }, compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle), write() {} };
+  expect(budget(deps, await transcript.chain())).toBeGreaterThan(272000);
+  await createAgent(deps).run();
+  expect(calls.filter(c => c.trace?.purpose === "rolling-summary").length).toBeGreaterThan(1);
+  expect(calls.some(c => c.trace?.purpose === "rolling-summary-repair")).toBe(false);
+  expect(calls.filter(c => c.trace?.purpose === "agent")).toHaveLength(1);
+  expect(budget(deps, calls.at(-1)!.messages) + calls.at(-1)!.maxTokens).toBeLessThan(272000 * .8);
+  const checkpoint = transcript.branch().find(e => e.type === "summary");
+  expect(checkpoint?.type === "summary" && checkpoint.memory).toEqual(aboveTarget);
+  expect(JSON.stringify(calls.at(-1)!.messages)).toContain("Latest correction");
+  expect(transcript.history!().slice(0, original.length)).toEqual(original);
 });
 
 test("a hard-limit validation failure and its cooldown retain the cause without foreground requests or transcript writes", async () => {
