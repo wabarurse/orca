@@ -1,6 +1,6 @@
 // Shared TUI state and input helpers; rendering and event handling live in app.ts.
 import type { TaskTreeRender, ClipboardImage, Key, Terminal } from "./components";
-import type { ImageRef, AgentInfo, ProjectEntry, Message, ToolCall, ToolOutcome } from "../protocol";
+import type { ImageRef, AgentInfo, ProjectEntry, Message, ToolCall, ToolOutcome, Role } from "../protocol";
 import type { RequestSettings } from "../providers/catalog";
 import type { Orchestrator } from "../core/agent-loop/orc";
 import { archiveAgents, cancelSession } from "../core/tmux";
@@ -44,6 +44,10 @@ export interface Page {
   /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
   calls: Calls;
   model?: string;
+  /** The project's role overrides that apply with `model` (/model for one role): the header shows each role's model. */
+  roles?: Partial<Record<Role, string>>;
+  /** The project's selected account, provider:profile, for the header; undefined until read or when unreadable. */
+  account?: string;
   settings?: RequestSettings;
   /** The project's review-round limit and dynamic-dispatch switch (project-flow.ts) as last read; undefined = unknown, shown as "?". */
   review?: number;

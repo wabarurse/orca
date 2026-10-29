@@ -112,7 +112,7 @@ test("a keeper failure is reported on the page and retried on later polls; quitt
 test("without a keeper (tests, legacy), pages open and the model acknowledgement still goes through the client", async () => {
   const { app, calls } = await setup({ saveModel: async id => `model set to ${id}`, modelAgents: async () => [],
     modelChoices: async () => ({ choices: [{ value: "claude-opus-5-5", label: "claude-opus-5-5" }], errors: [], current: "" }) });
-  await app.commands.get("/model")!.run("", app.page); // the picker: there is no id argument
+  await app.commands.get("/model")!.run("all", app.page); // all agents skips the scope step; there is no id argument
   await app.onKey({ name: "enter" });
   await until(() => calls.includes("model claude-opus-5-5"));
   await until(() => note(app).includes("orchestrator: model claude-opus-5-5 applies"));

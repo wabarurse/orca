@@ -1,11 +1,66 @@
 # Project model, effort, and fast mode
 
-`/model` selects this project's model from a picker of the models offered by
-the project's selected account (one provider; `/accounts` switches provider).
-There is no id argument. Live worker/reviewer **tmux windows**, not transcript filenames,
+`/model` selects this project's model, for all agents or for one role (see
+Per-role models below), from a picker of the models offered by the project's
+selected account (one provider; `/accounts` switches provider). There is no id
+argument. Live worker/reviewer **tmux windows**, not transcript filenames,
 require confirmation; failed/unknown liveness refuses the change. A known
 missing tmux session is empty and may switch immediately. No project means an
 explanation, never an implicit new project or global-default write.
+
+## Per-role models
+
+`/model` starts with a scope step: **all agents**, **orchestrator**, **workers**
+or **reviewers**, each row showing that scope's current effective model.
+`/model orch|worker|reviewer` (also `orchestrator`, `workers`, `reviewers`,
+`all`) skips the step; this argument names a role, never a model id, and any
+other argument prints the usage and opens nothing. The next step is the same
+picker of the project account's models, with the scope's current model marked;
+a role's picker begins with **same as project**, which clears its override
+(picking the project model itself does the same). Enter picks, Esc cancels.
+
+- Storage: project state key `role-models`, per provider like `provider-models`:
+  `{ anthropic?: { orchestrator?, worker?, reviewer? }, openai?: { … } }`. Only
+  entries that are models of their provider count; a non-record value fails
+  closed (`invalid project role models`) for role reads and model saves.
+- Resolution (`core/data/projects/project-model.ts`, the one place):
+  `roleOverrides(project, model)` is the overrides of the project model's
+  provider minus any equal to it; `effectiveModel(project, role?)` returns the
+  role's override when one applies, else the project model; and
+  `projectModelResolver(project, load, role?)` resolves it before every request.
+  The orchestrator passes `"orchestrator"`, `orca agent` passes its own
+  `worker`/`reviewer` role; no role means the project model. The header, the
+  scope rows and the daemon's model acknowledgement and context estimate use the
+  same functions.
+- **All agents** saves the project model and, in the same locked commit, clears
+  the role overrides of its provider: after "switch all", every agent uses that
+  model. The scope row says so when overrides exist.
+- A role save (`saveRoleModel`) refuses a model of another provider (the
+  project's account serves one provider; `/accounts` switches it) and rechecks
+  the project model's provider under the project lock.
+- `/accounts` to another provider leaves the overrides on disk, dormant: the
+  resolver ignores another provider's overrides, and switching back (which
+  restores the provider's last model) restores them too.
+- Settings stay per exact model: an agent on an override model uses that
+  model's saved effort/fast (`effectiveSettings(project, model)`). `/effort`
+  and `/fast` still act on the project model only.
+- Confirmation: all agents counts running workers and reviewers as before; the
+  workers/reviewers scopes count only that role's running windows ("applies to
+  N running workers"); nothing of the role running, or the orchestrator scope,
+  saves at once. An orchestrator change asks the daemon to acknowledge it.
+- Header: one field shows the project's selected account and each role's
+  effective model, then the project model's effort/fast:
+  `account anthropic:phoebe · model claude-opus-5-5 · all roles · effort default · fast off`
+  when every role uses the project model, else
+  `account anthropic:phoebe · model orch claude-opus-5-5 · workers claude-sonnet-5 · reviewers claude-haiku-5-5 · effort default · fast off`.
+  The role models come from the same `roleOverrides` resolution the agents use.
+  On a narrow width the field wraps once when the header has a spare row,
+  otherwise its tail is clipped, so the account and the orchestrator's model
+  are kept before workers, reviewers and the settings (beside the fin at 80
+  columns the field has 45 columns over two rows, so three differing long ids
+  can lose effort/fast). The context figure is the orchestrator's own model's.
+  `/model`, `/accounts` and `/effort` all refresh the header through the one
+  `refreshHeader` read.
 
 `/effort` opens the same arrow-key menu as `/model`: `default` plus the levels
 the project's current model supports, with the effective choice marked. Enter
