@@ -109,6 +109,7 @@ export class RollingCompactor {
   private finished?: Finished;
   private disposed = false;
   private generation = 0;
+  private target?: string;
   constructor(private project: string, private transcript: Transcript, private options: RollingOptions = {}) {}
   ready(): boolean { return !!this.job?.settled; }
   reset(): void {
@@ -143,6 +144,11 @@ export class RollingCompactor {
     deps.signal?.throwIfAborted();
     if (this.disposed) return;
     if (!manual && deps.compaction?.enabled === false) { this.reset(); return; }
+    // A background job owns the account/model snapshot it started with. A switch
+    // must cancel that job and its failure backoff before using the new account.
+    const target = JSON.stringify([deps.model, deps.provider?.account ?? deps.provider?.name, contextLimit(deps.compaction ?? {}, deps.model)]);
+    if (this.target !== undefined && this.target !== target) this.reset();
+    this.target = target;
     this.reconcile();
     if (this.job?.settled) await this.apply(deps, this.job);
     // Idle maintenance only publishes existing work. In particular a discarded

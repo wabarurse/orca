@@ -39,7 +39,7 @@ function provider(complete: Provider["complete"]): Provider { return { name: "an
 
 for (const manual of [false, true]) test(`${manual ? "manual" : "automatic"} oversized compaction uses one bounded request and preserves the tool tail`, async () => {
   const { deps, transcript, tail } = await fixture();
-  const bytes = await Bun.file(transcript.path).text(), history = transcript.history!();
+  const bytes = await Bun.file(transcript.path).text(), history = transcript.history!().filter(e => e.type !== "model-request");
   const requests: CompleteRequest[] = [];
   let normal = 0;
   deps.provider = provider(async request => {
@@ -70,7 +70,7 @@ for (const manual of [false, true]) test(`${manual ? "manual" : "automatic"} ove
   expect(chain[0]!.content).toContain("Original requirements and progress.");
   expect(chain[0]!.content).toContain("Keep the original requirements.");
   expect(chain.slice(1, -1)).toEqual(tail);
-  expect(transcript.history!().slice(0, -1)).toEqual(history);
+  expect(transcript.history!().filter(e => e.type !== "model-request").slice(0, -1)).toEqual(history);
   expect((await Bun.file(transcript.path).text()).startsWith(bytes)).toBe(true);
   expect(await open(transcript.path).chain()).toEqual(chain);
 });
