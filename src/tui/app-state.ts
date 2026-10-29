@@ -44,8 +44,10 @@ export interface Page {
   /** The orchestrator's tool calls running now, shown in the live region (tools.ts). */
   calls: Calls;
   model?: string;
-  /** The project's role overrides that apply with `model` (/model for one role), shown compactly after it in the header. */
+  /** The project's role overrides that apply with `model` (/model for one role): the header shows each role's model. */
   roles?: Partial<Record<Role, string>>;
+  /** The project's selected account, provider:profile, for the header; undefined until read or when unreadable. */
+  account?: string;
   settings?: RequestSettings;
   /** The project's review-round limit and dynamic-dispatch switch (project-flow.ts) as last read; undefined = unknown, shown as "?". */
   review?: number;

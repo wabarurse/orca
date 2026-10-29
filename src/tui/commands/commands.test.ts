@@ -79,11 +79,11 @@ describe("role models in /model and the header", () => {
     const reviewer = scopedChoices(offered, "reviewer", "claude-opus-5", { worker: "claude-sonnet-5" }, dim);
     expect(reviewer[0]).toEqual({ value: null, label: "same as project  claude-opus-5", current: true });
   });
-  test("the header label is compact, groups roles sharing a model, and is empty without overrides", () => {
-    expect(roleModelsLabel(undefined)).toBe("");
-    expect(roleModelsLabel({})).toBe("");
-    expect(roleModelsLabel({ worker: "sonnet" })).toBe(" · workers sonnet");
-    expect(roleModelsLabel({ reviewer: "haiku", worker: "haiku", orchestrator: "opus" })).toBe(" · orch opus · workers+reviewers haiku");
+  test("the header's model field is compact when every role uses the project model, else lists each role's model", () => {
+    expect(roleModelsLabel("opus", undefined)).toBe("opus · all roles");
+    expect(roleModelsLabel("opus", {})).toBe("opus · all roles");
+    expect(roleModelsLabel("opus", { worker: "sonnet" })).toBe("orch opus · workers sonnet · reviewers opus");
+    expect(roleModelsLabel("opus", { reviewer: "haiku", worker: "sonnet", orchestrator: "opus" })).toBe("orch opus · workers sonnet · reviewers haiku");
   });
 });
 

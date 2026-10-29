@@ -48,9 +48,19 @@ a role's picker begins with **same as project**, which clears its override
   workers/reviewers scopes count only that role's running windows ("applies to
   N running workers"); nothing of the role running, or the orchestrator scope,
   saves at once. An orchestrator change asks the daemon to acknowledge it.
-- Header: overrides follow the project model compactly, roles sharing a model
-  grouped: `model opus · orch haiku · workers+reviewers sonnet · effort …`. The
-  context figure is the orchestrator's own model's.
+- Header: one field shows the project's selected account and each role's
+  effective model, then the project model's effort/fast:
+  `account anthropic:phoebe · model claude-opus-5-5 · all roles · effort default · fast off`
+  when every role uses the project model, else
+  `account anthropic:phoebe · model orch claude-opus-5-5 · workers claude-sonnet-5 · reviewers claude-haiku-5-5 · effort default · fast off`.
+  The role models come from the same `roleOverrides` resolution the agents use.
+  On a narrow width the field wraps once when the header has a spare row,
+  otherwise its tail is clipped, so the account and the orchestrator's model
+  are kept before workers, reviewers and the settings (beside the fin at 80
+  columns the field has 45 columns over two rows, so three differing long ids
+  can lose effort/fast). The context figure is the orchestrator's own model's.
+  `/model`, `/accounts` and `/effort` all refresh the header through the one
+  `refreshHeader` read.
 
 `/effort` opens the same arrow-key menu as `/model`: `default` plus the levels
 the project's current model supports, with the effective choice marked. Enter

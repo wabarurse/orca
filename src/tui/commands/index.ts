@@ -1,5 +1,5 @@
 export { accountChoices, login, useAccount } from "./accounts";
-export { activeRoles, effortChoices, modelChoices, roleModelsLabel, setModel, type Choice } from "./model";
+export { activeRoles, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, type Choice } from "./model";
 export { chooseScope, type Scope } from "./scope";
 export { switchAllMenu } from "./switch-all";
 export { chooseModel, type ModelHost } from "./model-flow";

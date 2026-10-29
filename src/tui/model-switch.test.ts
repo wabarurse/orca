@@ -422,12 +422,12 @@ test("/model for one role: the scope menu shows each role's model; only that rol
     expect(await effectiveModel(ui.project, "worker")).toBe("gpt-5.5");
     expect(await effectiveModel(ui.project, "reviewer")).toBe("gpt-6-astra");
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    await until(() => ui.writes.some((s) => s.includes("model gpt-6-astra · workers gpt-5.5 · effort")));
+    await until(() => ui.writes.some((s) => s.includes("account openai:default · model orch gpt-6-astra · workers gpt-5.5 · reviewers gpt-6-astra · effort")));
     // The orchestrator scope never asks: only the orchestrator reads it.
     await pickModel(ui, "gpt-5.5", "orch");
     await until(() => note(ui.app).includes("orchestrator set to gpt-5.5"));
     expect(ui.app.menu).toBeNull();
-    await until(() => ui.writes.some((s) => s.includes("model gpt-6-astra · orch+workers gpt-5.5 · effort")));
+    await until(() => ui.writes.some((s) => s.includes("model orch gpt-5.5 · workers gpt-5.5 · reviewers gpt-6-astra · effort")));
     // No argument: the scope step, each row with its current model.
     await ui.app.commands.get("/model")!.run("", ui.app.page);
     expect(plainItems()).toEqual([
@@ -452,6 +452,7 @@ test("/model for one role: the scope menu shows each role's model; only that rol
     await until(() => note(ui.app).includes("model set to gpt-5.5"));
     expect(await effectiveModel(ui.project, "orchestrator")).toBe("gpt-5.5");
     expect(readProjectState(ui.project, "role-models")).toEqual({});
+    await until(() => ui.writes.some((s) => s.includes("account openai:default · model gpt-5.5 · all roles · effort")));
   } finally { await ui.close(); }
 });
 

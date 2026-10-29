@@ -23,7 +23,7 @@ import { listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
 import type { AgentInfo } from "../protocol";
 import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
-import { activeRoles, chooseModel, effortChoices, modelChoices, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
+import { activeRoles, chooseModel, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
 import { reviewRounds, dynamicDispatch } from "./commands";
 import { paths, validRounds } from "../config";
 import { projectIdentity } from "../core/data/projects";
@@ -589,8 +589,8 @@ export class App {
 
   private header(page: Page, decorate = true): string[] {
     const settings = page.settings;
-    const model = `${page.model ?? "loading model…"}${roleModelsLabel(page.roles)} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(page.review), dispatch: dispatchStatus(page.dispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    const model = `${page.model ? roleModelsLabel(page.model, page.roles) : "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), review: reviewStatus(page.review), dispatch: dispatchStatus(page.dispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Submission hides the welcome immediately, even before inbox consumption. */
@@ -611,11 +611,11 @@ export class App {
     const version = (this.modelVersions.get(page) ?? 0) + 1;
     this.modelVersions.set(page, version);
     const model = await this.readModel(page.project);
-    const settings = await effectiveSettings(page.project, model).catch(() => undefined);
+    const [settings, account] = await Promise.all([effectiveSettings(page.project, model).catch(() => undefined), pageAccount(page.project)]);
     if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
     const roles = activeRoles(page.project, model);
-    const unchanged = model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings) && JSON.stringify(roles) === JSON.stringify(page.roles);
-    page.model = model; page.roles = roles;
+    const unchanged = model === page.model && account === page.account && JSON.stringify(settings) === JSON.stringify(page.settings) && JSON.stringify(roles) === JSON.stringify(page.roles);
+    page.model = model; page.roles = roles; page.account = account;
     page.settings = settings;
     if (!unchanged && page === this.page) this.draw();
   }
@@ -1038,7 +1038,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     page.lines.unshift(...this.looseLines);
     this.looseLines = [];
     if (this.looseNote !== undefined) { this.notes.set(page, this.looseNote); this.looseNote = undefined; }
-    page.model = await this.readModel(project); page.roles = activeRoles(project, page.model);
+    page.model = await this.readModel(project); page.roles = activeRoles(project, page.model); page.account = await pageAccount(project);
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
     catch (error) { this.note(dim(`image recovery failed: ${error}`), page); }

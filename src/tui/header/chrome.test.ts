@@ -92,6 +92,24 @@ test("fin fits to the right of metadata and yields to fields on tiny terminals",
   expect(plain(ordinary).join("\n")).toContain(`model ${settings}`);
 });
 
+test("the account leads the model field; a narrow width wraps it when a row is spare, else keeps the account and the orchestrator's model first", () => {
+  const roles = "orch claude-opus-5-5 · workers claude-sonnet-5 · reviewers claude-haiku-5-5 · effort high · fast off";
+  const c: Chapter = { ...chapter, account: "anthropic:phoebe", model: roles };
+  expect(plain(chapterRows(c, 160))[1]).toBe(`account anthropic:phoebe · model ${roles}`);
+  expect(plain(chapterRows({ ...chapter, model: roles }, 160))[1]).toBe(`model ${roles}`); // no account read yet: no field for it
+  // 60 columns, a spare row: the field wraps once (a second row is still bounded).
+  const wide = plain(chapterRows(c, 60, headerHeight(24)));
+  expect(wide[1]).toBe("account anthropic:phoebe · model orch claude-opus-5-5 · work");
+  expect(wide[2]).toBe("ers claude-sonnet-5 · reviewers claude-haiku-5-5 · effort h…"); // 133 cells: the second row is itself bounded
+  expect(wide.join("\n")).toContain("/repo");
+  // No spare row: the tail is clipped; the account and the orchestrator's model stay.
+  const narrow = plain(chapterRows(c, 60, 5));
+  expect(narrow).toHaveLength(5);
+  expect(narrow[1]).toBe("account anthropic:phoebe · model orch claude-opus-5-5 · wo…");
+  expect(narrow[2]).toBe("/repo");
+  expect(narrow.every(line => Bun.stringWidth(line) <= 60)).toBe(true);
+});
+
 test("new-chat whale is uncaptioned and fits each supported viewport", () => {
   for (const [cols, budget] of [[32, 6], [44, 10], [84, 19]]) {
     const art = whaleRows(cols!, budget!);

@@ -7,6 +7,8 @@ export interface Tab { name: string; busy?: boolean }
 export interface Chapter {
   tabs: Tab[];
   active: number;
+  /** The project's account (provider:profile); leads the model field so narrow widths keep it. */
+  account?: string;
   model: string;
   directory: string;
   remote: string;
@@ -93,9 +95,12 @@ export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
 
 function chapterFields(c: Chapter, cols: number): string[] {
   const telemetry = [c.context, c.review, c.dispatch].filter(Boolean).join(" · ");
+  // One field: the account, then the model (each role's), then effort/fast; a narrow width wraps it once when a row is spare,
+  // else clips its tail, so the account and the orchestrator's model survive before workers/reviewers and the settings.
+  const model = `${c.account ? `account ${c.account} · ` : ""}model ${c.model}`;
   // Narrow telemetry stacks without sacrificing the selected model to telemetry.
   // Agent identity precedes paths in constrained views.
   return telemetry && visibleLength(plain(telemetry)) > cols
-    ? [c.context, `model ${c.model}`, c.review, c.dispatch, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote].filter((f): f is string => !!f)
-    : [...(telemetry ? [telemetry] : []), `model ${c.model}`, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote];
+    ? [c.context, model, c.review, c.dispatch, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote].filter((f): f is string => !!f)
+    : [...(telemetry ? [telemetry] : []), model, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote];
 }

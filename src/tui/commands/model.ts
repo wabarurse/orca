@@ -6,6 +6,7 @@ import { prefetchContextLimits } from "../../providers/catalog";
 import { loadConfig, saveConfig } from "../../config";
 import { accountForModel, effectiveAccount, effectiveModel, roleOverrides, saveProjectModel, validateModel } from "../../core/data/projects";
 import type { Role } from "../../protocol";
+import { accountId } from "../../login";
 import { effectiveSettingsReport } from "../../core/data/projects";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }
@@ -62,10 +63,14 @@ export function activeRoles(project: string, model: string): RoleModels {
   try { return roleOverrides(project, model); } catch { return {}; }
 }
 const SHORT: Readonly<Record<Role, string>> = { orchestrator: "orch", worker: "workers", reviewer: "reviewers" };
-/** The header's compact overrides after the project model, roles sharing a model together: ` · workers+reviewers sonnet`; "" for none. */
-export function roleModelsLabel(roles: RoleModels | undefined): string {
-  const groups = new Map<string, string[]>();
-  for (const role of ["orchestrator", "worker", "reviewer"] as const) { const model = roles?.[role]; if (model) groups.set(model, [...groups.get(model) ?? [], SHORT[role]]); }
-  return [...groups].map(([model, names]) => ` · ${names.join("+")} ${model}`).join("");
+/** The header's model field: each role's effective model (its override from roleOverrides, else the project model), compact when
+ * every role uses the project model: `claude-opus-5-5 · all roles`, else `orch opus · workers sonnet · reviewers haiku`. */
+export function roleModelsLabel(model: string, roles: RoleModels | undefined): string {
+  const per = (["orchestrator", "worker", "reviewer"] as const).map((role) => [SHORT[role], roles?.[role] ?? model] as const);
+  return per.every(([, m]) => m === model) ? `${model} · all roles` : per.map(([who, m]) => `${who} ${m}`).join(" · ");
+}
+/** The header's account: the project's selected account as provider:profile; undefined when it cannot be read (shown as nothing). */
+export function pageAccount(project: string): Promise<string | undefined> {
+  return effectiveAccount(project).then(accountId, () => undefined);
 }
 
