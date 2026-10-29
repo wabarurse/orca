@@ -37,7 +37,12 @@ The orchestrator keeps roughly 6,000 recent tokens, never splitting a tool
 exchange, and always keeps the newest whole exchange even if oversized.
 Summarization reuses the account and model resolved for the foreground request,
 with low effort when supported, fast mode off, no tools, bounded UTF-8 source
-chunks, a two-minute deadline and a 30-second automatic retry cooldown. A
+chunks, a two-minute deadline per summary request (a large prefix is many
+sequential parts, so the deadline never covers the whole summary) and an automatic
+retry cooldown of 30 seconds that doubles per consecutive failure up to 30 minutes.
+A finished summary that was not published (declined or failed) is kept: the next
+summary reuses it while its exact prefix, input/context epoch and checkpoint are
+unchanged, and summarizes only the messages that became older since. A
 Claude session does not require an OpenAI login. Manual `/compact` can retry
 immediately; automatic turns do not bypass the cooldown. No live provider
 capability is implied by local tests.
