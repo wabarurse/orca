@@ -6,7 +6,10 @@ import { listAgents, agentWindows } from "../../core/tmux/liveness";
 import { deleteProject } from "./project";
 import { displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "../../core/data/projects/registry";
 import { DYNAMIC_DISPATCH_USAGE, dynamicDispatch, REVIEW_ROUNDS_USAGE, reviewRounds } from "./settings";
-import { recentModels } from "./model";
+import { recentModels, roleModelsLabel } from "./model";
+import { chooseScope, parseScope, scopeChoices, scopeUsage, type Scope } from "./scope";
+import { switchAllMenu } from "./switch-all";
+import { scopedChoices } from "./model-flow";
 import { loadConfig, paths, saveConfig } from "../../config/config";
 import { effectiveFlow } from "../../core/data/projects/flow";
 import { tmux } from "../../core/tmux/runner";
@@ -21,6 +24,66 @@ describe("recentModels", () => {
   });
   test("ignores a current model the provider does not list", () => {
     expect(recentModels(ids, "other", 3)).toEqual(["m6", "m5", "m4"]);
+  });
+});
+
+describe("scope step", () => {
+  test("parseScope takes role names and short forms, never a model id", () => {
+    expect(["orch", "orchestrator", "worker", "workers", "reviewer", "Reviewers", "all"].map(parseScope)).toEqual(["orchestrator", "orchestrator", "worker", "worker", "reviewer", "reviewer", "all"]);
+    expect(parseScope("claude-opus-5")).toBeUndefined();
+    expect(parseScope("toString")).toBeUndefined();
+  });
+  test("scopeChoices lists all agents then each role, aligned, with what each has now", () => {
+    const rows = scopeChoices((scope) => `now ${scope}`);
+    expect(rows.map((r) => r.value)).toEqual(["all", "orchestrator", "worker", "reviewer"]);
+    expect(rows.map((r) => r.label)).toEqual(["all agents    now all", "orchestrator  now orchestrator", "workers       now worker", "reviewers     now reviewer"]);
+    expect(rows.some((r) => r.current)).toBe(false);
+  });
+  test("chooseScope: no argument opens the menu; a role skips it; anything else is the usage and opens nothing", async () => {
+    const seen: string[] = [];
+    let pick!: (scope: Scope) => Promise<void> | void;
+    const step = { command: "/model", title: "t", describe: () => "", open: (_t: string, _c: unknown, p: typeof pick) => { seen.push("menu"); pick = p; },
+      note: (text: string) => { seen.push(text); }, then: (scope: Scope) => { seen.push(`then ${scope}`); } };
+    await chooseScope("", step);
+    expect(seen).toEqual(["menu"]);
+    await pick("reviewer");
+    await chooseScope(" workers ", step);
+    await chooseScope("claude-opus-5", step);
+    expect(seen).toEqual(["menu", "then reviewer", "then worker", scopeUsage("/model")]);
+  });
+});
+
+describe("scoped switch confirmation", () => {
+  const agents = ["worker-a", "worker-b", "reviewer-a", "orchestrator"];
+  test("all agents counts workers and reviewers, as before", () => {
+    expect(switchAllMenu("switch?", agents)!.title).toContain("applies to orchestrator, 2 workers and 1 reviewers");
+    expect(switchAllMenu("switch?", ["orchestrator"])).toBeNull();
+  });
+  test("a role counts only its own running agents; none running, or the orchestrator, saves at once", () => {
+    const workers = switchAllMenu("switch workers to x?", agents, "worker")!;
+    expect(workers.title).toContain("applies to 2 running workers");
+    expect(workers.choices.map((c) => c.label)).toEqual(["cancel", "switch workers"]);
+    expect(workers.choices[0]!.current).toBe(true);
+    expect(switchAllMenu("q", agents, "reviewer")!.title).toContain("applies to 1 running reviewers");
+    expect(switchAllMenu("q", ["worker-a"], "reviewer")).toBeNull();
+    expect(switchAllMenu("q", agents, "orchestrator")).toBeNull();
+  });
+});
+
+describe("role models in /model and the header", () => {
+  const offered = [{ value: "claude-opus-5", label: "claude-opus-5" }, { value: "claude-sonnet-5", label: "claude-sonnet-5" }];
+  const dim = (s: string) => s;
+  test("all agents marks the project model; a role marks its override, else \"same as project\"", () => {
+    expect(scopedChoices(offered, "all", "claude-opus-5", { worker: "claude-sonnet-5" }, dim).map((c) => [c.value, !!c.current])).toEqual([["claude-opus-5", true], ["claude-sonnet-5", false]]);
+    expect(scopedChoices(offered, "worker", "claude-opus-5", { worker: "claude-sonnet-5" }, dim).map((c) => [c.value, !!c.current])).toEqual([[null, false], ["claude-opus-5", false], ["claude-sonnet-5", true]]);
+    const reviewer = scopedChoices(offered, "reviewer", "claude-opus-5", { worker: "claude-sonnet-5" }, dim);
+    expect(reviewer[0]).toEqual({ value: null, label: "same as project  claude-opus-5", current: true });
+  });
+  test("the header's model field is compact when every role uses the project model, else lists each role's model", () => {
+    expect(roleModelsLabel("opus", undefined)).toBe("opus · all roles");
+    expect(roleModelsLabel("opus", {})).toBe("opus · all roles");
+    expect(roleModelsLabel("opus", { worker: "sonnet" })).toBe("orch opus · workers sonnet · reviewers opus");
+    expect(roleModelsLabel("opus", { reviewer: "haiku", worker: "sonnet", orchestrator: "opus" })).toBe("orch opus · workers sonnet · reviewers haiku");
   });
 });
 
