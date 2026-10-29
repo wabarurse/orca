@@ -1,5 +1,5 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { budget, contextLimit, estimate, outputCap, retainedImages, type ContextDeps } from "./compaction";
+import { budget, ContextBlocked, contextLimit, estimate, outputCap, retainedImages, type ContextDeps } from "./compaction";
 import { archiveTranscript, contextEpoch, scopedTasks, transcriptEntries } from "./archive";
 import { existingTasks } from "../tasks";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
@@ -32,6 +32,19 @@ interface Job {
   error?: unknown;
   settled: boolean;
 }
+/** A finished summary that was not published, with the exact prefix it covers (kept by apply, taken by reusable). */
+interface Finished {
+  prefix: MessageParam[];
+  memory: RollingMemory;
+  epoch: string;
+  inputEpoch: string;
+  checkpoint: string | undefined;
+  identity: string;
+}
+/** Attempts cool down for 30s. Real failures also defer background retries up to
+ * 30 minutes, but a hard context limit bypasses that extra deferral. */
+const RETRY_MS = 30000, MAX_RETRY_MS = 30 * 60000;
+type Outcome = "published" | "declined" | "failed";
 
 /** Keep a recent tail near the target, always retaining the newest complete exchange. */
 export function rollingCut(messages: MessageParam[], tailTokens: number): number {
@@ -94,11 +107,19 @@ function memoryText(memory: RollingMemory, tasks: Task[], preferences: string[])
 export class RollingCompactor {
   private job?: Job;
   private retryAfter = 0;
+  private deferUntil = 0;
+  private failures = 0;
+  private finished?: Finished;
   private disposed = false;
   private generation = 0;
+  private target?: string;
+  private failure?: string;
   constructor(private project: string, private transcript: Transcript, private options: RollingOptions = {}) {}
   ready(): boolean { return !!this.job?.settled; }
-  reset(): void { this.generation++; this.job?.abort.abort(new Error("rolling compaction cancelled")); this.job = undefined; this.retryAfter = 0; }
+  reset(): void {
+    this.generation++; this.job?.abort.abort(new Error("rolling compaction cancelled")); this.job = undefined;
+    this.retryAfter = 0; this.deferUntil = 0; this.failures = 0; this.finished = undefined; this.failure = undefined;
+  }
   dispose(): void { this.disposed = true; this.reset(); }
   /** Read-only refresh can invalidate work, never start or publish a summary. */
   reconcile(): void {
@@ -118,8 +139,14 @@ export class RollingCompactor {
     try { await this.prepare(deps, manual, maintenance); }
     catch (error) {
       deps.signal?.throwIfAborted();
-      this.retryAfter = Date.now() + 30000;
-      status(deps, `background compaction failed; original history kept: ${error instanceof Error ? error.message : error}`);
+      this.backoff();
+      this.failure = error instanceof Error ? error.message : String(error);
+      status(deps, `background compaction failed; original history kept: ${this.failure}`);
+    }
+    // Preserve the compaction cause in the daemon's durable failure status. The
+    // loop's generic admission error otherwise hides the reason recovery failed.
+    if (!maintenance && this.failure && !fits(deps, await this.transcript.chain())) {
+      throw new ContextBlocked(`context blocked: compaction failed: ${this.failure}. Original history is preserved; /compact retries explicitly, or select a larger context model.`);
     }
   }
 
@@ -127,6 +154,11 @@ export class RollingCompactor {
     deps.signal?.throwIfAborted();
     if (this.disposed) return;
     if (!manual && deps.compaction?.enabled === false) { this.reset(); return; }
+    // A background job owns the account/model snapshot it started with. A switch
+    // must cancel that job and its failure backoff before using the new account.
+    const target = JSON.stringify([deps.model, deps.provider?.account ?? deps.provider?.name, contextLimit(deps.compaction ?? {}, deps.model)]);
+    if (this.target !== undefined && this.target !== target) this.reset();
+    this.target = target;
     this.reconcile();
     if (this.job?.settled) await this.apply(deps, this.job);
     // Idle maintenance only publishes existing work. In particular a discarded
@@ -138,7 +170,9 @@ export class RollingCompactor {
     // This controller is orchestrator-only. Workers/reviewers keep the separate
     // foreground compaction policy. Reserve headroom still bounds small windows.
     const trigger = Math.min(this.options.triggerTokens ?? limit * .5, safeInput);
-    if (!this.job && (manual || (budget(deps, messages) >= trigger && Date.now() >= this.retryAfter))) {
+    // A blocked foreground cannot make progress during a long background deferral.
+    const due = Date.now() >= this.retryAfter && (Date.now() >= this.deferUntil || !fits(deps, messages));
+    if (!this.job && (manual || (budget(deps, messages) >= trigger && due))) {
       await this.start(deps, messages);
     }
     if (this.job && (manual || !fits(deps, messages))) {
@@ -158,7 +192,7 @@ export class RollingCompactor {
 
   private async start(deps: ContextDeps, messages: MessageParam[]): Promise<void> {
     const cut = rollingCut(messages, this.options.tailTokens ?? 20000);
-    if (!cut) { this.retryAfter = Date.now() + 30000; return; }
+    if (!cut) { this.retryAfter = Date.now() + RETRY_MS; return; }
     const identity = projectIdentity(this.project), generation = this.generation;
     const epoch = inputEpoch(this.project);
     await archiveTranscript(this.project, this.transcript);
@@ -170,8 +204,16 @@ export class RollingCompactor {
       inputEpoch: epoch, epoch: contextEpoch(transcriptEntries(this.transcript)), checkpoint: checkpoint(this.transcript), head: this.transcript.head(),
       identity, settled: false };
     this.job = job;
-    const timer = setTimeout(() => abort.abort(new Error("rolling summary timed out")), this.options.timeoutMs ?? 120000);
-    timer.unref();
+    // The timeout bounds each summary request, never the whole job: a long prefix is many
+    // sequential parts (rolling-summary.ts chunks), so a total cap aborted every large summary.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      clearTimeout(timer);
+      if (job.settled || abort.signal.aborted) return;
+      timer = setTimeout(() => abort.abort(new Error("rolling summary timed out")), this.options.timeoutMs ?? 120000);
+      timer.unref();
+    };
+    arm();
     // Race even custom providers that ignore AbortSignal; late answers cannot publish.
     const cancelled = new Promise<never>((_resolve, reject) => abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true }));
     const target = { model: deps.model, compaction: deps.compaction, loadProvider: this.options.loadProvider ?? (async () => {
@@ -182,28 +224,64 @@ export class RollingCompactor {
     // re-read from its rendered text: tasks and preferences are never re-summarized.
     const prior = this.transcript.branch().find(e => e.type === "summary");
     const carried = prior?.type === "summary" && prior.memory && messages[0]?.content === prior.text;
-    const older = messages.slice(carried ? 1 : 0, cut);
-    job.promise = Promise.race([summarizeOlder(older, abort.signal, target, { project: this.project, previous: carried ? previousMemory(prior.memory) : undefined }), cancelled])
+    let older = messages.slice(carried ? 1 : 0, cut), previous = carried ? previousMemory(prior.memory) : undefined;
+    // A finished summary that was not published still covers its exact prefix: continue from it
+    // (only messages that became older since are summarized), never re-summarize that prefix.
+    const reused = this.reusable(job);
+    if (reused) { older = messages.slice(reused.prefix.length, cut); previous = reused.memory; }
+    const summary = reused && !older.length ? Promise.resolve(reused.memory)
+      : summarizeOlder(older, abort.signal, target, { project: this.project, previous, onRequest: arm,
+        onRepair: reason => status(deps, `compaction summary rejected (${reason}); retrying this part once…`) });
+    job.promise = Promise.race([summary, cancelled])
       .then(memory => { assertProjectIdentity(this.project, identity); job.memory = memory; })
       .catch(error => { job.error = error; })
       .finally(() => { clearTimeout(timer); job.settled = true; });
     status(deps, ROLLING_STATUS.started);
   }
 
-  private async apply(deps: ContextDeps, job: Job): Promise<void> {
-    try { await this.publish(deps, job); }
-    finally { if (this.job === job) this.job = undefined; }
+  /** The kept summary, when it is still exactly the start of this job's older prefix in the same
+   * scope (session identity, input epoch, context epoch, checkpoint); taken once either way. */
+  private reusable(job: Job): Finished | undefined {
+    const kept = this.finished;
+    this.finished = undefined;
+    if (!kept || kept.identity !== job.identity || kept.inputEpoch !== job.inputEpoch || kept.epoch !== job.epoch || kept.checkpoint !== job.checkpoint) return;
+    if (kept.prefix.length > job.cut || JSON.stringify(job.source.slice(0, kept.prefix.length)) !== JSON.stringify(kept.prefix)) return;
+    return kept;
+  }
+  private backoff(): void {
+    this.retryAfter = Date.now() + RETRY_MS;
+    this.deferUntil = Date.now() + Math.min(RETRY_MS * 2 ** this.failures, MAX_RETRY_MS);
+    this.failures = Math.min(this.failures + 1, 10);
   }
 
-  private async publish(deps: ContextDeps, job: Job): Promise<void> {
-    this.retryAfter = Date.now() + 30000;
-    if (job.error || !job.memory) { status(deps, `background compaction failed; original history kept: ${job.error instanceof Error ? job.error.message : job.error}`); return; }
+  private async apply(deps: ContextDeps, job: Job): Promise<void> {
+    let outcome: Outcome | undefined;
+    try { outcome = await this.publish(deps, job); }
+    finally {
+      if (this.job === job) this.job = undefined;
+      // Keep a finished summary that was declined or failed to publish (a cancelled one never):
+      // the next start reuses it if its prefix is unchanged. A throw backs off in boundary().
+      if (outcome !== "published" && job.memory && !job.abort.signal.aborted && !this.disposed) {
+        this.finished = { prefix: job.source.slice(0, job.cut), memory: job.memory, epoch: job.epoch, inputEpoch: job.inputEpoch, checkpoint: job.checkpoint, identity: job.identity };
+      }
+      if (outcome === "failed") this.backoff();
+    }
+  }
+
+  /** A stale or non-reducing result is declined, not an inference failure. */
+  private async publish(deps: ContextDeps, job: Job): Promise<Outcome> {
+    // Until this publication settles, no new summary starts.
+    this.retryAfter = Date.now() + RETRY_MS;
+    if (job.error || !job.memory) {
+      this.failure = job.error instanceof Error ? job.error.message : String(job.error ?? "summary missing");
+      status(deps, `background compaction failed; original history kept: ${this.failure}`); return "failed";
+    }
     const identity = job.identity;
     // Index before the lock: SQLite may wait seconds on other archive writers, and indexing is idempotent and resumable
     // (start() also indexes unlocked). Everything this summary replaces was indexed by start() already.
     assertProjectIdentity(this.project, identity);
     await archiveTranscript(this.project, this.transcript);
-    await withProjectStateLock(this.project, async () => {
+    return withProjectStateLock(this.project, async () => {
       assertProjectIdentity(this.project, identity);
       const signal = deps.signal ? AbortSignal.any([deps.signal, job.abort.signal]) : job.abort.signal;
       const authorize = () => {
@@ -213,11 +291,11 @@ export class RollingCompactor {
       };
       authorize();
       await this.transcript.refresh?.();
-      if (this.disposed || job.abort.signal.aborted || contextEpoch(transcriptEntries(this.transcript)) !== job.epoch || checkpoint(this.transcript) !== job.checkpoint) return;
+      if (this.disposed || job.abort.signal.aborted || contextEpoch(transcriptEntries(this.transcript)) !== job.epoch || checkpoint(this.transcript) !== job.checkpoint) return "declined";
       const head = this.transcript.head();
       const current = await this.transcript.chain();
       // The original snapshot must still be an exact prefix. All newer messages survive verbatim.
-      if (JSON.stringify(current.slice(0, job.source.length)) !== JSON.stringify(job.source)) return;
+      if (JSON.stringify(current.slice(0, job.source.length)) !== JSON.stringify(job.source)) return "declined";
       const tasks = scopedTasks(existingTasks(this.project), transcriptEntries(this.transcript));
       const memory = job.memory!;
       // Tasks and preferences are read as saved now, at publication, never from the model.
@@ -230,13 +308,15 @@ export class RollingCompactor {
       const retained = [...retainedImages(current.slice(0, job.cut)), ...current.slice(job.cut)];
       const proposed: MessageParam[] = [{ role: "user", content: text }, ...retained];
       const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
-      if (!paired(proposed) || estimate(proposed) >= estimate(current)) { status(deps, ROLLING_STATUS.unchanged); return; }
+      if (!paired(proposed) || estimate(proposed) >= estimate(current)) { status(deps, ROLLING_STATUS.unchanged); return "declined"; }
       // New arrivals can outgrow even a valid summary. Commit the reduction; the loop
       // still refuses a model request until requireFits passes (possibly after another pass).
       await this.transcript.append({ type: "summary", text, memory, retained, boundary: job.head }, signal, { head, check: authorize });
       if (deps.compaction) deps.compaction.measured = undefined;
-      this.retryAfter = fits(clean, proposed) ? Date.now() + 30000 : 0;
+      this.failures = 0; this.deferUntil = 0; this.failure = undefined;
+      this.retryAfter = fits(clean, proposed) ? Date.now() + RETRY_MS : 0;
       status(deps, ROLLING_STATUS.done(estimate(current), estimate(proposed)));
+      return "published";
     });
   }
 }

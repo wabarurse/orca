@@ -192,10 +192,10 @@ branch/worktree cleanup, including removal of ignored files.
 - Ctrl+C cancels the current turn; `/quit` exits. The orchestrator daemon and
   background workers/reviewers keep running; see [Using the TUI](#using-the-tui)
   for cancellation details.
-- Finish active work and let background agents exit, including the orchestrator
-  daemons (`orca stop <project>` for each, or delete the project), then run `orca pull`
-  from any directory to update **only the dedicated app installation**. Git and
-  Bun 1.4.2+ are required. Restart afterward; existing processes are not upgraded.
+- Run `orca pull` from any directory to update the global app installation and
+  reload running orchestrators once their current turns finish. Git and Bun 1.4.2+
+  are required. Reopen TUIs for interface changes; workers/reviewers finish on
+  their loaded builds. `orca reload` retries activation without rebuilding.
   Read [update safety and recovery](#explicit-updates-orca-pull) before updating.
 
 ## Install once, run from any repository
@@ -352,8 +352,7 @@ model admission, queue recovery, retention/privacy, compaction and test coverage
 
 ### Explicit updates: `orca pull`
 
-Finish active work and let background agents exit before upgrading. From **any**
-directory (including an unrelated repository), run:
+From **any** directory (including an unrelated repository), run:
 
 ```sh
 orca pull
@@ -361,10 +360,12 @@ orca pull
 "$HOME/.local/bin/orca" pull
 ```
 
-This command accepts no arguments. It updates **only the dedicated harness
-installation** at `$HOME/.orca/.runtime/app`, never the invoking repository or a
-managed project. `ORCA_HOME` still relocates runtime state, not the updater's
-checkout or executable. Git and **Bun >= 1.4.2 on PATH** are required for updates;
+This command accepts no arguments. It updates the dedicated harness installation
+at `$HOME/.orca/.runtime/app` and schedules reloads for its running orchestrators.
+It never updates the invoking repository or a managed project's source code.
+`ORCA_HOME` still relocates runtime state, not the updater's checkout, executable,
+or global activation target. To activate an explicitly relocated home, use
+`ORCA_HOME=/path/to/home orca reload`. Git and **Bun >= 1.4.2 on PATH** are required for updates;
 Bun is not required for normal compiled runtime. An initial clone and successful
 `bun run install:local` are required first; `pull` does not create or guess a
 missing installation.
@@ -408,7 +409,7 @@ Checkout behavior is deliberately conservative:
 - Dirty/untracked source, Git operations in progress, unsafe paths (including
   symlinked `dist` or `node_modules`), conflicting installs, and concurrent
   installer/updater operations are refused. There is no automatic stash, reset,
-  clean, force-overwrite, or session restart.
+  clean, or force-overwrite.
 
 Fetch/dependency/build/installation failure leaves the previously installed
 executable intact. The app's fetched refs, checkout or dependencies **may already
@@ -417,12 +418,31 @@ error, preserve any local work, resolve it, then rerun `orca pull`. Do not
 blindly delete files to make the check pass. A failed build does not require
 resetting the checkout.
 
-**Existing processes keep the code they already loaded.** Nothing is stopped,
-killed or restarted. New launches use the replacement executable; an old
-worker/reviewer shell wrapper can also re-enter that new executable for its
-`agent-exit` follow-up. Mixed protocol/code versions are therefore possible if
-you update during a run: update **between active runs**, then start a new session
-when ready. Source-development processes are not upgraded in place either.
+**Installation and activation are separate.** After installation succeeds, the
+new executable starts a detached helper. For each running orchestrator on an
+older build, it queues a stop that is consumed between turns, waits for that
+process to exit, then launches the installed build. It never force-kills a busy
+turn, clears history, or retries a failed model request. Conversation, queued
+input, project settings and running worker/reviewer processes remain intact.
+
+The helper logs progress and failures to `~/.orca/.runtime/updates.log`. Closing
+the updater or TUI does not interrupt it. Durable per-project update records
+allow `orca reload` to resume a failed handoff, including after an orchestrator
+stopped but before its replacement started. It does not start unrelated closed
+sessions. A recreated project cannot inherit the previous project's reload.
+Concurrent reload helpers serialize; later updates recheck the installed build.
+
+Workers/reviewers keep their loaded code until they finish; new runs use the
+installed binary. Reopen existing TUIs to load interface changes. New clients
+detect a different daemon build and refuse new work with reload instructions,
+instead of silently feeding an outdated daemon. A source-development process
+is not upgraded in place. For an incompatible protocol/storage upgrade, follow
+that release's offline upgrade instructions and stop all participants first.
+
+**First upgrade from an older updater:** after `orca pull` installs this version,
+run `orca reload` once. The old updater did not contain the automatic activation
+step. Subsequent pulls schedule activation themselves. A failed activation
+does not undo a successful installation; inspect the log and retry `orca reload`.
 
 ### Installer ownership and recovery
 
@@ -951,7 +971,10 @@ prefix at a safe tool boundary. Every newer message, including messages arriving
 while the worker runs, survives unchanged. The TUI can publish a ready summary
 while idle without making another foreground model request. Summary requests have
 no tools, use low effort when supported, and split large sources into bounded UTF-8 parts. The
-worker has a two-minute deadline and a 30-second automatic retry cooldown.
+worker has a two-minute deadline per summary request (not per summary) and an automatic retry
+cooldown of 30 seconds, plus a failure deferral doubling up to 30 minutes for background work;
+a hard context limit bypasses the deferral and manual `/compact` bypasses both. An unpublished
+finished summary is reused for its unchanged prefix instead of being summarized again.
 Closing the page or exiting the TUI cancels its worker. Shared cancellation,
 `/clear`, or another session's checkpoint invalidates stale summary work. Refresh
 only reloads state and invalidates stale work; it never starts or publishes a

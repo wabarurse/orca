@@ -21,6 +21,7 @@ import { pidAlive } from "../../data";
 import type { ToolCall, ToolOutcome } from "../../../protocol";
 import { open, type Transcript } from "../../data/transcripts";
 import { inputEpoch } from "../../data/inbox";
+import { requireCurrentDaemon } from "./build";
 
 /** How often a following client looks at the status and transcript. */
 export const FOLLOW_MS = 250;
@@ -34,15 +35,15 @@ export const RESTART_BACKOFF_MS = 15_000;
 export const STOP_WAIT_MS = 10_000;
 const KILL_WAIT_MS = 3000;
 
-export interface EnsureOptions { runner?: Runner; signal?: AbortSignal; alive?: (project: string) => Promise<boolean> }
+export interface EnsureOptions { runner?: Runner; signal?: AbortSignal; alive?: (project: string) => Promise<boolean>; build?: string; status?: typeof liveStatus }
 
 /** Start the project's daemon unless one is alive. A launch lost to a concurrent start (the loser exits before its run record) counts as running. */
 export async function ensureDaemon(project: string, opts: EnsureOptions = {}): Promise<"running" | "started"> {
   const alive = opts.alive ?? (async (p: string) => (await daemonPid(p)) !== undefined);
-  if (await alive(project)) return "running";
+  if (await alive(project)) { await requireCurrentDaemon(project, opts); return "running"; }
   try { await (opts.runner ?? local).start({ project, role: "orchestrator", signal: opts.signal }); }
   catch (error) {
-    if (await alive(project)) return "running";
+    if (await alive(project)) { await requireCurrentDaemon(project, opts); return "running"; }
     throw error;
   }
   return "started";
@@ -64,7 +65,7 @@ export function daemonKeeper(opts: EnsureOptions & { now?: () => number } = {}):
       const last = started.get(project);
       if (last !== undefined && now() - last < RESTART_BACKOFF_MS) return;
       const alive = opts.alive ?? (async (p: string) => (await daemonPid(p)) !== undefined);
-      if (await alive(project)) return;
+      if (await alive(project)) { await requireCurrentDaemon(project, opts); return; }
       started.set(project, now());
       await ensureDaemon(project, opts);
       return last === undefined ? undefined : "orchestrator was not running; restarted"; // the first start is routine: nothing to show
@@ -97,6 +98,8 @@ export async function stopDaemon(project: string, opts: { kill?: (project: strin
 
 export interface ClientDeps {
   project: string;
+  /** Compiled client identity; tests inject a build without compiling a binary. */
+  build?: string;
   /** The transcript has new entries (idle or mid-turn): the TUI re-syncs from disk, dropping what the live events below showed (durable entries supersede them). */
   onRefresh?: () => void;
   /** Acknowledgements and failures the user should see. */
@@ -217,6 +220,7 @@ async function follow(c: Client): Promise<void> {
 async function ask(c: Client, what: string, send: () => Promise<string | undefined>, signal?: AbortSignal): Promise<string> {
   c.checkIdentity();
   if (!await c.alive()) throw new Error("orchestrator is not running");
+  if (what !== "cancel") await requireCurrentDaemon(c.project, { build: c.deps.build, status: c.status });
   const id = await send();
   if (!id) throw new Error(`orchestrator has no launch to ${what}`);
   const ack = await awaitAck(c.project, id, { signal, alive: c.alive });
@@ -241,6 +245,7 @@ function contextOf(project: string, model: string): DaemonStatus["context"] | un
 
 async function say(c: Client, text: string, submission: string, inputId?: string, attachments?: ImageRef[]): Promise<void> {
   c.checkIdentity();
+  await requireCurrentDaemon(c.project, { build: c.deps.build, status: c.status });
   await (c.deps.put ?? put)(c.project, "orchestrator", { from: "user", text, ...(attachments?.length ? { attachments } : {}), userEpoch: submission, ...(inputId ? { inputId } : {}) });
 }
 

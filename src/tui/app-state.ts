@@ -140,7 +140,7 @@ export interface ActiveMenu extends Menu {
 export interface AgentsTimer { menu: ActiveMenu; readAt: number; reading: boolean; stop: () => void }
 export interface TaskTreeState {
   page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
-  graphX: number; graphY: number; detailY: number; loading: boolean; error?: string;
+  graphY: number; detailY: number; loading: boolean; error?: string;
   collapsed: Set<string>; frame: number; detailsFocused?: boolean;
   confirmRemoval?: string; notice?: string; removing?: boolean;
   revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;

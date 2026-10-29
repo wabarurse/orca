@@ -28,7 +28,9 @@ On macOS or Linux with Git, [Bun](https://bun.sh/) 1.4.2+ and [tmux](https://git
 curl -fsSL https://raw.githubusercontent.com/wabarurse/parallels/main/install.sh | sh
 ```
 
-This builds the app in `~/.orca/.runtime/app`, installs `~/.local/bin/orca`, and adds its directory to your bash, zsh, or sh startup file. This version initializes a fresh layout-3 home. Open a new terminal or follow the printed PATH command, then run `orca` from your repo's default branch. Sign in with `/login codex` (also `/login claude` if using claude), and choose a model with `/model`. Update with `orca pull`.
+This builds the app in `~/.orca/.runtime/app`, installs `~/.local/bin/orca`, and adds its directory to your bash, zsh, or sh startup file. This version initializes a fresh layout-3 home. Open a new terminal or follow the printed PATH command, then run `orca` from your repo's default branch. Sign in with `/login codex` (also `/login claude` if using claude), and choose a model with `/model`.
+
+Run `orca pull` from any directory to update the global installation and reload running orchestrators after their current turns finish. Reopen existing TUIs for interface updates; workers and reviewers finish on their loaded builds. Progress is in `~/.orca/.runtime/updates.log`. When upgrading from a version that predates automatic reloads, run `orca reload` once after the first pull. See [update behavior and recovery](docs/REFERENCE.md#explicit-updates-orca-pull).
 
 See the [install details](docs/REFERENCE.md#2-install-once) to inspect the script first, skip shell changes, or install manually.
 

@@ -36,15 +36,16 @@ test("independent roots, wide Unicode and hostile text are safe at narrow and sc
   const tasks = [task(1, [], evil), task(2, [], "Second root"), task(3, [1, 2])];
   tasks[0]!.summary = evil; tasks[0]!.branch = evil;
   for (const cols of [1, 2, 20, 80, 120]) {
-    const out = renderTaskTree(tasks, { cols, rows: 24, graphX: 1, selectedId: id(1) });
+    const out = renderTaskTree(tasks, { cols, rows: 24, selectedId: id(1) });
     expect(out.lines.length).toBeLessThanOrEqual(24);
     for (const line of out.lines) { expect(visibleLength(line)).toBeLessThanOrEqual(cols); expect(plainText(line)).not.toMatch(/[\x1b\x07\u202e]/); expect(line).not.toContain("title"); }
     for (const h of out.hits) expect(h.col + h.width).toBeLessThanOrEqual(out.graph.cols);
   }
   const full = renderTaskTree(tasks, { cols: 120, rows: 35 });
-  expect(full.hits.some(h => h.width === 2)).toBe(true);
-  const scroll = renderTaskTree(Array.from({ length: 100 }, (_, i) => task(i + 1, i ? [i] : [])), { cols: 80, rows: 24, graphX: 99999, graphY: 99999 });
-  expect(scroll.graph.x).toBe(scroll.graph.width - scroll.graph.cols);
+  expect(full.hits.every(h => h.col === 0 && h.width === 120)).toBe(true); // a whole row selects its task
+  expect(full.lines[1]).toContain("界🙂é");
+  const scroll = renderTaskTree(Array.from({ length: 100 }, (_, i) => task(i + 1, i ? [i] : [])), { cols: 80, rows: 24, graphY: 99999 });
+  expect(scroll.graph.x).toBe(0);
   expect(scroll.graph.y).toBe(scroll.graph.height - scroll.graph.rows);
   expect(scroll.lines.at(-1)).toContain("Outline y=");
 });
@@ -103,8 +104,13 @@ test("canonical outline references other prerequisites and navigates visible dep
   const out = renderTaskTree(tasks, options);
   expect(out).toEqual(renderTaskTree([...tasks].reverse().map(taskTreeView), options));
   expect(out.order).toEqual([5, 1, 2, 6, 3, 4].map(id));
-  expect(out.lines[2]).toStartWith("   #1");
-  expect(out.lines[3]).toStartWith("     #2");
+  const rows = out.lines.slice(1, 7).map(plainText);
+  expect(rows[0]).toMatch(/^▶ ▾ ● #5 Clarify empty inbox/);
+  expect(rows[1]).toMatch(/^  ├─ ▾ ● #1 Restore session draft/);
+  expect(rows[2]).toMatch(/^  │  └─ ▾ ● #2 Export task history/);
+  expect(rows[3]).toMatch(/^  │     └─ ● #6 Document task recovery +\+#3 \+#4 queued$/); // other prerequisites stay explicit
+  expect(rows[4]).toMatch(/^  ├─ ● #3 Narrow-terminal keys/);
+  expect(rows[5]).toMatch(/^  └─ ● #4 Reduce footer redraws/);
   expect(renderTaskTree(tasks, { ...options, selectedId: id(6), rows: 100 }).lines.join("\n")).toContain("#3 Narrow-terminal keys");
   expect(new Set(out.nodes.map(n => n.id)).size).toBe(tasks.length);
   expect(navigateOutline(out.nodes, id(1), collapsed, "right")).toBe(id(2));
@@ -113,6 +119,7 @@ test("canonical outline references other prerequisites and navigates visible dep
   expect(navigateOutline(out.nodes, id(1), collapsed, "left")).toBe(id(1));
   const folded = renderTaskTree(tasks, options);
   expect(folded.order).toEqual([5, 1, 3, 4].map(id));
+  expect(plainText(folded.lines[2]!)).toMatch(/^  ├─ ▸ ● #1 Restore session draft \(1 hidden\)/);
   expect(navigateOutline(folded.nodes, id(1), collapsed, "left")).toBe(id(5));
   expect(navigateOutline(folded.nodes, id(1), collapsed, "right")).toBe(id(1));
   expect(collapsed.size).toBe(0);
@@ -129,8 +136,10 @@ test("only unended started runs animate; merged checkbox requires archive eviden
   const a = renderTaskTree(tasks, { cols: 120, rows: 35 });
   const b = renderTaskTree(tasks, { cols: 120, rows: 35, frame: 1 });
   expect(a.animated).toBe(true);
-  expect(a.lines).toEqual(b.lines);
+  expect(a.lines).not.toEqual(b.lines); // the active dots spin with the frame
+  expect(a.lines[2]).toContain("\x1b[36m◐"); expect(b.lines[2]).toContain("\x1b[36m◓");
   for (const color of [90, 35]) expect(a.lines.join("\n")).toContain(`\x1b[${color}m●`);
+  expect(plainText(a.lines[6]!)).toMatch(/merged$/);
   expect(renderTaskTree(tasks, { cols: 120, rows: 35, selectedId: id(4) }).lines.join("\n")).toContain("stopped");
   expect(renderTaskTree(tasks.slice(3), { cols: 120, rows: 35 }).animated).toBe(false);
   tasks[1]!.attention = { kind: "blocked", reason: "stopped externally" };
@@ -167,7 +176,7 @@ test("publication is green independently of attention, failed runs or readiness;
 });
 
 test("dot colour follows task status: queued grey, building/working cyan, attention red/yellow, PR green, merged purple", () => {
-  const colours = (t: Task) => { const m = renderTaskTree([t], { cols: 120, rows: 30 }).lines.join("\n").match(/\x1b\[(\d+)m●/); return m && Number(m[1]); };
+  const colours = (t: Task) => { const m = renderTaskTree([t], { cols: 120, rows: 30 }).lines[1]!.match(/\x1b\[(\d+)m[●◐]/); return m && Number(m[1]); };
   const base = (n: number) => task(n);
   expect(colours(base(1))).toBe(90);
   const run = { id: "run", agent: "agent", role: "worker" as const, state: "started" as const, preparedAt: "today", startedAt: "today" };
@@ -187,5 +196,21 @@ test("dot colour follows task status: queued grey, building/working cyan, attent
   expect(colours(open)).toBe(32);
   const merged = base(7); merged.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
   expect(colours(merged)).toBe(35);
-  expect(renderTaskTree([ready], { cols: 120, rows: 40 }).lines.join("\n")).toContain("Lifecycle: ready to merge");
+  const readyOut = renderTaskTree([ready], { cols: 120, rows: 40 }).lines;
+  expect(readyOut.join("\n")).toContain("Lifecycle: ready to merge");
+  expect(plainText(readyOut[1]!)).toMatch(/ready to merge$/);
+  expect(plainText(readyOut[4]!)).toContain("●──●──◉┄┄○ worker → review → PR → merged"); // worker and review done, PR here
+});
+
+test("rows read attention first, then PR open/closed or lifecycle; the tree panel takes the rows the nodes need", () => {
+  const t = task(1); t.pr = pr; t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
+  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/PR open$/);
+  t.attention = { kind: "blocked", reason: "x" };
+  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/blocked$/);
+  const one = renderTaskTree([task(1)], { cols: 100, rows: 30 });
+  expect(one.graph.rows).toBe(1); expect(one.details.rows).toBe(26);
+  const many = renderTaskTree(Array.from({ length: 40 }, (_, i) => task(i + 1)), { cols: 100, rows: 30 });
+  expect(many.graph.rows).toBe(16); expect(many.details.rows).toBe(11);
+  expect(plainText(renderTaskTree([task(1)], { cols: 100, rows: 30 }).lines[0]!)).toContain("├─ first prerequisite");
+  expect(plainText(renderTaskTree([task(1)], { cols: 40, rows: 30 }).lines[0]!)).toBe("TASKS");
 });

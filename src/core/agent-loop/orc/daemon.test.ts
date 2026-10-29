@@ -322,6 +322,10 @@ test("compact and model requests are answered during a running turn; clear and s
   const release = await tryStorageLock(paths.daemonLock(p), p);
   const running = runDaemon({ project: p, run: "run-t", session, sleep: clock.sleep, now: clock.now, log() {}, watchers: { watchdog: async () => {}, merges: async () => {} } });
   await until(() => clock.sleeping() === 1);
+  const stale = await request(p, { kind: "stop" }, "previous-run");
+  clock.wake();
+  expect(await awaitAck(p, stale)).toMatchObject({ ok: false, message: "request belongs to an earlier daemon run" });
+  await until(() => clock.sleeping() === 1);
   await put(p, "orchestrator", { from: "user", text: "slow" });
   clock.wake();
   await until(() => readStatus(p)?.state === "turn");
@@ -396,13 +400,15 @@ test("a turn streams its text, tool starts and ends to the live file, keyed by r
   const entries = transcript.history!();
   const inboxEntry = entries.find(e => e.type === "message" && e.message.role === "user")!;
   const reply = entries.find(e => e.type === "message" && e.message.role === "assistant")!;
-  expect(texts[0]!.head).toBe(inboxEntry.uuid); // streamed after the input was consumed, before the reply was appended
+  const waiting = entries.find(e => e.type === "model-request" && e.stage === "provider-wait")!;
+  expect(entries.indexOf(waiting)).toBeGreaterThan(entries.indexOf(inboxEntry));
+  expect(texts[0]!.head).toBe(waiting.uuid); // streamed after request diagnostics, before the reply was appended
   expect(seen.at(-1)).toMatchObject({ kind: "tool_start", head: reply.uuid, call: { id: "t1", name: "echo", input: { text: "hi" } } });
   expect(entries.at(-1)!.uuid).toBe(reply.uuid); // the tool's result is not durable yet: only the live file has the running call
   gate.resolve();
   // The tool ended (its end is tagged with the reply, before its result is appended) and the next request waits.
   await until(() => { const s = readStatus(p)!; seen.push(...reader.read({ run: s.run, turn: s.turns })); return seen.some(e => e.kind === "tool_end"); });
-  expect(seen.at(-1)).toMatchObject({ kind: "tool_end", head: reply.uuid, outcome: { id: "t1", ok: true, text: "echo hi" } });
+  expect(seen.find(e => e.kind === "tool_end")).toMatchObject({ kind: "tool_end", head: reply.uuid, outcome: { id: "t1", ok: true, text: "echo hi" } });
   expect(readStatus(p)?.state).toBe("turn");
   second.resolve();
   await until(() => readStatus(p)?.state === "idle");

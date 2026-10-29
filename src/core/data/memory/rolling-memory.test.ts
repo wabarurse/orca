@@ -6,13 +6,13 @@ import { tmpdir } from "node:os";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { createAgent, type AgentDeps } from "../../agent-loop/loop/agent";
 import { runAgent } from "../../../exec/run";
-import { budget, estimate } from "./compaction";
+import { budget, estimate, requireFits } from "./compaction";
 import { paths, saveConfig } from "../../../config/config";
 import { put } from "../inbox/inbox";
 import { archivePath, archiveTranscript, purgeProject, queryHistory } from "./archive";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import type { CompleteRequest, Provider } from "../../../providers/provider";
-import { preferenceLines, RollingCompactor, rollingCut, type RollingOptions } from "./rolling-memory";
+import { preferenceLines, ROLLING_STATUS, RollingCompactor, rollingCut, type RollingOptions } from "./rolling-memory";
 import { parseMemory, previousMemory, summarizeOlder } from "./rolling-summary";
 import { remember, type Fact } from "../knowledge/knowledge";
 import type { RollingMemory } from "../../../protocol/transcript";
@@ -21,6 +21,7 @@ import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { paired } from "../transcripts/tool-pairs";
 import { open } from "../transcripts/transcript";
 import { orchestratorTask as task, task as agentTask } from "../../tools/task";
+import { advanceInputEpoch } from "../inbox/user-input";
 
 const previous = process.env.ORCA_HOME, dirs: string[] = [], compacters: RollingCompactor[] = [];
 afterEach(() => {
@@ -251,11 +252,11 @@ test("real orchestrator ignores old 32k/48k thresholds and respects failed-summa
 
 test("a failed summary at the hard limit never calls the foreground model", async () => {
   const { deps, foreground, transcript, controller } = await fixture();
-  const rolling = controller(fakeProvider([[text("invalid memory")]]));
+  const rolling = controller(fakeProvider([[text("invalid memory")], [text("still invalid")]]));
   deps.compaction = { contextLimit: 20000, outputReserve: 2000 };
   deps.compactBoundary = (d, m) => rolling.boundary(d, m);
   const before = await Bun.file(transcript.path).text();
-  await expect(createAgent(deps).run()).rejects.toThrow("context blocked");
+  await expect(createAgent(deps).run()).rejects.toThrow("context blocked: compaction failed: summary validation failed after 2 attempts: summary is not valid JSON");
   expect(foreground.calls).toHaveLength(0); expect(await Bun.file(transcript.path).text()).toBe(before);
 });
 
@@ -271,7 +272,8 @@ for (const mode of ["malformed", "incomplete", "timeout", "credentials"] as cons
   const rolling = controller(provider, { timeoutMs: 10 }), before = await Bun.file(transcript.path).text();
   await rolling.boundary(deps, true);
   await rolling.boundary(deps);
-  expect(calls).toBe(1); expect(await Bun.file(transcript.path).text()).toBe(before); expect(rolling.ready()).toBe(false);
+  expect(calls).toBe(mode === "malformed" || mode === "incomplete" ? 2 : 1);
+  expect(await Bun.file(transcript.path).text()).toBe(before); expect(rolling.ready()).toBe(false);
 });
 
 test("archive failure prevents replacement but a fitting foreground request can continue", async () => {
@@ -382,6 +384,102 @@ test("summary chunks fit smaller selected windows without losing Unicode or esca
   }
 });
 
+// Regression (orch-5xab, 2026-10-28): a ~1.9MB prefix is ~11 sequential parts of ~22s each, and one
+// 120s timer covered the whole job, so every summary was aborted after 4-5 parts and never published.
+test("a summary of many parts outlasting the request timeout still publishes: the timeout bounds each part", async () => {
+  const { transcript, deps, controller } = await fixture();
+  for (const [role, content] of [["user", "bulk " + "b".repeat(700000)], ["assistant", "noted " + "n".repeat(700000)], ["user", "latest question"], ["assistant", "latest answer"]] as const) {
+    await transcript.append({ type: "message", message: { role, content } });
+  }
+  const calls: CompleteRequest[] = [];
+  const rolling = controller({ name: "openai", models: async () => [], complete: async req => { calls.push(req); await Bun.sleep(25); return answer(); } }, { timeoutMs: 150 });
+  const before = await transcript.chain(), cut = rollingCut(before, 200), started = Date.now();
+  await rolling.boundary(deps, true);
+  expect(calls.length).toBeGreaterThan(6); expect(Date.now() - started).toBeGreaterThan(150);
+  expect(transcript.branch()[0]?.type).toBe("summary");
+  expect((await transcript.chain()).slice(1)).toEqual(before.slice(cut));
+});
+
+test("a conversation larger than the newly selected model compacts in bounded parts before any foreground request", async () => {
+  const { project, transcript, deps } = await fixture();
+  for (const [role, content] of [["user", "earlier request " + "x".repeat(1000000)], ["assistant", "findings " + "y".repeat(1000000)], ["user", "Latest correction: keep all source history."], ["assistant", "acknowledged"]] as const) {
+    await transcript.append({ type: "message", message: { role, content } });
+  }
+  const originals = transcript.history!(), calls: CompleteRequest[] = [];
+  deps.model = "gpt-6-sol"; deps.compaction = { contextLimit: 200000 };
+  deps.provider = { name: "openai", account: "openai:phoebe", models: async () => [], complete: async req => {
+    calls.push(req);
+    requireFits({ ...deps, system: req.system, tools: {}, compaction: { contextLimit: 200000 } }, req.messages, req.maxTokens, "test request");
+    return req.trace?.purpose === "rolling-summary" ? answer() : { content: [text("continued")], stop: "end", completion: "completed" };
+  } };
+  const rolling = new RollingCompactor(project, transcript); compacters.push(rolling);
+  expect(budget(deps, await transcript.chain())).toBeGreaterThan(600000);
+  await createAgent({ ...deps, compactBoundary: (d, manual, idle) => rolling.boundary(d, manual, idle) }).run();
+  expect(calls.length).toBeGreaterThan(10);
+  expect(calls.slice(0, -1).every(c => c.trace?.purpose === "rolling-summary")).toBe(true);
+  expect(calls.at(-1)?.trace?.purpose).toBe("agent");
+  expect(calls.every(c => c.model === "gpt-6-sol")).toBe(true);
+  expect(JSON.stringify(calls.at(-1)?.messages)).toContain("Latest correction");
+  expect(transcript.history!().slice(0, originals.length)).toEqual(originals);
+});
+
+for (const change of ["account", "model"] as const) test(`${change} switch cancels the old summary and immediately uses the new target`, async () => {
+  const { project, transcript, deps } = await fixture(), old = gated();
+  deps.model = "claude-opus-5-5"; deps.compaction = { contextLimit: 1000000 };
+  deps.provider = { ...old.provider, name: "anthropic", account: "anthropic:phoebe" };
+  const rolling = new RollingCompactor(project, transcript, { triggerTokens: 5000, tailTokens: 200 }); compacters.push(rolling);
+  await rolling.boundary(deps); await old.entered;
+  const calls: CompleteRequest[] = [];
+  if (change === "model") { deps.model = "gpt-6-sol"; deps.compaction = { contextLimit: 200000 }; }
+  deps.provider = { name: change === "model" ? "openai" : "anthropic", account: change === "model" ? "openai:phoebe" : "anthropic:personal",
+    models: async () => [], complete: async req => { calls.push(req); return answer(memory({ summary: ["new account summary"] })); } };
+  await rolling.boundary(deps, true);
+  expect(old.calls[0]?.signal?.aborted).toBe(true); expect(calls).toHaveLength(1);
+  expect(calls[0]?.model).toBe(deps.model);
+  old.release(); await Bun.sleep(0);
+  expect(JSON.stringify(await transcript.chain())).toContain("new account summary");
+  expect(transcript.branch().filter(e => e.type === "summary")).toHaveLength(1);
+});
+
+test("a finished summary that was not published is reused for its unchanged prefix, never re-summarized; another input epoch never reuses it", async () => {
+  const { project, deps } = await fixture();
+  const small = open(paths.transcript(project, "small-orchestrator"));
+  for (const [role, content] of [["user", "Remember SMALL-PREFIX-MARKER."], ["assistant", "Noted."], ["user", "recent question " + "q".repeat(1200)], ["assistant", "recent answer " + "a".repeat(1200)]] as const) {
+    await small.append({ type: "message", message: { role, content } });
+  }
+  // Larger than the small prefix it replaces, so publication declines it as "unchanged".
+  const big = memory({ summary: Array.from({ length: 7 }, (_, i) => `Item ${i}: ` + "m".repeat(900)) });
+  const calls: CompleteRequest[] = [], notices: string[] = [];
+  const rolling = new RollingCompactor(project, small, { triggerTokens: 5000, tailTokens: 200, loadProvider: async () => ({ name: "openai", models: async () => [], complete: async req => { calls.push(req); return answer(big); } }) });
+  compacters.push(rolling);
+  const current = { ...deps, transcript: small, write: (t: string) => { notices.push(t); } };
+  const part = (call: CompleteRequest) => JSON.parse(call.messages[0]!.content as string) as { previousMemory: RollingMemory; sourcePart: string };
+  await rolling.boundary(current, true);
+  expect(calls).toHaveLength(1); expect(notices.join("")).toContain(ROLLING_STATUS.unchanged);
+  expect((rolling as unknown as { failures: number }).failures).toBe(0); // a decline does not extend the failure deferral
+  await rolling.boundary(current, true);
+  expect(calls).toHaveLength(1); // same prefix: the finished summary is reused, no model call
+  expect(small.branch().some(e => e.type === "summary")).toBe(false);
+  advanceInputEpoch(project); // a cancellation elsewhere: pre-cancel work is never reused
+  await rolling.boundary(current, true);
+  expect(calls).toHaveLength(2); expect(part(calls[1]!).sourcePart).toContain("SMALL-PREFIX-MARKER");
+  expect(part(calls[1]!).previousMemory).toEqual({ summary: [], pending: [] });
+  for (const [role, content] of [["user", "bulk " + "b".repeat(30000)], ["assistant", "bulk noted"], ["user", "latest question"], ["assistant", "latest answer " + "z".repeat(1200)]] as const) {
+    await small.append({ type: "message", message: { role, content } });
+  }
+  const before = await small.chain(), cut = rollingCut(before, 200), originals = small.history!();
+  await rolling.boundary(current, true);
+  // Only messages that became older since are summarized, merged into the reused memory.
+  expect(calls).toHaveLength(3);
+  expect(part(calls[2]!).sourcePart).not.toContain("SMALL-PREFIX-MARKER"); expect(part(calls[2]!).sourcePart).toContain("bulk");
+  expect(part(calls[2]!).previousMemory).toEqual(big);
+  const checkpoint = small.branch()[0];
+  expect(checkpoint?.type).toBe("summary");
+  if (checkpoint?.type === "summary") expect(checkpoint.memory).toEqual(big);
+  expect((await small.chain()).slice(1)).toEqual(before.slice(cut));
+  expect(small.history!()).toEqual(originals);
+});
+
 test("structured summaries accept only {summary, pending} within bounds", () => {
   expect(parseMemory(JSON.stringify(memory({ pending: ["As of this prefix, review pending"] })))).toEqual(memory({ pending: ["As of this prefix, review pending"] }));
   expect(() => parseMemory(JSON.stringify({ summary: "invalid", pending: [] }))).toThrow();
@@ -389,7 +487,7 @@ test("structured summaries accept only {summary, pending} within bounds", () => 
   expect(() => parseMemory(JSON.stringify(memory({ summary: ["x".repeat(1100)] })))).toThrow("invalid memory");
   expect(() => parseMemory(JSON.stringify(memory({ summary: Array(33).fill("x") })))).toThrow("invalid memory");
   expect(() => parseMemory(JSON.stringify(memory({ pending: Array(17).fill("x") })))).toThrow("invalid memory");
-  expect(() => parseMemory("x".repeat(12000))).toThrow("budget");
+  expect(() => parseMemory("x".repeat(70000))).toThrow("budget");
 });
 
 test("legacy {user, project, pending, tasks} memory loads without throwing and seeds the next summary; task notes are dropped", async () => {
@@ -536,4 +634,21 @@ test("summary source preserves speaker and block provenance rather than interpre
   expect(calls[0]!.system).toContain("Assistant plans, refusals and inferred restrictions are not user decisions");
   expect(calls[0]!.system).toContain("Tie next steps to the latest user request visible in this prefix");
   expect(calls[0]!.system).toContain("preserve unrelated explicit limits");
+});
+
+
+test("hard limits bypass the failure deferral after cooldown, while ordinary turns defer", async () => {
+  const { deps, transcript, controller } = await fixture(), worker = gated(), rolling = controller(worker.provider);
+  deps.compaction = { contextLimit: 60000 };
+  const internals = rolling as unknown as { retryAfter: number; deferUntil: number; failures: number };
+  internals.failures = 6; internals.deferUntil = Date.now() + 30 * 60000; internals.retryAfter = 0;
+  await rolling.boundary(deps);
+  expect(worker.calls).toHaveLength(0);
+  const estimated = budget(deps, await transcript.chain());
+  deps.compaction.measured = { model: deps.model, input: 50000, estimated };
+  const waiting = rolling.boundary(deps); await worker.entered;
+  worker.release(); await waiting;
+  expect(worker.calls).toHaveLength(1);
+  expect(transcript.branch()[0]?.type).toBe("summary");
+  expect(internals.failures).toBe(0); expect(internals.deferUntil).toBe(0);
 });

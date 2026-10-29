@@ -4,7 +4,7 @@ import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt }
 import { codexSearchItemSources, codexSearchResults } from "./search";
 import { validateSettings, type RequestSettings } from "./catalog";
 import OpenAI from "openai";
-import type { FunctionTool, ResponseOutputItemDoneEvent, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
+import type { FunctionTool, ResponseFunctionCallOutputItem, ResponseOutputItemDoneEvent, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../login";
 import type { Provider, Turn } from "./provider";
@@ -41,10 +41,22 @@ export function toResponses(messages: MessageParam[]): CodexInputItem[] {
         input.push({ type: "function_call", call_id: block.id, name: block.name, arguments: JSON.stringify(block.input) });
       } else if (block.type === "tool_result") {
         user = undefined;
-        if (Array.isArray(block.content) && block.content.some(b => b.type === "image")) throw new Error("nested tool images are unsupported; forward structured attachments instead.");
         const output = typeof block.content === "string" ? block.content
           : (block.content ?? []).map((part) => part.type === "text" ? part.text : "").join("\n");
-        input.push({ type: "function_call_output", call_id: block.tool_use_id, output: block.is_error ? `Error: ${output}` : output });
+        const parts = typeof block.content === "string" ? [] : block.content ?? [];
+        if (!parts.some(part => part.type === "image")) {
+          input.push({ type: "function_call_output", call_id: block.tool_use_id, output: block.is_error ? `Error: ${output}` : output });
+          continue;
+        }
+        // A tool's image result (`read` of an image): Responses function output admits
+        // input_text/input_image items, as Codex's own image tool returns them.
+        const items = parts.flatMap((part): ResponseFunctionCallOutputItem[] => {
+          if (part.type === "text") return [{ type: "input_text", text: part.text }];
+          if (part.type !== "image") return [];
+          const image = validatedBase64(part);
+          return [{ type: "input_image", image_url: `data:${image.mime};base64,${image.data}`, detail: "auto" }];
+        });
+        input.push({ type: "function_call_output", call_id: block.tool_use_id, output: block.is_error ? [{ type: "input_text", text: "Error:" }, ...items] : items });
       } else if (block.type === "thinking") {
         user = undefined;
         try {
