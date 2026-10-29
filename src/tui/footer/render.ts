@@ -16,7 +16,8 @@ export interface TaskInboxView extends Help {
   question?: QuestionView | null;
   notice?: string;
 }
-export interface Menu { title: string; items: string[]; index: number }
+/** `footer`: rows under the items (a status, a count, a key hint) that win over the list on short terminals. */
+export interface Menu { title: string; items: string[]; index: number; footer?: string[] }
 export interface Input {
   prompt: string;
   text: string;
@@ -183,12 +184,13 @@ export function questionRows(q: QuestionView, cols: number, height: number): str
   return [...text, ...list, ...footer];
 }
 
-/** A menu's rows, at most `height`: its title, then the items scrolled to keep the selection in view. */
+/** A menu's rows, at most `height`: its title, then the items scrolled to keep the selection in view, then its footer. */
 export function menuRows(m: Menu, height: number): string[] {
-  const listRows = Math.max(0, height - 1);
+  const footer = (m.footer ?? []).slice(0, Math.max(0, height - 1));
+  const listRows = Math.max(0, height - 1 - footer.length);
   const start = windowStart(m.items.length, m.index, listRows);
   const items = m.items.slice(start, start + listRows).map((item, i) => `${start + i === m.index ? bold("❯") : " "} ${item}`);
-  return [m.title, ...items].slice(0, Math.max(0, height));
+  return [m.title, ...items, ...footer].slice(0, Math.max(0, height));
 }
 
 /** Finished lines as they go into the scrollback: split at newlines, wrapped to `cols`, each ending in CRLF. */

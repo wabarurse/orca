@@ -6,7 +6,8 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../config/config";
-import { AGENTS_TICK_MS, App, type Clock } from "./app";
+import { AGENTS_TICK_MS, App, type AppDeps, type Clock } from "./app";
+import type { AgentInfo } from "../protocol";
 import type { Message } from "../protocol/inbox";
 import { all as allQuestions, ask as askQuestions } from "../core/data/inbox/questions";
 import { text as said } from "../test/fake-provider";
@@ -357,13 +358,13 @@ describe("/agents clocks", () => {
   const row = (term: ReturnType<typeof fakeTerm>, name: string) => term.screen().split("\n").find((l) => l.includes(name))?.trim();
 
   /** An app whose clock and timers the test drives; `agents` is what the list returns now. */
-  async function setup(agents: () => Promise<{ name: string; live: boolean; startedAt?: string; endedAt?: string; approximateEnd?: boolean }[]>) {
+  async function setup(agents: () => Promise<AgentInfo[]>, extra: Partial<AppDeps> = {}) {
     const term = fakeTerm(80, 24);
     const state = { now: T0 + 192_000 };
     const timers: { fn: () => void; ms: number }[] = [];
     const clock: Clock = { now: () => state.now, every: (fn, ms) => { const t = { fn, ms }; timers.push(t); return () => { timers.splice(timers.indexOf(t), 1); }; } };
     const menuTimers = () => timers.filter((t) => t.ms === AGENTS_TICK_MS);
-    const app = new App({ term, clock, pollMs: 100_000, agents, watchdog: async () => {}, merges: async () => {}, openOrchestrator: fakeOrchestrators().openOrchestrator });
+    const app = new App({ term, clock, pollMs: 100_000, agents, watchdog: async () => {}, merges: async () => {}, openOrchestrator: fakeOrchestrators().openOrchestrator, ...extra });
     const running = app.run("clocks");
     await until(() => !!app.page);
     return { term, state, timers, menuTimers, app, running, stop: async () => { app.quit(); await running; },
@@ -529,6 +530,49 @@ describe("/agents clocks", () => {
       await Bun.sleep(40);
       expect(t.term.writes.length - before).toBeLessThanOrEqual(2);
       expect(row(t.term, "worker-foo")).toBe("❯ worker-foo  live 3m 13s");
+    } finally { await t.stop(); }
+  });
+
+  test("older finished agents hide behind a; d and D remove finished rows after y, refusing a live one", async () => {
+    const old = iso(-48 * 3600_000);
+    let list: AgentInfo[] = [
+      { name: "worker-foo", live: true, startedAt: iso(0) },
+      { name: "worker-recent", live: false, startedAt: iso(0), endedAt: iso(60_000), lastActiveAt: iso(60_000) },
+      { name: "worker-old", live: false, startedAt: old, endedAt: old, lastActiveAt: old },
+    ];
+    const removed: string[][] = [];
+    const t = await setup(async () => list, { archiveAgents: async (_project, names) => {
+      removed.push(names);
+      list = list.map((a) => names.includes(a.name) ? { ...a, archived: true } : a);
+      return { archived: names, live: [] };
+    } });
+    try {
+      t.term.type("/agents\r");
+      await until(() => t.term.screen().includes("+1 older hidden"));
+      expect(row(t.term, "worker-old")).toBeUndefined();
+      t.term.type("a");
+      await until(() => !!row(t.term, "worker-old"));
+      expect(t.term.screen()).not.toContain("older hidden");
+      t.term.type("a");
+      await until(() => row(t.term, "worker-old") === undefined);
+      t.term.type("d"); // the live worker-foo is selected
+      await until(() => t.term.screen().includes("worker-foo is live"));
+      expect(removed).toEqual([]);
+      t.term.press({ name: "down" });
+      await until(() => t.app.menu!.index === 1);
+      t.term.type("d");
+      await until(() => t.term.screen().includes("remove worker-recent from /agents? y/n"));
+      t.term.type("y");
+      await until(() => t.term.screen().includes("removed 1 agent from /agents"));
+      expect(removed).toEqual([["worker-recent"]]);
+      expect(row(t.term, "worker-recent")).toBeUndefined();
+      expect(t.term.screen()).toContain("+2 older hidden");
+      t.term.type("D");
+      await until(() => t.term.screen().includes("remove 1 finished agent from /agents? y/n"));
+      t.term.press({ name: "escape" }); // cancels the removal; the menu stays
+      await until(() => !t.term.screen().includes("y/n"));
+      expect(t.app.menu).not.toBeNull();
+      expect(removed.length).toBe(1);
     } finally { await t.stop(); }
   });
 });

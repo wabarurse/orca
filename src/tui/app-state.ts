@@ -3,7 +3,7 @@ import type { TaskTreeRender, ClipboardImage, Key, Terminal } from "./components
 import type { ImageRef, AgentInfo, ProjectEntry, Message, ToolCall, ToolOutcome, Role } from "../protocol";
 import type { RequestSettings } from "../providers/catalog";
 import type { Orchestrator } from "../core/agent-loop/orc";
-import { cancelSession } from "../core/tmux";
+import { archiveAgents, cancelSession } from "../core/tmux";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
 import type { FlowSettings } from "../core/data/projects";
 import { login, sendAgentFeedback, modelChoices, effortChoices, setModel, type DeleteOptions } from "./commands";
@@ -79,6 +79,8 @@ export interface AppDeps {
   /** A project's agents and which are live: /agents lists these and live views poll them. Defaults to listAgents for the menu and to tmux alone (liveAgents) for the poll. */
   cancelAgent?: typeof cancelSession;
   agents?: (project: string) => Promise<AgentInfo[]>;
+  /** How /agents d and D remove finished agents' rows (archiveAgents: a marker in project state); tests stub it. */
+  archiveAgents?: typeof archiveAgents;
   /** Sign-in; tests replace it. */
   login?: typeof login;
   modelChoices?: typeof modelChoices;
@@ -136,8 +138,10 @@ export interface ProjectListState { items: ProjectEntry[]; index: number; status
 
 export interface ActiveMenu extends Menu {
   pick: (index: number) => Promise<void> | void;
-  /** Set on the /agents menu, whose rows depend on the time: the rows at `now`, built per frame. `items` is then just the row count's source, as last built. */
-  itemsAt?: (now: number) => string[];
+  /** Set on the /agents menu, whose rows depend on the time: its rows and footer at `now`, built per frame. `items` is then just the row count's source, as last built. */
+  viewAt?: (now: number) => Pick<Menu, "items" | "footer">;
+  /** Set on the /agents menu: keys it handles before navigation (a, d, D and their y/n); true when it took the key. */
+  keys?: (k: Key) => Promise<boolean> | boolean;
   /** Set on the /agents menu: re-read the agent list and show it, keeping the selected agent by name. */
   reload?: () => Promise<void>;
 }

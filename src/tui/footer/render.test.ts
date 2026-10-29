@@ -157,6 +157,15 @@ describe("live", () => {
     expect(r.slice(0, 2)).toEqual(["> hi", "s"]);
   });
 
+  test("a menu footer (the /agents count and hint) sits under the items and wins over them on short terminals", () => {
+    const items = Array.from({ length: 10 }, (_, i) => `m${i}`);
+    const menu = { title: "pick", items, index: 8, footer: ["+3 older hidden", "hint"] };
+    expect(menuRows(menu, 6).map(strip)).toEqual(["pick", "  m6", "  m7", "❯ m8", "+3 older hidden", "hint"]);
+    expect(menuRows(menu, 3).map(strip)).toEqual(["pick", "+3 older hidden", "hint"]);
+    expect(menuRows(menu, 2).map(strip)).toEqual(["pick", "+3 older hidden"]);
+    expect(menuRows({ ...menu, items: [], index: 0 }, 6).map(strip)).toEqual(["pick", "+3 older hidden", "hint"]);
+  });
+
   test("the boxed composer leaves room for the menu selection without padding", () => {
     setUserFill("\x1b[48;5;236m");
     const items = Array.from({ length: 7 }, (_, i) => `m${i}`);

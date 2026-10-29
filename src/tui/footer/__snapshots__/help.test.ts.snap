@@ -22,7 +22,7 @@ help · commands & keys                                                  1–9/6
                  consumed input
   /inbox         user inbox: tasks / questions; shift+tab switches sections,
                  esc/tab closes
-  /agents        browse and follow agent conversations
+  /agents        follow agents; a shows older, d/D remove finished rows
   /clear         clear conversation, context and cache after confirmation
 ↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;
@@ -35,7 +35,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
                  consumed input
   /inbox         user inbox: tasks / questions; shift+tab switches sections,
                  esc/tab closes
-  /agents        browse and follow agent conversations
+  /agents        follow agents; a shows older, d/D remove finished rows
   /clear         clear conversation, context and cache after confirmation
   /questions     inbox questions (ctrl+q); enter answers or picks skip;
                  shift+tab tasks
@@ -140,8 +140,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     shift+tab switches sections,
     esc/tab closes
   /agents
-    browse and follow agent
-    conversations
+    follow agents; a shows older, d/D
+    remove finished rows
   /clear
     clear conversation, context and
     cache after confirmation
