@@ -51,7 +51,10 @@ capability is implied by local tests.
 
 Generated memory is validated after JSON parsing, against its compact stored
 representation: at most 32 summary items, 16 pending items, 1000 characters per
-item, 8000 serialized characters and 4096 conservatively estimated tokens.
+item and 4096 conservatively estimated tokens. The prompt's 8000-character target
+encourages brevity; it is not a second hard budget. A complete summary above that
+target is accepted unchanged when it fits the token budget. Budget rejections
+report both estimated tokens and serialized character count.
 Formatting and JSON escape spellings do not inflate the stored budget; raw
 responses still have a separate decoding limit. An oversized, malformed or
 truncated summary gets one repair request for the same source part and previous
