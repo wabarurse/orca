@@ -1,4 +1,4 @@
-import { navigateOutline, renderTaskTree, type TaskTreeRender } from "./components";
+import { navigateOutline, renderTaskTreeVariant, variantNavigate, variantSwitch, type TaskTreeRender } from "./components";
 import { ConversationSelection, hitRow } from "./screen";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./components";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
@@ -117,15 +117,15 @@ export class App {
 
   private treeScreen(): StickyScreen {
     const view = this.taskTree!, { cols, rows } = this.deps.term;
-    const rendered = renderTaskTree(view.error ? [] : view.tasks, { ...view, cols, rows: Math.max(1, rows - 2) });
+    const rendered = renderTaskTreeVariant(view.error ? [] : view.tasks, { ...view, cols, rows: Math.max(1, rows - 2) });
     view.rendered = rendered;
     view.revealSelected = false;
     if (!view.error && !view.loading) view.selectedId = rendered.selectedId;
     view.graphX = rendered.graph.x; view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
-    const controls = [view.confirmRemoval ? "Remove merged task from list? y confirm / n cancel (SQL retained)" : view.notice ?? "Ctrl+T/Esc chat · r refresh · d remove merged · terminal gesture opens PR links",
-      view.detailsFocused ? "Details: ↑↓ scroll · ← list" : "↑↓ select · ← fold/parent · → expand/details"].map(line => fit(line, cols));
+    const controls = [view.confirmRemoval ? "Remove merged task from list? y confirm / n cancel (SQL retained)" : view.notice ?? "Ctrl+T/Esc chat · r refresh · d remove merged · 0–8/v variant (mockup)",
+      view.detailsFocused ? "Details: ↑↓ scroll · ← list" : "↑↓ select · ←→ fold/column · PgUp/PgDn details · Shift+Tab next"].map(line => fit(line, cols));
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
     return { rows: [...content, ...controls].slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0,
       bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
@@ -141,6 +141,7 @@ export class App {
     }
     if (k.name === "escape" || k.ctrl && k.name === "t") return this.toggleTaskTree();
     if (k.name === "char" && k.text === "r") { void this.manualTreeRefresh(view); return; }
+    if (variantSwitch(view, k)) { this.draw(); return; } // MOCKUP-PICK
     if (k.name === "char" && k.text === "d") {
       const selected = view.tasks.find(t => t.id === view.selectedId);
       if (!view.error && !view.loading && selected?.archive) { view.confirmRemoval = selected.id; view.notice = undefined; }
@@ -205,7 +206,7 @@ export class App {
   }
 
   private scrollTaskTree(view: TaskTreeState, rendered: TaskTreeRender, k: Key): void {
-    if (this.focusTaskDetails(view, k.name)) return;
+    if (variantNavigate(view, rendered, k) || this.focusTaskDetails(view, k.name)) return; // MOCKUP-PICK
     if (["up", "down", "left", "right"].includes(k.name)) {
       view.selectedId = navigateOutline(rendered.nodes, view.selectedId, view.collapsed, k.name);
       view.revealSelected = true;

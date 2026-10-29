@@ -71,7 +71,7 @@ function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: num
 /** A single canonical identity, placed under its lowest-UUID prerequisite.
  * Other prerequisites remain explicit references, never implied tree edges.
  */
-function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>): OutlineNode[] {
+export function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>): OutlineNode[] {
   dependencyLayers(tasks); // Validate against retained SQL records before hiding membership.
   const visible = new Set(tasks.filter(t => !t.removedAt).map(t => t.id.toLowerCase()));
   tasks = tasks.filter(t => visible.has(t.id.toLowerCase())).map(t => ({ ...t, dependsOn: t.dependsOn.filter(id => visible.has(id.toLowerCase())) }));
@@ -88,7 +88,7 @@ function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>): OutlineNode
   return result;
 }
 
-function active(task: TreeTask): boolean {
+export function active(task: TreeTask): boolean {
   return !task.archive && !task.attention && task.runs.some(run => run.state === "started" && !run.endedAt);
 }
 
@@ -97,7 +97,7 @@ function status(task: TreeTask): string { return publicTaskStatus(task); }
 /** Dot colour: merged purple, verified PR out green, stopped (blocked/cancelled/closed) red,
  * unknown yellow, building/working/reviewing/ready cyan, queued grey. A routine `waiting`
  * attention never hides progress. The PR milestone stays green even when blocked. */
-function statusColor(task: TreeTask): number {
+export function statusColor(task: TreeTask): number {
   const milestone = taskPublicationMilestone(task);
   if (milestone.kind === "merged") return 35;
   if (milestone.kind === "published") return 32;
@@ -108,7 +108,7 @@ function statusColor(task: TreeTask): number {
   return 90;
 }
 
-function activity(task: TreeTask): string {
+export function activity(task: TreeTask): string {
   return task.runs.filter(run => run.state === "started" && !run.endedAt)
     .map(run => run.role === "worker" ? "working" : "reviewing").join(" / ");
 }

@@ -144,6 +144,8 @@ export interface TaskTreeState {
   collapsed: Set<string>; frame: number; detailsFocused?: boolean;
   confirmRemoval?: string; notice?: string; removing?: boolean;
   revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
+  /** MOCKUP-PICK: 0 today's outline, 1–8 variants A–H. */
+  variant?: number;
 }
 
 export interface TaskInboxState extends TaskInboxData {
