@@ -23,11 +23,11 @@ import { listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
 import type { AgentInfo } from "../protocol";
 import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
-import { effortChoices, modelChoices, setModel, switchAllMenu, type Choice } from "./commands";
+import { activeRoles, chooseModel, effortChoices, modelChoices, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
 import { reviewRounds, dynamicDispatch } from "./commands";
 import { paths, validRounds } from "../config";
 import { projectIdentity } from "../core/data/projects";
-import { validateModel, effectiveModel } from "../core/data/projects";
+import { effectiveModel } from "../core/data/projects";
 import { effectiveFlow, type FlowSettings } from "../core/data/projects";
 import type { Message } from "../protocol";
 import type { Orchestrator } from "../core/agent-loop/orc";
@@ -589,7 +589,7 @@ export class App {
 
   private header(page: Page, decorate = true): string[] {
     const settings = page.settings;
-    const model = `${page.model ?? "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
+    const model = `${page.model ?? "loading model…"}${roleModelsLabel(page.roles)} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
     return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), model, context: this.contextLabel(page), review: reviewStatus(page.review), dispatch: dispatchStatus(page.dispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
@@ -613,16 +613,18 @@ export class App {
     const model = await this.readModel(page.project);
     const settings = await effectiveSettings(page.project, model).catch(() => undefined);
     if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
-    const unchanged = model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings);
-    page.model = model;
+    const roles = activeRoles(page.project, model);
+    const unchanged = model === page.model && JSON.stringify(settings) === JSON.stringify(page.settings) && JSON.stringify(roles) === JSON.stringify(page.roles);
+    page.model = model; page.roles = roles;
     page.settings = settings;
     if (!unchanged && page === this.page) this.draw();
   }
 
   /** Agent views show no session context; otherwise the orchestrator's own compaction limit. */
   private contextLabel(page: Page): string {
-    if (page.view || !page.model) return contextStatus(undefined);
-    return contextStatus(page.model, page.orch.contextUsage?.(page.model), page.orch.contextWindow?.(page.model));
+    const model = page.roles?.orchestrator ?? page.model; // the orchestrator's own model, its /model override if set
+    if (page.view || !model) return contextStatus(undefined);
+    return contextStatus(model, page.orch.contextUsage?.(model), page.orch.contextWindow?.(model));
   }
 
   private bumpFlow(page: Page): number {
@@ -1036,7 +1038,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     page.lines.unshift(...this.looseLines);
     this.looseLines = [];
     if (this.looseNote !== undefined) { this.notes.set(page, this.looseNote); this.looseNote = undefined; }
-    page.model = await this.readModel(project);
+    page.model = await this.readModel(project); page.roles = activeRoles(project, page.model);
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
     catch (error) { this.note(dim(`image recovery failed: ${error}`), page); }
@@ -1349,16 +1351,6 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     });
   }
 
-  private async modelMenu(page: Page, operation: number, identity: string): Promise<void> {
-    this.note("fetching models…", page);
-    const { choices, errors } = await (this.deps.modelChoices ?? modelChoices)(dim, page.project);
-    if (this.notes.delete(page)) this.draw();
-    if (!this.modelPageCurrent(page, operation)) return;
-    for (const e of errors) this.note(dim(e));
-    if (!choices.length) return this.note(dim("no models available; sign in with /login first"));
-    this.openMenu("switch model   (/accounts for another provider)", choices, async (id) => this.switchModel(page, id, operation, identity), operation);
-  }
-
   private async attach(page: Page, name: string, live: boolean): Promise<void> {
     this.cancelClear();
     const stopped = new Promise<void>((r) => (page.view = { name, lines: [], leave: r, live, calls: new Calls() }));
@@ -1465,7 +1457,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear conversation, context and cache after confirmation" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
-    ["/model", { run: (_, page) => this.modelCommand(page), help: { group: "settings", label: "/model", description: "choose the project model from its account" } }],
+    ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [orch|worker|reviewer]", description: "choose the model for all agents or one role" } }],
     ["/accounts", { run: (_, page) => this.accountsMenu(page), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args, page) => this.login(args, page), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
     ["/review-rounds", { args: true, run: (args, page) => this.flowCommand(page, args, reviewRounds), help: { group: "advanced", label: "/review-rounds [n]", description: "project review rounds before ci; 0 goes straight to ci" } }],
@@ -1599,42 +1591,38 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.openMenu(`effort for ${picker.model}   (/effort <level|default> sets directly)`, picker.choices, (level) => this.saveSetting(page, operation, `set effort for ${picker.model} to ${level}?`, () => setEffort(page.project, picker.model, level, identity)), operation);
   }
 
-  /** /model opens the picker of the project's account's models; there is no id argument. */
-  private async modelCommand(page?: Page): Promise<void> {
+  /** /model [orch|worker|reviewer]: the scope step, then the picker of the project's account's models (commands/model-flow.ts); no id argument. */
+  private async modelCommand(args: string, page?: Page): Promise<void> {
     const operation = ++this.modelGeneration;
     if (!page) return this.note(dim("open a project before changing its model"));
-    await this.modelMenu(page, operation, projectIdentity(page.project));
+    const { project } = page, identity = projectIdentity(project);
+    await chooseModel(args, {
+      project, identity, dim,
+      current: () => this.modelPageCurrent(page, operation),
+      note: (text) => this.note(text, page),
+      unnote: () => { if (this.notes.delete(page)) this.draw(); },
+      open: (title, choices, pick) => this.openMenu(title, choices, pick, operation),
+      confirm: (question, scope, save) => this.confirmAll(page, operation, question, save, scope),
+      projectModel: () => this.readModel(project),
+      choices: () => (this.deps.modelChoices ?? modelChoices)(dim, project),
+      saveAll: (id) => (this.deps.saveModel ?? setModel)(id, project, identity),
+      refresh: () => this.refreshHeader(page),
+      observe: (id) => void page.orch.observeModel?.(id).then(ack => this.note(`orchestrator: ${ack}`, page), error => this.note(dim(`orchestrator did not acknowledge the model: ${error instanceof Error ? error.message : String(error)}`), page)),
+    });
   }
 
   private modelPageCurrent(page: Page, operation: number): boolean {
     return operation === this.modelGeneration && this.page === page && this.pages.includes(page) && !page.deleting;
   }
 
-  private async switchModel(page: Page, id: string, operation: number, identity: string): Promise<void> {
-    validateModel(id);
-    await this.confirmAll(page, operation, `switch this project to ${id}?`, () => this.commitModel(page, id, operation, identity));
-  }
-
-  /** A change every agent reads before its next request (/model, /effort, /fast): saved at once unless workers or reviewers run, else after "switch all". */
-  private async confirmAll(page: Page, operation: number, question: string, save: () => Promise<void>): Promise<void> {
+  /** A change agents read before their next request (/model, /effort, /fast): saved at once unless workers or reviewers of `scope` run, else after "switch …". */
+  private async confirmAll(page: Page, operation: number, question: string, save: () => Promise<void>, scope: Scope = "all"): Promise<void> {
     if (!this.modelPageCurrent(page, operation)) return;
     const agents = await Promise.try(this.deps.modelAgents ?? liveAgentsOrNull, page.project).catch(() => null);
     if (!this.modelPageCurrent(page, operation)) return;
     if (agents === null) return this.note(dim("could not determine running agents; try again"), page);
-    const confirm = switchAllMenu(question, agents);
+    const confirm = switchAllMenu(question, agents, scope);
     return confirm ? this.openMenu(confirm.title, confirm.choices, async (confirmed) => { if (confirmed) await save(); }, operation) : save();
-  }
-
-  private async commitModel(page: Page, id: string, operation: number, identity: string): Promise<void> {
-    if (!this.modelPageCurrent(page, operation)) return;
-    // Persistence boundary: once invoked, this commit belongs to the captured
-    // project even if its page closes or selection changes. Disk identity and
-    // the shared project-state lock protect deletion/recreation, not selection.
-    const result = await (this.deps.saveModel ?? setModel)(id, page.project, identity);
-    this.note(result, page);
-    await this.refreshHeader(page);
-    // The daemon reads the saved model at its next request; its acknowledgement replaces the note when it arrives.
-    void page.orch.observeModel?.(id).then(ack => this.note(`orchestrator: ${ack}`, page), error => this.note(dim(`orchestrator did not acknowledge the model: ${error instanceof Error ? error.message : String(error)}`), page));
   }
 
   /**

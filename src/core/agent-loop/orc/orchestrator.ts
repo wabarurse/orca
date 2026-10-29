@@ -103,7 +103,7 @@ export async function createOrchestrator(deps: OrchestratorDeps): Promise<Orches
   const { project } = deps;
   const transcript = deps.transcript ?? open(paths.transcript(project, "orchestrator"));
   if (transcript.head() === null) {
-    await transcript.append({ type: "meta", role: "orchestrator", model: await effectiveModel(project) });
+    await transcript.append({ type: "meta", role: "orchestrator", model: await effectiveModel(project, "orchestrator") });
   }
 
   // Background and best-effort: the first start after an upgrade migrates old per-project indexes.
@@ -314,8 +314,8 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
     loadContext: query => agentKnowledge(deps.project, paths.repo(deps.project), query),
     signal, requireInbox: true, onContext,
     toolConcurrency: config.toolConcurrency,
-    resolveModel: projectModelResolver(deps.project, loadProvider),
-    transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project),
+    resolveModel: projectModelResolver(deps.project, loadProvider, "orchestrator"),
+    transcript, tools: orchestratorTools(deps.tools), model: await effectiveModel(deps.project, "orchestrator"),
     compaction: compactionOptions(config), compactRequested,
     compactBoundary: async (current, manual, maintenance) => {
       if (inputEpoch(deps.project) !== epoch) { rolling.reset(); return; }

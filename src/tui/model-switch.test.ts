@@ -10,7 +10,7 @@ import { setModel } from "./commands/model";
 import { withProjectStateLock } from "../core/data/projects/state";
 import { effectiveModel } from "../core/data/projects/project-model";
 import { effectiveSettings } from "../core/data/projects/project-settings";
-import { paths, saveConfig, writeProjectState } from "../config";
+import { paths, readProjectState, saveConfig, writeProjectState } from "../config";
 
 const home = mkdtempSync(join(tmpdir(), "model-ui-"));
 process.env.ORCA_HOME = home;
@@ -23,7 +23,7 @@ async function until(check: () => boolean) {
 const note = (app: App) => Bun.stripANSI(app.frame().inputArea!.lines.join("\n"));
 async function setup(agents: { name: string; live: boolean }[], choices?: AppDeps["modelChoices"], extra: Partial<AppDeps> = {}) {
   await saveConfig({ model: "gpt-6-astra" });
-  // /model has no id argument: by default the picker offers just `offer.id`, which tests set before picking.
+  // /model has no id argument (its argument is a scope): by default the picker offers just `offer.id`, which tests set before picking.
   const offer = { id: "claude-test" };
   choices ??= async () => ({ choices: [{ value: offer.id, label: offer.id }], errors: [], current: "gpt-6-astra" });
   const project = `p-${crypto.randomUUID()}`;
@@ -74,6 +74,10 @@ test("picker uses the same immediate path when no subagents run", async () => {
   const ui = await setup([{ name: "worker-old", live: false }], async () => ({ choices: [{ value: "claude-test", label: "Claude" }], errors: [], current: "gpt-6-astra" }));
   try {
     await ui.app.commands.get("/model")!.run("", ui.app.page);
+    expect(ui.app.menu!.title).toContain("switch model for"); // the scope step first: all agents is the first row
+    expect(ui.app.menu!.items[0]).toContain("all agents");
+    ui.type("\r");
+    await until(() => !!ui.app.menu?.title.includes("switch model for all agents"));
     ui.type("\r");
     await until(() => note(ui.app).includes("next model request"));
     expect(await effectiveModel(ui.project)).toBe("claude-test");
@@ -86,13 +90,16 @@ test("async picker and stale confirmation cannot switch a different selected pag
   const ui = await setup([{ name: "worker-a", live: true }], () => new Promise((r) => { release = r; }));
   try {
     const original = ui.app.page!;
-    const fetching = ui.app.commands.get("/model")!.run("", original);
+    const fetching = ui.app.commands.get("/model")!.run("all", original);
+    await until(() => !!release); // the catalog fetch has started
     ui.app.pages.push({ ...original, project: "other" }); ui.app.active = 1;
     release({ choices: [{ value: "claude-test", label: "Claude" }], errors: [], current: "gpt-6-astra" });
     await fetching;
     expect(ui.app.menu).toBeNull();
     ui.app.active = 0;
-    const again = ui.app.commands.get("/model")!.run("", original);
+    const first = release;
+    const again = ui.app.commands.get("/model")!.run("all", original);
+    await until(() => release !== first); // the second fetch has started
     release({ choices: [{ value: "claude-test", label: "Claude" }], errors: [], current: "gpt-6-astra" }); await again;
     ui.type("\r"); await until(() => !!ui.app.menu?.title.includes("switch this project"));
     ui.app.active = 1;
@@ -110,12 +117,14 @@ function deferred<T>() {
   return { promise, resolve };
 }
 const catalog = (id: string) => ({ choices: [{ value: id, label: id }], errors: [], current: "gpt-6-astra" });
-const modelCommand = (ui: Awaited<ReturnType<typeof setup>>) => ui.app.commands.get("/model")!.run("", ui.app.page);
-/** /model, then Enter on `id` as the picker's only offer: the pick (and any confirmation it opens) has started when this resolves. */
-async function pickModel(ui: Awaited<ReturnType<typeof setup>>, id: string) {
+/** `/model all`: the scope argument skips the scope step, straight to the all-agents picker. */
+const modelCommand = (ui: Awaited<ReturnType<typeof setup>>, scope = "all") => ui.app.commands.get("/model")!.run(scope, ui.app.page);
+/** /model <scope>, then Enter on `id` as the picker's only offer: the pick (and any confirmation it opens) has started when this resolves. */
+async function pickModel(ui: Awaited<ReturnType<typeof setup>>, id: string, scope = "all") {
   ui.offer.id = id;
-  await modelCommand(ui);
+  await modelCommand(ui, scope);
   expect(ui.app.menu!.title).toContain("switch model");
+  if (scope !== "all") ui.key({ name: "down" }); // past "same as project"
   ui.type("\r");
 }
 
@@ -145,14 +154,13 @@ for (const result of [null, "throw", [], ["shell", "worker-no-transcript", "revi
   });
 }
 
-test("/model takes no id: an argument is an unknown command that opens no picker and saves nothing", async () => {
+test("/model takes no id: its argument is a scope, anything else is the usage, opens no picker and saves nothing", async () => {
   const ui = await setup([]);
   try {
     ui.type("/model claude-test\r");
-    await until(() => note(ui.app).includes("unknown command /model"));
+    await until(() => note(ui.app).includes("usage: /model [orch|worker|reviewer]"));
     expect(ui.app.menu).toBeNull();
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    expect(ui.app.commands.get("/model")!.args).toBeFalsy();
   } finally { await ui.close(); }
 });
 
@@ -179,6 +187,7 @@ for (const cancel of ["newer", "escape", "other-menu", "away-back", "close"] as 
     const ui = await setup([], () => ++calls === 1 ? old.promise : Promise.resolve(catalog("newer")));
     try {
       const pending = modelCommand(ui);
+      await until(() => calls === 1); // the old catalog fetch has started
       if (cancel === "newer") await modelCommand(ui);
       if (cancel === "escape") ui.key({ name: "escape" });
       if (cancel === "other-menu") ui.app.openMenu("other menu", [{ value: 1, label: "other" }], () => {});
@@ -399,6 +408,63 @@ test("confirmed save refreshes captured page, not the selection changed while pe
     ui.app.switchPage(-1);
     await until(() => ui.writes.some((s) => s.includes(`model claude-captured`)));
   } finally { release.resolve(); await ui.close(); }
+});
+
+test("/model for one role: the scope menu shows each role's model; only that role's running agents are counted; the header shows the override", async () => {
+  const ui = await setup([{ name: "worker-a", live: true }, { name: "reviewer-a", live: true }]);
+  const plainItems = () => ui.app.menu!.items.map((item) => Bun.stripANSI(item));
+  try {
+    await pickModel(ui, "gpt-5.5", "worker");
+    await until(() => !!ui.app.menu?.title.includes("switch workers to gpt-5.5? applies to 1 running workers."));
+    expect(ui.app.menu!.items).toEqual(["● cancel", "  switch workers"]);
+    ui.key({ name: "down" }); ui.type("\r");
+    await until(() => note(ui.app).includes("workers set to gpt-5.5"));
+    expect(await effectiveModel(ui.project, "worker")).toBe("gpt-5.5");
+    expect(await effectiveModel(ui.project, "reviewer")).toBe("gpt-6-astra");
+    expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
+    await until(() => ui.writes.some((s) => s.includes("model gpt-6-astra · workers gpt-5.5 · effort")));
+    // The orchestrator scope never asks: only the orchestrator reads it.
+    await pickModel(ui, "gpt-5.5", "orch");
+    await until(() => note(ui.app).includes("orchestrator set to gpt-5.5"));
+    expect(ui.app.menu).toBeNull();
+    await until(() => ui.writes.some((s) => s.includes("model gpt-6-astra · orch+workers gpt-5.5 · effort")));
+    // No argument: the scope step, each row with its current model.
+    await ui.app.commands.get("/model")!.run("", ui.app.page);
+    expect(plainItems()).toEqual([
+      "  all agents    gpt-6-astra  clears the role choices",
+      "  orchestrator  gpt-5.5",
+      "  workers       gpt-5.5",
+      "  reviewers     gpt-6-astra  same as project",
+    ]);
+    ui.key({ name: "escape" });
+    // "same as project" clears the worker override, after the workers' confirmation.
+    await modelCommand(ui, "workers");
+    expect(plainItems()).toEqual(["  same as project  gpt-6-astra", "● gpt-5.5"]);
+    ui.key({ name: "up" }); ui.type("\r");
+    await until(() => !!ui.app.menu?.title.includes("return workers to the project model gpt-6-astra? applies to 1 running workers."));
+    ui.key({ name: "down" }); ui.type("\r");
+    await until(() => note(ui.app).includes("workers back on the project model"));
+    expect(await effectiveModel(ui.project, "worker")).toBe("gpt-6-astra");
+    // All agents: the project model, clearing the remaining role choice.
+    await pickModel(ui, "gpt-5.5");
+    await until(() => !!ui.app.menu?.title.includes("applies to orchestrator, 1 workers and 1 reviewers"));
+    ui.key({ name: "down" }); ui.type("\r");
+    await until(() => note(ui.app).includes("model set to gpt-5.5"));
+    expect(await effectiveModel(ui.project, "orchestrator")).toBe("gpt-5.5");
+    expect(readProjectState(ui.project, "role-models")).toEqual({});
+  } finally { await ui.close(); }
+});
+
+test("/model reviewer with no reviewer running saves at once; another provider's model is refused", async () => {
+  const ui = await setup([{ name: "worker-a", live: true }]);
+  try {
+    await pickModel(ui, "gpt-5.5", "reviewer");
+    await until(() => note(ui.app).includes("reviewers set to gpt-5.5"));
+    expect(await effectiveModel(ui.project, "reviewer")).toBe("gpt-5.5");
+    await pickModel(ui, "claude-test", "reviewer");
+    await until(() => note(ui.app).includes("not served by this project's openai account"));
+    expect(await effectiveModel(ui.project, "reviewer")).toBe("gpt-5.5");
+  } finally { await ui.close(); }
 });
 
 const settings = (ui: Awaited<ReturnType<typeof setup>>) => effectiveSettings(ui.project, "gpt-6-astra");

@@ -96,7 +96,7 @@ async function publish(d: Daemon, state: DaemonState): Promise<void> {
 
 /** The header's estimate after a turn, from the session that just ran it. */
 async function contextEstimate(d: Daemon): Promise<void> {
-  const model = await effectiveModel(d.o.project).catch(() => undefined);
+  const model = await effectiveModel(d.o.project, "orchestrator").catch(() => undefined);
   if (!model) return;
   d.context = { model, used: d.o.session.contextUsage?.(model), window: d.o.session.contextWindow?.(model) ?? contextWindow({}, model) };
 }
@@ -107,7 +107,7 @@ async function runCommand(d: Daemon, command: Command): Promise<string> {
     case "compact": await session.compact?.(); return COMPACT_ACK;
     case "clear": await session.clear?.(); return "model context cleared";
     // Confirms what is saved now: an older request overtaken by a newer switch still gets the current answer, not an error.
-    case "model": return `model ${await effectiveModel(project)} applies from the orchestrator's next request`;
+    case "model": return `model ${await effectiveModel(project, "orchestrator")} applies from the orchestrator's next request`;
     case "stop": return "stopping";
   }
 }
