@@ -39,13 +39,28 @@ Summarization reuses the account and model resolved for the foreground request,
 with low effort when supported, fast mode off, no tools, bounded UTF-8 source
 chunks, a two-minute deadline per summary request (a large prefix is many
 sequential parts, so the deadline never covers the whole summary) and an automatic
-retry cooldown of 30 seconds that doubles per consecutive failure up to 30 minutes.
+retry cooldown of 30 seconds. Real failures also defer background retries, doubling
+up to 30 minutes, but a hard context limit bypasses that extra deferral. Manual
+`/compact` bypasses both. A stale or non-reducing summary is not a failure.
 A finished summary that was not published (declined or failed) is kept: the next
 summary reuses it while its exact prefix, input/context epoch and checkpoint are
 unchanged, and summarizes only the messages that became older since. A
 Claude session does not require an OpenAI login. Manual `/compact` can retry
 immediately; automatic turns do not bypass the cooldown. No live provider
 capability is implied by local tests.
+
+Generated memory is validated after JSON parsing, against its compact stored
+representation: at most 32 summary items, 16 pending items, 1000 characters per
+item, 8000 serialized characters and 4096 conservatively estimated tokens.
+Formatting and JSON escape spellings do not inflate the stored budget; raw
+responses still have a separate decoding limit. An oversized, malformed or
+truncated summary gets one repair request for the same source part and previous
+memory, using the same account/model with no tools. The repair is separately
+metered as `rolling-summary-repair` and gets its own request deadline. The source
+and memory are never cut locally to satisfy validation. Provider/authentication
+failures and refusals do not enter this repair path. If repair fails, the job
+backs off; when the foreground cannot fit, its error retains the actual
+compaction failure reason and originals remain unchanged.
 
 The foreground continues while summaries run unless the context limit requires
 waiting. Publication reloads the latest transcript under project/turn ownership,
