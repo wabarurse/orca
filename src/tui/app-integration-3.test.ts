@@ -570,15 +570,15 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
     term.type("\x1b[Z");
     await until(() => screen().includes("Task #2 ·"));
     expect(screen()).toContain("Overview: Summary 2");
-    const row = term.display.screen().findIndex(line => line.includes("#1 ● Node 1"));
+    const row = term.display.screen().findIndex(line => line.includes("● #1 Node 1"));
     const col = term.display.screen()[row]!.indexOf("#1");
     term.press({ name: "mousedown", x: col + 1, y: row + 1 });
     term.press({ name: "mouseup", x: col + 1, y: row + 1 });
     await until(() => screen().includes("Task #1 ·"));
     term.press({ name: "left" });
-    await until(() => !screen().includes("#2 ● Node 2"));
+    await until(() => !screen().includes("● #2 Node 2"));
     term.press({ name: "right" });
-    await until(() => screen().includes("#2 ● Node 2"));
+    await until(() => screen().includes("● #2 Node 2"));
     term.press({ name: "down" });
     await until(() => screen().includes("Task #2 ·"));
     term.press({ name: "left" }); term.press({ name: "left" });
@@ -699,12 +699,12 @@ test("task tree cycling reveals long independent registries without changing cha
   try {
     await until(() => !!app.page);
     term.type("keep draft"); term.type("\x14");
-    await until(() => screen().includes("#1 ● Independent task 1"));
+    await until(() => screen().includes("● #1 Independent task 1"));
     for (let i = 0; i < 23; i++) term.type("\x1b[Z");
-    await until(() => screen().includes("#24 ● Independent task 24"));
+    await until(() => screen().includes("● #24 Independent task 24"));
     expect(screen()).toContain("Outline y=");
     term.type("\x1b[Z");
-    await until(() => screen().includes("#1 ● Independent task 1"));
+    await until(() => screen().includes("● #1 Independent task 1"));
     expect(screen()).toContain("Outline y=0/");
     term.press({ name: "right" });
     await until(() => screen().includes("Details: ↑↓ scroll"));
@@ -730,12 +730,12 @@ test("task tree r re-reads the real ledger and says when it refreshed; dots foll
   const running = app.run(project), screen = () => term.display.screen().join("\n");
   try {
     await until(() => !!app.page); term.type("\x14");
-    await until(() => screen().includes("#1 ● First"));
+    await until(() => screen().includes("● #1 First"));
     expect(term.raw()).toContain("\x1b[90m●");
     await registerTask(project, { name: "Second", summary: "s", branch: "feat/b", authorized: true });
     await setTaskAttention(project, first.id, { kind: "blocked", reason: "stopped" }, first.revision);
     term.type("r"); // no poll, no refreshSessions: only the key
-    await until(() => screen().includes("#2 ● Second"));
+    await until(() => screen().includes("● #2 Second"));
     await until(() => /Refreshed \d\d:\d\d:\d\d/.test(screen()));
     expect(term.raw()).toContain("\x1b[31m●");
   } finally { app.quit(); await running; }
@@ -763,7 +763,7 @@ for (const width of [80, 120]) test(`persistent task tree real App ${width}: con
     term.type("d"); await until(() => screen().includes("y confirm / n cancel"));
     term.type("n"); expect(await listTasks(project)).toHaveLength(2);
     term.type("d"); term.type("y");
-    await until(() => screen().includes("Task #2 · queued") && !screen().includes("#1 ●"));
+    await until(() => screen().includes("Task #2 · queued") && !screen().includes("● #1 Merged"));
     expect((await listTasks(project)).map(t => t.number)).toEqual([2]);
     expect((await getTask(project, b.id)).dependsOn).toEqual([a.id]);
     expect((searchLedger({ project, taskId: a.id })[0] as { removedAt: string }).removedAt).toBeTruthy();
@@ -771,6 +771,6 @@ for (const width of [80, 120]) test(`persistent task tree real App ${width}: con
     term.type("r"); await app.refreshSessions(); expect(screen()).toContain("Task #2 · queued");
     term.type("\x14"); expect(app.input.text).toBe("draft"); term.type("\x14");
     await until(() => screen().includes("Task #2 · queued"));
-    expect(screen()).not.toContain("#1 ●");
+    expect(screen()).not.toContain("● #1 Merged");
   } finally { app.quit(); await running; }
 });
