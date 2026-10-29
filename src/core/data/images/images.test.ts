@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ImageRef } from "../../../protocol/images";
 import { paths } from "../../../config/config";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { content, consume, pending, put } from "../inbox/inbox";
@@ -293,6 +294,27 @@ test("magic-byte sniffing and header checks for jpeg, gif and webp; tool-read im
   expect(out.split("Image omitted from this request").length).toBe(2);
   expect(out).toContain(`attachment_id=${refs[0]!.id}`);
   await expect(materializeImages(p, [{ role: "user", content: refs.map(imageBlock) }])).rejects.toThrow("16 mib");
+});
+
+test("a request carries at most 20 images: prompt images first, then the newest tool-read images; older ones become the note", async () => {
+  const p = project(), small = await saveImage(p, png()), tiny = png().toString("base64");
+  const tool = (r: ImageRef, i: number): MessageParam => ({ role: "user", content: [{ type: "tool_result", tool_use_id: `call-${i}`, content: [imageBlock(r)] }] });
+  const images = (messages: MessageParam[]) => JSON.stringify(messages).split(`"data":"${tiny}"`).length - 1;
+  const notes = (messages: MessageParam[]) => JSON.stringify(messages).split("Image omitted from this request").length - 1;
+  // 25 tiny tool images are far under 16 MiB, yet only the newest 20 are delivered.
+  const refs: ImageRef[] = []; for (let i = 0; i < 25; i++) refs.push(await saveImage(p, png()));
+  const out = await materializeImages(p, refs.map(tool));
+  expect(images(out)).toBe(20); expect(notes(out)).toBe(5);
+  const text = JSON.stringify(out);
+  for (const r of refs.slice(0, 5)) expect(text).toContain(`attachment_id=${r.id}`); // the five oldest
+  for (const r of refs.slice(5)) expect(text).not.toContain(`attachment_id=${r.id}`);
+  expect(text).toContain("20 images or 16 MiB");
+  // Prompt images count first (and are never dropped): 4 prompt + 25 tool → 4 + 16 images.
+  const mixed = await materializeImages(p, [{ role: "user", content: [small, small, small, small].map(imageBlock) }, ...refs.map(tool)]);
+  expect(images(mixed)).toBe(20); expect(notes(mixed)).toBe(9);
+  expect(JSON.stringify(mixed).split(`"source":{"type":"base64"`).length - 1).toBe(20);
+  // Exactly 20 tool images need no note.
+  expect(notes(await materializeImages(p, refs.slice(0, 20).map(tool)))).toBe(0);
 });
 
 // Exercise the actual Claude adapter without credentials or network requests.

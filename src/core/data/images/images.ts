@@ -15,6 +15,9 @@ import type { ImageInput, ImageRef } from "../../../protocol";
 export const MAX_IMAGES = 4;
 /** Encoded image bytes one model request may carry. */
 const MAX_CONTEXT_IMAGE_BYTES = 16 * 1024 * 1024;
+/** Images one request may carry: past 20, Anthropic shrinks every image's limit to
+ * 2000 px (so a 4096 px screenshot fails) and refuses more than 100 outright. */
+const MAX_CONTEXT_IMAGES = 20;
 /** Stored file extension per format; PNG first (clipboard images and every older store). */
 const EXTENSIONS: Record<ImageMime, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -113,8 +116,9 @@ export function imageContent(text: string, refs: ImageRef[] = []): MessageParam[
 }
 /** Scoped references become base64 blocks just before a request. Prompt images are
  * never dropped: over the cap the request is refused. Images a tool read (`read`;
- * nested in a tool_result, their file can be read again) fill what remains newest
- * first; older ones give way to a text note instead of blocking the agent. */
+ * nested in a tool_result, their file can be read again) fill what remains, in bytes
+ * and in count, newest first; older ones give way to a text note instead of blocking
+ * the agent. Prompt images keep their policy: the count cap only limits tool images. */
 export async function materializeImages(project: string, messages: MessageParam[]): Promise<MessageParam[]> {
   const loaded = new Map<ImageBlockParam, { bytes: Buffer; mime: ImageMime }>();
   const load = async (block: ImageBlockParam): Promise<number> => {
@@ -124,7 +128,7 @@ export async function materializeImages(project: string, messages: MessageParam[
     loaded.set(block, image);
     return image.bytes.length;
   };
-  let total = 0;
+  let total = 0, count = 0;
   const toolImages: ImageBlockParam[] = [];
   for (const message of messages) {
     if (typeof message.content === "string") continue;
@@ -134,19 +138,22 @@ export async function materializeImages(project: string, messages: MessageParam[
       }
       if (block.type !== "image") continue;
       if (message.role !== "user") throw new Error("assistant image input is unsupported.");
-      total += await load(block);
+      total += await load(block); count++;
       if (total > MAX_CONTEXT_IMAGE_BYTES) throw new Error("image context exceeds 16 mib of encoded image bytes. no image was discarded. use an explicit /clear for a new task; original history is preserved.");
     }
   }
+  // Newest first; the first tool image that does not fit ends the fill, so what is
+  // delivered is always the newest run (an older image never displaces a newer one).
   for (const block of toolImages.reverse()) {
+    if (count >= MAX_CONTEXT_IMAGES) break;
     const size = await load(block);
     if (total + size > MAX_CONTEXT_IMAGE_BYTES) { loaded.delete(block); break; }
-    total += size;
+    total += size; count++;
   }
   const deliver = (block: ImageBlockParam): ImageBlockParam | TextBlockParam => {
     const image = loaded.get(block);
     if (image) return { type: "image", source: { type: "base64", media_type: image.mime, data: image.bytes.toString("base64") } };
-    return { type: "text", text: `[Image omitted from this request: this context's images exceed 16 MiB (attachment_id=${blockRef(block)?.id ?? "unknown"}). Read the file again to inspect it.]` };
+    return { type: "text", text: `[Image omitted from this request: this context's images exceed the request limit (${MAX_CONTEXT_IMAGES} images or 16 MiB) (attachment_id=${blockRef(block)?.id ?? "unknown"}). Read the file again to inspect it.]` };
   };
   return messages.map(message => typeof message.content === "string" ? message : { ...message, content: message.content.map(block =>
     block.type === "image" && message.role === "user" ? deliver(block)

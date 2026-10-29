@@ -74,6 +74,15 @@ async function contents(path: string): Promise<Buffer> {
 }
 const mib = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+const isText = (data: Buffer) => { if (data.includes(0)) return false; try { new TextDecoder("utf-8", { fatal: true }).decode(data); return true; } catch { return false; } };
+/** Whether a file whose first bytes look like an image is one: an image extension
+ * decides; otherwise plain UTF-8 text (a file that merely starts with "GIF89a") is not. */
+async function isImage(path: string): Promise<boolean> {
+  if (IMAGE_EXTENSIONS.has(extname(path).toLowerCase())) return true;
+  const s = await lstat(path);
+  return s.size > MAX_FILE || !isText(await readFile(path));
+}
 /** An image file returned as an image: stored in the project image store (as clipboard
  * images are) and delivered as an image block inside the tool_result. */
 async function readImage(path: string, mime: ImageMime, ctx: ToolContext): Promise<ToolResult> {
@@ -124,7 +133,7 @@ export const read: Tool<ToolResult> = {
   async run(input, ctx) {
     const path = await filePath(input.path, ctx);
     const image = sniffImage(await head(path));
-    if (image) return readImage(path, image, ctx);
+    if (image && await isImage(path)) return readImage(path, image, ctx);
     const data = await contents(path);
     const start = input.start_line ?? 1, count = input.lines ?? 150;
     if (!Number.isInteger(start) || Number(start) < 1 || !Number.isInteger(count) || Number(count) < 1 || Number(count) > 500) throw new Error("invalid line range");

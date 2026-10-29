@@ -75,6 +75,11 @@ test('read returns an image file as a scoped image block, sniffed by bytes not n
   await writeFile(join(cwd, 'paper.pdf'), Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.from([0, 0xff, 0xfe])]));
   await expect(read.run({ path: 'paper.pdf' }, ctx)).rejects.toThrow('binary file (pdf); use a command such as `pdftotext');
   await expect(write.run({ path: 'shot.dat', content: 'x', expected_revision: JSON.parse(meta.text).revision }, ctx)).rejects.toThrow('png image');
+  // A text file that merely starts like an image stays text; an image extension on real binary bytes decides the other way.
+  await writeFile(join(cwd, 'notes.txt'), 'GIF89a is the magic string of GIF images\nsecond line\n');
+  expect(JSON.parse(await read.run({ path: 'notes.txt' }, ctx) as string)).toMatchObject({ total_lines: 3, next_line: null });
+  await writeFile(join(cwd, 'shot.gif'), 'GIF89a is text but named like an image\n');
+  await expect(read.run({ path: 'shot.gif' }, ctx)).rejects.toThrow('gif image dimensions exceed'); // " i" read as a 8297 px width
 });
 test('file tools refuse symlinks, outside writes and reviewer mutations', async () => {
   await writeFile(join(home, 'outside'), 'secret'); await symlink(join(home, 'outside'), join(cwd, 'link'));

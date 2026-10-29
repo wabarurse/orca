@@ -169,9 +169,16 @@ input fails through the normal provider error path, without a text-only retry.
 The attachment ID can be forwarded with `spawn`/`message` like a prompt image.
 
 Prompt images always count against the 16 MiB request cap and are never
-dropped. Tool-read images fill the remaining space newest first; an older one
-that no longer fits is replaced, in that request only, by a note to read the
-file again. Summaries and rolling memory do not retain tool-read images: their
+dropped. A request also carries at most **20 images** (past 20, Anthropic caps
+every image at 2000 px, so a full-size screenshot would fail; 100 is refused).
+Tool-read images fill the remaining space, in bytes and in count, newest first;
+an older one that no longer fits is replaced, in that request only, by a note to
+read the file again. The count cap limits tool-read images only; prompt images
+keep their policy.
+
+A file whose first bytes look like an image is read as one when it has an image
+extension or is not plain UTF-8 text; a text file that merely starts with
+`GIF89a` stays text. Summaries and rolling memory do not retain tool-read images: their
 marker says the file can be read again.
 
 ## Context budgeting and integration contract
