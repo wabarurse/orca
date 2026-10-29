@@ -65,7 +65,7 @@ for (const role of ["orchestrator", "worker", "reviewer"] as const) {
       expect(second.calls[0]!.messages[0]!.content).toBe("original task");
       expect(JSON.stringify(second.calls[0]!.messages)).toContain("tool finished");
       expect(second.calls[0]!.tools[0]).toBe("switch");
-      expect(transcript.branch()).toHaveLength(4);
+      expect(transcript.branch().filter(e => e.type !== "model-request")).toHaveLength(4);
     });
   }
 }

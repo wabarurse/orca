@@ -116,6 +116,11 @@ async function runCommand(d: Daemon, command: Command): Promise<string> {
 async function handleRequests(d: Daemon, accept?: (kind: Command["kind"]) => boolean): Promise<boolean> {
   let stop = false;
   for (const r of await takeRequests(d.o.project, accept)) {
+    if (r.run && r.run !== d.o.run) {
+      await acknowledge(d.o.project, r.id, false, "request belongs to an earlier daemon run")
+        .catch(error => d.o.log(`orchestrator: could not acknowledge stale request: ${error}`));
+      continue;
+    }
     let ok = true, message: string;
     try { message = await runCommand(d, r.command); }
     catch (error) { ok = false; message = error instanceof Error ? error.message : String(error); }

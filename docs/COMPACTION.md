@@ -303,3 +303,13 @@ retained alongside the checkpoint so later normal requests still carry pixels.
 Accumulated image/context limits fail explicitly instead of silently dropping
 images. `/clear` also refuses unconsumed image-submission journals; a successful
 clear keeps original bytes, journals, history and consumption receipts on disk.
+
+## Switching accounts or context windows
+
+A model, account, or context-window change cancels the previous background summary
+and clears its retry backoff. The next job uses the resolved selected account/model;
+a named profile does not require a `default` login. Source parts are split until
+each request fits the selected window, so a transcript larger than the new model
+can be summarized before its first foreground request. Original history and the
+recent verbatim tail are preserved. Fixed instructions or a retained tail that
+cannot fit still produce an explicit context error instead of dropping content.

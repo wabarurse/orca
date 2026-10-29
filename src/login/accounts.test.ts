@@ -35,6 +35,15 @@ async function saveProfile(name: string, token = "subscription-access") {
   await saveClaudeTokens(name, { accessToken: token, refreshToken: "subscription-refresh", expiresAt: Date.now() + 3_600_000 });
 }
 
+test("named subscription profiles load without any default login and expose only their local identity", async () => {
+  await saveCodexTokens("phoebe", fakeCodexTokens("fixture-account"));
+  await saveProfile("personal");
+  expect((await provider("openai", { profile: "phoebe" })).account).toBe("openai:phoebe");
+  expect((await provider("anthropic", { profile: "personal" })).account).toBe("anthropic:personal");
+  await expect(provider("openai")).rejects.toThrow("default");
+  await expect(provider("anthropic", { profile: "missing" })).rejects.toThrow("missing");
+});
+
 function streamResponse(): Response {
   const events = [
     { type: "message_start", message: { id: "msg_test", type: "message", role: "assistant", model: "claude-test", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },

@@ -60,11 +60,11 @@ export const liveRun = async (project: string): Promise<string | undefined> => (
 
 let seq = 0;
 /** Enqueue a request; returns its id, which the ack carries. */
-export async function request(project: string, command: Command): Promise<string> {
+export async function request(project: string, command: Command, run?: string): Promise<string> {
   const id = crypto.randomUUID();
   const ts = new Date().toISOString();
   const name = `${ts.replaceAll(":", "-")}-${String(seq++).padStart(6, "0")}-${id.slice(0, 8)}.json`;
-  await publish(join(commandsDir(project), name), JSON.stringify({ id, ts, command } satisfies Request) + "\n");
+  await publish(join(commandsDir(project), name), JSON.stringify({ id, ts, command, ...(run ? { run } : {}) } satisfies Request) + "\n");
   return id;
 }
 

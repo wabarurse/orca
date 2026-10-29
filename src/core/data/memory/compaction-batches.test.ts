@@ -44,7 +44,7 @@ for (const manual of [false, true]) test(`${manual ? "manual" : "automatic"} com
     { role: "user", content: [result("recent-a", "first result"), result("recent-b", "second result"), text("Keep this latest amendment.")] },
   ];
   await append(tail);
-  const bytes = await Bun.file(transcript.path).text(), history = transcript.history!();
+  const bytes = await Bun.file(transcript.path).text(), history = transcript.history!().filter(e => e.type !== "model-request");
   const calls: CompleteRequest[] = [];
   deps.provider = { name: "anthropic", models: async () => [], complete: async request => {
     calls.push(request);
@@ -67,7 +67,7 @@ for (const manual of [false, true]) test(`${manual ? "manual" : "automatic"} com
   const context = await transcript.chain();
   expect(context[0]!.content).toContain(original);
   expect(context.slice(1, -1)).toEqual(tail);
-  expect(transcript.history!().slice(0, -1)).toEqual(history);
+  expect(transcript.history!().filter(e => e.type !== "model-request").slice(0, -1)).toEqual(history);
   expect((await Bun.file(transcript.path).text()).startsWith(bytes)).toBe(true);
   expect(await open(transcript.path).chain()).toEqual(context);
 });
@@ -95,7 +95,7 @@ test("a live oversized tool batch is summarized once, then work resumes without 
   } };
   await createAgent(deps).run();
   expect(executions).toBe(2); expect(normal).toBe(2); expect(summaries).toBe(1);
-  const history = transcript.history!();
+  const history = transcript.history!().filter(e => e.type !== "model-request");
   expect(history).toHaveLength(4);
   expect(history[2]).toMatchObject({ type: "message", message: { content: [result("a", output), result("b", output)] } });
   expect(await open(transcript.path).chain()).toEqual(await transcript.chain());
