@@ -21,13 +21,13 @@ export async function provider(name: ProviderName, options: { promptCache?: bool
       throw new Error("custom anthropic authorization headers are unsupported; use /login anthropic for claude code subscription access.");
     }
     if (!(await readClaudeTokens(profile))) throw new Error(`claude profile '${profile}' is not signed in; run /login anthropic ${profile}.`);
-    return metered(anthropic(new Anthropic({
+    return metered({ account: `${name}:${profile}`, ...anthropic(new Anthropic({
       apiKey: null, authToken: null, baseURL: "https://api.anthropic.com",
       credentials: claudeCredentials(profile),
       defaultHeaders: { "anthropic-beta": CLAUDE_BETAS, "x-api-key": null },
       fetchOptions: { redirect: "error" },
-    }), { promptCache: options.promptCache ?? (config.anthropicPromptCache === true), recovery: { enabled: true, onRetry: event => recordRetry("anthropic", event) } }));
+    }), { promptCache: options.promptCache ?? (config.anthropicPromptCache === true), recovery: { enabled: true, onRetry: event => recordRetry("anthropic", event) } }) });
   }
   if (!(await readCodexTokens(profile))) throw new Error(`codex profile '${profile}' is not signed in; run /login openai ${profile}.`);
-  return metered(openai(codexCredentials(profile), { recovery: { enabled: true, onRetry: event => recordRetry("openai", event) } }));
+  return metered({ account: `${name}:${profile}`, ...openai(codexCredentials(profile), { recovery: { enabled: true, onRetry: event => recordRetry("openai", event) } }) });
 }
