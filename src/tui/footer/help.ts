@@ -14,6 +14,7 @@ const NAVIGATION: HelpEntry[] = [
   { label: "ctrl+t", description: "task list; up/down selects; left folds/parent; right expands or focuses details; details up/down scrolls, left returns; terminal gesture opens PR links; r refresh; ctrl+t/esc returns to draft" },
   { label: "ctrl+q", description: "inbox questions toggle; arrivals never open inbox" },
   { label: "shift+tab (inbox)", description: "switch tasks / questions; esc or tab closes without answering" },
+  { label: "ctrl+d (question)", description: "delete shown question; no reply" },
   { label: "pgup/pgdn / wheel", description: "scroll conversation, help or inbox tasks (mouse reporting required)" },
   { label: "click ▸", description: "open a run of tool calls (▾ when open); click again to fold it" },
   { label: "ctrl+c", description: "cancel selected turn/agent; twice within 2s exits, keeping history" },

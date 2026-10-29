@@ -62,6 +62,7 @@ describe("adaptive role contracts", () => {
     const p = rolePrompt("orchestrator", defaults);
     expect(p).toContain("in the ask tool so it reaches their Questions inbox (Ctrl+Q)");
     expect(p).toContain("a list in chat alone is not asking");
+    expect(p).toContain("Close questions answered in chat or outdated (ask close).");
     expect(p).toContain("Ask only for consequential unresolved decisions");
   });
   test("questions retain authorization and silence rules", () => {

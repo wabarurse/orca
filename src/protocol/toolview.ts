@@ -37,6 +37,8 @@ const display = (name: string) => name === "web_search" ? "websearch" : name;
 const firstString = (input: Input) => oneLine(str(Object.values(input).find((v) => typeof v === "string")));
 
 function askArgs(input: Input): string {
+  if (input.action === "list") return "list";
+  if (input.action === "close") return `close ${Array.isArray(input.ids) ? input.ids.length : 0}: ${words(str(input.reason), 8)}`;
   const qs = Array.isArray(input.questions) ? (input.questions as { text?: unknown }[]) : [];
   const first = words(str(qs[0]?.text), 8);
   return qs.length > 1 ? `${qs.length} questions: ${first}` : first;

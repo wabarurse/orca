@@ -37,9 +37,14 @@ last snapshot with a visible stale/error warning, never a fabricated zero.
   shows numbered options, **type your own answer**, and **skip — remove from inbox**.
   ↑↓ moves among rows (and within multiline answers); 1–9 picks an option on an
   option row; typing enters `answer>`. Enter explicitly sends the selected option
-  or typed answer. **Only selecting skip and pressing Enter dismisses a question**:
-  it durably leaves the unanswered queue and decrements counts, retaining its
-  skipped record/history. It sends no user/orchestrator message, queues no answer
+  or typed answer. **Only selecting skip and pressing Enter, or Ctrl+D (delete),
+  dismisses a question**: it durably leaves the unanswered queue and decrements
+  counts, retaining its skipped record/history. Ctrl+D deletes the shown
+  question from either the pick or `answer>` mode (for one that is outdated or
+  already answered in chat); no editing key uses it, so it never clashes with
+  typing an answer. It waits out the same half-second guard, is single-flight and
+  restores the chat draft like Skip; an unfinished typed answer is not sent but
+  reported separately once deleted. Its note is `→ deleted, removed from inbox`. It sends no user/orchestrator message, queues no answer
   delivery, applies no default and never calls a provider or wakes/resumes an
   agent (including paused/cancelled work). Silence and panel dismissal are not
   Skip, and neither applies a default or grants approval. The optional stored
@@ -53,7 +58,19 @@ last snapshot with a visible stale/error warning, never a fabricated zero.
   claims prevent double closes; failed persistence/delivery rolls back before
   releasing the claim. If rollback itself cannot persist, the claim stays held
   rather than risk duplicate delivery; no automatic claim stealing is added.
-  Successful final answers or skips close the panel; explicitly opening an empty queue shows **No open questions**.
+  Successful final answers, skips or deletes close the panel; explicitly opening an empty queue shows **No open questions**.
+* The orchestrator manages its own questions with the `ask` tool: `action:
+  "list"` returns this project's open questions (id, time, text, options,
+  default); `action: "close"` with `ids` (at most 20) and a short `reason`
+  withdraws open ones that were answered in chat or became outdated. A
+  withdrawal is stored as `skipped` with that `reason`: no answer is recorded and
+  no reply message is delivered. It is scoped to the calling project and to open
+  questions; other ids are reported as not closed. The user's answer always
+  wins: a close that finds the question answered is refused and quotes the
+  answer, a close that loses the claim waits briefly for the winner, and an
+  answer arriving after a withdrawal is still recorded and delivered once
+  (a separate exclusive `.answered` claim). The TUI treats a withdrawal like any
+  close elsewhere, and its next poll updates **Inbox N**.
 * An externally closed row disappears. If it had an unfinished answer, that
   orphan text is reported separately, never silently assigned to the next question
   or substituted for the original chat draft. Menus/help retain precedence. Ctrl+B

@@ -5,9 +5,10 @@ import { definition } from "./files";
 // Input structure and validation remain trusted. Annotation edits are effective
 // provider schema edits, not executable extensions or new input capabilities.
 function annotations(base: unknown, edited: unknown, path: string): unknown {
-  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary"];
+  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary", "ask.properties.action", "ask.properties.ids", "ask.properties.reason"];
   if (edited === undefined && added.includes(path)) return base;
   if (path === "spawn.required" && JSON.stringify(edited) === '["prompt","branch","taskId"]') return base;
+  if (path === "ask.required" && JSON.stringify(edited) === '["questions"]') return base; // list/close take no questions
   if (path === "bash.properties.timeout_ms.minimum" && edited === 1 && base === 0) return base;
   // Upgrade older edited schemas without overwriting user annotation files. Only
   // these shipped additions are restored; arbitrary schema mutations still fail.

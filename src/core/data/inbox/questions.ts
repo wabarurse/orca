@@ -3,8 +3,10 @@ import { inputEpoch } from "./user-input";
 // questions/, one file per question, named like inbox messages so a sorted
 // listing is ask order. Unlike the inbox, files stay after they are answered
 // or skipped; the status field records it. The answer travels back to the
-// orchestrator as an ordinary inbox message from "user". Skips are local
-// durable dismissals only: no reply, default application or agent wakeup.
+// orchestrator as an ordinary inbox message from "user". Skips (the user's
+// Skip or delete) and the orchestrator's withdrawals (a question answered in
+// chat or outdated, with a reason) are durable dismissals only: no reply,
+// default application or agent wakeup. A user's answer wins over a withdrawal.
 
 import { mkdirSync } from "node:fs";
 import { open, readdir, rename, unlink } from "node:fs/promises";
@@ -78,7 +80,8 @@ function checkedQuestion(raw: unknown, name: string): Question {
     || !["open", "answered", "skipped"].includes(q.status)
     || (q.options !== undefined && (!Array.isArray(q.options) || q.options.some(o => typeof o !== "string")))
     || (q.default !== undefined && typeof q.default !== "string")
-    || (q.answer !== undefined && typeof q.answer !== "string")) throw new Error(`invalid question record: ${name}`);
+    || (q.answer !== undefined && typeof q.answer !== "string")
+    || (q.reason !== undefined && typeof q.reason !== "string")) throw new Error(`invalid question record: ${name}`);
   return q;
 }
 
@@ -105,31 +108,41 @@ export async function list(project: string): Promise<Question[]> {
   return (await all(project)).filter((q) => q.status === "open");
 }
 
-/** Claim a question exclusively so two concurrent closes can't both pass the status check. */
-async function claim(project: string, id: string): Promise<string> {
-  const path = join(paths.questions(project), `${id}.closed`);
-  try {
-    await (await open(path, "wx")).close();
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`question ${id} is already closed`);
-    throw e;
-  }
-  return path;
-}
-
-/** Persist one close under the exclusive claim. Only an explicit answer has a
- * delivery payload; dismissal must not touch inboxes or input epochs. On write
- * or delivery failure restore the open record before releasing the claim. If
- * rollback itself fails, retain the claim rather than allow duplicate delivery. */
-async function close(project: string, id: string, reply?: { answer: string; userEpoch: string; inputId?: string }): Promise<Question> {
+/** One validated record; a bad id or a missing record is refused before any claim. */
+async function load(project: string, id: string): Promise<Question> {
   if (!/^[\w.-]+$/.test(id) || id.includes("..")) throw new Error(`bad question id ${id}`);
   const f = Bun.file(file(project, id));
   if (!(await f.exists())) throw new Error(`no question ${id}`);
-  const q = checkedQuestion(await f.json(), `${id}.json`);
-  if (q.status !== "open") throw new Error(`question ${id} is already ${q.status}`);
-  const lock = await claim(project, id);
-  const next: Question = { ...q, status: reply ? "answered" : "skipped" };
-  if (reply) next.answer = reply.answer;
+  return checkedQuestion(await f.json(), `${id}.json`);
+}
+
+/** An exclusive claim file, so two concurrent closes can't both pass the status check. False when another holds it. */
+async function claim(path: string): Promise<boolean> {
+  try {
+    await (await open(path, "wx")).close();
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw e;
+  }
+}
+
+const claimFile = (project: string, id: string, kind: "closed" | "answered") => join(paths.questions(project), `${id}.${kind}`);
+
+/** Withdrawn by the orchestrator (a reason, no answer): the one closed state a user's answer may still settle. */
+const withdrawn = (q: Question) => q.status === "skipped" && q.reason !== undefined;
+
+/** How one close settles: an explicit answer (the only delivery payload), the orchestrator's reason, or neither (the user's Skip or delete). */
+interface Settle { reply?: { answer: string; userEpoch: string; inputId?: string }; reason?: string }
+
+/** How long a close waits for a competing close it lost the claim to, to see how that ended. */
+const SETTLE_WAIT_MS = 2000;
+const SETTLE_POLL_MS = 25;
+
+/** Write `next` under the held claim and deliver an answer. On write or delivery
+ * failure restore `q` before releasing the claim. If rollback itself fails,
+ * retain the claim rather than allow duplicate delivery. */
+async function persist(project: string, q: Question, next: Question, lock: string, reply?: Settle["reply"]): Promise<Question> {
   let written = false;
   try {
     await write(project, next);
@@ -146,16 +159,59 @@ async function close(project: string, id: string, reply?: { answer: string; user
   return next;
 }
 
+/** Close an open question under the exclusive claim. Dismissal (Skip, delete,
+ * withdrawal) never touches inboxes or input epochs. The user's answer wins over
+ * the orchestrator's withdrawal either way round: a withdrawal finding it answered
+ * is refused, and an answer finding it withdrawn (now, or once the close it lost
+ * the claim to ends) is still recorded and delivered, under its own claim. */
+async function close(project: string, id: string, how: Settle): Promise<Question> {
+  const lock = claimFile(project, id, "closed");
+  const until = Date.now() + SETTLE_WAIT_MS;
+  for (;;) {
+    const q = await load(project, id);
+    if (q.status !== "open") {
+      if (how.reply && withdrawn(q)) return answerWithdrawn(project, q, how.reply);
+      throw new Error(`question ${id} is already ${q.status}`);
+    }
+    if (await claim(lock)) {
+      const next: Question = { ...q, status: how.reply ? "answered" : "skipped" };
+      if (how.reply) next.answer = how.reply.answer;
+      else if (how.reason !== undefined) next.reason = how.reason;
+      return persist(project, q, next, lock, how.reply);
+    }
+    // Another close holds the claim: wait briefly to see how it ends (an answer
+    // may still settle a withdrawal; a withdrawal reports the user's answer).
+    if (Date.now() > until) throw new Error(`question ${id} is already closed`);
+    await Bun.sleep(SETTLE_POLL_MS);
+  }
+}
+
+/** The user's answer to a question the orchestrator withdrew: recorded and delivered once (the "answered" claim), keeping the withdrawal reason as history. */
+async function answerWithdrawn(project: string, q: Question, reply: NonNullable<Settle["reply"]>): Promise<Question> {
+  const lock = claimFile(project, q.id, "answered");
+  if (!(await claim(lock))) throw new Error(`question ${q.id} is already answered`);
+  return persist(project, q, { ...q, status: "answered", answer: reply.answer }, lock, reply);
+}
+
 /** Answer an open question and tell the orchestrator. An optional inputId
  * identifies the delivered message at consumption, like a typed prompt's. */
 export async function answer(project: string, id: string, text: string, inputId?: string): Promise<Question> {
   const a = clean(text, limits.answer, "answer");
   if (!a) throw new Error("empty answer");
-  return close(project, id, { answer: a, userEpoch: inputEpoch(project), inputId });
+  return close(project, id, { reply: { answer: a, userEpoch: inputEpoch(project), inputId } });
 }
 
-/** Silently remove an open question from Inbox, retaining its skipped history.
- * A stored default is only a suggestion, never an implicit answer or approval. */
+/** Silently remove an open question from Inbox, retaining its skipped history:
+ * the user's Skip and delete. A stored default is only a suggestion, never an
+ * implicit answer or approval. */
 export async function skip(project: string, id: string): Promise<Question> {
-  return close(project, id);
+  return close(project, id, {});
+}
+
+/** The orchestrator closes one of its open questions (answered in chat, or
+ * outdated): skipped with its reason, no reply message, no answer invented. */
+export async function withdraw(project: string, id: string, reason: string): Promise<Question> {
+  const r = clean(reason, limits.reason, "reason");
+  if (!r) throw new Error("a close needs a reason");
+  return close(project, id, { reason: r });
 }

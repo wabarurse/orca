@@ -14,7 +14,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 task │ inbox 1
-help · commands & keys                                                  1–9/67
+help · commands & keys                                                  1–9/68
   conversation
   /refresh       reload shared local state; active context waits until idle;
                  never runs work
@@ -67,6 +67,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   ctrl+q             inbox questions toggle; arrivals never open inbox
   shift+tab (inbox)  switch tasks / questions; esc or tab closes without
                      answering
+  ctrl+d (question)  delete shown question; no reply
   pgup/pgdn / wheel  scroll conversation, help or inbox tasks (mouse reporting
                      required)
   click ▸            open a run of tool calls (▾ when open); click again to
@@ -111,7 +112,7 @@ Conversation record 30
 │> draft 界                            │
 └──────────────────────────────────────┘
 2 agents running │ 1 task │ inbox 1
-help                           1–9/135
+help                           1–9/137
   conversation
   /refresh
     reload shared local state; active
@@ -205,6 +206,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   shift+tab (inbox)
     switch tasks / questions; esc or
     tab closes without answering
+  ctrl+d (question)
+    delete shown question; no reply
   pgup/pgdn / wheel
     scroll conversation, help or inbox
     tasks (mouse reporting required)
@@ -276,7 +279,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 task │ inbox 1
-help · commands & keys                                                59–67/67
+help · commands & keys                                                60–68/68
   ↑ / ↓                move between input rows, then project input history
 
   advanced & diagnostics
