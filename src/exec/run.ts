@@ -14,7 +14,7 @@ import { publishLaunch, watchCancellation } from "../core/tmux";
 import { supervise, type Tracker } from "../core/tmux";
 import { sessionId } from "../core/tmux";
 import { registry } from "../core/tools";
-import { toolsFor, type Tool } from "../core/tools";
+import { toolsFor, type Tool, type ToolResult } from "../core/tools";
 import { pending } from "../core/data/inbox";
 import { listProcesses, liveProcess, controlProcess, reconcileProcesses } from "../core/data/processes";
 import { agentKnowledge } from "../core/data/knowledge";
@@ -74,7 +74,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: T
     await transcript.append({ type: "meta", role: opts.role, model });
   }
 
-  const tools: Record<string, Tool> = {};
+  const tools: Record<string, Tool<ToolResult>> = {};
   for (const name of toolsFor[opts.role]) {
     const tool = registry[name];
     if (tool) tools[name] = editableTool(tool);
