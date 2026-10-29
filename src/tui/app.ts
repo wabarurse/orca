@@ -17,9 +17,9 @@ import type { RequestSettings } from "../providers/catalog";
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, login, useAccount, sendAgentFeedback, runtimeText, usageText } from "./commands";
+import { accountChoices, AgentsList, login, useAccount, sendAgentFeedback, runtimeText, usageText } from "./commands";
 import { deleteProject, type DeleteOptions } from "./commands";
-import { listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
+import { archiveAgents, listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
 import type { AgentInfo } from "../protocol";
 import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
@@ -1290,7 +1290,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** The open menu as drawn now: the /agents rows are rebuilt for the current time. */
   private menuView(): Menu | null {
     const m = this.menu;
-    return m?.itemsAt ? { ...m, items: m.itemsAt(this.clock.now()) } : m;
+    return m?.viewAt ? { ...m, ...m.viewAt(this.clock.now()) } : m;
   }
 
   /** What opening any menu first closes or invalidates. */
@@ -1307,35 +1307,34 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.draw();
   }
 
+  /** /agents: recent agents (commands/agents.ts AgentsList), `a` for all, `d`/`D` + y/n remove finished rows (transcripts stay). */
   private async agentsMenu(page: Page): Promise<void> {
     const operation = ++this.modelGeneration;
     const view = page.view;
     const current = () => operation === this.modelGeneration && page === this.page && this.pages.includes(page) && !page.deleting && page.view === view;
-    const list = this.deps.agents ?? listAgents;
-    let agents = await list(page.project);
+    const read = () => (this.deps.agents ?? listAgents)(page.project);
+    const list = new AgentsList(await read(), { row: agentRow, bold, dim });
     if (!current()) return;
-    if (!agents.length) return this.note(dim("no agents yet"));
-    const rowsAt = (now: number) => agents.map((a) => agentRow(a, now));
+    if (!list.agents.length) return this.note(dim("no agents yet"));
+    const shown = () => list.shown(this.clock.now());
+    /** Change the list, keeping the selected agent by name, and rebuild the row count. */
+    const update = (change: () => void) => { const before = shown(); change(); menu.index = reselect(menu.index, before, shown()); menu.items = list.view(this.clock.now()).items; };
     this.beginMenu(operation);
     const menu: ActiveMenu = {
-      title: dim("attach to an agent") + dim("   ↑↓ enter   esc cancels"),
-      items: rowsAt(this.clock.now()),
-      index: 0,
-      itemsAt: rowsAt,
-      pick: (i) => {
-        const agent = agents[i];
-        if (!agent || !current()) return;
-        page.view?.leave();
-        return this.attach(page, agent.name, agent.live);
-      },
+      title: dim("attach to an agent"), items: list.view(this.clock.now()).items, index: 0, viewAt: (now) => list.view(now),
+      pick: (i) => { const agent = shown()[i]; if (!agent || !current()) return; page.view?.leave(); return this.attach(page, agent.name, agent.live); },
       reload: async () => {
-        const next = await list(page.project);
+        const next = await read();
         if (this.menu !== menu) return;
         if (!current()) { this.menu = null; return this.draw(); } // the view or model operation moved on: close, don't tick a stale list
-        if (!next.length) return;
-        menu.index = reselect(menu.index, agents, next);
-        agents = next;
-        menu.items = rowsAt(this.clock.now());
+        if (next.length) update(() => { list.agents = next; }); // an empty read (transcripts unreadable) keeps the list
+      },
+      keys: async (k) => {
+        const { handled, remove } = list.key(k.name === "char" && !k.ctrl && !k.alt ? k.text : undefined, shown()[menu.index]);
+        if (!remove) { if (handled) update(() => {}); return handled; }
+        try { list.removed(await (this.deps.archiveAgents ?? archiveAgents)(page.project, remove)); } catch (e) { list.status = dim(e instanceof Error ? e.message : String(e)); }
+        await menu.reload!().catch(() => {});
+        return true;
       },
     };
     this.showMenu(menu);
@@ -1452,7 +1451,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "close this page; keep its project and history" } }],
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "user inbox: tasks / questions; shift+tab switches sections, esc/tab closes" } }],
-    ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "browse and follow agent conversations" } }],
+    ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "follow agents; a shows older, d/D remove finished rows" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear conversation, context and cache after confirmation" } }],
@@ -1934,11 +1933,12 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.note(dim("done"));
   }
 
-  /** Keys while a menu is open: ↑ Ctrl+P k up, ↓ j down, Enter picks, Esc q cancels; the rest do nothing. */
+  /** Keys while a menu is open: its own keys first (/agents a d D y/n), then ↑ Ctrl+P k up, ↓ j down, Enter picks, Esc q cancels; the rest do nothing. */
   private async menuKey(k: Key): Promise<void> {
     const m = this.menu!;
+    if (m.keys && await m.keys(k)) return this.draw();
     const id = menuKeyId(k);
-    const n = m.items.length;
+    const n = Math.max(1, m.items.length); // an /agents list can show no rows (all older ones hidden)
     if (id === "up") m.index = (m.index + n - 1) % n;
     else if (id === "down") m.index = (m.index + 1) % n;
     else if (id === "enter") { this.menu = null; await m.pick(m.index); }
