@@ -27,16 +27,32 @@ Attribute consequential claims within the strings (for example, "User requested�
 Each source part continues the previous part and may split a serialized message. Merge with previous memory; do not drop still-relevant items merely because this part does not repeat them. Later explicit user corrections in the supplied source supersede earlier assumptions on the same subject; preserve unrelated explicit limits. Summarize only this older prefix: the recent verbatim tail is withheld and may change its state. Phrase unresolved historical permission questions as "As of this prefix…", not current prohibitions. Do not infer what happened in the unseen tail or invent missing details.
 Use at most ${LIMITS.summary} summary items and ${LIMITS.pending} pending items, at most ${LIMITS.item} characters per item, and at most 8000 characters total. If nothing remains, use empty arrays.`;
 
+/** The total a memory may occupy (characters of its JSON), matching the ~8000 the model is asked for plus slack. */
+const MEMORY_CHARS = 10000;
+const ELLIPSIS = "…";
+/** The items of one list, clamped: non-strings are dropped, over-long items are cut (marked), extra items
+ * are dropped from the end (the lists are in priority order). The shape itself must still be an array:
+ * a model that answers in the wrong shape has not produced a memory. */
 function memoryStrings(value: unknown, max: number): string[] {
-  if (!Array.isArray(value) || value.length > max || value.some(v => typeof v !== "string" || v.length > LIMITS.item)) throw new Error("invalid memory items");
-  return value;
+  if (!Array.isArray(value)) throw new Error("invalid memory items");
+  return value.filter((v): v is string => typeof v === "string").slice(0, max)
+    .map(v => v.length > LIMITS.item ? v.slice(0, LIMITS.item - ELLIPSIS.length) + ELLIPSIS : v);
+}
+/** Keep the memory within the total budget by dropping the last pending items first, then the last summary items. */
+function withinBudget(memory: RollingMemory): RollingMemory {
+  const size = (m: RollingMemory) => { const text = JSON.stringify(m); return text.length > MEMORY_CHARS || estimate(text) > 4096; };
+  while (size(memory) && (memory.pending.length || memory.summary.length)) {
+    memory = memory.pending.length ? { ...memory, pending: memory.pending.slice(0, -1) } : { ...memory, summary: memory.summary.slice(0, -1) };
+  }
+  return memory;
 }
 
+/** The model's answer as a memory. Over-long or too many items are clamped, never a reason to discard a
+ * finished (multi-minute) summary; only text that is not a {summary, pending} JSON object throws. */
 export function parseMemory(text: string): RollingMemory {
-  if (text.length > 10000 || estimate(text) > 4096) throw new Error("memory exceeds output budget");
   const raw = JSON.parse(text);
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid memory object");
-  return { summary: memoryStrings(raw.summary, LIMITS.summary), pending: memoryStrings(raw.pending, LIMITS.pending) };
+  return withinBudget({ summary: memoryStrings(raw.summary, LIMITS.summary), pending: memoryStrings(raw.pending, LIMITS.pending) });
 }
 
 /** The memory a checkpoint carries, as the next summary's previous memory; never throws.

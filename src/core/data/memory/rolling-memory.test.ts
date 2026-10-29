@@ -455,6 +455,7 @@ test("a finished summary that was not published is reused for its unchanged pref
   const part = (call: CompleteRequest) => JSON.parse(call.messages[0]!.content as string) as { previousMemory: RollingMemory; sourcePart: string };
   await rolling.boundary(current, true);
   expect(calls).toHaveLength(1); expect(notices.join("")).toContain(ROLLING_STATUS.unchanged);
+  expect((rolling as unknown as { failures: number }).failures).toBe(0); // a decline is not a failure: no backoff
   await rolling.boundary(current, true);
   expect(calls).toHaveLength(1); // same prefix: the finished summary is reused, no model call
   expect(small.branch().some(e => e.type === "summary")).toBe(false);
@@ -478,14 +479,50 @@ test("a finished summary that was not published is reused for its unchanged pref
   expect(small.history!()).toEqual(originals);
 });
 
-test("structured summaries accept only {summary, pending} within bounds", () => {
+// Review of 12cc8e9: the failure deferral (up to 30 min) must never hold a hard limit, where agent.ts
+// requireFits refuses every request until a summary publishes. Only the 30s cooldown applies there.
+test("the failure deferral never holds a hard limit", async () => {
+  const { deps, transcript, controller } = await fixture(), worker = gated(), rolling = controller(worker.provider);
+  deps.compaction = { contextLimit: 60000 }; // fits: ~19k budget + 12k output cap within 48k
+  const internals = rolling as unknown as { retryAfter: number; deferUntil: number; failures: number };
+  internals.failures = 6; internals.deferUntil = Date.now() + 30 * 60000; internals.retryAfter = 0; // six failures, cooldown over
+  await rolling.boundary(deps);
+  expect(worker.calls).toHaveLength(0); // above the trigger but deferred while the context still fits
+  const estimated = budget(deps, await transcript.chain());
+  deps.compaction.measured = { model: deps.model, input: 50000, estimated }; // the provider's count: over the limit
+  const waiting = rolling.boundary(deps); await worker.entered; // starts regardless of the deferral, and waits
+  worker.release(); await waiting;
+  expect(worker.calls).toHaveLength(1);
+  expect(transcript.branch()[0]?.type).toBe("summary"); expect(internals.failures).toBe(0); expect(internals.deferUntil).toBe(0);
+});
+
+test("structured summaries accept only {summary, pending}; over-long and extra items are clamped, never a reason to discard the summary", () => {
   expect(parseMemory(JSON.stringify(memory({ pending: ["As of this prefix, review pending"] })))).toEqual(memory({ pending: ["As of this prefix, review pending"] }));
   expect(() => parseMemory(JSON.stringify({ summary: "invalid", pending: [] }))).toThrow();
   expect(() => parseMemory(JSON.stringify({ user: [], project: [], pending: [], tasks: [] }))).toThrow("invalid memory"); // the old output shape
-  expect(() => parseMemory(JSON.stringify(memory({ summary: ["x".repeat(1100)] })))).toThrow("invalid memory");
-  expect(() => parseMemory(JSON.stringify(memory({ summary: Array(33).fill("x") })))).toThrow("invalid memory");
-  expect(() => parseMemory(JSON.stringify(memory({ pending: Array(17).fill("x") })))).toThrow("invalid memory");
-  expect(() => parseMemory("x".repeat(12000))).toThrow("budget");
+  expect(() => parseMemory("not json")).toThrow();
+  // Regression (compaction experiment): one 1001+ character item threw and discarded the whole multi-minute job.
+  const long = parseMemory(JSON.stringify(memory({ summary: ["x".repeat(1100), "kept"] })));
+  expect(long.summary[0]).toHaveLength(1000); expect(long.summary[0]!.endsWith("…")).toBe(true); expect(long.summary[1]).toBe("kept");
+  expect(parseMemory(JSON.stringify(memory({ summary: Array.from({ length: 33 }, (_, i) => `s${i}`) }))).summary).toHaveLength(32);
+  expect(parseMemory(JSON.stringify(memory({ pending: Array.from({ length: 17 }, (_, i) => `p${i}`) }))).pending).toHaveLength(16);
+  expect(parseMemory(JSON.stringify({ summary: ["a", 1, null, "b"], pending: [{}] }))).toEqual({ summary: ["a", "b"], pending: [] });
+  // Over the total budget: the last pending items go first, then the last summary items; the first summary items survive.
+  const oversized = parseMemory(JSON.stringify({ summary: Array.from({ length: 32 }, (_, i) => `S${i} ` + "x".repeat(900)), pending: Array.from({ length: 16 }, (_, i) => `P${i} ` + "y".repeat(900)) }));
+  expect(JSON.stringify(oversized).length).toBeLessThanOrEqual(10000);
+  expect(oversized.pending).toEqual([]); expect(oversized.summary.length).toBeGreaterThan(8); expect(oversized.summary[0]!.startsWith("S0 ")).toBe(true);
+});
+
+test("a summary whose items exceed the limits is clamped and published, not discarded", async () => {
+  const { transcript, deps, controller } = await fixture();
+  const rolling = controller({ name: "openai", models: async () => [], complete: async () => answer(memory({ summary: ["LONG-ITEM " + "x".repeat(1200)], pending: Array.from({ length: 20 }, (_, i) => `pending ${i}`) })) });
+  await rolling.boundary(deps, true);
+  const checkpoint = transcript.branch()[0];
+  expect(checkpoint?.type).toBe("summary");
+  if (checkpoint?.type !== "summary") return;
+  const published = previousMemory(checkpoint.memory);
+  expect(published.summary[0]).toHaveLength(1000); expect(published.summary[0]).toStartWith("LONG-ITEM ");
+  expect(published.pending).toHaveLength(16);
 });
 
 test("legacy {user, project, pending, tasks} memory loads without throwing and seeds the next summary; task notes are dropped", async () => {
