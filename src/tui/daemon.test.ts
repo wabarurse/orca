@@ -136,9 +136,9 @@ test("the daemon's cancel acknowledgement and compaction progress are transient 
   const page = app.page!;
   await app.onKey({ name: "c", ctrl: true });
   expect(calls).toContain("cancel");
-  expect(note(app)).toContain("turn cancelled. send a message to resume; press ctrl+c again within 2 seconds to exit.");
+  expect(note(app)).toContain("stopping conversation + agents; send to resume. ctrl+c within 2s exits.");
   await until(() => note(app).includes("orchestrator: turn cancelled; the orchestrator stays paused until you send a message"));
-  expect(note(app)).not.toContain("press ctrl+c again"); // replaced, one row
+  expect(note(app)).not.toContain("ctrl+c within"); // replaced, one row
   expect(page.lines).toEqual([]);
   for (const line of ["compacting…", "compacting older conversation in the background…", "compaction complete: ~9000 → ~2000 history tokens; recent messages unchanged.", "background summary did not reduce context; original history kept.", "orchestrator: compaction requested; it runs at the next safe boundary"]) {
     notice(line);
@@ -159,7 +159,7 @@ test("the daemon's cancel acknowledgement and compaction progress are transient 
   expect(closed).toBe(false);
   now += 5000;
   await app.onKey({ name: "c", ctrl: true }); // long after the last press: the first press again
-  expect(note(app)).toContain("press ctrl+c again");
+  expect(note(app)).toContain("ctrl+c within");
   expect(closed).toBe(false);
   now += 1999;
   await app.onKey({ name: "c", ctrl: true });

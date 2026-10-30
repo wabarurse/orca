@@ -7,6 +7,8 @@ import type { RequestSettings } from "../../providers/catalog";
 import type { Role } from "../../protocol";
 
 export interface ToolContext {
+  /** Execution generation that admitted this run; a resumed conversation cannot revive it. */
+  executionEpoch?: string;
   callId?: string;
   signal?: AbortSignal;
   /** Exact supervised run; not a branch-derived task identity. */

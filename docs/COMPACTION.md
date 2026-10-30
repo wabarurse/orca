@@ -81,6 +81,11 @@ responses still have a separate decoding limit. An oversized, malformed or
 truncated summary gets one repair request for the same source part and previous
 memory, using the same account/model with no tools. The repair is separately
 metered as `rolling-summary-repair` and gets its own request deadline. The source
+and system-message prefix stay identical; the repair instruction follows the source
+to enable prefix-cache reuse. Summary generation allows up to 8192 tokens (subject
+to an explicit output ceiling); accepted memory still has the 4096-token limit.
+The generation allowance covers syntax and possible reasoning without relaxing
+stored-memory validation. The source
 and memory are never cut locally to satisfy validation. Provider/authentication
 failures and refusals do not enter this repair path. If repair fails, the job
 backs off; when the foreground cannot fit, its error retains the actual
@@ -122,8 +127,9 @@ unbounded context is promised; see [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md).
 
 `/clear` takes no arguments and opens a **local, Cancel-default** confirmation
 in the existing bottom menu area. Enter alone cancels. Select **Clear conversation**
-with an arrow, then Enter to confirm. Escape or Ctrl+C cancels without changing
-chat/answer drafts or saved history. Typing, pastes and question shortcuts cannot
+with an arrow, then Enter to confirm. Escape cancels the confirmation. Ctrl+C
+cancels it and stops the conversation and its subagents; drafts and saved history
+remain intact. Typing, pastes and question shortcuts cannot
 leak through the modal. Switching/closing pages, opening another menu, or resizing
 invalidates it; even a tiny/hidden modal still owns its keys. `/clear` is deliberately
 excluded from input recall. In a worker/reviewer view it refuses: `/back` first.
@@ -215,8 +221,9 @@ calibrates estimates upward with estimated subsequent growth; other providers
 currently use estimates. Measurements are invalidated after compaction and ignored
 across model changes.
 
-The worker/reviewer trigger is **input + output reserve >= 80% of the window**,
-NOT 80% input alone. The orchestrator starts earlier as described above.
+The worker/reviewer trigger is the earlier of the configured **working-context
+target (`workerContextTokens`, default 128000)** and **input + output reserve >=
+80% of the window**. The orchestrator keeps its separate rolling policy described above.
 The remaining 20% is safety headroom. With auto enabled, the default output cap /
 accounting reserve is min(64000, 20% of window). The embedder's `outputReserve`
 overrides that cap. It is normalized once per boundary: positive finite integer,

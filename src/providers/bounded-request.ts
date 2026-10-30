@@ -1,5 +1,6 @@
 import { transportAttempt, type RequestScope } from "./bounded-transport";
 import { exhaustedQuota, transientFailure, withTransientRetries, type RetryOptions } from "./retry";
+import { AccountCooldownError } from "./rate-limit";
 
 export const MODEL_REQUEST_LIMITS = { totalMs: 600_000, idleMs: 90_000 } as const;
 export class ModelRequestError extends Error {
@@ -39,6 +40,11 @@ function requestDeadline(options: Options) {
 }
 
 function terminalError(error: unknown, consumed: boolean): ModelRequestError {
+  if (error instanceof AccountCooldownError) {
+    const result = new ModelRequestError("exhausted", 429);
+    result.message += ` Retry after ${new Date(error.until).toISOString()}.`;
+    return result;
+  }
   // Existing retry helper maps quota to a sanitized Error; never include raw payloads.
   if (exhaustedQuota(error) || (error instanceof Error && error.message.startsWith("model: quota exhausted"))) return new ModelRequestError("quota");
   const raw = (error as { status?: unknown })?.status;

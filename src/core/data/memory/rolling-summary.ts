@@ -27,7 +27,12 @@ Attribute consequential claims within the strings (for example, "User requestedâ
 Each source part continues the previous part and may split a serialized message. Merge with previous memory; do not drop still-relevant items merely because this part does not repeat them. Later explicit user corrections in the supplied source supersede earlier assumptions on the same subject; preserve unrelated explicit limits. Summarize only this older prefix: the recent verbatim tail is withheld and may change its state. Phrase unresolved historical permission questions as "As of this prefixâ€¦", not current prohibitions. Do not infer what happened in the unseen tail or invent missing details.
 Use at most ${LIMITS.summary} summary items and ${LIMITS.pending} pending items, at most ${LIMITS.item} characters per item. Aim for at most ${LIMITS.targetChars} characters in the complete compact JSON object; the hard memory budget is ${LIMITS.tokens} conservatively estimated tokens (UTF-8 bytes divided by 3 plus framing). Prefer less than 12000 UTF-8 bytes, including keys and escaping. If nothing remains, use empty arrays.`;
 
-const repairInstruction = `${instruction}\nThe previous attempt failed local output validation. Regenerate this same source part and previous memory as one complete JSON object, with no Markdown or commentary. Target at most 6000 characters total to leave room for JSON escaping; use fewer, shorter items. Preserve consequential user requirements, permissions, corrections and unresolved work. Do not copy source text at length or invent missing details.`;
+const repairInstruction = `The previous attempt failed local output validation. Regenerate this same source part and previous memory as one complete JSON object, with no Markdown or commentary. Target at most 6000 characters total to leave room for JSON escaping; use fewer, shorter items. Preserve consequential user requirements, permissions, corrections and unresolved work. Do not copy source text at length or invent missing details.`;
+// Generation includes JSON syntax and possible reasoning; retained memory has its
+// own stricter budget. A larger generation allowance never relaxes validation.
+// Pi likewise separates summary generation from its retained-context reserve:
+// https://github.com/earendil-works/pi/blob/a14cdf90f0a76532f3e20bc3c01872837cef24ba/packages/coding-agent/src/core/compaction/compaction.ts
+const GENERATION_TOKENS = 8192;
 class MemoryOutputError extends Error {}
 
 function memoryStrings(value: unknown, max: number): string[] {
@@ -75,7 +80,8 @@ async function summarizePart(provider: Provider, request: CompleteRequest, optio
   for (let attempt = 0; attempt < 2; attempt++) {
     request.signal?.throwIfAborted();
     options.onRequest?.();
-    const result = await provider.complete({ ...request, system: attempt ? repairInstruction : instruction,
+    const result = await provider.complete({ ...request, system: instruction,
+      messages: attempt ? [...request.messages, { role: "user", content: repairInstruction }] : request.messages,
       trace: { ...request.trace, purpose: attempt ? "rolling-summary-repair" : "rolling-summary" } });
     request.signal?.throwIfAborted();
     try { return resultMemory(result); }
@@ -127,7 +133,7 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
     const input: MessageParam[] = [{ role: "user", content: JSON.stringify({ sourceScope: "older conversation prefix only; recent verbatim tail withheld", sourceEncoding: "JSON messages in chronological order; roles and content block types preserved; sourcePart may split a message", previousMemory: memory, sourcePart: part }) }];
     try {
       // Reserve the longer repair instructions too, before any request starts.
-      requireFits({ model: target.model, tools: {}, system: repairInstruction, compaction: { ...target.compaction, measured: undefined }, transcript: null! }, input, LIMITS.tokens, "rolling summary source");
+      requireFits({ model: target.model, tools: {}, system: instruction, compaction: { ...target.compaction, measured: undefined }, transcript: null! }, [...input, { role: "user", content: repairInstruction }], GENERATION_TOKENS, "rolling summary source");
     } catch (error) {
       if (!(error instanceof ContextBlocked) || part.length < 2) throw error;
       // Account for JSON escaping, previous memory and the selected model's
@@ -139,7 +145,7 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
       continue;
     }
     memory = await summarizePart(provider, { trace: { project: options.project, agent: "orchestrator" }, signal, model: target.model,
-      settings, messages: input, tools: [], maxTokens: LIMITS.tokens, onText() {} }, options);
+      settings, messages: input, tools: [], maxTokens: Math.min(GENERATION_TOKENS, target.compaction?.maxOutputTokens ?? GENERATION_TOKENS), onText() {} }, options);
     options.onPart?.();
   }
   return memory;

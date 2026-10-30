@@ -131,12 +131,12 @@ test("input sent while the orchestrator is idle starts its turn at once, not aft
   session.dispose?.();
 });
 
-test("a cancel request for this launch aborts the running turn, pauses input and is acknowledged under its token", async () => {
+test("a cancel request aborts an in-flight model request and durably stops the daemon", async () => {
   const p = await project("cancel");
   const transcript = open(paths.transcript(p, "orchestrator"));
-  let aborted = false;
+  let aborted = false, entered = false;
   const provider = fakeProvider([]);
-  provider.complete = (req: CompleteRequest) => new Promise((_, reject) => req.signal?.addEventListener("abort", () => { aborted = true; reject(new Cancelled()); }));
+  provider.complete = (req: CompleteRequest) => { entered = true; return new Promise((_, reject) => req.signal?.addEventListener("abort", () => { aborted = true; reject(new Cancelled()); })); };
   const session = await createOrchestrator({ project: p, provider, tools: {}, write() {}, transcript });
   const clock = fakeClock();
   const release = await tryStorageLock(paths.daemonLock(p), p); // the daemon process holds it for life; the test stands in
@@ -145,24 +145,16 @@ test("a cancel request for this launch aborts the running turn, pauses input and
   expect(await daemonBusy(p)).toBe(false);
   await put(p, "orchestrator", { from: "user", text: "work" });
   clock.wake();
-  await until(() => readStatus(p)?.state === "turn");
+  await until(() => readStatus(p)?.state === "turn" && entered);
   expect(await daemonBusy(p)).toBe(true);
   publishLaunch(p, "orchestrator", "run-c");
   const epoch = inputEpoch(p);
   const token = (await cancelSession(p, "orchestrator"))!;
-  const ack = await awaitAck(p, token, { alive: async () => true });
-  expect(ack).toMatchObject({ ok: true, message: expect.stringContaining("turn cancelled") });
-  expect(aborted).toBe(true);
-  await until(() => readStatus(p)?.state === "idle");
-  expect(inputEpoch(p)).not.toBe(epoch);
-  expect(existsSync(`${paths.transcript(p, "orchestrator")}.cancel`)).toBe(false);
-  // Paused: the consumed pre-cancel input does not run again; the loop idles.
-  await until(() => clock.sleeping() === 1);
-  expect(await session.pending()).toBe(false);
-  const stop = await request(p, { kind: "stop" });
-  clock.wake();
+  expect(token).toBeString();
   expect(await running).toBe("stopped");
-  expect((await awaitAck(p, stop, { alive: async () => true })).ok).toBe(true);
+  expect(aborted).toBe(true);
+  expect(inputEpoch(p)).not.toBe(epoch);
+  expect(readStatus(p)?.state).toBe("stopped");
   await release!();
   session.dispose?.();
 });
@@ -301,12 +293,7 @@ test("a foreign .launch (a start that lost the lock race, published last) is re-
   expect(launchIdentity(p, "orchestrator")).toBe("winner-run");
   const token = (await cancelSession(p, "orchestrator"))!;
   clock.wake();
-  expect(await awaitAck(p, token)).toMatchObject({ ok: true, message: expect.stringContaining("nothing was running") });
-  await until(() => clock.sleeping() === 1);
-  const stop = await request(p, { kind: "stop" });
-  clock.wake();
   expect(await running).toBe("stopped");
-  await awaitAck(p, stop);
   await release!();
   session.dispose?.();
 });

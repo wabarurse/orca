@@ -71,11 +71,12 @@ for (const [name, invalid] of [
     onRequest: () => { requests++; }, onPart: () => { parts++; }, onRepair: reason => reasons.push(reason),
   })).toEqual(valid);
   expect(requests).toBe(2); expect(parts).toBe(1); expect(reasons).toHaveLength(1);
-  expect(f.calls[1]!.messages).toEqual(f.calls[0]!.messages);
+  expect(f.calls[1]!.messages.slice(0, -1)).toEqual(f.calls[0]!.messages);
+  expect(f.calls[1]!.system).toBe(f.calls[0]!.system);
   expect(f.calls[1]!.trace?.purpose).toBe("rolling-summary-repair");
-  expect(f.calls[1]!.system).toContain("Target at most 6000 characters");
+  expect(f.calls[1]!.messages.at(-1)!.content).toContain("Target at most 6000 characters");
   expect(JSON.stringify(f.calls)).not.toContain("private malformed response");
-  for (const call of f.calls) { expect(call.model).toBe("gpt-6-astra"); expect(call.tools).toEqual([]); expect(call.maxTokens).toBe(4096); }
+  for (const call of f.calls) { expect(call.model).toBe("gpt-6-astra"); expect(call.tools).toEqual([]); expect(call.maxTokens).toBe(8192); }
 });
 
 test("repeated invalid output stops after one repair and never exposes the rejected response", async () => {

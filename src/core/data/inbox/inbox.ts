@@ -3,6 +3,7 @@ import { format, type Message } from "../../../protocol";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { withStorageLock } from "../storage-lock";
 import { projectIdentity, assertProjectIdentity, withProjectStateLock } from "../projects";
+import { execution } from "../projects/lifecycle";
 import { inputEpoch } from "./user-input";
 // Every agent has its own inbox: a durable FIFO queue of files under
 // inbox/<agent>/. Anyone can put a message in anyone's inbox; only the owner
@@ -47,6 +48,7 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
     await validateRefs(project, full.attachments);
     await Bun.write(tmp, JSON.stringify(full) + "\n");
     await rename(tmp, join(d, name));
+    if (to === "orchestrator" && full.from === "user") execution.resume(project, full.userEpoch!);
     return full;
   };
   // Clear and orchestrator input publication share the project lock. A send

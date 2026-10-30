@@ -11,6 +11,7 @@ import { open } from "../data/transcripts";
 import type { Tool, ToolContext } from "./registry";
 import { withStorageLock } from "../data";
 import { join } from "node:path";
+import { execution } from "../data/projects/lifecycle";
 
 // Orchestrator-only. Seeds the agent's transcript with the prompt, then starts
 // it in a worktree on `branch`. Spawning again on the same branch and role
@@ -66,6 +67,9 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       },
     },
     async run(input, ctx) {
+      const epoch = ctx.executionEpoch ?? execution.epoch(ctx.project);
+      execution.assertActive(ctx.project, epoch);
+      ctx = { ...ctx, executionEpoch: epoch };
       if (ctx.role !== "orchestrator") return "refused: only the orchestrator can spawn";
       const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
       const branch = typeof input.branch === "string" ? input.branch.trim() : `work-${crypto.randomUUID().slice(0, 8)}`;
@@ -95,12 +99,13 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       const busy = !now.length || receptive ? now : await stillLive(runner, ctx.project, branch, wait, ctx.signal);
       ctx.signal?.throwIfAborted();
       if (busy === null) return unverified;
+      execution.assertActive(ctx.project, epoch);
       const other = busy.find(agent => agent !== id);
       if (other) return `refused: ${other} is still running on ${branch} and one agent works on a branch at a time, so this ${role} prompt was not delivered; message ${other} instead, or spawn the ${role} again after ${other} reports and exits`;
       if (busy.length) return deliver(runner, id, prompt, branch, role, checked, ctx, attachments);
 
       if (typeof input.baseCommit === "string") await prepareStackSpawn(ctx.project, input.taskId as string, branch, ctx.cwd, input.baseCommit);
-      return launch(runner, prompt, branch, role, input.taskId as string | undefined, { ...ctx, fresh: input.fresh === true }, attachments, reviewMode);
+      return launch(runner, prompt, branch, role, input.taskId as string | undefined, { ...ctx, executionEpoch: epoch, fresh: input.fresh === true }, attachments, reviewMode);
       });
     },
   };
@@ -147,7 +152,8 @@ async function launch(runner: Runner, prompt: string | null, branch: string, rol
   const run = crypto.randomUUID();
   if (taskId) await prepareTaskRun(ctx.project, taskId, branch, { id: run, agent: id, role, ...(reviewMode ? { reviewMode } : {}) });
   try {
-    publishLaunch(ctx.project, id, run);
+    execution.assertActive(ctx.project, ctx.executionEpoch);
+    publishLaunch(ctx.project, id, run, ctx.executionEpoch);
     const t = open(paths.transcript(ctx.project, id));
     if (t.head() === null) await t.append({ type: "meta", role, branch, model: "" });
     else if (ctx.fresh) await t.append({ type: "context-boundary" });
@@ -163,7 +169,8 @@ async function launch(runner: Runner, prompt: string | null, branch: string, rol
         content: !inbox.length ? next! : next === null ? queued : [...blocks(queued), ...blocks(next)] } }, ctx.signal);
     }, true);
     ctx.signal?.throwIfAborted();
-    await runner.start({ project: ctx.project, role, branch, run, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+    execution.assertActive(ctx.project, ctx.executionEpoch);
+    await runner.start({ project: ctx.project, role, branch, run, executionEpoch: ctx.executionEpoch, ...(ctx.signal ? { signal: ctx.signal } : {}) });
     return id;
   } catch (error) {
     await stopTaskRun(ctx.project, run, ctx.signal?.aborted ? "cancelled" : "blocked", "agent launch failed; no successful start confirmed", true);

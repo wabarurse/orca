@@ -95,7 +95,7 @@ test("isolated tmux: Ctrl+C exit, ignored INT, stale run/PID, missing pane and r
     expect((await interruptExactRun(exiting.t, query, 1500)).status).toBe("agent-exited-cleanup-unverified");
     expect((await interruptExactRun(exiting.t, query)).status).toBe("agent-exited-cleanup-unverified");
     const ignored = await launch(true);
-    expect((await interruptExactRun(ignored.t, query, 100)).status).toBe("still-running");
+    expect((await interruptExactRun(ignored.t, query, 1500)).status).toBe("still-running");
     const fresh = await launch();
     expect((await interruptExactRun({ ...fresh.t, run: "old-run" }, query)).status).toBe("unknown");
     expect((await interruptExactRun({ ...fresh.t, pid: fresh.t.pid + 1 }, query)).status).toBe("unknown");

@@ -7,16 +7,17 @@ import { editableTool } from "../core/definitions";
 import { loadConfig, paths } from "../config";
 import { createAgent, type AgentOptions } from "../core/agent-loop/loop";
 import { effectiveFlow } from "../core/data/projects";
+import { execution } from "../core/data/projects/lifecycle";
 import { effectiveModel, projectModelResolver } from "../core/data/projects";
 import { open } from "../core/data/transcripts";
 import { rolePrompt } from "../core/prompt";
-import { publishLaunch, watchCancellation } from "../core/tmux";
+import { launchEpoch, launchIdentity, SETTLED_EXIT, publishLaunch, watchCancellation } from "../core/tmux";
 import { supervise, type Tracker } from "../core/tmux";
 import { sessionId } from "../core/tmux";
 import { registry } from "../core/tools";
 import { toolsFor, type Tool, type ToolResult } from "../core/tools";
 import { pending } from "../core/data/inbox";
-import { listProcesses, liveProcess, controlProcess, reconcileProcesses } from "../core/data/processes";
+import { recoverableProcesses, listProcesses, liveProcess, controlProcess, reconcileProcesses } from "../core/data/processes";
 import { agentKnowledge } from "../core/data/knowledge";
 
 /**
@@ -28,6 +29,9 @@ import { agentKnowledge } from "../core/data/knowledge";
  */
 export async function runAgent(opts: AgentOptions, exit?: (code: number) => void): Promise<number> {
   const run = opts.run ?? crypto.randomUUID();
+  const published = launchIdentity(opts.project, sessionId(opts.role, opts.branch));
+  if (opts.run && published && published !== run) return SETTLED_EXIT;
+  if (execution.stale(opts.project, launchEpoch(opts.project, sessionId(opts.role, opts.branch), run) ?? execution.epoch(opts.project))) return SETTLED_EXIT;
   if (!opts.run) publishLaunch(opts.project, sessionId(opts.role, opts.branch), run);
   opts = { ...opts, run };
   if (opts.role === "orchestrator") {
@@ -51,9 +55,10 @@ export async function runAgent(opts: AgentOptions, exit?: (code: number) => void
 }
 
 async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> {
+  const epoch = launchEpoch(opts.project, sessionId(opts.role, opts.branch), opts.run!) ?? execution.epoch(opts.project);
   const cancellation = new AbortController();
   const unwatch = watchCancellation(opts.project, sessionId(opts.role, opts.branch), cancellation, opts.run!);
-  try { await agentSession(opts, cancellation.signal, tracker); }
+  try { await agentSession(opts, cancellation.signal, tracker, epoch); }
   catch (error) {
     if (cancellation.signal.aborted) {
       for (const p of await listProcesses(opts.project)) if (p.owner === sessionId(opts.role, opts.branch) && liveProcess(p)) await controlProcess(opts.project, p.id, "stop").catch(() => {});
@@ -63,7 +68,7 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
   finally { unwatch(); }
 }
 
-async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: Tracker): Promise<void> {
+async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker: Tracker | undefined, epoch: string): Promise<void> {
   const config = await loadConfig();
   const model = await effectiveModel(opts.project, opts.role); // this role's model: its /model override, else the project model
   // One transcript per role per branch, so a restart resumes it. spawn seeds
@@ -88,9 +93,9 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: T
     transcript,
     tools,
     model,
-    compaction: { enabled: config.compact, fallback: config.contextLimitFallback },
+    compaction: { enabled: config.compact, fallback: config.contextLimitFallback, triggerTokens: config.workerContextTokens },
     system: rolePrompt(opts.role, { ...config, ...await effectiveFlow(opts.project, config) }), // this project's review rounds and dispatch, not config.toml's
-    ctx: { run: opts.run, project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd() },
+    ctx: { run: opts.run, project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd(), executionEpoch: epoch },
     tracker,
   });
   // Wait in the runtime, not through model polling. A worker remains responsive
@@ -102,7 +107,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker?: T
     while (!await pending(opts.project, id)) {
       signal.throwIfAborted();
       await reconcileProcesses(opts.project);
-      if (!(await listProcesses(opts.project)).some(p => p.owner === id && liveProcess(p))) {
+      if (!(await recoverableProcesses(opts.project)).some(p => p.owner === id && liveProcess(p))) {
         if (!await pending(opts.project, id)) return;
         break;
       }

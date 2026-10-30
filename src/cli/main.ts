@@ -16,12 +16,13 @@ import { runAgent, scheduleReload, activateInstalled } from "../exec";
 import { afterExit } from "../exec";
 import { put } from "../core/data/inbox";
 import { repoHere, validProjectName } from "../core/data/projects";
+import { execution } from "../core/data/projects/lifecycle";
 import { existsSync } from "node:fs";
 import { paths, BUILD_ID } from "../config";
 import { daemonPid, reloadRunningDaemons, requireCurrentDaemon } from "../core/agent-loop/orc";
 import { sessionId } from "../core/tmux";
 import { ensureProject } from "../core/agent-loop/orc";
-import { createClientOrchestrator, daemonKeeper, stopDaemon } from "../core/agent-loop/orc";
+import { createClientOrchestrator, daemonKeeper, ensureDaemon, stopDaemon } from "../core/agent-loop/orc";
 import type { Role } from "../protocol";
 import { App } from "../tui";
 import { realTerminal } from "../tui/components";
@@ -84,8 +85,10 @@ switch (cmd) {
   case "msg": {
     const [project, ...words] = rest;
     if (!project || words.length === 0) usage("expected msg <project> <text>");
-    await requireCurrentDaemon(project);
+    const wasStopped = execution.stopped(project);
+    if (!wasStopped) await requireCurrentDaemon(project);
     await put(project, "orchestrator", { from: "user", text: words.join(" ") });
+    if (wasStopped) await ensureDaemon(project);
     break;
   }
   case "stop": {

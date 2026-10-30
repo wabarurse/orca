@@ -67,17 +67,13 @@ test("a client round trip with a live daemon: say, follow the turn from disk, ca
   expect(notices.at(-1)).toContain("compaction requested");
   await saveProjectModel(p, "claude-opus-5-5");
   expect(await client.observeModel!("claude-opus-5-5")).toBe("model claude-opus-5-5 applies from the orchestrator's next request");
-  // A cancel while idle pauses and is acknowledged under its token.
-  client.cancel!();
-  await until(() => notices.some(t => t.includes("nothing was running")));
-  expect(existsSync(`${paths.transcript(p, "orchestrator")}.cancel`)).toBe(false);
-  await until(() => readStatus(p)?.state === "idle");
   await client.clear!();
   expect(client.entries!().at(-1)?.type).toBe("context-boundary");
-  expect(provider.calls).toHaveLength(1); // the client never called the model; the compaction request had nothing to do
-  client.dispose?.();
-  await request(p, { kind: "stop" });
+  expect(provider.calls).toHaveLength(1);
+  client.cancel!();
+  await until(() => notices.some(t => t.includes("conversation stopped")));
   expect(await daemon).toBe("stopped");
+  client.dispose?.();
   await release!();
   session.dispose?.();
 });

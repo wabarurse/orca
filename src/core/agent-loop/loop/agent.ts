@@ -23,6 +23,15 @@ import { callText, resultText, type ToolCall, type ToolOutcome } from "../../../
 import { scheduleTools } from "./tool-scheduler";
 import type { RollingOptions } from "../../data/memory";
 import { recordCorrection, recordRuntime } from "../../data/knowledge";
+import { execution } from "../../data/projects/lifecycle";
+import { Cancelled } from "../../tmux";
+
+function staleExecution(deps: AgentDeps): boolean {
+  return deps.ctx.executionEpoch !== undefined && execution.stale(deps.ctx.project, deps.ctx.executionEpoch);
+}
+function assertExecution(deps: AgentDeps): void {
+  if (staleExecution(deps)) throw new Cancelled();
+}
 
 export interface AgentOptions {
   project: string;
@@ -78,7 +87,7 @@ type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
 /** Run one tool; a thrown error becomes an is_error result, never a crash. */
 async function runTool(deps: AgentDeps, name: string, input: Record<string, unknown>): Promise<ToolResultBlockParam> {
-  if (deps.signal?.aborted) return { type: "tool_result", tool_use_id: "", content: "cancelled by user", is_error: true };
+  if (deps.signal?.aborted || staleExecution(deps)) return { type: "tool_result", tool_use_id: "", content: "cancelled by user", is_error: true };
   const tool = deps.tools[name];
   if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
   try {
@@ -151,10 +160,13 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
 /** Persist payload and acknowledgements in the same transcript entry. Notification
  * follows commit; a failed append leaves the original inbox files retryable. */
 async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Promise<boolean> {
+  assertExecution(deps);
   const msgs = await consume(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch), deps.transcript, async inbox => {
+    assertExecution(deps);
     const blocks = content(inbox);
     await deps.transcript.append({ type: "message", inbox,
-      message: { role: "user", content: results ? [...results, ...(typeof blocks === "string" ? [{ type: "text" as const, text: blocks }] : blocks)] : blocks } });
+      message: { role: "user", content: results ? [...results, ...(typeof blocks === "string" ? [{ type: "text" as const, text: blocks }] : blocks)] : blocks } }, deps.signal,
+      deps.ctx.executionEpoch === undefined ? undefined : { head: deps.transcript.head(), check: () => assertExecution(deps) });
     for (const message of inbox) if (message.from === "user") await recordCorrection(deps.ctx.project, { id: message.inputId ?? message.deliveryId, text: message.text, at: message.ts });
   });
   if (msgs.length) {
@@ -166,6 +178,7 @@ async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Pro
 
 /** One model request, streamed and appended to the transcript. */
 async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
+  assertExecution(deps);
   await deps.tracker?.model();
   const requestId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
@@ -233,9 +246,11 @@ function boundaries(deps: AgentDeps) {
   let failed = false;
   let previousModel = "";
   return async (manual = false, maintenance = false): Promise<AgentDeps> => {
+    assertExecution(deps);
     deps.signal?.throwIfAborted();
     await completeInterruptedTools(deps.transcript, deps.signal);
     const current = await snapshot(deps);
+    assertExecution(current);
     deps.signal?.throwIfAborted();
     if (current.model !== previousModel) failed = false;
     previousModel = current.model;
@@ -252,8 +267,12 @@ function boundaries(deps: AgentDeps) {
 }
 async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<void> {
   const results = await runTools(deps, content, deps.write!);
-  if (!deps.signal?.aborted) await readInbox(deps, results);
-  else await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
+  if (!deps.signal?.aborted && !staleExecution(deps)) {
+    try { await readInbox(deps, results); return; }
+    catch (error) { if (!(error instanceof Cancelled)) throw error; }
+  }
+  // Preserve completed results without consuming input authorized for a new run.
+  await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
 }
 async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>): Promise<void> {
   deps.signal?.throwIfAborted();

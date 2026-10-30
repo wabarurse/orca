@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cancelled, cancelSession, delay, publishLaunch, watchCancellation } from "./cancellation";
@@ -96,6 +96,7 @@ test("cancelled notice reaches orchestrator with non-recovery policy; only user 
   const { createOrchestrator } = await import("../agent-loop/orc/orchestrator");
   const { makeSpawn } = await import("../tools/spawn");
   const project = "cancel-notice";
+  mkdirSync(paths.project(project), { recursive: true });
   await supervise({ project, id: "worker-x", run: "cancelled", role: "worker", branch: "x", cwd: home }, async t => {
     await t.reported(); // cancellation is still distinct even just after a report
     throw new Cancelled();
@@ -109,7 +110,7 @@ test("cancelled notice reaches orchestrator with non-recovery policy; only user 
     expect(messages).toContain("[agent-cancelled]");
     expect(messages).not.toContain("[agent-exit]");
     expect(messages).toContain("leave stopped until the user explicitly authorizes continuation");
-    expect(req.system).toContain("no respawn or tool retry without explicit user authorization");
+    expect(req.system).toContain("no respawn without new user authorization");
     if (calls === 2) {
       expect(messages).toContain("Continue worker-x");
       return { stop: "tool_use", content: [toolUse("restart", "spawn", { taskId, branch: "x", prompt: "Continue authorized task" })] };

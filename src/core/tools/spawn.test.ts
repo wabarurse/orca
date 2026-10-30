@@ -46,7 +46,7 @@ const ctx = (role: ToolContext["role"], branch?: string): ToolContext => ({ proj
 test("spawn seeds the worker transcript with the prompt and starts it on the branch", async () => {
   const id = await spawn.run({ prompt: "Add a login page", branch: "feat/login" }, ctx("orchestrator"));
   expect(id).toBe("worker-feat-login");
-  expect(started).toEqual([{ project: "p", role: "worker", branch: "feat/login", run: expect.any(String) }]);
+  expect(started).toEqual([{ project: "p", role: "worker", branch: "feat/login", run: expect.any(String), executionEpoch: "" }]);
   const chain = await open(paths.transcript("p", "worker-feat-login")).chain();
   expect(chain).toEqual([{ role: "user", content: "Branch: feat/login\n\nAdd a login page" }]);
 });
@@ -54,7 +54,7 @@ test("spawn seeds the worker transcript with the prompt and starts it on the bra
 test("spawn with role reviewer uses the same branch and its own transcript", async () => {
   const id = await spawn.run({ prompt: "Review it", branch: "feat/login", role: "reviewer", reviewMode: "review" }, ctx("orchestrator"));
   expect(id).toBe("reviewer-feat-login");
-  expect(started.at(-1)).toEqual({ project: "p", role: "reviewer", branch: "feat/login", run: expect.any(String) });
+  expect(started.at(-1)).toEqual({ project: "p", role: "reviewer", branch: "feat/login", run: expect.any(String), executionEpoch: "" });
 });
 
 test("spawning again on the same branch appends to the existing transcript", async () => {
@@ -115,7 +115,7 @@ describe("one agent per branch", () => {
   test("a live agent that finishes while spawn waits: spawn goes ahead", async () => {
     const { r, starts } = runner([["reviewer-soon"], ["reviewer-soon"], []]);
     expect(await makeSpawn(r, wait).run({ prompt: "next task", branch: "soon" }, qctx)).toBe("worker-soon");
-    expect(starts).toEqual([{ project: "q", role: "worker", branch: "soon", run: expect.any(String) }]);
+    expect(starts).toEqual([{ project: "q", role: "worker", branch: "soon", run: expect.any(String), executionEpoch: "" }]);
     expect((await chain("worker-soon")).map((m) => m.content)).toEqual(["Branch: soon\n\nnext task"]);
   });
 
@@ -154,7 +154,7 @@ describe("one agent per branch", () => {
     const { r, starts } = runner([["worker-gone"], []]);
     const out = await realSpawn(r, wait).run({ prompt: "late follow-up", branch: "gone" }, qctx);
     expect(out).toBe("worker-gone: it exited before reading the prompt, so it was started again on gone with the prompt queued");
-    expect(starts).toEqual([{ project: "q", role: "worker", branch: "gone", run: expect.any(String) }]);
+    expect(starts).toEqual([{ project: "q", role: "worker", branch: "gone", run: expect.any(String), executionEpoch: "" }]);
     expect((await chain("worker-gone")).map((m) => m.content)).toEqual(["[orchestrator] late follow-up"]);
     expect(await pending("q", "worker-gone")).toBe(false);
   });

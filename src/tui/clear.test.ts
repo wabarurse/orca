@@ -231,7 +231,7 @@ test("navigation cancels an authorized clear waiting on persistence, never retar
   expect(await open(paths.transcript("other", "orchestrator")).chain()).toEqual([]);
 });
 
-test("late eligibility results cannot open a confirmation after a page change; ctrl+c only cancels the local modal", async () => {
+test("late eligibility results cannot open a confirmation after a page change; ctrl+c interrupts through the modal", async () => {
   const ui = await setup(), { app } = ui, page = app.page!;
   await app.openPage("other"); app.switchPage(-1);
   const release = Promise.withResolvers<void>();
@@ -248,7 +248,7 @@ test("late eligibility results cannot open a confirmation after a page change; c
   await ui.command();
   await app.onKey({ name: "c", ctrl: true });
   expect(app.menu).toBeNull();
-  expect(page.orch.submission!()).toBe(submission); // not global turn cancellation/pause
+  expect(page.orch.submission!()).not.toBe(submission);
   expect(app.input).toEqual({ text: "keep draft", cursor: 4 });
   expect(await ui.context()).toHaveLength(1);
 });

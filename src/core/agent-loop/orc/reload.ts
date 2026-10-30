@@ -6,6 +6,7 @@ import { BUILD_ID, paths } from "../../../config";
 import type { DaemonStatus } from "../../../protocol";
 import { pidAlive, tryStorageLock } from "../../data";
 import { projectIdentity } from "../../data/projects";
+import { execution } from "../../data/projects/lifecycle";
 import { cliCommand, delay } from "../../tmux";
 import { command } from "../../proc";
 import { daemonPid, liveStatus, request } from "./channel";
@@ -48,6 +49,7 @@ export async function reloadRunningDaemons(options: ReloadOptions = {}): Promise
     const projects = await (options.projects?.() ?? readdir(paths.projects).catch(() => []));
     await Promise.all(projects.filter(p => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p)).map(async project => {
       try {
+        if (execution.stopped(project)) { await clearIntent(project); return; }
         const saved = await readIntent(project);
         if (saved && saved.identity !== o.identity(project)) { await clearIntent(project); throw new Error("project replaced during update; not restarted"); }
         const current = await o.status(project);
