@@ -1,7 +1,7 @@
-import { chmodSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { present as existsSync, safeDirectory, safeFile } from "./layout-safety";
+import { present as existsSync, safeDirectory, safeFile, safeProjectDirectories } from "./layout-safety";
 
 export const movedRoot = ["app", "checkout-locks", "turn-locks", "project-locks", "daemon-locks"];
 export const movedProject = ["orchestrator", "inbox", "runs", "questions", "merged"];
@@ -9,10 +9,7 @@ export const runtimeRoot = (root: string) => join(root, ".runtime");
 export function legacyEntries(root: string): string[] {
   const entries = [...movedRoot, "tmux.sock"].filter(n => existsSync(join(root, n)));
   const projects = join(root, "projects");
-  if (!existsSync(projects)) return entries;
-  safeDirectory(projects);
-  for (const p of readdirSync(projects)) {
-    safeDirectory(join(projects, p));
+  for (const p of safeProjectDirectories(root)) {
     for (const n of movedProject) if (existsSync(join(projects, p, n))) entries.push(join("projects", p, n));
   }
   return entries;

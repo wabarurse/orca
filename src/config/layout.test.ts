@@ -2,7 +2,7 @@ import { afterAll, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { assertLayout } from "./layout";
+import { assertLayout, legacyEntries } from "./layout";
 import { migrateLayout } from "./migrate-layout";
 import { installedApp } from "./legacy";
 import { paths } from "./config";
@@ -64,6 +64,59 @@ test("mixed paths and insecure roots refuse; new homes version on startup", () =
   const fresh = join(suite, "fresh"); assertLayout(fresh);
   expect(JSON.parse(readFileSync(join(fresh, ".runtime/layout.json"), "utf8")).version).toBe(3);
 });
+test("Finder metadata does not block current-layout startup or change project evidence", () => {
+  assertLayout(root);
+  const project = join(root, "projects/p");
+  mkdirSync(project, { recursive: true, mode: 0o700 });
+  const metadata = join(root, "projects/.DS_Store");
+  const contents = Buffer.from([0, 0, 0, 1, 66, 117, 100, 49]);
+  writeFileSync(metadata, contents, { mode: 0o644 });
+  writeFileSync(join(project, "tasks.json"), "retained project evidence");
+  const identity = lstatSync(project);
+  expect(legacyEntries(root)).toEqual([]);
+  assertLayout(root);
+  assertLayout(root);
+  expect(readFileSync(metadata)).toEqual(contents);
+  expect(readFileSync(join(project, "tasks.json"), "utf8")).toBe("retained project evidence");
+  expect(lstatSync(project).ino).toBe(identity.ino);
+});
+test("Finder metadata is retained during legacy discovery, offline migration and rollback", () => {
+  legacy();
+  const expected = legacyEntries(root);
+  mkdirSync(join(root, ".runtime/projects"), { recursive: true, mode: 0o700 });
+  const metadata = ["projects/.DS_Store", ".runtime/projects/.DS_Store"];
+  for (const file of metadata) writeFileSync(join(root, file), "Finder metadata", { mode: 0o644 });
+  expect(legacyEntries(root)).toEqual(expected);
+  expect(() => assertLayout(root)).toThrow("manual offline");
+  expect(migrateLayout({ root, bin })).toEqual(expected);
+  apply();
+  apply({ rollback: true });
+  for (const file of metadata) expect(readFileSync(join(root, file), "utf8")).toBe("Finder metadata");
+  expect(readFileSync(join(root, "projects/p/runs/worker.json"), "utf8")).toBe("retained projects/p/runs/worker.json");
+});
+for (const parent of ["projects", ".runtime/projects"]) {
+  for (const kind of ["directory", "symlink", "broken symlink", "writable file", "unexpected file"] as const) {
+    test(`project scanning refuses ${kind} at ${parent} rather than broadly ignoring metadata names`, () => {
+      legacy();
+      mkdirSync(join(root, parent), { recursive: true, mode: 0o700 });
+      const suspect = join(root, parent, kind === "unexpected file" ? ".unexpected" : ".DS_Store");
+      if (kind === "directory") mkdirSync(suspect);
+      else if (kind === "symlink" || kind === "broken symlink") symlinkSync(join(root, kind === "symlink" ? "projects/p" : "missing"), suspect);
+      else {
+        writeFileSync(suspect, "retained evidence");
+        if (kind === "writable file") chmodSync(suspect, 0o666);
+      }
+      if (parent === "projects") {
+        expect(() => legacyEntries(root)).toThrow("unsafe");
+        expect(() => assertLayout(root)).toThrow("unsafe");
+      }
+      expect(() => migrateLayout({ root, bin })).toThrow("unsafe");
+      expect(() => apply()).toThrow("unsafe");
+      expect(existsSync(join(root, ".runtime/migration.json"))).toBe(false);
+      expect(readFileSync(join(root, "projects/p/runs/worker.json"), "utf8")).toBe("retained projects/p/runs/worker.json");
+    });
+  }
+}
 test("installed path is runtime app; old installation requires explicit migration", () => {
   expect(installedApp(root)).toBe(join(root, ".orca/.runtime/app"));
   mkdirSync(join(root, ".orca/app"), { recursive: true });
