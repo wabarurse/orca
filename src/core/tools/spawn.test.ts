@@ -163,8 +163,8 @@ describe("one agent per branch", () => {
     const { r, asked, starts } = runner([["worker-strict"]]);
     const tool = realSpawn(r, wait);
     expect(await tool.run({ prompt: "x", branch: "strict", reviewMode: "review" }, qctx)).toBe("refused: reviewMode is only valid for reviewer");
-    expect(await tool.run({ prompt: "x", branch: "strict", role: "reviewer", reviewMode: "bogus" }, qctx)).toContain("requires reviewMode");
-    expect(await tool.run({ prompt: "x", branch: "strict", baseCommit: "a".repeat(40) }, qctx)).toBe("refused: baseCommit requires a registered taskId");
+    expect(await tool.run({ prompt: "x", branch: "strict", role: "reviewer", reviewMode: "bogus" }, qctx)).toBe("refused: invalid legacy reviewMode; use review or watch-ci");
+    expect(await tool.run({ prompt: "x", branch: "strict", baseCommit: "a".repeat(40) }, qctx)).toBe("refused: stacked branch automation was removed; update branches explicitly with git");
     expect(asked).toEqual([]);
     expect(starts).toEqual([]);
     expect(await pending("q", "worker-strict")).toBe(false);
@@ -260,7 +260,7 @@ for (const previous of [false, true]) test(`cancel before supervisor publication
   } finally { off(); hook.mockRestore(); }
 });
 
-test("production reviewer protocol refuses omitted intent and persists both modes through dispatch", async () => {
+test("review assignments launch without a workflow mode and retain historical mode labels", async () => {
   const { listTasks, startTaskRun, getTask } = await import("../data/tasks/tasks");
   const task = await registerTask("p", { name: "Telemetry", summary: "Explicit reviewer intent", branch: "feat/telemetry", authorized: true });
   const runner: Runner = {
@@ -274,14 +274,14 @@ test("production reviewer protocol refuses omitted intent and persists both mode
   const base = { taskId: task.id, branch: task.branch, role: "reviewer" };
   // Even a seemingly obvious prompt must not heuristically choose a mode.
   for (const prompt of ["Review the code", "watch ci"]) {
-    expect(await tool.run({ ...base, prompt }, ctx("orchestrator"))).toContain("requires reviewMode");
+    expect(await tool.run({ ...base, prompt }, ctx("orchestrator"))).toBe("reviewer-feat-telemetry");
   }
-  expect((await getTask("p", task.id)).runs).toEqual([]);
+  expect((await getTask("p", task.id)).runs).toHaveLength(2);
   for (const reviewMode of ["review", "watch-ci"] as const) {
     expect(await tool.run({ ...base, reviewMode, prompt: "Full task instructions" }, ctx("orchestrator"))).toBe("reviewer-feat-telemetry");
     const persisted = await getTask("p", task.id);
     expect(persisted.runs.at(-1)?.reviewMode).toBe(reviewMode);
-    expect((await listTasks("p")).find(t => t.id === task.id)?.review).toEqual({ rounds: 1, unknown: false, ci: reviewMode === "watch-ci" });
+    expect((await listTasks("p")).find(t => t.id === task.id)?.review).toEqual({ rounds: 1, unknown: true, ci: reviewMode === "watch-ci" });
   }
 });
 

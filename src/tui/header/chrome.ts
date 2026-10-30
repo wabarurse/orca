@@ -14,8 +14,6 @@ export interface Chapter {
   remote: string;
   agent?: string;
   context?: string;
-  review?: string;
-  dispatch?: string;
   fin?: { time: number; active: boolean };
 }
 
@@ -94,13 +92,13 @@ export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
 }
 
 function chapterFields(c: Chapter, cols: number): string[] {
-  const telemetry = [c.context, c.review, c.dispatch].filter(Boolean).join(" · ");
+  const telemetry = [c.context].filter(Boolean).join(" · ");
   // One field: the account, then the model (each role's), then effort/fast; a narrow width wraps it once when a row is spare,
   // else clips its tail, so the account and the orchestrator's model survive before workers/reviewers and the settings.
   const model = `${c.account ? `account ${c.account} · ` : ""}model ${c.model}`;
   // Narrow telemetry stacks without sacrificing the selected model to telemetry.
   // Agent identity precedes paths in constrained views.
   return telemetry && visibleLength(plain(telemetry)) > cols
-    ? [c.context, model, c.review, c.dispatch, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote].filter((f): f is string => !!f)
+    ? [c.context, model, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote].filter((f): f is string => !!f)
     : [...(telemetry ? [telemetry] : []), model, ...(c.agent ? [`view ${c.agent}`] : []), c.directory, c.remote];
 }

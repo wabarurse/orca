@@ -1,5 +1,4 @@
-export { assertProjectIdentity, conversationTurnLock, projectIdentity, turnLocks, turnLocksHeld, withDependencyLock, withProjectStateLock } from "./state";
-export { effectiveFlow, saveProjectFlow, type FlowSettings } from "./flow";
+export { assertProjectIdentity, conversationTurnLock, projectIdentity, turnLocks, turnLocksHeld, withProjectStateLock } from "./state";
 export { effectiveSettings, effectiveSettingsReport, setEffort, settingChange } from "./project-settings";
 export { accountForModel, effectiveAccount, lastProviderModel, saveProjectAccount, seedProjectAccount } from "./project-account";
 export { effectiveModel, projectModelResolver, roleOverrides, saveProjectModel, saveRoleModel, validateModel } from "./project-model";

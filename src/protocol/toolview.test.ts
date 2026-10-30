@@ -8,9 +8,6 @@ test("labels: a short human summary of the input per tool, the first string argu
   expect(toolLabel("message", { to: "user", text: "hi" })).toBe("message(user: hi)");
   expect(toolLabel("spawn", { prompt: "long brief", branch: "feat/login" })).toBe("spawn(feat/login, worker)");
   expect(toolLabel("spawn", { prompt: "p", branch: "feat/x", role: "reviewer" })).toBe("spawn(feat/x, reviewer)");
-  expect(toolLabel("complexity", { files: ["src/a.ts", "src/b.ts"] })).toBe("complexity(src/a.ts, src/b.ts)");
-  expect(toolLabel("complexity", {})).toBe("complexity(changed files)");
-  expect(toolLabel("complexity", { base: "main" })).toBe("complexity(changed files vs main)");
   expect(toolLabel("ask", { questions: [{ text: "Which db?" }] })).toBe("ask(Which db?)");
   expect(toolLabel("ask", { questions: [{ text: "Which db?" }, { text: "Port?" }] })).toBe("ask(2 questions: Which db?)");
   expect(toolLabel("ask", { action: "list" })).toBe("ask(list)");
@@ -32,7 +29,6 @@ test("summaries: bash line counts, exit codes with the first error line, timeout
   expect(toolSummary("message", { ok: true, text: "sent to orchestrator" })).toEqual({ summary: "sent to orchestrator", failed: false });
   expect(toolSummary("message", { ok: true, text: "refused: empty message" })).toEqual({ summary: "refused: empty message", failed: true });
   expect(toolSummary("spawn", { ok: true, text: "worker-feat-login" })).toEqual({ summary: "spawned worker-feat-login", failed: false });
-  expect(toolSummary("complexity", { ok: true, text: "\n| file | fn |\n…" })).toEqual({ summary: "| file | fn |", failed: false });
   expect(toolSummary("bash", { ok: false, text: "boom\nstack" })).toEqual({ summary: "boom", failed: true });
   expect(toolSummary("x", { ok: false, text: "" })).toEqual({ summary: "error", failed: true });
   expect(toolSummary("x", { ok: true, text: "" })).toEqual({ summary: "done", failed: false });

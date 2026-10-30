@@ -779,7 +779,7 @@ describe("command and key tables", () => {
     expect(help).not.toContain("/back");
     expect(help.indexOf("advanced & diagnostics")).toBeGreaterThan(help.indexOf("keyboard · editing"));
     expect(help.indexOf("/keys")).toBeGreaterThan(help.indexOf("advanced & diagnostics"));
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/dynamic-dispatch", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/model", "/new", "/projects", "/questions", "/quit", "/refresh", "/rename", "/retry-images", "/review-rounds", "/runtime", "/usage"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/model", "/new", "/projects", "/questions", "/quit", "/refresh", "/rename", "/retry-images", "/runtime", "/usage"]);
   });
 
   test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {
@@ -851,7 +851,7 @@ describe("command and key tables", () => {
     term.type("/keys\r");
     await until(() => app.keyEcho);
     term.press({ name: "escape" });
-    term.type("/review-rounds 2\r/nope\r");
+    term.type("/nope\r");
     await until(() => app.frame().inputArea!.lines[0] === dim("unknown command /nope")); term.type("hello\r"); // a note, shown over the view too
     await until(() => feedback.length === 1);
     expect(feedback).toEqual(["viewer/worker-x: hello"]);

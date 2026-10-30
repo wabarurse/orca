@@ -27,7 +27,7 @@ export async function superviseProcess(project: string, id: string): Promise<voi
     try {
       const cancelled = execution.stale(project, admitted) || await Bun.file(join(dir, "stop")).exists();
       if (cancelled) { p.state = "cancelled"; await addProcessEvent(p, p.state); return; }
-      const argv = await shellCommand(`exec 2>&1\n${p.command}`, p.cwd, p.role === "reviewer");
+      const argv = await shellCommand(`exec 2>&1\n${p.command}`, p.cwd, false);
       if (execution.stale(project, admitted)) { p.state = "cancelled"; await addProcessEvent(p, p.state); return; }
       proc = Bun.spawn(argv, { cwd: p.cwd, detached: true, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
       p.pid = proc.pid; p.state = "running";

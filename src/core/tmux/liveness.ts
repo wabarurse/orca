@@ -143,10 +143,9 @@ export const exitWatchdog = (live: (project: string) => Promise<string[] | null>
  * The merge watcher (src/core/tmux/merges.ts), run by the orchestrator daemon on its
  * poll next to the exit watchdog; it asks gh about every 30s per project.
  */
-export const mergeWatch = (live: (project: string) => Promise<string[] | null> = liveAgentsOrNull) => mergeWatcher({ live });
+export const mergeWatch = () => mergeWatcher();
 
 /** Close a project's (now idle) tmux session, if tmux is installed. */
 export async function killProjectSession(project: string): Promise<void> {
   if (Bun.which("tmux")) await tmux.killSession(sessionName(project));
 }
-

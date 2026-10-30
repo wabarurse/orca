@@ -22,13 +22,6 @@ export interface Config {
   maxToolOutputBytes: number;
   /** Max bytes a single tool result may occupy in the transcript. */
   maxToolResultBytes: number;
-  /** Default max review rounds for projects without their own (memory.sqlite project flow, /review-rounds); 0 skips review and goes straight to CI. */
-  maxReviewRounds: number;
-  /** Default /dynamic-dispatch switch for projects without their own; dormant until the orchestrator reads it. Default off. */
-  dynamicDispatch: boolean;
-  /** Complexity thresholds the reviewer reports against. */
-  cyclomatic: number;
-  cognitive: number;
   /** Projects pinned to the top of the TUI's project list. */
   pinned: string[];
 }
@@ -45,15 +38,8 @@ export const defaults: Config = {
   toolConcurrency: 4,
   maxToolOutputBytes: 64 * 1024 * 1024,
   maxToolResultBytes: 16 * 1024,
-  maxReviewRounds: 1,
-  dynamicDispatch: false,
-  cyclomatic: 10,
-  cognitive: 15,
   pinned: [],
 };
-
-/** Most review rounds /review-rounds, project flow records and config.toml accept. */
-export const MAX_REVIEW_ROUNDS = 100;
 
 /** The last parse warning, so a broken file is reported once, not on every load. */
 let warned = "";
@@ -75,7 +61,7 @@ export async function loadConfig(options: { strict?: boolean } = {}): Promise<Co
   }
   // The orchestrator now compacts at a fraction of the selected model's window (rolling-memory.ts).
   // Do not let a saved absolute target restore the old 32k policy or persist it on save.
-  delete (parsed as Record<string, unknown>).orchestratorContextTokens;
+  for (const key of ["orchestratorContextTokens", "maxReviewRounds", "dynamicDispatch", "cyclomatic", "cognitive"]) delete (parsed as Record<string, unknown>)[key];
   return withFallbacks({ ...defaults, ...parsed });
 }
 
@@ -86,15 +72,8 @@ function withFallbacks(config: Config): Config {
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;
   if (!integerWithin(config.maxToolOutputBytes, 1024, 256 * 1024 * 1024)) config.maxToolOutputBytes = defaults.maxToolOutputBytes;
-  if (!validRounds(config.maxReviewRounds)) config.maxReviewRounds = defaults.maxReviewRounds;
-  if (typeof config.dynamicDispatch !== "boolean") config.dynamicDispatch = defaults.dynamicDispatch;
   if (!integerWithin(config.workerContextTokens, 16000, 1000000)) config.workerContextTokens = defaults.workerContextTokens;
   return config;
-}
-
-/** A review round count: an integer from 0 to MAX_REVIEW_ROUNDS. */
-export function validRounds(n: unknown): n is number {
-  return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= MAX_REVIEW_ROUNDS;
 }
 
 /** Write changed keys back to config.toml, keeping the others. */

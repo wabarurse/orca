@@ -81,11 +81,12 @@ test('read returns an image file as a scoped image block, sniffed by bytes not n
   await writeFile(join(cwd, 'shot.gif'), 'GIF89a is text but named like an image\n');
   await expect(read.run({ path: 'shot.gif' }, ctx)).rejects.toThrow('gif image dimensions exceed'); // " i" read little-endian as a 26912 px width
 });
-test('file tools refuse symlinks, outside writes and reviewer mutations', async () => {
+test('file tools retain path boundaries across assignment presets', async () => {
   await writeFile(join(home, 'outside'), 'secret'); await symlink(join(home, 'outside'), join(cwd, 'link'));
   await expect(read.run({ path: 'link' }, ctx)).rejects.toThrow('symlink');
   await expect(write.run({ path: '../outside', content: 'lost' }, ctx)).rejects.toThrow('outside');
-  await expect(write.run({ path: 'review.txt', content: 'bad' }, { ...ctx, role: 'reviewer' })).rejects.toThrow('read-only');
+  await write.run({ path: 'review.txt', content: 'authorized by brief' }, { ...ctx, role: 'reviewer' });
+  expect(await Bun.file(join(cwd, 'review.txt')).text()).toBe('authorized by brief');
 });
 test('background command yields and delivers one durable completion consumed once', async () => {
   const p = record('sleep 0.1; printf finished');

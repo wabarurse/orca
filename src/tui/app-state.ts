@@ -5,7 +5,6 @@ import type { RequestSettings } from "../providers/catalog";
 import type { Orchestrator } from "../core/agent-loop/orc";
 import { archiveAgents, cancelSession } from "../core/tmux";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
-import type { FlowSettings } from "../core/data/projects";
 import { login, sendAgentFeedback, modelChoices, effortChoices, setModel, type DeleteOptions } from "./commands";
 import type { Line, MarkdownStream, Calls } from "./conversation";
 import { editor as ed, type PageQuestions, type QuestionStore, type TaskInboxData, type CommandHelp, type Menu } from "./footer";
@@ -49,9 +48,6 @@ export interface Page {
   /** The project's selected account, provider:profile, for the header; undefined until read or when unreadable. */
   account?: string;
   settings?: RequestSettings;
-  /** The project's review-round limit and dynamic-dispatch switch (project-flow.ts) as last read; undefined = unknown, shown as "?". */
-  review?: number;
-  dispatch?: boolean;
   agentCount?: number;
 }
 
@@ -63,8 +59,6 @@ export interface AppDeps {
   clipboardImage?: () => Promise<ClipboardImage>;
   /** Cached header model accessor; defaults to effectiveModel(project). */
   projectModel?: (project: string) => Promise<string>;
-  /** The project's saved review limit and /dynamic-dispatch switch (effectiveFlow by default); read outside paint, independent of task progress. */
-  flowSettings?: (project: string) => Promise<FlowSettings>;
   term: Terminal;
   /** Bind a new project to a local checkout and build its orchestrator. */
   /** `write` gets streamed model text (markdown) and, with `plain` set, tool lines shown as they are; `onInbox` gets each batch of messages the orchestrator reads. */
@@ -118,8 +112,6 @@ export const realClock: Clock = {
 };
 
 export const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
-/** /review-rounds and /dynamic-dispatch are project settings: without a page there is nothing to show or change. */
-export const NO_PAGE_FOR_SETTINGS = "open a project before changing its settings";
 /** At most one frame per this many ms: stream chunks and spinner ticks coalesce. */
 export const FRAME_MS = 16;
 /** A resize reprints once it has settled for this long (trailing debounce). */
@@ -230,4 +222,3 @@ export const EDITS: Record<string, (s: ed.EditState) => ed.EditState> = {
 
 /** The text a key types (a printable run or a paste), if any. */
 export const typedText = (k: Key): string | undefined => ((k.name === "char" || k.name === "paste") && !k.ctrl && !k.alt ? k.text : undefined);
-

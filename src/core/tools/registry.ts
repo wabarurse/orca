@@ -37,5 +37,5 @@ export interface Tool<R extends ToolResult = string> {
 export const toolsFor: Record<Role, string[]> = {
   orchestrator: ["bash", "read", "write", "edit", "process", "context", "remember", "skill", "runtime", "spawn", "message", "ask", "web_search", "task", "history", "memory"],
   worker: ["bash", "read", "write", "edit", "process", "context", "skill", "message", "web_search", "task"],
-  reviewer: ["bash", "read", "process", "context", "skill", "message", "complexity", "web_search", "task"],
+  reviewer: ["bash", "read", "write", "edit", "process", "context", "skill", "message", "web_search", "task"],
 };

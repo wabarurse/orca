@@ -20,70 +20,6 @@ test("legacy orchestrator token targets cannot override the half-window policy",
   expect((await loadConfig()).model).toBe("claude-opus-5-5");
 });
 
-describe("dynamicDispatch", () => {
-  test("defaults to off; reads booleans; anything else reads as off", async () => {
-    expect(defaults.dynamicDispatch).toBe(false);
-    expect((await loadConfig()).dynamicDispatch).toBe(false);
-    await Bun.write(paths.config, "dynamicDispatch = true\n");
-    expect((await loadConfig()).dynamicDispatch).toBe(true);
-    for (const bad of [`"on"`, `"true"`, "1", "0", "[]"]) {
-      await Bun.write(paths.config, `dynamicDispatch = ${bad}\n`);
-      expect((await loadConfig()).dynamicDispatch).toBe(false);
-    }
-    await saveConfig({ dynamicDispatch: true });
-    await saveConfig({ maxReviewRounds: 3 });
-    expect(await loadConfig()).toMatchObject({ dynamicDispatch: true, maxReviewRounds: 3 });
-  });
-});
-
-describe("maxReviewRounds", () => {
-  test("defaults to 1", async () => {
-    expect(defaults.maxReviewRounds).toBe(1);
-    expect((await loadConfig()).maxReviewRounds).toBe(1);
-  });
-  test("reads any non-negative integer", async () => {
-    await Bun.write(paths.config, "maxReviewRounds = 0\n");
-    expect((await loadConfig()).maxReviewRounds).toBe(0);
-    await Bun.write(paths.config, "maxReviewRounds = 4\n");
-    expect((await loadConfig()).maxReviewRounds).toBe(4);
-  });
-  test("anything else falls back to the default", async () => {
-    for (const bad of [`"2"`, "-1", "1.5", "true", "101", "1e21", "1e23"]) {
-      await Bun.write(paths.config, `maxReviewRounds = ${bad}\n`);
-      expect((await loadConfig()).maxReviewRounds).toBe(defaults.maxReviewRounds);
-    }
-  });
-  test("100 is the most it reads", async () => {
-    await Bun.write(paths.config, "maxReviewRounds = 100\n");
-    expect((await loadConfig()).maxReviewRounds).toBe(100);
-  });
-  test("a config.toml that does not parse falls back to defaults and warns once", async () => {
-    const errors: string[] = [];
-    const orig = console.error;
-    console.error = (...a: unknown[]) => { errors.push(a.join(" ")); };
-    try {
-      await Bun.write(paths.config, "maxReviewRounds = 9007199254740993\n");
-      expect(await loadConfig()).toEqual(defaults);
-      expect(await loadConfig()).toEqual(defaults);
-      expect(errors.length).toBe(1);
-      expect(errors[0]).toContain(paths.config);
-      await Bun.write(paths.config, "model = [unclosed\n");
-      expect(await loadConfig()).toEqual(defaults);
-      expect(errors.length).toBe(2);
-    } finally {
-      console.error = orig;
-    }
-  });
-  test("saveConfig keeps the other keys", async () => {
-    await Bun.write(paths.config, `cyclomatic = 7\nmodel = "m"\n`);
-    await saveConfig({ maxReviewRounds: 3 });
-    const config = await loadConfig();
-    expect(config.maxReviewRounds).toBe(3);
-    expect(config.cyclomatic).toBe(7);
-    expect(config.model).toBe("m");
-  });
-});
-
 test("efficiency defaults are enabled and overrides remain bounded", async () => {
   expect((await loadConfig()).anthropicPromptCache).toBe(true);
   expect((await loadConfig()).toolConcurrency).toBe(4);
@@ -93,7 +29,6 @@ test("efficiency defaults are enabled and overrides remain bounded", async () =>
   expect(await loadConfig()).toMatchObject({ anthropicPromptCache: true, toolConcurrency: 4, maxToolResultBytes: 16384, maxToolOutputBytes: 67108864 });
 });
 
-
 test("execution configuration rejects invalid sandbox values and malformed TOML", async () => {
   await Bun.write(paths.config, 'sandbox = "workspce"\n');
   await expect(loadConfig({ strict: true })).rejects.toThrow("sandbox must be");
@@ -101,4 +36,27 @@ test("execution configuration rejects invalid sandbox values and malformed TOML"
   await expect(loadConfig({ strict: true })).rejects.toThrow("invalid execution configuration");
   await Bun.write(paths.config, 'sandbox = "workspace"\n');
   expect((await loadConfig({ strict: true })).sandbox).toBe("workspace");
+});
+
+test("retired workflow settings do not affect configuration and disappear on save", async () => {
+  await Bun.write(paths.config, 'model = "selected-model"\nmaxReviewRounds = 0\ndynamicDispatch = true\ncyclomatic = 7\ncognitive = 9\n');
+  const config = await loadConfig({ strict: true });
+  expect(config.model).toBe("selected-model");
+  for (const key of ["maxReviewRounds", "dynamicDispatch", "cyclomatic", "cognitive"]) expect(config).not.toHaveProperty(key);
+  await saveConfig({ toolConcurrency: 2 });
+  const saved = await Bun.file(paths.config).text();
+  for (const key of ["maxReviewRounds", "dynamicDispatch", "cyclomatic", "cognitive"]) expect(saved).not.toContain(key);
+  expect(await loadConfig()).toMatchObject({ model: "selected-model", toolConcurrency: 2 });
+});
+
+test("malformed TOML warns once and strict execution still refuses it", async () => {
+  const errors: string[] = [], original = console.error;
+  console.error = (...args: unknown[]) => { errors.push(args.join(" ")); };
+  try {
+    await Bun.write(paths.config, 'model = [unclosed\n');
+    expect(await loadConfig()).toEqual(defaults);
+    expect(await loadConfig()).toEqual(defaults);
+    expect(errors).toHaveLength(1);
+    await expect(loadConfig({ strict: true })).rejects.toThrow("invalid execution configuration");
+  } finally { console.error = original; }
 });

@@ -14,7 +14,7 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 task │ inbox 1
-help · commands & keys                                                  1–9/68
+help · commands & keys                                                  1–9/65
   conversation
   /refresh       reload shared local state; active context waits until idle;
                  never runs work
@@ -54,7 +54,6 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   /model [orch|worker|reviewer]  choose the model for all agents or one role
   /accounts                      choose a subscription account
   /login claude|codex [profile]  sign in to a subscription account
-  /dynamic-dispatch [on|off]     show or set the project's dynamic dispatch
 
   keyboard · navigation
   ctrl+n             new orchestrator
@@ -72,8 +71,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
                      required)
   click ▸            open a run of tool calls (▾ when open); click again to
                      fold it
-  ctrl+c             cancel selected turn/agent; twice within 2s exits,
-                     keeping history
+  ctrl+c             stop conversation and its agents; message to resume;
+                     twice within 2s exits
   esc                close panel, else leave agent view, else clear input
 
   keyboard · editing
@@ -90,12 +89,10 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   ↑ / ↓                move between input rows, then project input history
 
   advanced & diagnostics
-  /runtime            loaded builds, context observations and background
-                      commands
-  /usage              measured project tokens, cached input and request time
-  /keys               diagnose keys/wheel; ctrl+g keeps draft; esc ends
-  /compact            summarize model context; keep full history
-  /review-rounds [n]  project review rounds before ci; 0 goes straight to ci"
+  /runtime  loaded builds, context observations and background commands
+  /usage    measured project tokens, cached input and request time
+  /keys     diagnose keys/wheel; ctrl+g keeps draft; esc ends
+  /compact  summarize model context; keep full history"
 `;
 
 exports[`help appearance fixtures 40x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
@@ -112,7 +109,7 @@ Conversation record 30
 │> draft 界                            │
 └──────────────────────────────────────┘
 2 agents running │ 1 task │ inbox 1
-help                           1–9/137
+help                           1–9/130
   conversation
   /refresh
     reload shared local state; active
@@ -182,9 +179,6 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     choose a subscription account
   /login claude|codex [profile]
     sign in to a subscription account
-  /dynamic-dispatch [on|off]
-    show or set the project's dynamic
-    dispatch
 
   keyboard · navigation
   ctrl+n
@@ -215,8 +209,9 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     open a run of tool calls (▾ when
     open); click again to fold it
   ctrl+c
-    cancel selected turn/agent; twice
-    within 2s exits, keeping history
+    stop conversation and its agents;
+    message to resume; twice within 2s
+    exits
   esc
     close panel, else leave agent
     view, else clear input
@@ -247,22 +242,17 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     project input history
 
   advanced & diagnostics
-  /runtime
-    loaded builds, context
-    observations and background
-    commands
-  /usage
-    measured project tokens, cached
-    input and request time
-  /keys
-    diagnose keys/wheel; ctrl+g keeps
-    draft; esc ends
-  /compact
-    summarize model context; keep full
-    history
-  /review-rounds [n]
-    project review rounds before ci; 0
-    goes straight to ci"
+  /runtime  loaded builds, context
+            observations and
+            background commands
+  /usage    measured project tokens,
+            cached input and request
+            time
+  /keys     diagnose keys/wheel;
+            ctrl+g keeps draft; esc
+            ends
+  /compact  summarize model context;
+            keep full history"
 `;
 
 exports[`help appearance fixtures End reaches diagnostics with a bounded range and dismissal hint 1`] = `
@@ -279,15 +269,15 @@ Conversation record 30
 │> draft 界                                                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 2 agents running │ 1 task │ inbox 1
-help · commands & keys                                                60–68/68
+help · commands & keys                                                57–65/65
+  home/end / ctrl+a/e  start / end of current line
+  ctrl+u / ctrl+k      delete to start / end of current line
   ↑ / ↓                move between input rows, then project input history
 
   advanced & diagnostics
-  /runtime            loaded builds, context observations and background
-                      commands
-  /usage              measured project tokens, cached input and request time
-  /keys               diagnose keys/wheel; ctrl+g keeps draft; esc ends
-  /compact            summarize model context; keep full history
-  /review-rounds [n]  project review rounds before ci; 0 goes straight to ci
+  /runtime  loaded builds, context observations and background commands
+  /usage    measured project tokens, cached input and request time
+  /keys     diagnose keys/wheel; ctrl+g keeps draft; esc ends
+  /compact  summarize model context; keep full history
 ↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;

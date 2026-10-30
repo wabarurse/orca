@@ -597,7 +597,7 @@ describe("explicit footer help", () => {
       await app.onKey({ name: "pagedown" });
       expect(app.frame().help!.top).toBeGreaterThan(0);
       await app.onKey({ name: "end" });
-      await until(() => term.screen().includes("/review-rounds"));
+      await until(() => term.screen().includes("/keys"));
       await app.onKey({ name: "home" });
       expect(app.frame().help!.top).toBe(0);
       await app.onKey({ name: "wheeldown" });

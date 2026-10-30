@@ -6,7 +6,6 @@ import { assertLayout, paths, saveConfig, repositoryBinding, writeProjectState }
 import { initializeWorkspace } from "../core/data/projects/workspace";
 import { setDisplayName, displayName, listProjects } from "../core/data/projects/registry";
 import { saveProjectModel, effectiveModel } from "../core/data/projects/project-model";
-import { saveProjectFlow, effectiveFlow } from "../core/data/projects/flow";
 import { remember, facts, updateContext, workingContext, clearWorkingContext } from "../core/data/knowledge";
 import { open } from "../core/data/transcripts";
 import { editableTool } from "../core/definitions";
@@ -28,10 +27,10 @@ afterEach(() => { if (previous === undefined) delete process.env.ORCA_HOME; else
 
 test("normal features stay inside the agreed public home/project categories", async () => {
   await saveConfig({ model: "gpt-6-astra" }); await setDisplayName("p", "Example");
-  await saveProjectModel("p", "gpt-6-astra"); await saveProjectFlow("p", { dynamicDispatch: true });
+  await saveProjectModel("p", "gpt-6-astra");
   await remember("p", "user", { key: "tone", text: "concise", source: "human-1", confidence: "explicit", updatedAt: "now", project: "p" });
   await updateContext("p", { goal: "Build the requested result", decisions: ["Keep changes local"] });
-  editableTool(read); rolePrompt("orchestrator", defaults);
+  editableTool(read); rolePrompt("orchestrator");
   const credential = claudeCredentialsPath("fixture");
   await withCredentialLock(credential, () => writeTokens(credential, { accessToken: "fake-local-fixture" }));
   await open(paths.transcript("p", "orchestrator")).append({ type: "message", message: { role: "user", content: "original request" } });
@@ -46,7 +45,7 @@ test("normal features stay inside the agreed public home/project categories", as
 });
 
 test("clearing cache preserves settings, bindings, decisions and original evidence across restart", async () => {
-  await setDisplayName("p", "Example"); await saveProjectModel("p", "gpt-6-astra"); await saveProjectFlow("p", { maxReviewRounds: 3 });
+  await setDisplayName("p", "Example"); await saveProjectModel("p", "gpt-6-astra");
   await updateContext("p", { goal: "Keep this goal", decisions: ["Keep this decision"] });
   await remember("p", "project", { key: "domain", text: "project fact", source: "human-1", confidence: "explicit", updatedAt: "now", project: "p" });
   const transcript = open(paths.transcript("p", "orchestrator"));
@@ -54,7 +53,6 @@ test("clearing cache preserves settings, bindings, decisions and original eviden
   const before = readFileSync(transcript.path, "utf8");
   writeFileSync(join(paths.cache("p"), "derived.txt"), "rebuildable"); rmSync(paths.cache("p"), { recursive: true });
   expect(repositoryBinding("p")?.directory).toBe(realpathSync(repo)); expect(await listProjects()).toEqual(["p"]);
-  expect(await displayName("p")).toBe("Example"); expect(await effectiveModel("p")).toBe("gpt-6-astra"); expect((await effectiveFlow("p")).maxReviewRounds).toBe(3);
   expect((await workingContext("p")).goal).toBe("Keep this goal"); expect(await facts("p", "project")).toHaveLength(1);
   expect(readFileSync(transcript.path, "utf8")).toBe(before);
   const code = `import { paths, readProjectState } from ${JSON.stringify(import.meta.dir + "/index.ts")}; console.log(JSON.stringify(readProjectState('p','working-context')));`;

@@ -17,7 +17,6 @@ const inside = (root: string, file: string) => { const r = relative(root, file);
  * https://code.claude.com/docs/en/how-claude-code-works */
 async function filePath(input: unknown, ctx: ToolContext, writing = false): Promise<string> {
   if (typeof input !== "string" || !input.trim() || input.includes("\0")) throw new Error("path must be a non-empty file path");
-  if (writing && ctx.role === "reviewer") throw new Error("reviewers have read-only file access");
   const path = resolve(ctx.cwd, input);
   const stat = await lstat(path).catch(error => { if (error.code !== "ENOENT") throw error; });
   if (stat?.isSymbolicLink()) throw new Error("use the resolved file path, not a symlink");

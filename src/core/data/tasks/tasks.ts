@@ -1,11 +1,8 @@
-import { verifyPublicationState } from './dependency-verification';
-import { assertLedgerPrerequisitesMerged } from "./dependency-ledger";
-import { validateProvenance, type DependencyProvenance, type ProvenanceTask } from "./dependency-provenance";
 import { existsSync, readFileSync } from "node:fs";
 import { paths } from "../../../config";
 // Structured task records, not a scheduler or any of the message/question queues.
 import { ledgerTransaction, existingLedgerTasks } from "./ledger-store";
-import { assertProjectIdentity, projectIdentity, withDependencyLock, withProjectStateLock } from "../projects";
+import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import { clean } from "../inbox";
 import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol/task";
 
@@ -63,7 +60,6 @@ function validateTask(raw: unknown): asserts raw is Task {
     check(object(a) && a.reason === "merged" && stamp(a.mergedAt) && stamp(a.archivedAt), "invalid archive");
     const p = taskPR(a.pr); check(object(raw.pr) && samePR(p, taskPR(raw.pr)), "archive pr mismatch");
   }
-  validateProvenance(raw as unknown as Task);
   check(raw.history.length === raw.revision, "invalid history revision");
   raw.history.forEach((e, i) => {
     check(object(e) && e.revision === i + 1 && stamp(e.at) && typeof e.kind === "string" && taskStatuses.includes(e.status as TaskStatus), "invalid event");
@@ -87,24 +83,13 @@ async function read(project: string): Promise<Store> {
   if (durable) { for (const task of durable) validateTask(task); return { version: 1, tasks: durable }; }
   return withProjectStateLock(project, async () => ({ version: 1, tasks: await allTasksLocked(project) }));
 }
-const revisions = (tasks: Task[]) => JSON.stringify(tasks.map(t => [t.id, t.revision]));
-/** A `preflight` (git or network verification) runs outside the project lock, serialized with dependency actions by
- * their lock; the commit then requires the ledger it verified to be unchanged. */
-async function update<T>(project: string, action: (s: Store) => T, preflight?: (tasks: Task[]) => Promise<void>): Promise<T> {
+/** One authority and one project lock; tasks are records, not a workflow engine. */
+async function update<T>(project: string, action: (s: Store) => T): Promise<T> {
   projectId(project);
   const identity = projectIdentity(project);
-  const commit = (verified?: Task[]) => withProjectStateLock(project, async () => {
+  return withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
-    return ledgerTransaction(project, validateTask, store => {
-      if (verified) check(revisions(store.tasks) === revisions(verified), "tasks changed during verification; retry");
-      return action(store);
-    });
-  });
-  if (!preflight) return commit();
-  return withDependencyLock(project, async () => {
-    const tasks = await withProjectStateLock(project, async () => { assertProjectIdentity(project, identity); return allTasksLocked(project); });
-    await preflight(tasks);
-    return commit(tasks);
+    return ledgerTransaction(project, validateTask, store => action(store));
   });
 }
 function event(t: Task, kind: string, run?: string): void {
@@ -172,10 +157,6 @@ export async function setTaskDependencies(project: string, id: string, dependsOn
     const proposed = taskDependencies(ids, t.id).map(dep => resolve(dep).id);
     validateDependencyGraph(s.tasks, dependencyGraph(s.tasks, t, proposed, resolve));
     if (JSON.stringify(t.dependsOn) !== JSON.stringify(proposed)) {
-      check(!s.tasks.some(other => {
-        const stack = (other as ProvenanceTask).dependencyProvenance?.stack;
-        return stack && (other.id === t.id || stack.prerequisites.some(dep => dep.taskId === t.id));
-      }), "recorded stack dependencies are immutable; explicit recovery required");
       t.dependsOn = proposed; event(t, "dependencies_updated");
     }
     return t;
@@ -197,10 +178,9 @@ export async function registerTask(project: string, input: { id?: string; name: 
     event(t, "registered"); s.tasks.push(t); return t;
   });
 }
-/** Persist before dispatch, but do not assert that a process has started. Waits for a running dependency action of
- * the project, which requires its branch to stay quiescent. */
+/** Persist ownership before dispatch; never assert a process started before confirmation. */
 export async function prepareTaskRun(project: string, id: string, branch: string, run: Pick<TaskRun, "id" | "agent" | "role" | "reviewMode">): Promise<void> {
-  await withDependencyLock(project, () => update(project, s => {
+  await update(project, s => {
     const t = find(s, id); active(t); check(t.branch === branch, "task branch mismatch");
     const existing = t.runs.find(r => r.id === run.id);
     if (existing) { check(existing.agent === run.agent && existing.role === run.role, "run identity mismatch"); return; }
@@ -212,7 +192,7 @@ export async function prepareTaskRun(project: string, id: string, branch: string
     t.runs.push({ ...run, state: "prepared", preparedAt: new Date().toISOString() });
     t.status = run.role === "worker" ? "queued" : "reviewing";
     t.attention = { kind: "waiting", reason: "launch prepared; agent has not started" }; event(t, "run_prepared", run.id);
-  }));
+  });
 }
 /** Called by the supervisor inside the actual child, never by spawn's successful return. */
 export async function startTaskRun(project: string, run: string): Promise<void> {
@@ -285,7 +265,6 @@ export async function observeTaskPR(project: string, id: string, observation: PR
       t.archive = { reason: "merged", mergedAt: observation.mergedAt, archivedAt: new Date().toISOString(), pr };
       delete t.attention;
     } else if (observation.state === "CLOSED") t.attention = { kind: "closed", reason: "pr closed without merging" };
-    else if (before !== JSON.stringify(t) && !t.readiness && (!t.attention || t.attention.kind === "waiting")) t.attention = { kind: "waiting", reason: "pr observed; readiness needs explicit validation" };
     // Historical milestone only. Keep duplicate polls idempotent and leave all
     // existing attention/readiness decisions above independent of this evidence.
     if (observation.state !== "MERGED" && (!t.publication || t.publication.state !== observation.state
@@ -296,41 +275,19 @@ export async function observeTaskPR(project: string, id: string, observation: PR
     return t;
   });
 }
-/** The merge watcher found the PR conflicting with main after another merge: blocked, and no longer ready. Idempotent. */
-export async function blockConflictingTask(project: string, id: string, reason: string): Promise<Task> {
-  const note = attention({ kind: "blocked", reason });
-  return update(project, s => {
-    const t = find(s, id); active(t);
-    if (JSON.stringify(t.attention) === JSON.stringify(note) && !t.readiness) return t;
-    const ready = !!t.readiness;
-    unready(t); t.attention = note; event(t, ready ? "readiness_invalidated" : "attention"); return t;
-  });
-}
-/** Only a currently started reviewer can attest readiness, after validating this exact PR head. */
+/** Optional exact-head evidence annotation; it never gates publication or requires a reviewer. */
 export async function validateTaskReadiness(project: string, id: string, input: { run: string; revision: number; observation: PRObservation; validation: string; validated: true; cwd?: string }): Promise<Task> {
   const pr = taskPR(input.observation.pr), validation = text(input.validation, 2000, "validation");
   check(input.validated === true && input.observation.ready && input.observation.state === "OPEN" && ["passed", "not_configured"].includes(input.observation.checks), "pr is not validated ready");
   return update(project, s => {
     const t = find(s, id); active(t);
-    assertLedgerPrerequisitesMerged(s.tasks, t.id);
-    if (t.dependsOn?.length || (t as ProvenanceTask).dependencyProvenance?.stack) {
-      const p = (t as ProvenanceTask).dependencyProvenance;
-      check(p?.checks?.head === pr.head && p.review?.head === pr.head, "dependent readiness requires matching worker and review evidence");
-    }
-    const reviewer = current(s, input.run);
-    check(reviewer?.run.role === "reviewer" && reviewer.run.state === "started" && reviewer.task.branch === t.branch && t.runs.some(r => r.startedAt), "readiness requires an active reviewer on the task branch");
+    const owner = current(s, input.run);
+    check(owner?.run.state === "started" && owner.task.branch === t.branch && t.runs.some(r => r.startedAt), "readiness requires an active agent on the task branch");
     check(t.attention?.kind !== "cancelled", "cancelled task needs explicit authorized continuation");
     check(t.revision === input.revision && t.pr && samePR(t.pr, pr) && t.pr.head === pr.head && t.branch === input.observation.branch, "task/pr changed during validation; retry");
     if (t.readiness?.run === input.run && t.readiness.head === pr.head && t.readiness.validation === validation && t.readiness.checks === input.observation.checks) return t;
     t.readiness = { head: pr.head, run: input.run, validatedAt: new Date().toISOString(), validation, checks: input.observation.checks as "passed" | "not_configured" };
     t.status = "ready_to_merge"; delete t.attention; event(t, "readiness_validated", input.run); return t;
-  }, async tasks => {
-    const t = find({ version: 1, tasks }, id);
-    assertLedgerPrerequisitesMerged(tasks, t.id);
-    if (!t.dependsOn?.length && !(t as ProvenanceTask).dependencyProvenance?.stack) return;
-    check(input.cwd, 'dependent readiness requires trusted checkout');
-    const verified = await verifyPublicationState(project, input.cwd, t, tasks);
-    check(verified.head === pr.head && t.revision === input.revision, 'task/head changed during readiness verification');
   });
 }
 /** Exact repository/number/link match; independent of destructive merge cleanup or its claims. */
@@ -376,46 +333,4 @@ export function existingTasks(project: string): Task[] {
   check(raw.version === 1 && Array.isArray(raw.tasks), "task projection requires durable ledger");
   for (const task of raw.tasks) validateTask(task);
   return raw.tasks;
-}
-
-/** Internal dependency coordinator seam. The project's dependency lock is held across git verification/side
- * effects, serializing dependency actions and task-run preparation; the project state lock is taken only for the
- * brief ledger reads and writes, so slow git/gh work never stalls other project state (run tracking, saves, inbox).
- * Ownership is checked at the start, by `verify` (before remote effects) and by every `save`, each under the project
- * lock: any change to the task meanwhile refuses the action. No model-facing arbitrary receipt writer. Never nest
- * public task APIs in action. This serializes Orca writers, not arbitrary user shells or external git clients.
- */
-export async function withDependencyTaskOwnership<T>(project: string, id: string, branch: string,
-  action: (task: Task, tasks: Task[], save: (value: DependencyProvenance) => Promise<void>, verify: () => Promise<void>) => Promise<T>, ownerRun?: string): Promise<T> {
-  projectId(project);
-  const identity = projectIdentity(project);
-  const owned = (tasks: Task[]): Task => {
-    assertProjectIdentity(project, identity);
-    const t = find({ version: 1, tasks }, id);
-    active(t); check(!t.removedAt && t.branch === branch, "dependency task branch mismatch");
-    if (ownerRun) check(t.runs.at(-1)?.id === ownerRun && t.runs.at(-1)?.state === "started", "dependency owner is not the active run");
-    check(!tasks.some(other => other.branch === branch && other.runs.some(r => (r.state === "prepared" || r.state === "started") && r.id !== ownerRun)), "dependency operation requires quiescent branch or exclusive active-run ownership");
-    check(!t.attention || !["cancelled", "blocked", "closed", "unknown"].includes(t.attention.kind), "task attention blocks dependency operation");
-    return t;
-  };
-  return withDependencyLock(project, async () => {
-    const { tasks, t } = await withProjectStateLock(project, async () => {
-      const tasks = await allTasksLocked(project);
-      return { tasks, t: owned(tasks) };
-    });
-    let revision = t.revision;
-    const verify = () => withProjectStateLock(project, async () => {
-      check(owned(await allTasksLocked(project)).revision === revision, "dependency task changed");
-    });
-    const save = (value: DependencyProvenance) => withProjectStateLock(project, async () => {
-      ledgerTransaction(project, validateTask, store => {
-        const current = owned(store.tasks);
-        check(current.revision === revision, "dependency task changed");
-        (current as ProvenanceTask).dependencyProvenance = structuredClone(value);
-        unready(current); event(current, "dependency_provenance");
-        validateProvenance(current); revision = current.revision;
-      });
-    });
-    return action(t, tasks, save, verify);
-  });
 }

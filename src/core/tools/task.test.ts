@@ -39,8 +39,8 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
   expect(task.status).toBe("queued");
   expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual([task]);
   expect(JSON.parse(await tool.run({ action: "get", taskId: task.id }, ctx())).id).toBe(task.id);
-  expect(rolePrompt("orchestrator", { ...defaults, maxReviewRounds: 0 })).toContain("0 review rounds; use watch-ci with existing check evidence");
-  expect(rolePrompt("reviewer", defaults)).toContain("Review-only never asserts readiness.");
+  expect(rolePrompt("orchestrator")).toContain("optional assignments");
+  expect(rolePrompt("reviewer")).toContain("No mandatory review rounds");
 });
 
 test("PR creation/no CI is not ready; active reviewer explicitly validates verified exact clean head", async () => {
@@ -52,7 +52,7 @@ test("PR creation/no CI is not ready; active reviewer explicitly validates verif
   const ready = JSON.parse(await validate()); expect(ready.status).toBe("pr open"); expect(ready.internal.readiness.head).toBe(head);
   expect(ready.internal.readiness.checks).toBe("not_configured");
   expect(await validate({}, ctx("orchestrator"))).toContain("taskId");
-  expect(await validate({ taskId: t.id }, ctx("orchestrator"))).toContain("only a reviewer");
+  expect(await validate({ taskId: t.id }, ctx("orchestrator"))).toContain("active agent");
 });
 
 test("duplicate registration on a PR branch guides corrections to the existing task without changing it", async () => {
@@ -118,14 +118,13 @@ test("failed explicit PR refresh invalidates previously validated readiness with
   expect(retained.readiness).toBeUndefined(); expect(retained.attention?.kind).toBe("unknown"); expect(await listTasks(project)).toHaveLength(1);
 });
 
-
 test("both exposed task schemas describe executable structured dependencies, not scheduling", async () => {
   for (const exposed of [agentTask, orchestratorTask]) {
     expect(structuredClone(exposed.spec.input_schema.properties)).toMatchObject({ action: { enum: expect.arrayContaining(["dependencies"]) } });
     expect(structuredClone(exposed.spec.input_schema.properties)).toMatchObject({ taskId: { description: expect.stringContaining("dependencies, which requires an explicit taskId") } });
     expect(structuredClone(exposed.spec.input_schema.properties)).toMatchObject({ dependsOn: { type: "array", items: { type: "string" } } });
     const description = JSON.stringify(exposed.spec);
-    for (const text of ["not free-text notes", "never infer dependencies from text", "no scheduling", "only verified merged membership", "not process cancellation or authorization to continue", "no reruns/local validation", "even without hosted checks"]) expect(description).toContain(text);
+    for (const text of ["not free-text notes", "never infer dependencies from text", "no scheduling", "confirmed merged membership", "never publication permission"]) expect(description).toContain(text);
     expect(exposed.spec.description!.length).toBeLessThan(600);
   }
   const example = { action: "dependencies", taskId: "11111111-1111-4111-8111-111111111111", dependsOn: ["22222222-2222-4222-8222-222222222222"] };
@@ -153,4 +152,17 @@ test("persistent tool uses project numbers for create/update/remove and retains 
   expect(JSON.parse(await tool.run({ action: "remove", taskNumber: 1, confirmed: true }, ctx())).status).toBe("merged");
   expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual([]);
   expect(JSON.parse(await tool.run({ action: "get", taskId: "#1" }, ctx())).id).toBe(created.id);
+});
+
+test("workers link PRs and record optional evidence without a reviewer handoff", async () => {
+  const t = await registerTask(project, { name: "Direct delivery", summary: "Authorized result", branch: "feat/x", authorized: true });
+  await prepareTaskRun(project, t.id, t.branch, { id: "worker", role: "worker", agent: "worker-feat-x" }); await startTaskRun(project, "worker");
+  const worker = ctx("worker", "worker");
+  const linked = await tool.run({ action: "pr", repository: "o/r", number: 2 }, worker);
+  expect(JSON.parse(linked).prLink).toBe("https://github.com/o/r/pull/2");
+  const ready = await tool.run({ action: "ready", validated: true, validation: "Relevant checks passed on this head" }, worker);
+  expect(JSON.parse(ready).internal.readiness.head).toBe(head);
+  for (const action of ["checkpoint", "prepare_publication", "checks", "reviewed", "publish"]) expect(await tool.run({ action }, worker)).toContain("unknown task action");
+  for (const role of ["worker", "reviewer"] as const) for (const name of ["read", "edit", "write", "bash", "process"]) expect(toolsFor[role]).toContain(name);
+  expect(registry).not.toHaveProperty("complexity");
 });

@@ -12,6 +12,7 @@ import { conversationTurnLock, projectTurnLock } from "./state";
 import { lockOwner, tryStorageLock } from "../storage-lock";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { bash } from "../../tools/bash/bash";
+import { registerTask, observeTaskPR } from "../tasks";
 import { mergeWatcher } from "../../tmux/merges";
 
 let temp: string, repo: string, previous: string | undefined;
@@ -237,7 +238,7 @@ test("origin default branch is honored and workers start there even if the user 
   expect(await git(repo, "branch", "--show-current")).toBe("unrelated");
 });
 
-test("merged worker cleanup does not pull or change the original checkout", async () => {
+test("merge observation preserves both worktree and original checkout", async () => {
   const origin = join(temp, "origin.git");
   await Bun.$`git init -q --bare -b main ${origin}`.quiet();
   await git(repo, "remote", "add", "origin", origin);
@@ -249,12 +250,12 @@ test("merged worker cleanup does not pull or change the original checkout", asyn
   const oid = await git(worker, "rev-parse", "HEAD");
   await git(worker, "push", "origin", "task/fix", "HEAD:main");
   await Bun.write(join(repo, "draft"), "untouched");
-  const check = mergeWatcher({ repo: async () => "o/r", live: async () => [], gh: async () => [{
-    number: 1, headRefName: "task/fix", headRefOid: oid, url: "https://github.com/o/r/pull/1",
-    mergedAt: new Date(Date.now() + 60_000).toISOString(), isCrossRepository: false,
-  }] });
+  const task = await registerTask("p", { name: "Fix", summary: "Work", branch: "task/fix", authorized: true });
+  const pr = { repository: "o/r", number: 1, head: oid, url: "https://github.com/o/r/pull/1" };
+  await observeTaskPR("p", task.id, { pr, branch: "task/fix", state: "OPEN", ready: false, checks: "unknown" });
+  const check = mergeWatcher({ repo: async () => "o/r", pr: async () => ({ pr, branch: "task/fix", state: "MERGED", mergedAt: new Date().toISOString(), ready: false, checks: "unknown" }) });
   expect(await check("p")).toEqual([1]);
-  expect(existsSync(worker)).toBe(false);
+  expect(existsSync(worker)).toBe(true);
   expect(await git(repo, "rev-parse", "HEAD")).toBe(before);
   expect(await Bun.file(join(repo, "draft")).text()).toBe("untouched");
 });

@@ -18,7 +18,6 @@ import { inputEpoch } from "../core/data/inbox/user-input";
 import { tryStorageLock } from "../core/data/storage-lock";
 import { projectTurnLock } from "../core/data/projects/state";
 import { saveProjectSettings } from "../core/data/projects/project-settings";
-import { effectiveFlow, saveProjectFlow, type FlowSettings } from "../core/data/projects/flow";
 import { Calls } from "./conversation/tools";
 
 const previous = process.env.ORCA_HOME;
@@ -228,7 +227,6 @@ test("refresh restores full external history before the next local model turn an
   expect(raw(app)).toContain("newest external context"); expect(raw(app)).toContain("external history 0");
 });
 
-
 test("login-held submissions refresh immediately and retain original epochs, IDs and FIFO through release", async () => {
   const gate = deferred();
   const { app, submit, provider } = await setup({ login: async () => { await gate.promise; return "signed in"; } });
@@ -276,7 +274,6 @@ test("manual refresh preserves a scrolled history anchor, composer cursor and pi
   expect(raw(app)).toContain("external row 0"); expect(raw(app)).toContain("external row 59");
 });
 
-
 test("a turn that loses shared ownership cannot mark an unrendered snapshot as displayed", async () => {
   const provider = fakeProvider([]);
   const { app, submit } = await setup({ openOrchestrator: async (project, _url, write, onInbox, events) => {
@@ -308,252 +305,6 @@ test("a turn that loses shared ownership cannot mark an unrendered snapshot as d
   }
 });
 
-const header = (screen: FakeScreen) => screen.screen().slice(0, 7).join("\n");
 
-/** The transient status note above the composer, if any. */
+/** Temporary feedback above the composer. */
 const note = (app: App) => Bun.stripANSI(app.frame().inputArea!.lines.join("\n"));
-
-test("review rounds are per project: they start at config.toml's value, a command changes only the current page's project, agent views show the page's value", async () => {
-  const { app, screen, submit } = await setup();
-  await until(() => header(screen).includes("review rounds: 1"));
-  await submit("/review-rounds");
-  expect(note(app)).toContain("review rounds: 1"); // a query is a transient note, not conversation
-  expect(raw(app)).not.toContain("review rounds: 1");
-  await app.openPage("b");
-  for (const n of [0, 100, 7]) {
-    await submit(`/review-rounds ${n}`);
-    expect(note(app)).toContain(`review rounds set to ${n} for this project`);
-    expect(raw(app)).not.toContain(`set to ${n}`);
-    expect((await effectiveFlow("b")).maxReviewRounds).toBe(n);
-    expect((await effectiveFlow("a")).maxReviewRounds).toBe(1);
-    expect((await loadConfig()).maxReviewRounds).toBe(1); // config.toml stays the default
-    await until(() => header(screen).includes(`review rounds: ${n}`));
-    await app.openPage("a");
-    await until(() => header(screen).includes("review rounds: 1")); // the other project keeps its own value
-    app.page!.view = { name: "reviewer-MixedCase", lines: [], calls: new Calls(), live: false, leave() {} };
-    app.draw();
-    await until(() => header(screen).includes("view reviewer-MixedCase"));
-    expect(header(screen)).toContain("review rounds: 1");
-    expect(header(screen)).toContain("ctx ?/?");
-    app.page!.view = null;
-    await app.openPage("b");
-    await until(() => header(screen).includes(`review rounds: ${n}`)); // switching back shows this project's value
-  }
-  for (const arg of ["-1", "101", "1.5", "bad", "0100"]) {
-    await submit(`/review-rounds ${arg}`);
-    expect(note(app)).toContain("usage: /review-rounds"); // refusals use the status row
-    expect((await effectiveFlow("b")).maxReviewRounds).toBe(7);
-    expect(header(screen)).toContain("review rounds: 7");
-  }
-});
-
-test("manual and passive refresh observe external saved review limits: project overrides first, config.toml's fallback rules otherwise", async () => {
-  const { app, screen, submit } = await setup({ pollMs: 20 });
-  await until(() => header(screen).includes("review rounds: 1"));
-  await saveConfig({ maxReviewRounds: 0 });
-  await until(() => header(screen).includes("review rounds: 0")); // real timer, no explicit refresh: config.toml is still the default
-  await saveProjectFlow("a", { maxReviewRounds: 42 });
-  await until(() => header(screen).includes("review rounds: 42")); // an override saved elsewhere (another TUI) shows up too
-  await saveConfig({ maxReviewRounds: 100 });
-  await submit("/refresh");
-  await Bun.sleep(30);
-  expect(header(screen)).toContain("review rounds: 42"); // the override wins over config
-  writeProjectState("a", "flow", undefined);
-  await submit("/refresh");
-  await until(() => header(screen).includes("review rounds: 100"));
-  // Invalid persisted config settings use loadConfig's existing default, also used by the command.
-  await Bun.write(paths.config, 'model = "fake-model"\nmaxReviewRounds = 101\n');
-  await app.refreshSessions(false);
-  await until(() => header(screen).includes("review rounds: 1"));
-  await submit("/review-rounds");
-  expect(note(app)).toContain("review rounds: 1");
-});
-
-test("a malformed per-project settings record shows unknown and reports the project; a repaired record recovers", async () => {
-  const { app, screen, submit } = await setup();
-  await until(() => header(screen).includes("review rounds: 1 · dispatch: off"));
-  const notices = spyOn(app, "note");
-  writeProjectState("a", "flow", { maxReviewRounds: 101 });
-  await submit("/refresh");
-  await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
-  const failure = "project settings refresh failed: Error: project a flow settings";
-  const failures = () => notices.mock.calls.filter(([line]) => line.includes(failure)).length;
-  expect(failures()).toBe(1); // one read, one line for both values
-  await submit("/refresh"); await submit("/refresh"); await app.refreshSessions();
-  expect(failures()).toBe(1); // the same persisting error is not repeated every poll
-  writeProjectState("a", "flow", { dynamicDispatch: "on" });
-  await submit("/refresh");
-  await until(() => notices.mock.calls.some(([line]) => line.includes("invalid dynamic dispatch")));
-  expect(failures()).toBe(2); // a different error is reported
-  await expect(submit("/review-rounds 2")).rejects.toThrow("flow settings"); // never silently repaired by a save
-  writeProjectState("a", "flow", { maxReviewRounds: 2, dynamicDispatch: true });
-  await submit("/refresh");
-  await until(() => header(screen).includes("review rounds: 2 · dispatch: on"));
-  // After a success the same error is said again when it recurs.
-  writeProjectState("a", "flow", { dynamicDispatch: "on" });
-  await submit("/refresh");
-  await until(() => failures() === 3);
-  writeProjectState("a", "flow", undefined);
-});
-
-test("project settings are read once per page per refresh (both values from one read), never during paint", async () => {
-  let reads = 0;
-  const { app, screen } = await setup({ flowSettings: async () => { reads++; return { maxReviewRounds: 8, dynamicDispatch: true }; } });
-  await app.openPage("b");
-  await until(() => header(screen).includes("review rounds: 8 · dispatch: on"));
-  const before = reads;
-  for (let i = 0; i < 100; i++) { app.frame(); app.draw(); }
-  await Bun.sleep(30);
-  expect(reads).toBe(before);
-  await app.refreshSessions(false);
-  expect(reads).toBe(before + app.pages.length);
-  expect(app.pages.length).toBe(2);
-});
-
-test("unavailable or invalid review snapshots show unknown rather than an invented count, then recover", async () => {
-  let state: number | Error = new Error("Fixture Read FAILED");
-  const { app, screen } = await setup({ flowSettings: async () => { if (state instanceof Error) throw state; return { maxReviewRounds: state, dynamicDispatch: false }; } });
-  await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
-  expect(note(app)).toContain("project settings refresh failed: Error: Fixture Read FAILED");
-  for (const value of [9, NaN, 101, -1, 1.5, 0]) {
-    state = value;
-    await app.refreshSessions();
-    const label = value === 9 || value === 0 ? String(value) : "?";
-    await until(() => header(screen).includes(`review rounds: ${label} · dispatch: off`)); // an invalid count never hides a valid switch
-  }
-  state = new Error("Later Read FAILED");
-  await app.refreshSessions();
-  await until(() => header(screen).includes("review rounds: ? · dispatch: ?"));
-  expect(note(app)).toContain("project settings refresh failed: Error: Later Read FAILED");
-  state = 1; // cleanup's refresh can succeed
-});
-
-for (const fail of [false, true]) test(`a stale pre-command review ${fail ? "failure" : "snapshot"} cannot replace a newer saved value`, async () => {
-  let delayed: Promise<FlowSettings> | undefined;
-  const entered = deferred();
-  const { app, screen, submit } = await setup({ flowSettings: (project) => {
-    if (delayed) entered.resolve();
-    return delayed ?? effectiveFlow(project);
-  } });
-  let release!: () => void;
-  delayed = new Promise<FlowSettings>((resolve, reject) => { release = () => fail ? reject(new Error("Old read FAILED")) : resolve({ maxReviewRounds: 1, dynamicDispatch: false }); });
-  // The getter captures the deferred read before the command starts saving.
-  const refreshing = app.refreshSessions(false);
-  try {
-    await entered.promise;
-    delayed = undefined;
-    await submit("/review-rounds 0");
-    await until(() => header(screen).includes("review rounds: 0"));
-    release(); await refreshing;
-    expect(header(screen)).toContain("review rounds: 0");
-    expect((await effectiveFlow("a")).maxReviewRounds).toBe(0);
-  } finally { delayed = undefined; release(); await refreshing; }
-});
-
-test("a failed review-rounds save never paints the requested value", async () => {
-  const { app, screen, submit } = await setup();
-  await submit("/review-rounds 7");
-  await until(() => header(screen).includes("review rounds: 7"));
-  writeProjectState("a", "flow", "malformed"); // deterministic read/merge failure
-  try {
-    await expect(submit("/review-rounds 100")).rejects.toThrow();
-    expect(header(screen)).toContain("review rounds: 7");
-    expect(header(screen)).not.toContain("review rounds: 100");
-    expect(note(app)).not.toContain("review rounds set to 100");
-    expect(raw(app)).not.toContain("review rounds set to 100");
-  } finally {
-    writeProjectState("a", "flow", { maxReviewRounds: 7 });
-  }
-});
-
-for (const command of ["/review-rounds 5", "/dynamic-dispatch on"]) test(`without a page, ${command.split(" ")[0]} explains instead of touching config.toml`, async () => {
-  const { app, screen, submit } = await setup();
-  app.closePage();
-  expect(app.page).toBeUndefined();
-  await submit(command);
-  await until(() => screen.screen().join("\n").includes("open a project before changing its settings"));
-  expect(await loadConfig()).toMatchObject({ maxReviewRounds: 1, dynamicDispatch: false });
-  expect(app.page).toBeUndefined(); // no implicit new project
-});
-
-test("dynamic dispatch is per project: starts off, a command changes only the current page's project, invalid input keeps the saved value", async () => {
-  const { app, screen, submit } = await setup();
-  await until(() => header(screen).includes("review rounds: 1 · dispatch: off"));
-  await app.openPage("b");
-  for (const v of ["on", "off", "on"]) {
-    await submit(`/dynamic-dispatch ${v}`);
-    expect(note(app)).toContain(`dynamic dispatch set to ${v} for this project; applies from the orchestrator's next turn`);
-    expect(raw(app)).not.toContain(`dynamic dispatch set to ${v}`); // a transient note, not conversation
-    expect((await effectiveFlow("b")).dynamicDispatch).toBe(v === "on");
-    expect((await effectiveFlow("a")).dynamicDispatch).toBe(false);
-    expect((await loadConfig()).dynamicDispatch).toBe(false);
-    await until(() => header(screen).includes(`dispatch: ${v}`));
-    await app.openPage("a");
-    await until(() => header(screen).includes("dispatch: off"));
-    app.page!.view = { name: "reviewer-MixedCase", lines: [], calls: new Calls(), live: false, leave() {} };
-    app.draw();
-    await until(() => header(screen).includes("view reviewer-MixedCase"));
-    expect(header(screen)).toContain("dispatch: off");
-    app.page!.view = null;
-    await app.openPage("b");
-    await until(() => header(screen).includes(`dispatch: ${v}`));
-  }
-  await submit("/dynamic-dispatch");
-  expect(note(app)).toContain("dynamic dispatch: on");
-  await submit("/dynamic-dispatch maybe");
-  expect(note(app)).toContain("usage: /dynamic-dispatch [on|off]");
-  expect((await effectiveFlow("b")).dynamicDispatch).toBe(true);
-  expect(header(screen)).toContain("dispatch: on");
-});
-
-test("refresh observes external dispatch changes: a project override, then config.toml; invalid saved config reads as off", async () => {
-  const { app, screen, submit } = await setup({ pollMs: 20 });
-  await until(() => header(screen).includes("dispatch: off"));
-  await saveConfig({ dynamicDispatch: true });
-  await until(() => header(screen).includes("dispatch: on")); // passive poll, config.toml default
-  await saveProjectFlow("a", { dynamicDispatch: false });
-  await until(() => header(screen).includes("dispatch: off")); // the override wins
-  writeProjectState("a", "flow", undefined);
-  await Bun.write(paths.config, 'model = "fake-model"\ndynamicDispatch = "on"\n');
-  await submit("/refresh");
-  await until(() => header(screen).includes("dispatch: off"));
-});
-
-test("unavailable dispatch snapshots show unknown, read once per page per refresh, then recover", async () => {
-  let state: boolean | Error = new Error("Dispatch Read FAILED");
-  let reads = 0;
-  const { app, screen } = await setup({ flowSettings: async () => { reads++; if (state instanceof Error) throw state; return { maxReviewRounds: 1, dynamicDispatch: state }; } });
-  await until(() => header(screen).includes("dispatch: ?"));
-  expect(note(app)).toContain("project settings refresh failed: Error: Dispatch Read FAILED");
-  state = true;
-  await app.refreshSessions();
-  await until(() => header(screen).includes("dispatch: on"));
-  const before = reads;
-  for (let i = 0; i < 50; i++) { app.frame(); app.draw(); }
-  await app.refreshSessions(false);
-  expect(reads).toBe(before + 1);
-  state = 1 as unknown as boolean;
-  await app.refreshSessions();
-  await until(() => header(screen).includes("dispatch: ?"));
-  state = false;
-});
-
-test("a stale pre-command dispatch snapshot cannot replace a newer saved value", async () => {
-  let delayed: Promise<FlowSettings> | undefined;
-  const entered = deferred();
-  const { app, screen, submit } = await setup({ flowSettings: (project) => {
-    if (delayed) entered.resolve();
-    return delayed ?? effectiveFlow(project);
-  } });
-  let release!: () => void;
-  delayed = new Promise<FlowSettings>(resolve => { release = () => resolve({ maxReviewRounds: 1, dynamicDispatch: false }); });
-  const refreshing = app.refreshSessions(false);
-  try {
-    await entered.promise;
-    delayed = undefined;
-    await submit("/dynamic-dispatch on");
-    await until(() => header(screen).includes("dispatch: on"));
-    release(); await refreshing;
-    expect(header(screen)).toContain("dispatch: on");
-  } finally { delayed = undefined; release(); await refreshing; }
-});

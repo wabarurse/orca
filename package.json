@@ -14,14 +14,14 @@
     "install:local": "bun scripts/install.ts"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.3"
+    "@types/bun": "^1.4.3",
+    "@babel/parser": "^8.0.7"
   },
   "peerDependencies": {
     "typescript": "^7"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
-    "@babel/parser": "^8.0.7",
     "openai": "^7.39.0"
   },
   "engines": {

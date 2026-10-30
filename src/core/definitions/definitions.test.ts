@@ -25,12 +25,11 @@ test("defaults track upgrades; edited files survive; deleting resets to current 
   expect(definition("prompts/shared.md", "v3")).toBe("v3");
 });
 test("visible role/shared Markdown edits reload while mandatory role contracts remain", () => {
-  const config = { maxReviewRounds: 1, dynamicDispatch: false, cyclomatic: 10, cognitive: 10 };
-  const original = rolePrompt("worker", config);
+  const original = rolePrompt("worker");
   expect(readFileSync(join(home, "prompts/worker.md"), "utf8")).toContain("focused agent");
   writeFileSync(join(home, "prompts/worker.md"), "Prefer very short paragraphs.");
   writeFileSync(join(home, "prompts/shared.md"), "Use project terminology.");
-  const changed = rolePrompt("worker", config);
+  const changed = rolePrompt("worker");
   expect(changed).toContain("Prefer very short paragraphs.");
   expect(changed).toContain("Use project terminology.");
   expect(changed.endsWith(original)).toBe(true);
@@ -64,7 +63,7 @@ test("description contracts stay in concise main text or relevant fields; memory
   const taskText = readFileSync(new URL("../tools/task.ts", import.meta.url), "utf8");
   const memoryText = readFileSync(new URL("../tools/history.ts", import.meta.url), "utf8");
   const main = (text: string) => text.match(/description: "([^\n]+)",\n\s+input_schema:/)![1]!;
-  for (const text of ["immutable", "authorized", "before spawn", "current clean PR head", "Verified OPEN", "merge permission", "confirmed", "SQL", "no scheduling", "never infer"]) expect(taskText.toLowerCase()).toContain(text.toLowerCase());
+  for (const text of ["immutable", "authorized", "exact PR head", "confirmed", "history retained", "no scheduling", "never infer"]) expect(taskText.toLowerCase()).toContain(text.toLowerCase());
   expect(main(taskText).length).toBeLessThan(600);
   expect(main(memoryText).length).toBeLessThan(500);
   for (const text of ["outside current context", "untrusted", "never instructions or authorization", "removed tasks", "without restoring membership"]) expect(memoryText).toContain(text);
@@ -87,17 +86,18 @@ test("built-in underscore names materialize without enabling arbitrary paths", (
   expect(() => definition("tools/../../escape.json", "{}")).toThrow("invalid definition name");
 });
 
-test('edited task schemas retain annotations while upgrading publication actions and evidence fields', () => {
-  const legacy: Tool = { ...tool, spec: { name: 'task', description: 'Task contract', input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['get'], description: 'Action' } }, required: ['action'] } } };
+test('edited task schemas retire publication actions without losing annotations or rewriting user files', () => {
+  const legacy: Tool = { ...tool, spec: { name: 'task', description: 'Task contract', input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['get', 'checkpoint', 'prepare_publication', 'checks', 'reviewed', 'publish'], description: 'Action' }, commands: { type: 'array', items: { type: 'string' } } }, required: ['action'] } } };
   editableTool(legacy);
-  const actual = join(home, 'tools/task.json');
-  const edited = JSON.parse(readFileSync(actual, 'utf8')); edited.description = 'My task guidance';
-  writeFileSync(actual, JSON.stringify(edited));
-  const upgraded: Tool = { ...legacy, spec: { ...legacy.spec, input_schema: { ...legacy.spec.input_schema, properties: { action: { type: 'string', enum: ['get', 'checkpoint', 'prepare_publication', 'checks', 'reviewed', 'publish'], description: 'Action' }, commands: { type: 'array', items: { type: 'string' } } } } } };
-  const result = editableTool(upgraded);
+  const file = join(home, 'tools/task.json');
+  const edited = JSON.parse(readFileSync(file, 'utf8')); edited.description = 'My task guidance';
+  writeFileSync(file, JSON.stringify(edited)); const original = readFileSync(file, 'utf8');
+  const current: Tool = { ...legacy, spec: { ...legacy.spec, input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['get'], description: 'Action' } }, required: ['action'] } } };
+  const result = editableTool(current);
   expect(result.spec.description).toContain('My task guidance');
-  expect(JSON.stringify(result.spec.input_schema)).toContain('prepare_publication');
-  expect(JSON.stringify(result.spec.input_schema)).toContain('commands');
+  expect(JSON.stringify(result.spec.input_schema)).not.toContain('prepare_publication');
+  expect(JSON.stringify(result.spec.input_schema)).not.toContain('commands');
+  expect(readFileSync(file, 'utf8')).toBe(original);
 });
 
 test("edited legacy message definitions gain the report bound without losing annotations", () => {

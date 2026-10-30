@@ -12,10 +12,10 @@ function annotations(base: unknown, edited: unknown, path: string): unknown {
   if (path === "bash.properties.timeout_ms.minimum" && edited === 1 && base === 0) return base;
   // Upgrade older edited schemas without overwriting user annotation files. Only
   // these shipped additions are restored; arbitrary schema mutations still fail.
-  if (edited === undefined && ["spawn.properties.baseCommit", "task.properties.commands", "memory.properties.commands", "message.properties.summary.minLength", "message.properties.summary.maxLength"].includes(path)) return base;
-  if (Array.isArray(base) && Array.isArray(edited) && path.endsWith(".properties.action.enum")) {
-    const additions = new Set(["checkpoint", "prepare_publication", "checks", "reviewed", "publish"]);
-    if (JSON.stringify(edited) === JSON.stringify(base.filter(v => !additions.has(String(v))))) return base;
+  if (edited === undefined && ["message.properties.summary.minLength", "message.properties.summary.maxLength"].includes(path)) return base;
+  if (Array.isArray(base) && Array.isArray(edited) && /^(task|memory)\.properties\.action\.enum$/.test(path)) {
+    const retired = new Set(["checkpoint", "prepare_publication", "checks", "reviewed", "publish"]);
+    if (JSON.stringify(edited.filter(v => !retired.has(String(v)))) === JSON.stringify(base)) return base;
   }
   if (Array.isArray(base)) {
     if (!Array.isArray(edited) || edited.length !== base.length) throw new Error(`immutable tool schema: ${path}`);
@@ -35,7 +35,10 @@ function description(base: unknown, edited: unknown, path: string) {
 }
 function objectAnnotations(a: Record<string, unknown>, edited: unknown, path: string) {
   if (!edited || typeof edited !== "object" || Array.isArray(edited)) throw new Error(`invalid tool schema: ${path}`);
-  const b = edited as Record<string, unknown>, schemaNode = !path.endsWith(".properties");
+  const b = { ...edited as Record<string, unknown> }, schemaNode = !path.endsWith(".properties");
+  // Old, user-annotated definitions may still contain removed shipped fields.
+  if (path === "spawn.properties" && !Object.hasOwn(a, "baseCommit")) delete b.baseCommit;
+  if ((path === "task.properties" || path === "memory.properties") && !Object.hasOwn(a, "commands")) delete b.commands;
   if (Object.keys(b).some(k => !Object.hasOwn(a, k) && !(k === "description" && schemaNode))) throw new Error(`unknown tool schema field: ${path}`);
   const result: Record<string, unknown> = {};
   for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {

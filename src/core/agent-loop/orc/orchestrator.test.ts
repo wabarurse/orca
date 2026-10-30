@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { loadConfig, paths, saveConfig } from "../../../config/config";
 import { put } from "../../data/inbox/inbox";
 import { createOrchestrator, ensureProject } from "./orchestrator";
-import { DYNAMIC_DISPATCH } from "../../prompt/shared";
 import type { Runner, StartOptions } from "../../tmux/runner";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { message } from "../../tools/message";
@@ -250,7 +249,6 @@ test("the real CLI send resumes a cancelled orchestrator across processes", asyn
   expect(JSON.stringify(provider.calls[0]!.messages)).toContain("external continuation");
 });
 
-
 test("local prompt identities survive persistence unchanged and are reported only at consumption", async () => {
   const project = "input-identity", seen: import("../../../protocol/inbox").Message[] = [];
   const provider = fakeProvider([[text("received")]]);
@@ -339,24 +337,4 @@ test("context cache is constant-work on unchanged draws and tracks summary retai
   const next = orch.contextUsage!(model), warmed = branches;
   for (let i = 0; i < 100; i++) expect(orch.contextUsage!(model)).toBe(next);
   expect(branches).toBe(warmed);
-});
-
-test("/dynamic-dispatch is read per turn: toggling between turns changes the next system prompt", async () => {
-  const p = "dispatch-per-turn", systems: (string | undefined)[] = [];
-  const base = fakeProvider([[text("one")], [text("two")], [text("three")]]);
-  const provider = { ...base, complete: (req: Parameters<typeof base.complete>[0]) => { systems.push(req.system); return base.complete(req); } };
-  const orch = await createOrchestrator({ project: p, provider, tools: {}, write: () => {} });
-  expect((await loadConfig()).dynamicDispatch).toBe(false);
-  try {
-    for (const on of [false, true, false]) {
-      await saveConfig({ dynamicDispatch: on });
-      await orch.say(`turn ${systems.length}`);
-      await orch.turn();
-    }
-  } finally { await saveConfig({ dynamicDispatch: false }); }
-  expect(systems.length).toBe(3);
-  expect(systems[0]).not.toContain(DYNAMIC_DISPATCH);
-  expect(systems[1]).toContain(DYNAMIC_DISPATCH);
-  expect(systems[0]).not.toContain(DYNAMIC_DISPATCH);
-  expect(systems[2]).not.toContain(DYNAMIC_DISPATCH);
 });

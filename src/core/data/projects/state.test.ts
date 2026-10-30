@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, saveConfig } from "../../../config/config";
 import { deleteProject } from "../../../tui/commands/project";
-import { DEPENDENCY_LOCK_WAIT_MS, lockDelay, PROJECT_LOCK_WAIT_MS, projectIdentity, withDependencyLock, withProjectStateLock } from "./state";
+import { lockDelay, PROJECT_LOCK_WAIT_MS, projectIdentity, withProjectStateLock } from "./state";
 import { effectiveModel, saveProjectModel } from "./project-model";
 
 const home = mkdtempSync(join(tmpdir(), "project-state-"));
@@ -87,19 +87,7 @@ test("the project lock records its owner, and a lock left by a dead process is t
 
 test("contention waits with backoff for far longer than the old 5s limit, bounded and capped per attempt", () => {
   expect(PROJECT_LOCK_WAIT_MS).toBeGreaterThanOrEqual(30_000);
-  expect(DEPENDENCY_LOCK_WAIT_MS).toBeGreaterThan(PROJECT_LOCK_WAIT_MS);
   expect(lockDelay(0)).toBeLessThan(20);
   for (let attempt = 0; attempt < 40; attempt++) expect(lockDelay(attempt)).toBeLessThan(260);
   expect(lockDelay(10)).toBeGreaterThanOrEqual(250);
-});
-
-test("the dependency lock is separate: holding it never blocks project state", async () => {
-  const project = "separate";
-  mkdirSync(paths.project(project), { recursive: true });
-  const entered = deferred();
-  const release = deferred();
-  const dependency = withDependencyLock(project, async () => { entered.resolve(); await release.promise; });
-  await entered.promise;
-  expect(await withProjectStateLock(project, async () => "saved")).toBe("saved");
-  release.resolve(); await dependency;
 });

@@ -558,7 +558,7 @@ repository: an `orch-xxxx` project referencing the original checkout (reused nex
 start there). With no project named it also reopens every project under
 `~/.orca/projects`. The ruled, pinned header shows bracketed project/display names (the active one
 marked `>`), cached model, effort, fast mode, the project's review-round limit
-and dynamic-dispatch switch, directory and remote, and refreshes when settings
+directory and remote, and refreshes when settings
 change (on a page switch it shows that page's project's values).
 Short terminals collapse header details to keep the input usable. A blank row
 separates the conversation (including streaming output) from the entire footer,
@@ -606,7 +606,7 @@ after Ctrl+N, a rename's `old → new`, `fetching models…`, `model set to …`
 and the daemon's `orchestrator: model … applies from the orchestrator's next
 request`, `/effort` picker results (`fetching effort levels…`, a dropped saved
 level, the saved pick), `/effort <level>`/`/fast` queries and saves,
-`/review-rounds` and `/dynamic-dispatch` queries and saves, `/accounts` selections, a daemon restart by the keeper (`orchestrator was not
+`/accounts` selections, a daemon restart by the keeper (`orchestrator was not
 running; restarted`; the first start is silent), `unknown command /x`, Ctrl+C's
 `turn cancelled. send a message to resume; press ctrl+c again within 2 seconds to exit.`
 and the daemon's acknowledgement that replaces it (`orchestrator: turn cancelled;
@@ -626,8 +626,7 @@ answers the next question) does not clear it, and it shows once the panel
 closes, until the next key. Each page keeps its own note,
 so a background page's shows when you switch to it (its keys there do not clear it). Notes are never written to
 the conversation, so `/refresh`, a reopen or an exit replay never bring them
-back. Errors, refusals (`usage: /fast [on|off]`, `usage: /review-rounds [n]`,
-`effort ultra is unsupported`, `orchestrator is not running: …`), the daemon's
+back. Errors, refusals (`usage: /fast [on|off]`, `effort ultra is unsupported`, `orchestrator is not running: …`), the daemon's
 failures and warnings (`orchestrator: turn failed: …`, `compaction failed: …`,
 `background compaction failed; original history kept: …`, `cancel not
 acknowledged: …`, memory-index warnings, `live output truncated …`), command output you need to
@@ -752,103 +751,17 @@ conversation. Background projects' question counts are shown too.
 Harness state lives under `~/.orca` by default; your checkout and worker
 worktrees stay outside it. Design notes are in [PLAN.md](PLAN.md).
 
-## The cycle
+## Execution and coordination
 
-The orchestrator shows its plan; a clear request to implement authorizes that scope.
-It spawns a **worker** on a branch to implement the request and run only relevant
-checks. Each worker run ends in one commit and one report, including the check
-commands, tested commit/code state, results and saved failure-output paths.
-Never run the full test suite, baseline comparisons or duplicate tests. A check
-runs once for the code it covers; feedback permits a rerun only when that code
-changes. Unchanged passing results carry forward; unchanged failures are reported,
-not retried. Missing evidence is reported rather than triggering broader checks.
+One agent loop handles direct work and focused delegation. The brief defines exploration, implementation, review, CI observation or publication; none requires a fixed role sequence. Worker/reviewer names remain assignment presets and preserve role-specific model overrides and existing histories.
 
-The **reviewer** reads the diff against the request, inspects failed-check output
-and runs `complexity` (cyclomatic and cognitive, per function). It never runs tests
-or validation commands, investigates passing checks again, or edits code. Feedback
-goes to the worker for changes and relevant checks; subsequent reviews focus on
-the new diff and prior findings. This repeats for at most `maxReviewRounds` rounds.
-Unresolved findings at the limit are reported without claiming readiness.
+Tasks retain stable project numbers, progress, ownership, explicit dependency metadata and verified PR links. They do not enforce review rounds or publication gates. Any authorized agent may publish with ordinary Git/GitHub tools and link its PR using `task pr`. Optional `task ready` records exact-head evidence; it grants no merge permission and does not require a reviewer.
 
-After approval, "watch ci" publishes the PR and performs CI-only validation,
-not a blocking watch. Use bounded one-shot `gh pr checks <PR>` and, when needed,
-`gh pr view <PR> --json headRefOid,reviewDecision,mergeStateStatus` calls with
-bash `timeout_ms: 10000`. Never use `--watch`, shell polling loops or long sleeps
-for CI monitoring, including output-piped watches. Return control/check inbox
-between observations; report pending with the PR link, observed head/status and
-next step instead of holding the turn. Use `task attention` with kind `waiting`
-for pending CI; a later turn can take another snapshot. Timeouts/errors are
-unknown, not success.
+Merge observation polls only PRs linked to project tasks. It updates merged status and sends a durable `[pr-merged]` notification. It never stops agents, removes workspaces, deletes branches, rebases other tasks or pulls the original checkout. Cleanup and branch updates are explicit agent/user work.
 
-Reuse worker evidence matched to the exact current clean PR head; never rerun
-jobs or add a local validation pass. Readiness also requires required hosted
-checks and required approval to be satisfied. No hosted checks is not a pass
-and cannot replace worker evidence. Failures return to the worker through the
-orchestrator; missing/stale evidence prevents readiness. Recheck the head when
-observing status; changed heads invalidate prior readiness.
-These are role/dispatch instructions, not shell-command enforcement, a process
-cancellation mechanism or a durable check-result cache. They address blocking
-CI monitoring, not every possible cause of a later model stall. One agent codes on a branch at a
-time. When the branch's agent of the same role is still live (also after it
-reported, e.g. supervising a dev server), spawn delivers the prompt to its inbox
-and that run continues; it refuses, with what to do instead, for fresh=true, a
-baseCommit, a different taskId or reviewMode, or when the other role's agent is
-still running after a brief wait. Corrections to an existing task or unmerged PR reuse its task ID
-and branch, including CI failures, review feedback and user-requested fixes after
-a ready report. The orchestrator finds the task with `task list/get` and refreshes
-its PR state with `task pr` before resuming. It messages a running agent or
-restarts the worker on the same branch, then runs the task flow again. The reviewer
-updates the same PR and validates its new head; previous readiness is invalidated.
-These corrections need no new task, temporary branch or cherry-pick workaround.
-A separate small follow-up before PR publication can reuse the branch with a new
-task ID. Independent work, separate work after publication, and work after a merge
-get a new branch.
+Dynamic dispatch, review-round settings and the complexity tool have been removed. Saved global keys are ignored and omitted on the next configuration save; old project flow records are inert. Editable prompts, tools and skills remain available for personalized procedures.
 
-When a branch's PR is merged, the TUI notices within about 30 seconds (it asks
-`gh pr list --repo <origin> --state merged` for each open project whose origin
-is on GitHub; without `gh` nothing happens): it stops that branch's worker and
-reviewer, removes the worktree and the local and remote branch, deletes their
-transcripts, and tells the orchestrator, which tells you and starts whatever was
-waiting on that branch. Because main moved, the same notice reports the other
-registered tasks' open PRs: each is looked up once (`gh pr view`), and the ones
-GitHub now reports as conflicting (`mergeable` CONFLICTING or `mergeStateStatus`
-DIRTY) are listed, "conflicts with main now: #115 (collapse-tool-calls)", and
-their tasks become blocked ("conflicts with main after PR #N merged; rebase
-needed"; a ready-to-merge task loses its readiness). The orchestrator has each
-listed branch's worker rebase onto main before anything else, then runs the task
-flow again. PRs GitHub has not judged yet (`mergeable` UNKNOWN) or whose lookup
-failed are listed as "conflict state unknown (not computed yet or lookup
-failed)", never as conflicts; otherwise the notice says "no open PRs conflict".
-Later polls do not recheck a PR listed as unknown (the per-poll refresh does not
-act on mergeability), so "unknown" must not be read as "clean": ask that branch's
-worker, or `gh pr view`, before relying on it. Without any other registered PR
-the notice is unchanged.
-For original-checkout projects, cleanup never pulls or changes that checkout;
-update its default branch yourself. Legacy clone-based projects still fast-forward
-their managed checkout. The worktree is removed with `git worktree remove --force`,
-so ignored files in it, such as `.env`, are deleted too. Everything is kept, and the message says
-why, when the worktree has uncommitted changes, is on another branch, or the
-branch has commits that are not in the merged PR, or when an agent does not
-stop. PRs from forks, closed-unmerged PRs, branches without a PR, main and
-origin's default branch are never touched.
-
-`config.toml` holds `maxReviewRounds` (1), `dynamicDispatch` (false),
-`cyclomatic` (10) and `cognitive` (15). The review-round limit and the
-dynamic-dispatch switch are **per project**: `/review-rounds [n]` shows or sets
-the round count (0 to 100) and `/dynamic-dispatch [on|off]` the switch for the
-current page's project, saved as the `flow` record in `memory.sqlite` under the same
-project-state lock as the model. `config.toml`'s values are the defaults for
-every project without an override (a config value outside the range, or a
-`config.toml` that does not parse, falls back to the built-in defaults); the
-commands never write `config.toml`, and other projects are unaffected. 0 rounds
-skips review and sends the worker's branch straight to "watch ci". Each
-orchestrator turn and each worker/reviewer start reads its own project's values,
-so a change applies from that orchestrator's next turn. A malformed
-flow record is refused rather than repaired: the header shows `?` for both
-values and one line names the project (repeated only when the error changes or
-recurs after a successful read); a save fails until it is fixed or removed. Without an
-open page the commands only explain (`open a project before changing its
-settings`).
+Rolling compaction, project/account/model settings, inboxes, remote persistence and runtime diagnostics remain supported. See [architecture](ARCHITECTURE.md) and [performance and execution lifetime](PERFORMANCE.md).
 
 ## Subscription login
 
@@ -1210,11 +1123,7 @@ model contract, not a shell sandbox. Set concurrency to 1 for sequential executi
 
 ## Web search
 
-There are **eight tools**: `bash`, `spawn`, `message`, `ask`, `complexity`,
-`web_search`, `task` and `history`. Search and structured task access are available to every
-role; `history` is orchestrator-only (orchestrator: 7 tools, worker: 4, reviewer: 5). Search uses the current model's
-existing Claude/Codex subscription, with no extra API key, search service, slash
-command or browser tool.
+Search is available through `web_search` alongside file, command and coordination tools. Tool exposure follows agent capabilities; no complexity scorer is built in.
 
 `web_search` accepts a public `query` and optional `max_results` (1–10, default 5),
 and returns source URLs, titles and actual quoted excerpts where supported. Agents

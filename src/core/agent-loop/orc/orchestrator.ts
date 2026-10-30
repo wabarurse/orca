@@ -26,7 +26,6 @@ import { loadConfig, paths, type Config } from "../../../config";
 import { consume, pending, pendingInput, put, userInEpoch } from "../../data/inbox";
 import type { Message } from "../../../protocol";
 import { rolePrompt } from "../../prompt";
-import { effectiveFlow } from "../../data/projects";
 import type { Provider } from "../../../providers";
 import { registry } from "../../tools";
 import { toolsFor, type Tool, type ToolResult } from "../../tools";
@@ -322,7 +321,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
       if (inputEpoch(deps.project) !== epoch) { rolling.reset(); return; }
       await rolling.boundary(current, manual, maintenance);
     },
-    system: rolePrompt("orchestrator", { ...config, ...await effectiveFlow(deps.project, config) }), // per turn, so /review-rounds and /dynamic-dispatch apply next turn
+    system: rolePrompt("orchestrator"),
     ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project), executionEpoch: epoch },
     write: deps.write, onInbox: deps.onInbox, tracker: deps.tracker,
     onTool: deps.onTool, onToolResult: deps.onToolResult,
