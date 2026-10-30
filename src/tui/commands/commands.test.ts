@@ -5,14 +5,12 @@ import { join } from "node:path";
 import { archiveAgents, listAgents, agentWindows, openTaskAgents } from "../../core/tmux/liveness";
 import { deleteProject } from "./project";
 import { displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "../../core/data/projects/registry";
-import { DYNAMIC_DISPATCH_USAGE, dynamicDispatch, REVIEW_ROUNDS_USAGE, reviewRounds } from "./settings";
 import { recentModels, roleModelsLabel } from "./model";
 import { chooseScope, parseScope, scopeChoices, scopeUsage, type Scope } from "./scope";
 import { switchAllMenu } from "./switch-all";
 import { scopedChoices } from "./model-flow";
 import { loadConfig, paths, saveConfig } from "../../config/config";
 import { readProjectState } from "../../config/paths";
-import { effectiveFlow } from "../../core/data/projects/flow";
 import { tmux } from "../../core/tmux/runner";
 
 describe("recentModels", () => {
@@ -148,69 +146,6 @@ describe("repoHere", () => {
   });
 });
 
-describe("/dynamic-dispatch", () => {
-  test("shows, saves per project and refuses; config.toml is the default and stays untouched", async () => {
-    const before = process.env.ORCA_HOME;
-    const home = mkdtempSync(join(tmpdir(), "orca-dispatch-"));
-    process.env.ORCA_HOME = home;
-    mkdirSync(paths.project("one"), { recursive: true });
-    mkdirSync(paths.project("two"), { recursive: true });
-    try {
-      expect(await dynamicDispatch("one", "")).toBe("dynamic dispatch: off");
-      expect(await dynamicDispatch("one", "on")).toBe("dynamic dispatch set to on for this project; applies from the orchestrator's next turn");
-      expect((await effectiveFlow("one")).dynamicDispatch).toBe(true);
-      expect(await dynamicDispatch("one", "")).toBe("dynamic dispatch: on");
-      expect(await dynamicDispatch("two", "")).toBe("dynamic dispatch: off"); // another project keeps the default
-      expect((await loadConfig()).dynamicDispatch).toBe(false); // the global default is never written
-      for (const bad of ["ON", "true", "1", "yes", "on off", "of"]) expect(await dynamicDispatch("one", bad)).toBe(DYNAMIC_DISPATCH_USAGE);
-      expect(DYNAMIC_DISPATCH_USAGE).toBe(DYNAMIC_DISPATCH_USAGE.toLowerCase());
-      expect((await effectiveFlow("one")).dynamicDispatch).toBe(true);
-      expect(await dynamicDispatch("one", "off")).toBe("dynamic dispatch set to off for this project; applies from the orchestrator's next turn");
-      expect(await dynamicDispatch("one", "")).toBe("dynamic dispatch: off");
-      // config.toml supplies the default for projects without an override; a saved override wins over it.
-      await saveConfig({ dynamicDispatch: true });
-      expect(await dynamicDispatch("two", "")).toBe("dynamic dispatch: on");
-      expect(await dynamicDispatch("one", "")).toBe("dynamic dispatch: off");
-      await expect(dynamicDispatch("missing", "")).rejects.toThrow(); // no project directory: nothing to show or change
-    } finally {
-      if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("/review-rounds", () => {
-  test("shows, saves per project and refuses; config.toml is the default and stays untouched", async () => {
-    const before = process.env.ORCA_HOME;
-    const home = mkdtempSync(join(tmpdir(), "orca-rounds-"));
-    process.env.ORCA_HOME = home;
-    mkdirSync(paths.project("one"), { recursive: true });
-    mkdirSync(paths.project("two"), { recursive: true });
-    try {
-      expect(await reviewRounds("one", "")).toBe("review rounds: 1");
-      expect(await reviewRounds("one", "3")).toBe("review rounds set to 3 for this project; applies from the orchestrator's next turn");
-      expect((await effectiveFlow("one")).maxReviewRounds).toBe(3);
-      expect(await reviewRounds("two", "")).toBe("review rounds: 1");
-      expect((await loadConfig()).maxReviewRounds).toBe(1);
-      expect(await reviewRounds("one", "0")).toContain("set to 0");
-      expect(await reviewRounds("one", "")).toBe("review rounds: 0");
-      for (const bad of ["-1", "1.5", "two", "1e2", "1e23", "2 3", "101", "999", "0100", "9007199254740993"]) expect(await reviewRounds("one", bad)).toBe(REVIEW_ROUNDS_USAGE);
-      expect((await effectiveFlow("one")).maxReviewRounds).toBe(0);
-      await saveConfig({ maxReviewRounds: 5 });
-      expect(await reviewRounds("two", "")).toBe("review rounds: 5");
-      expect(await reviewRounds("one", "")).toBe("review rounds: 0");
-      // Both settings share one file: saving one keeps the other.
-      await dynamicDispatch("one", "on");
-      expect(await effectiveFlow("one")).toEqual({ maxReviewRounds: 0, dynamicDispatch: true });
-      expect(await reviewRounds("one", "2")).toContain("set to 2");
-      expect(await effectiveFlow("one")).toEqual({ maxReviewRounds: 2, dynamicDispatch: true });
-    } finally {
-      if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before;
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("project list", () => {
   const withHome = async (fn: (home: string) => Promise<void>) => {
     const prev = process.env.ORCA_HOME;
@@ -276,13 +211,13 @@ describe("project list", () => {
     await withHome(async (home) => {
       project(home, "keep");
       project(home, "gone");
-      await saveConfig({ model: "gpt-test", maxReviewRounds: 5 });
+      await saveConfig({ model: "gpt-test", compact: false });
       await togglePin("keep");
       await togglePin("gone");
       await deleteProject("gone", { live: async () => [], kill: async () => {} });
       const cfg = await loadConfig();
       expect(cfg.model).toBe("gpt-test");
-      expect(cfg.maxReviewRounds).toBe(5);
+      expect(cfg.compact).toBe(false);
       expect(cfg.pinned).toEqual(["keep"]);
     });
   });

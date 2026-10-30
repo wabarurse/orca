@@ -3,7 +3,7 @@ import { ConversationSelection, hitRow } from "./screen";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./components";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
 import type { ImageRef } from "../protocol";
-import { contextStatus, dispatchStatus, reviewStatus } from "./header";
+import { contextStatus } from "./header";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
 import { refreshTaskInboxData, TaskCounts, taskInboxLines, type TaskInboxData } from "./footer";
 import { cancelSession } from "../core/tmux";
@@ -24,11 +24,9 @@ import type { AgentInfo } from "../protocol";
 import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
 import { activeRoles, chooseModel, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
-import { reviewRounds, dynamicDispatch } from "./commands";
-import { paths, validRounds } from "../config";
+import { paths } from "../config";
 import { projectIdentity } from "../core/data/projects";
 import { effectiveModel } from "../core/data/projects";
-import { effectiveFlow, type FlowSettings } from "../core/data/projects";
 import type { Message } from "../protocol";
 import type { Orchestrator } from "../core/agent-loop/orc";
 import type { Entry } from "../protocol";
@@ -56,7 +54,7 @@ import { stickyRows, stickyUpdate, type StickyScreen } from "./screen";
 export { helpLines } from "./footer";
 export { lineRows, type Line } from "./conversation";
 
-import { type Page, type AppDeps, type ToolEvents, type Clock, type Note, realClock, SPINNER, NO_PAGE_FOR_SETTINGS, FRAME_MS, RESIZE_MS, SPIN_MS, TICK_MS, LIVE_CHECK_MS, AGENTS_TICK_MS, AGENTS_REFRESH_MS, type ProjectListState, type ActiveMenu, type AgentsTimer, type TaskTreeState, type TaskInboxState, type ClearConfirmation, type Command, parseCommand, listKeyId, type KeyLayer, MENU_CHARS, menuKeyId, active, EDITS, typedText } from './app-state';
+import { type Page, type AppDeps, type ToolEvents, type Clock, type Note, realClock, SPINNER, FRAME_MS, RESIZE_MS, SPIN_MS, TICK_MS, LIVE_CHECK_MS, AGENTS_TICK_MS, AGENTS_REFRESH_MS, type ProjectListState, type ActiveMenu, type AgentsTimer, type TaskTreeState, type TaskInboxState, type ClearConfirmation, type Command, parseCommand, listKeyId, type KeyLayer, MENU_CHARS, menuKeyId, active, EDITS, typedText } from './app-state';
 export { type Page, type AppDeps, type ToolEvents, type Clock, AGENTS_TICK_MS, type Command, parseCommand, type KeyLayer } from './app-state';
 
 export class App {
@@ -314,10 +312,6 @@ export class App {
   private refreshing?: Promise<void>;
   private refreshAgain = false;
   private refreshForce = false;
-  /** Per-page read generations for the project's review limit and dispatch switch; a slow read never replaces a newer one. */
-  private readonly flowVersions = new WeakMap<Page, number>();
-  /** The last flow read failure said per page, so a poll repeats a persisting error once, not every 2 s. */
-  private readonly flowErrors = new WeakMap<Page, string>();
   private readonly deferredRefresh = new Set<Page>();
   private readonly renderedHeads = new WeakMap<Page, string | undefined>();
   private readonly refreshedTurns = new WeakSet<Page>();
@@ -590,7 +584,7 @@ export class App {
   private header(page: Page, decorate = true): string[] {
     const settings = page.settings;
     const model = `${page.model ? roleModelsLabel(page.model, page.roles) : "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), review: reviewStatus(page.review), dispatch: dispatchStatus(page.dispatch), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Submission hides the welcome immediately, even before inbox consumption. */
@@ -625,51 +619,6 @@ export class App {
     const model = page.roles?.orchestrator ?? page.model; // the orchestrator's own model, its /model override if set
     if (page.view || !model) return contextStatus(undefined);
     return contextStatus(model, page.orch.contextUsage?.(model), page.orch.contextWindow?.(model));
-  }
-
-  private bumpFlow(page: Page): number {
-    const version = (this.flowVersions.get(page) ?? 0) + 1;
-    this.flowVersions.set(page, version);
-    return version;
-  }
-
-  /** The page's project's review limit and dispatch switch in one read per page per refresh, never during paint.
-   * A slow pre-save/pre-refresh read must never replace a newer observation; a failed or invalid read shows both as unknown. */
-  private async refreshFlow(page: Page): Promise<void> {
-    const version = this.bumpFlow(page);
-    let review: number | undefined, dispatch: boolean | undefined;
-    try {
-      const saved = await (this.deps.flowSettings ?? effectiveFlow)(page.project);
-      if (validRounds(saved?.maxReviewRounds)) review = saved.maxReviewRounds;
-      if (typeof saved?.dynamicDispatch === "boolean") dispatch = saved.dynamicDispatch;
-    } finally {
-      if (version === this.flowVersions.get(page) && !this.closed && (page.review !== review || page.dispatch !== dispatch)) {
-        page.review = review;
-        page.dispatch = dispatch;
-        if (page === this.page) this.draw();
-      }
-    }
-  }
-
-  /** A poll's flow read failure is said once per distinct error per page; success clears it so a recurrence is reported again. */
-  private async pollFlow(page: Page): Promise<void> {
-    try { await this.refreshFlow(page); this.flowErrors.delete(page); }
-    catch (err) {
-      const line = `project settings refresh failed: ${err}`;
-      if (this.flowErrors.get(page) === line) return;
-      this.flowErrors.set(page, line);
-      this.note(dim(line), page);
-    }
-  }
-
-  /** Settings feedback, including refusals, uses the temporary status row. */
-  private flowCommand(page: Page | undefined, args: string, command: typeof reviewRounds): Promise<void> | void {
-    if (!page) return this.note(dim(NO_PAGE_FOR_SETTINGS));
-    this.bumpFlow(page); // invalidate observations started before this save
-    return command(page.project, args).then(async result => {
-      this.note(result, page);
-      await this.refreshFlow(page); // read the saved value, never infer success from input
-    });
   }
 
   private spinner(): string { return SPINNER[Math.floor(this.clock.now() / SPIN_MS) % SPINNER.length]!; }
@@ -904,7 +853,6 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
         this.refreshForce = false;
         await Promise.all([
           ...this.pages.map(page => this.refreshPage(page, forced)),
-          ...this.pages.map(page => this.pollFlow(page)),
         ]);
         await this.refreshProjects().catch(err => this.note(dim(`refresh projects failed: ${err}`)));
         await this.refreshTaskInbox();
@@ -1042,7 +990,6 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
     catch (error) { this.note(dim(`image recovery failed: ${error}`), page); }
-    await this.pollFlow(page);
     this.pages.push(page);
     this.active = this.pages.length - 1;
     void this.keepDaemon(project, page); // the daemon starts in the background; the page shows what happened
@@ -1459,8 +1406,6 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [orch|worker|reviewer]", description: "choose the model for all agents or one role" } }],
     ["/accounts", { run: (_, page) => this.accountsMenu(page), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args, page) => this.login(args, page), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
-    ["/review-rounds", { args: true, run: (args, page) => this.flowCommand(page, args, reviewRounds), help: { group: "advanced", label: "/review-rounds [n]", description: "project review rounds before ci; 0 goes straight to ci" } }],
-    ["/dynamic-dispatch", { args: true, run: (args, page) => this.flowCommand(page, args, dynamicDispatch), help: { group: "settings", label: "/dynamic-dispatch [on|off]", description: "show or set the project's dynamic dispatch" } }],
     ["/questions", { run: (_, page) => this.questions.command(page), help: { group: "conversation", label: "/questions", description: "inbox questions (ctrl+q); enter answers or picks skip; shift+tab tasks" } }],
     ["/back", { run: (_, page) => (page?.view ? page.view.leave() : this.note(dim("not viewing an agent"))), help: { group: "conversation", label: "/back", description: "return from agent view (also esc)", viewOnly: true } }],
     ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "commands and keyboard shortcuts; esc closes" } }],

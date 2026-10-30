@@ -2,7 +2,7 @@
 
 Orca uses one agent loop across orchestrator, worker and reviewer roles. The model chooses tools from the user's current request and evidence. There is no classifier that assigns conversations to direct execution, iteration or publication loops. A one-off script can run directly or in a worker without registering a task, creating a reviewer, committing, opening a PR or starting CI.
 
-Publication remains a separately authorized capability. Existing task, dependency, review, CI and merge safeguards still apply when publishing. This change does not auto-merge or install a running build.
+Publication remains a separately authorized capability. Tasks record evidence and PR links; review and publication follow the authorized brief and repository instructions. This change does not auto-merge or install a running build.
 
 ## Delivered capabilities
 
@@ -31,7 +31,7 @@ Publication remains a separately authorized capability. Existing task, dependenc
 
 The orchestrator delegates based on how much intermediate context the work is likely to produce, not labels such as exploration or implementation. Many reads, long outputs and repeated trials/checks are reasons to assign a focused worker before collecting the detail. A bounded action with a short result can stay direct. If it grows, the orchestrator hands off the remaining outcome with findings and evidence references. One worker owns that outcome through validation; follow-up corrections return to its existing workspace. The coordinator inspects targeted evidence for decisions rather than routinely repeating the worker's investigation.
 
-This is model guidance in the existing loop, not a hard router or a guarantee that the model always delegates. `spawn` remains optional and independent of the publication-specific dynamic-dispatch setting. The coordinator retains its direct tools. New workers receive only their brief plus applicable instructions/knowledge, not the coordinator's conversation history.
+This is model guidance in the existing loop, not a hard router or a guarantee that the model always delegates. `spawn` remains optional; no dispatch switch selects a workflow. The coordinator retains its direct tools. New workers receive only their brief plus applicable instructions/knowledge, not the coordinator's conversation history.
 
 The message tool enforces a separate report boundary: up to 2,000 characters of report body can reach the orchestrator from a worker or reviewer. Longer reports require an explicit, nonempty `summary` within that limit; delivery contains the summary plus an artifact path, and the complete text is saved in `tool-outputs/reports/`. A summary can also archive a shorter report. Missing or oversized summaries are rejected before delivery, never silently truncated or summarized by another model. Summaries must retain outcomes, checked revision, checks, failures, uncertainty and decisions needed; the runtime bounds size but cannot verify their completeness. Report only completion, blockers or material changes, without splitting logs into multiple messages. This limit is per message; accumulated reports still occupy context until compaction. Ordinary direct tool-result retention is unchanged.
 
@@ -82,7 +82,7 @@ Orca retains one tmux session per project and windows for its agents. Running Or
 
 `sandbox = "off"` preserves the existing full-access default. Explicit `sandbox = "workspace"` uses macOS sandbox-exec or Linux bubblewrap to restrict writes. Invalid sandbox values, malformed execution configuration or missing platform support fail rather than fall back to full access.
 
-Workers may write their workspace, temporary storage, device files and Git metadata required for worktree commits. Reviewers get temporary storage but no workspace write allowance. Shared Git metadata includes refs and objects: this is not per-ref Git authorization. Read and network access remain available; this profile is not a secret-isolation container. Structured file tools enforce their own narrower path/revision rules. macOS write-denial behavior is exercised locally; Linux bubblewrap needs verification on a supported Linux host.
+Focused agents use the same workspace write boundary, including temporary storage, device files and Git metadata required for worktree commits. The reviewer preset defaults to inspection through its instructions; the brief can authorize edits or commands without a different execution engine. Shared Git metadata includes refs and objects: this is not per-ref Git authorization. Read and network access remain available; this profile is not a secret-isolation container. Structured file tools enforce their own narrower path/revision rules. macOS write-denial behavior is exercised locally; Linux bubblewrap needs verification on a supported Linux host.
 
 ## Evidence, builds and measurement
 

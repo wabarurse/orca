@@ -293,40 +293,34 @@ test('automatic copy errors stay visible, highlight supports explicit retry; mot
   } finally { app.quit(); await running; }
 });
 
-test("unchanged telemetry polls avoid redraw; task progress is independent of the saved limit and agent switches render honestly", async () => {
+test("unchanged telemetry polls avoid redraw and agent switches render honestly", async () => {
   const term = fakeTerm(80, 24);
   const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../protocol/task/tasks").TaskRow[];
   const fake = fakeOrchestrators();
-  let limit = 7;
-  const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks, flowSettings: async () => ({ maxReviewRounds: limit, dynamicDispatch: false }),
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks,
     agents: async () => [], openOrchestrator: async (...args) => ({ ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]), contextUsage: () => 12500 }) });
   const running = app.run("header-poll-telemetry");
   try {
     await until(() => !!app.page);
     await app.refreshHeader();
-    await until(() => term.screen().includes("ctx ~12.5k/272k") && term.screen().includes("review rounds: 7"));
+    await until(() => term.screen().includes("ctx ~12.5k/272k"));
     await settle();
     const draws = spyOn(app, "draw"), bytesBefore = term.writes.length;
     for (let i = 0; i < 20; i++) await app.refreshHeader();
     expect(draws).not.toHaveBeenCalled();
     expect(term.writes.length).toBe(bytesBefore);
-    limit = 0;
-    await app.refreshSessions();
-    await app.refreshHeader();
-    expect(draws).toHaveBeenCalled();
-    await until(() => term.screen().includes("review rounds: 0"));
     draws.mockRestore();
     // These views have no usage accessor of their own: never borrow the main
     // session's estimate or current project model limit for another agent.
     app.page!.view = { name: "reviewer-feat-two", lines: [], leave() {}, live: false, calls: new Calls() };
     app.draw();
-    await until(() => term.screen().includes("review rounds: 0") && term.screen().includes("view reviewer-feat-two"));
+    await until(() => term.screen().includes("view reviewer-feat-two"));
     expect(term.screen()).toContain("ctx ?/?");
     app.page!.view = { ...app.page!.view!, name: "worker-feat-one" };
     app.draw();
-    await until(() => term.screen().includes("view worker-feat-one") && term.screen().includes("review rounds: 0"));
+    await until(() => term.screen().includes("view worker-feat-one"));
     app.page!.view = null; app.draw();
-    await until(() => term.screen().includes("ctx ~12.5k/272k") && term.screen().includes("review rounds: 0"));
+    await until(() => term.screen().includes("ctx ~12.5k/272k"));
   } finally { app.quit(); await running; }
 });
 
@@ -334,7 +328,7 @@ test("header denominator: verified claude window, unlisted model shows the sessi
   const term = fakeTerm(80, 24);
   const fake = fakeOrchestrators();
   let model = "claude-opus-5-5";
-  const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], flowSettings: async () => ({ maxReviewRounds: 7, dynamicDispatch: false }), agents: async () => [],
+  const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], agents: async () => [],
     openOrchestrator: async (...args) => ({ ...await fake.openOrchestrator(args[0], args[1], args[2], args[3]), contextUsage: () => 45000,
       contextWindow: (m: string) => (m === "claude-opus-5-5" ? { limit: 1000000, estimated: false } : { limit: 64000, estimated: true }) }) });
   const running = app.run("header-denominator");

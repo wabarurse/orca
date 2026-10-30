@@ -37,8 +37,6 @@ export function assertProjectIdentity(project: string, identity: string, what = 
 /** How long a project state transaction waits for other holders before it gives up. Holders are brief (ledger and
  * small state files; no network, git, gh or model calls), so this covers a queue of them across processes. */
 export const PROJECT_LOCK_WAIT_MS = 30_000;
-/** Dependency task actions hold their own lock across git/gh work, which can take minutes on a large repository. */
-export const DEPENDENCY_LOCK_WAIT_MS = 300_000;
 /** Backoff between attempts: doubling from 10ms to 250ms, plus jitter so contenders do not retry in step. */
 export const lockDelay = (attempt: number): number => Math.min(10 * 2 ** attempt, 250) + Math.floor(Math.random() * 10);
 
@@ -49,12 +47,6 @@ const validProject = (project: string) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(pr
 export function withProjectStateLock<T>(project: string, action: () => Promise<T>): Promise<T> {
   if (!validProject(project)) return Promise.reject(new Error("invalid project id"));
   return serialized(join(paths.runtime, "project-locks", project), project, PROJECT_LOCK_WAIT_MS, "project state", action);
-}
-/** Serialize a project's dependency task actions (and the run preparation they exclude) across processes. Taken before,
- * never inside, the project state lock; the action takes that lock only briefly for its ledger reads and writes. */
-export function withDependencyLock<T>(project: string, action: () => Promise<T>): Promise<T> {
-  if (!validProject(project)) return Promise.reject(new Error("invalid project id"));
-  return serialized(join(paths.runtime, "dependency-locks", project), project, DEPENDENCY_LOCK_WAIT_MS, "task dependency operation", action);
 }
 function serialized<T>(key: string, project: string, waitMs: number, what: string, action: () => Promise<T>): Promise<T> {
   const next = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() => locked(key, project, waitMs, what, action));

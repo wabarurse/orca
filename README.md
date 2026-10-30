@@ -39,3 +39,5 @@ Existing homes are refused without modification. There is no automatic upgrade t
 Orca uses one adaptive conversation loop: run a small action directly, delegate substantial work with a focused brief, and keep revising the same result. Review and publication remain available when requested. Select a worker in `/agents` and type feedback to it; `/back` returns to the orchestrator. `/runtime` shows loaded build identities and background work; `/usage` shows measured project usage.
 
 See [adaptive execution, personalization and background tools](docs/ADAPTIVE_RUNTIME.md) for the new capabilities, limits and validation instructions.
+
+Architecture follows a small execution core with personalized instructions and skills. Tasks, inboxes, project model/account settings and rolling compaction remain first-class features; review and publication have no mandatory workflow. PR merge notifications preserve agents and workspaces. See [architecture and simplification](docs/ARCHITECTURE.md).

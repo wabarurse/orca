@@ -6,7 +6,6 @@ import { join } from "node:path";
 import type { Orchestrator } from "../core/agent-loop/orc/orchestrator";
 import { displayName, newProjectName, setDisplayName } from "../core/data/projects/registry";
 import { loadConfig, paths } from "../config/config";
-import { effectiveFlow } from "../core/data/projects/flow";
 import { AGENTS_TICK_MS, App, type Clock, type ToolEvents } from "./app";
 import { historyRows } from "./conversation/lines";
 import { text as said } from "../test/fake-provider";
@@ -326,41 +325,7 @@ describe("tui app", () => {
     await running;
   });
 
-  test("/review-rounds works while viewing an agent and while signing in", async () => {
-    const term = fakeTerm();
-    const orchs = fakeOrchestrators();
-    let finish!: () => void;
-    const login = async () => { await new Promise<void>((r) => (finish = r)); return "signed in"; };
-    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, login });
-    mkdirSync(paths.project("rounds"), { recursive: true }); // the setting lives in the project's directory
-    const running = app.run("rounds");
-    await until(() => !!app.page);
-    const page = app.page!;
-    const view = { name: "worker-x", lines: [] as string[], leave: () => {}, live: false, calls: new Calls() };
-    page.view = view;
-    const note = () => strip(app.frame().inputArea!.lines.join("\n"));
-    term.type("/review-rounds 3\r");
-    await until(() => note().includes("review rounds set to 3")); // a transient note (cut to the width), even in an agent view
-    expect(view.lines.join("\n")).not.toContain("review rounds set to 3");
-    expect((await effectiveFlow("rounds")).maxReviewRounds).toBe(3);
-    expect((await loadConfig()).maxReviewRounds).toBe(1); // the project's setting, not config.toml's
-    page.view = null;
-    term.type("/login claude\r");
-    await until(() => app.loggingIn);
-    term.type("/review-rounds 0\r");
-    await until(() => note().includes("review rounds set to 0"));
-    expect((await effectiveFlow("rounds")).maxReviewRounds).toBe(0);
-    term.type("/review-rounds\r");
-    await until(() => note().includes("review rounds: 0"));
-    expect(page.lines.join("\n")).not.toContain("queued");
-    expect(page.lines.join("\n")).not.toContain("review rounds");
-    finish();
-    await until(() => !app.loggingIn);
-    await Bun.sleep(20);
-    expect(orchs.said.rounds).toEqual([]); // nothing was queued for the orchestrator
-    app.quit();
-    await running;
-  });
+
 
   test("text queued during a sign-in that fails is dropped, not run", async () => {
     const term = fakeTerm(200);
@@ -446,7 +411,7 @@ describe("tui app", () => {
     await until(() => !!app.frame().help);
     const help = app.frame().help!.lines.join("\n");
     expect(app.page!.lines).toEqual([]);
-    for (const cmd of ["/keys", "/rename <name>", "/new [name] [directory]", "/close", "/quit", "/agents", "/model", "/accounts", "/login claude|codex", "/review-rounds [n]", "/dynamic-dispatch [on|off]"]) expect(help).toContain(cmd);
+    for (const cmd of ["/keys", "/rename <name>", "/new [name] [directory]", "/close", "/quit", "/agents", "/model", "/accounts", "/login claude|codex"]) expect(help).toContain(cmd);
     expect(help).not.toContain("/back");
     app.quit();
     await running;
@@ -1159,7 +1124,7 @@ describe("frames, resizes, startup and crashes", () => {
     expect(console.log).not.toBe(log);
     const stderr = spyOn(process.stderr, "write");
     const stdout = spyOn(process.stdout, "write");
-    await Bun.write(paths.config, "maxReviewRounds = [broken");
+    await Bun.write(paths.config, "model = [broken");
     try {
       await loadConfig();
       await until(() => term.screen().includes("orca: ignoring"));

@@ -75,7 +75,7 @@ test("bounded header budgets retain each field before wrapping long metadata", (
 test("fin fits to the right of metadata and yields to fields on tiny terminals", () => {
   for (const cols of [1, 20, 40, 68, 80, 100, 160]) for (const rows of [6, 12, 24, 36, 60, 90]) {
     const budget = headerHeight(rows);
-    const c = { ...chapter, context: "24k / 272k", review: "review 1", dispatch: "dispatch off", fin: { time: 1200, active: true } };
+    const c = { ...chapter, context: "24k / 272k", review: "review 1", fin: { time: 1200, active: true } };
     const header = plain(chapterRows(c, cols, budget));
     expect(header.length).toBeLessThanOrEqual(budget);
     expect(header.every(line => Bun.stringWidth(line) <= cols)).toBe(true);
@@ -88,7 +88,7 @@ test("fin fits to the right of metadata and yields to fields on tiny terminals",
     }
   }
   const settings = "gpt-6-astra · effort medium · fast off";
-  const ordinary = chapterRows({ ...chapter, model: settings, context: "ctx 0 / 272k", review: "review rounds: 1", dispatch: "dispatch off", fin: { time: 0, active: true } }, 80, headerHeight(24));
+  const ordinary = chapterRows({ ...chapter, model: settings, context: "ctx 0 / 272k", fin: { time: 0, active: true } }, 80, headerHeight(24));
   expect(plain(ordinary).join("\n")).toContain(`model ${settings}`);
 });
 
@@ -105,7 +105,7 @@ test("the account leads the model field; a narrow width wraps it when a row is s
   // No spare row: the tail is clipped; the account and the orchestrator's model stay.
   const narrow = plain(chapterRows(c, 60, 5));
   expect(narrow).toHaveLength(5);
-  expect(narrow[1]).toBe("account anthropic:phoebe · model orch claude-opus-5-5 · wo…");
+  expect(narrow[1]).toBe("account anthropic:phoebe · model orch claude-opus-5-5 · wor…");
   expect(narrow[2]).toBe("/repo");
   expect(narrow.every(line => Bun.stringWidth(line) <= 60)).toBe(true);
 });

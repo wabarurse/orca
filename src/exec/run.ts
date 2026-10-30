@@ -6,7 +6,6 @@ import { editableTool } from "../core/definitions";
 
 import { loadConfig, paths } from "../config";
 import { createAgent, type AgentOptions } from "../core/agent-loop/loop";
-import { effectiveFlow } from "../core/data/projects";
 import { execution } from "../core/data/projects/lifecycle";
 import { effectiveModel, projectModelResolver } from "../core/data/projects";
 import { open } from "../core/data/transcripts";
@@ -94,7 +93,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker: Tr
     tools,
     model,
     compaction: { enabled: config.compact, fallback: config.contextLimitFallback, triggerTokens: config.workerContextTokens },
-    system: rolePrompt(opts.role, { ...config, ...await effectiveFlow(opts.project, config) }), // this project's review rounds and dispatch, not config.toml's
+    system: rolePrompt(opts.role),
     ctx: { run: opts.run, project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd(), executionEpoch: epoch },
     tracker,
   });

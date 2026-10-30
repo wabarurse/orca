@@ -56,7 +56,7 @@ describe("help appearance fixtures", () => {
     expect(plain(stickyRows(f, history, chrome(f)).rows)).toMatchSnapshot();
     const panel = helpPanel({ ...f, rows: 19 });
     expect(panel.top).toBe(panel.maxTop);
-    expect(plain(panel.rows)).toContain("/review-rounds");
+    expect(plain(panel.rows)).toContain("/keys");
     expect(plain(panel.rows)).toContain("esc close");
   });
 });

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { paths } from "../../../config/config";
-import { allTasks, archiveMergedTasks, blockConflictingTask, getTask, invalidateTaskBranch, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun, validateTaskReadiness } from "./tasks";
+import { allTasks, archiveMergedTasks, getTask, invalidateTaskBranch, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun, validateTaskReadiness } from "./tasks";
 import { taskPR, taskStatusLabels, type PRObservation, type Task } from "../../../protocol/task/tasks";
 import { beginRun, recoverTaskRuns, supervise } from "../../tmux/exits";
 import { afterExit } from "../../../exec/after-exit";
@@ -62,10 +62,11 @@ test("schema rejects unauthorized work, unsafe fields, corrupt versions/status/r
   await expect(registerTask(project, { ...input(), branch: "../other" })).rejects.toThrow("branch");
   const t = await registerTask(project, input()), path = join(paths.project(project), "tasks.json");
   const originals = { version: 1, tasks: [t] };
-  for (const corrupt of [{ ...originals, version: 99 }, { version: 1, tasks: [{ ...t, status: "completed" }] }, { version: 1, tasks: [{ ...t, status: "ready_to_merge" }] }, { version: 1, tasks: [t, t] }, { version: 1, tasks: [{ ...t, runs: [{}] }] }]) {
-    const bytes = JSON.stringify(corrupt); writeFileSync(path, bytes);
-    await expect(allTasks(project)).rejects.toThrow();
-    await expect(registerTask(project, input())).rejects.toThrow();
+  for (const [index, corrupt] of [{ ...originals, version: 99 }, { version: 1, tasks: [{ ...t, status: "completed" }] }, { version: 1, tasks: [{ ...t, status: "ready_to_merge" }] }, { version: 1, tasks: [t, t] }, { version: 1, tasks: [{ ...t, runs: [{}] }] }].entries()) {
+    const importing = `${project}-invalid-${index}`; mkdirSync(paths.project(importing), { recursive: true });
+    const path = join(paths.project(importing), "tasks.json"), bytes = JSON.stringify(corrupt); writeFileSync(path, bytes);
+    await expect(allTasks(importing)).rejects.toThrow();
+    await expect(registerTask(importing, input())).rejects.toThrow();
     expect(readFileSync(path, "utf8")).toBe(bytes);
   }
 });
@@ -165,22 +166,7 @@ test("reads and a no-op branch invalidation never wait on the project lock anoth
   expect((await getTask(project, t.id)).readiness).toBeUndefined();
 });
 
-test("a conflict found after another merge blocks the task and invalidates readiness once; repeats are no-ops", async () => {
-  const t = await ready();
-  const reason = "conflicts with main after PR #9 merged; rebase needed";
-  const blocked = await blockConflictingTask(project, t.id, reason);
-  expect(blocked).toMatchObject({ status: "reviewing", attention: { kind: "blocked", reason } });
-  expect(blocked.readiness).toBeUndefined();
-  expect(blocked.history.at(-1)).toMatchObject({ kind: "readiness_invalidated", attention: { kind: "blocked", reason } });
-  expect(await blockConflictingTask(project, t.id, reason)).toEqual(blocked);
-  // The PR observation that follows keeps the block (it only overwrites waiting attention).
-  await observeTaskPR(project, t.id, { ...observation(), ready: false, mergeable: "conflicting" });
-  expect((await getTask(project, t.id)).attention).toEqual({ kind: "blocked", reason });
-  const other = await registerTask(project, input("feat/y"));
-  expect((await blockConflictingTask(project, other.id, reason)).history.at(-1)?.kind).toBe("attention");
-  await archiveMergedTasks(project, observation().pr, new Date().toISOString());
-  await expect(blockConflictingTask(project, t.id, reason)).rejects.toThrow("archived");
-});
+
 
 for (const wasReady of [false, true]) test(`same-PR correction after ${wasReady ? "a ready report" : "CI failure"} reuses the task and branch through spawn and revalidation`, async () => {
   const t = await (wasReady ? ready() : reviewing());

@@ -14,14 +14,7 @@ Limits come only from verified model metadata, never the compaction fallback.
 Unlisted models therefore show `?` for their limit. Agent views show both values as unknown rather than borrowing the project's
 selected model or orchestrator usage.
 
-`review rounds: n` is the saved global `maxReviewRounds`, the same value
-shown and set by `/review-rounds [n]` (default 1, integer range 0–100). It is
-not task progress or a distribution. Every project and agent view uses the
-same cached snapshot. Startup, successful command execution, `/refresh`, and
-passive session refresh reread configuration outside paint. Generation checks
-prevent a late pre-save read from replacing a newer value. Read failures or
-invalid accessor results show `?`; normal config-file fallback behavior stays
-the same as `/review-rounds`.
+The header shows context, project/account/model and workspace identity. It has no review-round or dispatch setting and performs no flow-settings polling.
 
 Task review bookkeeping is unchanged: confirmed `reviewMode: review` starts
 count toward actual task rounds, `watch-ci` starts do not, and legacy starts
@@ -47,8 +40,7 @@ installation/tool schema before using reviewer dispatches under this contract.
 Identical header snapshots do not schedule a redraw. Context estimates
 are cached by transcript head, model and request-configuration identity: repeated
 draws do not traverse or serialize the chain. On narrow screens an oversized
-telemetry row stacks context/model/review; at short heights model and context
-remain before the configured review count. Agent identity precedes paths. Selection
+telemetry row stacks context/model; short screens prioritize those values. Agent identity precedes paths. Selection
 completion/auto-copy remains the main-branch behavior; telemetry adds no copy
 or selection ownership operations.
 

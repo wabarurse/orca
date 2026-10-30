@@ -184,3 +184,14 @@ for (const replacement of ["project directory", "repository binding"] as const) 
     }
   });
 }
+
+test("legacy stack metadata remains evidence without enforcing branch or publication workflow", async () => {
+  const task = { ...legacy(crypto.randomUUID(), "2025-01-01"), dependencyProvenance: { version: 1, stack: { historical: "retain as opaque evidence" } } };
+  writeFileSync(path(), JSON.stringify({ version: 1, tasks: [task] }));
+  const imported = await allTasks(project);
+  expect(imported[0]?.id).toBe(task.id);
+  await setTaskDependencies(project, task.id, []);
+  expect((await getTask(project, task.id)) as unknown).toMatchObject({ dependencyProvenance: task.dependencyProvenance });
+  await prepareTaskRun(project, task.id, task.branch, { id: "followup", role: "worker", agent: "worker-followup" });
+  expect((await getTask(project, task.id)).runs.at(-1)?.state).toBe("prepared");
+});

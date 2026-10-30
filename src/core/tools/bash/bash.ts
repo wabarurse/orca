@@ -69,7 +69,7 @@ export const bash: Tool = {
       if (Buffer.byteLength(artifact.partialPath) + 240 > cap) throw new Error("tool output path exceeds preview budget; increase max_output_bytes and maxToolResultBytes");
       ctx.signal?.throwIfAborted();
       execution.assertActive(ctx.project, epoch);
-      const argv = await shellCommand(`exec 2>&1\n${command}`, ctx.cwd, ctx.role === "reviewer");
+      const argv = await shellCommand(`exec 2>&1\n${command}`, ctx.cwd, false);
       execution.assertActive(ctx.project, epoch);
       const proc = Bun.spawn(argv, { cwd: ctx.cwd, detached: true, stdout: "pipe", stdin: "ignore" });
       const kill = () => killGroup(proc);

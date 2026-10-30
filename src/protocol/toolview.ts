@@ -44,17 +44,11 @@ function askArgs(input: Input): string {
   return qs.length > 1 ? `${qs.length} questions: ${first}` : first;
 }
 
-function complexityArgs(input: Input): string {
-  const files = Array.isArray(input.files) ? input.files.map((f) => oneLine(plain(String(f)))) : [];
-  return files.length ? files.join(", ") : `changed files${input.base ? ` vs ${str(input.base)}` : ""}`;
-}
-
 /** Per-tool input summaries; anything else shows its first string argument. */
 const ARGS: Record<string, (input: Input) => string> = {
   bash: (i) => oneLine(str(i.command)),
   message: (i) => `${oneLine(str(i.to))}: ${words(str(i.text), 8)}`,
   spawn: (i) => `${oneLine(str(i.branch))}, ${i.role === "reviewer" ? "reviewer" : "worker"}`,
-  complexity: complexityArgs,
   ask: askArgs,
   web_search: (i) => oneLine(str(i.query)),
   history: (i) => oneLine(i.action === "read" ? `read ${str(i.project)}/${str(i.entryId)}` : `${str(i.action)} ${str(i.query)}`.trim()),
@@ -118,7 +112,7 @@ const SUMMARIES: Record<string, (text: string) => { summary: string; failed: boo
 };
 
 /** Tools whose own refusals ("refused: …", not is_error results) count as failures; bash's output is the command's, so it never does. */
-const REFUSING = new Set(["spawn", "message", "ask", "complexity", "history"]);
+const REFUSING = new Set(["spawn", "message", "ask", "history"]);
 const refused = (name: string, text: string) => REFUSING.has(name) && /^refused\b/.test(text.trim());
 
 /** The one-line summary of how a call ended, and whether it failed. */

@@ -1,6 +1,4 @@
 import { taskForRun } from "../data/tasks";
-import { provenance } from "../data/tasks";
-import { gitAncestry } from "../data/tasks";
 import { delay, publishLaunch } from "./cancellation";
 import { claim, readRun } from "./exits";
 import { command, run } from "../proc";
@@ -69,7 +67,7 @@ export const sessionId = (role: Role, branch?: string) => windowName(role, branc
  * default branch if needed (HEAD for legacy projects). Reusing a worktree lets a reviewer share the
  * worker's checkout.
  */
-export async function ensureWorktree(project: string, branch: string, signal?: AbortSignal, stackBase?: string): Promise<string> {
+export async function ensureWorktree(project: string, branch: string, signal?: AbortSignal): Promise<string> {
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
@@ -79,29 +77,18 @@ export async function ensureWorktree(project: string, branch: string, signal?: A
   if (existsSync(dir)) { await assertWorktree(project, dir, branch); return dir; }
   if (!existsSync(repo)) throw new Error(`runner: repo not found at ${repo}`);
 
-  const exists = await validateWorktreeBase(repo, branch, stackBase, signal);
-  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, stackBase ?? (base ? `refs/heads/${base}` : "HEAD")])], repo, signal);
+  const exists = (await command(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo, signal)).code === 0;
+  const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, base ? `refs/heads/${base}` : "HEAD"])], repo, signal);
   if (res.code !== 0) throw new Error(`runner: git worktree add failed: ${res.err.trim()}`);
   return dir;
 }
 
-async function validateWorktreeBase(repo: string, branch: string, stackBase?: string, signal?: AbortSignal): Promise<boolean> {
-  if (stackBase && !/^[0-9a-f]{40,64}$/.test(stackBase)) throw new Error("invalid immutable stack base");
-  const exists = (await command(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo, signal)).code === 0;
-  if (exists && stackBase) {
-    const head = (await command(["git", "rev-parse", `refs/heads/${branch}`], repo, signal)).out.trim();
-    if (!(await gitAncestry(repo)(stackBase, head))) throw new Error("existing branch omits recorded stack base");
-  }
-  return exists;
-}
-
-/** Consume only ledger-authorized immutable stack metadata, never an arbitrary launch base. */
+/** Validate ownership and reuse the existing workspace; branch updates are explicit agent work. */
 export async function ensureTaskWorktree(opts: StartOptions): Promise<string> {
   if (!opts.branch) throw new Error("task branch required");
   const task = opts.run ? await taskForRun(opts.project, opts.run) : undefined;
   if (task && task.branch !== opts.branch) throw new Error("task run branch mismatch");
-  const p = task && provenance(task);
-  return ensureWorktree(opts.project, opts.branch, opts.signal, p?.replay?.newHead ?? p?.stack?.baseCommit);
+  return ensureWorktree(opts.project, opts.branch, opts.signal);
 }
 
 export async function removeWorktree(project: string, branch: string): Promise<void> {

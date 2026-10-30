@@ -1,12 +1,6 @@
 # Native subscription web search
 
-`web_search` is the sixth registered tool. All roles can call it:
-
-| Role | Tools | Count |
-| --- | --- | --- |
-| Orchestrator | `bash`, `spawn`, `message`, `ask`, `web_search` | 5 |
-| Worker | `bash`, `message`, `web_search` | 3 |
-| Reviewer | `bash`, `message`, `complexity`, `web_search` | 4 |
+`web_search` is available to orchestrators, workers and reviewers alongside their file, command and coordination tools.
 
 There is no search slash command, separate fetch/browser tool, new dependency,
 API key, search-service account or configuration option. Existing subscription

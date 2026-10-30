@@ -131,68 +131,13 @@ task editor, historical archive browser or replacement for agent message queues.
 
 ## Producers and tools
 
-The orchestrator first obtains the user's task authorization (the existing
-planning/authorization policy still applies), then calls:
+The coordinator can register an authorized assignment with `task create` or `task register`, giving it a title/name, summary and branch. Tasks retain immutable UUIDs and stable project numbers; duplicate retries are idempotent. `task update` edits title/summary. `task dependencies` records explicit prerequisites without scheduling agents or gating publication.
 
-```json
-{"action":"register","name":"Task inbox","summary":"Persist structured task lifecycle","branch":"feat/inbox","authorized":true}
-```
+`spawn` accepts an optional taskId to associate a run; ordinary delegation requires no task. Agents can update their own active task, while the coordinator manages the list. Publish through ordinary Git/GitHub tools only when authorized, then attach repository and PR number with `task pr`. Any active owner can record the PR; no reviewer handoff is required.
 
-The `task` tool returns JSON including a generated immutable UUID `id`. An optional
-caller-generated UUID `taskId` makes registration retries idempotent: identical
-fields return the same record; conflicting fields are rejected. Display names and
-summaries are never identifiers. `spawn` now requires this registered `taskId` in
-addition to `prompt`, `branch` and optional `role`.
+`task ready` is an optional annotation of validation evidence on an exact clean PR head. It requires observed eligibility and current evidence; it grants no merge permission and never gates publication. `task attention` records a blocker, cancellation or unresolved decision without authorizing execution. Confirmed membership removal retains SQL history.
 
-* Use the **same ID and branch** for a task's retries, review/CI corrections,
-  watch-CI run and user-requested fixes to its unmerged PR, even after a ready
-  report. Find the record with `task list/get` and refresh its PR state with
-  `task pr` before resuming. Message its running agent or spawn its worker again;
-  then run the task flow and update the same PR. Do not register a new task or
-  create a temporary branch to transfer the fix back. New activity invalidates
-  readiness; the reviewer must validate the updated PR head again.
-* Register a **new ID** for a separate follow-up task, even on a reusable pre-PR
-  branch. Prior records remain. Registration refuses a new task on a branch
-  already associated with a PR and points corrections back to the existing task.
-  Separate work after PR publication and work after a merge need a new branch.
-* Registration records authorization; it cannot independently prove a human
-  authorized the work. It does not spawn anything.
-* Agent `task` calls default to the task bound to their exact supervised run.
-  Orchestrator calls use `taskId`. An active agent can access/update an earlier
-  task on its own branch explicitly by ID, never another branch's task.
-* `task list` returns active rows; `task get` returns the retained full record.
-* `task attention` takes `kind` (`waiting`, `blocked`, `cancelled`, `closed`,
-  `unknown`) and `reason`. This records a stalled state, invalidates readiness,
-  and does **not** cancel a process, authorize continuation or complete a task.
-
-After publication, the **reviewer in watch-CI mode** calls:
-
-```json
-{"action":"pr","repository":"owner/repo","number":123}
-{"action":"ready","validated":true,"validation":"Worker's relevant-check evidence matches this PR head; diff and complexity reviewed; hosted checks passed or absent. No tests rerun by reviewer."}
-```
-
-`pr` verifies the project origin, repository/number/URL, non-fork PR and branch
-using read-only `gh pr view`. It is also available to the orchestrator. It does
-not establish readiness. If one published PR includes earlier tasks on a reused
-branch, explicitly associate those IDs too, and have the reviewer validate each
-included task. Branch-name matching alone never associates or archives tasks.
-
-`ready` is reviewer-only and requires a currently started reviewer run on the
-same branch, a previously started task, explicit `validated:true`, nonempty
-validation evidence, a clean local HEAD matching the current PR head, and a
-verified open, non-draft, mergeable/CLEAN PR without review blockers or pending,
-failed or unknown checks. Missing hosted checks are recorded as `not_configured`,
-**not** inferred as readiness: the worker's relevant-check evidence must still
-cover the current code. The reviewer matches that existing evidence to the PR
-head rather than rerunning tests or adding local validation. Missing or stale
-evidence and unresolved failures are reported through `task attention`.
-Skipped/neutral or unfamiliar check results conservatively do not qualify.
-Evidence is the reviewer's structured attestation, not machine execution of a
-project-specific test recipe. Report to the orchestrator in full afterwards as
-before. Code-review-only rounds never assert readiness. Zero review rounds still
-hand off to the reviewer with “watch ci” and worker evidence; no publishing responsibility moved
-to workers. No tool here pushes, opens PRs or merges.
+There are no checkpoint, prepare_publication, checks, reviewed or publish task actions. Branch updates, review and CI observation follow the assignment and repository instructions. Merge notifications update task status without stopping agents or deleting workspaces.
 
 ## Automatic lifecycle
 
@@ -205,7 +150,7 @@ to workers. No tool here pushes, opens PRs or merges.
 | Normal report/exit | Waiting for the next explicit step, **not ready**; existing blocked/cancelled attention retained |
 | Cancellation/crash/missing process | Visible cancelled/blocked/unknown attention; invalidate every included task validated by that run; no auto-continuation |
 | New run on branch, shell tool or new agent instruction after validation | Readiness invalidated, including earlier tasks on that branch |
-| Explicit validated readiness | `ready_to_merge`, bound to the exact PR head and reviewer run |
+| Explicit validated readiness | `ready_to_merge`, bound to the exact PR head and active owning run |
 | Observed PR-head change, check/review blocker, closed PR or failed refresh | Readiness invalidated; closed-unmerged and unknown tasks remain active |
 | Confirmed repository/PR merge | Active row removed; task, runs, events and merge metadata retained |
 
