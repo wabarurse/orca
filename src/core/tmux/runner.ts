@@ -16,11 +16,13 @@ import { basename, resolve, dirname } from "node:path";
 import { $ } from "bun";
 import { paths, repositoryBinding } from "../../config";
 import { assertMainCheckout, assertWorktree } from "../data/projects";
+import { execution } from "../data/projects/lifecycle";
 import { launchEnvironment } from "./launch-environment";
 import { listProcesses, liveProcess } from "../data/processes";
 import type { Role } from "../../protocol";
 
 export interface StartOptions {
+  executionEpoch?: string;
   /** Exact launch, published before this session becomes selectable. */
   run?: string;
   signal?: AbortSignal;
@@ -402,6 +404,8 @@ export async function confirmLaunch(project: string, id: string, run: string, pa
 
 export const local: Runner = {
   async start(opts) {
+    const epoch = opts.executionEpoch ?? execution.epoch(opts.project);
+    execution.assertActive(opts.project, epoch);
     need("git");
     need("tmux");
     if (opts.role !== "orchestrator" && !opts.branch) throw new Error("workers and reviewers require a task branch");
@@ -419,9 +423,10 @@ export const local: Runner = {
     await tmux.checkServer(opts.signal);
     const id = sessionId(opts.role, opts.branch);
     const run = opts.run ?? crypto.randomUUID();
-    if (!opts.run) publishLaunch(opts.project, id, run);
+    if (!opts.run) publishLaunch(opts.project, id, run, epoch);
     const launch = await launchEnvironment(opts.project, agentCommand(opts, run));
     let pane: string;
+    execution.assertActive(opts.project, epoch);
     try { pane = await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, launch.argv, opts.signal); }
     catch (error) { await launch.cleanup(); throw error; }
     await confirmLaunch(opts.project, id, run, pane, true, opts.signal);

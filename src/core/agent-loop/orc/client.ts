@@ -4,7 +4,7 @@
 // calls a model or appends to the orchestrator's transcript.
 
 import { existsSync } from "node:fs";
-import { cancelSession, delay } from "../../tmux";
+import { cancelSession, delay, launchEpoch, launchIdentity } from "../../tmux";
 import { loadConfig, paths } from "../../../config";
 import { pendingImageInputs } from "../../data/images";
 import type { ImageRef } from "../../../protocol";
@@ -16,6 +16,7 @@ import type { DaemonStatus } from "../../../protocol";
 import { liveReader, type LiveReader } from "./live";
 import type { LiveEvent, LiveKey } from "../../../protocol";
 import { projectIdentity, turnLocksHeld } from "../../data/projects";
+import { execution } from "../../data/projects/lifecycle";
 import { local, sessionName, tmux, type Runner } from "../../tmux";
 import { pidAlive } from "../../data";
 import type { ToolCall, ToolOutcome } from "../../../protocol";
@@ -38,9 +39,22 @@ const KILL_WAIT_MS = 3000;
 export interface EnsureOptions { runner?: Runner; signal?: AbortSignal; alive?: (project: string) => Promise<boolean>; build?: string; status?: typeof liveStatus }
 
 /** Start the project's daemon unless one is alive. A launch lost to a concurrent start (the loser exits before its run record) counts as running. */
-export async function ensureDaemon(project: string, opts: EnsureOptions = {}): Promise<"running" | "started"> {
+export async function ensureDaemon(project: string, opts: EnsureOptions = {}): Promise<"running" | "started" | "paused"> {
+  if (execution.stopped(project)) return "paused";
   const alive = opts.alive ?? (async (p: string) => (await daemonPid(p)) !== undefined);
-  if (await alive(project)) { await requireCurrentDaemon(project, opts); return "running"; }
+  if (await alive(project)) {
+    const run = launchIdentity(project, "orchestrator"), admitted = run ? launchEpoch(project, "orchestrator", run) : undefined;
+    if (admitted === undefined || admitted === execution.epoch(project)) { await requireCurrentDaemon(project, opts); return "running"; }
+    // A fresh message can arrive before the old daemon finishes shutting down.
+    // Retire that generation before starting its replacement, including CLI sends
+    // where no TUI poller remains to retry the launch later.
+    const pid = await daemonPid(project);
+    if (pid && launchIdentity(project, "orchestrator") === run) {
+      await request(project, { kind: "stop" }, run);
+      if (!await waitDead(pid, 3000)) throw new Error("previous conversation execution is still stopping; the new message remains queued");
+    }
+  }
+  if (execution.stopped(project)) return "paused";
   try { await (opts.runner ?? local).start({ project, role: "orchestrator", signal: opts.signal }); }
   catch (error) {
     if (await alive(project)) { await requireCurrentDaemon(project, opts); return "running"; }
@@ -58,14 +72,18 @@ export function daemonKeeper(opts: EnsureOptions & { now?: () => number } = {}):
   const now = opts.now ?? Date.now;
   const started = new Map<string, number>();
   const checking = new Map<string, Promise<string | undefined>>();
+  const generations = new Map<string, string>();
   return project => {
+    const generation = execution.epoch(project);
+    if (generations.get(project) !== generation) { started.delete(project); generations.set(project, generation); }
+    if (execution.stopped(project)) { started.delete(project); return Promise.resolve(undefined); }
     const pending = checking.get(project);
     if (pending) return pending;
     const check = (async () => {
       const last = started.get(project);
       if (last !== undefined && now() - last < RESTART_BACKOFF_MS) return;
       const alive = opts.alive ?? (async (p: string) => (await daemonPid(p)) !== undefined);
-      if (await alive(project)) { await requireCurrentDaemon(project, opts); return; }
+      if (await alive(project)) { await ensureDaemon(project, opts); return; }
       started.set(project, now());
       await ensureDaemon(project, opts);
       return last === undefined ? undefined : "orchestrator was not running; restarted"; // the first start is routine: nothing to show
@@ -245,14 +263,20 @@ function contextOf(project: string, model: string): DaemonStatus["context"] | un
 
 async function say(c: Client, text: string, submission: string, inputId?: string, attachments?: ImageRef[]): Promise<void> {
   c.checkIdentity();
-  await requireCurrentDaemon(c.project, { build: c.deps.build, status: c.status });
+  if (!execution.stopped(c.project)) await requireCurrentDaemon(c.project, { build: c.deps.build, status: c.status });
   await (c.deps.put ?? put)(c.project, "orchestrator", { from: "user", text, ...(attachments?.length ? { attachments } : {}), userEpoch: submission, ...(inputId ? { inputId } : {}) });
 }
 
 /** The request goes out at once; the daemon's answer (or its absence) is reported when it comes. */
 function cancel(c: Client): void {
-  void ask(c, "cancel", () => (c.deps.cancel ?? cancelSession)(c.project, "orchestrator"))
-    .then(message => c.notice(`orchestrator: ${message}`), error => c.notice(`cancel not acknowledged: ${error instanceof Error ? error.message : error}`));
+  c.checkIdentity();
+  const run = launchIdentity(c.project, "orchestrator");
+  void (c.deps.cancel ?? cancelSession)(c.project, "orchestrator")
+    .then(async () => {
+      if (run) await request(c.project, { kind: "stop" }, run); // Older daemons exit after accepting their cancellation.
+      if (!c.deps.cancel && !execution.stopped(c.project)) return;
+      c.notice("conversation stopped; orchestrator and subagents are stopping. Send a new message to resume.");
+    }, error => c.notice(`stop failed: ${error instanceof Error ? error.message : error}`)).catch(error => c.notice(`stop failed: ${String(error)}`));
 }
 
 function client(deps: ClientDeps): Client {

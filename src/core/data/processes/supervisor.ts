@@ -1,4 +1,5 @@
 import { appendFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { execution } from "../projects/lifecycle";
 import { join } from "node:path";
 import { killGroup } from "../../proc";
 import { shellCommand } from "../../execution";
@@ -14,6 +15,7 @@ export async function superviseProcess(project: string, id: string): Promise<voi
   const dir = processDirectory(project, id);
   await withStorageLock(join(dir, "supervisor.lock"), async () => {
     const p = await readProcess(project, id);
+    const admitted = await Bun.file(join(dir, "execution-epoch")).text().catch(() => execution.epoch(project));
     if (p.state !== "starting") return; // Reentry must never repeat a command.
     p.supervisorPid = process.pid;
     await saveProcess(p);
@@ -23,9 +25,11 @@ export async function superviseProcess(project: string, id: string): Promise<voi
     const stop = () => { stopping ??= "cancelled"; if (proc) killGroup(proc); };
     const onExit = () => { if (proc) killGroup(proc); };
     try {
-      const cancelled = await Bun.file(join(dir, "stop")).exists();
+      const cancelled = execution.stale(project, admitted) || await Bun.file(join(dir, "stop")).exists();
       if (cancelled) { p.state = "cancelled"; await addProcessEvent(p, p.state); return; }
-      proc = Bun.spawn(await shellCommand(`exec 2>&1\n${p.command}`, p.cwd, p.role === "reviewer"), { cwd: p.cwd, detached: true, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+      const argv = await shellCommand(`exec 2>&1\n${p.command}`, p.cwd, p.role === "reviewer");
+      if (execution.stale(project, admitted)) { p.state = "cancelled"; await addProcessEvent(p, p.state); return; }
+      proc = Bun.spawn(argv, { cwd: p.cwd, detached: true, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
       p.pid = proc.pid; p.state = "running";
       process.once("exit", onExit); process.once("SIGTERM", stop); process.once("SIGINT", stop);
       await saveProcess(p);
@@ -33,7 +37,7 @@ export async function superviseProcess(project: string, id: string): Promise<voi
       monitor = setInterval(async () => {
         if (busy) return; busy = true;
         try {
-          if (await Bun.file(join(dir, "stop")).exists()) stop();
+          if (execution.stale(project, admitted) || await Bun.file(join(dir, "stop")).exists()) stop();
           for (const name of (await readdir(dir)).filter(n => /^input-[a-f0-9-]+\.txt$/.test(n)).sort()) {
             const path = join(dir, name), text = await Bun.file(path).text();
             proc!.stdin.write(text);

@@ -26,8 +26,8 @@ export async function provider(name: ProviderName, options: { promptCache?: bool
       credentials: claudeCredentials(profile),
       defaultHeaders: { "anthropic-beta": CLAUDE_BETAS, "x-api-key": null },
       fetchOptions: { redirect: "error" },
-    }), { promptCache: options.promptCache ?? (config.anthropicPromptCache === true), recovery: { enabled: true, onRetry: event => recordRetry("anthropic", event) } }) });
+    }), { promptCache: options.promptCache ?? (config.anthropicPromptCache === true), recovery: { enabled: true, account: `${name}:${profile}`, onRetry: event => recordRetry("anthropic", event) } }) });
   }
   if (!(await readCodexTokens(profile))) throw new Error(`codex profile '${profile}' is not signed in; run /login openai ${profile}.`);
-  return metered({ account: `${name}:${profile}`, ...openai(codexCredentials(profile), { recovery: { enabled: true, onRetry: event => recordRetry("openai", event) } }) });
+  return metered({ account: `${name}:${profile}`, ...openai(codexCredentials(profile), { recovery: { enabled: true, account: `${name}:${profile}`, onRetry: event => recordRetry("openai", event) } }) });
 }

@@ -3,6 +3,7 @@ import { loadConfig } from "../../../config";
 import { outputArtifact, OutputPreview } from "./output";
 import type { Tool } from "../registry";
 import { launchProcess } from "../../data/processes";
+import { execution } from "../../data/projects/lifecycle";
 import { cliCommand, sessionId } from "../../tmux";
 import { shellCommand } from "../../execution";
 
@@ -37,6 +38,8 @@ export const bash: Tool = {
     },
   },
   async run(input, ctx) {
+    const epoch = ctx.executionEpoch ?? execution.epoch(ctx.project);
+    execution.assertActive(ctx.project, epoch);
     const command = String(input.command ?? "");
     if (SUDO.test(command)) return "refused: sudo is not allowed";
     const timeout = input.timeout_ms;
@@ -56,7 +59,7 @@ export const bash: Tool = {
       return JSON.stringify(await launchProcess({ id: crypto.randomUUID(), project: ctx.project, owner: sessionId(ctx.role, ctx.branch),
         role: ctx.role, branch: ctx.branch, run: ctx.run, call: ctx.callId, cwd: ctx.cwd, command,
         createdAt: at, updatedAt: at, state: "starting", timeoutMs: timeoutMs, maxBytes: config.maxToolOutputBytes,
-        notify: true, events: [], ...(readyUrl ? { readyUrl: readyUrl.toString() } : {}) }, cliCommand(), yieldMs, ctx.signal));
+        notify: true, events: [], ...(readyUrl ? { readyUrl: readyUrl.toString() } : {}) }, cliCommand(), yieldMs, ctx.signal, epoch));
     }
     const cap = Math.min(config.maxToolResultBytes, Number(requested ?? config.maxToolResultBytes));
     const preview = new OutputPreview(cap);
@@ -65,7 +68,10 @@ export const bash: Tool = {
     try {
       if (Buffer.byteLength(artifact.partialPath) + 240 > cap) throw new Error("tool output path exceeds preview budget; increase max_output_bytes and maxToolResultBytes");
       ctx.signal?.throwIfAborted();
-      const proc = Bun.spawn(await shellCommand(`exec 2>&1\n${command}`, ctx.cwd, ctx.role === "reviewer"), { cwd: ctx.cwd, detached: true, stdout: "pipe", stdin: "ignore" });
+      execution.assertActive(ctx.project, epoch);
+      const argv = await shellCommand(`exec 2>&1\n${command}`, ctx.cwd, ctx.role === "reviewer");
+      execution.assertActive(ctx.project, epoch);
+      const proc = Bun.spawn(argv, { cwd: ctx.cwd, detached: true, stdout: "pipe", stdin: "ignore" });
       const kill = () => killGroup(proc);
       const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
       process.once("exit", kill);

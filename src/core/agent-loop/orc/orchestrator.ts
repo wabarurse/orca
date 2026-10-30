@@ -73,7 +73,7 @@ export interface Orchestrator {
   /** Capture before holding input for login (or any other asynchronous UI operation). */
   submission?(): string;
   /** Abort only this turn and pause automatic inbox turns until the user sends again. */
-  cancel?(): void;
+  cancel?(preserveEpoch?: boolean): void;
   /** Release the background summarizer when its page closes. */
   dispose?(): void;
   compact?(): Promise<void>;
@@ -137,13 +137,13 @@ class TurnControl {
   refreshing?: Promise<void>;
   context?: AgentDeps;
   constructor(private project: string, private transcript: Transcript) {}
-  pause(): void {
-    advanceInputEpoch(this.project);
+  pause(preserveEpoch = false): void {
+    if (!preserveEpoch) advanceInputEpoch(this.project);
     this.compactEpoch = undefined;
     this.requested = false;
   }
-  cancel(): void {
-    this.pause();
+  cancel(preserveEpoch = false): void {
+    this.pause(preserveEpoch);
     this.cancellation?.abort(new Cancelled());
     this.clearing?.abort(new Cancelled());
   }
@@ -231,8 +231,8 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
         });
       } finally { state.clearing = undefined; await release?.(); }
     },
-    cancel: () => {
-      rolling.reset(); state.cancel();
+    cancel: (preserveEpoch = false) => {
+      rolling.reset(); state.cancel(preserveEpoch);
       void listProcesses(deps.project).then(ps => Promise.all(ps.filter(p => p.owner === "orchestrator" && liveProcess(p))
         .map(p => controlProcess(deps.project, p.id, "stop")))).catch(error => deps.write?.(`command cancellation failed: ${String(error)}\n`, true));
     },
@@ -268,6 +268,7 @@ async function ownTurn(project: string): Promise<(() => Promise<void>) | undefin
 }
 async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, state: TurnControl, checkIdentity: () => void, rolling: RollingCompactor): Promise<Message[]> {
   if (state.running || state.clearing) return [];
+  const epoch = inputEpoch(deps.project);
   state.running = true;
   const cancellation = state.cancellation = new AbortController();
   const signal = deps.signal ? AbortSignal.any([deps.signal, cancellation.signal]) : cancellation.signal;
@@ -286,7 +287,7 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     if (!state.requested && !hasInbox && !rolling.ready()) return [];
     try { await assertMainCheckout(deps.project); }
     catch (error) { state.pause(); throw error; } // Retain input without a failing poll/retry loop.
-    const agent = await turnAgent(deps, transcript, state.takeRequest, signal, rolling, current => { state.context = current; });
+    const agent = await turnAgent(deps, transcript, state.takeRequest, signal, rolling, current => { state.context = current; }, epoch);
     if (hasInbox) await agent.run();
     else if (state.takeRequest()) await agent.compact();
     else await agent.maintain();
@@ -294,7 +295,7 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     // No indexing here: the searchable archive is written only where context is replaced (compaction, /clear).
     return await replies(deps.project, transcript);
   } catch (error) {
-    if (!signal.aborted) throw error;
+    if (!signal.aborted && !(error instanceof Cancelled)) throw error;
     return [];
   } finally { await release?.(); state.running = false; state.cancellation = undefined; }
 }
@@ -307,8 +308,7 @@ function orchestratorTools(overrides?: Record<string, Tool<ToolResult>>): Record
   if (overrides) return overrides;
   return Object.fromEntries(toolsFor.orchestrator.flatMap(name => registry[name] ? [[name, editableTool(name === "task" ? orchestratorTask : registry[name]!, name === "task" ? "task-orchestrator" : name)]] : []));
 }
-async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean, signal: AbortSignal, rolling: RollingCompactor, onContext: (current: AgentDeps) => void) {
-  const epoch = inputEpoch(deps.project);
+async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compactRequested: () => boolean, signal: AbortSignal, rolling: RollingCompactor, onContext: (current: AgentDeps) => void, epoch: string) {
   const config = await loadConfig();
   const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return createAgent({
@@ -323,7 +323,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
       await rolling.boundary(current, manual, maintenance);
     },
     system: rolePrompt("orchestrator", { ...config, ...await effectiveFlow(deps.project, config) }), // per turn, so /review-rounds and /dynamic-dispatch apply next turn
-    ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project) },
+    ctx: { project: deps.project, role: "orchestrator", cwd: paths.repo(deps.project), executionEpoch: epoch },
     write: deps.write, onInbox: deps.onInbox, tracker: deps.tracker,
     onTool: deps.onTool, onToolResult: deps.onToolResult,
   });

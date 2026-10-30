@@ -109,6 +109,8 @@ base64, including #74 rolling checkpoints. `read` of an image file (by magic byt
 
 Home layout 3 and source organization:
 
+Interruption/performance: Ctrl+C stops the selected conversation's execution tree, even from an agent view or clear modal. `data/projects/lifecycle` owns the durable stop barrier; only fresh human orchestrator input releases it. Per-run epochs fence inbox commits, tools and launches, so rapid resume cannot revive old work or consume the new instruction. Daemon keepers/update handoffs skip stopped projects. See docs/PERFORMANCE.md for the contract, Pi source references, idle benchmark, active command recovery index, pooled SQLite reads, workerContextTokens and coordinated completion retries.
+
 - `src/config/paths.ts` owns storage paths and project metadata access; `state-store.ts` owns transactional records in `memory.sqlite`. `config.ts` parses global configuration at `.runtime/config.toml`. Project scope includes its directory identity so recreated names cannot inherit prior bindings/settings/decisions.
 - Public home: `prompts/`, `tools/`, `skills/`, `projects/`, `memory.sqlite`, `.runtime/`. Project artifacts: `tasks.json`, rebuildable `cache/`, `transcript/`, `tool-outputs/` (worker `reports/` included), `images/`. Configuration, credentials, pending events, supervised command output and recovery state are under `.runtime/`, which is durable. See `docs/ORCA_HOME.md`.
 - Fresh homes only: older layout versions fail before normal startup. `scripts/migrate-layout.ts` is the historical v1→v2 utility, not an upgrade to v3. Never silently reset or reinterpret old state.

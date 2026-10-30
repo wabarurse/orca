@@ -1538,7 +1538,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** Own all typing/paste/question keys, even when a tiny footer hides the modal.
    * Navigation cancels first; Enter only confirms after an explicit plain arrow selection. */
   private clearKey(k: Key): Promise<void> | void {
-    if (k.name === "escape" || k.ctrl && k.name === "c") { this.cancelClear(); return this.draw(); }
+    if (k.ctrl && k.name === "c") { this.cancelClear(); return this.interrupt(); }
+    if (k.name === "escape") { this.cancelClear(); return this.draw(); }
     if (k.ctrl && ["n", "z", "x", "b"].includes(k.name)) { this.cancelClear(); return this.onKey(k); }
     const operation = this.clearing!;
     if (operation.committing || !operation.menu || k.ctrl || k.alt || k.shift) return;
@@ -1672,15 +1673,9 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (now - this.lastInterrupt <= 2000) return this.quit();
     this.lastInterrupt = now;
     const page = this.page;
-    if (page?.view) {
-      const view = page.view;
-      await (this.deps.cancelAgent ?? cancelSession)(page.project, view.name);
-      this.note("stopping selected agent. press ctrl+c again within 2 seconds to exit.", page);
-    } else {
-      page?.orch.cancel?.();
-      // A transient note; the daemon's acknowledgement replaces it (same row) and the header's fin stops once the turn ends.
-      this.note("turn cancelled. send a message to resume; press ctrl+c again within 2 seconds to exit.", page);
-    }
+    page?.orch.cancel?.();
+    // Persistent-stop feedback replaces this hint in the same temporary row.
+    this.note("stopping conversation + agents; send to resume. ctrl+c within 2s exits.", page);
     this.draw();
   }
 
@@ -2012,6 +2007,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       void this.refreshSessions(false);
       const { writing } = await prepared;
       await writing;
+      await this.keepDaemon(page.project, page);
     }
     catch (err) {
       const at = page.sent.indexOf(sent);

@@ -42,6 +42,7 @@ test("saved history beyond the preview budget remains reachable before exit, inc
     term.type("\x1b[200~draft 界é👩‍💻\nsecond line\x1b[201~");
     await until(() => term.screen().includes("second line"));
     const draft = { ...app.input }, top = bodyStart(term);
+    await until(() => term.screen().includes("0 tasks")); // Settle the async count before asserting that scrolling preserves the footer.
     const header = term.display.screen().slice(0, top), footer = term.display.screen().slice(-5);
     // Injected reports exercise the application path, NOT physical Apple Terminal gestures.
     const scrollToStart = async () => {
@@ -238,7 +239,7 @@ describe("ctrl+c cancellation", () => {
     expect(cancelled).toEqual(["cancel-b"]);
     expect(app.input.text).toBe("unsent draft");
     expect(term.closed).toBe(false);
-    await until(() => term.screen().includes("within 2 seconds to exit"));
+    await until(() => term.screen().includes("within 2s exits"));
     now += 2001;
     await app.onKey({ name: "c", ctrl: true });
     expect(cancelled).toEqual(["cancel-b", "cancel-b"]);
@@ -249,7 +250,7 @@ describe("ctrl+c cancellation", () => {
     expect(term.closed).toBe(true);
   });
 
-  test("agent view cancels only selected session, leaving orchestrator and other roles alone", async () => {
+  test("agent view interrupts the whole conversation", async () => {
     const term = fakeTerm(100, 20);
     const cancelled: string[] = [];
     const fakes = fakeOrchestrators();
@@ -261,10 +262,10 @@ describe("ctrl+c cancellation", () => {
     await until(() => !!app.page);
     app.page!.view = { name: "reviewer-x", lines: [], live: true, calls: new Calls(), leave() {} };
     await app.onKey({ name: "c", ctrl: true });
-    expect(cancelled).toEqual(["selected-agent/reviewer-x"]);
+    expect(cancelled).toEqual(["orchestrator"]);
     expect(app.page!.view!.name).toBe("reviewer-x");
     expect(term.closed).toBe(false);
-    await until(() => term.screen().includes("stopping selected agent"));
+    await until(() => term.screen().includes("stopping conversation"));
     app.quit();
     await running;
   });
@@ -291,7 +292,7 @@ test("real App login-held pre-cancel input stays paused, retains FIFO, and does 
     term.type("held one\rheld two\r");
     await until(() => app.frame().queued?.texts.length === 2);
     term.type("\x03");
-    await until(() => strip(app.frame().inputArea!.lines[0]!).startsWith("turn cancelled.") && !cancelled.lines.some(l => raw(l).includes("turn cancelled"))); // a note, not a line
+    await until(() => strip(app.frame().inputArea!.lines[0]!).startsWith("stopping conversation") && !cancelled.lines.some(l => raw(l).includes("turn cancelled"))); // a note, not a line
     await app.openPage("login-cancel-other");
     term.type("unrelated input\r");
     await until(() => app.frame().inputArea!.lines.join("\n").includes("queued; runs after sign-in"));

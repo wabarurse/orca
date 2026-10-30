@@ -22,6 +22,19 @@ test("durable records coexist with archive schemas and survive new processes", a
   finally { verify.close(); }
   expect(statSync(paths.memory).mode & 0o777).toBe(0o600);
 });
+test("reused state reads observe another process's commit without changing permissions on each read", async () => {
+  updateState(paths.memory, "cache", "counter", () => 1);
+  const before = statSync(paths.memory, { bigint: true }).ctimeNs;
+  for (let i = 0; i < 20; i++) expect(readState(paths.memory, "cache", "counter")).toBe(1);
+  expect(statSync(paths.memory, { bigint: true }).ctimeNs).toBe(before);
+  const script = `import { updateState } from ${JSON.stringify(import.meta.dir + "/state-store.ts")}; updateState(process.argv[1], 'cache', 'counter', () => 2);`;
+  const child = Bun.spawn([process.execPath, "-e", script, paths.memory], { stdout: "ignore", stderr: "pipe" });
+  expect(await child.exited).toBe(0);
+  expect(readState(paths.memory, "cache", "counter")).toBe(2);
+  const observer = new Database(paths.memory);
+  try { expect(observer.query("PRAGMA wal_checkpoint(TRUNCATE)").get()).toMatchObject({ busy: 0 }); }
+  finally { observer.close(); }
+});
 
 test("concurrent processes do not lose updates; failed updates roll back", async () => {
   const script = `import { updateState } from ${JSON.stringify(import.meta.dir + "/state-store.ts")}; for(let n=0;n<25;n++) updateState(process.argv[1], 'user', 'counter', x=>(x??0)+1);`;

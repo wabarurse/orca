@@ -17,7 +17,7 @@ const NAVIGATION: HelpEntry[] = [
   { label: "ctrl+d (question)", description: "delete shown question; no reply" },
   { label: "pgup/pgdn / wheel", description: "scroll conversation, help or inbox tasks (mouse reporting required)" },
   { label: "click ▸", description: "open a run of tool calls (▾ when open); click again to fold it" },
-  { label: "ctrl+c", description: "cancel selected turn/agent; twice within 2s exits, keeping history" },
+  { label: "ctrl+c", description: "stop conversation and its agents; message to resume; twice within 2s exits" },
   { label: "esc", description: "close panel, else leave agent view, else clear input" },
 ];
 const EDITING: HelpEntry[] = [

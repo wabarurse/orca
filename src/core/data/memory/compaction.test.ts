@@ -37,6 +37,14 @@ test("threshold includes system/tools/reserve; unknown uses configured fallback"
   expect(budget(deps, [])).toBeGreaterThan(100000);
   await expect(compact(deps)).rejects.toThrow("context blocked");
 });
+test("a working-context target compacts before a large model window fills, preserving history", async () => {
+  const { deps, transcript, provider } = await fixture();
+  deps.compaction = { contextLimit: 1000000, triggerTokens: 10000 };
+  const before = await Bun.file(transcript.path).text();
+  expect(await compact(deps)).toBe(true);
+  expect(provider.calls).toHaveLength(1);
+  expect((await Bun.file(transcript.path).text()).startsWith(before)).toBe(true);
+});
 test("atomic checkpoint, repeated compactions and restart keep original UI history without duplicated tail", async () => {
   const { deps, transcript } = await fixture();
   const before = await Bun.file(transcript.path).text();

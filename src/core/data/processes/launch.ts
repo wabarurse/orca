@@ -1,17 +1,22 @@
 import { projectIdentity } from "../projects";
+import { execution } from "../projects/lifecycle";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
 import { withStorageLock } from "../storage-lock";
 import { addProcessEvent, listProcesses, liveProcess, processDirectory, processOutput, readProcess, saveProcess, type ProcessRecord } from "./store";
 
-export async function launchProcess(record: ProcessRecord, executable: string[], yieldMs: number, signal?: AbortSignal) {
+export async function launchProcess(record: ProcessRecord, executable: string[], yieldMs: number, signal?: AbortSignal, admittedEpoch?: string) {
   signal?.throwIfAborted();
+  const epoch = admittedEpoch ?? execution.epoch(record.project);
+  execution.assertActive(record.project, epoch);
   record.incarnation = projectIdentity(record.project);
   await withStorageLock(join(processDirectory(record.project), "admission.lock"), async () => {
+    execution.assertActive(record.project, epoch);
     if ((await listProcesses(record.project)).filter(p => liveProcess(p) || p.state === "unknown").length >= 16) throw new Error("project already has 16 active commands; stop or finish existing work");
     if ((await listProcesses(record.project)).length >= 512) throw new Error("process history is full; forget terminal handles with process before launching more");
     await saveProcess(record);
+    await Bun.write(join(processDirectory(record.project, record.id), "execution-epoch"), epoch);
     const log = await open(join(processDirectory(record.project, record.id), "supervisor.log"), "a", 0o600);
     try {
       const child = Bun.spawn([...executable, "process-supervisor", "--project", record.project, "--process", record.id], {

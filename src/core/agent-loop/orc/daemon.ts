@@ -10,16 +10,18 @@ import { reconcileProcesses } from "../../data/processes";
 
 import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, join } from "node:path";
-import { delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux";
+import { cancelSession, delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux";
 import { exitWatchdog, mergeWatch } from "../../tmux";
 import { paths, repositoryBinding, BUILD_ID } from "../../../config";
 import { contextWindow } from "../../../providers/catalog";
 import { effectiveModel } from "../../data/projects";
+import { execution } from "../../data/projects/lifecycle";
 import type { Orchestrator, OrchestratorDeps } from "./orchestrator";
 import { acknowledge, pruneAcks, takeRequests, writeStatus } from "./channel";
 import type { Command, DaemonState, Request } from "../../../protocol";
 import type { LiveWriter } from "./live";
 import { callText, resultText } from "../../../protocol";
+import { withProcessScope } from "../../proc";
 
 /** How often the idle loop looks for input and requests when nothing woke it earlier, and how often a running turn checks for a cancel or an in-turn request. */
 export const DAEMON_POLL_MS = 1000;
@@ -55,6 +57,8 @@ export type DaemonOutcome = "stopped" | "deleted" | "idle";
 
 type Settled = Required<Omit<DaemonOptions, "watchers" | "exitWhenIdle" | "live">> & Pick<DaemonOptions, "exitWhenIdle" | "live">;
 interface Daemon {
+  supervision: AbortController;
+  epoch: string;
   o: Settled;
   watchdog: (project: string) => Promise<unknown>;
   merges: (project: string) => Promise<unknown>;
@@ -76,7 +80,10 @@ export function watchedSleep(dirs: string[]): { sleep: (ms: number) => Promise<v
   let dirty = false, wake: (() => void) | undefined;
   const changed = () => { dirty = true; wake?.(); };
   const watchers = dirs.flatMap(dir => {
-    try { mkdirSync(dir, { recursive: true }); const w = watch(dir, { persistent: false }, changed); w.on("error", () => {}); return [w]; }
+    try { mkdirSync(dir, { recursive: true }); const w = watch(dir, { persistent: false }, (_, name) => {
+      if (name?.toString().includes(".jsonl.lock")) return;
+      changed();
+    }); w.on("error", () => {}); return [w]; }
     catch { return []; }
   });
   return {
@@ -134,7 +141,8 @@ async function handleRequests(d: Daemon, accept?: (kind: Command["kind"]) => boo
 async function takeCancel(d: Daemon, inTurn: boolean): Promise<boolean> {
   const token = takeCancellation(d.o.project, "orchestrator", d.o.run);
   if (!token) return false;
-  d.o.session.cancel?.();
+  if (!execution.stopped(d.o.project)) await cancelSession(d.o.project, "orchestrator"); // Honor old clients with the same durable tree stop.
+  d.o.session.cancel?.(true);
   const what = inTurn ? CANCEL_ACK.turn : CANCEL_ACK.idle;
   await acknowledge(d.o.project, token, true, what).catch(error => d.o.log(`orchestrator: could not acknowledge the cancel: ${error}`));
   return true;
@@ -148,6 +156,7 @@ function assertLaunch(d: Daemon): void {
 /** While a turn runs: cancels and in-turn requests every TURN_POLL_MS, one pass at a time. */
 async function pollTurn(d: Daemon, signal: AbortSignal): Promise<void> {
   while (!signal.aborted) {
+    if (execution.stale(d.o.project, d.epoch)) { d.o.session.cancel?.(true); return; }
     if (!d.o.gone()) assertLaunch(d);
     await takeCancel(d, true);
     await handleRequests(d, kind => IN_TURN.has(kind));
@@ -161,10 +170,10 @@ function runWatchers(d: Daemon): void {
   const now = d.o.now();
   if (d.watching || now - d.watchedAt < d.o.watchMs) return;
   d.watchedAt = now;
-  const pass: Promise<void> = (async () => {
+  const pass: Promise<void> = withProcessScope(d.supervision.signal, async () => {
     await reconcileProcesses(d.o.project).catch(error => d.o.log(`process recovery: ${error}`));
     await Promise.all([d.watchdog, d.merges].map(w => w(d.o.project).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`))));
-  })().catch(error => d.o.log(`orchestrator: watcher failed: ${error}`)).finally(() => { if (d.watching === pass) d.watching = undefined; });
+  }).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`)).finally(() => { if (d.watching === pass) d.watching = undefined; });
   d.watching = pass;
 }
 
@@ -189,6 +198,7 @@ async function runTurn(d: Daemon): Promise<void> {
 /** One pass of the loop: requests, an idle cancel, a due watcher pass started in the background, then a turn or a wait. */
 async function step(d: Daemon): Promise<DaemonOutcome | undefined> {
   if (d.o.gone()) return "deleted";
+  if (execution.stale(d.o.project, d.epoch)) { d.o.session.cancel?.(true); return "stopped"; }
   assertLaunch(d);
   if (await handleRequests(d)) return "stopped";
   await takeCancel(d, false);
@@ -211,6 +221,8 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   const { project } = options;
   const watched = options.sleep ? undefined : watchedSleep([join(paths.inbox(project), "orchestrator"), join(paths.orchestrator(project), "commands"), dirname(paths.transcript(project, "orchestrator"))]);
   const d: Daemon = {
+    supervision: new AbortController(),
+    epoch: execution.epoch(project),
     o: { pollMs: DAEMON_POLL_MS, watchMs: WATCH_MS, now: Date.now, log: text => console.error(text),
       gone: () => projectGone(project), ...options, sleep: options.sleep ?? watched!.sleep },
     watchdog: options.watchers?.watchdog ?? exitWatchdog(),
@@ -224,11 +236,12 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       // A project removed mid-step fails the step (its files vanish under it): that is deletion, not a crash.
       const outcome = await step(d).catch(error => { if (d.o.gone()) return "deleted" as const; throw error; });
       if (!outcome) continue;
+      d.supervision.abort(new Error("conversation stopped"));
       await d.watching;
       if (outcome !== "deleted") await publish(d, "stopped");
       return outcome;
     }
-  } finally { await d.watching; watched?.close(); }
+  } finally { d.supervision.abort(new Error("conversation stopped")); await d.watching; watched?.close(); }
 }
 
 /** The session's output hooks: the window shows streamed text and tool lines like a worker's, and the live file gets the same events. */

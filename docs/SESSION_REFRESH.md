@@ -139,26 +139,8 @@ preview is local to the submitting window; it is not a global inbox inventory.
   the holder (PID, since, project). Clear still uses the project-state lock shared
   with orchestrator publication, and refuses queued input. Captured directory identity prevents stale Pages/queued publications
   from acquiring a deleted/recreated project's state.
-- The persisted cancellation epoch also gates other windows' later turns.
-  Refresh never changes it. Ctrl+C writes the launch's cancel request
-  (`transcript/orchestrator.jsonl.cancel`, naming the run in
-  `transcript/orchestrator.jsonl.launch`); the daemon takes it (renamed aside,
-  so a newer request is never lost), aborts the turn, advances the epoch and
-  acknowledges under the request's token. The live daemon owns the launch
-  file: it publishes its own run as soon as it holds the daemon lock and
-  re-asserts it on every pass, so two TUIs starting daemons in the same poll
-  (the loser exits before its run record, but may have published its launch
-  last) cannot leave cancels addressed to a run nobody runs. A cancel for a
-  dead daemon is never applied by a later launch (it names the exact run), so
-  pre-cancel input would run when the daemon restarts; the page says the
-  cancel was not acknowledged. Turn locks left by a daemon killed mid-turn
-  (dead owner pid) do not gate the next daemon's turns or a clear
-  (`turnLocksHeld`/`lockHeld`); taking the turn moves them aside. Pre-cancel input (including late login/persistence)
-  and agent reports cannot resume a paused project; fresh human input or an
-  explicit compact request is required. Explicit `/compact` retains its existing
-  local resume permission until the epoch changes; refresh cannot create that
-  permission. Cancellation still aborts the local
-  owning request/tools, not arbitrary already-running work in another process.
+- Ctrl+C publishes a durable project-incarnation stop barrier and rotates the execution epoch. The orchestrator, its workers/reviewers and supervised commands stop; new runs cannot adopt an old run's generation. Exact-run cancellation and command stop files also reach processes still running the previous build. Reopening, keepers, reports, settings changes, compaction and update handoffs cannot release the barrier. Only fresh human orchestrator input can resume. Execution generation checks at model/tool/inbox/launch boundaries preserve new input when a user resumes before old processes finish stopping.
+- The live daemon still owns its launch identity. Stale run-targeted commands cannot stop a replacement. Dead-owner turn locks remain recoverable without a timeout-based steal. A TUI disconnect continues to preserve ongoing remote work; Ctrl+C explicitly stops its selected conversation. See [PERFORMANCE.md](PERFORMANCE.md) for lifecycle and validation details.
 
 ## Limitations and recovery
 

@@ -7,6 +7,8 @@ export interface Config {
   sandbox: "off" | "workspace";
   model: string;
   compact: boolean;
+  /** Upper working-context target for workers/reviewers; original history stays on disk. */
+  workerContextTokens: number;
   contextLimitFallback: number;
   /** Claude subscription profile saved by /login anthropic. Empty = default. */
   account: string;
@@ -35,6 +37,7 @@ export const defaults: Config = {
   sandbox: "off",
   model: "claude-sonnet-5-5",
   compact: true,
+  workerContextTokens: 128000,
   contextLimitFallback: 128000,
   account: "",
   openaiAccount: "",
@@ -85,6 +88,7 @@ function withFallbacks(config: Config): Config {
   if (!integerWithin(config.maxToolOutputBytes, 1024, 256 * 1024 * 1024)) config.maxToolOutputBytes = defaults.maxToolOutputBytes;
   if (!validRounds(config.maxReviewRounds)) config.maxReviewRounds = defaults.maxReviewRounds;
   if (typeof config.dynamicDispatch !== "boolean") config.dynamicDispatch = defaults.dynamicDispatch;
+  if (!integerWithin(config.workerContextTokens, 16000, 1000000)) config.workerContextTokens = defaults.workerContextTokens;
   return config;
 }
 

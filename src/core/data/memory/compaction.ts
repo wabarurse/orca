@@ -30,6 +30,8 @@ export interface ContextDeps {
 }
 
 export interface CompactOptions {
+  /** Optional cost/latency target, independently bounded by actual model admission. */
+  triggerTokens?: number;
   enabled?: boolean;
   /** Verified metadata when available; otherwise an explicitly configured budget, not a model claim. */
   contextLimit?: number;
@@ -171,7 +173,8 @@ export async function compact(deps: ContextDeps, manual = false): Promise<boolea
   const messages = await deps.transcript.chain();
   const limit = contextLimit(options, deps.model);
   const reserve = outputCap(deps);
-  if (!manual && budget(deps, messages) + reserve < limit * .8) return null;
+  const trigger = Math.min(options.triggerTokens ?? Infinity, limit * .8 - reserve);
+  if (!manual && budget(deps, messages) < trigger) return null;
   status(deps, COMPACTION_STATUS.started);
   try {
     return await checkpoint(deps, messages, limit);

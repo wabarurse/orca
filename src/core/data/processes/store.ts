@@ -1,6 +1,6 @@
 import { usageEvent } from "../../../providers";
 import { assertProjectIdentity } from "../projects";
-import { mkdir, readdir, rename, writeFile, open } from "node:fs/promises";
+import { mkdir, readdir, rename, writeFile, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
 import type { Role, Message } from "../../../protocol";
@@ -17,6 +17,7 @@ export interface ProcessRecord {
   events: { event: NonNullable<Message["event"]>; text: string; delivered?: boolean }[];
 }
 export const liveProcess = (p: ProcessRecord) => p.state === "starting" || p.state === "running";
+const indexed = new Map<string, Set<string>>();
 export function processDirectory(project: string, id?: string): string {
   if (id && !/^[a-f0-9-]{36}$/.test(id)) throw new Error("invalid process handle");
   return join(paths.runtimeProject(project), "processes", ...(id ? [id] : []));
@@ -25,9 +26,45 @@ export async function saveProcess(p: ProcessRecord): Promise<void> {
   if (p.incarnation) assertProjectIdentity(p.project, p.incarnation, "saving process state");
   const dir = processDirectory(p.project, p.id);
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  const temp = join(dir, `.state-${crypto.randomUUID()}`);
-  await writeFile(temp, JSON.stringify(p) + "\n", { mode: 0o600 });
-  await rename(temp, join(dir, "state.json"));
+  await withStorageLock(join(dir, "record.lock"), async () => {
+    const active = join(processDirectory(p.project), "active");
+    await mkdir(active, { recursive: true, mode: 0o700 });
+    // Publish recovery intent first. A crash can leave extra recovery work, never
+    // an untracked running command or an undelivered durable event.
+    await writeFile(join(active, p.id), "\n", { mode: 0o600 });
+    const temp = join(dir, `.state-${crypto.randomUUID()}`);
+    await writeFile(temp, JSON.stringify(p) + "\n", { mode: 0o600 });
+    await rename(temp, join(dir, "state.json"));
+    if (!liveProcess(p) && (!p.notify || p.events.every(e => e.delivered))) await unlink(join(active, p.id)).catch(() => {});
+  });
+}
+/** Seed the recovery index once for existing homes; terminal history stays inspectable. */
+export async function recoverableProcesses(project: string): Promise<ProcessRecord[]> {
+  const dir = join(processDirectory(project), "active"), marker = join(dir, ".initialized");
+  if (!indexed.has(dir) || !await Bun.file(marker).exists()) await withStorageLock(join(processDirectory(project), "index.lock"), async () => {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const records = await listProcesses(project);
+    for (const p of records) if (liveProcess(p) || (p.notify && p.events.some(e => !e.delivered))) await writeFile(join(dir, p.id), "\n", { mode: 0o600 });
+    indexed.set(dir, new Set(records.map(p => p.id)));
+    await writeFile(marker, "1\n", { mode: 0o600 });
+  });
+  // Directory names are cheap to inspect. Discover older, still-running builds
+  // that create commands without publishing an active marker after an update.
+  for (const id of await readdir(processDirectory(project))) {
+    if (!/^[a-f0-9-]{36}$/.test(id) || indexed.get(dir)!.has(id)) continue;
+    try {
+      const p = await readProcess(project, id);
+      if (liveProcess(p) || (p.notify && p.events.some(e => !e.delivered))) await writeFile(join(dir, id), "\n", { mode: 0o600 });
+      indexed.get(dir)!.add(id);
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  const result: ProcessRecord[] = [];
+  for (const id of await readdir(dir)) {
+    if (!/^[a-f0-9-]{36}$/.test(id)) continue;
+    try { result.push(await readProcess(project, id)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  return result;
 }
 export async function readProcess(project: string, id: string): Promise<ProcessRecord> {
   const p = await Bun.file(join(processDirectory(project, id), "state.json")).json() as ProcessRecord;
@@ -71,7 +108,7 @@ export async function deliverProcessEvents(p: ProcessRecord): Promise<void> {
   }
 }
 export async function reconcileProcesses(project: string): Promise<void> {
-  for (const snapshot of await listProcesses(project)) {
+  for (const snapshot of await recoverableProcesses(project)) {
     if (snapshot.supervisorPid && pidAlive(snapshot.supervisorPid)) continue;
     if (!snapshot.supervisorPid && Date.now() - Date.parse(snapshot.createdAt) < 10000) continue;
     await withStorageLock(join(processDirectory(project, snapshot.id), "recovery.lock"), async () => {
@@ -81,6 +118,7 @@ export async function reconcileProcesses(project: string): Promise<void> {
         p.state = "unknown"; p.reason = "supervisor disappeared; command may have had effects and will not be replayed";
         await addProcessEvent(p, "unknown");
       } else await deliverProcessEvents(p);
+      if (!liveProcess(p) && (!p.notify || p.events.every(e => e.delivered))) await unlink(join(processDirectory(project), "active", p.id)).catch(() => {});
     });
   }
 }

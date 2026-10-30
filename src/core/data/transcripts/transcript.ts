@@ -7,7 +7,7 @@
 // history() walks past both for UI replay without duplicating retained turns.
 
 import { paired } from "./tool-pairs";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { withStorageLock } from "../storage-lock";
 import type { AppendGuard, Entry, NewEntry } from "../../../protocol";
 import { publish, disk, type Storage } from "./transcript-storage";
@@ -76,6 +76,12 @@ export function open(path: string, io: Storage = disk): Transcript {
   let byUuid = load(path);
   let head = [...byUuid.keys()].at(-1) ?? null;
   const branch = () => walk(byUuid, head);
+  const version = () => {
+    if (io !== disk) return undefined;
+    try { const s = statSync(path, { bigint: true }); return `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing"; throw error; }
+  };
+  let observed: string | undefined;
   const reload = async () => {
     // Read/parse first: a failed refresh leaves the previous snapshot intact.
     const bytes = await io.read(path).catch(error => {
@@ -88,9 +94,10 @@ export function open(path: string, io: Storage = disk): Transcript {
     }
     byUuid = next;
     head = [...next.keys()].at(-1) ?? null;
+    observed = version();
   };
   const lock = `${path}.lock`;
-  const refresh = () => withStorageLock(lock, reload);
+  const refresh = () => observed !== undefined && version() === observed ? Promise.resolve() : withStorageLock(lock, reload);
   async function append(partial: NewEntry, signal?: AbortSignal, guard?: AppendGuard): Promise<Entry> {
     return withStorageLock(lock, async () => {
       signal?.throwIfAborted();
@@ -103,6 +110,7 @@ export function open(path: string, io: Storage = disk): Transcript {
         byUuid.set(entry.uuid, entry);
         head = entry.uuid;
       }, signal, guard?.check);
+      observed = version();
       return entry;
     });
   }
