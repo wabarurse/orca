@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, openSync, closeSync, fsyncSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { legacyEntries, movedRoot, movedProject } from "./layout";
-import { present, safeDirectory, safeFile, safeAncestors } from "./layout-safety";
+import { present, safeDirectory, safeFile, safeAncestors, safeProjectDirectories } from "./layout-safety";
 
 interface Journal { version: 2; phase: "moving" | "complete" | "rolling-back" | "rolled-back"; entries: string[]; backed: string[] }
 type PersistenceEvent = (stage: "renamed" | "synced", path: string) => void;
@@ -39,12 +39,6 @@ function scanLocks(path: string) {
     if (entry.name.endsWith(".lock")) throw new Error(`unresolved storage lock: ${child}`);
     if (entry.isDirectory() && !["repo", "worktrees", ".git", "node_modules"].includes(entry.name)) scanLocks(child);
   }
-}
-function projectParents(base: string) {
-  const projects = join(base, "projects");
-  if (!present(projects)) return;
-  safeDirectory(projects);
-  for (const id of readdirSync(projects)) safeDirectory(join(projects, id));
 }
 function locksAt(base: string) {
   for (const name of ["checkout-locks", "turn-locks", "project-locks", "daemon-locks"]) {
@@ -100,7 +94,7 @@ function migrationRoots(options: MigrationOptions) {
 function inspect(options: MigrationOptions): Migration {
   const { root, runtime, journalPath, device } = migrationRoots(options);
   // Reject linked project parents BEFORE recursive lock scanning or discovery.
-  for (const base of [root, runtime]) projectParents(base);
+  for (const base of [root, runtime]) safeProjectDirectories(base);
   for (const base of [root, runtime]) locksAt(base);
   if (present(join(runtime, "activated"))) throw new Error("new layout has been activated; rollback/migration requires a separate data reconciliation, not this script");
   const journal = readJournal(journalPath);
