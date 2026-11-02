@@ -7,3 +7,4 @@ export { realTerminal, type Terminal } from "./term";
 
 export { renderTaskTree, type TaskTreeOptions, type TaskTreeRender, type TaskTreeHit } from "./task-tree";
 export { navigateOutline } from './task-tree';
+export { selectTaskNumber, taskStateColor } from "./task-tree";

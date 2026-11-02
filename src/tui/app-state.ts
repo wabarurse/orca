@@ -145,6 +145,7 @@ export interface TaskTreeState {
   graphY: number; detailY: number; loading: boolean; error?: string;
   collapsed: Set<string>; frame: number; detailsFocused?: boolean;
   confirmRemoval?: string; notice?: string; removing?: boolean;
+  jumpInput?: string;
   revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
 }
 

@@ -3,5 +3,5 @@ export { taskDependencies, taskTreeView, type TaskTreeAttention, type TaskTreeSt
 export { taskPublicationView, taskPublicationObservation, type TaskPublicationObservation, type TaskPublicationMilestone, type TaskPublicationView } from "./tasks";
 export { canonicalTask } from './task-ledger';
 export { type LedgerTask } from './task-ledger';
-export { publicTaskStatus } from './task-ledger';
+export { publicTaskStatus, type TaskDisplayStatus } from './task-ledger';
 export { taskPublicationMilestone } from './tasks';

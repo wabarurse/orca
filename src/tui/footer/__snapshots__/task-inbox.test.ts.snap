@@ -22,7 +22,7 @@ queued 1/1 · orchestrator · isolated
 0 agents running │ 1 task │ inbox 1
 inbox · [tasks] / questions · read-only                                                      1–2/2
 name               | summary                       | status         | pr link
-Task one           | A brief structured summary    | queued         | https://github.com/owner/repo/
+#? Task one        | A brief structured summary    | queued         | https://github.com/owner/repo/
                    |                               |                | pull/62
 esc/tab close · shift+tab questions · ↑↓/pgup/pgdn · r refresh"
 `;
@@ -49,7 +49,7 @@ queued 1/1 · orchestrator · isolated
 0 agents running │ 1 task │ inbox 1
 inbox · [tasks] / questions · read-only                                  1–2/2
 name           | summary              | status         | pr link
-Task one       | A brief structured   | queued         | https://github.com/owne
+#? Task one    | A brief structured   | queued         | https://github.com/owne
                | summary              |                | r/repo/pull/62
 esc/tab close · shift+tab questions · ↑↓/pgup/pgdn · r refresh"
 `;
@@ -60,6 +60,7 @@ model fake-model
 /isolated/repo
 owner/repo
 ────────────────────────────────────────
+conversation 26
 conversation 27
 conversation 28
 conversation 29
@@ -70,10 +71,9 @@ queued 1/1 · orch · isolated
 │> draft 界                            │
 │  second line                         │
 └──────────────────────────────────────┘
-0 agents running │ 1 task
-inbox 1
+0 agents running │ 1 task │ inbox 1
 inbox · [tasks]                  1–5/5
-name: Task one
+name: #? Task one
 summary: A brief structured summary
 status: queued
 pr link:

@@ -80,7 +80,7 @@ test("normal-width table has four columns and exact stage labels; all attention 
 test("long summaries cannot hide attention beside the status at normal widths", () => {
   const task = { ...row("Long task", "working"), summary: "summary ".repeat(60), attention: { kind: "cancelled" as const, reason: "Stopped; not ready" } };
   const rendered = taskInboxLines({ rows: [task], loading: false }, 80);
-  expect(plain(rendered.lines.slice(0, 2))).toContain("cancelled");
+  expect(plain(rendered.lines.slice(0, 2))).toContain("waiting");
 });
 
 test("exactly one status keyword at wide/narrow/tiny widths, with attention precedence and no mutation", () => {
@@ -90,12 +90,12 @@ test("exactly one status keyword at wide/narrow/tiny widths, with attention prec
         const task = { ...row("Full name", status), summary: "Full summary", ...(kind ? { attention: { kind, reason: "SECRET REASON" } } : {}) };
         const before = structuredClone(task);
         const rendered = taskInboxLines({ rows: [task], loading: false }, width);
-        const label = kind ?? (status === "ready_to_merge" ? "ready to merge" : status);
+        const label = kind ? "waiting" : (status === "ready_to_merge" ? "ready to merge" : status);
         if (width >= 72) {
           const statuses = rendered.lines.map(line => (Bun.stripANSI(line).split(" | ")[2] ?? "").trim()).filter(Boolean);
           expect(statuses).toEqual([label]);
         } else {
-          expect(plain(rendered.lines).replace(/\s/g, "")).toBe(`name:Fullnamesummary:Fullsummarystatus:${label.replaceAll(" ", "")}prlink:${pr.url}${kind ? `attention:${kind}:SECRETREASON` : ""}`);
+          expect(plain(rendered.lines).replace(/\s/g, "")).toBe(`name:#?Fullnamesummary:Fullsummarystatus:${label.replaceAll(" ", "")}prlink:${pr.url}${kind ? `attention:${kind}:SECRETREASON` : ""}`);
         }
         expect(plain(rendered.lines)).not.toContain("!");
         if (kind && width >= 72) expect(plain(rendered.lines)).toContain("SECRET");
@@ -122,7 +122,8 @@ test("unsafe fields, attention, errors and forged links cannot style, move or in
   const bad = { ...row(unsafe), summary: unsafe, attention: { kind: "blocked" as const, reason: unsafe }, pr: { ...pr, url: pr.url + "\x1b]52;c;bad\x07" } };
   const rendered = taskInboxLines({ rows: [bad], loading: false, error: unsafe }, 100);
   const contents = rendered.lines.join("\n");
-  expect(contents).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/);
+  expect(Bun.stripANSI(contents)).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/);
+  expect(contents).not.toContain("\x1b[31m"); expect(contents).not.toContain("\x1b[2J");
   expect(contents).not.toContain("evil.test"); expect(contents).not.toContain("payload");
   expect(contents).toContain("invalid pr link");
   expect(inboxText(unsafe)).toContain("safeREDlabel");
@@ -802,7 +803,8 @@ for (const cols of [80, 120]) test(`publication App/realTerminal fixture ${cols}
   expect(screen.text()).not.toContain("PR is out");
   tasks = [published, closed, legacy, merged];
   await app.onKey({ name: "char", text: "r" });
-  await until(() => screen.text().includes("PR is out"));
+  await until(() => screen.text().includes("Refreshed"));
+  expect(screen.text()).toContain("waiting");
   expect(raw).toContain("\x1b[32m●"); expect(raw).toContain("\x1b[35m●");
   let capture = `TREE ${cols}x24\n${screen.text()}\n`;
   // Details scroll is existing behavior; publication doesn't add a polling loop.
@@ -811,11 +813,11 @@ for (const cols of [80, 120]) test(`publication App/realTerminal fixture ${cols}
   await until(() => raw.includes(`\x1b]8;;${pr.url}`));
   capture += `TREE details\n${screen.text()}\n`;
   await app.onKey({ name: "escape" }); await command();
-  await until(() => text(app).includes("PR is out"));
+  await until(() => text(app).includes("waiting"));
   const lines = app.frame().inbox!.lines.join("\n");
   expect(lines).toContain("\x1b[32m"); expect(lines).toContain("conflicting; checks failed");
-  expect(lines).toContain("PR closed"); expect(lines).toContain("ready to merge");
-  expect(lines.match(/PR is out/g)).toHaveLength(1);
+  expect(lines).toContain("waiting"); expect(lines).toContain("ready to merge");
+  expect(lines).not.toContain("PR is out");
   await until(() => screen.text().includes("pr link"));
   capture += `INBOX\n${screen.text()}\nALL INBOX ROWS\n${plain(app.frame().inbox!.lines)}\n`;
   writeFileSync(`/tmp/pr-activation-${cols}.txt`, capture);

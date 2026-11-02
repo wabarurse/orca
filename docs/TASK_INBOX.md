@@ -89,13 +89,18 @@ last snapshot with a visible stale/error warning, never a fabricated zero.
 
 ### Tasks section (read-only)
 
-The table remains **Name | Summary | Status | PR link**. Status is **exactly one
-plain human label**: stored attention kind (**waiting**, **blocked**, **cancelled**,
-**closed**, **unknown**) if present, otherwise lifecycle (**queued**, **working**,
-**reviewing**, **ready to merge**). No `!` prefix, second lifecycle line, reason,
-metadata or per-task detail appears underneath. This is display precedence only;
-stored lifecycle, attention and reason remain untouched, and readiness is never
-inferred.
+The table remains **Name | Summary | Status | PR link**. The current state is
+exactly one of **queued**, **working**, **reviewing**, **ready to merge**,
+**merged**, or **waiting**. Tree rows, inbox rows and task tool responses share
+the same projection. Merged evidence wins; waiting includes every explicit hold
+reason (waiting, blocked, cancelled, closed, unknown) and a closed PR. Hold kinds
+and explanations remain retained in details; waiting never authorizes a restart.
+An open PR is publication evidence, not a readiness or activity claim. Row colors
+follow the displayed state: queued grey, working/reviewing cyan, ready to merge
+green, merged purple, waiting yellow. PR metadata cannot override those colors.
+The stored lifecycle, attention, checkpoints, IDs, task numbers and SQL schema are
+unchanged; historical ledger milestones keep their compatible checkpoint format.
+
 A stage is not a claim that a process is running. Exit/report prose never
 establishes readiness/completion.
 
@@ -236,3 +241,16 @@ activity is intentionally conservative; after ready, send the report without
 more shell commands, or validate again. External edits/pushes are detected on
 next PR refresh/local validation, not by a filesystem watcher. GitHub Enterprise,
 non-GitHub PRs, task editing/rebranching, pruning and scheduling are out of scope.
+
+
+## Jump to a task number
+
+In the Ctrl+T task tree, type a task number and press Enter. Digits accumulate
+without a timer, so `13` selects #13 rather than briefly selecting #1. Backspace
+edits the number; Escape cancels the number entry, and a subsequent Escape returns
+to chat. A missing/removed number leaves selection unchanged and shows a notice.
+The jump uses stable task numbers rather than row positions, unfolds only the
+selected task's primary ancestors, scrolls it into view and focuses the list with
+details reset to the top. Other folded groups and the chat draft stay intact.
+Jumping is local navigation: it does not submit a prompt, start agents, or write
+task state.

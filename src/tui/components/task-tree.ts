@@ -1,4 +1,4 @@
-import { publicTaskStatus } from "../../protocol/task";
+import { publicTaskStatus, type TaskDisplayStatus } from "../../protocol/task";
 import { taskPublicationMilestone } from "../../protocol/task";
 import { check, taskStatusLabels, type Task, type TaskTreeView } from "../../protocol/task";
 import { cells, fit, plainText, visibleLength, wordWrap, wrap } from "./text";
@@ -81,20 +81,14 @@ function active(task: TreeTask): boolean {
   return !task.archive && !task.attention && task.runs.some(run => run.state === "started" && !run.endedAt);
 }
 
-function status(task: TreeTask): string { return publicTaskStatus(task); }
+function status(task: TreeTask): TaskDisplayStatus { return publicTaskStatus(task); }
 
-/** Dot colour: merged purple, verified PR out green, stopped (blocked/cancelled/closed) red,
- * unknown yellow, building/working/reviewing/ready cyan, queued grey. A routine `waiting`
- * attention never hides progress. The PR milestone stays green even when blocked. */
+/** The row and status text always share the same state and colour. */
+export function taskStateColor(state: TaskDisplayStatus): number {
+  return ({ queued: 90, working: 36, reviewing: 36, "ready to merge": 32, merged: 35, waiting: 33 })[state];
+}
 function statusColor(task: TreeTask): number {
-  const milestone = taskPublicationMilestone(task);
-  if (milestone.kind === "merged") return 35;
-  if (milestone.kind === "published") return 32;
-  const kind = task.attention?.kind;
-  if (kind === "blocked" || kind === "cancelled" || kind === "closed") return 31;
-  if (kind === "unknown") return 33;
-  if (active(task) || status(task) === "building" || task.status !== "queued") return 36;
-  return 90;
+  return taskStateColor(status(task));
 }
 
 function activity(task: TreeTask): string {
@@ -131,13 +125,17 @@ function dot(task: TreeTask, frame: number): string {
 
 /** One plain label, the inbox rule: attention first, then merged / ready / PR / lifecycle. */
 function rowLabel(task: TreeTask): string {
-  if (task.archive) return "merged";
-  if (task.attention) return task.attention.kind;
-  if (task.status === "ready_to_merge") return "ready to merge";
-  const milestone = taskPublicationMilestone(task);
-  if (milestone.kind === "published") return "PR open";
-  if (milestone.kind === "closed") return "PR closed";
-  return status(task) === "building" ? "building" : taskStatusLabels[task.status];
+  return status(task);
+}
+/** Reveal only the target's primary ancestor chain, retaining unrelated folds. */
+export function selectTaskNumber(input: readonly (Task | TaskTreeView)[], number: number, collapsed: Set<string>): string | undefined {
+  if (!Number.isSafeInteger(number) || number < 1) return;
+  const tasks = treeTasks(input), target = tasks.find((task, i) => !task.removedAt && (task.number ?? i + 1) === number);
+  if (!target) return;
+  const nodes = outline(tasks, new Set());
+  let parent = nodes.find(node => node.id === target.id)?.parent;
+  while (parent) { collapsed.delete(parent); parent = nodes.find(node => node.id === parent)?.parent; }
+  return target.id;
 }
 
 /** worker → review → PR → merged: 0 nothing yet, 4 merged. */
