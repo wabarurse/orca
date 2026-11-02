@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { conversationIdentity } from "./conversation-identity";
 import { readState, updateState } from "./state-store";
 export const inheritedSettings = ["model", "account", "provider-models", "role-models", "model-settings"] as const;
-export interface DirectoryProject { id: string; name: string; directory: string; branch: string; conversations: string[]; incarnations: Record<string, string>; defaults: Record<string, unknown> }
+export interface DirectoryProject { id: string; name: string; directory: string; branch: string; conversations: string[]; incarnations: Record<string, string>; defaults: Record<string, unknown>; previousDirectories?: { directory: string; branch: string }[] }
 interface Catalog { version: 1; projects: DirectoryProject[]; open?: string[]; selected?: string }
 const scope = "directory-projects", key = "catalog";
 const empty = (): Catalog => ({ version: 1, projects: [] });
@@ -13,6 +13,7 @@ export function projectCatalog(file: string): Catalog {
   const ids = new Set<string>(), members = new Set<string>();
   for (const p of value.projects) {
     if (!/^[a-f0-9-]{36}$/.test(p.id) || ids.has(p.id) || typeof p.name !== "string" || !p.directory?.startsWith("/") || typeof p.branch !== "string" || !Array.isArray(p.conversations) || !p.incarnations || typeof p.incarnations !== "object" || !p.defaults || typeof p.defaults !== "object") throw new Error("invalid directory project");
+    if (p.previousDirectories !== undefined && (!Array.isArray(p.previousDirectories) || p.previousDirectories.some(route => !route || typeof route.directory !== "string" || !route.directory.startsWith("/") || typeof route.branch !== "string"))) throw new Error("invalid project relink history");
     ids.add(p.id);
     for (const member of p.conversations) { if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(member) || members.has(member)) throw new Error("duplicate conversation membership"); members.add(member); }
   }
@@ -59,6 +60,7 @@ export function updateDirectory(file: string, id: string, patch: { name?: string
   updateState<Catalog>(file, scope, key, old => {
     const p = old?.projects.find(p => p.id === id);
     if (!p) throw new Error("directory project not found");
+    const previous = { directory: p.directory, branch: p.branch };
     if (patch.name !== undefined) { if (!patch.name.trim() || patch.name.length > 80 || /[\x00-\x1f\x7f]/.test(patch.name)) throw new Error("invalid project name"); p.name = patch.name.trim(); }
     if (patch.directory !== undefined) {
       const directory = realpathSync(resolve(patch.directory));
@@ -66,6 +68,10 @@ export function updateDirectory(file: string, id: string, patch: { name?: string
       p.directory = directory;
     }
     if (patch.branch !== undefined) p.branch = patch.branch;
+    if (previous.directory !== p.directory || previous.branch !== p.branch) {
+      p.previousDirectories ??= [];
+      if (!p.previousDirectories.some(route => route.directory === previous.directory && route.branch === previous.branch)) p.previousDirectories.push(previous);
+    }
     return old;
   });
 }

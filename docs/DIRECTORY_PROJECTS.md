@@ -48,3 +48,5 @@ Older layout-3 state used `device:inode:birth-time` in settings keys. Device num
 Stop/control identity comes from the filesystem UUID rather than the settings database. A broken task/settings database cannot prevent publishing cancellation. Legacy stop/process records still match the original fingerprint, preserving stopped status across the upgrade.
 
 No live state is reset by this PR. Update with `orca pull` after merge and reopen old TUIs. Older workers finish on their loaded build; originals and task records remain intact.
+
+Task-ledger bindings remain immutable. Readers and writers recognize the original filesystem fingerprint as the same conversation UUID only when repository and worktree identity still match. Validated explicit relinks record prior directory/branch routes; unapproved binding changes and recreated conversations still require recovery. No task rows or task numbers are rewritten to perform this compatibility check.
