@@ -5,8 +5,8 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { paths, repositoryBinding } from "../../../config";
-import { projectIdentity } from "../projects";
+import { paths, repositoryBinding, directoryProject } from "../../../config";
+import { projectIdentity, matchesProjectIdentity } from "../projects";
 import { openExistingReadonly } from "../sqlite";
 import { installTaskLedgerSchema } from "../sqlite";
 import { canonicalTask, type LedgerTask } from "../../../protocol/task";
@@ -29,6 +29,21 @@ function database(): Database {
 function binding(project: string): string {
   return JSON.stringify({ identity: projectIdentity(project), repository: repositoryBinding(project) ?? paths.repo(project) });
 }
+/** The SQL binding stays immutable. Compatibility changes representation, never
+ * ownership: require the same conversation and exact repository/worktree identity. */
+function matchesBinding(project: string, encoded: string): boolean {
+  let saved: { identity?: unknown; repository?: unknown };
+  try { saved = JSON.parse(encoded); } catch { return false; }
+  if (!saved || typeof saved.identity !== "string" || !matchesProjectIdentity(project, saved.identity)) return false;
+  const current = repositoryBinding(project) ?? paths.repo(project);
+  if (typeof saved.repository === "string" || typeof current === "string") return saved.repository === current;
+  const old = saved.repository as typeof current | undefined;
+  if (!old || old.version !== current.version || old.worktreeId !== current.worktreeId) return false;
+  if (old.directory === current.directory && old.branch === current.branch) return true;
+  // A validated explicit relink records its former route; a random binding edit
+  // or another conversation's repository is never silently adopted.
+  return directoryProject(paths.memory, project)?.previousDirectories?.some(route => route.directory === old.directory && route.branch === old.branch) ?? false;
+}
 function atomic(path: string, bytes: string): void {
   const tmp = `${path}.${crypto.randomUUID()}.tmp`;
   try { writeFileSync(tmp, bytes, { mode: 0o600, flag: "wx" }); renameSync(tmp, path); }
@@ -37,7 +52,7 @@ function atomic(path: string, bytes: string): void {
 function importLegacy(db: Database, project: string, validate: (raw: unknown) => asserts raw is Task): void {
   const saved = db.query("SELECT repository FROM task_ledger_projects WHERE project_id=?").get(project) as { repository: string } | null;
   if (saved) {
-    if (saved.repository !== binding(project)) throw new Error("task ledger project identity/repository changed; explicit recovery required");
+    if (!matchesBinding(project, saved.repository)) throw new Error("task ledger project identity/repository changed; explicit recovery required");
     // A v1 writer must never become authority again after migration.
     if (existsSync(file(project))) {
       let raw: { version?: number };
@@ -152,7 +167,7 @@ export function existingLedgerTasks(project: string): Task[] | undefined {
     if (!db.query("SELECT name FROM sqlite_master WHERE name='task_ledger_records'").get()) return;
     const saved = db.query("SELECT repository FROM task_ledger_projects WHERE project_id=?").get(project) as { repository: string } | null;
     if (!saved) return;
-    if (saved.repository !== binding(project)) throw new Error("task ledger project identity/repository changed; explicit recovery required");
+    if (!matchesBinding(project, saved.repository)) throw new Error("task ledger project identity/repository changed; explicit recovery required");
     return load(db, project).tasks;
   } finally { db.close(); }
 }
