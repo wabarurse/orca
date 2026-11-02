@@ -1,7 +1,7 @@
 // Storage locations and durable project metadata. Configuration parsing stays in config.ts.
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { readState, updateState, recoverStateScope } from "./state-store";
+import { readState, updateState, recoverStateScope, legacyStateScopes } from "./state-store";
 import { conversationIdentity } from "./conversation-identity";
 import { directoryProject, inheritedSettings, setDirectorySetting } from "./directory-projects";
 import { stateRoot, worktreeRoot } from "./legacy";
@@ -20,6 +20,12 @@ export function projectStateScope(name: string): string {
   const scope = `conversation:${identity.id}`;
   recoverStateScope(paths.memory, `project:${name}:`, identity.fingerprint, scope);
   return scope;
+}
+/** Historical identities only for the persisted conversation's original directory.
+ * A recreated alias has a new fingerprint and cannot inherit these scopes. */
+export function legacyProjectIdentities(name: string): string[] {
+  const identity = conversationIdentity(root(), name), prefix = `project:${name}:`;
+  return legacyStateScopes(paths.memory, prefix, identity.fingerprint).map(scope => scope.slice(prefix.length));
 }
 export function readProjectState<T>(name: string, key: string): T | undefined {
   let scope: string;

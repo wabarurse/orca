@@ -6,7 +6,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
-import { paths } from "../../../config";
+import { paths, legacyProjectIdentities } from "../../../config";
 import { legacy } from "../../../config";
 import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../providers";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
@@ -82,12 +82,18 @@ export async function loadImage(project: string, ref: ImageRef): Promise<Buffer>
 }
 async function loadTypedImage(project: string, ref: ImageRef): Promise<{ bytes: Buffer; mime: ImageMime }> {
   assertRef(ref);
-  if (ref.scope !== scope(project)) throw new Error("image belongs to another/deleted project.");
+  const identity = projectIdentity(project);
+  // Pre-UUID transcripts retain hashed device/inode/birth identities. Accept only
+  // aliases proven by retained state for this conversation's original fingerprint;
+  // matching image bytes alone never authorizes another/deleted conversation.
+  if (ref.scope !== scope(project) && !legacyProjectIdentities(project).some(old => ref.scope === hash(`${project}\0${old}`))) {
+    throw new Error("image belongs to another/deleted project.");
+  }
   await safeDir(imageDir(project));
   const { bytes, mime } = await readStored(project, ref.id);
   if (hash(bytes) !== ref.sha256) throw new Error(`image ${ref.id} changed or is corrupt.`);
   validateImage(bytes, mime);
-  if (ref.scope !== scope(project)) throw new Error("project changed while reading image.");
+  assertProjectIdentity(project, identity, "reading image");
   return { bytes, mime };
 }
 export async function validateRefs(project: string, refs: ImageRef[] | undefined): Promise<void> {
