@@ -224,6 +224,16 @@ export const tmux = {
   async listWindows(session: string): Promise<string[]> {
     return (await tmux.windows(session)) ?? [];
   },
+  /** Point-in-time pane inventory; retained dead panes are not running agents. */
+  async agentPanes(session: string): Promise<{ name: string; live: boolean }[] | null> {
+    if (!Bun.which("tmux")) return null;
+    const out = await run(tmux.argv("list-panes", "-s", "-t", "=" + session, "-F", "#{window_name}\t#{pane_dead}"), { cwd: process.cwd(), timeoutMs: 5000 });
+    if (!out) return null;
+    if (out.code !== 0) return /can't find session|no server running|error connecting to .*\((No such file or directory|Connection refused)\)/i.test(out.err) ? [] : null;
+    const rows = out.out.trim().split("\n").filter(Boolean).map(line => line.split("\t"));
+    if (rows.some(row => row.length !== 2 || !row[0] || !/^[01]$/.test(row[1]!))) return null;
+    return rows.map(([name, dead]) => ({ name: name!, live: dead === "0" }));
+  },
 
   /**
    * A session's window names: [] when the session or the tmux server is gone,

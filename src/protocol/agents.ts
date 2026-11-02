@@ -4,6 +4,9 @@
 export interface AgentInfo {
   name: string;
   live: boolean;
+  status?: "running" | "exited" | "unknown";
+  inventoryComplete?: boolean;
+  queuedMessages?: number | null;
   activity?: string;
   /** ISO start of the latest run. */
   startedAt?: string;

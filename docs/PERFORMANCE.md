@@ -48,3 +48,12 @@ Source inspected: [earendil-works/pi, commit a14cdf90](https://github.com/earend
 - Pi is implemented in TypeScript. Its [tool truncation defaults](https://github.com/earendil-works/pi/blob/a14cdf90f0a76532f3e20bc3c01872837cef24ba/packages/coding-agent/src/core/tools/truncate.ts) are 2000 lines/50 KiB, larger than Orca's default 16 KiB result cap. Lightweight architecture does not mean simply making every output smaller, and these source comparisons establish no performance ranking between the harnesses.
 
 The implementation comments identify the Pi ideas used here. No Pi source was copied, no workflow categories were added, and no language rewrite is needed to remove the measured idle overhead.
+
+
+## Read-only agent activity
+
+`runtime({action: "status"})`, `/runtime`, the TUI running count and `/agents` share a point-in-time activity snapshot. A running agent needs a current launch matching its run record, a live agent PID and a live tmux pane. An agent with a verified-gone PID is exited; missing/invalid ownership, changed launches, permission errors, conflicting end records and unverifiable panes are unknown. Retained dead panes do not prove activity. Failed inspection produces a null running count and explicit errors, never a fabricated zero. `verifiedRunningCount` still reports the confirmed subset, and `observedAt` timestamps the snapshot; this is not an atomic guarantee that processes cannot change immediately afterward.
+
+Agent rows include queued inbox-file counts and task ID/number/name only when the task owns that exact current run. A queued follow-up does not start or resume an exited agent. Queue read failures are null, not zero. Historical build/model/context records are returned separately as `contextObservations` and never establish liveness. Supervised command states remain recorded process observations. `applicationSchedules: "not_inspected"` explicitly excludes application cron, external schedulers and production toggles from this tool's claims. `all_projects` applies to usage only; status is scoped to the current conversation.
+
+Inspection does not drain messages, update task stages, launch processes, repair identity, restart workers or trigger scheduling. No new polling loop is added; existing TUI checks use the shared snapshot, and their frequent count path does not read transcript bodies or restoration clocks. Unknown activity stays visible and is not offered as a finished row for removal. Existing cancellation, supervision and watchdog behavior is unchanged.

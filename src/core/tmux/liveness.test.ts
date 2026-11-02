@@ -14,10 +14,12 @@ for (const error of ["can't find session: missing", "no server running", "permis
     await Bun.write(executable, `#!/bin/sh\nprintf '%s\\n' "$FAKE_TMUX_ERROR" >&2\nexit 1\n`);
     chmodSync(executable, 0o755);
     const liveness = join(import.meta.dir, "liveness.ts");
-    const child = Bun.spawn([process.execPath, "-e", `import {liveAgentsOrNull} from ${JSON.stringify(liveness)}; console.log(JSON.stringify(await liveAgentsOrNull("missing")));`], {
+    const runner = join(import.meta.dir, "runner.ts");
+    const child = Bun.spawn([process.execPath, "-e", `import {liveAgentsOrNull} from ${JSON.stringify(liveness)}; import {tmux} from ${JSON.stringify(runner)}; console.log(JSON.stringify([await liveAgentsOrNull("missing"), await tmux.agentPanes("missing")]));`], {
       env: { ...process.env, PATH: bin, ORCA_HOME: home, FAKE_TMUX_ERROR: error }, stdout: "pipe", stderr: "pipe",
     });
     expect(await child.exited).toBe(0);
-    expect(JSON.parse(await new Response(child.stdout).text())).toEqual(error === "permission denied" ? null : []);
+    const expected = error === "permission denied" ? null : [];
+    expect(JSON.parse(await new Response(child.stdout).text())).toEqual([expected, expected]);
   });
 }

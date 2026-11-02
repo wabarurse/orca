@@ -3,6 +3,10 @@ import { agentRow, elapsedMs, formatElapsed, reselect } from "./agent-clock";
 
 const S = 1000, M = 60 * S, H = 60 * M, D = 24 * H;
 const plain = (s: string) => Bun.stripANSI(s);
+test("unknown activity is labeled unknown, and exited agents expose queued follow-ups", () => {
+  expect(plain(agentRow({ name: "worker-spec", live: false, status: "unknown", queuedMessages: 3 }, 0))).toBe("worker-spec  status unknown · 3 queued");
+  expect(plain(agentRow({ name: "worker-spec", live: false, status: "exited", queuedMessages: 3 }, 0))).toBe("worker-spec  finished · 3 queued");
+});
 
 describe("formatElapsed", () => {
   test("seconds under a minute, minutes and seconds under an hour, hours and minutes under a day, then days and hours", () => {

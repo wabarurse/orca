@@ -3,12 +3,13 @@
 // rows the user removed: an archive marker in project state, never the transcript),
 // and the daemon's exit-watchdog / merge-watch wrappers over that answer.
 
-import { readdir, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { paths, projectStateScope, readProjectState, updateState } from "../../config";
 import { existingTasks } from "../data/tasks";
-import { readRun, watchdog, type RunState } from "./exits";
+import { watchdog, type RunState } from "./exits";
 import { mergeWatcher } from "./merges";
 import { sessionName, tmux } from "./runner";
+import { agentActivity } from "./activity";
 import type { AgentInfo } from "../../protocol";
 import type { Task } from "../../protocol/task";
 
@@ -76,24 +77,26 @@ const activityMs = (a: AgentInfo) => (a.lastActiveAt ? Date.parse(a.lastActiveAt
 export const byActivity = (a: AgentInfo, b: AgentInfo) => Number(b.live) - Number(a.live) || activityMs(b) - activityMs(a) || a.name.localeCompare(b.name);
 
 /**
- * Every agent that has a transcript, marked live when its tmux window is still open, with its latest run's times,
- * its latest activity, whether its task is still open and whether the user removed its row; sorted by byActivity.
+ * Known agents from runs, transcripts, queues and panes. Live requires the shared
+ * run/PID/pane verification; unknown is explicit. Add history clocks and archive
+ * presentation only for this menu, keeping frequent count checks lightweight.
  * A removed row comes back when its agent is live or was started again after the removal.
  */
 export async function listAgents(project: string): Promise<AgentInfo[]> {
-  const live = new Set(await liveAgents(project));
-  const dir = paths.transcript(project, "x").replace(/x\.jsonl$/, "");
-  const names = (await readdir(dir).catch(() => [])).filter((f) => f.endsWith(".jsonl")).map((f) => f.slice(0, -6)).filter((n) => n !== "orchestrator");
+  const snapshot = await agentActivity(project);
+  if (!snapshot.agents.length && !snapshot.verificationComplete) throw new Error("agent activity could not be verified");
+  const live = new Set(snapshot.agents.filter(a => a.status === "running").map(a => a.agent));
   const archived = archivedAgents(project);
   const tasks = openTaskAgents(readTasks(project));
-  const agents = await Promise.all(names.map(async (name): Promise<AgentInfo> => {
-    const state = await readRun(project, name);
-    const times = await agentTimes(project, name, live.has(name), state);
+  const agents = await Promise.all(snapshot.agents.map(async (row): Promise<AgentInfo> => {
+    const name = row.agent, state = row.record;
+    const times = row.status === "unknown" ? { activity: "status unknown" } : await agentTimes(project, name, live.has(name), state);
     const lastActiveAt = await lastActive(paths.transcript(project, name), times.endedAt);
     const removedAt = archived.get(name);
     const started = Date.parse(state?.startedAt ?? times.startedAt ?? "");
     const removed = removedAt !== undefined && !live.has(name) && !(started > removedAt);
-    return { name, live: live.has(name), ...times, ...(lastActiveAt ? { lastActiveAt } : {}), ...(tasks.has(name) ? { openTask: true } : {}), ...(removed ? { archived: true } : {}) };
+    return { name, live: live.has(name), status: row.status, inventoryComplete: snapshot.verificationComplete, queuedMessages: row.queuedMessages,
+      ...times, ...(lastActiveAt ? { lastActiveAt } : {}), ...(tasks.has(name) ? { openTask: true } : {}), ...(removed ? { archived: true } : {}) };
   }));
   return agents.sort(byActivity);
 }

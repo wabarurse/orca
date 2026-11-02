@@ -19,7 +19,7 @@ import type { RequestSettings } from "../providers/catalog";
 
 import { accountChoices, AgentsList, login, useAccount, sendAgentFeedback, runtimeText, usageText, restoreConversations, directoryProjectCommand, directoryDefaultsCommand, projectMenu } from "./commands";
 import { checkContextClear, deleteProject, type DeleteOptions } from "./commands";
-import { archiveAgents, listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
+import { archiveAgents, listAgents, activeAgentRows, liveAgentsOrNull } from "../core/tmux";
 import type { AgentInfo } from "../protocol";
 import { directories, displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
@@ -609,7 +609,7 @@ export class App {
 
   /** Counts only: no shortcuts, repeated identities or transient animation in the footer. */
   status(page: Page): string {
-    const agents = page.agentCount ?? 0;
+    const agents = page.agentCount === null ? "?" : page.agentCount ?? 0;
     const known = (p: Page) => p.questions.loaded && !p.questions.error, questions = known(page) ? page.questions.open.length : "?";
     const background = this.pages.filter(p => p !== page), elsewhere = background.reduce((n, p) => n + (known(p) ? p.questions.open.length : 0), 0);
     const unknown = background.some(p => !known(p));
@@ -684,15 +684,15 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** One agents call per project, never overlapping: mark views whose agent has finished. */
   private checkLive(project: string): void {
     if (this.liveChecks.has(project)) return;
-    const agents = this.deps.agents ?? (async (p: string) => (await liveAgents(p)).map((name) => ({ name, live: true })));
+    const agents = this.deps.agents ?? activeAgentRows;
     const check = agents(project)
       .then((agents) => {
         const live = new Set(agents.filter((a) => a.live).map((a) => a.name));
-        for (const p of this.pages) if (p.project === project) p.agentCount = [...live].filter((n) => /^(worker|reviewer)(-|$)/.test(n)).length;
+        for (const p of this.pages) if (p.project === project) p.agentCount = agents.some(a => a.status === "unknown" || a.inventoryComplete === false) ? null : [...live].filter((n) => /^(worker|reviewer)(-|$)/.test(n)).length;
         this.draw();
-        for (const p of this.pages) if (p.project === project && p.view?.live && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
+        for (const p of this.pages) if (p.project === project && p.view?.live && !agents.some(a => a.name === p.view!.name && a.status === "unknown") && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
       })
-      .catch(() => {})
+      .catch(() => { for (const p of this.pages) if (p.project === project) p.agentCount = null; this.draw(); })
       .finally(() => this.liveChecks.delete(project));
     this.liveChecks.set(project, check);
   }

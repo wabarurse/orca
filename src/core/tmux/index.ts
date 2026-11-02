@@ -3,3 +3,4 @@ export { cliCommand, local, sessionId, sessionName, SETTLED_EXIT, tmux, type Run
 export { ABANDONED, claim, dirtyCount, markEnded, noticeText, readRun, sendNotice, supervise, type RunInfo, type Tracker } from "./exits";
 export { archiveAgents, exitWatchdog, killProjectSession, listAgents, liveAgents, liveAgentsOrNull, mergeWatch } from "./liveness";
 export { type ModelRequestState } from './exits';
+export { activeAgentRows, agentActivity, type AgentActivity } from "./activity";

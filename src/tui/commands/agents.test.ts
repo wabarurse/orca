@@ -15,6 +15,13 @@ const agents: AgentInfo[] = [
   { name: "worker-old", live: false, lastActiveAt: ago(RECENT_AGENT_MS + 1) },
   { name: "reviewer-removed", live: false, lastActiveAt: ago(H), archived: true },
 ];
+test("unknown activity cannot be archived as finished; queued work stays visible", () => {
+  const unknown: AgentInfo = { name: "worker-uncertain", live: false, status: "unknown" };
+  const list = new AgentsList([unknown], look);
+  expect(list.key("d", unknown)).toEqual({ handled: true }); expect(list.confirm).toBeNull();
+  list.key("D", unknown); expect(list.confirm).toBeNull();
+  expect(recentAgent({ name: "worker-queued", live: false, queuedMessages: 3, lastActiveAt: ago(72 * H) }, NOW)).toBe(true);
+});
 
 describe("recentAgent", () => {
   test("live, recent, open-task and unknown-time agents show; older finished ones and removed rows do not", () => {
