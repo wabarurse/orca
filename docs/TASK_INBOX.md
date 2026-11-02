@@ -254,3 +254,11 @@ selected task's primary ancestors, scrolls it into view and focuses the list wit
 details reset to the top. Other folded groups and the chat draft stay intact.
 Jumping is local navigation: it does not submit a prompt, start agents, or write
 task state.
+
+
+The Ctrl+T tree separates the list from details with a horizontal rule. At 80
+columns or wider, details wrap in two columns: description, prerequisites and unblocked tasks on
+the left, and state, run/attention/validation information, retained
+checkpoints and PR links on the right. Smaller terminals stack the original
+fields. The detail viewport still scrolls vertically; columns do not truncate
+evidence or change task state.

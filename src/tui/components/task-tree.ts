@@ -1,6 +1,6 @@
 import { publicTaskStatus, type TaskDisplayStatus } from "../../protocol/task";
 import { taskPublicationMilestone } from "../../protocol/task";
-import { check, taskStatusLabels, type Task, type TaskTreeView } from "../../protocol/task";
+import { check, type Task, type TaskTreeView } from "../../protocol/task";
 import { cells, fit, plainText, visibleLength, wordWrap, wrap } from "./text";
 import { treeTasks, type TreeTask } from "./task-tree-data";
 
@@ -123,7 +123,7 @@ function dot(task: TreeTask, frame: number): string {
   return paint(statusColor(task), active(task) ? SPINNER[frame % 4]! : "●");
 }
 
-/** One plain label, the inbox rule: attention first, then merged / ready / PR / lifecycle. */
+/** One of the six current states; original hold reasons stay in details. */
 function rowLabel(task: TreeTask): string {
   return status(task);
 }
@@ -205,7 +205,7 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
   });
   const fields: [string, string][] = [
     [`Task #${selected.number ?? tasks.indexOf(selected) + 1} · ${status(selected)}`, selected.name],
-    ["Lifecycle", taskStatusLabels[selected.status]],
+    ["State", status(selected)],
     ["UUID", selected.id],
     ["Created", selected.createdAt],
     ["Overview", selected.summary],
@@ -213,6 +213,7 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
   ];
   if (active(selected)) fields.push(["Activity", activity(selected)]);
   const milestone = taskPublicationMilestone(selected);
+  if ("label" in milestone) fields.push(["Publication", `${milestone.label} (historical)`]);
   if ("observedAt" in milestone) fields.push(["Observed", `${milestone.observedAt} (historical; not merge permission)`]);
   if (selected.attention) fields.push(["Attention", `${selected.attention.kind}: ${selected.attention.reason}`]);
   const latest = selected.runs.at(-1);
@@ -223,6 +224,7 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
 
 function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: number, frame: number): string[] {
   if (!selected) return safeLines("Tasks: No tasks", cols);
+  if (cols >= 80) return detailColumns(tasks, selected, cols);
   const lines: string[] = [];
   const fields = detailFields(tasks, selected);
   const dependents = tasks.filter(t => !t.removedAt && t.dependsOn.some(id => id.toLowerCase() === selected.id.toLowerCase()));
@@ -244,11 +246,33 @@ function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: nu
   return lines;
 }
 
+/** Description and operational metadata wrap independently; scroll retains both. */
+function detailColumns(tasks: TreeTask[], selected: TreeTask, cols: number): string[] {
+  const gap = " │ ", leftWidth = Math.floor((cols - 3) / 2), rightWidth = cols - leftWidth - 3;
+  const fields = detailFields(tasks, selected), title = fields[0]!;
+  const left = ["Description", ...safeLines(selected.summary || "No description recorded.", leftWidth)];
+  const prerequisites = fields.find(([name]) => name === "Dependencies")![1];
+  left.push("", "Prerequisites", ...safeLines(prerequisites, leftWidth));
+  const dependents = tasks.filter(t => !t.removedAt && t.dependsOn.some(id => id.toLowerCase() === selected.id.toLowerCase()));
+  if (dependents.length) left.push("", ...safeLines(`Unblocks: ${dependents.map(t => `#${t.number ?? tasks.indexOf(t) + 1} ${t.name}`).join("; ")}`, leftWidth));
+  const right = ["Details"];
+  for (const [name, value] of fields.slice(1).filter(([name]) => name !== "Overview" && name !== "Dependencies")) right.push(...safeLines(`${name}: ${value}`, rightWidth));
+  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) right.push(...safeLines(`${checkpoint}: ${at}`, rightWidth));
+  const pr = selected.archive?.pr ?? selected.pr;
+  if (pr) {
+    for (const label of safeLines(`PR: ${pr.repository} #${pr.number}`, rightWidth)) right.push(`\x1b]8;;${pr.url}\x07${label}\x1b]8;;\x07`);
+    right.push(...safeLines(pr.url, rightWidth));
+  } else right.push(...safeLines("PR: not recorded", rightWidth));
+  return [...safeLines(`${title[0]}: ${title[1]}`, cols), ...Array.from({ length: Math.max(left.length, right.length) }, (_, i) => {
+    const a = left[i] ?? ""; return a + " ".repeat(Math.max(0, leftWidth - visibleLength(a))) + dim(gap) + (right[i] ?? "");
+  })];
+}
+
 const LEGEND = "├─ first prerequisite · +#n other prerequisites · ▾▸ fold";
 function compose(p: Panels, graph: string[], detail: string[], detailY: number, footer: string): string[] {
   const lines = [p.cols >= 70 ? fit(`TASKS  ${dim(LEGEND)}`, p.cols) : safeLines("TASKS", p.cols)[0]!];
   for (let row = 0; row < p.graphRows; row++) lines.push(graph[row] ?? "");
-  lines.push("");
+  lines.push(dim("─".repeat(p.cols)));
   for (let row = 0; row < p.detailRows; row++) lines.push(detail[detailY + row] ?? "");
   lines.push(safeLines(footer, p.cols)[0]!);
   return lines.slice(0, p.rows);

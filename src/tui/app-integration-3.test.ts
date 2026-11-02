@@ -608,7 +608,7 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
     expect(screen()).toContain("↑↓ select");
     term.type("\x1b[Z");
     await until(() => screen().includes("Task #2 ·"));
-    expect(screen()).toContain("Overview: Summary 2");
+    expect(screen()).toContain("Description"); expect(screen()).toContain("Summary 2");
     const row = term.display.screen().findIndex(line => line.includes("● #1 Node 1"));
     const col = term.display.screen()[row]!.indexOf("#1");
     term.press({ name: "mousedown", x: col + 1, y: row + 1 });
