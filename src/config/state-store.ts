@@ -47,17 +47,43 @@ export function readState<T>(file: string, scope: string, key: string): T | unde
   if (!db) return;
   // Reuse the connection, never a row cache or a transaction spanning calls.
   if (!exists(db)) return;
-  const row = db.query("SELECT value FROM orca_state WHERE scope=? AND key=?").get(scope, key) as { value: string } | null;
-  return row ? JSON.parse(row.value) as T : undefined;
+  const value = stateValue(db, file, scope, key);
+  return value === undefined ? undefined : JSON.parse(value) as T;
 }
 /** Synchronous transaction prevents lost updates across worker processes. Undefined deletes. */
 export function updateState<T>(file: string, scope: string, key: string, update: (old: T | undefined) => T | undefined): T | undefined {
   const db = connect(file, true)!;
   return db.transaction(() => {
-    const row = db.query("SELECT value FROM orca_state WHERE scope=? AND key=?").get(scope, key) as { value: string } | null;
-    const next = update(row ? JSON.parse(row.value) : undefined);
-    if (next === undefined) db.query("DELETE FROM orca_state WHERE scope=? AND key=?").run(scope, key);
+    const value = stateValue(db, file, scope, key);
+    const next = update(value === undefined ? undefined : JSON.parse(value));
+    if (next === undefined) {
+      db.query("DELETE FROM orca_state WHERE scope=? AND key=?").run(scope, key);
+      if (legacyScopes.has(`${file}\0${scope}`)) db.query("INSERT INTO orca_state VALUES (?,?,?) ON CONFLICT(scope,key) DO UPDATE SET value=excluded.value").run(scope, masked(key), "true");
+    }
     else db.query("INSERT INTO orca_state VALUES (?,?,?) ON CONFLICT(scope,key) DO UPDATE SET value=excluded.value").run(scope, key, JSON.stringify(next));
     return next;
   }).immediate();
+}
+
+// Compatibility aliases are process-local descriptions derived from the persisted
+// conversation UUID. Legacy rows stay readable until a key is explicitly written;
+// this also observes older agents' late commits during an update handoff.
+const legacyScopes = new Map<string, { prefix: string; fingerprint: string }>();
+const masked = (key: string) => `@legacy-cleared:${key}`;
+export function recoverStateScope(file: string, prefix: string, fingerprint: string, scope: string): void {
+  legacyScopes.set(`${file}\0${scope}`, { prefix, fingerprint });
+}
+function stateValue(db: Database, file: string, scope: string, key: string): string | undefined {
+  const own = db.query("SELECT value FROM orca_state WHERE scope=? AND key=?").get(scope, key) as { value: string } | null;
+  if (own) return own.value;
+  const alias = legacyScopes.get(`${file}\0${scope}`);
+  if (!alias || db.query("SELECT 1 FROM orca_state WHERE scope=? AND key=?").get(scope, masked(key))) return;
+  const rows = db.query("SELECT scope,value FROM orca_state WHERE key=? AND scope GLOB ?").all(key, `${alias.prefix}*:${alias.fingerprint}`) as {scope: string; value: string}[];
+  let value: string | undefined;
+  for (const row of rows) {
+    if (!/^\d+$/.test(row.scope.slice(alias.prefix.length, -alias.fingerprint.length - 1))) continue;
+    if (value !== undefined && value !== row.value) throw new Error(`conflicting legacy project state: ${key}`);
+    value = row.value;
+  }
+  return value;
 }

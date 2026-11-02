@@ -64,3 +64,72 @@ export async function deleteProject(name: string, { live = liveAgentsOrNull, sto
   } finally { await release(); }
 }
 
+
+/** Explicit relink of a missing/moved directory; the project UUID and conversations remain. */
+export async function relinkProjectDirectory(conversation: string, directory: string): Promise<string> {
+  const { directories } = await import("../../core/data/projects");
+  const project = directories.parentProject(conversation);
+  if (!project) throw new Error("conversation has no directory project");
+  const releases: (() => Promise<void>)[] = [];
+  try {
+    for (const id of [...project.conversations].sort()) {
+      const release = await tryStorageLock(conversationTurnLock(id), id);
+      if (!release) throw new Error("a conversation is running; stop it before relinking");
+      releases.push(release);
+      const agents = await liveAgentsOrNull(id);
+      if (agents === null || agents.length) throw new Error("stop active agents before relinking the project");
+      if ((await listProcesses(id)).some(p => liveProcess(p) || p.state === "unknown")) throw new Error("stop or reconcile background commands before relinking");
+    }
+    const canonical = await directories.relinkDirectoryProject(project.id, directory);
+    return `project relinked to ${canonical}; conversations and workspaces preserved`;
+  } finally { for (const release of releases.reverse()) await release(); }
+}
+
+/** Restoration opens saved views only; it never starts a runtime or submits input. */
+export async function restoreConversations(options: {
+  project?: string; directory?: string; source?: string | null;
+  open: (id: string, directory?: string) => Promise<unknown>; note: (text: string) => void;
+}): Promise<void> {
+  const { directories, listProjects, projectFor } = await import("../../core/data/projects");
+  if (options.project) { await options.open(options.project, options.directory); return; }
+  await directories.directoryProjects();
+  const known = await listProjects(), saved = directories.rememberedConversations();
+  const existing = options.source ? await projectFor(options.source, saved.selected) : null;
+  const group = existing ? directories.parentProject(existing) : undefined;
+  const opening = existing ? group?.conversations ?? [existing] : saved.open ?? known;
+  for (const id of opening.filter(id => known.includes(id))) {
+    try { await options.open(id); }
+    catch (error) { options.note(`could not open ${id}: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  const selected = saved.selected && opening.includes(saved.selected) ? saved.selected : existing;
+  if (selected && known.includes(selected)) await options.open(selected);
+  if (options.source && !existing) options.note(`new directory: /new <conversation name> ${options.source} to add it as a project`);
+  else if (!options.source && !known.length) options.note("/new <conversation name> <directory> to add a project");
+}
+
+export async function directoryProjectCommand(conversation: string, args: string): Promise<string> {
+  const { directories } = await import("../../core/data/projects");
+  const project = directories.attachConversation(conversation);
+  if (!project) return "conversation is not attached to a directory project";
+  if (args.startsWith("rename ")) directories.renameDirectoryProject(project.id, args.slice(7));
+  else if (args.startsWith("relink ")) return relinkProjectDirectory(conversation, args.slice(7));
+  else if (args) return "usage: /project [rename <name>|relink <directory>]";
+  return `${project.name} · ${project.id} · ${project.directory}`;
+}
+export async function directoryDefaultsCommand(conversation: string, args: string): Promise<string> {
+  const { directories } = await import("../../core/data/projects");
+  if (args === "inherit") directories.inheritDefaults(conversation);
+  else if (!args || args === "save") directories.promoteDefaults(conversation);
+  else return "usage: /project-defaults [save|inherit]";
+  return args === "inherit" ? "conversation inherits project defaults" : "current settings saved as directory project defaults";
+}
+
+/** Project groups reflect their open conversations without reading state during paint. */
+export function projectMenu(list: { items: import("../../protocol").ProjectEntry[]; index: number; status: string; parent?: string }, pages: { project: string; busy: boolean }[], selected?: string) {
+  const items = list.items.map(it => {
+    const members = new Set([it.name, ...(it.conversations ?? [])]), open = pages.filter(page => members.has(page.project));
+    return { ...it, open: !!open.length, active: !!selected && members.has(selected), busy: open.some(p => p.busy) };
+  });
+  const hint = list.parent ? "↑↓ enter opens  n new conversation  d deletes  esc projects" : items.some(it => it.directory) ? "↑↓ enter conversations  p pins  esc closes" : undefined;
+  return { items, index: list.index, status: list.status, hint };
+}

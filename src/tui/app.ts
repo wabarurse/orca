@@ -17,11 +17,11 @@ import type { RequestSettings } from "../providers/catalog";
 // menu. Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, AgentsList, login, useAccount, sendAgentFeedback, runtimeText, usageText } from "./commands";
+import { accountChoices, AgentsList, login, useAccount, sendAgentFeedback, runtimeText, usageText, restoreConversations, directoryProjectCommand, directoryDefaultsCommand, projectMenu } from "./commands";
 import { deleteProject, type DeleteOptions } from "./commands";
 import { archiveAgents, listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
 import type { AgentInfo } from "../protocol";
-import { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
+import { directories, displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
 import { activeRoles, chooseModel, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
 import { paths } from "../config";
@@ -377,6 +377,7 @@ export class App {
       await this.finished;
     } finally {
       clearInterval(poll);
+      if (this.started) directories.rememberConversations(this.pages.map(p => p.project), this.page?.project);
       this.closed = true;
       for (const t of [this.frameTimer, this.resizeTimer]) if (t) clearTimeout(t);
       this.stopSpinner?.();
@@ -393,19 +394,8 @@ export class App {
 
   /** The given project, or every known one plus the repo we were started in, or a fresh orch-xxxx. */
   private async openStartPages(project?: string, url?: string): Promise<void> {
-    if (project) { await this.openPage(project, url); return; }
-    for (const name of await listProjects()) {
-      try { await this.openPage(name); }
-      catch (error) { this.note(`could not open ${name}: ${error instanceof Error ? error.message : String(error)}`); }
-    }
-    const source = this.deps.source;
-    if (source) {
-      // Reuse by original checkout path, never by origin (another clone may share it).
-      const existing = await projectFor(source);
-      if (existing) await this.openPage(existing);
-      else await this.newPage();
-    }
-    if (!this.pages.length) await this.newPage();
+    await restoreConversations({ project, directory: url, source: this.deps.source,
+      open: (id, directory) => this.openPage(id, directory), note: text => this.note(text) });
   }
 
   /**
@@ -571,13 +561,7 @@ export class App {
       help: this.helpView(),
       inbox: this.taskInboxView(),
       question: this.questions.view(),
-      projects: this.projectList && {
-        index: this.projectList.index, status: this.projectList.status,
-        items: this.projectList.items.map((it) => {
-          const at = this.pages.findIndex((p) => p.project === it.name);
-          return { ...it, open: at !== -1, active: at === this.active, busy: !!this.pages[at]?.busy };
-        }),
-      },
+      projects: this.projectList && projectMenu(this.projectList, this.pages, this.page?.project),
     };
   }
 
@@ -992,7 +976,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     catch (error) { this.note(dim(`image recovery failed: ${error}`), page); }
     this.pages.push(page);
     this.active = this.pages.length - 1;
-    void this.keepDaemon(project, page); // the daemon starts in the background; the page shows what happened
+    directories.attachConversation(project); // Opening is observation; only fresh input starts execution.
     this.checkLive(project);
     this.questions.poll([page]);
     this.reprint();
@@ -1037,7 +1021,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (name && [...shown].some(([id, n]) => id !== name && n === name)) return this.note(dim(`another project is already called ${name}`));
     const project = name ?? newProjectName([...shown.keys(), ...shown.values()]);
     try {
-      const page = await this.openPage(project, url ?? this.deps.source ?? undefined);
+      const page = await this.openPage(project, url ?? (this.page ? paths.repo(this.page.project) : this.deps.source) ?? undefined);
       if (!name) this.note("/rename <name> to rename", page);
     } catch (err) { this.note(`error: ${err instanceof Error ? err.message : String(err)}`); }
   }
@@ -1067,8 +1051,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     this.taskInbox = null;
     this.cancelClear();
     this.modelGeneration++;
-    const items = await orderedProjects();
-    const index = Math.max(0, items.findIndex((it) => it.name === this.page?.project));
+    const items = await directories.projectRows();
+    const index = Math.max(0, items.findIndex((it) => it.name === this.page?.project || it.conversations?.includes(this.page?.project ?? "")));
     this.helpTop = null;
     this.menu = null;
     this.projectList = { items, index, status: "", confirm: null };
@@ -1085,7 +1069,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const list = this.projectList;
     if (!list) return;
     const index = list.index;
-    const items = await orderedProjects();
+    const items = await directories.projectRows(list.parent);
     if (this.projectList !== list) return;
     if (list.index !== index) select = list.items[list.index]?.name;
     list.items = items;
@@ -1099,8 +1083,9 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["up", () => this.moveProjects(-1)], ["k", () => this.moveProjects(-1)],
     ["down", () => this.moveProjects(1)], ["j", () => this.moveProjects(1)],
     ["enter", (entry) => this.openFromProjects(entry.name)],
+    ["n", async () => { const parent = this.projectList?.parent; if (parent) { const p = (await directories.directoryProjects()).find(p => p.id === parent); this.closeProjects(); if (p) await this.newPage(undefined, p.directory); } }],
     ["p", (entry) => this.pinFromProjects(entry)],
-    ["d", (entry) => { this.projectList!.confirm = entry; this.projectList!.status = bold(`delete ${entry.label}? y/n`); }],
+    ["d", (entry) => { if (entry.directory) { this.projectList!.status = "open the project to manage its conversations"; return; } this.projectList!.confirm = entry; this.projectList!.status = bold(`delete ${entry.label}? y/n`); }],
   ]);
 
   /** Ctrl+B anywhere, and every key while the project list is open (and no menu is up). */
@@ -1115,7 +1100,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (list.confirm) return this.confirmDelete(k);
     list.status = "";
     const id = listKeyId(k);
-    if (id === "escape") return this.closeProjects();
+    if (id === "escape") { if (list.parent) { this.projectList = null; await this.openProjects(); return; } return this.closeProjects(); }
     const entry = list.items[list.index];
     const action = id === null ? undefined : this.projectActions.get(id);
     if (action && entry) await action(entry);
@@ -1128,6 +1113,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   private async openFromProjects(name: string): Promise<void> {
+    const parent = (await directories.directoryProjects()).find(p => p.id === name);
+    if (parent) {
+      this.projectList = { parent: name, items: await directories.projectRows(name), index: 0, status: `${parent.directory} · n new conversation · esc projects`, confirm: null };
+      this.draw(); return;
+    }
     this.projectList = null;
     try { await this.openPage(name); } catch (err) { this.note(`error: ${err instanceof Error ? err.message : String(err)}`); }
   }
@@ -1316,7 +1306,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const watchers = [this.deps.watchdog, this.deps.merges].filter((w): w is NonNullable<typeof w> => !!w);
     void this.refreshTaskInbox();
     for (const p of this.pages) {
-      void this.keepDaemon(p.project, p);
+      if (this.authorizedPages.has(p)) void this.keepDaemon(p.project, p);
       if (watchers.length) void Promise.all(watchers.map(w => w(p.project).catch(() => {}))).then(() => this.refreshTaskInbox(p));
     }
   }
@@ -1329,6 +1319,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
   /** A repeated failure (a start that keeps failing) is shown once, not once per poll; every (rate-limited) start or restart is noted. */
   private readonly daemonLines = new WeakMap<Page, string>();
+  private readonly authorizedPages = new WeakSet<Page>();
   private async keepDaemon(project: string, page: Page): Promise<void> {
     const outcome = await this.ensureDaemon(project);
     if (!outcome || !this.validPage(page)) return;
@@ -1403,6 +1394,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear conversation, context and cache after confirmation" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
+    ["/project", { args: true, run: (args, page) => page ? directoryProjectCommand(page.project, args).then(text => this.note(text, page)) : this.note("open a conversation first"), help: { group: "settings", label: "/project [rename|relink]", description: "directory project identity, name and location" } }],
+    ["/project-defaults", { args: true, run: (args, page) => page ? directoryDefaultsCommand(page.project, args).then(async text => { await this.refreshHeader(page); this.note(text, page); }) : this.note("open a conversation first"), help: { group: "settings", label: "/project-defaults [save|inherit]", description: "save directory defaults or inherit them in this conversation" } }],
     ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [orch|worker|reviewer]", description: "choose the model for all agents or one role" } }],
     ["/accounts", { run: (_, page) => this.accountsMenu(page), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
     ["/login", { args: true, run: (args, page) => this.login(args, page), help: { group: "settings", label: "/login claude|codex [profile]", description: "sign in to a subscription account" } }],
@@ -1952,6 +1945,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       void this.refreshSessions(false);
       const { writing } = await prepared;
       await writing;
+      this.authorizedPages.add(page);
       await this.keepDaemon(page.project, page);
     }
     catch (err) {

@@ -41,3 +41,5 @@ Orca uses one adaptive conversation loop: run a small action directly, delegate 
 See [adaptive execution, personalization and background tools](docs/ADAPTIVE_RUNTIME.md) for the new capabilities, limits and validation instructions.
 
 Architecture follows a small execution core with personalized instructions and skills. Tasks, inboxes, project model/account settings and rolling compaction remain first-class features; review and publication have no mandatory workflow. PR merge notifications preserve agents and workspaces. See [architecture and simplification](docs/ARCHITECTURE.md).
+
+Projects reference directories; conversations keep separate histories, tasks and inboxes. Startup restores views without starting agent work. See [directory projects, startup selection and recovery](docs/DIRECTORY_PROJECTS.md).

@@ -1,8 +1,9 @@
 // Storage locations and durable project metadata. Configuration parsing stays in config.ts.
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { statSync } from "node:fs";
-import { readState, updateState } from "./state-store";
+import { readState, updateState, recoverStateScope } from "./state-store";
+import { conversationIdentity } from "./conversation-identity";
+import { directoryProject, inheritedSettings, setDirectorySetting } from "./directory-projects";
 import { stateRoot, worktreeRoot } from "./legacy";
 
 // Read lazily so tests can point ORCA_HOME at a temp dir after import.
@@ -13,16 +14,25 @@ export interface RepositoryBinding { version: 1; directory: string; branch: stri
 /** Project incarnation prevents recreated names from inheriting prior settings or authority. */
 export function projectStateScope(name: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) throw new Error("invalid project id");
-  const s = statSync(join(root(), "projects", name), { bigint: true });
-  return `project:${name}:${s.dev}:${s.ino}:${s.birthtimeNs}`;
+  const parent = directoryProject(paths.memory, name);
+  if (parent?.id === name) return `directory-project:${name}`;
+  const identity = conversationIdentity(root(), name);
+  const scope = `conversation:${identity.id}`;
+  recoverStateScope(paths.memory, `project:${name}:`, identity.fingerprint, scope);
+  return scope;
 }
 export function readProjectState<T>(name: string, key: string): T | undefined {
   let scope: string;
   try { scope = projectStateScope(name); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
-  return readState<T>(paths.memory, scope, key);
+  const own = readState<T>(paths.memory, scope, key);
+  if (own !== undefined) return own;
+  const parent = directoryProject(paths.memory, name);
+  return inheritedSettings.includes(key as typeof inheritedSettings[number]) ? parent?.defaults[key] as T | undefined : undefined;
 }
 export function writeProjectState<T>(name: string, key: string, value: T | undefined): void {
+  const parent = directoryProject(paths.memory, name);
+  if (parent?.id === name) { setDirectorySetting(paths.memory, name, key, value); return; }
   updateState<T>(paths.memory, projectStateScope(name), key, () => value);
 }
 /** Missing means an unbound/legacy project; corrupt metadata never falls back. */
@@ -33,7 +43,8 @@ export function repositoryBinding(name: string): RepositoryBinding | undefined {
       typeof value.branch !== "string" || !value.branch || !/^[a-f0-9-]{36}$/.test(value.worktreeId)) {
     throw new Error(`invalid repository binding for ${name}`);
   }
-  return value;
+  const parent = directoryProject(paths.memory, name);
+  return parent ? { ...value, directory: parent.directory, branch: parent.branch } : value;
 }
 
 function worktrees(name: string): string {

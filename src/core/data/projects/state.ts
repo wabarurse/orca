@@ -1,10 +1,10 @@
+import { existsSync } from "node:fs";
 // Serialize model/settings commits, context clears, orchestrator inbox publication
 // and managed project creation/deletion, across processes.
 // Locks live outside projects so deleting/recreating a directory cannot replace its lock.
-import { statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { paths, repositoryBinding } from "../../../config";
+import { paths, repositoryBinding, projectStateScope, conversationIdentity } from "../../../config";
 import { describeOwner, lockHeld, lockOwner, tryStorageLock } from "../storage-lock";
 
 // Separate conversations using one original checkout must never run overlapping turns.
@@ -27,12 +27,17 @@ export async function turnLocksHeld(project: string): Promise<boolean> {
 }
 
 export function projectIdentity(project: string): string {
-  const s = statSync(paths.project(project), { bigint: true });
-  return `${s.dev}:${s.ino}:${s.birthtimeNs}`;
+  return existsSync(paths.project(project)) ? `conversation:${conversationIdentity(paths.root, project).id}` : projectStateScope(project);
 }
 /** `what` names the interrupted action ("switching model"); the default is neutral, since many saves share this check. */
 export function assertProjectIdentity(project: string, identity: string, what = "saving"): void {
-  if (projectIdentity(project) !== identity) throw new Error(`project changed while ${what}; try again`);
+  if (!matchesProjectIdentity(project, identity)) throw new Error(`project changed while ${what}; try again`);
+}
+/** Read compatibility for stop/process records written before durable UUIDs. */
+export function matchesProjectIdentity(project: string, identity: string): boolean {
+  if (projectIdentity(project) === identity) return true;
+  const old = /^\d+:(\d+:\d+)$/.exec(identity);
+  return !!old && old[1] === conversationIdentity(paths.root, project).fingerprint;
 }
 /** How long a project state transaction waits for other holders before it gives up. Holders are brief (ledger and
  * small state files; no network, git, gh or model calls), so this covers a queue of them across processes. */

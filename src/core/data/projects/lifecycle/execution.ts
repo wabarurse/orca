@@ -5,7 +5,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../../../../config";
-import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../state";
+import { assertProjectIdentity, projectIdentity, matchesProjectIdentity, withProjectStateLock } from "../state";
 
 const file = (project: string, name: string) => join(paths.runtimeProject(project), name);
 function read(path: string): string | undefined {
@@ -27,7 +27,7 @@ export function stopped(project: string): boolean {
   if (value === undefined) return false;
   const marker = JSON.parse(value) as { identity: string; epoch: string };
   if (typeof marker.identity !== "string" || typeof marker.epoch !== "string") throw new Error("invalid execution stop barrier");
-  return marker.identity === projectIdentity(project);
+  return matchesProjectIdentity(project, marker.identity);
 }
 export const stale = (project: string, admitted: string): boolean => stopped(project) || epoch(project) !== admitted;
 export function assertActive(project: string, admitted = epoch(project)): void {
