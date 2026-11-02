@@ -146,3 +146,24 @@ test("raw mouse bytes and fragmented UTF-8 survive the terminal after the OSC wi
     expect(t.procHandlers.size).toBe(0);
   }
 });
+
+test("terminal titles are plain, deduplicated, and only written while open", () => {
+  const writes: string[] = [];
+  const stdin = { isTTY: true, setRawMode() {}, on() {}, off() {}, resume() {}, pause() {} };
+  const stdout = { isTTY: true, columns: 80, rows: 24, write(s: string) { writes.push(s); }, on() {} };
+  const proc = { on() {}, off() {}, exit() {}, stderr: { write() {} } };
+  const term = realTerminal(stdin as never, stdout as never, proc as never, { now: () => 0, setTimer: () => () => {} });
+  term.setTitle!("orca · closed");
+  expect(writes).toEqual([]);
+  term.open();
+  writes.length = 0;
+  term.setTitle!("orca · phoebe");
+  term.setTitle!("orca · phoebe");
+  expect(writes).toEqual(["\x1b]0;orca · phoebe\x07"]);
+  term.setTitle!("orca · other\x1b]0;injected\x07\x1b[31m\u202e\nrepo");
+  expect(writes.at(-1)).toBe("\x1b]0;orca · other repo\x07");
+  term.close();
+  const count = writes.length;
+  term.setTitle!("orca · ignored");
+  expect(writes.length).toBe(count);
+});

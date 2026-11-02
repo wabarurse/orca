@@ -13,11 +13,17 @@
 
 import { keyReader, type Key, type SetTimer } from "./keys";
 import { BG_QUERY, BG_REPLY_MS, parseBgReply, useTerminalBackground } from "./style";
+import { basename } from "node:path";
+import { plainText } from "./text";
+
+export const repositoryTitle = (directory: string): string => basename(directory) ? `orca · ${basename(directory)}` : "orca";
 
 export interface Terminal {
   cols: number;
   rows: number;
   write(s: string): void;
+  /** Terminal window/tab title; optional on test and embedded terminals. */
+  setTitle?(title: string): void;
   onKey(cb: (key: Key) => void): void;
   onResize(cb: () => void): void;
   /** Enter raw mode and bracketed paste. */
@@ -74,6 +80,7 @@ export function realTerminal(stdin = process.stdin, stdout = process.stdout, pro
 
 class RealTerminal implements Terminal {
   private opened = false;
+  private title = "";
   /** Closed, but waiting out the reply window with stdin still read (and dropped) in raw mode. */
   private draining = false;
   private eraser = "";
@@ -96,6 +103,13 @@ class RealTerminal implements Terminal {
   get cols() { return this.stdout.columns || 80; }
   get rows() { return this.stdout.rows || 24; }
   write(s: string): void { this.stdout.write(s); }
+  setTitle(title: string): void {
+    if (!this.opened) return;
+    const safe = plainText(title);
+    if (safe === this.title) return;
+    this.stdout.write(`\x1b]0;${safe}\x07`);
+    this.title = safe;
+  }
   onKey(cb: (k: Key) => void): void { this.keyHandlers.push(cb); }
   onResize(cb: () => void): void { this.stdout.on("resize", cb); }
   eraseOnExit(text: string): void { this.eraser = text; }
@@ -154,6 +168,7 @@ class RealTerminal implements Terminal {
   open(): void {
     if (this.opened || this.draining) return;
     this.opened = true;
+    this.title = "";
     this.install(true);
     this.stdin.setRawMode(true);
     // Keep raw bytes: legacy X10 payloads are not UTF-8; the reader decodes text.
