@@ -50,7 +50,7 @@ export interface Page {
   /** The project's selected account, provider:profile, for the header; undefined until read or when unreadable. */
   account?: string;
   settings?: RequestSettings;
-  agentCount?: number;
+  agentCount?: number | null;
 }
 
 export interface AppDeps {
@@ -72,7 +72,7 @@ export interface AppDeps {
   source?: string | null;
   /** Clock and repeating timer for the busy spinner; tests inject fakes so they never sleep. */
   clock?: Clock;
-  /** A project's agents and which are live: /agents lists these and live views poll them. Defaults to listAgents for the menu and to tmux alone (liveAgents) for the poll. */
+  /** Agent activity: the menu and count poll share the verified run/PID/pane snapshot. Tests may inject rows. */
   cancelAgent?: typeof cancelSession;
   agents?: (project: string) => Promise<AgentInfo[]>;
   /** How /agents d and D remove finished agents' rows (archiveAgents: a marker in project state); tests stub it. */

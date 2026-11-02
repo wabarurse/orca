@@ -15,7 +15,7 @@ export const AGENTS_ALL_HINT = "↑↓ enter attaches   a hides older   d remove
  * open or was active in the last 24h. A finished agent with no known time stays shown (nothing says it is old).
  */
 export function recentAgent(a: AgentInfo, now: number): boolean {
-  if (a.live) return true;
+  if (a.live || a.status === "unknown" || a.queuedMessages) return true;
   if (a.archived) return false;
   if (a.openTask) return true;
   const at = a.lastActiveAt ? Date.parse(a.lastActiveAt) : NaN;
@@ -67,13 +67,14 @@ export class AgentsList {
     if (text === "a") { this.all = !this.all; this.status = ""; return { handled: true }; }
     if (text === "d") {
       if (!selected) return { handled: true };
-      if (selected.live) this.status = dim(`${selected.name} is live; stop it (ctrl+c in its view) before removing its row`);
+      if (selected.status === "unknown") this.status = dim(`${selected.name} activity is unknown; cannot remove its row safely`);
+      else if (selected.live) this.status = dim(`${selected.name} is live; stop it (ctrl+c in its view) before removing its row`);
       else if (selected.archived) this.status = dim(`${selected.name} is already removed`);
       else { this.confirm = { names: [selected.name], label: selected.name }; this.status = ""; }
       return { handled: true };
     }
     if (text === "D") {
-      const finished = this.agents.filter((a) => !a.live && !a.archived).map((a) => a.name);
+      const finished = this.agents.filter((a) => !a.live && a.status !== "unknown" && !a.archived).map((a) => a.name);
       if (!finished.length) this.status = dim("no finished agents to remove");
       else { this.confirm = { names: finished, label: `${finished.length} finished ${finished.length === 1 ? "agent" : "agents"}` }; this.status = ""; }
       return { handled: true };

@@ -5,6 +5,7 @@ import type { Tool } from "./registry";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../config";
+import { messageReceipt } from "./message-delivery";
 
 // Claude Code's subagents isolate intermediate detail and return a summary:
 // https://code.claude.com/docs/en/sub-agents . Orca enforces its own report bound
@@ -13,13 +14,13 @@ const REPORT_LIMIT = 2000;
 
 // Every agent has an inbox. Addresses: "orchestrator", "user", or an agent id
 // such as "worker-feat-login". Messages wait in the queue until the receiver
-// next reads its inbox, so sending to a finished agent is fine.
+// next reads its inbox. A queued message never starts or resumes an exited agent.
 export const message: Tool = {
   spec: {
     name: "message",
     description:
       "Send a message to another agent's inbox. `to` is \"orchestrator\", \"user\", or an agent id like " +
-      "\"worker-feat-login\" (what spawn returned). Delivered when they next check their inbox. " +
+      "\"worker-feat-login\" (what spawn returned). Enqueue only: this never starts/resumes an agent, and acceptance is not processing confirmation. For authorized corrections/continuations use spawn with the same unmerged branch/task; it handles live, finishing and exited agents. Status questions do not authorize restarts. " +
       `Agent reports to orchestrator must fit ${REPORT_LIMIT} characters. If text is longer, supply summary; only summary plus an evidence path is delivered, and full text is archived. ` +
       "Preserve outcome, checked revision, checks, evidence references, failures, uncertainty and decisions needed. Send on completion, blockers or material changes; do not split logs across messages. A summary also archives shorter text.",
     input_schema: {
@@ -55,7 +56,9 @@ export const message: Tool = {
       await writeFile(file, text, { mode: 0o600 });
       delivered = `${(input.summary as string).trim()}\nFull evidence: ${file}`;
     }
-    await put(ctx.project, to, { from, text: delivered, ...(attachments.length ? { attachments } : {}) });
+    const inputId = crypto.randomUUID();
+    await put(ctx.project, to, { from, text: delivered, inputId, ...(attachments.length ? { attachments } : {}) });
+    if (/^(worker|reviewer)(-[A-Za-z0-9._-]+)?$/.test(to)) return messageReceipt(ctx.project, to, inputId);
     return `sent to ${to}`;
   },
 };

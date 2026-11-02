@@ -17,17 +17,15 @@ export async function sendAgentFeedback(project: string, agent: string, text: st
   await recordCorrection(project, { id: inputId, text: `[To ${agent}] ${text}`, at });
   const live = await (deps.runner ?? local).running(project, [agent]);
   if (live === null) throw new Error("cannot confirm agent status; feedback was retained in the working brief");
-  if (live.includes(agent)) await put(project, agent, { from: "user", text, inputId, ...(attachments.length ? { attachments } : {}) });
-  else {
-    // User feedback authorizes this continuation; a passive process event does not.
-    const task = await taskForRun(project, state.run);
-    if (task?.archive) throw new Error("this branch was merged; ask the orchestrator for a linked follow-up");
-    if (attachments.length) throw new Error("image feedback to an exited agent needs an orchestrator handoff; text was retained in the working brief");
-    const result = await (deps.spawn ?? registry.spawn!).run({ prompt: `New user feedback (source ${inputId}): ${text}`, branch: state.branch,
-      role: state.role, ...(task ? { taskId: task.id } : {}), ...(state.role === "reviewer" ? { reviewMode: "review" } : {}) },
-      { project, role: "orchestrator", cwd: paths.repo(project) });
-    if (typeof result === "string" && result.startsWith("refused:")) throw new Error(result);
-  }
-  await put(project, "orchestrator", { from: "runtime", text: `User feedback ${inputId} was delivered to ${agent}: ${text}\nThe worker owns the continuation; coordinate only if needed.` });
-  return `${live.includes(agent) ? "delivered to" : "resumed"} ${agent}`;
+  // Human feedback authorizes this handoff; passive status observations do not.
+  const task = await taskForRun(project, state.run);
+  if (task?.archive) throw new Error("this branch was merged; ask the orchestrator for a linked follow-up");
+  const mode = task?.runs.find(run => run.id === state.run)?.reviewMode;
+  const result = await (deps.spawn ?? registry.spawn!).run({
+    prompt: `New user feedback (source ${inputId}): ${text}`,
+    branch: state.branch, role: state.role, ...(task ? { taskId: task.id } : {}), ...(mode ? { reviewMode: mode } : {}) },
+    { project, role: "orchestrator", cwd: paths.repo(project), userFeedback: { inputId, attachments } });
+  if (typeof result === "string" && result.startsWith("refused:")) throw new Error(`${result}; feedback remains retained`);
+  await put(project, "orchestrator", { from: "runtime", text: `User feedback ${inputId} queued for ${agent}: ${text}\nHandoff result: ${result}\nQueue acceptance is not processing confirmation; check the worker's report/status before claiming progress.` });
+  return result === agent ? `resumed ${agent}` : `queued for ${agent}; ${result}`;
 }

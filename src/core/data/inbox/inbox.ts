@@ -65,6 +65,11 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
 export async function pending(project: string, agent: string): Promise<boolean> {
   return (await readdir(dir(project, agent)).catch(() => [])).some((n) => n.endsWith(".json"));
 }
+/** Read-only queue count. Unreadable is unknown, never silently an empty queue. */
+export async function pendingCount(project: string, agent: string): Promise<number> {
+  const names = await readdir(dir(project, agent)).catch(error => { if (error.code === "ENOENT") return []; throw error; });
+  return names.filter(name => name.endsWith(".json")).length;
+}
 
 /** Fail-closed clear guard, including local writes not yet durably published.
  * Call under the project-state lock to exclude concurrent orchestrator puts.
