@@ -77,10 +77,11 @@ test("follow restores conversation silently and emits only newly appended metada
     expect(lines).toEqual(["actual reply"]);
     expect(notices).toEqual([]);
     await t.append({ type: "model-request", requestId: "new", provider: "anthropic", model: "m", stage: "completed", startedAt: "a", updatedAt: "b" });
+    await Bun.sleep(30);
+    expect(notices).toEqual([]);
+    await t.append({ type: "tool-recovery", messages: [] });
     for (let i = 0; i < 100 && !notices.length; i++) await Bun.sleep(5);
-    expect(notices).toEqual(["[model request] anthropic/m completed; started a; updated b"]);
-    await Bun.sleep(20);
-    expect(notices).toHaveLength(1);
+    expect(notices).toEqual(["interrupted tool calls completed as errors; outcome unknown—reconcile before retrying"]);
   } finally { stop(); await running; }
   notices.length = 0;
   await follow(path, () => {}, Promise.resolve(), 1, () => {}, text => notices.push(text));

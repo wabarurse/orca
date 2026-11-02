@@ -149,15 +149,15 @@ describe("tui app", () => {
     try {
       await until(() => !!app.page);
       finish("one");
-      for (const stage of ["preparing", "provider-wait", "completed"]) {
+      for (const stage of ["preparing", "provider-wait", "completed", "error", "aborted"]) {
         events.notice!(diagnostic(stage));
-        expect(strip(app.frame().inputArea!.lines.join("\n"))).toContain(diagnostic(stage));
+        expect(strip(app.frame().inputArea!.lines.join("\n"))).not.toContain(diagnostic(stage));
         expect(app.page!.lines).toHaveLength(1);
       }
       finish("two");
       await until(() => term.screen().includes("▸ 2 tool calls · bash ×2"));
       expect(app.page!.lines).toHaveLength(2);
-      for (const notice of [diagnostic("error"), diagnostic("aborted"),
+      for (const notice of [
         "model request failed (timeout); retrying: attempt 2, nextRetryAt tomorrow",
         "background compaction failed; original history kept: unknown task in memory"]) {
         events.notice!(notice);
