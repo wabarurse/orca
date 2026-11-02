@@ -2,6 +2,7 @@ import { chmodSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { present as existsSync, safeDirectory, safeFile, safeProjectDirectories } from "./layout-safety";
+import { assertStorageAvailable } from "./conversation-storage";
 
 export const movedRoot = ["app", "checkout-locks", "turn-locks", "project-locks", "daemon-locks"];
 export const movedProject = ["orchestrator", "inbox", "runs", "questions", "merged"];
@@ -15,7 +16,8 @@ export function legacyEntries(root: string): string[] {
   return entries;
 }
 /** CLI entry gate, before launching agents or mutating any project. No migration here. */
-export function assertLayout(root: string): void {
+export function assertLayout(root: string, organizing = false): void {
+  if (!organizing) assertStorageAvailable(root);
   const runtime = runtimeRoot(root), journal = join(runtime, "migration.json");
   validateLayoutPaths(root, runtime, journal);
   if (existsSync(journal)) requireMarker(journal, "phase", "complete");

@@ -4,7 +4,7 @@
 // existingLedgerTasks is the read-only lock-free snapshot.
 import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { paths, repositoryBinding, directoryProject } from "../../../config";
 import { projectIdentity, matchesProjectIdentity } from "../projects";
 import { openExistingReadonly } from "../sqlite";
@@ -36,7 +36,14 @@ function matchesBinding(project: string, encoded: string): boolean {
   try { saved = JSON.parse(encoded); } catch { return false; }
   if (!saved || typeof saved.identity !== "string" || !matchesProjectIdentity(project, saved.identity)) return false;
   const current = repositoryBinding(project) ?? paths.repo(project);
-  if (typeof saved.repository === "string" || typeof current === "string") return saved.repository === current;
+  if (typeof saved.repository === "string" || typeof current === "string") {
+    if (saved.repository === current) return true;
+    // Only the explicit same-conversation storage move changes an unbound legacy
+    // fallback path. Conversation identity was verified above; arbitrary routes
+    // and newly bound repositories still fail closed.
+    return current === join(paths.root, "projects", ".conversations", project, "repo") &&
+      saved.repository === join(paths.root, "projects", project, "repo");
+  }
   const old = saved.repository as typeof current | undefined;
   if (!old || old.version !== current.version || old.worktreeId !== current.worktreeId) return false;
   if (old.directory === current.directory && old.branch === current.branch) return true;

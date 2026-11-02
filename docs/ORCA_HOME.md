@@ -7,12 +7,18 @@ Layout 3 keeps the public home small and separates original evidence from rebuil
   prompts/                     # shared and role guidance
   tools/                       # editable tool descriptions/schema annotations
   skills/                      # personal skill catalog; bodies load on demand
-  projects/<id>/
-    tasks.json                 # current task projection; ledger in SQLite
-    cache/                     # rebuildable data only
-    transcript/                # original conversation/agent JSONL and companions
-    tool-outputs/              # tool evidence; detailed worker reports in reports/
-    images/                    # attachments and input metadata
+  projects/
+    phoebe--<project-id>/
+      project.json             # generated directory/name metadata
+      conversations/
+        notes--5xab -> ../../.conversations/orch-5xab
+    .conversations/<id>/       # stable artifacts; include hidden folders in backups
+      .identity.json          # durable conversation UUID and legacy fingerprint
+      tasks.json              # current task projection; ledger in SQLite
+      cache/                  # rebuildable data only
+      transcript/             # original conversation/agent JSONL and companions
+      tool-outputs/           # tool evidence; detailed worker reports in reports/
+      images/                 # attachments and input metadata
   memory.sqlite                # project metadata, facts, working briefs, ledger/index
   .runtime/
     config.toml                # global configuration and pinned projects
@@ -34,9 +40,9 @@ Entries appear as features use them. SQLite may place `memory.sqlite-wal` and `m
 
 `memory.sqlite` holds repository bindings (canonical path, branch, worktree namespace), display names, model/effort/flow settings, user/project facts, the working brief's goal/decisions/result references, and the task ledger/conversation index. These are distinct tables/records; the state store does not take over archive schema versioning. Writes use SQLite transactions so processes cannot overwrite each other's updates. Invalid saved settings or corrupt databases are reported, never silently reset.
 
-Project metadata is scoped to the project directory's incarnation. Deleting and recreating a name does not inherit the former project's repository authority, settings or decisions. Filesystem copies change that identity: copying a project folder and database is **not** a supported migration/restore procedure. Historical ledger rows and inactive state records remain retained. An offline restore to new filesystem identities needs explicit binding reconciliation.
+Project metadata is scoped to the conversation's persisted UUID. Deleting and recreating a folder without its identity does not inherit former settings or authority. Preserve `.identity.json`, the hidden `.conversations/` store and SQLite in a complete offline backup. Historical ledger rows and inactive state records remain retained; incomplete restores require explicit recovery.
 
-`transcript/`, `images/` and `tool-outputs/` retain original evidence. `tasks.json` is the current-list projection backed by the SQLite ledger. `/clear` empties the active project's `cache/`. This directory may be deleted and regenerated; it must never hold the only copy of a binding, preference, decision, task or user message. The regression tests delete cache and reopen the project in another process to check this boundary.
+`transcript/`, `images/` and `tool-outputs/` retain original evidence. `tasks.json` is the current-list projection backed by the SQLite ledger. `/clear-context` empties the active project's `cache/`. This directory may be deleted and regenerated; it must never hold the only copy of a binding, preference, decision, task or user message. The regression tests delete cache and reopen the project in another process to check this boundary.
 
 `.runtime/` is **durable**, despite its name. It includes configuration, credentials, pending input/events, ownership records, supervised command output and recovery state. Deleting it can lose settings, logins and undelivered work. It is not a general cleanup target. Stop participating processes before making a consistent backup, and retain SQLite and any WAL/SHM companions together. No automatic age-based cleanup is introduced here.
 
@@ -73,4 +79,6 @@ Skills are discovered from Orca's personal directory and supported repository lo
 
 Memory lookup can open SQLite connections and create/chmod SQLite companions. It is not claimed to be strictly filesystem-read-only. Existing ledger and publication authorization checks remain in place.
 
-Directory projects are logical records in memory.sqlite; existing projects/<orch-id> artifact directories now represent conversations and retain their paths. Each includes `.identity.json`, a durable UUID and original legacy fingerprint. Keep hidden files in backups. See [directory project migration](DIRECTORY_PROJECTS.md).
+Directory projects are logical records in memory.sqlite; artifact directories represent conversations with stable storage IDs. Each includes `.identity.json`, a durable UUID and original legacy fingerprint. Keep hidden files in backups. See [directory project migration](DIRECTORY_PROJECTS.md).
+
+Existing flat layout-3 homes stay readable until `orca organize` runs. This is an offline, resumable command: close TUIs and stop Orca sessions first, after authorized agents finish. Active/unknown participants and unresolved commands refuse migration; the command never stops work itself. Artifact directories move by same-filesystem rename to `.conversations/`, retaining their UUID, inode, task IDs and image references. New homes use the grouped view immediately. Legacy in-folder Git clones/worktrees require separate explicit relocation and are refused rather than moved unsafely. See [named project folders](DIRECTORY_PROJECTS.md#named-project-folders).

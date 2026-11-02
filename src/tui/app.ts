@@ -18,7 +18,7 @@ import type { RequestSettings } from "../providers/catalog";
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
 import { accountChoices, AgentsList, login, useAccount, sendAgentFeedback, runtimeText, usageText, restoreConversations, directoryProjectCommand, directoryDefaultsCommand, projectMenu } from "./commands";
-import { deleteProject, type DeleteOptions } from "./commands";
+import { checkContextClear, deleteProject, type DeleteOptions } from "./commands";
 import { archiveAgents, listAgents, liveAgents, liveAgentsOrNull } from "../core/tmux";
 import type { AgentInfo } from "../protocol";
 import { directories, displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
@@ -39,7 +39,7 @@ import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } fro
 import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
-import { fromUserLines, replyLine, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
+import { clearChatView, visibleChatEntries, fromUserLines, replyLine, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
 import { bold, dim, fit, sanitize } from "./components";
 import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
 import type { Terminal } from "./components";
@@ -940,6 +940,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   /** The record as lines. While the turn runs (`running`), the newest entry's calls without a result are left out: the live view shows them running, and the record says how they ended once it does. */
   private restored(page: Page, entries: Entry[], running: boolean): Line[] {
+    entries = visibleChatEntries(entries, page.chatClearedThrough);
     const omit = running ? unresolvedCalls(entries) : undefined;
     if (omit?.size) this.hidRunning.add(page); else this.hidRunning.delete(page);
     return restore(entries, this.deps.term.cols, Infinity, omit);
@@ -1384,7 +1385,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/projects", { run: () => this.openProjects(), help: { group: "projects", label: "/projects", description: "browse projects: enter opens, p pins, d deletes" } }],
     ["/retry-images", { run: (_, page) => this.retryImages(page), help: { group: "conversation", label: "/retry-images", description: "retry unconfirmed image prompts by original id; never replay consumed input" } }],
     ["/keys", { run: () => { this.keyEcho = true; this.note(dim("press keys; esc ends")); }, help: { group: "advanced", label: "/keys", description: "diagnose keys/wheel; ctrl+g keeps draft; esc ends" } }],
-    ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "change display name only; project id stays fixed" } }],
+    ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "rename conversation and its folder link; keep its identity" } }],
     ["/new", { args: true, run: (args) => this.newCommand(args), help: { group: "projects", label: "/new [name] [directory]", description: "create a project page" } }],
     ["/close", { run: () => this.closePage(), help: { group: "projects", label: "/close", description: "close this page; keep its project and history" } }],
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
@@ -1392,7 +1393,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "follow agents; a shows older, d/D remove finished rows" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
-    ["/clear", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear", description: "clear conversation, context and cache after confirmation" } }],
+    ["/clear", { run: (_, page) => this.clearCommand(page, false), help: { group: "conversation", label: "/clear", description: "clear visible chat only; keep model context, history and cache" } }],
+    ["/clear-context", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear-context", description: "clear chat, model context and cache after confirmation" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
     ["/project", { args: true, run: (args, page) => page ? directoryProjectCommand(page.project, args).then(text => this.note(text, page)) : this.note("open a conversation first"), help: { group: "settings", label: "/project [rename|relink]", description: "directory project identity, name and location" } }],
     ["/project-defaults", { args: true, run: (args, page) => page ? directoryDefaultsCommand(page.project, args).then(async text => { await this.refreshHeader(page); this.note(text, page); }) : this.note("open a conversation first"), help: { group: "settings", label: "/project-defaults [save|inherit]", description: "save directory defaults or inherit them in this conversation" } }],
@@ -1404,10 +1406,15 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/help", { run: () => this.toggleHelp(), help: { group: "conversation", label: "/help", description: "commands and keyboard shortcuts; esc closes" } }],
   ]);
 
-  /** Clear is a local modal, never a prompt or a scheduled model turn. */
-  private async clearCommand(page?: Page): Promise<void> {
+  /** UI clear is immediate; context reset uses confirmation. Neither submits a prompt. */
+  private async clearCommand(page?: Page, context = true): Promise<void> {
     this.cancelClear();
-    if (!page) return this.note(dim("open a project before clearing context"));
+    if (!page) return this.note(dim(context ? "open a project before clearing context" : "open a project before clearing chat"));
+    if (!context) {
+      this.openGroups.delete(page.view?.lines ?? page.lines); clearChatView(page);
+      this.notices.delete(page); this.notes.delete(page); this.pending = []; this.screenHistory = [];
+      this.scrollTop = null; this.scrollAnchor = undefined; this.selection.clear(); this.reprint(); return;
+    }
     let operation: ClearConfirmation | undefined;
     try {
       this.checkClearPage(page);
@@ -1421,7 +1428,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       this.projectList = null;
       this.menu = operation.menu = {
         title: dim(`clear conversation, context and cache for ${page.name}? saved transcript stays. ↑↓ enter · esc`),
-        items: ["cancel", "clear conversation"], index: 0,
+        items: ["cancel", "clear context"], index: 0,
         pick: index => { if (index === 1) return this.confirmClear(operation!); this.cancelClear(); this.draw(); },
       };
       this.draw();
@@ -1434,11 +1441,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   private checkClearPage(page: Page): void {
-    if (!this.pages.includes(page) || page !== this.page || page.deleting) throw new Error("project changed; try again");
-    if (page.view) throw new Error(`viewing ${page.view.name}; /back first to clear the orchestrator`);
-    if (page.busy) throw new Error("orchestrator is running or compacting; wait before clearing context");
-    if (page.sent.length || this.queued.get(page)?.length || page.questions.closing) throw new Error("input is pending; context was not cleared");
-    if (!page.orch.checkClear || !page.orch.clear) throw new Error("this session does not support clearing context");
+    checkContextClear(page, this.page, this.pages, this.queued.get(page));
   }
 
   private clearCurrent(operation: ClearConfirmation): boolean {

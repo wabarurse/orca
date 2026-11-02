@@ -21,6 +21,8 @@ export interface Page {
   lines: Line[];
   /** Last rendered clear boundary; keep refreshes from reviving old conversation state. */
   contextBoundary?: string;
+  /** Local UI-only clear boundary; never written to the shared transcript. */
+  chatClearedThrough?: string;
   /** The streaming reply: markdown blocks leave it as they complete; the rest shows raw in the live region. */
   md: MarkdownStream;
   busy: boolean;

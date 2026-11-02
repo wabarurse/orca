@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App, type AppDeps } from "./app";
@@ -38,7 +38,7 @@ async function setup(extra: Partial<AppDeps> = {}) {
   const running = app.run(project);
   await until(() => !!app.page);
   cleanups.push(async () => { app.quit(); await running; rmSync(home, { recursive: true, force: true }); });
-  const command = () => app.commands.get("/clear")!.run("", app.page);
+  const command = () => app.commands.get("/clear-context")!.run("", app.page);
   const context = () => open(t.path).chain();
   return { app, project, t, term, screen, provider, command, context, running, exit: () => exit,
     resize(cols: number, rows: number) { term.cols = cols; term.rows = rows; screen.resize(cols, rows); resize(); },
@@ -46,23 +46,69 @@ async function setup(extra: Partial<AppDeps> = {}) {
 }
 const uiText = (app: App) => JSON.stringify(app.page?.lines);
 
-test("bare /clear is local, cancel-default and excluded from recall; esc preserves drafts/history; explicit confirmation clears UI and exit replay but keeps saved transcript", async () => {
+test("/clear immediately clears only visible chat and remains clear across refresh, resize and new entries", async () => {
+  const ui = await setup(), { app } = ui;
+  const before = readFileSync(ui.t.path), context = await ui.context();
+  mkdirSync(paths.cache(ui.project), { recursive: true });
+  const cache = join(paths.cache(ui.project), "keep.txt"); writeFileSync(cache, "cached evidence");
+  app.input = { text: "/clear", cursor: 6 }; await app.onKey({ name: "enter" });
+  expect(app.menu).toBeNull(); expect(app.page!.lines).toEqual([]);
+  expect(await ui.context()).toEqual(context); expect(readFileSync(ui.t.path)).toEqual(before);
+  expect(readFileSync(cache, "utf8")).toBe("cached evidence");
+  expect(app.page!.inputHistory).not.toContain("/clear");
+  await app.commands.get("/refresh")!.run("", app.page);
+  ui.resize(80, 20);
+  expect(app.page!.lines).toEqual([]);
+  await ui.t.append({ type: "message", message: { role: "assistant", content: "new visible reply" } });
+  await app.commands.get("/refresh")!.run("", app.page);
+  expect(uiText(app)).toContain("new visible reply"); expect(uiText(app)).not.toContain("original UI history");
+  expect(await ui.context()).toHaveLength(2); expect(ui.provider.calls).toHaveLength(0);
+  app.quit(); await ui.running;
+  expect(ui.exit()).not.toContain("original UI history"); expect(ui.exit()).toContain("new visible reply");
+});
+
+test("UI-only clear works while busy without touching pending input or the context-reset API", async () => {
+  const ui = await setup(), { app } = ui, page = app.page!;
+  const before = readFileSync(ui.t.path);
+  let resets = 0; page.orch.checkClear = async () => { resets++; }; page.orch.clear = async () => { resets++; };
+  page.busy = true; page.sent.push({ inputId: "pending", text: "keep this prompt" });
+  await app.commands.get("/clear")!.run("", page);
+  expect(page.busy).toBe(true); expect(page.sent).toEqual([{ inputId: "pending", text: "keep this prompt" }]);
+  expect(resets).toBe(0); expect(app.menu).toBeNull(); expect(page.lines).toEqual([]);
+  expect(readFileSync(ui.t.path)).toEqual(before); expect(ui.provider.calls).toHaveLength(0);
+  page.busy = false; page.sent = [];
+});
+
+test("UI clear is local to the open view; saved history returns on reopen", async () => {
+  const ui = await setup(), { app } = ui, page = app.page!;
+  page.view = { name: "worker-a", lines: ["worker history"], leave() {}, live: false, calls: new Calls() };
+  await app.commands.get("/clear")!.run("", page);
+  expect(page.view.lines).toEqual([]); expect(uiText(app)).toContain("original UI history");
+  page.view = null;
+  await app.commands.get("/clear")!.run("", page);
+  expect(page.lines).toEqual([]);
+  app.closePage(); await app.openPage(ui.project);
+  expect(uiText(app)).toContain("original UI history");
+  expect(await ui.context()).toHaveLength(1); expect(ui.provider.calls).toHaveLength(0);
+});
+
+test("bare /clear-context is local, cancel-default and excluded from recall; esc preserves drafts/history; explicit confirmation clears UI and exit replay but keeps saved transcript", async () => {
   const ui = await setup(), { app } = ui;
   const before = await Bun.file(ui.t.path).text();
-  app.input = { text: "/clear", cursor: 6 };
+  app.input = { text: "/clear-context", cursor: 14 };
   await app.onKey({ name: "enter" });
   expect(app.menu?.index).toBe(0);
-  expect(app.menu?.items).toEqual(["cancel", "clear conversation"]);
-  expect(app.page!.inputHistory).not.toContain("/clear");
+  expect(app.menu?.items).toEqual(["cancel", "clear context"]);
+  expect(app.page!.inputHistory).not.toContain("/clear-context");
   await app.onKey({ name: "enter" });
   expect(app.menu).toBeNull();
   expect(await Bun.file(ui.t.path).text()).toBe(before);
   app.input = { text: "draft 界", cursor: 5 };
   const lines = [...app.page!.lines];
   await ui.command();
-  await until(() => ui.screen.text().includes("clear conversation"));
+  await until(() => ui.screen.text().includes("clear context"));
   const visible = ui.screen.screen().map(Bun.stripANSI);
-  expect(visible.findIndex(row => row.includes("clear conversation"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 tasks")));
+  expect(visible.findIndex(row => row.includes("clear context"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 tasks")));
   for (const key of [{ name: "paste", text: "danger\n/quit" }, { name: "char", text: "y" }, { name: "q", ctrl: true }, { name: "g", ctrl: true }, { name: "enter", alt: true }]) await app.onKey(key);
   expect(app.input).toEqual({ text: "draft 界", cursor: 5 });
   await app.onKey({ name: "escape" });
@@ -85,12 +131,12 @@ test("bare /clear is local, cancel-default and excluded from recall; esc preserv
 
 test("no arguments, no page creation, and worker/reviewer transcript views refuse", async () => {
   const ui = await setup(), { app } = ui;
-  app.input = { text: "/clear yes", cursor: 10 };
+  app.input = { text: "/clear-context yes", cursor: 18 };
   await app.onKey({ name: "enter" });
   expect(app.menu).toBeNull();
-  expect(app.frame().inputArea!.lines[0]).toContain("unknown command /clear"); // a transient note, not conversation
+  expect(app.frame().inputArea!.lines[0]).toContain("unknown command /clear-context"); // a transient note, not conversation
   expect(uiText(app)).not.toContain("unknown command");
-  expect(app.page!.inputHistory).not.toContain("/clear yes");
+  expect(app.page!.inputHistory).not.toContain("/clear-context yes");
   for (const name of ["worker-a", "reviewer-a"]) {
     app.page!.view = { name, lines: [], leave() {}, live: false, calls: new Calls() };
     await ui.command();

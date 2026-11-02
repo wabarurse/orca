@@ -1,8 +1,8 @@
 // Global update activation is separate from installation. Stop is deliberately
 // queued (never cancel/kill): even older daemons process it only between turns.
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { BUILD_ID, paths } from "../../../config";
+import { BUILD_ID, paths, conversationIds } from "../../../config";
 import type { DaemonStatus } from "../../../protocol";
 import { pidAlive, tryStorageLock } from "../../data";
 import { projectIdentity } from "../../data/projects";
@@ -46,7 +46,7 @@ export async function reloadRunningDaemons(options: ReloadOptions = {}): Promise
     sleep: (ms: number) => delay(ms), now: Date.now, waitMs: 12 * 60 * 60 * 1000, startWaitMs: 10_000, ...options, write };
   try {
     o.build = await o.currentBuild();
-    const projects = await (options.projects?.() ?? readdir(paths.projects).catch(() => []));
+    const projects = await (options.projects?.() ?? conversationIds(paths.root));
     await Promise.all(projects.filter(p => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p)).map(async project => {
       try {
         if (execution.stopped(project)) { await clearIntent(project); return; }

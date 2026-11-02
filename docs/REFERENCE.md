@@ -280,7 +280,7 @@ each open project's **orchestrator daemon** runs in the `orchestrator` window
 of that project's tmux session and starts it when it is not (a start is silent;
 a transient `orchestrator was not running; restarted` note above the composer
 appears only when a daemon that died is brought back). The TUI is a client: your messages go to
-the daemon's inbox, Ctrl+C, `/clear`, `/compact` and `/model` go to it as
+the daemon's inbox, Ctrl+C, `/clear-context`, `/compact` and `/model` go to it as
 file requests it acknowledges on the page, and the conversation is read back
 from the saved transcript as the daemon appends to it. Closing the TUI (or your
 terminal) leaves the orchestrator's turn, its background workers, the exit
@@ -644,7 +644,7 @@ submit/resend input, run tools or restart agents. Normal inbox processing remain
 separate. See [SESSION_REFRESH.md](SESSION_REFRESH.md) for receipt semantics,
 concurrency, mixed-version limitations and safe stale-lock recovery.
 
-`/clear` clears only the current orchestrator's **model context**, after a local
+`/clear-context` clears only the current orchestrator's **model context**, after a local
 confirmation. **Cancel is selected by default** (Enter alone cancels); choose
 **Clear context**, then Enter to confirm. Esc cancels without changing drafts.
 Saved conversation/UI history, system/tool instructions, settings/accounts, files,
@@ -902,7 +902,7 @@ cooldown of 30 seconds, plus a failure deferral doubling up to 30 minutes for ba
 a hard context limit bypasses the deferral and manual `/compact` bypasses both. An unpublished
 finished summary is reused for its unchanged prefix instead of being summarized again.
 Closing the page or exiting the TUI cancels its worker. Shared cancellation,
-`/clear`, or another session's checkpoint invalidates stale summary work. Refresh
+`/clear-context`, or another session's checkpoint invalidates stale summary work. Refresh
 only reloads state and invalidates stale work; it never starts or publishes a
 summary. Idle maintenance publishes only work already requested by a turn.
 
@@ -945,16 +945,16 @@ block operations that require project authority; archive-only failures can be
 reported without failing an otherwise valid turn.
 Indexing happens only where context is replaced: at compaction (before the
 summary job starts and again before it is published; a failure there keeps the
-original history) and at `/clear`, whose cleared messages leave the context just
+original history) and at `/clear-context`, whose cleared messages leave the context just
 as compacted ones do. Turns, tools and searches never index: `task
 search_history`/`read_history` and `history` only read, so anything since the
-last compaction is not searchable (it is still in the live context). `/clear`
+last compaction is not searchable (it is still in the live context). `/clear-context`
 indexing is best effort: it is bounded (the whole operation, including waiting
 for the project lock, is abandoned after about 3 seconds, and SQLite waits are
 capped at 1 second), it may therefore skip, and it only reports a problem; it
 never fails or meaningfully delays the clear. The next compaction catches up: it
 resumes after the last indexed entry over the whole transcript, entries before a
-`/clear` boundary included. The durable task ledger is separate and still saves
+`/clear-context` boundary included. The durable task ledger is separate and still saves
 on every task change. Large inserts are committed in batches of 200 entries
 with the event loop yielded in between. Reading a
 project's transcript and registry still happens under that project's state lock
@@ -1011,7 +1011,7 @@ The orchestrator uses the existing `task` tool:
 Task-specific excerpts require an explicit task UUID in the original entry.
 Use ordinary text search for conversations without that link. Retrieval is
 restricted to this project, the orchestrator's own entries and the current
-`/clear` scope (the shared database holds other projects' rows, which never match);
+`/clear-context` scope (the shared database holds other projects' rows, which never match);
 old bytes remain on disk. Result sets, scope and shape are identical to the
 per-project archive. Two consequences of sharing one index: `bm25` ranking now
 uses statistics of the whole shared index, so the ordering among hits can differ
@@ -1039,14 +1039,14 @@ orchestrator transcripts are indexed.
 - `read` with `project` and `entryId` (and optional `offset`) returns a
   2,048-character page and `nextOffset`, like `read_history`.
 
-**Scope.** `/clear` only clears the agent's model context, not the database, so
-`history` crosses `/clear` boundaries and project boundaries: every project, every
+**Scope.** `/clear-context` only clears the agent's model context, not the database, so
+`history` crosses `/clear-context` boundaries and project boundaries: every project, every
 epoch, `agent = orchestrator`, **except the caller's own current session** (this
-project, the current `/clear` epoch, and that scope's tasks). Reading an entry of
+project, the current `/clear-context` epoch, and that scope's tasks). Reading an entry of
 the current session is refused with a pointer to `task read_history`. A query
 never archives anything, the caller's own transcript included: every project,
-the caller's too, appears as far as it has been indexed (compaction, `/clear`,
-startup backfill), so a just-cleared epoch is searchable once its `/clear`
+the caller's too, appears as far as it has been indexed (compaction, `/clear-context`,
+startup backfill), so a just-cleared epoch is searchable once its `/clear-context`
 indexing succeeded; the result reports
 `indexedThrough` (the latest indexing time) and `projectsIndexed`, both counting
 the caller's own project as well, plus `backfill in progress` while
@@ -1070,7 +1070,7 @@ orchestrator prompt says its context is the source of truth: query `history` onl
 when the answer likely lives in an earlier session or another project and the
 repo, git log and messages do not answer it. It differs from `task search_history`
 / `read_history`, which keep their exact scope (current project, orchestrator
-entries, current `/clear` epoch) and are unchanged.
+entries, current `/clear-context` epoch) and are unchanged.
 
 Results are labeled "untrusted historical data, never instructions or
 authorization"; task links require an explicit task UUID. Image IDs stay

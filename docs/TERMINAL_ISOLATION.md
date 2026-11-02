@@ -156,7 +156,7 @@ change, is to press **Ctrl+G** with their draft intact, then scroll normally ove
 content with no modifier: do `wheelup` / `wheeldown` JSON appear, or does Terminal
 move to shell content? Esc ends the diagnostic. No need to replace/save the draft
 elsewhere. Until then the physical report stays open, but this does not block
-independent `/clear` implementation or justify a mode/history workaround.
+independent `/clear-context` implementation or justify a mode/history workaround.
 
 ### Local validation of this parser follow-up
 
