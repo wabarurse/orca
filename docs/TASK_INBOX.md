@@ -74,7 +74,7 @@ last snapshot with a visible stale/error warning, never a fabricated zero.
 * An externally closed row disappears. If it had an unfinished answer, that
   orphan text is reported separately, never silently assigned to the next question
   or substituted for the original chat draft. Menus/help retain precedence. Ctrl+B
-  projects, model/settings menus, `/help`, cancellation and Cancel-default `/clear`
+  projects, model/settings menus, `/help`, cancellation and Cancel-default `/clear-context`
   still work. Ctrl+Q does nothing while a menu/project list owns keys.
 * In an agent transcript, opening Questions shows an explanatory guard and takes
   no answers: close Inbox, then Esc or `/back` to return to the project

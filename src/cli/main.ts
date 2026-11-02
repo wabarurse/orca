@@ -12,7 +12,7 @@ import { superviseProcess } from "../core/data/processes";
 
 import { pullHarness } from "../core/install";
 import pkg from "../../package.json";
-import { runAgent, scheduleReload, activateInstalled } from "../exec";
+import { runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
 import { afterExit } from "../exec";
 import { put } from "../core/data/inbox";
 import { directories, repoHere, validProjectName } from "../core/data/projects";
@@ -28,7 +28,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "startup", "msg", "stop", "agent", "agent-exit", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root);
+if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -43,6 +43,7 @@ function usage(error?: string): never {
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
+  orca organize                   group saved folders by directory (requires Orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
@@ -57,6 +58,12 @@ function usage(error?: string): never {
 if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 
 switch (cmd) {
+  case "organize": {
+    if (rest.length) usage("organize takes no arguments");
+    const moved = await organizeProjects();
+    console.log(`organized ${moved} conversation folder(s); named directory/conversation links are ready in ${paths.projects}`);
+    break;
+  }
   case "startup": {
     if (rest.length !== 1) usage("startup requires a conversation name or --all");
     const selected = await directories.selectStartupConversations(rest[0]!);

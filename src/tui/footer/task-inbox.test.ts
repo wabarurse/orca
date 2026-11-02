@@ -601,7 +601,7 @@ test("Questions panel sanitizes fields and stays bounded at narrow/tiny sizes; E
   expect(ui.sent).toEqual([]);
 });
 
-test("inbox Questions coexists with help, projects, model menus and cancel-default /clear without losing either draft", async () => {
+test("inbox Questions coexists with help, projects, model menus and cancel-default /clear-context without losing either draft", async () => {
   const ui = await setup({ tasks: async () => [] }), { app } = ui;
   const page = app.page!, chat = { text: "chat draft", cursor: 2 }, answer = { text: "answer draft", cursor: 4 };
   let clears = 0; page.orch.checkClear = async () => {}; page.orch.clear = async () => { clears++; };
@@ -616,7 +616,7 @@ test("inbox Questions coexists with help, projects, model menus and cancel-defau
   app.openMenu("models", [{ value: "fake", label: "fake" }], () => {});
   await app.onKey({ name: "q", ctrl: true }); expect(app.menu).not.toBeNull();
   await app.onKey({ name: "escape" }); expect(app.input).toEqual(answer);
-  await app.commands.get("/clear")!.run("", page); expect(app.menu?.index).toBe(0);
+  await app.commands.get("/clear-context")!.run("", page); expect(app.menu?.index).toBe(0);
   await app.onKey({ name: "enter" }); expect(clears).toBe(0); expect(app.input).toEqual(answer);
   await app.onKey(sectionKey); expect(app.input).toEqual(chat);
   await app.onKey({ name: "tab" }); expect(app.frame().inbox).toBeNull();

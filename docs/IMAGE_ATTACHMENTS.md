@@ -20,7 +20,7 @@ arrives; orca does not change terminal settings or key bindings for you.
 
 Menus, projects, help, task/question panels and agent views keep ownership of
 input. Ctrl+V does not attach an image to a question answer. Pending asynchronous
-reads are invalidated by send/clear/cancel, removal/history navigation, refresh,
+reads are invalidated by send/clear-context/cancel, removal/history navigation, refresh,
 page changes/close/delete, and modal changes. Repeated Ctrl+V while reading reports
 that the read is in progress. Ordinary editing of the same chat draft is allowed.
 
@@ -76,7 +76,7 @@ PR #70's committed input/delivery receipts remain the only consumption evidence.
 Refresh/reopen restores image labels and unconfirmed prompt previews, not delivery
 inferred from absent files or matching text. The inbox consumer commits **the
 prompt, image references and receipt together** before removing inbox files or
-acknowledging UI previews. Cross-process turn/clear ownership is unchanged.
+acknowledging UI previews. Cross-process turn/clear-context ownership is unchanged.
 
 **`/retry-images` explicitly republishes unconfirmed image prompts with their
 original IDs**, never a newly generated retry ID. Reopen/refresh never
@@ -91,7 +91,7 @@ explicit retry and reports the error. A failure **before the journal can be
 written** cannot guarantee restart recovery; do not close that window before
 retrying successfully. Missing/corrupt image data fails closed. Login failure
 keeps image prompts for explicit retry rather than dropping them. A confirmed
-`/clear` refuses while any unconsumed durable image journal exists, including one
+`/clear-context` refuses while any unconsumed durable image journal exists, including one
 held by a different window.
 
 A receipt means **committed context, not provider success**. Model rejection,
@@ -103,8 +103,8 @@ failed turns or restart workers.
 
 Validated image bytes and submission journals remain under the project until
 **project deletion**, including removed/unsubmitted attachments and after
-`/clear`. This conservative retention avoids releasing bytes still needed by
-queues, histories or workers. `/clear` resets only the orchestrator's context;
+`/clear-context`. This conservative retention avoids releasing bytes still needed by
+queues, histories or workers. `/clear-context` resets only the orchestrator's context;
 old receipts/history remain, old prompts do not reappear as unconsumed, and old
 images are not forwarded implicitly. This is not secure deletion. There is no history image picker: reattach a
 pre-clear image from the clipboard to include it in a new context. There is no
@@ -203,7 +203,7 @@ policy of #74; there is no new vision/provider fallback. Its summary can reduce
 prose while retained images still exceed the foreground budget. In that case a
 checkpoint may commit the reduction, but the foreground request is explicitly
 blocked. Worker checkpoints instead refuse an over-budget proposal. Neither path
-silently drops images. Use an explicit `/clear` for a new task when accumulation
+silently drops images. Use an explicit `/clear-context` for a new task when accumulation
 blocks context; original transcripts/images remain on disk.
 
 The global SQLite `~/.orca/memory.sqlite` (rows keyed by project and agent) keeps the **original scoped references** losslessly in
@@ -215,7 +215,7 @@ clear scope**. Search/read results are historical **text**, not new images or ne
 permissions. Pixels remain directly inspectable in retained context, so no history
 image-read tool or implicit cross-task image sharing is needed. Explicit
 spawn/message forwarding still requires a real original image in the sender's
-current context epoch, not merely a retrieved or guessed UUID. After `/clear`,
+current context epoch, not merely a retrieved or guessed UUID. After `/clear-context`,
 old history IDs cannot retrieve/forward old images; reattach from the clipboard.
 The orchestrator-only `history` tool (earlier sessions and other projects) returns the
 same text markers only: never pixels, and no forwarding permission. Image IDs stay

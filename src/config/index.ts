@@ -5,4 +5,6 @@ export { paths, projectStateScope, readProjectState, writeProjectState, reposito
 export { assertLayout } from './layout';
 export { readState, updateState } from "./state-store";
 export { conversationIdentity } from "./conversation-identity";
+export { conversationIds, initializeConversationStorage, organizeConversationStorage } from "./conversation-storage";
+export { syncNamedFolders, type FolderProject } from "./project-folders";
 export { attachDirectory, directoryProject, inheritedSettings, projectCatalog, saveOpenConversations, updateDirectory, type DirectoryProject } from "./directory-projects";

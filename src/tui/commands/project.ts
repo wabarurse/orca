@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { loadConfig, paths, saveConfig } from "../../config";
 import { describeOwner, lockOwner, tryStorageLock } from "../../core/data";
-import { conversationTurnLock, withProjectStateLock } from "../../core/data/projects";
+import { directories, conversationTurnLock, withProjectStateLock } from "../../core/data/projects";
 import { validProjectName } from "../../core/data/projects";
 import { removeProjectWorktrees } from "../../core/data/projects";
 import { purgeProject } from "../../core/data/memory";
@@ -56,6 +56,7 @@ export async function deleteProject(name: string, { live = liveAgentsOrNull, sto
       await beforeRemove?.();
       await rm(paths.runtimeProject(name), { recursive: true, force: true });
       await rm(paths.project(name), { recursive: true, force: true });
+      await directories.refreshFolders();
       // Best effort: the project is already gone, and the backfill's orphan cleanup removes leftovers.
       try { purgeProject(name); } catch { /* rebuildable index */ }
     });
@@ -111,7 +112,7 @@ export async function directoryProjectCommand(conversation: string, args: string
   const { directories } = await import("../../core/data/projects");
   const project = directories.attachConversation(conversation);
   if (!project) return "conversation is not attached to a directory project";
-  if (args.startsWith("rename ")) directories.renameDirectoryProject(project.id, args.slice(7));
+  if (args.startsWith("rename ")) await directories.renameDirectoryProject(project.id, args.slice(7));
   else if (args.startsWith("relink ")) return relinkProjectDirectory(conversation, args.slice(7));
   else if (args) return "usage: /project [rename <name>|relink <directory>]";
   return `${project.name} · ${project.id} · ${project.directory}`;

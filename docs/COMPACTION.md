@@ -106,10 +106,10 @@ JSONL or tasks.json: one global `~/.orca/memory.sqlite` (WAL, mode `0600`)
 shared by all projects, with `project` and `agent` columns on every row, holding
 only orchestrator transcripts and task records. Old per-project `memory.sqlite`
 files are migrated by a background backfill and deleted only after the rebuilt
-rows verify identical. Rows are written only at compaction and `/clear`;
+rows verify identical. Rows are written only at compaction and `/clear-context`;
 searches only read, so messages since the last compaction are not searchable
 (they are still in context). Search/read results are bounded historical text and
-restricted to this project, the orchestrator and the current `/clear` scope; clear
+restricted to this project, the orchestrator and the current `/clear-context` scope; clear
 does not delete bytes or receipts. See the
 [reference rolling-memory section](REFERENCE.md#orchestrator-rolling-memory) for tool
 arguments. Reasoning and image bytes/URLs are excluded from searchable text and
@@ -123,15 +123,19 @@ sending an oversized or text-only request. A failed/stale checkpoint leaves
 original context intact. No image-count reduction, automatic image eviction or
 unbounded context is promised; see [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md).
 
-## Clear conversation and cache
+## Clear the chat display
 
-`/clear` takes no arguments and opens a **local, Cancel-default** confirmation
-in the existing bottom menu area. Enter alone cancels. Select **Clear conversation**
+`/clear` immediately clears only the current TUI's visible chat. It has no confirmation and makes no model request. Model context, saved transcripts, cache, tasks, pending input, agents and other attached TUIs are unchanged. Refreshes and resizing keep earlier entries hidden; new replies still appear. Closing and reopening that conversation restores its saved history. In an agent view, only that view is cleared.
+
+## Clear model context and cache
+
+`/clear-context` takes no arguments and opens a **local, Cancel-default** confirmation
+in the existing bottom menu area. Enter alone cancels. Select **Clear context**
 with an arrow, then Enter to confirm. Escape cancels the confirmation. Ctrl+C
 cancels it and stops the conversation and its subagents; drafts and saved history
 remain intact. Typing, pastes and question shortcuts cannot
 leak through the modal. Switching/closing pages, opening another menu, or resizing
-invalidates it; even a tiny/hidden modal still owns its keys. `/clear` is deliberately
+invalidates it; even a tiny/hidden modal still owns its keys. `/clear-context` is deliberately
 excluded from input recall. In a worker/reviewer view it refuses: `/back` first.
 With no project open it explains rather than creating one.
 
@@ -347,7 +351,7 @@ token allowance (6,000 each), never a base64-as-prose estimate. Summaries descri
 only text and IDs; actual image references and historical prompt excerpts are
 retained alongside the checkpoint so later normal requests still carry pixels.
 Accumulated image/context limits fail explicitly instead of silently dropping
-images. `/clear` also refuses unconsumed image-submission journals; a successful
+images. `/clear-context` also refuses unconsumed image-submission journals; a successful
 clear keeps original bytes, journals, history and consumption receipts on disk.
 
 ## Switching accounts or context windows

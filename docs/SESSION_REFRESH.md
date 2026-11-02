@@ -58,7 +58,7 @@ The new context-consumption transaction is:
    Cleanup errors do not turn a committed operation into a failed send.
 
 `Transcript.consumed()` scans all saved entries, including records before a
-summary, context boundary or alternate branch. Compaction and `/clear` do not
+summary, context boundary or alternate branch. Compaction and `/clear-context` do not
 expire receipts. Crash residue is cleaned without re-delivery, and an
 orchestrator cannot run another model turn merely because already-consumed files
 remain: it requires fresh consumed input (explicit compaction is separate).
@@ -129,7 +129,7 @@ preview is local to the submitting window; it is not a global inbox inventory.
   after a consumer's snapshot wait for a later boundary. Per-process submission
   FIFO is preserved. Simultaneous independent windows have no invented global
   keystroke order beyond their persisted filename order.
-- `/clear` acquires both turn locks too (in the daemon, on the client's request,
+- `/clear-context` acquires both turn locks too (in the daemon, on the client's request,
   after the client's own disk checks); project deletion only the conversation's
   own, so an idle conversation can be deleted while a sibling on the same checkout
   is mid-turn. Deletion first asks the daemon to stop and waits for its process

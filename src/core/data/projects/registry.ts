@@ -2,11 +2,11 @@
 // bound checkout a project reuses, and the pinned/ordered project list.
 
 import { existsSync, realpathSync } from "node:fs";
-import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { $ } from "bun";
-import { loadConfig, paths, readProjectState, writeProjectState, repositoryBinding, saveConfig } from "../../../config";
+import { conversationIds, loadConfig, paths, readProjectState, writeProjectState, repositoryBinding, saveConfig } from "../../../config";
 import { checkoutHere } from "./workspace";
+import { refreshProjectFolders, withFolderLock } from "./folders";
 import type { ProjectEntry } from "../../../protocol";
 
 /** A fresh orchestrator name, orch-xxxx, that no project uses yet. */
@@ -27,18 +27,20 @@ export async function displayName(project: string): Promise<string> {
 }
 
 /**
- * Give a project a display name. Only the durable name record changes: the folder, the
- * id, the tmux session and running agents stay as they are, so this is safe
- * at any time. Refused when another project already shows that name.
+ * Update the display name and readable folder link; stable artifacts, identities,
+ * tmux routes and open transcripts keep their paths while agents are running.
  */
 export async function setDisplayName(project: string, name: string): Promise<string> {
   name = name.trim();
   if (!name || name.length > 40 || /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(name)) throw new Error("names are 1-40 printable characters");
-  for (const other of await listProjects()) {
-    if (other !== project && (other === name || (await displayName(other)) === name)) throw new Error(`another project is already called ${name}`);
-  }
-  writeProjectState(project, "name", name);
-  return name;
+  return withFolderLock(async () => {
+    for (const other of await listProjects()) {
+      if (other !== project && (other === name || (await displayName(other)) === name)) throw new Error(`another project is already called ${name}`);
+    }
+    writeProjectState(project, "name", name);
+    refreshProjectFolders();
+    return name;
+  });
 }
 
 /** A project's origin URL, or "no remote". */
@@ -71,8 +73,7 @@ export function shortRemote(url: string): string {
 
 /** Keep unavailable bound checkouts listed so their conversations remain discoverable. */
 export async function listProjects(): Promise<string[]> {
-  const entries = await readdir(paths.projects, { withFileTypes: true }).catch(() => []);
-  const names = entries.filter(e => e.isDirectory() && validProjectName(e.name)).map(e => e.name);
+  const names = conversationIds(paths.root).filter(validProjectName);
   const out: string[] = [];
   for (const name of names.sort()) if (repositoryBinding(name) || existsSync(paths.repo(name))) out.push(name);
   return out;

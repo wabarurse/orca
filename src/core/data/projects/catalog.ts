@@ -5,6 +5,7 @@ import { loadConfig, paths, attachDirectory, directoryProject, inheritedSettings
 import { repositoryBinding } from "../../../config";
 import { listProjects, displayName, orderedProjects } from "./registry";
 import type { ProjectEntry } from "../../../protocol";
+import { refreshProjectFolders, withFolderLock } from "./folders";
 
 export function attachConversation(conversation: string): DirectoryProject | undefined {
   const existing = parentProject(conversation);
@@ -19,6 +20,7 @@ export function parentProject(conversation: string): DirectoryProject | undefine
 }
 export async function directoryProjects(): Promise<DirectoryProject[]> {
   for (const conversation of await listProjects()) attachConversation(conversation);
+  await refreshFolders();
   return projectCatalog(paths.memory).projects.map(p => ({ ...p, conversations: p.conversations.filter(id => parentProject(id)?.id === p.id) }));
 }
 export async function projectRows(parent?: string): Promise<ProjectEntry[]> {
@@ -48,7 +50,12 @@ export function inheritDefaults(conversation: string): void {
   if (!parentProject(conversation)) throw new Error("conversation has no directory project");
   for (const key of inheritedSettings) writeProjectState(conversation, key, undefined);
 }
-export function renameDirectoryProject(id: string, name: string): void { updateDirectory(paths.memory, id, { name }); }
+export async function refreshFolders(): Promise<void> {
+  await withFolderLock(async () => refreshProjectFolders());
+}
+export async function renameDirectoryProject(id: string, name: string): Promise<void> {
+  await withFolderLock(async () => { updateDirectory(paths.memory, id, { name }); refreshProjectFolders(); });
+}
 
 /** Relinking changes only metadata. Callers must first exclude active participants. */
 export async function relinkDirectoryProject(id: string, source: string): Promise<string> {

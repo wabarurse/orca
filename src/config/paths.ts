@@ -5,6 +5,7 @@ import { readState, updateState, recoverStateScope, legacyStateScopes } from "./
 import { conversationIdentity } from "./conversation-identity";
 import { directoryProject, inheritedSettings, setDirectorySetting } from "./directory-projects";
 import { stateRoot, worktreeRoot } from "./legacy";
+import { conversationPath } from "./conversation-storage";
 
 // Read lazily so tests can point ORCA_HOME at a temp dir after import.
 const root = () => stateRoot(homedir(), process.env);
@@ -55,7 +56,7 @@ export function repositoryBinding(name: string): RepositoryBinding | undefined {
 
 function worktrees(name: string): string {
   const binding = repositoryBinding(name);
-  return binding ? worktreeRoot(binding.directory, binding.worktreeId) : join(root(), "projects", name, "worktrees");
+  return binding ? worktreeRoot(binding.directory, binding.worktreeId) : join(conversationPath(root(), name), "worktrees");
 }
 
 export const paths = {
@@ -69,14 +70,14 @@ export const paths = {
   daemonLock: (name: string) => join(root(), ".runtime", "daemon-locks", name),
   orchestrator: (name: string) => join(root(), ".runtime", "projects", name, "orchestrator"),
   get projects() { return join(root(), "projects"); },
-  project: (name: string) => join(root(), "projects", name),
+  project: (name: string) => conversationPath(root(), name),
   inputHistory: (name: string) => join(root(), ".runtime", "projects", name, "input-history"),
-  cache: (name: string) => join(root(), "projects", name, "cache"),
-  repo: (name: string) => repositoryBinding(name)?.directory ?? join(root(), "projects", name, "repo"),
+  cache: (name: string) => join(conversationPath(root(), name), "cache"),
+  repo: (name: string) => repositoryBinding(name)?.directory ?? join(conversationPath(root(), name), "repo"),
   worktrees,
   worktree: (name: string, slug: string) => join(worktrees(name), slug),
   inbox: (name: string) => join(root(), ".runtime", "projects", name, "inbox"),
   runs: (name: string) => join(root(), ".runtime", "projects", name, "runs"),
   questions: (name: string) => join(root(), ".runtime", "projects", name, "questions"),
-  transcript: (name: string, id: string) => join(root(), "projects", name, "transcript", `${id}.jsonl`),
+  transcript: (name: string, id: string) => join(conversationPath(root(), name), "transcript", `${id}.jsonl`),
 };
