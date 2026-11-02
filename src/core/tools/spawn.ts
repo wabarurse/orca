@@ -1,6 +1,6 @@
 import { attachmentSchema, forwardImages } from "./attachments";
 import { consume, content, pending, put } from "../data/inbox";
-import { imageContent } from "../data/images";
+import { imageContent, validateRefs } from "../data/images";
 import type { ImageRef } from "../../protocol";
 import { delay, launchIdentity, publishLaunch, readRun } from "../tmux";
 import { getTask, invalidateTaskBranch, prepareTaskRun, stopTaskRun, taskForRun } from "../data/tasks";
@@ -81,7 +81,8 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (role === "worker" && input.reviewMode !== undefined) return "refused: reviewMode is only valid for reviewer";
       const reviewMode = role === "reviewer" ? input.reviewMode as ReviewMode : undefined;
 
-      const attachments = await forwardImages(input.attachments, ctx);
+      if (ctx.userFeedback) await validateRefs(ctx.project, ctx.userFeedback.attachments);
+      const attachments = ctx.userFeedback ? structuredClone(ctx.userFeedback.attachments) : await forwardImages(input.attachments, ctx);
       const checked: Checked = { ...input, reviewMode };
       return withStorageLock(join(paths.runtimeProject(ctx.project), "spawn-locks", sessionId("worker", branch)), async () => {
       // One agent per branch. A live agent of the same role takes the prompt in its
@@ -129,16 +130,19 @@ async function deliver(runner: Runner, id: string, prompt: string, branch: strin
   }
   const mode = task?.runs.at(-1)?.reviewMode;
   if (role === "reviewer" && mode && input.reviewMode && mode !== input.reviewMode) return `refused: ${id} is running in ${mode} mode on ${branch}, not ${String(input.reviewMode)}; spawn again with reviewMode ${mode} to deliver this prompt to it, or ${wait} with reviewMode ${String(input.reviewMode)}`;
-  await put(ctx.project, id, { from: "orchestrator", text: prompt, ...(attachments.length ? { attachments } : {}) });
+  await put(ctx.project, id, { from: ctx.userFeedback ? "user" : "orchestrator", text: prompt,
+    ...(ctx.userFeedback ? { inputId: ctx.userFeedback.inputId } : {}), ...(attachments.length ? { attachments } : {}) });
   // New instructions can change the branch: earlier readiness no longer holds (the agent repeats this when it reads them).
   if (run) await invalidateTaskBranch(ctx.project, run);
   const after = await runner.running(ctx.project, [id], ctx.signal).catch(() => null);
+  if (after === null) return `queued for ${id}; post-send activity could not be verified. No new agent was started and processing is not confirmed. Inspect status before claiming progress.`;
   if (after && !after.includes(id) && await pending(ctx.project, id)) {
     const taskId = typeof input.taskId === "string" ? input.taskId : task && !task.archive ? task.id : undefined;
     const started = await launch(runner, null, branch, role, taskId, ctx, [], input.reviewMode);
     return `${started}: it exited before reading the prompt, so it was started again on ${branch} with the prompt queued`;
   }
-  return `delivered to running ${id}; it continues on ${branch} in its current run (${current}) and reads the prompt at its next inbox check. No new agent was started; its report arrives in your inbox.`;
+  if (!after.includes(id)) return `queued for ${id}; it has now exited and its inbox is empty. Inspect its saved report/receipts before retrying; no continuing work is confirmed.`;
+  return `queued for observed running ${id} on ${branch} (${current}); no new agent was started. Processing is not confirmed until it reads the prompt; verify its report/status before claiming progress.`;
 }
 
 /** Publish identity before the first transcript entry (the TUI lists transcripts). A null prompt starts it on its queued inbox alone. */

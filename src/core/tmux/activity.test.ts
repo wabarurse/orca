@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { paths } from "../../config";
 import { agentActivity } from "./activity";
 import { listAgents } from "./liveness";
+import { local } from "./runner";
 import { runtime } from "../tools/runtime";
 import { recordRuntime } from "../data/knowledge";
 import { registerTask, prepareTaskRun } from "../data/tasks";
@@ -104,14 +105,29 @@ test("production runtime tool and /agents agree, retaining history separately wi
   expect(result.agents[0]).toMatchObject({ agent, status: "running", queuedMessages: 0 });
   expect(result.agents[0].record).toBeUndefined(); expect(result.contextObservations[0].agent).toBe("worker-old");
   expect(result.applicationSchedules).toBe("not_inspected");
+  expect(await local.running(project, [agent])).toEqual([agent]);
   expect((await listAgents(project))[0]).toMatchObject({ name: agent, live: true, status: "running" });
   expect(readFileSync(runFile)).toEqual(before);
   writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec\\tinvalid\\n'\n`);
   const unknown = JSON.parse(await runtime.run({ action: "status" }, { project, role: "orchestrator", cwd: home }));
   expect(unknown.runningCount).toBeNull(); expect(unknown.agents[0].status).toBe("unknown");
+  expect(await local.running(project, [agent])).toBeNull();
   writeFileSync(join(paths.runtimeProject(project), "contexts", "worker-old.json"), "invalid");
   writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec\\t0\\n'\n`);
   const historicalError = JSON.parse(await runtime.run({ action: "status" }, { project, role: "orchestrator", cwd: home }));
   expect(historicalError.runningCount).toBe(1); expect(historicalError.contextObservations).toBeNull();
   expect(historicalError.errors).toContain("historical context observations unavailable");
+});
+test("dispatch ignores retained dead panes only when its matching process is proven gone", async () => {
+  const child = Bun.spawn([process.execPath, "-e", "process.exit(0)"], { stdout: "ignore", stderr: "ignore" });
+  expect(await child.exited).toBe(0);
+  record(agent, { pid: child.pid });
+  const bin = join(home, "dispatch-bin"); mkdirSync(bin);
+  const executable = join(bin, "tmux"); writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec\\t1\\n'\n`); chmodSync(executable, 0o755); process.env.PATH = bin;
+  expect(await local.running(project, [agent])).toEqual([]);
+  record(agent, { pid: process.pid });
+  expect(await local.running(project, [agent])).toBeNull();
+  writeFileSync(executable, '#!/bin/sh\nexit 0\n');
+  expect(await local.running(project, ["worker-new-branch"])).toEqual([]);
+  expect(await local.running(project, [agent])).toBeNull(); // Live process outside the pane remains owned/unknown.
 });

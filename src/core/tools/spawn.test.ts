@@ -125,7 +125,7 @@ describe("one agent per branch", () => {
     expect(await tool.run({ prompt: "build variants", branch: "live" }, qctx)).toBe("worker-live");
     r.running = async (_p, ids) => { asked.push(ids); return ["worker-live"]; };
     const out = await tool.run({ prompt: "the user picked variant B", branch: "live" }, qctx);
-    expect(out).toStartWith("delivered to running worker-live; it continues on live in its current run (task #");
+    expect(out).toStartWith("queued for observed running worker-live on live (task #");
     expect(asked).toEqual([["worker-live", "reviewer-live"], ["worker-live", "reviewer-live"], ["worker-live"]]); // no wait: one check, then the post-delivery check
     expect(starts).toHaveLength(1);
     expect((await drain("q", "worker-live")).map((m) => [m.from, m.text])).toEqual([["orchestrator", "the user picked variant B"]]);
@@ -146,7 +146,7 @@ describe("one agent per branch", () => {
     const wrongMode = await tool.run({ prompt: "again", branch: "guarded", role: "reviewer", reviewMode: "watch-ci", taskId: first.id }, qctx);
     expect(wrongMode).toStartWith("refused: reviewer-guarded is running in review mode on guarded, not watch-ci; spawn again with reviewMode review");
     expect(await pending("q", "reviewer-guarded")).toBe(false);
-    expect(await tool.run({ prompt: "round two", branch: "guarded", role: "reviewer", reviewMode: "review", taskId: first.id }, qctx)).toStartWith("delivered to running reviewer-guarded");
+    expect(await tool.run({ prompt: "round two", branch: "guarded", role: "reviewer", reviewMode: "review", taskId: first.id }, qctx)).toStartWith("queued for observed running reviewer-guarded");
     expect(starts).toHaveLength(1);
   });
 
@@ -188,6 +188,15 @@ describe("one agent per branch", () => {
     expect(asked).toHaveLength(1);
     expect(starts).toHaveLength(0);
   });
+  test("a failed post-send check retains the queued prompt without asserting progress or launching a replacement", async () => {
+    const { r, starts } = runner([[], ["worker-post-check"], null]);
+    const tool = makeSpawn(r, wait);
+    await tool.run({ prompt: "Build", branch: "post-check" }, qctx);
+    const result = await tool.run({ prompt: "Fix the review", branch: "post-check" }, qctx);
+    expect(result).toContain("post-send activity could not be verified");
+    expect(result).toContain("processing is not confirmed");
+    expect(starts).toHaveLength(1); expect(await pending("q", "worker-post-check")).toBe(true);
+  });
 
   test("a liveness exception also refuses a replacement", async () => {
     const { r, starts } = runner([]);
@@ -200,7 +209,7 @@ describe("one agent per branch", () => {
 test("message delivers to the named inbox and refuses self or empty", async () => {
   expect(await message.run({ to: "orchestrator", text: "done, PR #4" }, ctx("worker", "feat/login"))).toBe("sent to orchestrator");
   expect(await message.run({ to: "user", text: "all green" }, ctx("orchestrator"))).toBe("sent to user");
-  expect(await message.run({ to: "worker-feat-login", text: "also fix the test" }, ctx("orchestrator"))).toBe("sent to worker-feat-login");
+  expect(JSON.parse(await message.run({ to: "worker-feat-login", text: "also fix the test" }, ctx("orchestrator")))).toMatchObject({ enqueued: true, agentStarted: false, processingConfirmed: false, recipientStatus: "unknown" });
   expect(await message.run({ to: "worker-b", text: "  " }, ctx("worker", "b"))).toContain("empty");
   expect(await message.run({ text: "x" }, ctx("worker", "b"))).toContain("`to` is required");
   expect(await message.run({ to: "worker-b", text: "hi me" }, ctx("worker", "b"))).toContain("own inbox");

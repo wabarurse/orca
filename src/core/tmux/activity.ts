@@ -10,6 +10,7 @@ import { pendingCount } from "../data/inbox";
 import { launchIdentity } from "./cancellation";
 import { readRun, type RunState } from "./exits";
 import { sessionName, tmux } from "./runner";
+import { classifyAgent, processAlive } from "./agent-evidence";
 
 const valid = (name: string) => /^(worker|reviewer)(-[A-Za-z0-9._-]+)?$/.test(name);
 export interface AgentActivity {
@@ -23,22 +24,8 @@ interface Options {
   read?: typeof readRun;
   launch?: typeof launchIdentity;
 }
-function alive(pid: number): boolean | null {
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : null; }
-}
 async function names(path: string): Promise<string[]> {
   return readdir(path).catch(error => { if (error.code === "ENOENT") return []; throw error; });
-}
-function classify(agent: string, record: RunState | null, launch: string | undefined, pane: boolean | undefined, available: boolean, processAlive: Options["processAlive"]): Pick<AgentActivity, "status" | "reason"> {
-  if (!record || typeof record.run !== "string" || !Number.isInteger(record.pid) || record.pid <= 0 || record.role !== agent.split("-")[0] || !["running", "reported"].includes(record.state)) return { status: "unknown", reason: "missing or invalid run record" };
-  if (launch !== record.run) return { status: "unknown", reason: "current launch does not match the run record" };
-  const pid = processAlive!(record.pid);
-  if (pid === false) return { status: "exited", reason: record.endedAt ? "run ended; process is gone" : "process is gone" };
-  if (pid === null) return { status: "unknown", reason: "process could not be verified" };
-  if (record.endedAt) return { status: "unknown", reason: "run ended but its process is still present" };
-  if (!available || pane !== true) return { status: "unknown", reason: "live process has no verified live agent pane" };
-  return { status: "running", reason: "current launch, process and live pane agree" };
 }
 export async function agentActivity(project: string, options: Options = {}) {
   const errors: string[] = [];
@@ -64,7 +51,7 @@ export async function agentActivity(project: string, options: Options = {}) {
     const queuedMessages = await pendingCount(project, agent).catch(() => { errors.push(`cannot inspect queued messages for ${agent}`); return null; });
     const current = (options.launch ?? launchIdentity)(project, agent);
     const activity = current !== launch ? { status: "unknown" as const, reason: "launch changed during inspection" }
-      : classify(agent, record, current, paneMap.get(agent), panes !== null, options.processAlive ?? alive);
+      : classifyAgent(agent, record, current, paneMap.get(agent), panes !== null, options.processAlive ?? processAlive);
     const task = tasks.find(t => t.runs.some(r => r.agent === agent && r.id === record?.run && r.id === current));
     return { agent, ...activity, run: record?.run, pid: record?.pid, record, queuedMessages,
       ...(task ? { task: { id: task.id, number: task.number, name: task.name } } : {}) };

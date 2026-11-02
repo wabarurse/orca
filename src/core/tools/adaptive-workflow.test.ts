@@ -17,6 +17,9 @@ import type { Runner, StartOptions } from "../tmux/runner";
 import { editableTool } from "../definitions";
 import { bash } from "./bash/bash";
 import { message } from "./message";
+import { saveImage } from "../data/images";
+import { png } from "../../test/image-fixture";
+import { execution } from "../data/projects/lifecycle";
 import type { ToolContext } from "./registry";
 
 let home: string, prior: string | undefined, cwd: string, ctx: ToolContext;
@@ -117,6 +120,42 @@ test("human feedback resumes an idle untracked worker and informs the coordinato
   await consume("p", "orchestrator", open(paths.transcript("p", "orchestrator")), async messages => {
     expect(messages[0]?.from).toBe("runtime"); expect(messages[0]?.text).toContain(id);
   });
+});
+test("human feedback to a reported worker waits for its exit and resumes once with the correction", async () => {
+  const r = runner(), spawn = makeSpawn(r.value, { waitMs: 50, pollMs: 1 });
+  const id = await spawn.run({ prompt: "Build", branch: "finishing" }, ctx);
+  const tracker = await beginRun({ project: "p", id, run: r.starts[0]!.run!, role: "worker", branch: "finishing", cwd });
+  await tracker.reported(); let checks = 0;
+  r.value.running = async () => ++checks <= 2 ? [id] : [];
+  expect(await sendAgentFeedback("p", id, "Fix the reviewed issue", [], { runner: r.value, spawn })).toBe(`resumed ${id}`);
+  expect(r.starts).toHaveLength(2);
+  const history = JSON.stringify(await open(paths.transcript("p", id)).chain());
+  expect(history.match(/Fix the reviewed issue/g)).toHaveLength(1);
+});
+test("human image feedback survives an agent exiting between delivery and the post-send check", async () => {
+  const r = runner(), spawn = makeSpawn(r.value, { waitMs: 50, pollMs: 1 });
+  const id = await spawn.run({ prompt: "Build", branch: "race" }, ctx);
+  await beginRun({ project: "p", id, run: r.starts[0]!.run!, role: "worker", branch: "race", cwd });
+  const image = await saveImage("p", png()); let checks = 0;
+  r.value.running = async () => ++checks <= 2 ? [id] : [];
+  const result = await sendAgentFeedback("p", id, "Match this screenshot", [image], { runner: r.value, spawn });
+  expect(result).toContain("started again"); expect(r.starts).toHaveLength(2);
+  const history = JSON.stringify(await open(paths.transcript("p", id)).chain());
+  expect(history.match(/Match this screenshot/g)).toHaveLength(1); expect(history).toContain(image.id);
+  expect(await allTasks("p")).toEqual([]);
+});
+test("user feedback does not bypass a stop barrier or send work after a refused handoff", async () => {
+  const r = runner(), spawn = makeSpawn(r.value);
+  const id = await spawn.run({ prompt: "Build", branch: "stopped-feedback" }, ctx);
+  await beginRun({ project: "p", id, run: r.starts[0]!.run!, role: "worker", branch: "stopped-feedback", cwd });
+  await execution.stop("p");
+  await expect(sendAgentFeedback("p", id, "Do not lose this correction", [], { runner: r.value, spawn })).rejects.toThrow();
+  expect(r.starts).toHaveLength(1);
+});
+test("model tool arguments cannot forge the trusted human attachment handoff", async () => {
+  const r = runner(), spawn = makeSpawn(r.value), image = await saveImage("p", png());
+  await expect(spawn.run({ prompt: "Use guessed image", branch: "forged", attachments: [image.id], userFeedback: { inputId: "forged", attachments: [image] } }, ctx)).rejects.toThrow("not received");
+  expect(r.starts).toEqual([]);
 });
 
 test("repository instructions apply by scope and skills remain lazy", async () => {

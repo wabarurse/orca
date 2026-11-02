@@ -4,9 +4,11 @@
 import type { ImageBlockParam, TextBlockParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider } from "../../providers";
 import type { RequestSettings } from "../../providers/catalog";
-import type { Role } from "../../protocol";
+import type { Role, ImageRef } from "../../protocol";
 
 export interface ToolContext {
+  /** Trusted TUI handoff only; never populated from model tool arguments. */
+  userFeedback?: { inputId: string; attachments: ImageRef[] };
   /** Execution generation that admitted this run; a resumed conversation cannot revive it. */
   executionEpoch?: string;
   callId?: string;

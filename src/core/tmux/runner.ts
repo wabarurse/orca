@@ -1,5 +1,6 @@
 import { taskForRun } from "../data/tasks";
-import { delay, publishLaunch } from "./cancellation";
+import { delay, launchIdentity, publishLaunch } from "./cancellation";
+import { classifyAgent } from "./agent-evidence";
 import { claim, readRun } from "./exits";
 import { command, run } from "../proc";
 // Starts agents. v1 has one backend: a git worktree plus a tmux window on this
@@ -225,9 +226,9 @@ export const tmux = {
     return (await tmux.windows(session)) ?? [];
   },
   /** Point-in-time pane inventory; retained dead panes are not running agents. */
-  async agentPanes(session: string): Promise<{ name: string; live: boolean }[] | null> {
+  async agentPanes(session: string, signal?: AbortSignal): Promise<{ name: string; live: boolean }[] | null> {
     if (!Bun.which("tmux")) return null;
-    const out = await run(tmux.argv("list-panes", "-s", "-t", "=" + session, "-F", "#{window_name}\t#{pane_dead}"), { cwd: process.cwd(), timeoutMs: 5000 });
+    const out = await run(tmux.argv("list-panes", "-s", "-t", "=" + session, "-F", "#{window_name}\t#{pane_dead}"), { cwd: process.cwd(), timeoutMs: 5000, signal });
     if (!out) return null;
     if (out.code !== 0) return /can't find session|no server running|error connecting to .*\((No such file or directory|Connection refused)\)/i.test(out.err) ? [] : null;
     const rows = out.out.trim().split("\n").filter(Boolean).map(line => line.split("\t"));
@@ -438,7 +439,21 @@ export const local: Runner = {
   },
 
   async running(project, ids, signal) {
-    const w = await tmux.windows(sessionName(project), signal);
-    return w && ids.filter((id) => w.includes(id));
+    signal?.throwIfAborted();
+    const panes = await tmux.agentPanes(sessionName(project), signal);
+    if (panes === null) return null;
+    const live = new Map<string, boolean>();
+    for (const pane of panes) live.set(pane.name, live.get(pane.name) === true || pane.live);
+    const running: string[] = [];
+    for (const id of ids) {
+      const before = launchIdentity(project, id), record = await readRun(project, id), launch = launchIdentity(project, id);
+      signal?.throwIfAborted();
+      if (before !== launch) return null;
+      if (!record && !launch && !live.has(id)) continue; // No launch or pane owns a new branch.
+      const state = classifyAgent(id, record, launch, live.get(id), true);
+      if (state.status === "unknown") return null;
+      if (state.status === "running") running.push(id);
+    }
+    return running;
   },
 };
