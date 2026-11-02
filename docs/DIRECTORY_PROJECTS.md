@@ -8,17 +8,16 @@ The first supported directory source remains an original Git checkout. Worker wo
 
 ## Startup and execution
 
-Startup restores the last open conversations and selection. Starting inside a known checkout selects its conversation, preferring the saved selection when it belongs there. An unknown directory offers an explicit `/new <name> <directory>` action instead of creating an empty conversation automatically.
+Starting inside a known checkout automatically opens the conversations belonging to that directory project, preferring the saved selection when it belongs there. No startup-selection command is required, and saved views from unrelated directories are not opened. Outside a known checkout, startup restores the last open conversations and selection. An unknown directory offers an explicit `/new <name> <directory>` action instead of creating an empty conversation automatically.
 
 Opening or polling a restored view does not start its daemon, run queued work or revive workers. Already-running remote work can still be observed. Fresh human input starts execution for that conversation; persistent stop barriers still require that input. Closing a terminal preserves authorized remote work.
 
-`orca startup <conversation-name>` chooses the conversations restored next time without deleting anything. It retains every exact title match, including duplicate titles. A storage ID can select one conversation. `orca startup --all` restores all discoverable conversations again. Directory projects and closed conversations remain available in `/projects`.
+`orca startup <conversation-name>` optionally saves the conversations restored when starting outside a known checkout, without deleting anything. It retains every exact title match, including duplicate titles. A storage ID can select one conversation. `orca startup --all` restores all discoverable conversations again. Directory projects and closed conversations remain available in `/projects`.
 
 For the two existing `phoebe-agent-notes` conversations, after merging and updating:
 
 ```sh
 orca pull
-orca startup phoebe-agent-notes
 cd ~/Documents/phoebe/phoebe
 orca
 ```

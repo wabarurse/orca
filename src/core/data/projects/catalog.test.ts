@@ -103,3 +103,17 @@ test("startup name selection retains both duplicate names without deleting other
   expect([...new Set(opened)]).toEqual(["one", "two"]);
   expect(await listProjects()).toContain("other");
 });
+
+test("starting inside a directory opens its conversations without startup configuration", async () => {
+  expect(Bun.spawnSync(["git", "init", "-q", "-b", "main", directory]).exitCode).toBe(0);
+  conversation("one"); conversation("two");
+  const elsewhere = join(root, "elsewhere"); mkdirSync(elsewhere);
+  conversation("other"); writeProjectState("other", "repository", { version: 1, directory: elsewhere, branch: "main", worktreeId: crypto.randomUUID() });
+  const nested = join(directory, "nested"); mkdirSync(nested);
+  for (const open of [[], ["other"]]) {
+    rememberConversations(open, open[0]); const opened: string[] = [], notes: string[] = [];
+    await restoreConversations({ source: nested, open: async id => { opened.push(id); }, note: text => notes.push(text) });
+    expect([...new Set(opened)]).toEqual(["one", "two"]);
+    expect(notes).toEqual([]);
+  }
+});

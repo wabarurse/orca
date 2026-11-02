@@ -94,16 +94,17 @@ export async function restoreConversations(options: {
   if (options.project) { await options.open(options.project, options.directory); return; }
   await directories.directoryProjects();
   const known = await listProjects(), saved = directories.rememberedConversations();
-  for (const id of (saved.open ?? known).filter(id => known.includes(id))) {
+  const existing = options.source ? await projectFor(options.source, saved.selected) : null;
+  const group = existing ? directories.parentProject(existing) : undefined;
+  const opening = existing ? group?.conversations ?? [existing] : saved.open ?? known;
+  for (const id of opening.filter(id => known.includes(id))) {
     try { await options.open(id); }
     catch (error) { options.note(`could not open ${id}: ${error instanceof Error ? error.message : String(error)}`); }
   }
-  if (saved.selected && known.includes(saved.selected)) await options.open(saved.selected);
-  if (options.source) {
-    const existing = await projectFor(options.source, saved.selected);
-    if (existing) await options.open(existing);
-    else options.note(`new directory: /new <conversation name> ${options.source} to add it as a project`);
-  } else if (!known.length) options.note("/new <conversation name> <directory> to add a project");
+  const selected = saved.selected && opening.includes(saved.selected) ? saved.selected : existing;
+  if (selected && known.includes(selected)) await options.open(selected);
+  if (options.source && !existing) options.note(`new directory: /new <conversation name> ${options.source} to add it as a project`);
+  else if (!options.source && !known.length) options.note("/new <conversation name> <directory> to add a project");
 }
 
 export async function directoryProjectCommand(conversation: string, args: string): Promise<string> {
