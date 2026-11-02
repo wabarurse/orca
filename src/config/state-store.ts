@@ -73,6 +73,14 @@ const masked = (key: string) => `@legacy-cleared:${key}`;
 export function recoverStateScope(file: string, prefix: string, fingerprint: string, scope: string): void {
   legacyScopes.set(`${file}\0${scope}`, { prefix, fingerprint });
 }
+/** Retained pre-UUID namespaces prove which device numbers belonged to this
+ * directory incarnation. Never infer authority from image bytes or filenames. */
+export function legacyStateScopes(file: string, prefix: string, fingerprint: string): string[] {
+  const db = connect(file, false);
+  if (!db || !exists(db)) return [];
+  const rows = db.query("SELECT DISTINCT scope FROM orca_state WHERE scope GLOB ?").all(`${prefix}*:${fingerprint}`) as { scope: string }[];
+  return rows.map(row => row.scope).filter(scope => /^\d+$/.test(scope.slice(prefix.length, -fingerprint.length - 1)));
+}
 function stateValue(db: Database, file: string, scope: string, key: string): string | undefined {
   const own = db.query("SELECT value FROM orca_state WHERE scope=? AND key=?").get(scope, key) as { value: string } | null;
   if (own) return own.value;
