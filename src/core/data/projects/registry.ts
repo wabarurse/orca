@@ -53,10 +53,12 @@ export async function repoHere(cwd = process.cwd()): Promise<string | null> {
 }
 
 /** Reuse by canonical checkout identity, never by a shared remote URL. */
-export async function projectFor(directory: string): Promise<string | null> {
+export async function projectFor(directory: string, preferred?: string): Promise<string | null> {
   const source = await checkoutHere(directory);
   if (!source) return null;
-  for (const name of await listProjects()) {
+  const names = await listProjects();
+  if (preferred && names.includes(preferred) && existsSync(paths.repo(preferred)) && realpathSync(paths.repo(preferred)) === source) return preferred;
+  for (const name of names) {
     if (existsSync(paths.repo(name)) && realpathSync(paths.repo(name)) === source) return name;
   }
   return null;

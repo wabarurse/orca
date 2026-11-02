@@ -72,3 +72,5 @@ Skills are discovered from Orca's personal directory and supported repository lo
 - `src/core/data/sqlite/` and `transcripts/`: ledger/database utilities and transcript pairing; callers import these owners directly.
 
 Memory lookup can open SQLite connections and create/chmod SQLite companions. It is not claimed to be strictly filesystem-read-only. Existing ledger and publication authorization checks remain in place.
+
+Directory projects are logical records in memory.sqlite; existing projects/<orch-id> artifact directories now represent conversations and retain their paths. Each includes `.identity.json`, a durable UUID and original legacy fingerprint. Keep hidden files in backups. See [directory project migration](DIRECTORY_PROJECTS.md).

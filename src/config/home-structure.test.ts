@@ -39,7 +39,7 @@ test("normal features stay inside the agreed public home/project categories", as
   mkdirSync(join(paths.project("p"), "images"));
   expect(readdirSync(paths.root).filter(n => !["memory.sqlite-wal", "memory.sqlite-shm"].includes(n)).sort()).toEqual([".runtime", "memory.sqlite", "projects", "prompts", "skills", "tools"]);
   // tasks.json appears only when publication work is registered.
-  expect(readdirSync(paths.project("p")).sort()).toEqual(["cache", "images", "tool-outputs", "transcript"]);
+  expect(readdirSync(paths.project("p")).sort()).toEqual([".identity.json", "cache", "images", "tool-outputs", "transcript"]);
   expect(credential).toContain("/.runtime/auth/");
   expect(readdirSync(join(paths.project("p"), "tool-outputs", "reports"))).toHaveLength(1);
 });

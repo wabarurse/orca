@@ -4,6 +4,7 @@ exports[`offline CLI usage and owned errors are lowercase without changing suppl
 "usage:
   orca                            start for the repository in the current directory
   orca start [project] [directory]
+  orca startup <conversation-name|--all>  choose conversations restored on startup
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
@@ -20,6 +21,7 @@ exports[`offline CLI usage and owned errors are lowercase without changing suppl
 usage:
   orca                            start for the repository in the current directory
   orca start [project] [directory]
+  orca startup <conversation-name|--all>  choose conversations restored on startup
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version

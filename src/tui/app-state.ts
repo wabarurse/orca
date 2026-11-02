@@ -126,7 +126,7 @@ export const AGENTS_TICK_MS = 1000;
 export const AGENTS_REFRESH_MS = 2000;
 
 /** The project list (Ctrl+B, /projects): every project on disk, pinned first. Takes the keys while open. */
-export interface ProjectListState { items: ProjectEntry[]; index: number; status: string; confirm: ProjectEntry | null }
+export interface ProjectListState { parent?: string; items: ProjectEntry[]; index: number; status: string; confirm: ProjectEntry | null }
 
 export interface ActiveMenu extends Menu {
   pick: (index: number) => Promise<void> | void;

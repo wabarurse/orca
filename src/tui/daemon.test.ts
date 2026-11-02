@@ -18,7 +18,7 @@ import { fakeProvider, text as textBlock, toolUse } from "../test/fake-provider"
 import type { Tool } from "../core/tools/registry";
 import { open } from "../core/data/transcripts/transcript";
 
-// The TUI as a client: it keeps each open project's orchestrator daemon alive
+// The TUI as a client: restored pages observe; fresh input authorizes a daemon
 // through the injected keeper, and never runs a turn itself.
 
 const previous = process.env.ORCA_HOME;
@@ -70,32 +70,22 @@ async function setup(extra: Partial<AppDeps> = {}) {
   return openApp(extra);
 }
 
-test("opening a page starts ensuring its daemon without blocking the page, shows what the keeper did, and every poll keeps it alive", async () => {
+test("opening and polling restored pages never starts a daemon; fresh input authorizes only its conversation", async () => {
   const ensured: string[] = [];
-  let line: string | undefined = "orchestrator was not running; restarted"; // the keeper's first start is silent: only a restart is noted
-  const { app, calls } = await setup({ ensureDaemon: async project => { ensured.push(project); const l = line; line = undefined; return l; } });
-  expect(ensured[0]).toBe("a");
-  await until(() => note(app).includes("orchestrator was not running; restarted")); // a transient note, not conversation
-  await until(() => ensured.length >= 3); // the poll
-  expect(text(app)).not.toContain("restarted");
-  // Every restart is noted, even one that repeats the last outcome after a key cleared it (the keeper rate-limits restarts).
-  for (let i = 0; i < 2; i++) {
-    await app.onKey({ name: "char", text: "x" });
-    expect(note(app)).not.toContain("orchestrator");
-    line = "orchestrator was not running; restarted";
-    await until(() => note(app).includes("orchestrator was not running; restarted"));
-  }
-  expect(text(app)).not.toContain("restarted");
-  await app.openPage("b");
-  expect(ensured).toContain("b");
-  expect(calls.filter(c => c === "turn")).toEqual([]); // nothing ran in-process
-  // Quitting the TUI leaves the daemon alone: no cancel, only dispose (checked by the cleanup below).
+  const { app, calls } = await setup({ ensureDaemon: async project => { ensured.push(project); return undefined; } });
+  await Bun.sleep(110); expect(ensured).toEqual([]);
+  await app.openPage("b"); await Bun.sleep(60); expect(ensured).toEqual([]);
+  app.input = { text: "continue this conversation", cursor: 26 }; await app.onKey({ name: "enter" });
+  await until(() => ensured.includes("b")); expect(ensured).not.toContain("a");
+  expect(calls).toContain("say continue this conversation");
 });
 
 test("a keeper failure is reported on the page and retried on later polls; quitting never cancels the daemon's turn", async () => {
   let fail = true;
   const attempts: number[] = [];
   const { app, calls } = await setup({ ensureDaemon: async () => { attempts.push(Date.now()); if (fail) throw new Error("tmux not found"); return undefined; } });
+  expect(attempts).toEqual([]);
+  app.input = { text: "continue", cursor: 8 }; await app.onKey({ name: "enter" });
   await until(() => note(app).includes("orchestrator unavailable: tmux not found"));
   await until(() => attempts.length > 3);
   expect(note(app).match(/tmux not found/g)).toHaveLength(1); // the same failure is not repeated every poll

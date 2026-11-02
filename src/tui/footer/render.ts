@@ -29,6 +29,7 @@ export interface Input {
 export interface ProjectItem { name: string; label: string; pinned: boolean; open: boolean; active: boolean; busy: boolean }
 /** The project list (Ctrl+B, /projects): drawn like a menu, with a status and key hint under it. */
 export interface ProjectList {
+  hint?: string;
   items: ProjectItem[];
   index: number;
   /** A question or refusal shown under the list, e.g. "delete x? y/n". */
@@ -146,7 +147,7 @@ export const PROJECTS_HINT = "↑↓ enter opens   p pins   d deletes   esc clos
  * terminals the status and hint win over the list.
  */
 export function projectRows(p: ProjectList, height: number): string[] {
-  const footer = [...(p.status ? p.status.split("\n") : []), dim(PROJECTS_HINT)].slice(0, Math.max(0, height));
+  const footer = [...(p.status ? p.status.split("\n") : []), dim(p.hint ?? PROJECTS_HINT)].slice(0, Math.max(0, height));
   const listRows = Math.max(0, height - footer.length - 1);
   const start = windowStart(p.items.length, p.index, listRows);
   const items = p.items.slice(start, start + listRows).map((it, i) => projectRow(it, start + i === p.index));

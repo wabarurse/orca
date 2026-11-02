@@ -4,6 +4,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Orchestrator } from "../core/agent-loop/orc/orchestrator";
+import { directories } from "../core/data/projects";
 import { displayName, newProjectName, setDisplayName } from "../core/data/projects/registry";
 import { loadConfig, paths } from "../config/config";
 import { AGENTS_TICK_MS, App, type Clock, type ToolEvents } from "./app";
@@ -105,7 +106,7 @@ describe("tui app", () => {
     term.press({ name: "n", ctrl: true });
     await until(() => app.pages.length === 2);
     expect(orchs.opened[1]!.project).toMatch(/^orch-[a-z0-9]{4}$/);
-    expect(orchs.opened[1]!.url).toBeUndefined();
+    expect(orchs.opened[1]!.url).toBe(paths.repo("alpha"));
     expect(app.page!.project).toBe(orchs.opened[1]!.project);
     await until(() => term.screen().includes("/rename <name> to rename"));
     expect(app.page!.lines).toEqual([]); // a transient note above the composer, not conversation
@@ -417,9 +418,10 @@ describe("tui app", () => {
     await running;
   });
 
-  test("with no project named it reopens every known project", async () => {
+  test("startup restores the remembered conversations", async () => {
     mkdirSync(join(home, "projects", "p1", "repo"), { recursive: true });
     mkdirSync(join(home, "projects", "p2", "repo"), { recursive: true });
+    directories.rememberConversations(["p1", "p2"]);
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
@@ -435,8 +437,14 @@ describe("tui app", () => {
     const repo = join(home, "original");
     await Bun.$`git init -q -b main ${repo}`.quiet();
     const source = realpathSync(repo);
-    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, source });
+    const app = new App({ term, openOrchestrator: async (...args) => {
+      const orch = await orchs.openOrchestrator(args[0], args[1], args[2], args[3]);
+      if (args[1] === source) writeProjectState(args[0], "repository", { version: 1, directory: source, branch: "main", worktreeId: crypto.randomUUID() });
+      return orch;
+    }, pollMs: 100_000, source });
     const running = app.run();
+    await until(() => app.frame().inputArea!.lines.join("\n").includes("new directory"));
+    await app.newPage(undefined, source);
     await until(() => !!app.page?.project.startsWith("orch-"));
     const first = orchs.opened.find((o) => o.url === source)!;
     expect(first.project).toMatch(/^orch-[a-z0-9]{4}$/);

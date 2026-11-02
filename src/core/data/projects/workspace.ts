@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readdir, rmdir } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { paths, writeProjectState, repositoryBinding, type RepositoryBinding } from "../../../config";
+import { attachConversation } from "./catalog";
 import { command } from "../../proc";
 
 /** Canonical checkout root, retaining local config and files even when origin exists. */
@@ -44,6 +45,7 @@ function inside(parent: string, child: string): boolean {
 /** Caller owns the project-state lock. Existing bindings and legacy clones are immutable. */
 export async function initializeWorkspace(project: string, source?: string): Promise<void> {
   if (repositoryBinding(project) || existsSync(paths.repo(project))) {
+    attachConversation(project);
     if (source && await checkoutHere(source) !== realpathSync(paths.repo(project))) {
       throw new Error(`${project} already uses another checkout; create a new project for this directory`);
     }
@@ -56,6 +58,7 @@ export async function initializeWorkspace(project: string, source?: string): Pro
   await mkdir(paths.project(project), { recursive: true });
   await mkdir(paths.cache(project), { recursive: true });
   writeProjectState(project, "repository", binding);
+  attachConversation(project);
 }
 
 async function originalCheckout(source: string): Promise<string> {
@@ -107,4 +110,11 @@ export async function removeProjectWorktrees(project: string): Promise<void> {
     if (result.code !== 0) throw new Error(`could not remove worktree: ${result.err.trim()}`);
   }
   if (existsSync(root)) await rmdir(root);
+}
+
+/** Validate a directory before a metadata-only relink, leaving the old binding untouched on failure. */
+export async function validateProjectDirectory(source: string): Promise<{ directory: string; branch: string }> {
+  const directory = await originalCheckout(source), branch = await defaultBranch(directory);
+  await requireBranch(directory, branch);
+  return { directory, branch };
 }

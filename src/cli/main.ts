@@ -15,7 +15,7 @@ import pkg from "../../package.json";
 import { runAgent, scheduleReload, activateInstalled } from "../exec";
 import { afterExit } from "../exec";
 import { put } from "../core/data/inbox";
-import { repoHere, validProjectName } from "../core/data/projects";
+import { directories, repoHere, validProjectName } from "../core/data/projects";
 import { execution } from "../core/data/projects/lifecycle";
 import { existsSync } from "node:fs";
 import { paths, BUILD_ID } from "../config";
@@ -28,7 +28,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "msg", "stop", "agent", "agent-exit", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root);
+if (["", "start", "startup", "msg", "stop", "agent", "agent-exit", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root);
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -42,6 +42,7 @@ function usage(error?: string): never {
   write(`usage:
   orca                            start for the repository in the current directory
   orca start [project] [directory]
+  orca startup <conversation-name|--all>  choose conversations restored on startup
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca version
@@ -56,6 +57,12 @@ function usage(error?: string): never {
 if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 
 switch (cmd) {
+  case "startup": {
+    if (rest.length !== 1) usage("startup requires a conversation name or --all");
+    const selected = await directories.selectStartupConversations(rest[0]!);
+    console.log(`startup will restore ${selected.length} conversation(s): ${selected.join(", ")}; other history is preserved`);
+    break;
+  }
   case "process-supervisor": {
     const project = flag("project") ?? usage("missing process project");
     const id = flag("process") ?? usage("missing process identity");
