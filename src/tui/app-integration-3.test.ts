@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { paths } from "../config/config";
 import { AGENTS_TICK_MS, App, type AppDeps, type Clock } from "./app";
 import type { AgentInfo } from "../protocol";
+import type { Task } from "../protocol/task";
 import type { Message } from "../protocol/inbox";
 import { all as allQuestions, ask as askQuestions } from "../core/data/inbox/questions";
 import { text as said } from "../test/fake-provider";
@@ -607,7 +608,7 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
     expect(screen()).toContain("↑↓ select");
     term.type("\x1b[Z");
     await until(() => screen().includes("Task #2 ·"));
-    expect(screen()).toContain("Overview: Summary 2");
+    expect(screen()).toContain("Description"); expect(screen()).toContain("Summary 2");
     const row = term.display.screen().findIndex(line => line.includes("● #1 Node 1"));
     const col = term.display.screen()[row]!.indexOf("#1");
     term.press({ name: "mousedown", x: col + 1, y: row + 1 });
@@ -722,6 +723,30 @@ test("task tree deferred reads coalesce a trailing pass and ignore a replaced ov
   } finally { app.quit(); await running; }
 });
 
+test("task numbers jump through folded parents and scroll without submitting or changing the chat draft", async () => {
+  const term = fakeTerm(100, 24), fake = fakeOrchestrators();
+  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const tasks: Task[] = Array.from({ length: 30 }, (_, i) => ({ id: id(i + 1), number: i + 1, name: `Jump task ${i + 1}`, summary: "", branch: "feat/jump", status: "queued", createdAt: "today", updatedAt: "today", revision: 1, dependsOn: i ? [id(1)] : [], runs: [], history: [] }));
+  const app = new App({ term, pollMs: 100_000, agents: async () => [], openOrchestrator: fake.openOrchestrator, treeTasks: async () => tasks });
+  const running = app.run("task-number-jump");
+  const screen = () => term.display.screen().join("\n");
+  try {
+    await until(() => !!app.page); term.type("keep this draft"); term.type("\x14");
+    await until(() => screen().includes("Task #1 · queued"));
+    term.press({ name: "left" }); await until(() => screen().includes("(29 hidden)"));
+    term.type("15"); await until(() => screen().includes("Jump to #15"));
+    expect(app.input.text).toBe("keep this draft");
+    term.press({ name: "enter" }); await until(() => screen().includes("Task #15 · queued"));
+    expect(screen()).toContain("Jump task 15"); expect(screen()).toContain("Task #15 selected");
+    term.type("999"); term.press({ name: "enter" }); await until(() => screen().includes("No listed task #999"));
+    expect(screen()).toContain("Task #15 · queued");
+    term.type("2"); term.press({ name: "escape" }); await until(() => !screen().includes("Jump to #2"));
+    expect(screen()).toContain("TASKS");
+    term.press({ name: "escape" }); await until(() => !screen().includes("TASKS"));
+    expect(app.input.text).toBe("keep this draft"); expect(Object.values(fake.said).flat()).toEqual([]);
+  } finally { app.quit(); await running; }
+});
+
 test("task tree cycling reveals long independent registries without changing chat input", async () => {
   const term = fakeTerm(80, 24), fake = fakeOrchestrators();
   const tasks: import("../protocol/task/tasks").Task[] = Array.from({ length: 24 }, (_, i) => ({
@@ -775,7 +800,7 @@ test("task tree r re-reads the real ledger and says when it refreshed; dots foll
     term.type("r"); // no poll, no refreshSessions: only the key
     await until(() => screen().includes("● #2 Second"));
     await until(() => /Refreshed \d\d:\d\d:\d\d/.test(screen()));
-    expect(term.raw()).toContain("\x1b[31m●");
+    expect(term.raw()).toContain("\x1b[33m●");
   } finally { app.quit(); await running; }
 });
 

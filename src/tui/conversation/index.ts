@@ -6,3 +6,4 @@ export { fromUserLines, replyLine, reportLine, restore, unresolvedCalls, userLin
 export { follow, parts } from "./view";
 export { entryNotice, plainToolLine } from "./notices";
 export { clearChatView, visibleChatEntries } from "./clear";
+export { taskNumberKey } from "./task-jump";

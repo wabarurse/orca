@@ -1,9 +1,9 @@
 import { publicTaskStatus } from "../../protocol/task";
 import { taskPublicationMilestone } from "../../protocol/task";
 // Read-only presentation of the durable registry. Never inspect agents/transcripts.
-import { taskPR, taskStatusLabels, type TaskRow } from "../../protocol/task";
+import { taskPR, type TaskRow } from "../../protocol/task";
 import { wordWrap } from "../components";
-import { bold, plainText, visibleLength, wrap } from "../components";
+import { bold, plainText, visibleLength, wrap, taskStateColor } from "../components";
 
 export interface TaskInboxData {
   rows?: TaskRow[];
@@ -89,10 +89,9 @@ export function taskInboxLines(data: TaskInboxData, cols: number): { lines: stri
     // Display precedence only: never change stored lifecycle, attention or reason.
     let milestone;
     try { milestone = taskPublicationMilestone(row); } catch { /* malformed proof stays unknown */ }
-    const published = milestone?.kind === "published";
     const status = publicTaskStatus(row);
     const fields = [`#${row.number ?? "?"} ${inboxText(row.name)}`, inboxText(row.summary), status, url];
-    const decorate = (part: string, i: number) => i === 3 ? link(part) : i === 2 && published ? `\x1b[32m${link(part)}\x1b[0m` : part;
+    const decorate = (part: string, i: number) => i === 3 ? link(part) : i === 2 ? `\x1b[${taskStateColor(status)}m${part}\x1b[0m` : part;
     if (wide) {
       const cells = fields.map((text, i) => bounded(text, widths[i]!).map(part => decorate(part, i)));
       const height = Math.max(...cells.map(cell => cell.length));

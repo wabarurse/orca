@@ -10,13 +10,30 @@ const task = (n: number, deps: number[] = [], name = `Task ${n}`): Task => ({
 const sample = () => [task(1, [5], "Restore session draft"), task(2, [1], "Export task history"), task(3, [5], "Narrow-terminal keys"), task(4, [5], "Reduce footer redraws"), task(5, [], "Clarify empty inbox"), task(6, [2, 3, 4], "Document task recovery")];
 const pr = { repository: "sample/repo", number: 105, url: "https://github.com/sample/repo/pull/105", head: "a".repeat(40) };
 
+test("a divider separates list and details; wide details use columns and narrow details stack", () => {
+  const t = task(1); t.summary = "A complete description with 界 and 🙂 that wraps independently.";
+  t.attention = { kind: "blocked", reason: "Need approval" }; t.pr = pr;
+  for (const cols of [80, 100, 120]) {
+    const rendered = renderTaskTree([t], { cols, rows: 100 });
+    expect(plainText(rendered.lines[rendered.graph.rows + 1]!)).toBe("─".repeat(cols));
+    const lines = rendered.lines.slice(rendered.graph.rows + 2).map(plainText);
+    expect(lines.some(line => line.includes("Description") && line.includes("│ Details"))).toBe(true);
+    expect(lines.join("\n")).toContain("Need approval");
+    expect(rendered.lines.join("\n")).toContain(`\x1b]8;;${pr.url}\x07`);
+    for (const line of rendered.lines) expect(visibleLength(line)).toBeLessThanOrEqual(cols);
+  }
+  const narrow = renderTaskTree([t], { cols: 40, rows: 100 });
+  expect(narrow.lines.map(plainText).join("\n")).toContain("Overview:");
+  expect(narrow.lines.some(line => line.includes(" │ "))).toBe(false);
+});
+
 
 test("selected details preserve warnings, runs, PR/readiness and missing facts with independent scroll", () => {
   const t = task(1); t.attention = { kind: "blocked", reason: "Need a decision" }; t.pr = pr;
   t.status = "ready_to_merge"; t.readiness = { head: pr.head, run: "review", validatedAt: "today", validation: "Evidence checked", checks: "not_configured" };
   t.runs = [{ id: "review", agent: "reviewer", role: "reviewer", state: "stopped", preparedAt: "yesterday" }];
   const opts = { cols: 120, rows: 200 }, full = renderTaskTree([t], opts).lines.join("\n");
-  for (const value of ["Need a decision", "Evidence checked", "not_configured", "Dependencies: none"]) expect(full).toContain(value);
+  for (const value of ["Need a decision", "Evidence checked", "not_configured", "Prerequisites"]) expect(full).toContain(value);
   const small = renderTaskTree([t], { cols: 20, rows: 12, detailY: 99999 });
   expect(small.details.y).toBe(small.details.height - small.details.rows);
   expect(small.lines.join("\n")).toContain("sample/repo"); expect(small.graph.y).toBe(0);
@@ -43,7 +60,7 @@ test("independent roots, wide Unicode and hostile text are safe at narrow and sc
   }
   const full = renderTaskTree(tasks, { cols: 120, rows: 35 });
   expect(full.hits.every(h => h.col === 0 && h.width === 120)).toBe(true); // a whole row selects its task
-  expect(full.lines[1]).toContain("界🙂é");
+  expect(full.lines[1]!.normalize("NFC")).toContain("界🙂é");
   const scroll = renderTaskTree(Array.from({ length: 100 }, (_, i) => task(i + 1, i ? [i] : [])), { cols: 80, rows: 24, graphY: 99999 });
   expect(scroll.graph.x).toBe(0);
   expect(scroll.graph.y).toBe(scroll.graph.height - scroll.graph.rows);
@@ -153,29 +170,30 @@ test("only unended started runs animate; merged checkbox requires archive eviden
   for (const cols of [80, 120]) {
     const out = renderTaskTree([ready, merged], { cols, rows: 35, selectedId: merged.id });
     expect(out.lines.slice(0, out.graph.rows + 1).join("\n")).not.toContain("Overview");
-    expect(out.lines.join("\n")).not.toContain("\x1b[32m●");
+    expect(out.lines[2]).toContain("\x1b[35m●");
     expect(out.lines.join("\n")).toContain("Task #2 · merged");
-    expect(out.lines.join("\n")).toContain("Dependencies: #1 Task 1");
+    expect(out.lines.join("\n")).toContain("#1 Task 1");
     expect(out.lines.join("\n")).toContain(`\x1b]8;;${pr.url}\x07PR: sample/repo #105`);
   }
   ready.readiness.head = "b".repeat(40);
   expect(renderTaskTree([ready], { cols: 80, rows: 24 }).errors.join(" ")).toContain("ready requires matching validation");
 });
 
-test("publication is green independently of attention, failed runs or readiness; closed and legacy neutral", () => {
+test("publication evidence stays separate from waiting state and its colour", () => {
   const t = task(1); t.pr = pr;
   t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
   t.attention = { kind: "blocked", reason: "conflicting; checks failed" };
   t.runs = [{ id: "w", agent: "worker", role: "worker", state: "failed", preparedAt: "today" }];
   const render = () => renderTaskTree([t], { cols: 120, rows: 60 }).lines.join("\n");
-  for (const value of ["pr open", "\x1b[32m●", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
+  for (const value of ["waiting", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
   t.publication.state = "CLOSED";
-  expect(render()).toContain("queued"); expect(render()).not.toContain("\x1b[32m●");
+  expect(render()).toContain("waiting");
+  expect(renderTaskTree([t], { cols: 120, rows: 60 }).lines[1]).toContain("\x1b[33m●");
   delete t.publication;
   expect(render()).not.toContain("pr open");
 });
 
-test("dot colour follows task status: queued grey, building/working cyan, attention red/yellow, PR green, merged purple", () => {
+test("six visible task states use one consistent colour independent of PR metadata", () => {
   const colours = (t: Task) => { const m = renderTaskTree([t], { cols: 120, rows: 30 }).lines[1]!.match(/\x1b\[(\d+)m[●◐]/); return m && Number(m[1]); };
   const base = (n: number) => task(n);
   expect(colours(base(1))).toBe(90);
@@ -184,29 +202,29 @@ test("dot colour follows task status: queued grey, building/working cyan, attent
   expect(colours(building)).toBe(36);
   const reviewing = base(3); reviewing.status = "reviewing"; reviewing.checkpoints = { buildingAt: "today" };
   reviewing.attention = { kind: "waiting", reason: "awaiting review" };
-  expect(colours(reviewing)).toBe(36); // routine waiting never hides progress
-  for (const [kind, colour] of [["blocked", 31], ["cancelled", 31], ["closed", 31], ["unknown", 33]] as const) {
+  expect(colours(reviewing)).toBe(33); // explicit waiting is a hold, even after work started
+  for (const [kind, colour] of [["blocked", 33], ["cancelled", 33], ["closed", 33], ["unknown", 33]] as const) {
     const t = base(4); t.status = "working"; t.runs = [run]; t.attention = { kind, reason: "x" };
     expect(colours(t)).toBe(colour);
   }
   const ready = base(5); ready.pr = pr; ready.status = "ready_to_merge";
   ready.readiness = { head: pr.head, run: "r", validatedAt: "today", validation: "checked", checks: "passed" };
-  expect(colours(ready)).toBe(36); // ready without verified PR proof is not "PR is out"
+  expect(colours(ready)).toBe(32); // green means ready to merge
   const open = base(6); open.pr = pr; open.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
-  expect(colours(open)).toBe(32);
+  expect(colours(open)).toBe(90); // PR publication does not change the recorded work state
   const merged = base(7); merged.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
   expect(colours(merged)).toBe(35);
   const readyOut = renderTaskTree([ready], { cols: 120, rows: 40 }).lines;
-  expect(readyOut.join("\n")).toContain("Lifecycle: ready to merge");
+  expect(readyOut.join("\n")).toContain("State: ready to merge");
   expect(plainText(readyOut[1]!)).toMatch(/ready to merge$/);
-  expect(plainText(readyOut[4]!)).toContain("●──●──◉┄┄○ worker → review → PR → merged"); // worker and review done, PR here
+  expect(plainText(readyOut.join("\n"))).toContain("Details"); // worker and review done, PR here
 });
 
-test("rows read attention first, then PR open/closed or lifecycle; the tree panel takes the rows the nodes need", () => {
+test("rows use six states, with PR history kept in details; panel geometry stays bounded", () => {
   const t = task(1); t.pr = pr; t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
-  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/PR open$/);
+  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/queued$/);
   t.attention = { kind: "blocked", reason: "x" };
-  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/blocked$/);
+  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/waiting$/);
   const one = renderTaskTree([task(1)], { cols: 100, rows: 30 });
   expect(one.graph.rows).toBe(1); expect(one.details.rows).toBe(26);
   const many = renderTaskTree(Array.from({ length: 40 }, (_, i) => task(i + 1)), { cols: 100, rows: 30 });

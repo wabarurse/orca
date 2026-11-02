@@ -1,5 +1,5 @@
 // Public record and private dispatch/safety envelope are deliberately distinct.
-import { canonicalTask } from "../../protocol/task";
+import { canonicalTask, publicTaskStatus } from "../../protocol/task";
 import { originRepo, ghTaskPR } from "../data/tasks";
 import { run } from "../proc";
 import { getTask, allTasks, removeTask, updateTaskMetadata, listTasks, observeTaskPR, registerTask, setTaskDependencies, setTaskAttention, taskForRun, validateTaskReadiness } from "../data/tasks";
@@ -8,7 +8,7 @@ import type { Tool, ToolContext } from "./registry";
 import { queryHistory } from "../data/memory";
 
 function toolTask(task: Task) {
-  return { ...canonicalTask(task), internal: { branch: task.branch, revision: task.revision, runs: task.runs,
+  return { ...canonicalTask(task), status: publicTaskStatus(task), internal: { branch: task.branch, revision: task.revision, runs: task.runs,
     readiness: task.readiness, attention: task.attention, publication: task.publication, removedAt: task.removedAt } };
 }
 const result = (task: Task) => JSON.stringify(toolTask(task));

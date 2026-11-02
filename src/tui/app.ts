@@ -31,7 +31,7 @@ import type { Message } from "../protocol";
 import type { Orchestrator } from "../core/agent-loop/orc";
 import type { Entry } from "../protocol";
 import { format } from "node:util";
-import { follow, parts } from "./conversation";
+import { taskNumberKey, follow, parts } from "./conversation";
 import { editor as ed } from "./footer";
 import type { Key } from "./components";
 import { historyRows, type Line, type Shown } from "./conversation";
@@ -123,7 +123,7 @@ export class App {
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
     const controls = [view.confirmRemoval ? "Remove merged task from list? y confirm / n cancel (SQL retained)" : view.notice ?? "Ctrl+T/Esc chat · r refresh · d remove merged · terminal gesture opens PR links",
-      view.detailsFocused ? "Details: ↑↓ scroll · ← list" : "↑↓ select · ← fold/parent · → unfold/details · Shift+Tab next"].map(line => fit(line, cols));
+      view.detailsFocused ? "Details: ↑↓ scroll · ← list · number + Enter jump" : "number + Enter jump · ↑↓ select · ← fold/parent · → unfold/details · Shift+Tab next"].map(line => fit(line, cols));
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
     return { rows: [...content, ...controls].slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0,
       bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
@@ -137,6 +137,7 @@ export class App {
       else if (k.name === "escape" || k.name === "char" && k.text === "n") { view.confirmRemoval = undefined; this.draw(); }
       return;
     }
+    if (!view.error && !view.loading && taskNumberKey(view, k)) { this.draw(); return; }
     if (k.name === "escape" || k.ctrl && k.name === "t") return this.toggleTaskTree();
     if (k.name === "char" && k.text === "r") { void this.manualTreeRefresh(view); return; }
     if (k.name === "char" && k.text === "d") {

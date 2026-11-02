@@ -45,11 +45,11 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
 
 test("PR creation/no CI is not ready; active reviewer explicitly validates verified exact clean head", async () => {
   const t = await reviewer();
-  expect(JSON.parse(await record()).status).toBe("pr open");
+  expect(JSON.parse(await record()).status).toBe("reviewing");
   expect(await validate({ validated: false })).toContain("not validated");
   expect(await validate({ validation: "" })).toContain("validation is required");
   expect((await getTask(project, t.id)).status).toBe("reviewing");
-  const ready = JSON.parse(await validate()); expect(ready.status).toBe("pr open"); expect(ready.internal.readiness.head).toBe(head);
+  const ready = JSON.parse(await validate()); expect(ready.status).toBe("ready to merge"); expect(ready.internal.readiness.head).toBe(head);
   expect(ready.internal.readiness.checks).toBe("not_configured");
   expect(await validate({}, ctx("orchestrator"))).toContain("taskId");
   expect(await validate({ taskId: t.id }, ctx("orchestrator"))).toContain("active agent");

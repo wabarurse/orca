@@ -48,6 +48,15 @@ export function canonicalTask(task: import("./tasks").Task): LedgerTask {
     dependencies: task.dependsOn ?? [], ...(task.pr ? { prLink: task.pr.url } : {}) };
 }
 
-export function publicTaskStatus(task: Pick<import("./tasks").Task, "archive" | "checkpoints" | "publication">): LedgerTaskStatus {
-  return task.archive ? "merged" : task.checkpoints?.prOpenAt || task.publication?.state === "OPEN" ? "pr open" : task.checkpoints?.buildingAt ? "building" : "queued";
+/** Current user-facing state. Publication checkpoints remain independent history;
+ * an open PR cannot override a hold, cancellation or unfinished review. */
+export type TaskDisplayStatus = "queued" | "working" | "reviewing" | "ready to merge" | "merged" | "waiting";
+export function publicTaskStatus(task: Pick<import("./tasks").Task, "archive" | "status" | "attention" | "publication"> & Partial<Pick<import("./tasks").Task, "runs">>): TaskDisplayStatus {
+  if (task.archive) return "merged";
+  if (task.attention || task.publication?.state === "CLOSED") return "waiting";
+  if (task.status === "queued") {
+    const active = task.runs?.findLast(run => run.state === "started" && !run.endedAt);
+    if (active) return active.role === "reviewer" ? "reviewing" : "working";
+  }
+  return task.status === "ready_to_merge" ? "ready to merge" : task.status;
 }
