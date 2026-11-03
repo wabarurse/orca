@@ -260,10 +260,7 @@ async function expectLifecycle(scenario: Awaited<ReturnType<typeof lifecycleScen
   const saved = await scenario.latest();
   expect(saved).toEqual({ model: "selected-model", provider: "openai", stage: stages.at(-1)!, startedAt: expect.any(String), updatedAt: expect.any(String) });
   expect(Number.isNaN(Date.parse(saved.startedAt))).toBe(false);
-  for (const line of scenario.lines) {
-    expect(line).toContain("openai/selected-model");
-    expect(line).toContain(`started ${saved.startedAt}`);
-  }
+  expect(scenario.lines).toEqual([]);
   const events = open(scenario.transcript.path).history!().filter(e => e.type === "model-request");
   expect(events.map(e => e.stage)).toEqual(stages);
   expect(new Set(events.map(e => e.requestId)).size).toBe(1);
@@ -272,7 +269,7 @@ async function expectLifecycle(scenario: Awaited<ReturnType<typeof lifecycleScen
     expect(Number.isNaN(Date.parse(event.ts))).toBe(false);
     expect(Number.isNaN(Date.parse(event.updatedAt))).toBe(false);
     expect(entryText(event)).toBe("");
-    expect(entryNotice(event)).toContain(`${event.provider}/${event.model} ${event.stage}`);
+    expect(entryNotice(event)).toBeUndefined();
   }
   const evidence = JSON.stringify(saved) + JSON.stringify(events) + scenario.lines.join("");
   for (const sensitive of ["private prompt", "private output", scenario.secret.message]) expect(evidence).not.toContain(sensitive);

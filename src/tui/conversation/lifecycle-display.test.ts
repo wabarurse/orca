@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { modelRequestText, type Entry, type ModelRequestEntry } from "../../protocol/transcript";
+import { type Entry, type ModelRequestEntry } from "../../protocol/transcript";
 import { entryNotice } from "./notices";
 import { restore } from "./restore";
 import { parts, render } from "./view";
@@ -24,8 +24,8 @@ test("live status and transcript replay leave consecutive finished calls collaps
   const live: Line[] = [];
   for (const entry of entries) {
     if (entry.type === "model-request") {
-      // App's live notice routing: progress updates the transient note only.
-      expect(entryNotice(entry)).toBe(modelRequestText(entry));
+      // Lifecycle evidence stays on disk without generating live notices.
+      expect(entryNotice(entry)).toBeUndefined();
       expect(parts(entry)).toBeNull();
       expect(render(entry)).toBeNull();
     } else live.push(...followed.absorb(parts(entry) ?? []));

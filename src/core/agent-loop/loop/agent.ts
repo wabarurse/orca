@@ -1,6 +1,5 @@
 import { usageScope, usageEvent } from "../../../providers";
 import { completeInterruptedTools } from "../../data/transcripts";
-import { modelRequestText } from "../../../protocol";
 import { materializeImages } from "../../data/images";
 import type { RequestSettings } from "../../../providers/catalog";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
@@ -191,7 +190,8 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
     // Observability must not introduce a new failure/retry boundary.
     try { await deps.transcript.append({ type: "model-request", requestId, ...state }); } catch {}
     try { await deps.tracker?.request?.(state); } catch {}
-    try { write(`${modelRequestText(state)}\n`, true); } catch {}
+    // Lifecycle evidence stays on disk; provider failures/retries and the final
+    // turn error already carry actionable feedback through their existing paths.
   };
   await observe("preparing");
   const { message, estimated } = await (async () => {

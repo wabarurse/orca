@@ -22,7 +22,11 @@ test("saved diagnostics never become notifications on startup, refresh, clear, o
     expect(note(app)).not.toContain("model request");
     expect(app.page!.lines).toEqual([]);
     events!.notice!("[model request] anthropic/m completed; started x; updated y");
-    await until(() => term.screen().includes("model request"));
+    expect(note(app)).not.toContain("model request");
+    events!.notice!("API call failed: exhausted quota for anthropic/phoebe");
+    await until(() => term.screen().includes("exhausted quota"));
+    events!.notice!("[model request] anthropic/m provider-wait; started x; updated y");
+    expect(note(app)).toContain("exhausted quota");
     term.type("a");
     expect(note(app)).not.toContain("model request");
     // The live event's saved record can arrive after the user dismissed it.

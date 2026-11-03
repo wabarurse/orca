@@ -429,6 +429,7 @@ export class App {
    * project list's status, the next keypress clears it; a mouse event does not.
    */
   note(text: string, page = this.page): void {
+    if (Bun.stripANSI(text).trimStart().startsWith("[model request]")) return; // Older daemons still emit lifecycle diagnostics.
     const note: Note = { text };
     if (page) this.notes.set(page, note); else this.looseNote = note;
     this.draw();
