@@ -117,3 +117,22 @@ test("starting inside a directory opens its conversations without startup config
     expect(notes).toEqual([]);
   }
 });
+
+test("a new checkout opens no unrelated conversations regardless of saved startup views", async () => {
+  conversation("raven");
+  const source = join(root, "ide");
+  expect(Bun.spawnSync(["git", "init", "-q", "-b", "main", source]).exitCode).toBe(0);
+  const nested = join(source, "nested"); mkdirSync(nested);
+  for (const saved of [undefined, [], ["raven"]]) {
+    if (saved) rememberConversations(saved, saved[0]);
+    const opened: string[] = [], notes: string[] = [];
+    await restoreConversations({ source: nested, open: async id => { opened.push(id); }, note: text => notes.push(text) });
+    expect(opened).toEqual([]);
+    expect(notes).toEqual([`new directory: /new <conversation name> ${nested} to add it as a project`]);
+    expect(await listProjects()).toEqual(["raven"]);
+  }
+  // An explicit conversation argument still overrides directory-based startup.
+  const opened: string[] = [];
+  await restoreConversations({ project: "raven", source, open: async id => { opened.push(id); }, note() {} });
+  expect(opened).toEqual(["raven"]);
+});

@@ -437,6 +437,8 @@ describe("tui app", () => {
     const repo = join(home, "original");
     await Bun.$`git init -q -b main ${repo}`.quiet();
     const source = realpathSync(repo);
+    mkdirSync(paths.repo("raven"), { recursive: true });
+    directories.rememberConversations(["raven"], "raven");
     const app = new App({ term, openOrchestrator: async (...args) => {
       const orch = await orchs.openOrchestrator(args[0], args[1], args[2], args[3]);
       if (args[1] === source) writeProjectState(args[0], "repository", { version: 1, directory: source, branch: "main", worktreeId: crypto.randomUUID() });
@@ -444,6 +446,8 @@ describe("tui app", () => {
     }, pollMs: 100_000, source });
     const running = app.run();
     await until(() => app.frame().inputArea!.lines.join("\n").includes("new directory"));
+    expect(app.pages).toEqual([]);
+    expect(orchs.opened).toEqual([]);
     await app.newPage(undefined, source);
     await until(() => !!app.page?.project.startsWith("orch-"));
     const first = orchs.opened.find((o) => o.url === source)!;
