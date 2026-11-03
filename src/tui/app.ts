@@ -40,7 +40,7 @@ import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
 import { clearChatView, visibleChatEntries, fromUserLines, replyLine, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
-import { bold, dim, fit, sanitize } from "./components";
+import { bold, dim, fit, sanitize, repositoryTitle } from "./components";
 import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
 import type { Terminal } from "./components";
 import { shimmer } from "./components";
@@ -356,6 +356,7 @@ export class App {
   async run(project?: string, url?: string): Promise<void> {
     const { term } = this.deps;
     term.open();
+    term.setTitle?.(repositoryTitle(this.deps.source ?? process.cwd()));
     const restoreConsole = this.captureConsole();
     term.onKey((k) => { this.onKey(k).catch((err) => this.note(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     term.onResize(() => this.resized());
@@ -568,9 +569,10 @@ export class App {
   }
 
   private header(page: Page, decorate = true): string[] {
+    const directory = paths.repo(page.project); this.deps.term.setTitle?.(repositoryTitle(directory));
     const settings = page.settings;
     const model = `${page.model ? roleModelsLabel(page.model, page.roles) : "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), directory: paths.repo(page.project), remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), directory, remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
   }
 
   /** Submission hides the welcome immediately, even before inbox consumption. */

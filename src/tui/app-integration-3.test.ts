@@ -837,3 +837,23 @@ for (const width of [80, 120]) test(`persistent task tree real App ${width}: con
     expect(screen()).not.toContain("● #1 Merged");
   } finally { app.quit(); await running; }
 });
+
+test("terminal title follows the active repository rather than conversation or worker names", async () => {
+  const term = fakeTerm(100, 28), titles: string[] = [];
+  term.setTitle = title => { titles.push(title); };
+  const orchs = fakeOrchestrators();
+  const app = new App({ term, source: "/fixtures/startup-repo", openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, agents: async () => [] });
+  const running = app.run("title-repo");
+  let repo: ReturnType<typeof spyOn> | undefined;
+  try {
+    await until(() => !!app.page);
+    expect(titles[0]).toBe("orca · startup-repo");
+    repo = spyOn(paths, "repo").mockReturnValue("/fixtures/phoebe");
+    app.page!.name = "renamed conversation";
+    app.draw();
+    await until(() => titles.at(-1) === "orca · phoebe");
+    repo.mockReturnValue("/fixtures/orca/");
+    app.draw();
+    await until(() => titles.at(-1) === "orca · orca");
+  } finally { repo?.mockRestore(); app.quit(); await running; }
+});
