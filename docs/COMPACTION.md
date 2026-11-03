@@ -363,3 +363,12 @@ each request fits the selected window, so a transcript larger than the new model
 can be summarized before its first foreground request. Original history and the
 recent verbatim tail are preserved. Fixed instructions or a retained tail that
 cannot fit still produce an explicit context error instead of dropping content.
+
+Provider prefixes and reference updates: the role prompt/tools remain separate
+from conversation summaries. Current reference context is represented by durable,
+append-only messages, updating only changed named sections. A checkpoint may
+retain those messages; if it summarizes them away, the loop appends the missing
+current sections before the next request. These messages count toward the same
+existing budgets. This changes the representation of knowledge, not the summary
+algorithm or compaction thresholds. Internal reference updates stay hidden from
+chat restoration and never count as fresh human input or authorization.

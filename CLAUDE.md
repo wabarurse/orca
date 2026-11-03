@@ -124,3 +124,11 @@ Directory projects: `config/directory-projects.ts` owns the UUID catalog and def
 Runtime activity: `core/tmux/activity.ts` supplies the read-only current-run/PID/live-pane snapshot for `runtime status`, `/runtime`, `/agents` and the TUI count. Context observations are historical and separate. Unknown inspection is explicit, queued follow-ups are not running work, and application schedules are not inspected. Never restart or resume agents as a side effect of status reporting. See docs/PERFORMANCE.md.
 
 Worker follow-ups: `message` only enqueues and returns an explicit unconfirmed-processing receipt for worker/reviewer recipients. Use the existing `spawn` same-branch/task handoff for already-authorized corrections, including finishing/exited workers. Direct user feedback uses that handoff too. `ToolContext.userFeedback` is trusted engine-only origin/attachment data, never model tool input. Preserve stop, task/branch and image scope guards; never infer progress or restart authorization from queue acceptance/status questions. See docs/PERFORMANCE.md.
+
+Prompt-cache prefixes: keep role/system instructions and tool schemas stable.
+`agentContext` supplies named reference sections; `loop/context.ts` appends only
+changed sections to the model transcript with hidden `contextSnapshot` metadata.
+Do not rebuild the system prompt from changing briefs, timestamps or input IDs.
+Preserve source/permission semantics, cancellation, exact inbox receipts and
+compaction budgets. After a checkpoint, restore only context absent from its
+retained messages. See docs/PERFORMANCE.md and evals/cache-prefix/.

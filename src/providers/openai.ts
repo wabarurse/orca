@@ -1,4 +1,5 @@
 import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
+import { createHash } from "node:crypto";
 import { validatedBase64 } from "./images";
 import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { codexSearchItemSources, codexSearchResults } from "./search";
@@ -131,6 +132,11 @@ export function openai(credentials: ReturnType<typeof codexCredentials>, options
           // The SDK's platform type requires server IDs that Codex's stateless history omits.
           model: req.model, input, instructions: req.system ? `You are Codex, an AI coding agent.\n\n${req.system}` : "You are Codex, an AI coding agent.",
           store: false, stream: true, parallel_tool_calls: true,
+          // Codex uses this endpoint-supported cache grouping field. Derive it
+          // only from the reusable prefix, never run IDs or changing knowledge.
+          // Explicit public-API breakpoint/options fields are rejected by the
+          // subscription endpoint (verified by evals/cache-prefix/probe-openai.ts).
+          prompt_cache_key: createHash("sha256").update(JSON.stringify([req.model, req.system ?? "", req.tools])).digest("hex"),
           ...settings, include: ["reasoning.encrypted_content"],
           ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
           // Codex manages its output budget; the backend rejects max_output_tokens.
@@ -222,7 +228,9 @@ function recordOutputItem(event: ResponseOutputItemDoneEvent, items: Map<number,
 function completedEventOutput(event: Parameters<typeof finalOutput>[0], items: Map<number, ResponseOutputItem>, strict: boolean, onUsage?: (usage: NonNullable<Turn["usage"]>) => void): ResponseOutputItem[] {
   const output = finalOutput(event, items, strict);
   const usage = event.response.usage;
-  if (usage) onUsage?.({ input: usage.input_tokens, cachedInput: usage.input_tokens_details?.cached_tokens,
+  const details = usage?.input_tokens_details as { cached_tokens?: number; cache_write_tokens?: number } | undefined;
+  if (usage) onUsage?.({ input: usage.input_tokens, cachedInput: details?.cached_tokens,
+    ...(Number.isSafeInteger(details?.cache_write_tokens) && details!.cache_write_tokens! >= 0 ? { cacheWriteInput: details!.cache_write_tokens } : {}),
     output: usage.output_tokens, reasoning: usage.output_tokens_details?.reasoning_tokens });
   return output;
 }

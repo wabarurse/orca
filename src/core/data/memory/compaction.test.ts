@@ -100,7 +100,7 @@ test("manual idle queues without user messages; busy request and arriving inbox 
   release(); await turn;
   expect(calls).toBe(1); expect(await pending("p", "orchestrator")).toBe(true);
   expect(await orch.pending()).toBe(true);
-  expect(orch.entries!()).toHaveLength(4);
+  expect(orch.entries!().filter(e => e.type !== "message" || !e.contextSnapshot)).toHaveLength(4);
 });
 for (const role of ["worker", "reviewer"] as const) test(`${role} uses shared pre-request path`, async () => {
   const { deps, provider, dir } = await fixture(); process.env.ORCA_HOME = dir;
@@ -170,7 +170,7 @@ test("scheduled compaction retains full UI replay and forwards subsequent tool e
   });
   await orch.compact!();
   await orch.turn();
-  expect(orch.entries!()).toEqual(originals);
+  expect(orch.entries!().filter(e => e.type !== "message" || !e.contextSnapshot)).toEqual(originals);
   expect(restore(orch.entries!(), 100)).toEqual(restore(originals, 100));
   expect(plain.some(line => line.includes("compaction complete"))).toBe(true);
   await orch.say("check now");

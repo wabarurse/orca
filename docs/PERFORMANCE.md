@@ -83,3 +83,39 @@ context, not model-controlled tool arguments; ordinary model forwarding still
 requires possession in its current context. Ownership and stop gates run before
 delivery. Status questions never restart workers; new filesystem polling, cron,
 automatic workflow phases or model-based retry loops are not introduced.
+
+## Reusable provider prefixes
+
+Role instructions and tool definitions form the reusable request prefix. Repository
+instructions, available skills, selected knowledge and the working brief are named
+reference sections. The loop records only changed sections as user-role reference
+updates after existing history; these are not human input, authorization or inbox
+receipts. `contextSnapshot` identifies internal entries for UI restoration, which
+hides them. Their original bytes remain in the saved transcript and model history.
+Unchanged sections are not resent as new messages after each tool or restart.
+
+Anthropic uses an explicit five-minute cache boundary after stable system
+instructions, in addition to automatic caching for the growing conversation. This
+lets fresh conversations reuse the same tools/instruction prefix. An explicit
+`anthropicPromptCache = false` remains respected. No cache warming requests,
+background model calls or one-hour write policy are added.
+
+Codex subscription requests use a content-derived `prompt_cache_key` over model,
+role instructions and tool definitions. Run IDs, timestamps, assignments and local
+trace metadata do not enter that key. The subscription endpoint rejected public
+API `prompt_cache_options` and `prompt_cache_breakpoint` fields during the isolated
+compatibility probe, so production sends neither. Cache writes are recorded when
+the endpoint supplies `input_tokens_details.cache_write_tokens`; missing values
+remain unknown. Cached and cache-written tokens still count toward input context.
+
+Compaction keeps the same triggers, output reserves, rolling summary algorithm
+and tail budget. Its retained MessageParams can include reference updates without
+entry metadata; the loop recognizes their complete marked sections and avoids
+repeating them. Sections summarized out of the tail are restored once from current
+knowledge before another request. Reference messages are actual model input and
+therefore count toward the existing tail/request budgets. Clear boundaries seed
+current context again; cancellation and ownership guards cover every publication.
+
+The cache-focused before/after runner and endpoint probe are under
+`evals/cache-prefix/`. They use disposable homes, generated fixtures and read-only
+access-token snapshots; never install or update a live Orca home to run them.

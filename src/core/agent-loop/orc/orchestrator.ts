@@ -1,4 +1,4 @@
-import { agentKnowledge, clearWorkingContext } from "../../data/knowledge";
+import { agentContext, clearWorkingContext } from "../../data/knowledge";
 import { listProcesses, liveProcess, controlProcess } from "../../data/processes";
 import { editableTool } from "../../definitions";
 import { budget, type CompactOptions } from "../../data/memory";
@@ -311,7 +311,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
   const config = await loadConfig();
   const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return createAgent({
-    loadContext: query => agentKnowledge(deps.project, paths.repo(deps.project), query),
+    loadContext: query => agentContext(deps.project, paths.repo(deps.project), query),
     signal, requireInbox: true, onContext,
     toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(deps.project, loadProvider, "orchestrator"),

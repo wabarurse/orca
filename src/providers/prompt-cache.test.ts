@@ -17,13 +17,14 @@ const request: CompleteRequest = { model: "claude-opus-5-5", system: "Stable ins
   messages: [{ role: "user", content: "Original task" }, { role: "assistant", content: [{ type: "tool_use", id: "call", name: "bash", input: { command: "pwd" } }] },
     { role: "user", content: [{ type: "tool_result", tool_use_id: "call", content: "workspace" }] }],
 };
-test("opt-in automatic caching changes only the cache directive, not tools, history, or generation settings", async () => {
+test("opt-in caching adds stable-prefix and moving history boundaries without changing history or generation settings", async () => {
   const normal = client(), cached = client();
   const original = structuredClone(request.messages);
   await anthropic(normal.sdk).complete(request);
   await anthropic(cached.sdk, { promptCache: true }).complete(request);
   expect(normal.sent[0].cache_control).toBeUndefined();
-  expect(cached.sent[0]).toEqual({ ...normal.sent[0], cache_control: { type: "ephemeral" } });
+  expect(cached.sent[0]).toEqual({ ...normal.sent[0], cache_control: { type: "ephemeral" },
+    system: normal.sent[0].system.map((block: unknown, i: number) => i === 1 ? { ...block as object, cache_control: { type: "ephemeral" } } : block) });
   expect(request.messages).toEqual(original);
 });
 test("cache reads and writes still count in input context, with writes tracked separately", async () => {

@@ -53,7 +53,7 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
   expect(await orch.pending()).toBe(false);
 
   // The inbox message reached the model as one user message with the sender tagged.
-  expect(provider.calls[0]!.messages.at(-1)?.content).toBe("[user] build me a login page");
+  expect(provider.calls[0]!.messages.findLast(m => m.role === "user" && typeof m.content === "string")?.content).toBe("[user] build me a login page");
 });
 
 test("worker reports back: orchestrator spawns a reviewer on the same branch", async () => {
@@ -190,7 +190,7 @@ test("say submitted before cancellation cannot resume when its persistence finis
   expect(provider.calls).toHaveLength(0);
   await orch.say("authorized later");
   await orch.turn();
-  expect(provider.calls[0]!.messages.at(-1)?.content).toBe("[user] submitted before cancel\n\n[user] authorized later");
+  expect(provider.calls[0]!.messages.findLast(m => m.role === "user" && typeof m.content === "string")?.content).toBe("[user] submitted before cancel\n\n[user] authorized later");
 });
 
 test("external sends and repeated cancellations are ordered even at one timestamp, with no queued input lost", async () => {
@@ -213,7 +213,7 @@ test("external sends and repeated cancellations are ordered even at one timestam
     await put(project, "orchestrator", { from: "user", text: "after second cancel" });
     expect(await orch.pending()).toBe(true);
     await orch.turn();
-    expect(provider.calls[0]!.messages.at(-1)?.content).toBe("[user] before first cancel\n\n[user] between cancels\n\n[worker-other] background\n\n[user] after second cancel");
+    expect(provider.calls[0]!.messages.findLast(m => m.role === "user" && typeof m.content === "string")?.content).toBe("[user] before first cancel\n\n[user] between cancels\n\n[worker-other] background\n\n[user] after second cancel");
   } finally { time.mockRestore(); }
 });
 
@@ -259,7 +259,7 @@ test("local prompt identities survive persistence unchanged and are reported onl
   expect(seen).toEqual([]);
   await orch.turn();
   expect(seen.map(message => message.inputId)).toEqual(["local-first", undefined, "local-last"]);
-  expect(provider.calls[0]!.messages.at(-1)?.content).toBe("[user] identical\n\n[user] identical\n\n[user] identical");
+  expect(provider.calls[0]!.messages.findLast(m => m.role === "user" && typeof m.content === "string")?.content).toBe("[user] identical\n\n[user] identical\n\n[user] identical");
   await orch.turn();
   expect(seen).toHaveLength(3);
 });

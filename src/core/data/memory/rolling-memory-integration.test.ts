@@ -72,10 +72,12 @@ test("orchestrator session inherits the 50k tail without a hidden session overri
   await orch.compact!(); await orch.turn();
   const loaded = open(transcript.path), after = await loaded.chain();
   expect(loaded.branch()[0]?.type).toBe("summary");
-  expect(after.slice(1)).toEqual(before.slice(cut));
+  // The unchanged 50k tail budget includes durable reference-context updates.
+  const withContext = loaded.history!().flatMap(e => e.type === "message" ? [e.message] : []);
+  expect(after.slice(1)).toEqual(withContext.slice(rollingCut(withContext, 50000)));
   expect(estimate(after.slice(1))).toBeGreaterThan(47000);
   expect(estimate(after.slice(1))).toBeLessThan(50000);
-  expect(loaded.history!()).toEqual(originals);
+  expect(loaded.history!().filter(e => e.type !== "message" || !e.contextSnapshot)).toEqual(originals);
   expect(foreground.calls).toHaveLength(0);
 });
 
