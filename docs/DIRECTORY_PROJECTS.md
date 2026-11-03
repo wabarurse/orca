@@ -12,6 +12,33 @@ Starting inside a known checkout automatically opens the conversations belonging
 
 Opening or polling a restored view does not start its daemon, run queued work or revive workers. Already-running remote work can still be observed. Fresh human input starts execution for that conversation; persistent stop barriers still require that input. Closing a terminal preserves authorized remote work.
 
+## Orchestrator coordination
+
+An orchestrator can discover sibling conversations in its canonical checkout with
+`runtime({action: "conversations"})`. The result includes names, stable IDs,
+`orchestrator@<conversation-id>` addresses, stop observations and queued message
+counts. Duplicate or renamed titles do not change the addresses. Different local
+checkouts remain separate even when they share a Git remote.
+
+Use `message({to: "orchestrator@orch-xxxx", text: "I own api.ts; are you changing it?"})`
+to coordinate authorized work. Sender identity is preserved as
+`orchestrator@<sender-id>`, so the receiver can reply to that address. These are
+agent reports, not fresh human instructions. Conversation history, tasks, settings
+and provider accounts remain separate. Peer messages are text-only; project-scoped
+images cannot be forwarded across conversation boundaries.
+
+Messages use the existing durable inbox. A receipt confirms enqueue acceptance,
+not processing, and never starts or restarts a daemon. An existing unpaused daemon
+can consume them on its next turn. Stopped conversations retain queued messages
+until fresh human input resumes them; exited daemons are not automatically
+launched. Finish the sending turn so the receiver can acquire the shared checkout
+lock; do not wait/poll for a reply while holding it or exchange empty acknowledgments.
+
+Reports over 2000 characters require a concise `summary`. Full text is saved in
+the recipient's evidence directory for bounded reads; only the summary and path
+enter its context. Recipient identity and checkout membership are checked again
+under the publication lock, rejecting changed/deleted conversations and relinks.
+
 `orca startup <conversation-name>` optionally saves the conversations restored when starting outside a known checkout, without deleting anything. It retains every exact title match, including duplicate titles. A storage ID can select one conversation. `orca startup --all` restores all discoverable conversations again. Directory projects and closed conversations remain available in `/projects`.
 
 For the two existing `phoebe-agent-notes` conversations, after merging and updating:
