@@ -335,3 +335,19 @@ test("Codex cache-write usage is recorded when present and never subtracted from
   expect(turn.inputTokens).toBe(1000);
   expect(turn.usage).toEqual({input:1000,cachedInput:800,cacheWriteInput:150,output:40,reasoning:30});
 });
+
+test("Codex cache affinity uses an opaque session header stable across provider reloads and distinct per transcript", async () => {
+  const tokens=fakeCodexTokens(),sent:{body:any;session:string|null;thread:string|null}[]=[];
+  intercept(async req=>{sent.push({body:await req.json(),session:req.headers.get('session-id'),thread:req.headers.get('thread-id')});
+    return codexSSE([{type:'response.completed',response:{status:'completed',output:[message]}}]);});
+  const base={...request(),system:'stable',cacheScope:'/private/local/transcript-one.jsonl'};
+  await openai(async()=>tokens).complete(base);
+  await openai(async()=>tokens).complete({...base,messages:[{role:'user',content:'next task'}],trace:{run:'new-run'}});
+  await openai(async()=>tokens).complete({...base,cacheScope:'/private/local/transcript-two.jsonl'});
+  expect(sent[0]!.session).toMatch(/^[a-f0-9]{64}$/);
+  expect(sent[0]!.session).toBe(sent[0]!.body.prompt_cache_key);
+  expect(sent[0]!.thread).toBe(sent[0]!.session);
+  expect(sent[1]!.session).toBe(sent[0]!.session);
+  expect(sent[2]!.session).not.toBe(sent[0]!.session);
+  expect(JSON.stringify(sent)).not.toContain('/private/local');expect(JSON.stringify(sent)).not.toContain('new-run');
+});

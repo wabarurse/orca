@@ -119,11 +119,13 @@ function clientFor(tokens: CodexTokens): OpenAI {
 
 /** OpenAI models always use the Codex subscription endpoint. */
 export function openai(credentials: ReturnType<typeof codexCredentials>, options: { recovery?: RecoveryPolicy; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
+  const standaloneScope = crypto.randomUUID();
   const request = <T>(run: (client: OpenAI) => Promise<T>) => authorizedRequest(credentials, run);
   return {
     name: "openai",
     async complete(req) {
       const input = toResponses(req.messages) as ResponseInputItem[], settings = codexRequestSettings(req.model, req.settings);
+      const cacheKey = createHash("sha256").update(JSON.stringify([req.cacheScope ?? standaloneScope, req.model, req.system ?? "", req.tools])).digest("hex");
       let refreshed = false;
       // Retries are ours (./retry), on the initial request only: the SDK's own are off.
       return providerRequest(options.recovery, async (started, scope) => {
@@ -132,15 +134,16 @@ export function openai(credentials: ReturnType<typeof codexCredentials>, options
           // The SDK's platform type requires server IDs that Codex's stateless history omits.
           model: req.model, input, instructions: req.system ? `You are Codex, an AI coding agent.\n\n${req.system}` : "You are Codex, an AI coding agent.",
           store: false, stream: true, parallel_tool_calls: true,
-          // Codex uses this endpoint-supported cache grouping field. Derive it
-          // only from the reusable prefix, never run IDs or changing knowledge.
-          // Explicit public-API breakpoint/options fields are rejected by the
-          // subscription endpoint (verified by evals/cache-prefix/probe-openai.ts).
-          prompt_cache_key: createHash("sha256").update(JSON.stringify([req.model, req.system ?? "", req.tools])).digest("hex"),
+          // Match Codex's cache key AND session-id affinity header. ChatGPT routes
+          // cache affinity by that header, not the body key alone. Stable scope
+          // survives turns/restarts; raw paths, trace IDs and briefs stay local.
+          // https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs
+          // https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/requests/headers.rs
+          prompt_cache_key: cacheKey,
           ...settings, include: ["reasoning.encrypted_content"],
           ...(req.tools.length ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
           // Codex manages its output budget; the backend rejects max_output_tokens.
-        }, { signal: scope?.signal ?? req.signal, maxRetries: 0 }), scope?.signal ?? req.signal, scope ? () => { if (refreshed) return false; refreshed = true; return true; } : undefined);
+        }, { signal: scope?.signal ?? req.signal, maxRetries: 0, headers: { "session-id": cacheKey, "thread-id": cacheKey } }), scope?.signal ?? req.signal, scope ? () => { if (refreshed) return false; refreshed = true; return true; } : undefined);
         let usage: Turn["usage"];
         const output = await completedOutput(observed(stream as AsyncIterable<CodexStreamEvent>, started), req.onText, false, value => { usage = value; }, !!scope);
         const content = fromResponses(output), completion = summaryCompletion(output);

@@ -16,11 +16,11 @@ test('real loop keeps system and earlier messages stable while knowledge changes
  const transcript=open(paths.transcript(ctx.project,'worker'));
  await transcript.append({type:'message',message:{role:'user',content:'original assignment'}});
  let knowledge='original reference';const seen:CompleteRequest[]=[];
- const provider:Provider={name:'anthropic',models:async()=>['m'],async complete(req){seen.push(structuredClone({system:req.system,messages:req.messages,tools:req.tools}) as CompleteRequest);
+ const provider:Provider={name:'anthropic',models:async()=>['m'],async complete(req){seen.push(structuredClone({system:req.system,messages:req.messages,tools:req.tools,cacheScope:req.cacheScope}) as CompleteRequest);
   return seen.length===1?{stop:'tool_use',content:[{type:'tool_use',id:'change',name:'change',input:{},caller:{type:'direct'}}]}:{stop:'end',content:[{type:'text',text:'done',citations:[]}]};}};
  await createAgent({ctx,transcript,provider,model:'m',system:'stable role rules',compaction:{enabled:false},loadContext:async()=>knowledge,
   tools:{change:{spec:{name:'change',input_schema:{type:'object',properties:{}}},async run(){knowledge='updated reference';return'updated';}}},write:()=>{}}).run();
- expect(seen).toHaveLength(2);expect(seen.map(r=>r.system)).toEqual(['stable role rules','stable role rules']);
+ expect(seen).toHaveLength(2);expect(seen.map(r=>r.cacheScope)).toEqual([transcript.path,transcript.path]);expect(seen.map(r=>r.system)).toEqual(['stable role rules','stable role rules']);
  expect(seen[1]!.messages.slice(0,seen[0]!.messages.length)).toEqual(seen[0]!.messages);
  expect(JSON.stringify(seen[1]!.messages.at(-1))).toContain('updated reference');
  expect(seen[1]!.tools).toEqual(seen[0]!.tools);

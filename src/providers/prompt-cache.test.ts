@@ -42,3 +42,10 @@ test("a replaced compacted history is sent as-is, without retaining a stale manu
   expect(sent[1].system).toEqual(sent[0].system);
   expect(sent[1].cache_control).toEqual({ type: "ephemeral" });
 });
+
+test("local cache-routing scope and trace never enter Anthropic model payloads", async () => {
+  const { sdk, sent }=client(),p=anthropic(sdk,{promptCache:true});
+  await p.complete({...request,cacheScope:'/local/one',trace:{run:'one'}});
+  await p.complete({...request,cacheScope:'/local/two',trace:{run:'two'}});
+  expect(sent[1]).toEqual(sent[0]);expect(JSON.stringify(sent)).not.toContain('/local/');
+});

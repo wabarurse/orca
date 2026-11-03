@@ -100,9 +100,12 @@ lets fresh conversations reuse the same tools/instruction prefix. An explicit
 `anthropicPromptCache = false` remains respected. No cache warming requests,
 background model calls or one-hour write policy are added.
 
-Codex subscription requests use a content-derived `prompt_cache_key` over model,
-role instructions and tool definitions. Run IDs, timestamps, assignments and local
-trace metadata do not enter that key. The subscription endpoint rejected public
+Codex subscription requests use a `prompt_cache_key` and matching `session-id`
+and `thread-id` headers. Codex derives ChatGPT cache affinity from the session
+header; a body key alone did not improve reuse in the initial A/B cohort. The
+key hashes a stable local transcript scope, model, role instructions and tools.
+Raw paths, run IDs, timestamps, assignments and trace metadata are never sent
+as the routing identity. The scope survives provider reloads and agent restarts. The subscription endpoint rejected public
 API `prompt_cache_options` and `prompt_cache_breakpoint` fields during the isolated
 compatibility probe, so production sends neither. Cache writes are recorded when
 the endpoint supplies `input_tokens_details.cache_write_tokens`; missing values

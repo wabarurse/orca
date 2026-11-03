@@ -204,6 +204,7 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
     const request = {
       signal: deps.signal,
       trace: { project: deps.ctx.project, agent: sessionId(deps.ctx.role, deps.ctx.branch), run: deps.ctx.run, purpose: "agent" },
+      cacheScope: deps.transcript.path,
       model: deps.model,
       settings: deps.settings,
       system: deps.system,

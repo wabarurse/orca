@@ -11,7 +11,8 @@ import { jsonLines } from '../efficiency/metrics';
 if(!process.argv.includes('--live'))throw new Error('Explicit --live is required');
 const profile=process.env.CACHE_PROFILE??'phoebe';
 const anthropic=await readClaudeTokens(profile),openai=await readCodexTokens(profile);
-if(!anthropic||!openai||Math.min(anthropic.expiresAt,openai.expiresAt)<Date.now()+30*60_000)throw new Error('Valid access tokens are required; no refresh or fallback');
+const requested=process.env.CACHE_ARMS?.split(',');
+if(((!requested||requested.some(a=>a.endsWith('opus')))&&(!anthropic||anthropic.expiresAt<Date.now()+30*60_000))||((!requested||requested.some(a=>a.endsWith('astra')))&&(!openai||openai.expiresAt<Date.now()+30*60_000)))throw new Error('Selected profiles need valid access tokens; no refresh or fallback');
 const baseline=resolve(process.env.CACHE_BASELINE??'/Users/wabarurse/Documents/github/orca-harness-benchmark');
 const candidate=resolve(import.meta.dir,'../..');
 const root=await mkdtemp(join(tmpdir(),'orca-prefix-ab-'));await chmod(root,0o700);
@@ -25,7 +26,7 @@ const selected=arms.filter(a=>!process.env.CACHE_ARMS||process.env.CACHE_ARMS.sp
 const tasks=(process.env.CACHE_TASKS?.split(',')??['lookup','repair','repository','output','parallel']) as Task[];
 const repeats=Number(process.env.CACHE_REPEATS??3);
 if(!selected.length||!Number.isSafeInteger(repeats)||repeats<1||repeats>3||tasks.some(t=>!['lookup','repair','repository','output','parallel'].includes(t)))throw new Error('invalid matrix');
-const files=['src/core/agent-loop/loop/agent.ts','src/core/agent-loop/loop/context.ts','src/protocol/transcript.ts','src/providers/anthropic.ts','src/providers/openai.ts','src/tui/conversation/restore.ts','evals/cache-prefix/run.ts','evals/cache-prefix/worker.ts'];
+const files=['src/core/agent-loop/loop/agent.ts','src/core/agent-loop/loop/context.ts','src/protocol/transcript.ts','src/providers/anthropic.ts','src/providers/openai.ts','src/providers/provider.ts','src/core/data/knowledge/instructions.ts','src/core/data/knowledge/index.ts','src/core/agent-loop/orc/orchestrator.ts','src/exec/run.ts','src/tui/conversation/restore.ts','evals/cache-prefix/run.ts','evals/cache-prefix/worker.ts'];
 const sourceHashes=Object.fromEntries(await Promise.all(files.map(async file=>[file,createHash('sha256').update(await readFile(join(candidate,file))).digest('hex')])));
 await writeFile(join(root,'environment.json'),JSON.stringify({date:new Date().toISOString(),baseline,candidate,baselineCommit:Bun.spawnSync(['git','rev-parse','HEAD'],{cwd:baseline}).stdout.toString().trim(),sourceHashes,arms:selected,tasks,repeats,profile,system,directSystem,effort:'medium',fast:false},null,2));
 console.log(JSON.stringify({root,tasks,repeats,arms:selected.map(a=>a.name)}));
@@ -39,7 +40,7 @@ for(let repeat=0;repeat<repeats&&!stopped;repeat++)for(const [index,task]of task
   const spec={...arm,engine:'orca',profile,dir,state,cwd,prompt:data.prompt,system,directSystem};await writeFile(join(dir,'spec.json'),JSON.stringify(spec,null,2));
   const env:Record<string,string|undefined>={...process.env,HOME:join(dir,'home'),ORCA_HOME:state,PARALLELS_HOME:state,NO_COLOR:'1',TERM:'dumb',CI:'1'};
   for(const key of ['OPENAI_API_KEY','CODEX_API_KEY','ANTHROPIC_API_KEY','CLAUDE_CODE_OAUTH_TOKEN','CODEX_ACCESS_TOKEN','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','OPENAI_BASE_URL'])delete env[key];
-  const token=arm.provider==='anthropic'?anthropic:openai;
+  const token=arm.provider==='anthropic'?anthropic!:openai!;
   env.ORCA_EVAL_CREDENTIAL=JSON.stringify({accessToken:token.accessToken,expiresAt:token.expiresAt,refreshToken:'',...('accountId'in token?{accountId:token.accountId}:{})});
   await mkdir(env.HOME!,{mode:0o700});console.log(`START ${repeat+1}/${repeats} ${task} ${arm.name}`);
   const start=performance.now(),child=Bun.spawn([process.execPath,join(import.meta.dir,'worker.ts'),join(dir,'spec.json')],{cwd,env,stdin:'ignore',stdout:Bun.file(join(dir,'stdout.jsonl')),stderr:Bun.file(join(dir,'stderr.txt')),timeout:210000});
