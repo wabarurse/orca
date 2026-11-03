@@ -86,16 +86,22 @@ export async function relinkProjectDirectory(conversation: string, directory: st
   } finally { for (const release of releases.reverse()) await release(); }
 }
 
-/** Restoration opens saved views only; it never starts a runtime or submits input. */
+/** Open this checkout's conversations, creating its first when needed. Opening
+ * does not submit input or start model work. */
 export async function restoreConversations(options: {
   project?: string; directory?: string; source?: string | null;
   open: (id: string, directory?: string) => Promise<unknown>; note: (text: string) => void;
 }): Promise<void> {
-  const { directories, listProjects, projectFor } = await import("../../core/data/projects");
+  const { directories, displayName, listProjects, newProjectName, projectFor } = await import("../../core/data/projects");
   if (options.project) { await options.open(options.project, options.directory); return; }
   await directories.directoryProjects();
   const known = await listProjects(), saved = directories.rememberedConversations();
   const existing = options.source ? await projectFor(options.source, saved.selected) : null;
+  if (options.source && !existing) {
+    const names = await Promise.all(known.map(displayName));
+    await options.open(newProjectName([...known, ...names]), options.source);
+    return;
+  }
   const group = existing ? directories.parentProject(existing) : undefined;
   // A launch checkout scopes startup even before it has any conversations.
   const matching = group?.conversations ?? (existing ? [existing] : []);
@@ -106,8 +112,7 @@ export async function restoreConversations(options: {
   }
   const selected = saved.selected && opening.includes(saved.selected) ? saved.selected : existing;
   if (selected && known.includes(selected)) await options.open(selected);
-  if (options.source && !existing) options.note(`new directory: /new <conversation name> ${options.source} to add it as a project`);
-  else if (!options.source && !known.length) options.note("/new <conversation name> <directory> to add a project");
+  if (!options.source && !known.length) options.note("/new <conversation name> <directory> to add a project");
 }
 
 export async function directoryProjectCommand(conversation: string, args: string): Promise<string> {

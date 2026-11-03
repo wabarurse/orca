@@ -439,17 +439,19 @@ describe("tui app", () => {
     const source = realpathSync(repo);
     mkdirSync(paths.repo("raven"), { recursive: true });
     directories.rememberConversations(["raven"], "raven");
-    const app = new App({ term, openOrchestrator: async (...args) => {
+    let launches = 0;
+    const app = new App({ term, ensureDaemon: async () => { launches++; }, openOrchestrator: async (...args) => {
       const orch = await orchs.openOrchestrator(args[0], args[1], args[2], args[3]);
       if (args[1] === source) writeProjectState(args[0], "repository", { version: 1, directory: source, branch: "main", worktreeId: crypto.randomUUID() });
       return orch;
     }, pollMs: 100_000, source });
     const running = app.run();
-    await until(() => app.frame().inputArea!.lines.join("\n").includes("new directory"));
-    expect(app.pages).toEqual([]);
-    expect(orchs.opened).toEqual([]);
-    await app.newPage(undefined, source);
     await until(() => !!app.page?.project.startsWith("orch-"));
+    expect(app.pages).toHaveLength(1);
+    expect(orchs.opened).toHaveLength(1);
+    expect(Object.values(orchs.said)).toEqual([[]]);
+    expect(launches).toBe(0);
+    expect(app.frame().inputArea!.lines.join("\n")).not.toContain("new directory");
     const first = orchs.opened.find((o) => o.url === source)!;
     expect(first.project).toMatch(/^orch-[a-z0-9]{4}$/);
     expect(app.page!.project).toBe(first.project);
