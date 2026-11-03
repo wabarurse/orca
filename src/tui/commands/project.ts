@@ -97,7 +97,9 @@ export async function restoreConversations(options: {
   const known = await listProjects(), saved = directories.rememberedConversations();
   const existing = options.source ? await projectFor(options.source, saved.selected) : null;
   const group = existing ? directories.parentProject(existing) : undefined;
-  const opening = existing ? group?.conversations ?? [existing] : saved.open ?? known;
+  // A launch checkout scopes startup even before it has any conversations.
+  const matching = group?.conversations ?? (existing ? [existing] : []);
+  const opening = options.source ? matching : saved.open ?? known;
   for (const id of opening.filter(id => known.includes(id))) {
     try { await options.open(id); }
     catch (error) { options.note(`could not open ${id}: ${error instanceof Error ? error.message : String(error)}`); }
