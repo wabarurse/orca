@@ -1,0 +1,50 @@
+{
+  "before-opus": {
+    "trials": 15,
+    "firstInput": 151445,
+    "firstCached": 0,
+    "followupInput": 409728,
+    "followupCached": 377341,
+    "appendOnlyTrials": 15,
+    "systemStableTrials": 15,
+    "firstRequestCacheHit": 0,
+    "followupCacheHit": 0.920954877382068,
+    "distinctSystemPrefixes": 15
+  },
+  "after-opus": {
+    "trials": 15,
+    "firstInput": 153653,
+    "firstCached": 139455,
+    "followupInput": 435093,
+    "followupCached": 396842,
+    "appendOnlyTrials": 15,
+    "systemStableTrials": 15,
+    "firstRequestCacheHit": 0.9075969880184571,
+    "followupCacheHit": 0.9120854621885436,
+    "distinctSystemPrefixes": 1
+  },
+  "before-astra": {
+    "trials": 15,
+    "firstInput": 77560,
+    "firstCached": 51968,
+    "followupInput": 273719,
+    "followupCached": 141440,
+    "appendOnlyTrials": 15,
+    "systemStableTrials": 15,
+    "firstRequestCacheHit": 0.6700361010830325,
+    "followupCacheHit": 0.5167343151187898,
+    "distinctSystemPrefixes": 15
+  },
+  "after-astra": {
+    "trials": 15,
+    "firstInput": 78746,
+    "firstCached": 51968,
+    "followupInput": 246128,
+    "followupCached": 208768,
+    "appendOnlyTrials": 15,
+    "systemStableTrials": 15,
+    "firstRequestCacheHit": 0.6599446321082976,
+    "followupCacheHit": 0.8482090619515049,
+    "distinctSystemPrefixes": 1
+  }
+}

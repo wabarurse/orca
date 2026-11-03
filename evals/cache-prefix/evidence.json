@@ -1,0 +1,140 @@
+{
+  "date": "2026-11-03",
+  "finalRoot": "/var/folders/vd/hnlbyr197798mph8w9jmp43w0000gn/T/orca-prefix-final-j9b4_21_",
+  "productionBase": "29ae5dfde233b91fc485d65475760a6166fde6f8",
+  "baselineCheckoutCommit": "e685dafef97b028d790de08d1b22a95a8522efc0",
+  "candidateInitialCommit": "4f8aec9",
+  "candidateAffinityCommit": "e6dbc7ddd8e6229c4c0312d83b4f5467df9bcb27",
+  "cohorts": [
+    {
+      "root": "/var/folders/vd/hnlbyr197798mph8w9jmp43w0000gn/T/orca-prefix-ab-Fvh5KN",
+      "retainedTrials": 60,
+      "primaryArms": [
+        "before-opus",
+        "after-opus"
+      ],
+      "primaryTrials": 30,
+      "role": "Initial complete matrix; OpenAI body-key implementation did not improve reuse. All exploratory results retained."
+    },
+    {
+      "root": "/var/folders/vd/hnlbyr197798mph8w9jmp43w0000gn/T/orca-prefix-ab-LrgVyO",
+      "retainedTrials": 30,
+      "primaryArms": [
+        "before-astra",
+        "after-astra"
+      ],
+      "primaryTrials": 30,
+      "role": "Full OpenAI before/after rerun after adding stable transcript scope and Codex session/thread headers."
+    }
+  ],
+  "primaryTrials": 60,
+  "totalRetainedMainTrials": 90,
+  "smokeTrialsExcluded": true,
+  "environmentSnapshots": [
+    {
+      "date": "2026-11-03T16:05:49.439Z",
+      "baseline": "/Users/wabarurse/Documents/github/orca-harness-benchmark",
+      "candidate": "/Users/wabarurse/Documents/github/orca-cache-prefix",
+      "baselineCommit": "e685dafef97b028d790de08d1b22a95a8522efc0",
+      "sourceHashes": {
+        "src/core/agent-loop/loop/agent.ts": "ad67bd3ca6d2c02da98abf49569cf3c731129c5da5bab0b18fcb64d5a5f65bcf",
+        "src/core/agent-loop/loop/context.ts": "9e014f34404d910d0a45eb659b02871d6c60db0c5dfa6d62456fb0089c2456c0",
+        "src/protocol/transcript.ts": "71281a7385d8f2392324a837041f17ac6a9e79648c34f3401281010aff110976",
+        "src/providers/anthropic.ts": "be78c8378523fd97dcab664a02e0324324aab3c5276b80d71d31a1255fc7f3c9",
+        "src/providers/openai.ts": "a6097d034d9d883f9e83fa89758e76f6a8c0044ffba263f1a7e1c98851e47eb7",
+        "src/tui/conversation/restore.ts": "35ec5ffd0b512b4dde17bd2e1ee66260ab3e942f94dd3cce0e99663b269884d1",
+        "evals/cache-prefix/run.ts": "b8485763d07ee2e1c711061ca470ac736022aa6769420b9a31a596ed45a95364",
+        "evals/cache-prefix/worker.ts": "70c036d33047866759be840579097f08e589856331ff5f19258991c827461755"
+      },
+      "arms": [
+        {
+          "name": "before-opus",
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "sourceRoot": "/Users/wabarurse/Documents/github/orca-harness-benchmark"
+        },
+        {
+          "name": "after-opus",
+          "provider": "anthropic",
+          "model": "claude-opus-5-5",
+          "sourceRoot": "/Users/wabarurse/Documents/github/orca-cache-prefix"
+        },
+        {
+          "name": "before-astra",
+          "provider": "openai",
+          "model": "gpt-6-astra",
+          "sourceRoot": "/Users/wabarurse/Documents/github/orca-harness-benchmark"
+        },
+        {
+          "name": "after-astra",
+          "provider": "openai",
+          "model": "gpt-6-astra",
+          "sourceRoot": "/Users/wabarurse/Documents/github/orca-cache-prefix"
+        }
+      ],
+      "tasks": [
+        "lookup",
+        "repair",
+        "repository",
+        "output",
+        "parallel"
+      ],
+      "repeats": 3,
+      "profile": "phoebe",
+      "system": "This is explicitly authorized local work: execute directly in this working directory. Do not delegate, spawn agents, register tasks, ask questions, create scheduled tasks, access the network, install dependencies, inspect credentials/environment/host files, or make commits. Read only workspace files and tool-output artifacts explicitly returned by your tools. Use Bun for JavaScript/TypeScript. Inspect evidence and verify changes. Use concise results. Issue independent read-only tool calls together when possible; keep dependent work ordered. Return the requested final answer; if your harness delivers answers through a message tool, address it to the user.",
+      "directSystem": "Benchmark-specific workflow: execute this small authorized local task directly. This overrides the usual task-registration, delegation, branch, commit, reviewer and approval workflow. The generated fixture intentionally has no Git repository; no branch setup is needed. Inspect files, make requested local changes, run tests and return the requested answer.",
+      "effort": "medium",
+      "fast": false
+    },
+    {
+      "date": "2026-11-03T16:20:48.326Z",
+      "baseline": "/Users/wabarurse/Documents/github/orca-harness-benchmark",
+      "candidate": "/Users/wabarurse/Documents/github/orca-cache-prefix",
+      "baselineCommit": "e685dafef97b028d790de08d1b22a95a8522efc0",
+      "sourceHashes": {
+        "src/core/agent-loop/loop/agent.ts": "8079e872c49a0424a4815efb22a5b65258ae7fdfab990903af9fa04448bfe4fe",
+        "src/core/agent-loop/loop/context.ts": "9e014f34404d910d0a45eb659b02871d6c60db0c5dfa6d62456fb0089c2456c0",
+        "src/protocol/transcript.ts": "71281a7385d8f2392324a837041f17ac6a9e79648c34f3401281010aff110976",
+        "src/providers/anthropic.ts": "be78c8378523fd97dcab664a02e0324324aab3c5276b80d71d31a1255fc7f3c9",
+        "src/providers/openai.ts": "69620712eededf9184c1b71d47bda62d8035eaedbd1c4627b4c55aafbdfa882e",
+        "src/providers/provider.ts": "1723aa6ac47dd0a9aa2eae78d5a6176a19d3774158a87ceeb9191906d0ed091b",
+        "src/core/data/knowledge/instructions.ts": "112957b81de0a6de009eabce36562f81f449525deb696f436d7d2896063361eb",
+        "src/core/data/knowledge/index.ts": "a29ad0bc0c5a478b537d6c483b0b9519fd13bc1ef050d3fa4e05bb12bb0f79d5",
+        "src/core/agent-loop/orc/orchestrator.ts": "c6ad9799e68c9c2c0ce5e17ae293e4912951ecaa9075417256141a3906b08124",
+        "src/exec/run.ts": "3b3c47d489c0a753d5f864106ae35975c7523b18508751681165ef40808413f4",
+        "src/tui/conversation/restore.ts": "35ec5ffd0b512b4dde17bd2e1ee66260ab3e942f94dd3cce0e99663b269884d1",
+        "evals/cache-prefix/run.ts": "3e843e02f5c2503ac79cf49b6ebd8c17a70959dd75ff0b382df114c40af46da7",
+        "evals/cache-prefix/worker.ts": "70c036d33047866759be840579097f08e589856331ff5f19258991c827461755"
+      },
+      "arms": [
+        {
+          "name": "before-astra",
+          "provider": "openai",
+          "model": "gpt-6-astra",
+          "sourceRoot": "/Users/wabarurse/Documents/github/orca-harness-benchmark"
+        },
+        {
+          "name": "after-astra",
+          "provider": "openai",
+          "model": "gpt-6-astra",
+          "sourceRoot": "/Users/wabarurse/Documents/github/orca-cache-prefix"
+        }
+      ],
+      "tasks": [
+        "lookup",
+        "repair",
+        "repository",
+        "output",
+        "parallel"
+      ],
+      "repeats": 3,
+      "profile": "phoebe",
+      "system": "This is explicitly authorized local work: execute directly in this working directory. Do not delegate, spawn agents, register tasks, ask questions, create scheduled tasks, access the network, install dependencies, inspect credentials/environment/host files, or make commits. Read only workspace files and tool-output artifacts explicitly returned by your tools. Use Bun for JavaScript/TypeScript. Inspect evidence and verify changes. Use concise results. Issue independent read-only tool calls together when possible; keep dependent work ordered. Return the requested final answer; if your harness delivers answers through a message tool, address it to the user.",
+      "directSystem": "Benchmark-specific workflow: execute this small authorized local task directly. This overrides the usual task-registration, delegation, branch, commit, reviewer and approval workflow. The generated fixture intentionally has no Git repository; no branch setup is needed. Inspect files, make requested local changes, run tests and return the requested answer.",
+      "effort": "medium",
+      "fast": false
+    }
+  ],
+  "validationFile": "verification.json",
+  "liveProjectsModified": false
+}

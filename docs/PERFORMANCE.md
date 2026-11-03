@@ -122,3 +122,10 @@ current context again; cancellation and ownership guards cover every publication
 The cache-focused before/after runner and endpoint probe are under
 `evals/cache-prefix/`. They use disposable homes, generated fixtures and read-only
 access-token snapshots; never install or update a live Orca home to run them.
+
+The [2026-11-03 report](../evals/cache-prefix/REPORT.txt) records 60/60 audited
+trials. On coding/inspection fixtures, cached-input share rose from 69.6% to
+90.9% for Opus and 54.7% to 80.0% for Astra. Estimated list-price-equivalent cost
+fell, while mean latency increased about 4%; this establishes no speedup. The
+initial unsuccessful OpenAI body-key experiment, complete cohort rerun, naturally
+warm cache conditions and unrelated baseline test failures remain disclosed.
