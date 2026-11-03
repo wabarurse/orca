@@ -18,6 +18,8 @@ export interface BaseEntry {
 export interface MessageEntry extends BaseEntry {
   type: "message";
   message: MessageParam;
+  /** Engine reference-context update, hidden from chat; not human input or authority. */
+  contextSnapshot?: string;
 }
 
 /** The orchestrator's rolling memory, as a summary entry carries it (memory/rolling-summary.ts maintains it):

@@ -1,0 +1,99 @@
+Stable provider prefixes — measured result, 2026-11-03
+
+Implemented and independently audited: 60/60 primary trials passed.
+The code improves cache reuse and list-price-equivalent input cost for both
+providers. It does not establish a speedup or fewer failed tool calls.
+Compaction algorithms, thresholds, output reserves and tail budgets are unchanged.
+No installed Orca build, live conversation, agent or project data was modified.
+
+Core coding/inspection fixtures (12 trials per arm; means):
+                                      Before             After
+Opus 5.5 cached-input share            69.6%              90.9%
+Opus mean uncached input               12,641             3,980
+Opus mean occupied peak input          12,634             13,270
+Opus mean elapsed seconds              8.62               8.93
+Opus estimated cost/trial              $0.07721           $0.03675
+Opus failed tool calls / all calls     1 / 34             2 / 37
+Opus nonzero commands                  3                  3
+Opus audited success                   12/12              12/12
+
+Astra cached-input share               54.7%              80.0%
+Astra mean uncached input              12,049             4,881
+Astra mean occupied peak input         7,495              7,170
+Astra mean elapsed seconds             13.68              14.24
+Astra estimated cost/trial             $0.14601–0.17613    $0.07844
+Astra failed tool calls / all calls    0 / 41             0 / 41
+Astra nonzero commands                 2                  2
+Astra audited success                  12/12              12/12
+
+Estimated cost decreased 52.4% for Opus and 46.3–55.5% for Astra. These are API
+list-price equivalents, not actual subscription charges/quota. The baseline
+OpenAI adapter did not expose cache writes, hence its honest cost range.
+Coding mean latency was approximately 4% higher for each provider. Opus used
+slightly more occupied context/output, and its two tool errors versus one are
+too few to infer a change in reliability. No tool-error improvement is claimed.
+Cache reuse reduces repeated input processing; it does not remove occupied
+context, generated output, network latency or model reasoning.
+
+Independent-command fixture (3 trials per arm, reported separately):
+                   Before seconds/cache          After seconds/cache
+Opus               8.11 / 48.6%                  7.51 / 92.6%
+Astra              7.61 / 58.3%                  7.99 / 82.8%
+All 12 parallel-fixture trials passed. These timings do not establish a general
+speedup; the primary coding sample did not get faster.
+
+What changed and what the evidence supports:
+- Role instructions and tools stay in a stable prefix. Repository instructions,
+  skills, knowledge and working briefs become separate append-only reference
+  sections. Only changed sections are appended. They are hidden from chat, not
+  treated as human input, and still count toward existing model/tail budgets.
+- Anthropic caches the stable system prefix explicitly while its existing
+  automatic history cache continues. Across fresh trials, first-request reuse
+  went from 0% to 90.8%; follow-up reuse was already high (92.1% versus 91.2%).
+  The main benefit in these fixtures is reuse of the common fresh-session prefix.
+- OpenAI needs Codex's session-id affinity header as well as a body cache key.
+  The opaque scope is stable per transcript across turns/restarts and excludes
+  run IDs/changing reference data. In the final cohort, first-request reuse was
+  similar (67.0% versus 66.0%), while follow-up reuse rose 51.7% to 84.8%.
+- Saved provider-boundary histories were append-only within every trial. Distinct
+  system prefixes across 15 fresh trials fell from 15 to 1 for both providers.
+  These short fixtures do not force changing knowledge or compaction. Separate
+  tests exercise those boundaries, context removal, restart, clear, cancellation
+  and byte-for-byte prefix preservation when reference sections change.
+
+An important negative result is retained: the first complete 60-trial matrix
+used only an OpenAI body key, and Astra reuse was 36.0% before versus 32.9% after
+on coding fixtures. Adding a key alone did not solve the problem. Native Codex's
+client explicitly documents ChatGPT session-id cache affinity. After adding the
+headers and transcript scope, both entire OpenAI arms were rerun (30 trials).
+The primary matrix combines that full OpenAI cohort with the original full
+Anthropic cohort. Anthropic's model payload is unchanged by the later metadata
+field, verified by a payload-equality test. No individual trial was replaced.
+All 90 main trials remain retained; the initial matrix was also audited 60/60.
+Separate compatibility probes/smokes are excluded from these reported means.
+
+Limitations: three repeats per task, small synthetic workspaces, medium effort,
+shared naturally warm provider caches, uncontrolled backend routing/load and
+different cohort time windows. This is not a guarantee of a given cache rate,
+a battery benchmark, a long-running context-growth benchmark, or a full product
+comparison against native Claude Code/Codex. See METHOD.txt for reproduction.
+
+Validation: typecheck, compiled build, whitespace check and 216 focused tests
+pass. Six background-process tests fail identically on unchanged baseline and
+candidate under the disposable-home runner (8 pass / 6 fail in each); those
+unrelated startup/supervisor failures are disclosed rather than called green.
+The full repository suite was not run. verification.json records suite outcomes.
+
+Artifacts: results.json contains audited aggregates/trial metrics;
+cache-metrics.json separates fresh/follow-up requests;
+initial-exploratory-results.json preserves initial matrix aggregates/metrics;
+evidence.json records exact cohort roots, source hashes and selection rationale.
+Original requests, responses, commands, transcripts and unaudited rows remain in
+the private generated evidence directories, with no credentials written to them.
+
+Sources:
+https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+https://developers.openai.com/api/docs/guides/prompt-caching
+https://github.com/openai/codex/blob/main/codex-rs/core/src/client.rs
+https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/requests/headers.rs
+Pricing source links and exact rates are recorded in results.json and METHOD.txt.

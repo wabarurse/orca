@@ -314,3 +314,40 @@ test("Codex terminal usage retains cached context and optional reasoning metrics
   const missing = await openai(async () => fakeCodexTokens()).complete(request());
   expect(missing.usage).toBeUndefined(); expect(missing.inputTokens).toBeUndefined();
 });
+
+test("cache grouping follows the stable prefix, not changing messages or local trace IDs", async () => {
+  const tokens=fakeCodexTokens(),sent:Record<string,unknown>[]=[];
+  intercept(async req=>{sent.push(await req.json() as Record<string,unknown>);return codexSSE([{type:'response.completed',response:{status:'completed',output:[message]}}]);});
+  const p=openai(async()=>tokens),base={...request(),system:'stable role'};
+  await p.complete({...base,trace:{project:'one',run:'first'}});
+  await p.complete({...base,messages:[{role:'user',content:'new assignment'}],trace:{project:'two',run:'second'}});
+  await p.complete({...base,system:'changed role'});
+  expect(sent[0]!.prompt_cache_key).toBe(sent[1]!.prompt_cache_key);
+  expect(sent[2]!.prompt_cache_key).not.toBe(sent[0]!.prompt_cache_key);
+  expect(sent[0]).not.toHaveProperty('prompt_cache_options');
+  expect(JSON.stringify(sent[0]!.input)).not.toContain('prompt_cache_breakpoint');
+});
+
+test("Codex cache-write usage is recorded when present and never subtracted from occupied input", async () => {
+  intercept(async()=>codexSSE([{type:'response.completed',response:{status:'completed',output:[message],usage:{input_tokens:1000,
+    input_tokens_details:{cached_tokens:800,cache_write_tokens:150},output_tokens:40,output_tokens_details:{reasoning_tokens:30}}}}]));
+  const turn=await openai(async()=>fakeCodexTokens()).complete(request());
+  expect(turn.inputTokens).toBe(1000);
+  expect(turn.usage).toEqual({input:1000,cachedInput:800,cacheWriteInput:150,output:40,reasoning:30});
+});
+
+test("Codex cache affinity uses an opaque session header stable across provider reloads and distinct per transcript", async () => {
+  const tokens=fakeCodexTokens(),sent:{body:any;session:string|null;thread:string|null}[]=[];
+  intercept(async req=>{sent.push({body:await req.json(),session:req.headers.get('session-id'),thread:req.headers.get('thread-id')});
+    return codexSSE([{type:'response.completed',response:{status:'completed',output:[message]}}]);});
+  const base={...request(),system:'stable',cacheScope:'/private/local/transcript-one.jsonl'};
+  await openai(async()=>tokens).complete(base);
+  await openai(async()=>tokens).complete({...base,messages:[{role:'user',content:'next task'}],trace:{run:'new-run'}});
+  await openai(async()=>tokens).complete({...base,cacheScope:'/private/local/transcript-two.jsonl'});
+  expect(sent[0]!.session).toMatch(/^[a-f0-9]{64}$/);
+  expect(sent[0]!.session).toBe(sent[0]!.body.prompt_cache_key);
+  expect(sent[0]!.thread).toBe(sent[0]!.session);
+  expect(sent[1]!.session).toBe(sent[0]!.session);
+  expect(sent[2]!.session).not.toBe(sent[0]!.session);
+  expect(JSON.stringify(sent)).not.toContain('/private/local');expect(JSON.stringify(sent)).not.toContain('new-run');
+});

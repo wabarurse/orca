@@ -28,7 +28,11 @@ export function anthropic(client: Anthropic, options: { recovery?: RecoveryPolic
         // The identity line is required by the Claude Code OAuth path; the role prompt follows it.
         system: [
           { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
-          ...(req.system ? [{ type: "text" as const, text: req.system }] : []),
+          // Explicitly cache reusable tools + role instructions across fresh
+          // sessions; automatic caching still follows the conversation suffix.
+          // https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+          ...(req.system ? [{ type: "text" as const, text: req.system,
+            ...(options.promptCache ? { cache_control: { type: "ephemeral" as const } } : {}) }] : []),
         ],
         ...(req.tools.length ? { tools: req.tools } : {}),
       };

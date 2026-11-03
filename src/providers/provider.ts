@@ -21,6 +21,9 @@ export interface Turn {
 export interface CompleteRequest {
   /** Accounting metadata only; never forwarded to the provider. */
   trace?: { project?: string; agent?: string; run?: string; purpose?: string };
+  /** Stable local conversation/agent identity for cache routing. Providers hash
+   * this before transport; never included in model text or taken from trace. */
+  cacheScope?: string;
   signal?: AbortSignal;
   settings?: RequestSettings;
   model: string;

@@ -25,6 +25,7 @@ import type { RollingOptions } from "../../data/memory";
 import { recordCorrection, recordRuntime } from "../../data/knowledge";
 import { execution } from "../../data/projects/lifecycle";
 import { Cancelled } from "../../tmux";
+import { appendContext, type ContextValue } from "./context";
 
 function staleExecution(deps: AgentDeps): boolean {
   return deps.ctx.executionEpoch !== undefined && execution.stale(deps.ctx.project, deps.ctx.executionEpoch);
@@ -47,7 +48,9 @@ export interface AgentOptions {
 }
 
 export interface AgentDeps extends ContextDeps {
-  loadContext?: (query: string) => Promise<string>;
+  loadContext?: (query: string) => Promise<ContextValue>;
+  /** Captured once per safe boundary; represented by append-only transcript messages. */
+  contextSnapshot?: ContextValue;
   /** UI observer of the actual safe-boundary request configuration. */
   onContext?: (deps: AgentDeps) => void;
   /** Maximum overlap of calls explicitly marked independent. Other tools are barriers. */
@@ -201,6 +204,7 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
     const request = {
       signal: deps.signal,
       trace: { project: deps.ctx.project, agent: sessionId(deps.ctx.role, deps.ctx.branch), run: deps.ctx.run, purpose: "agent" },
+      cacheScope: deps.transcript.path,
       model: deps.model,
       settings: deps.settings,
       system: deps.system,
@@ -236,7 +240,8 @@ async function snapshot(deps: AgentDeps): Promise<AgentDeps> {
   if (deps.loadContext) {
     const messages = await deps.transcript.chain();
     const last = messages.filter(m => m.role === "user" && typeof m.content === "string").at(-1);
-    selected.system = [deps.system, await deps.loadContext(typeof last?.content === "string" ? last.content.slice(-4000) : "")].filter(Boolean).join("\n\n");
+    selected.contextSnapshot = await deps.loadContext(typeof last?.content === "string" ? last.content.slice(-4000) : "");
+    await appendContext(deps.transcript, selected.contextSnapshot, deps.signal, { head: deps.transcript.head(), check: () => assertExecution(deps) });
   }
   const configured = { ...selected, requestOutputCap: outputCap(selected) };
   deps.onContext?.(configured);
@@ -261,6 +266,10 @@ function boundaries(deps: AgentDeps) {
         if (result !== null) failed = !result;
       } catch (error) { failed = true; throw error; }
     }
+    // Compaction may have summarized the previous snapshot. Restore current
+    // reference context once if it is absent from the retained tail.
+    if (current.contextSnapshot !== undefined) await appendContext(current.transcript, current.contextSnapshot, current.signal,
+      { head: current.transcript.head(), check: () => assertExecution(current) });
     if (!maintenance) requireFits(current, await current.transcript.chain(), outputCap(current), "model request");
     return current;
   };

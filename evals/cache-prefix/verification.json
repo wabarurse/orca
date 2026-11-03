@@ -1,0 +1,135 @@
+{
+  "date": "2026-11-03",
+  "typecheck": "pass",
+  "compiledBuild": "pass",
+  "diffCheck": "pass",
+  "focusedSuites": [
+    {
+      "file": "src/core/agent-loop/loop/context.test.ts",
+      "code": 0,
+      "summary": [
+        " 7 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/agent-loop/loop/append-context.test.ts",
+      "code": 0,
+      "summary": [
+        " 2 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/agent-loop/loop/agent.test.ts",
+      "code": 0,
+      "summary": [
+        " 14 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/providers/prompt-cache.test.ts",
+      "code": 0,
+      "summary": [
+        " 4 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/providers/openai.test.ts",
+      "code": 0,
+      "summary": [
+        "(pass) a second 401 fails instead of falling back to API billing [0.43ms]",
+        " 35 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/organization.test.ts",
+      "code": 0,
+      "summary": [
+        " 7 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/agent-loop/orc/orchestrator.test.ts",
+      "code": 0,
+      "summary": [
+        " 17 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/data/memory/compaction.test.ts",
+      "code": 0,
+      "summary": [
+        " 16 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/data/memory/compaction-review.test.ts",
+      "code": 0,
+      "summary": [
+        " 30 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/data/memory/rolling-memory.test.ts",
+      "code": 0,
+      "summary": [
+        " 41 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/data/memory/rolling-memory-integration.test.ts",
+      "code": 0,
+      "summary": [
+        " 14 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/tui/conversation/restore.test.ts",
+      "code": 0,
+      "summary": [
+        " 16 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/data/knowledge/sources.test.ts",
+      "code": 0,
+      "summary": [
+        " 5 pass",
+        " 0 fail"
+      ]
+    },
+    {
+      "file": "src/core/data/transcripts/interrupted-tools.test.ts",
+      "code": 0,
+      "summary": [
+        " 8 pass",
+        " 0 fail"
+      ]
+    }
+  ],
+  "knownUnrelatedFailure": {
+    "suite": "src/core/tools/adaptive.test.ts",
+    "candidate": {
+      "pass": 8,
+      "fail": 6
+    },
+    "unchangedBaseline": {
+      "pass": 8,
+      "fail": 6
+    },
+    "description": "Identical background process supervisor/startup failures under disposable HOME on baseline and candidate; not changed by this PR."
+  },
+  "fullRepositorySuiteRun": false,
+  "liveSessionsModified": false
+}

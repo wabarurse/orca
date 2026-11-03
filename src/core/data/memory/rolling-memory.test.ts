@@ -83,7 +83,9 @@ test("foreground proceeds while the summarizer works; idle publication preserves
   expect(foreground.calls).toHaveLength(2); expect(worker.calls).toHaveLength(1);
   expect(worker.calls[0]).toMatchObject({ model: "gpt-6-sol", tools: [], settings: { effort: "low", fast: false }, maxTokens: 8192 });
   expect(transcript.branch()[0]?.type).toBe("message");
-  const recent = (await transcript.chain()).slice(2), history = transcript.history!();
+  // Reference updates are now actual model input, counted by the same tail budget.
+  const cut = rollingCut(foreground.calls[0]!.messages, 200);
+  const recent = (await transcript.chain()).slice(cut), history = transcript.history!();
   worker.release();
   for (let i = 0; i < 100 && !await orch.pending(); i++) await Bun.sleep(1);
   expect(await orch.pending()).toBe(true);

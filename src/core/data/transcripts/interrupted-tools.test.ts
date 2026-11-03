@@ -7,6 +7,7 @@ import { completeInterruptedTools, interruptedMessages, open } from "./transcrip
 import { paired } from "../transcripts/tool-pairs";
 import { toResponses } from "../../../providers/openai";
 import { parts } from "../../../tui/conversation/view";
+import { entryNotice } from "../../../tui/conversation/notices";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { fakeProvider, text } from "../../../test/fake-provider";
 
@@ -113,9 +114,9 @@ test("fresh-inbox requirement and aborted runs do not authorize recovery or requ
 
 
 test("recovery checkpoint renders an honest diagnostic without duplicating history", () => {
-  const rendered = parts({ type: "tool-recovery", uuid: "r", parentUuid: null, ts: "now", messages: [batch("push")] });
-  expect(rendered).toHaveLength(1);
-  expect(String(rendered![0])).toContain("outcome unknown—reconcile before retrying");
+  const entry = { type: "tool-recovery" as const, uuid: "r", parentUuid: null, ts: "now", messages: [batch("push")] };
+  expect(parts(entry)).toBeNull(); // Recovery feedback belongs to the transient status row.
+  expect(entryNotice(entry)).toContain("outcome unknown—reconcile before retrying");
 });
 
 

@@ -204,7 +204,7 @@ function step(state: Fold, e: Entry, sent: Set<string>): void {
     state.held = [];
     state.items.push(...e.messages.map((m) => now([replyLine(m.from, m.text)])));
   }
-  if (e.type !== "message") return;
+  if (e.type !== "message" || e.contextSnapshot) return;
   if (e.message.role === "user") {
     const { items, user } = userEntry(e.message.content, e.inbox);
     if (user) release(state);

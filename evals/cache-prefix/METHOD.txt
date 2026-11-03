@@ -1,0 +1,71 @@
+Stable-prefix evaluation — 2026-11-03
+
+Run explicitly with CACHE_BASELINE=/path/to/baseline bun evals/cache-prefix/run.ts --live.
+The baseline must have the same dependencies installed. CACHE_PROFILE chooses the
+existing subscription profile (default phoebe). CACHE_ARMS, CACHE_TASKS and
+CACHE_REPEATS select complete cohorts; default is four arms, five tasks, three
+repeats. No access-token refresh, account fallback, live installation, session
+restart or modification of existing projects is performed.
+
+The runner snapshots unexpired access tokens read-only, passes them only through
+the child environment, and removes them before tools execute. Each trial has a
+fresh private home and generated workspace. Production Orca orchestration, tools,
+prompts, history, accounting and provider adapters run from the selected source
+checkout. A shared benchmark instruction requests direct execution and disables
+delegation/task registration for these deliberately small fixtures. No prompt
+cache warming requests run. Request count, outputs, source hashes and all attempts
+are retained, including failures.
+
+Tasks: exact lookup in a large file; TypeScript repair with tests; repository
+navigation; a large diagnostic result; and four independent delayed commands.
+Each task has three matched seeds. Arm order rotates/reverses. Reasoning effort
+is medium; fast mode is off. Parallel commands are reported separately from the
+12 coding/inspection trials per arm. This is a small local-fixture evaluation,
+not a production workload or a full Claude Code/Codex product comparison.
+
+Audit saved evidence independently:
+  bun evals/cache-prefix/audit.ts RUN_ROOT
+  bun evals/cache-prefix/summarize.ts RUN_ROOT
+  bun evals/cache-prefix/cache-metrics.ts RUN_ROOT
+
+The audit reconstructs each fixture, checks expected answers and unchanged files,
+requires evidence of tests/diagnostics/independent commands, runs an independent
+repair oracle, and reconciles recorded provider usage. Raw results are preserved;
+audit results are separate. Cache metrics distinguish first requests from
+follow-ups and check exact system/tool stability and message-prefix preservation.
+The request snapshots are at Orca's provider boundary, not provider token dumps.
+
+Primary cohort selection was by implementation version, never individual result:
+1. An initial complete 60-trial matrix tested stable systems/reference sections,
+   Anthropic's static breakpoint and an OpenAI body cache key. Opus improved;
+   OpenAI did not. The complete initial matrix remains exploratory evidence.
+2. Native Codex source identified missing session-id cache-affinity headers.
+   After adding those and stable transcript scope, both entire OpenAI arms were
+   rerun (30 trials). All 30 Opus trials from step 1 and all 30 OpenAI trials from
+   step 2 form the final 60-trial matrix. The added cacheScope field is metadata
+   ignored by Anthropic, with a payload-equality regression test.
+
+Separate compatibility probes rejected prompt_cache_options and
+prompt_cache_breakpoint on the Codex subscription endpoint (HTTP 400); production
+does not send them. Separate smoke trials are excluded from the primary matrix.
+Evidence paths, source hashes and cohort manifests are recorded in evidence.json.
+
+Cache reuse = sum(cached input tokens) / sum(input tokens). Cached tokens still
+occupy context. New reference sections count against existing request/tail
+budgets. Live fixtures do not force compaction or changing context; unit and
+integration tests cover changing sections, restarts, clear and compaction.
+
+Prices are API list-price equivalents, not subscription charges or quota usage:
+Opus input/read/5m-write/output = $4/$0.20/$5/$20 per million tokens.
+Astra input/read/write/output = $10/$1/$12.50/$50 per million tokens.
+Missing baseline OpenAI cache-write usage produces a cost range; unknown is never
+assumed zero. Endpoint-reported zero remains zero in the candidate adapter.
+Sources:
+https://developers.openai.com/api/docs/models/gpt-6-astra
+https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5#pricing
+
+Cache warmth, provider routing/load, model sampling and separate cohort time
+windows are uncontrolled. Repeated trials share provider caches; none is claimed
+as a guaranteed cold start. Report measured latency without inferring causation
+or claiming a reliable speedup. Smaller uncached input does not imply fewer
+occupied-context tokens or less output generation.

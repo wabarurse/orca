@@ -17,7 +17,7 @@ import { registry } from "../core/tools";
 import { toolsFor, type Tool, type ToolResult } from "../core/tools";
 import { pending } from "../core/data/inbox";
 import { recoverableProcesses, listProcesses, liveProcess, controlProcess, reconcileProcesses } from "../core/data/processes";
-import { agentKnowledge } from "../core/data/knowledge";
+import { agentContext } from "../core/data/knowledge";
 
 /**
  * Run an agent process. Workers and reviewers are supervised: a crash or an
@@ -86,7 +86,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker: Tr
 
   const agent = createAgent({
     signal,
-    loadContext: query => agentKnowledge(opts.project, process.cwd(), query),
+    loadContext: query => agentContext(opts.project, process.cwd(), query),
     toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(opts.project, opts.loadProvider, opts.role), // worker or reviewer: that role's override applies
     transcript,

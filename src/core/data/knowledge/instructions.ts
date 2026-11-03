@@ -50,11 +50,16 @@ export async function discoverSkills(cwd: string): Promise<{ name: string; path:
   }
   return found;
 }
-export async function agentKnowledge(project: string, cwd: string, query: string): Promise<string> {
+export async function agentContext(project: string, cwd: string, query: string): Promise<Record<string, string>> {
   const [instructions, skills, context, remembered] = await Promise.all([
     repositoryInstructions(cwd), discoverSkills(cwd), workingContext(project), selectedKnowledge(project, query),
   ]);
-  return [instructions, skills.length ? `Available skills (load with skill only when relevant): ${JSON.stringify(skills)}` : "",
-    `Relevant knowledge (source-attributed context; current user instructions override): ${remembered}`,
-    `Shared working brief (reported facts require evidence; latest human corrections take precedence): ${JSON.stringify(context)}`].filter(Boolean).join("\n\n");
+  return { instructions, skills: skills.length ? `Available skills (load with skill only when relevant): ${JSON.stringify(skills)}` : "",
+    knowledge: `Relevant knowledge (source-attributed context; current user instructions override): ${remembered}`,
+    brief: `Shared working brief (reported facts require evidence; latest human corrections take precedence): ${JSON.stringify(context)}` };
+}
+
+/** Compatibility projection for callers that need one text artifact. */
+export async function agentKnowledge(project: string, cwd: string, query: string): Promise<string> {
+  return Object.values(await agentContext(project, cwd, query)).filter(Boolean).join("\n\n");
 }
