@@ -7,6 +7,7 @@ import { attachConversation, directoryProjects, inheritDefaults, parentProject, 
 import { effectiveModel } from "./project-model";
 import { matchesProjectIdentity, projectIdentity } from "./state";
 import { listProjects } from "./registry";
+import { initializeWorkspace } from "./workspace";
 import { restoreConversations } from "../../../tui/commands/project";
 let root: string, directory: string, previous: string | undefined;
 beforeEach(() => { previous = process.env.ORCA_HOME; root = mkdtempSync(join(tmpdir(), "orca-directory-projects-")); process.env.ORCA_HOME = join(root, "home"); directory = join(root, "checkout"); mkdirSync(directory); });
@@ -118,21 +119,45 @@ test("starting inside a directory opens its conversations without startup config
   }
 });
 
-test("a new checkout opens no unrelated conversations regardless of saved startup views", async () => {
+test("a new checkout creates its first conversation once without opening unrelated saved views", async () => {
   conversation("raven");
-  const source = join(root, "ide");
-  expect(Bun.spawnSync(["git", "init", "-q", "-b", "main", source]).exitCode).toBe(0);
-  const nested = join(source, "nested"); mkdirSync(nested);
-  for (const saved of [undefined, [], ["raven"]]) {
+  for (const [i, saved] of [undefined, [], ["raven"]].entries()) {
+    const source = join(root, `ide-${i}`);
+    expect(Bun.spawnSync(["git", "init", "-q", "-b", "main", source]).exitCode).toBe(0);
+    const nested = join(source, "nested"); mkdirSync(nested);
     if (saved) rememberConversations(saved, saved[0]);
-    const opened: string[] = [], notes: string[] = [];
-    await restoreConversations({ source: nested, open: async id => { opened.push(id); }, note: text => notes.push(text) });
-    expect(opened).toEqual([]);
-    expect(notes).toEqual([`new directory: /new <conversation name> ${nested} to add it as a project`]);
-    expect(await listProjects()).toEqual(["raven"]);
+    const opened: { id: string; directory?: string }[] = [], notes: string[] = [];
+    const open = async (id: string, directory?: string) => { await initializeWorkspace(id, directory); opened.push({ id, directory }); };
+    await restoreConversations({ source: nested, open, note: text => notes.push(text) });
+    expect(opened).toHaveLength(1);
+    const id = opened[0]!.id;
+    expect(id).toMatch(/^orch-[a-z0-9]{4}$/);
+    expect(opened[0]!.directory).toBe(nested);
+    expect(notes).toEqual([]);
+    expect(parentProject(id)?.directory).toBe(realpathSync(source));
+    expect(parentProject(id)?.name).toBe(`ide-${i}`);
+    expect(parentProject(id)?.conversations).toEqual([id]);
+    expect(await listProjects()).toContain("raven");
+    // Reopening from the root reuses the same conversation after nested startup.
+    const before = await listProjects(); opened.length = 0;
+    rememberConversations(["raven"], "raven");
+    await restoreConversations({ source, open, note: text => notes.push(text) });
+    expect([...new Set(opened.map(row => row.id))]).toEqual([id]);
+    expect(await listProjects()).toEqual(before);
   }
   // An explicit conversation argument still overrides directory-based startup.
   const opened: string[] = [];
-  await restoreConversations({ project: "raven", source, open: async id => { opened.push(id); }, note() {} });
+  await restoreConversations({ project: "raven", source: directory, open: async id => { opened.push(id); }, note() {} });
   expect(opened).toEqual(["raven"]);
+});
+
+test("failed initial creation reports the error without opening the previously selected repository", async () => {
+  conversation("raven"); rememberConversations(["raven"], "raven");
+  const source = join(root, "ide");
+  expect(Bun.spawnSync(["git", "init", "-q", "-b", "main", source]).exitCode).toBe(0);
+  const attempted: string[] = [];
+  await expect(restoreConversations({ source, open: async id => { attempted.push(id); throw new Error("creation refused"); }, note() {} })).rejects.toThrow("creation refused");
+  expect(attempted).toHaveLength(1);
+  expect(attempted[0]).toMatch(/^orch-[a-z0-9]{4}$/);
+  expect(await listProjects()).toEqual(["raven"]);
 });

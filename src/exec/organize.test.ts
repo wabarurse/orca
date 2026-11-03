@@ -49,6 +49,7 @@ function taskRows() {
 }
 
 test("offline move preserves UUIDs, task SQL, settings, transcript/image bytes and duplicate renamed conversations", async () => {
+  expect(Bun.spawnSync(["git", "init", "-q", "-b", "main", checkout]).exitCode).toBe(0);
   legacy("orch-369l"); legacy("orch-5xab");
   const identity = projectIdentity("orch-5xab"), originalBinding = repositoryBinding("orch-5xab");
   const ref = await saveImage("orch-5xab", png());

@@ -8,7 +8,7 @@ The first supported directory source remains an original Git checkout. Worker wo
 
 ## Startup and execution
 
-Starting inside a known checkout automatically opens the conversations belonging to that directory project, preferring the saved selection when it belongs there. No startup-selection command is required, and saved views from unrelated directories are not opened. A new checkout with no conversations opens an empty screen and offers an explicit `/new <name> <directory>` action. Only when launched outside a Git checkout does startup restore the last open conversations and selection. An explicit conversation argument overrides directory-based startup.
+Starting inside a known checkout automatically opens the conversations belonging to that directory project, preferring the saved selection when it belongs there. No startup-selection command is required, and saved views from unrelated directories are not opened. A new checkout automatically creates its directory project and opens its first empty conversation; no `/new` command is needed. Reopening it reuses its conversations, including when launched from a subdirectory. Creation does not submit input or start model work. Only when launched outside a Git checkout does startup restore the last open conversations and selection. An explicit conversation argument overrides directory-based startup.
 
 Opening or polling a restored view does not start its daemon, run queued work or revive workers. Already-running remote work can still be observed. Fresh human input starts execution for that conversation; persistent stop barriers still require that input. Closing a terminal preserves authorized remote work.
 

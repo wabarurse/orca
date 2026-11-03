@@ -394,7 +394,7 @@ export class App {
     }
   }
 
-  /** The given project, or every known one plus the repo we were started in, or a fresh orch-xxxx. */
+  /** Open this checkout's conversations, or create its first automatically. */
   private async openStartPages(project?: string, url?: string): Promise<void> {
     await restoreConversations({ project, directory: url, source: this.deps.source,
       open: (id, directory) => this.openPage(id, directory), note: text => this.note(text) });
