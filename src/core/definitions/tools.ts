@@ -9,6 +9,7 @@ function annotations(base: unknown, edited: unknown, path: string): unknown {
   if (edited === undefined && added.includes(path)) return base;
   if (path === "spawn.required" && JSON.stringify(edited) === '["prompt","branch","taskId"]') return base;
   if (path === "ask.required" && JSON.stringify(edited) === '["questions"]') return base; // list/close take no questions
+  if (path === "runtime.properties.action.enum" && JSON.stringify(edited) === '["status","usage"]') return base;
   if (path === "bash.properties.timeout_ms.minimum" && edited === 1 && base === 0) return base;
   // Upgrade older edited schemas without overwriting user annotation files. Only
   // these shipped additions are restored; arbitrary schema mutations still fail.

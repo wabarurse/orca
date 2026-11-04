@@ -23,7 +23,7 @@ export function format(msgs: Message[]): string {
 }
 
 /** A real sender id, as `format` tags it: "user", "orchestrator" or an agent's session id. */
-const SENDER = String.raw`(?:user|runtime|orchestrator|(?:worker|reviewer)(?:-[\w.-]+)?)`;
+const SENDER = String.raw`(?:user|runtime|orchestrator(?:@[A-Za-z0-9][A-Za-z0-9._-]*)?|(?:worker|reviewer)(?:-[\w.-]+)?)`;
 const TAGGED = new RegExp(String.raw`^\[(${SENDER})\] ([\s\S]*)$`);
 const NEXT = new RegExp(String.raw`\n\n(?=\[${SENDER}\] )`);
 

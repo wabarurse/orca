@@ -32,9 +32,9 @@ let seq = 0;
 const writing = new Map<string, Promise<unknown>>();
 
 /** Append a message to `to`'s inbox. */
-export async function put(project: string, to: string, msg: Omit<Message, "ts">): Promise<Message> {
+export async function put(project: string, to: string, msg: Omit<Message, "ts">, beforePublish?: () => void): Promise<Message> {
   const d = dir(project, to);
-  mkdirSync(d, { recursive: true });
+  if (!beforePublish) mkdirSync(d, { recursive: true }); // Guarded routes validate before creating inbox directories.
   const identity = projectIdentity(project);
   const full: Message = { ...structuredClone(msg), ...(msg.from === "user" ? { userEpoch: msg.userEpoch ?? inputEpoch(project) } : {}), ts: new Date().toISOString() };
   const n = String(seq++).padStart(6, "0");
@@ -45,7 +45,9 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">)
   const tmp = join(d, `.${name}.tmp`);
   const publish = async () => {
     assertProjectIdentity(project, identity);
+    beforePublish?.();
     await validateRefs(project, full.attachments);
+    if (beforePublish) mkdirSync(d, { recursive: true });
     await Bun.write(tmp, JSON.stringify(full) + "\n");
     await rename(tmp, join(d, name));
     if (to === "orchestrator" && full.from === "user") execution.resume(project, full.userEpoch!);

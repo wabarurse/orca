@@ -9,12 +9,27 @@ import { toolsFor, type Tool } from "../tools/registry";
 import { rolePrompt } from "../prompt/shared";
 import { message } from "../tools/message";
 import { ask } from "../tools/ask";
+import { runtime } from "../tools/runtime";
 const root = mkdtempSync(join(tmpdir(), "orca-definitions-"));
 const old = process.env.ORCA_HOME;
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(root, "case-")); process.env.ORCA_HOME = home; });
 afterAll(() => { if (old === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = old; rmSync(root, { recursive: true, force: true }); });
 const tool: Tool = { spec: { name: "fixture", description: "Trusted authorization contract.", input_schema: { type: "object", properties: { action: { type: "string", enum: ["read"], description: "Read only." } }, required: ["action"] } }, run: async () => "trusted implementation" };
+test("edited legacy runtime definitions gain peer discovery while retaining annotations", () => {
+  editableTool(runtime);
+  const file = join(home, "tools/runtime.json"), edited = JSON.parse(readFileSync(file, "utf8"));
+  edited.input_schema.properties.action.enum = ["status", "usage"];
+  edited.description = "My runtime notes";
+  writeFileSync(file, JSON.stringify(edited)); const original = readFileSync(file, "utf8");
+  const loaded = editableTool(runtime);
+  expect(loaded.spec.description).toContain("My runtime notes");
+  expect(loaded.spec.input_schema.properties).toMatchObject({ action: { enum: ["status", "usage", "conversations"] } });
+  expect(readFileSync(file, "utf8")).toBe(original);
+  edited.input_schema.properties.action.enum = ["status", "usage", "arbitrary"];
+  writeFileSync(file, JSON.stringify(edited));
+  expect(() => editableTool(runtime)).toThrow("immutable tool schema");
+});
 test("defaults track upgrades; edited files survive; deleting resets to current default", () => {
   expect(definition("prompts/shared.md", "v1")).toBe("v1");
   expect(definition("prompts/shared.md", "v2")).toBe("v2");
