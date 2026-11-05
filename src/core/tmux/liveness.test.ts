@@ -6,6 +6,18 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 const home = mkdtempSync(join(tmpdir(), "model-liveness-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
+test("pane inspection targets an explicit session, avoiding tmux's missing-window ambiguity", async () => {
+  const bin = join(home, "session-target"); mkdirSync(bin);
+  const executable = join(bin, "tmux");
+  await Bun.write(executable, '#!/bin/sh\ncase "$*" in *"=missing:"*) printf "can\\047t find session: missing\\n" >&2;; *) printf "can\\047t find window: missing\\n" >&2;; esac\nexit 1\n');
+  chmodSync(executable, 0o755);
+  const runner = join(import.meta.dir, "runner.ts");
+  const child = Bun.spawn([process.execPath, "-e", `import {tmux} from ${JSON.stringify(runner)};console.log(JSON.stringify(await tmux.agentPanes("missing")));`], {
+    env: { ...process.env, PATH: bin, ORCA_HOME: home }, stdout: "pipe", stderr: "pipe",
+  });
+  expect(await child.exited).toBe(0);
+  expect(JSON.parse(await new Response(child.stdout).text())).toEqual([]);
+});
 for (const error of ["can't find session: missing", "no server running", "permission denied"]) {
   test(`production liveness classifies ${error}`, async () => {
     const bin = join(home, error.replace(/[^a-z]/g, ""));

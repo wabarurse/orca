@@ -5,7 +5,7 @@ import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput 
 import type { ImageRef } from "../protocol";
 import { contextStatus } from "./header";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
-import { refreshTaskInboxData, TaskCounts, taskInboxLines, type TaskInboxData } from "./footer";
+import { agentCounts, agentCountText, refreshTaskInboxData, TaskCounts, taskInboxLines, type TaskInboxData } from "./footer";
 import { cancelSession } from "../core/tmux";
 import { settingChange, effectiveSettings, setEffort } from "../core/data/projects";
 import type { RequestSettings } from "../providers/catalog";
@@ -613,11 +613,10 @@ export class App {
 
   /** Counts only: no shortcuts, repeated identities or transient animation in the footer. */
   status(page: Page): string {
-    const agents = page.agentCount === null ? "?" : page.agentCount ?? 0;
     const known = (p: Page) => p.questions.loaded && !p.questions.error, questions = known(page) ? page.questions.open.length : "?";
     const background = this.pages.filter(p => p !== page), elsewhere = background.reduce((n, p) => n + (known(p) ? p.questions.open.length : 0), 0);
     const unknown = background.some(p => !known(p));
-    return [`${agents} ${agents === 1 ? "agent" : "agents"} running`, this.taskCounts.label(page), `inbox ${questions}${elsewhere || unknown ? ` (+${elsewhere || ""}${unknown ? (elsewhere ? "+?" : "?") : ""} elsewhere)` : ""}`].join(" │ ");
+    return [agentCountText(page), this.taskCounts.label(page), `inbox ${questions}${elsewhere || unknown ? ` (+${elsewhere || ""}${unknown ? (elsewhere ? "+?" : "?") : ""} elsewhere)` : ""}`].join(" │ ");
   }
 
   /** Only the selected conversation can animate; tool rows already carry their own shimmer. */
@@ -692,11 +691,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const check = agents(project)
       .then((agents) => {
         const live = new Set(agents.filter((a) => a.live).map((a) => a.name));
-        for (const p of this.pages) if (p.project === project) p.agentCount = agents.some(a => a.status === "unknown" || a.inventoryComplete === false) ? null : [...live].filter((n) => /^(worker|reviewer)(-|$)/.test(n)).length;
+        for (const p of this.pages) if (p.project === project) Object.assign(p, agentCounts(agents));
         this.draw();
         for (const p of this.pages) if (p.project === project && p.view?.live && !agents.some(a => a.name === p.view!.name && a.status === "unknown") && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
       })
-      .catch(() => { for (const p of this.pages) if (p.project === project) p.agentCount = null; this.draw(); })
+      .catch(() => { for (const p of this.pages) if (p.project === project) Object.assign(p, { agentCount: null, verifiedAgentCount: undefined, unverifiedAgentCount: undefined }); this.draw(); })
       .finally(() => this.liveChecks.delete(project));
     this.liveChecks.set(project, check);
   }

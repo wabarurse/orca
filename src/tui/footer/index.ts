@@ -4,3 +4,4 @@ export { answeredNote, pageQuestions, QUESTION_DELAY_MS, QUESTION_PROGRESS, Ques
 export { commit, helpPanel, inputArea, inputGeometry, liveRows, statusRows, taskInboxPanel, type Frame, type Help, type Input, type InputArea, type Menu, type TaskInboxView } from "./render";
 export { refreshTaskInboxData, taskInboxLines, type TaskInboxData } from "./task-inbox";
 export { TaskCounts } from "./task-count";
+export { agentCounts, agentCountText } from "./agent-count";
