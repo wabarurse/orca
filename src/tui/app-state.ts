@@ -51,6 +51,8 @@ export interface Page {
   account?: string;
   settings?: RequestSettings;
   agentCount?: number | null;
+  verifiedAgentCount?: number;
+  unverifiedAgentCount?: number | null;
 }
 
 export interface AppDeps {

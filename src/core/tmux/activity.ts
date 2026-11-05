@@ -56,8 +56,9 @@ export async function agentActivity(project: string, options: Options = {}) {
     return { agent, ...activity, run: record?.run, pid: record?.pid, record, queuedMessages,
       ...(task ? { task: { id: task.id, number: task.number, name: task.name } } : {}) };
   }));
-  const verificationComplete = panes !== null && !errors.some(e => e.startsWith("cannot inspect") && !e.includes("queued messages")) && !rows.some(a => a.status === "unknown");
-  return { observedAt: new Date().toISOString(), verificationComplete,
+  const inventoryComplete = panes !== null && !errors.some(e => e.startsWith("cannot inspect") && !e.includes("queued messages"));
+  const verificationComplete = inventoryComplete && !rows.some(a => a.status === "unknown");
+  return { observedAt: new Date().toISOString(), inventoryComplete, verificationComplete,
     runningCount: verificationComplete ? rows.filter(a => a.status === "running").length : null,
     verifiedRunningCount: rows.filter(a => a.status === "running").length, agents: rows, errors };
 }
@@ -66,5 +67,5 @@ export async function activeAgentRows(project: string): Promise<AgentInfo[]> {
   const snapshot = await agentActivity(project);
   if (!snapshot.agents.length && !snapshot.verificationComplete) throw new Error("agent activity could not be verified");
   return snapshot.agents.map(a => ({ name: a.agent, live: a.status === "running", status: a.status,
-    inventoryComplete: snapshot.verificationComplete, queuedMessages: a.queuedMessages }));
+    inventoryComplete: snapshot.inventoryComplete, queuedMessages: a.queuedMessages }));
 }

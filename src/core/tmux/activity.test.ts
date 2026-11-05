@@ -70,6 +70,15 @@ test("no known rows plus failed tmux inspection is unknown, not zero", async () 
   const result = await agentActivity(project, { panes: async () => null });
   expect(result.runningCount).toBeNull(); expect(result.verificationComplete).toBe(false);
 });
+test("complete inventory keeps a verified running subset when a historical row is unverified", async () => {
+  record();
+  mkdirSync(join(paths.inbox(project), "worker-legacy"), { recursive: true });
+  const result = await agentActivity(project, options());
+  expect(result.inventoryComplete).toBe(true);
+  expect(result.verificationComplete).toBe(false);
+  expect(result.runningCount).toBeNull(); expect(result.verifiedRunningCount).toBe(1);
+  expect(result.agents.find(row => row.agent === "worker-legacy")?.status).toBe("unknown");
+});
 test("unrecorded panes and invalid records cannot count as running", async () => {
   const first = await agentActivity(project, options()); expect(first.agents[0]!.status).toBe("unknown");
   record(agent, { pid: -1 }); const second = await agentActivity(project, options()); expect(second.runningCount).toBeNull();
