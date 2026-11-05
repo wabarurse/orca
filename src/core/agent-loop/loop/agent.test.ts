@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { createAgent } from "./agent";
+import { task } from "../../tools/task";
+import { listTasks } from "../../data/tasks/tasks";
 import { put } from "../../data/inbox/inbox";
 import type { Provider } from "../../../providers/provider";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
@@ -101,6 +103,43 @@ describe("agent loop", () => {
 
     const results = calls[1]!.messages[2]!.content;
     expect(results).toEqual([{ type: "tool_result", tool_use_id: "tu1", content: "kaboom", is_error: true }]);
+  });
+
+  test("stops repeated invalid task creation after persisting each error", async () => {
+    const transcript = fakeTranscript();
+    await transcript.append(user("Record the assignments"));
+    const create = { action: "create", title: "Task", summary: "Summary" };
+    const provider = fakeProvider([
+      [toolUse("first", "task", create)],
+      [toolUse("second", "task", { ...create, authorized: true })],
+      [toolUse("third", "task", { ...create, authorized: true, title: "Another task" })],
+      [text("should not be requested")],
+    ]);
+    const agent = createAgent({ provider, transcript, tools: { task }, model: "m",
+      ctx: { ...ctx, role: "orchestrator" }, write: () => {} });
+    await expect(agent.run()).rejects.toThrow("task creation stopped after three batches");
+    expect(provider.calls).toHaveLength(3);
+    expect((await transcript.chain()).at(-1)?.content).toEqual([
+      expect.objectContaining({ tool_use_id: "third", is_error: true, content: expect.stringContaining("branch must be text") }),
+    ]);
+  });
+
+  test("corrected task creation and subsequent work proceed after validation errors", async () => {
+    const project = "task-recovery";
+    mkdirSync(paths.project(project), { recursive: true });
+    const transcript = fakeTranscript();
+    await transcript.append(user("Record the assignment"));
+    const create = { action: "create", title: "Task", summary: "Summary" };
+    const provider = fakeProvider([
+      [toolUse("first", "task", create)],
+      [toolUse("second", "task", { ...create, authorized: true })],
+      [toolUse("third", "task", { ...create, authorized: true, branch: "feat/valid" })],
+      [text("done")],
+    ]);
+    await createAgent({ provider, transcript, tools: { task }, model: "m",
+      ctx: { ...ctx, project, role: "orchestrator" }, write: () => {} }).run();
+    expect(provider.calls).toHaveLength(4);
+    expect(await listTasks(project)).toEqual([expect.objectContaining({ name: "Task", branch: "feat/valid" })]);
   });
 
   test("a run-tracking failure (task state locked) refuses that call only; the run and later calls go on", async () => {

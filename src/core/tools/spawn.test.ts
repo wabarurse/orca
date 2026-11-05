@@ -104,7 +104,7 @@ describe("one agent per branch", () => {
     const { r, asked, starts } = runner([["reviewer-busy"]]);
     const t0 = Date.now();
     const out = await makeSpawn(r, wait).run({ prompt: "follow-up", branch: "busy" }, qctx);
-    expect(out).toBe("refused: reviewer-busy is still running on busy and one agent works on a branch at a time, so this worker prompt was not delivered; message reviewer-busy instead, or spawn the worker again after reviewer-busy reports and exits");
+    expect(out).toBe("refused: reviewer-busy is still running on busy and one agent works on a branch at a time, so this worker prompt was not delivered; send to reviewer-busy with inbox instead, or spawn the worker again after reviewer-busy reports and exits");
     expect(Date.now() - t0).toBeGreaterThanOrEqual(250); // it waited first
     expect(asked[0]).toEqual(["worker-busy", "reviewer-busy"]);
     expect(asked.length).toBeGreaterThan(2);

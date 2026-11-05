@@ -15,7 +15,7 @@ const { getTask, prepareTaskRun, registerTask } = await import("../data/tasks/ta
 const { Cancelled } = await import("./cancellation");
 const { drain, put } = await import("../data/inbox/inbox");
 const { agentCommand, slug, tmux } = await import("./runner");
-const { message } = await import("../tools/message");
+const { inbox: inboxTool } = await import("../tools/inbox");
 const { fakeProvider, text, toolUse } = await import("../../test/fake-provider");
 const { open } = await import("../data/transcripts/transcript");
 const { paths } = await import("../../config/config");
@@ -26,6 +26,7 @@ let n = 0;
 let project = "";
 beforeEach(() => {
   project = `p${n++}`;
+  mkdirSync(paths.project(project), { recursive: true });
 });
 
 /** A git repo dir with `dirty` uncommitted files. */
@@ -53,7 +54,7 @@ const agentBody = (cwd: string, script: Parameters<typeof fakeProvider>[0]) => a
   await createAgent({
     provider: fakeProvider(script),
     transcript,
-    tools: { message, echo },
+    tools: { inbox: inboxTool, echo },
     model: "m",
     ctx: { project, role: "worker", branch: "feat", cwd },
     write: () => {},
@@ -65,14 +66,14 @@ describe("case 1: the loop throws", () => {
   test("one crash notice with the error, last tool, role, branch and dirty count; exit 70", async () => {
     const cwd = await repo(2);
     // One tool call, then the script runs out: the provider throws like an API error.
-    const code = await supervise(info(cwd), agentBody(cwd, [[toolUse("t1", "message", { to: "user", text: "hi" })]]), quiet);
+    const code = await supervise(info(cwd), agentBody(cwd, [[toolUse("t1", "inbox", { action: "send", to: "user", text: "hi" })]]), quiet);
     expect(code).toBe(70);
     const msgs = await inbox();
     expect(msgs.length).toBe(1);
     expect(msgs[0]!.from).toBe("worker-feat");
     const t = msgs[0]!.text;
     expect(t.startsWith("[agent-exit] worker-feat crashed: fake provider: script exhausted")).toBe(true);
-    expect(t).toContain(`role worker; branch feat; last step: model request; last tool: message {"to":"user","text":"hi"}; uncommitted changes: 2`);
+    expect(t).toContain(`role worker; branch feat; last step: model request; last tool: inbox {"action":"send","to":"user","text":"hi"}; uncommitted changes: 2`);
   });
 
   test("the shell follow-up after the crash sends nothing more", async () => {
@@ -290,7 +291,7 @@ describe("case 3: clean exit", () => {
 
   test("ending on a report to the orchestrator: only the report", async () => {
     const cwd = await repo(0);
-    const script = [[toolUse("t1", "message", { to: "orchestrator", text: "done" })], [text("")]];
+    const script = [[toolUse("t1", "inbox", { action: "send", to: "orchestrator", text: "done" })], [text("")]];
     expect(await supervise(info(cwd), agentBody(cwd, script), quiet)).toBe(0);
     expect((await inbox()).map((m) => m.text)).toEqual(["done"]);
     expect((await readRun(project, "worker-feat"))!.state).toBe("reported");
@@ -299,7 +300,7 @@ describe("case 3: clean exit", () => {
 
   test("an interim report followed by more tool calls does not count", async () => {
     const cwd = await repo(0);
-    const script = [[toolUse("t1", "message", { to: "orchestrator", text: "starting…" })], [toolUse("t2", "echo", {})], [text("")]];
+    const script = [[toolUse("t1", "inbox", { action: "send", to: "orchestrator", text: "starting…" })], [toolUse("t2", "echo", {})], [text("")]];
     await supervise(info(cwd), agentBody(cwd, script), quiet);
     const msgs = await inbox();
     expect(msgs.map((m) => m.text.slice(0, 45))).toEqual(["starting…", "[agent-exit] worker-feat finished without rep"]);
@@ -308,7 +309,7 @@ describe("case 3: clean exit", () => {
 
   test("a message to someone else is not a report", async () => {
     const cwd = await repo(0);
-    const script = [[toolUse("t1", "message", { to: "user", text: "hi" })], [text("")]];
+    const script = [[toolUse("t1", "inbox", { action: "send", to: "user", text: "hi" })], [text("")]];
     await supervise(info(cwd), agentBody(cwd, script), quiet);
     const msgs = await inbox();
     expect(msgs.length).toBe(1);
@@ -318,7 +319,7 @@ describe("case 3: clean exit", () => {
   test("new instructions after the report need a new report", async () => {
     const cwd = await repo(0);
     // The orchestrator's note lands while the report is being sent, so it rides along with the result.
-    const script = [[toolUse("t1", "message", { to: "orchestrator", text: "done" })], [text("")]];
+    const script = [[toolUse("t1", "inbox", { action: "send", to: "orchestrator", text: "done" })], [text("")]];
     const body = agentBody(cwd, script);
     await supervise(info(cwd), async (t) => {
       const reported = t.reported.bind(t);

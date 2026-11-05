@@ -93,18 +93,21 @@ async function runTool(deps: AgentDeps, name: string, input: Record<string, unkn
   const tool = deps.tools[name];
   if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
   try {
-    return { type: "tool_result", tool_use_id: "", content: await tool.run(input, { ...deps.ctx, signal: deps.signal,
-      selected: deps.provider ? { model: deps.model, provider: deps.provider, settings: deps.settings } : undefined }) };
+    const content = await tool.run(input, { ...deps.ctx, signal: deps.signal,
+      selected: deps.provider ? { model: deps.model, provider: deps.provider, settings: deps.settings } : undefined });
+    const refused = (name === "task" || name === "inbox") && typeof content === "string" && content.startsWith("refused:");
+    return { type: "tool_result", tool_use_id: "", content, ...(refused ? { is_error: true } : {}) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { type: "tool_result", tool_use_id: "", content: msg, is_error: true };
   }
 }
 
-/** A successful `message` to the orchestrator: what counts as reporting. */
+/** A successful delivery to the orchestrator counts as reporting. */
 function isReport(name: string, input: unknown, result: ToolResultBlockParam): boolean {
   const to = String((input as { to?: unknown } | null)?.to ?? "").trim();
-  return name === "message" && to === "orchestrator" && !result.is_error && String(result.content).startsWith("sent to");
+  const sent = name === "message" || (name === "inbox" && (input as { action?: unknown } | null)?.action === "send");
+  return sent && to === "orchestrator" && !result.is_error && String(result.content).startsWith("sent to");
 }
 
 /** Run one tool call and tell the tracker: the step before, a report after. */
@@ -274,32 +277,49 @@ function boundaries(deps: AgentDeps) {
     return current;
   };
 }
-async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<void> {
+async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<boolean> {
   const results = await runTools(deps, content, deps.write!);
   if (!deps.signal?.aborted && !staleExecution(deps)) {
-    try { await readInbox(deps, results); return; }
+    try {
+      const receivedInput = await readInbox(deps, results);
+      const calls = content.filter((block): block is ToolUse => block.type === "tool_use");
+      return !receivedInput && calls.length > 0 && calls.every((call, i) => {
+        const action = (call.input as Record<string, unknown> | null)?.action;
+        const result = results[i];
+        return call.name === "task" && (action === "create" || action === "register") &&
+          result?.is_error === true && typeof result.content === "string" && result.content.startsWith("refused: tasks:");
+      });
+    }
     catch (error) { if (!(error instanceof Cancelled)) throw error; }
   }
   // Preserve completed results without consuming input authorized for a new run.
   await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
+  return false;
 }
 async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>): Promise<void> {
   deps.signal?.throwIfAborted();
   const consumed = await readInbox(deps);
   if (deps.requireInbox && !consumed) return;
   let pauses = 0;
+  let refusedTaskBatches = 0;
   for (;;) {
     const current = await boundary(deps.compactRequested?.() ?? false);
     deps.signal?.throwIfAborted();
     const message = await ask(current, deps.write!);
-    if (message.stop === "tool_use") { await toolBatch(current, message.content); continue; }
+    if (message.stop === "tool_use") {
+      refusedTaskBatches = await toolBatch(current, message.content) ? refusedTaskBatches + 1 : 0;
+      if (refusedTaskBatches >= 3) {
+        throw new Error("task creation stopped after three batches of validation errors. Existing tasks were kept. Check the task list before retrying with corrected fields");
+      }
+      continue;
+    }
     if (message.stop === "pause" && !message.content.some(block => block.type === "tool_use") && ++pauses <= 2) {
       await deps.transcript.append({ type: "message", message: { role: "user", content: "The provider paused this response. Continue the existing request within its current scope." } });
       continue;
     }
     if (message.stop !== "end") throw new Error(`model stopped (${message.completion ?? message.stop}); partial response retained, task completion is not established`);
     deps.signal?.throwIfAborted();
-    if (await readInbox(deps)) continue;
+    if (await readInbox(deps)) { refusedTaskBatches = 0; continue; }
     if (deps.compactRequested?.()) await boundary(true);
     return;
   }

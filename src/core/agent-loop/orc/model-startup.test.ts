@@ -73,7 +73,7 @@ for (const role of ["worker", "reviewer"] as const) {
       await saveProjectSettings(project, override ?? "gpt-6-astra", { effort: "high", fast: true });
       const transcript = open(paths.transcript(project, `${role}-${branch}`));
       await transcript.append({ type: "message", message: { role: "user", content: "seeded task" } });
-      const fake = fakeProvider([[toolUse("report", "message", { to: "orchestrator", text: "done" })], [text("finished")]]);
+      const fake = fakeProvider([[toolUse("report", "inbox", { action: "send", to: "orchestrator", text: "done" })], [text("finished")]]);
       const requests: CompleteRequest[] = [];
       const complete = fake.complete;
       fake.complete = async (req) => { requests.push(req); return complete(req); };
@@ -83,7 +83,7 @@ for (const role of ["worker", "reviewer"] as const) {
       expect(requests[0]!.model).toBe(override ?? "gpt-6-astra");
       expect(requests[0]!.messages[0]!.content).toBe("seeded task");
       expect(requests[0]!.settings).toEqual({ effort: "high", fast: true });
-      expect(requests[0]!.tools.some((tool) => tool.name === "message")).toBe(true);
+      expect(requests[0]!.tools.some((tool) => tool.name === "inbox")).toBe(true);
       await saveProjectModel(project, "gpt-after-exit");
       await Bun.sleep(5);
       expect(requests).toHaveLength(2);

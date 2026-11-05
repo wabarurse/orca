@@ -99,7 +99,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (busy === null) return unverified;
       execution.assertActive(ctx.project, epoch);
       const other = busy.find(agent => agent !== id);
-      if (other) return `refused: ${other} is still running on ${branch} and one agent works on a branch at a time, so this ${role} prompt was not delivered; message ${other} instead, or spawn the ${role} again after ${other} reports and exits`;
+      if (other) return `refused: ${other} is still running on ${branch} and one agent works on a branch at a time, so this ${role} prompt was not delivered; send to ${other} with inbox instead, or spawn the ${role} again after ${other} reports and exits`;
       if (busy.length) return deliver(runner, id, prompt, branch, role, checked, ctx, attachments);
 
       return launch(runner, prompt, branch, role, input.taskId as string | undefined, { ...ctx, executionEpoch: epoch, fresh: input.fresh === true }, attachments, reviewMode);
@@ -116,7 +116,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
  * queued prompt, so it is never left unread.
  */
 async function deliver(runner: Runner, id: string, prompt: string, branch: string, role: "worker" | "reviewer", input: Checked, ctx: ToolContext, attachments: ImageRef[]): Promise<string> {
-  const wait = `wait for ${id} to report and exit (it exits once its background commands end: stop them with process, or message it), then spawn again`;
+  const wait = `wait for ${id} to report and exit (it exits once its background commands end: stop them with process, or send it a note with inbox), then spawn again`;
   if (input.fresh === true) return `refused: fresh=true needs an idle ${role}, but ${id} is still running on ${branch}; spawn again without fresh to deliver this prompt into its current context, or ${wait} with fresh=true`;
   const run = launchIdentity(ctx.project, id);
   const task = run ? await taskForRun(ctx.project, run) : undefined;

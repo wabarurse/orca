@@ -37,6 +37,7 @@ const display = (name: string) => name === "web_search" ? "websearch" : name;
 const firstString = (input: Input) => oneLine(str(Object.values(input).find((v) => typeof v === "string")));
 
 function askArgs(input: Input): string {
+  if (!Array.isArray(input.questions) && input.action === "send") return words(str(input.text), 8);
   if (input.action === "list") return "list";
   if (input.action === "close") return `close ${Array.isArray(input.ids) ? input.ids.length : 0}: ${words(str(input.reason), 8)}`;
   const qs = Array.isArray(input.questions) ? (input.questions as { text?: unknown }[]) : [];
@@ -45,9 +46,11 @@ function askArgs(input: Input): string {
 }
 
 /** Per-tool input summaries; anything else shows its first string argument. */
+const messageArgs = (i: Input) => `${oneLine(str(i.to))}: ${words(str(i.text), 8)}`;
 const ARGS: Record<string, (input: Input) => string> = {
   bash: (i) => oneLine(str(i.command)),
-  message: (i) => `${oneLine(str(i.to))}: ${words(str(i.text), 8)}`,
+  message: messageArgs,
+  inbox: (i) => i.action === "send" && i.reply !== "required" ? messageArgs(i) : askArgs(i),
   spawn: (i) => `${oneLine(str(i.branch))}, ${i.role === "reviewer" ? "reviewer" : "worker"}`,
   ask: askArgs,
   web_search: (i) => oneLine(str(i.query)),
@@ -112,7 +115,7 @@ const SUMMARIES: Record<string, (text: string) => { summary: string; failed: boo
 };
 
 /** Tools whose own refusals ("refused: …", not is_error results) count as failures; bash's output is the command's, so it never does. */
-const REFUSING = new Set(["spawn", "message", "ask", "history"]);
+const REFUSING = new Set(["spawn", "message", "ask", "inbox", "task", "history"]);
 const refused = (name: string, text: string) => REFUSING.has(name) && /^refused\b/.test(text.trim());
 
 /** The one-line summary of how a call ended, and whether it failed. */
