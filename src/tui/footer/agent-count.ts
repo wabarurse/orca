@@ -18,5 +18,5 @@ export function agentCountText(counts: AgentCounts): string {
   const n = counts.agentCount ?? counts.verifiedAgentCount ?? 0, noun = n === 1 ? "agent" : "agents";
   if (counts.agentCount !== null) return `${n} ${noun} running`;
   return counts.unverifiedAgentCount == null ? `${n} confirmed ${noun} running (inventory incomplete)`
-    : `${n} ${noun} running (${counts.unverifiedAgentCount} unverified)`;
+    : `${n} confirmed ${noun} running (${counts.unverifiedAgentCount} unverified)`;
 }

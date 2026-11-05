@@ -59,7 +59,7 @@ Agent rows include queued inbox-file counts and task ID/number/name only when th
 Inspection does not drain messages, update task stages, launch processes, repair identity, restart workers or trigger scheduling. No new polling loop is added; existing TUI checks use the shared snapshot, and their frequent count path does not read transcript bodies or restoration clocks. Unknown activity stays visible and is not offered as a finished row for removal. Existing cancellation, supervision and watchdog behavior is unchanged.
 
 The footer preserves verified running counts when retained records are uncertain:
-`1 agent running (1 unverified)` shows the confirmed subset and the unresolved
+`1 confirmed agent running (1 unverified)` shows the confirmed subset and the unresolved
 row separately. A failed inventory says so instead of presenting an exact total;
 a failed refresh clears stale confirmations and displays `agent status unavailable`.
 The runtime's exact `runningCount` remains null until verification is complete.
