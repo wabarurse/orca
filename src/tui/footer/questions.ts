@@ -17,7 +17,7 @@
 // A settled question leaves no conversation line: an answer, skip or delete
 // here is one transient note above the composer ("? <question> → <answer>"),
 // and the reply the orchestrator later reads is left out of the page
-// (restore.ts). The orchestrator withdrawing a question (ask close) is a close
+// (restore.ts). The orchestrator withdrawing a question (inbox close) is a close
 // elsewhere like any other.
 
 import { stat } from "node:fs/promises";

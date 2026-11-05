@@ -12,6 +12,7 @@ import { fakeProvider, text, toolUse } from "../../test/fake-provider";
 import { format, parseFormatted, type Message } from "../../protocol";
 import { runtime } from "./runtime";
 import { message } from "./message";
+import { inbox } from "./inbox";
 import { peerTarget } from "./peer-messages";
 import { read } from "./files";
 import type { ToolContext } from "./registry";
@@ -59,10 +60,10 @@ test("peer messages and replies retain source identity and never become human in
 });
 
 test("active orchestrator loops consume and reply through their existing inboxes", async () => {
-  const provider = fakeProvider([[toolUse("reply", "message", { to: "orchestrator@one", text: "I own ui.ts." })], [text("done")]]);
-  const peer = await createOrchestrator({ project: "two", provider, tools: { message }, write() {} });
+  const provider = fakeProvider([[toolUse("reply", "inbox", { action: "send", to: "orchestrator@one", text: "I own ui.ts." })], [text("done")]]);
+  const peer = await createOrchestrator({ project: "two", provider, tools: { inbox }, write() {} });
   try {
-    await message.run({ to: "orchestrator@two", text: "Which files do you own?" }, ctx);
+    await inbox.run({ action: "send", to: "orchestrator@two", text: "Which files do you own?" }, ctx);
     expect(await peer.pending()).toBe(true);
     await peer.turn();
     expect(JSON.stringify(provider.calls[0]!.messages)).toContain("[orchestrator@one] Which files do you own?");

@@ -43,6 +43,18 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
   expect(rolePrompt("reviewer")).toContain("No mandatory review rounds");
 });
 
+test("task create explains how to correct authorization and branch before retrying", async () => {
+  const create = { action: "create", title: "Task", summary: "Summary" };
+  expect(await tool.run(create, ctx())).toContain("Otherwise stop creating tasks and ask the user");
+  for (const branch of [undefined, null, 5, " "]) {
+    expect(await tool.run({ ...create, authorized: true, branch }, ctx())).toContain("Supply a branch for every create/register call");
+  }
+  expect(await listTasks(project)).toEqual([]);
+  const created = JSON.parse(await tool.run({ ...create, authorized: true, branch: "feat/new" }, ctx()));
+  expect(created.number).toBe(1);
+  expect(created.status).toBe("queued");
+});
+
 test("PR creation/no CI is not ready; active reviewer explicitly validates verified exact clean head", async () => {
   const t = await reviewer();
   expect(JSON.parse(await record()).status).toBe("reviewing");

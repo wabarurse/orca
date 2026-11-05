@@ -11,7 +11,7 @@ import type { Message } from "../protocol/inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions, withdraw as withdrawQuestion } from "../core/data/inbox/questions";
 import { answeredNote, fileStore, queuedAnswer, type QuestionStore } from "./footer/questions";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
-import { message } from "../core/tools/message";
+import { inbox } from "../core/tools/inbox";
 import { registerTask } from "../core/data/tasks/tasks";
 import { makeSpawn } from "../core/tools/spawn";
 import { open as openTranscript } from "../core/data/transcripts/transcript";
@@ -124,13 +124,13 @@ describe("restored pages", () => {
     const taskId = (await registerTask("fidelity", { name: "Feature", summary: "Test work", branch: "feat", authorized: true })).id;
     const TABLE_MD = "| a | b |\n|---|---|\n| 1 | 2 |";
     const runner = { async start() { await put("fidelity", "orchestrator", { from: "worker-feat", text: "Report:\n\nall green" }); }, async stop() {}, async running() { return []; } };
-    const tools = { spawn: makeSpawn(runner), message };
+    const tools = { spawn: makeSpawn(runner), inbox };
     const provider = fakeProvider([
       [said(`Plan:\n${TABLE_MD}\nthen *go*`), toolUse("t1", "spawn", { taskId, prompt: "do it", branch: "feat" })],
-      [said("```ts\nconst x = 1;\n"), toolUse("t2", "message", { to: "user", text: "Started **feat**." })],
+      [said("```ts\nconst x = 1;\n"), toolUse("t2", "inbox", { action: "send", to: "user", text: "Started **feat**." })],
       [said("All set.")],
       // A second turn, started by the poll: a message from `orca msg` and a report, nothing typed here.
-      [said("Got it."), toolUse("t3", "message", { to: "user", text: "Second." })],
+      [said("Got it."), toolUse("t3", "inbox", { action: "send", to: "user", text: "Second." })],
       [said("Done.")],
     ]);
     const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void, events?: ToolEvents) =>
@@ -156,8 +156,8 @@ describe("restored pages", () => {
     expect(live.map(raw)).toContain("All set.");
     expect(live.filter((l) => typeof l !== "string" && "tool" in l)).toEqual([
       { tool: "spawn(feat, worker)", summary: "spawned worker-feat", failed: false },
-      { tool: "message(user: Started **feat**.)", summary: "sent to user", failed: false },
-      { tool: "message(user: Second.)", summary: "sent to user", failed: false },
+      { tool: "inbox(user: Started **feat**.)", summary: "sent to user", failed: false },
+      { tool: "inbox(user: Second.)", summary: "sent to user", failed: false },
     ]);
     expect(term.screen()).toContain("⏺ spawn(feat, worker)\n  ⎿  spawned worker-feat");
     expect(live.map(raw).filter((l) => l.endsWith("> go") || l.endsWith("m go"))).toEqual([`${bold(">")} go`]); // typed here: shown once
@@ -746,7 +746,7 @@ describe("orchestrator questions", () => {
     await ask1("qa-restore", 'Use "a": or (b)?', ["postgres", "sqlite"], "sqlite");
     const provider = fakeProvider([[said("Noted, sqlite.")]]);
     const open = (p: string, _u: string | undefined, write: (t: string, plain?: boolean) => void, onInbox?: (msgs: Message[]) => void) =>
-      createOrchestrator({ project: p, provider, tools: { message }, write, onInbox });
+      createOrchestrator({ project: p, provider, tools: { inbox }, write, onInbox });
     const { term, app, stop } = await start("qa-restore", { openOrchestrator: open, pollMs: 20 });
     await until(() => live(term).includes("❯ 1. postgres"));
     term.press({ name: "down" });

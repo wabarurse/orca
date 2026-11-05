@@ -55,18 +55,28 @@ test("a double answer or skip is refused and sends nothing", async () => {
   expect(await drain("q3", "orchestrator")).toEqual([]);
 });
 
-test("the ask tool queues and returns ids at once; only the orchestrator has it", async () => {
+test("inbox queues user questions for the orchestrator and delivers agent notes", async () => {
   const ctx = { project: "q4", cwd: "/" };
-  const out = await askTool.run({ questions: [{ text: "A?", default: "a" }, { text: "B?", options: ["x", "y"] }] }, { ...ctx, role: "orchestrator" });
+  mkdirSync(paths.project(ctx.project), { recursive: true });
+  const input = { action: "send", to: "user", reply: "required",
+    questions: [{ text: "A?", default: "a" }, { text: "B?", options: ["x", "y"] }] };
+  const orchestrator = { ...ctx, role: "orchestrator" as const };
+  const worker = { ...ctx, role: "worker" as const, branch: "b" };
+  const tool = registry.inbox!;
+  const out = await tool.run(input, orchestrator);
   const qs = await list("q4");
   expect(out).toBe(`queued 2: ${qs.map((q) => q.id).join(", ")}`);
   expect(qs[1]?.options).toEqual(["x", "y"]);
-  expect(await askTool.run({ questions: [] }, { ...ctx, role: "orchestrator" })).toStartWith("refused");
-  expect(await askTool.run({ questions: [{ text: "C?" }] }, { ...ctx, role: "worker", branch: "b" })).toStartWith("refused");
-  expect(toolsFor.orchestrator).toContain("ask");
-  expect(toolsFor.worker).not.toContain("ask");
-  expect(toolsFor.reviewer).not.toContain("ask");
-  expect(registry.ask).toBe(askTool);
+  expect(await tool.run(input, worker)).toStartWith("refused");
+  expect(await tool.run({ action: "list" }, worker)).toStartWith("refused");
+  expect(await tool.run({ action: "close", ids: [qs[0]!.id], reason: "obsolete" }, orchestrator)).toContain("closed 1 of 1");
+  expect(await tool.run({ action: "send", to: "orchestrator", text: "Done." }, worker)).toBe("sent to orchestrator");
+  expect((await drain("q4", "orchestrator")).map(m => m.text)).toEqual(["Done."]);
+  for (const tools of Object.values(toolsFor)) {
+    expect(tools).toContain("inbox");
+    expect(tools).not.toContain("ask");
+    expect(tools).not.toContain("message");
+  }
 });
 
 test("concurrent answers: exactly one wins and one message is sent", async () => {

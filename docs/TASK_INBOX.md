@@ -59,7 +59,10 @@ last snapshot with a visible stale/error warning, never a fabricated zero.
   releasing the claim. If rollback itself cannot persist, the claim stays held
   rather than risk duplicate delivery; no automatic claim stealing is added.
   Successful final answers, skips or deletes close the panel; explicitly opening an empty queue shows **No open questions**.
-* The orchestrator manages its own questions with the `ask` tool: `action:
+* The orchestrator sends a question with `inbox` using `action: "send"`,
+  `to: "user"`, `reply: "required"`, and either `text` or a batch of `questions`.
+  Sending a note through the same tool uses `to` and `text` without requiring a reply.
+  The orchestrator manages pending questions with `action:
   "list"` returns this project's open questions (id, time, text, options,
   default); `action: "close"` with `ids` (at most 20) and a short `reason`
   withdraws open ones that were answered in chat or became outdated. A

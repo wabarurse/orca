@@ -11,7 +11,7 @@ import { put } from "../../data/inbox/inbox";
 import { createOrchestrator, ensureProject } from "./orchestrator";
 import type { Runner, StartOptions } from "../../tmux/runner";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import { message } from "../../tools/message";
+import { inbox } from "../../tools/inbox";
 import { startTaskRun, stopTaskRun } from "../../data/tasks/tasks";
 import { task } from "../../tools/task";
 import { makeSpawn } from "../../tools/spawn";
@@ -32,7 +32,7 @@ const runner: Runner = {
   async stop() {},
   async running() { return []; },
 };
-const tools = { task, spawn: makeSpawn(runner), message };
+const tools = { task, spawn: makeSpawn(runner), inbox };
 const project = "demo";
 const taskId = crypto.randomUUID();
 
@@ -40,7 +40,7 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
   const provider = fakeProvider([
     [toolUse("register", "task", { action: "register", taskId, name: "Login", summary: "Add login page", branch: "feat/login", authorized: true })],
     [text("Splitting that into one task."), toolUse("tu1", "spawn", { taskId, prompt: "Add a login page", branch: "feat/login" })],
-    [toolUse("tu2", "message", { to: "user", text: "Started a worker on feat/login." })],
+    [toolUse("tu2", "inbox", { action: "send", to: "user", text: "Started a worker on feat/login." })],
     [text("done")],
   ]);
   const orch = await createOrchestrator({ project, provider, tools, write: () => {} });
@@ -58,7 +58,7 @@ test("user asks for a feature: orchestrator spawns a worker and replies", async 
 
 test("worker reports back: orchestrator spawns a reviewer on the same branch", async () => {
   const provider = fakeProvider([
-    [toolUse("tu3", "spawn", { taskId, prompt: "Review PR #12", branch: "feat/login", role: "reviewer", reviewMode: "review" }), toolUse("tu4", "message", { to: "user", text: "feat/login is in review." })],
+    [toolUse("tu3", "spawn", { taskId, prompt: "Review PR #12", branch: "feat/login", role: "reviewer", reviewMode: "review" }), toolUse("tu4", "inbox", { action: "send", to: "user", text: "feat/login is in review." })],
     [text("ok")],
   ]);
   const orch = await createOrchestrator({ project, provider, tools, write: () => {} });
@@ -105,7 +105,7 @@ test("ensureProject binds an existing main checkout without creating a clone", a
 
 test("onInbox gets each batch as it is read, and the turn's replies are kept in the transcript", async () => {
   const provider = fakeProvider([
-    [toolUse("tu9", "message", { to: "user", text: "On it." })],
+    [toolUse("tu9", "inbox", { action: "send", to: "user", text: "On it." })],
     [text("ok")],
   ]);
   const seen: string[][] = [];
