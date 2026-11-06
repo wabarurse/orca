@@ -4,6 +4,13 @@ import { dirname, join, relative, resolve } from "node:path";
 import { paths } from "../../../config";
 import { selectedKnowledge, workingContext } from "./knowledge";
 
+async function repositoryRoot(base: string): Promise<string> {
+  for (let dir = base; ; dir = dirname(dir)) {
+    if (await access(join(dir, ".git")).then(() => true, () => false)) return dir;
+    if (dirname(dir) === dir) return base;
+  }
+}
+
 /** Inspired by Codex's hierarchical AGENTS.md loading and Claude Code's scoped
  * instructions/lazy skills. This is an independent, bounded filesystem resolver.
  * https://github.com/openai/codex/blob/main/codex-rs/core/src/agents_md.rs
@@ -11,12 +18,7 @@ import { selectedKnowledge, workingContext } from "./knowledge";
 export async function repositoryInstructions(cwd: string, target = cwd, belowCwd = false): Promise<string> {
   const base = await realpath(cwd).catch(error => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return undefined; throw error; });
   if (!base) return "";
-  let root = base;
-  while (dirname(root) !== root) {
-    if (await access(join(root, ".git")).then(() => true, () => false)) break;
-    root = dirname(root);
-  }
-  if (dirname(root) === root) root = base;
+  const root = await repositoryRoot(base);
   const selected = await realpath(resolve(target)).catch(error => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return undefined; throw error; });
   if (!selected) return "";
   const rel = relative(root, selected);
@@ -38,23 +40,41 @@ export async function repositoryInstructions(cwd: string, target = cwd, belowCwd
   }
   return blocks.join("\n\n");
 }
-export async function discoverSkills(cwd: string): Promise<{ name: string; path: string; description: string }[]> {
-  const found: { name: string; path: string; description: string }[] = [];
-  for (const root of [join(cwd, ".agents", "skills"), join(cwd, ".claude", "skills"), join(paths.root, "skills")]) {
-    for (const name of (await readdir(root).catch(e => { if (e.code === "ENOENT") return []; throw e; })).sort()) {
-      if (found.length >= 32 || !/^[\w-]+$/.test(name) || found.some(s => s.name === name)) continue;
-      const path = join(root, name, "SKILL.md");
-      const text = await Bun.file(path).slice(0, 4096).text().catch(() => "");
-      if (text) found.push({ name, path, description: text.match(/^description:\s*(.+)$/m)?.[1]?.slice(0, 160) ?? "Read SKILL.md for instructions" });
+interface SkillEntry { name: string; path: string; description: string }
+export const SKILL_RESULT_LIMIT = 8;
+
+export async function discoverSkills(cwd: string): Promise<SkillEntry[]> {
+  const base = await realpath(cwd).catch(error => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return undefined; throw error; });
+  const roots: string[] = [];
+  if (base) {
+    const repo = await repositoryRoot(base);
+    // Like Pi, discover repository skills from the working directory up to the Git root.
+    // https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md
+    for (let dir = base; ; dir = dirname(dir)) {
+      roots.push(join(dir, ".agents", "skills"), join(dir, ".claude", "skills"));
+      if (dir === repo) break;
     }
   }
-  return found;
+  roots.push(join(paths.root, "skills"));
+
+  const found = new Map<string, SkillEntry>();
+  for (const root of roots) {
+    const names: string[] = await readdir(root).catch(error => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return []; throw error; });
+    for (const name of names.sort()) {
+      if (!/^[\w-]+$/.test(name) || found.has(name)) continue;
+      const path = join(root, name, "SKILL.md");
+      const text = await Bun.file(path).slice(0, 4096).text().catch(() => "");
+      if (text) found.set(name, { name, path, description: text.match(/^description:[ \t]*(.+)$/m)?.[1]?.trim().slice(0, 160) || "Read SKILL.md for instructions" });
+    }
+  }
+  return [...found.values()];
 }
+
 export async function agentContext(project: string, cwd: string, query: string): Promise<Record<string, string>> {
   const [instructions, skills, context, remembered] = await Promise.all([
     repositoryInstructions(cwd), discoverSkills(cwd), workingContext(project), selectedKnowledge(project, query),
   ]);
-  return { instructions, skills: skills.length ? `Available skills (load with skill only when relevant): ${JSON.stringify(skills)}` : "",
+  return { instructions, skills: skills.length ? `Repository and personal skills (${skills.length}). Before inventing a workflow, use skill({search: "workflow keywords"}) for relevant skills or skill({name: "exact-name"}) to load one. Preview (${Math.min(skills.length, SKILL_RESULT_LIMIT)} of ${skills.length}): ${JSON.stringify(skills.slice(0, SKILL_RESULT_LIMIT).map(({ name, description }) => ({ name, description })))}` : "",
     knowledge: `Relevant knowledge (source-attributed context; current user instructions override): ${remembered}`,
     brief: `Shared working brief (reported facts require evidence; latest human corrections take precedence): ${JSON.stringify(context)}` };
 }

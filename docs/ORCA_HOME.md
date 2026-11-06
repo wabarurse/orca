@@ -34,6 +34,13 @@ Layout 3 keeps the public home small and separates original evidence from rebuil
     ...                        # tmux socket, locks, logs, scratch and recovery files
 ```
 
+Orca finds repository skills in `.agents/skills/<name>/SKILL.md` and
+`.claude/skills/<name>/SKILL.md`, from the working directory up to the Git root.
+For duplicate names, the nearest directory wins, with `.agents/skills` before
+`.claude/skills` within a directory and personal skills last. The agent sees a
+short preview and can use `skill({search: "workflow keywords"})` for up to eight
+matches or `skill({name: "exact-name"})` to load any indexed skill on demand.
+
 Entries appear as features use them. SQLite may place `memory.sqlite-wal` and `memory.sqlite-shm` beside the database. Transcript locks/heads and other transaction companions stay beside their transcript. These are part of the corresponding storage contract, not extra top-level categories.
 
 ## What must be retained
