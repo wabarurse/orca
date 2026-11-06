@@ -10,12 +10,24 @@ import { rolePrompt } from "../prompt/shared";
 import { message } from "../tools/message";
 import { ask } from "../tools/ask";
 import { runtime } from "../tools/runtime";
+import { skill } from "../tools/skill";
 const root = mkdtempSync(join(tmpdir(), "orca-definitions-"));
 const old = process.env.ORCA_HOME;
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(root, "case-")); process.env.ORCA_HOME = home; });
 afterAll(() => { if (old === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = old; rmSync(root, { recursive: true, force: true }); });
 const tool: Tool = { spec: { name: "fixture", description: "Trusted authorization contract.", input_schema: { type: "object", properties: { action: { type: "string", enum: ["read"], description: "Read only." } }, required: ["action"] } }, run: async () => "trusted implementation" };
+test("edited legacy skill definitions gain search while retaining annotations", () => {
+  editableTool(skill);
+  const file = join(home, "tools/skill.json");
+  const edited = JSON.parse(readFileSync(file, "utf8"));
+  delete edited.input_schema.properties.search;
+  edited.description = "Local skill guidance";
+  writeFileSync(file, JSON.stringify(edited));
+  const loaded = editableTool(skill);
+  expect(loaded.spec.description).toContain("Local skill guidance");
+  expect(loaded.spec.input_schema.properties).toHaveProperty("search");
+});
 test("edited legacy runtime definitions gain peer discovery while retaining annotations", () => {
   editableTool(runtime);
   const file = join(home, "tools/runtime.json"), edited = JSON.parse(readFileSync(file, "utf8"));

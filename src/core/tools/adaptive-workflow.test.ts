@@ -7,7 +7,7 @@ import { makeSpawn } from "./spawn";
 import { allTasks } from "../data/tasks";
 import { open } from "../data/transcripts";
 import { consume, observe } from "../data/inbox";
-import { clearWorkingContext, repositoryInstructions, discoverSkills, updateContext, workingContext, remember, facts } from "../data/knowledge";
+import { agentContext, clearWorkingContext, repositoryInstructions, discoverSkills, updateContext, workingContext, remember, facts } from "../data/knowledge";
 import { createOrchestrator } from "../agent-loop/orc";
 import { createAgent } from "../agent-loop/loop";
 import { fakeProvider, text, toolUse } from "../../test/fake-provider";
@@ -17,6 +17,7 @@ import type { Runner, StartOptions } from "../tmux/runner";
 import { editableTool } from "../definitions";
 import { bash } from "./bash/bash";
 import { message } from "./message";
+import { skill } from "./skill";
 import { saveImage } from "../data/images";
 import { png } from "../../test/image-fixture";
 import { execution } from "../data/projects/lifecycle";
@@ -169,6 +170,43 @@ test("repository instructions apply by scope and skills remain lazy", async () =
   expect(await repositoryInstructions(cwd)).not.toContain("Nested rules");
   expect(JSON.stringify(await discoverSkills(cwd))).toContain("Inspect the demo");
   expect(JSON.stringify(await discoverSkills(cwd))).not.toContain("Large skill instructions");
+});
+
+test("nested worktree sessions can search and load skills beyond the preview", async () => {
+  const nested = join(cwd, "packages", "frontend");
+  await mkdir(nested, { recursive: true });
+  await writeFile(join(cwd, ".git"), "gitdir: /fixture/worktrees/frontend\n");
+  async function addSkill(dir: string, name: string, description: string, body = "Private workflow details") {
+    const folder = join(dir, name);
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "SKILL.md"), `---\ndescription: ${description}\n---\n${body}`);
+  }
+  for (let n = 0; n < 36; n++) {
+    await addSkill(join(cwd, ".agents/skills"), `a-${n}`, "Run routine voice checks");
+  }
+  await addSkill(join(cwd, ".claude/skills"), "voice-evals", "Validate call quality");
+  await addSkill(join(cwd, ".claude/skills"), "migrations", "Plan schema rollout");
+  await addSkill(join(nested, ".agents/skills"), "migrations", "Plan frontend schema rollout", "Nested instructions");
+  await addSkill(join(home, ".agents/skills"), "outside", "Do not index outside the repo");
+  await addSkill(join(paths.root, "skills"), "personal", "Use personal shortcuts");
+
+  const nestedCtx = { ...ctx, cwd: nested };
+  const preview = JSON.parse(await skill.run({}, nestedCtx));
+  expect(preview.total).toBe(39);
+  expect(preview.skills).toHaveLength(8);
+  expect(preview.skills.some((entry: { name: string }) => entry.name === "voice-evals")).toBe(false);
+  const results = JSON.parse(await skill.run({ search: "voice evals" }, nestedCtx));
+  expect(results.matches).toBe(37);
+  expect(results.skills).toHaveLength(8);
+  expect(results.skills[0].name).toBe("voice-evals");
+  expect(JSON.parse(await skill.run({ search: "schema rollout" }, nestedCtx)).skills[0].name).toBe("migrations");
+  expect(await skill.run({ name: "voice-evals" }, nestedCtx)).toContain("Private workflow details");
+  expect(await skill.run({ name: "migrations" }, nestedCtx)).toContain("Nested instructions");
+  expect(await skill.run({ name: "personal" }, nestedCtx)).toContain("Use personal shortcuts");
+  await expect(skill.run({ name: "outside" }, nestedCtx)).rejects.toThrow("unknown skill");
+  const context = (await agentContext(ctx.project, nested, "voice evals")).skills;
+  expect(context).toContain("Preview (8 of 39)");
+  expect(context).not.toContain("Private workflow details");
 });
 
 test("clear resets the working goal and corrections while preserving explicit personal knowledge", async () => {

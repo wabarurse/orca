@@ -5,7 +5,7 @@ import { definition } from "./files";
 // Input structure and validation remain trusted. Annotation edits are effective
 // provider schema edits, not executable extensions or new input capabilities.
 function annotations(base: unknown, edited: unknown, path: string): unknown {
-  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary", "ask.properties.action", "ask.properties.ids", "ask.properties.reason"];
+  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary", "ask.properties.action", "ask.properties.ids", "ask.properties.reason", "skill.properties.search"];
   if (edited === undefined && added.includes(path)) return base;
   if (path === "spawn.required" && JSON.stringify(edited) === '["prompt","branch","taskId"]') return base;
   if (path === "ask.required" && JSON.stringify(edited) === '["questions"]') return base; // list/close take no questions
