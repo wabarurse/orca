@@ -11,12 +11,36 @@ import { message } from "../tools/message";
 import { ask } from "../tools/ask";
 import { runtime } from "../tools/runtime";
 import { skill } from "../tools/skill";
+import { processTool } from "../tools/process";
+import { read } from "../tools/files";
 const root = mkdtempSync(join(tmpdir(), "orca-definitions-"));
 const old = process.env.ORCA_HOME;
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(root, "case-")); process.env.ORCA_HOME = home; });
 afterAll(() => { if (old === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = old; rmSync(root, { recursive: true, force: true }); });
 const tool: Tool = { spec: { name: "fixture", description: "Trusted authorization contract.", input_schema: { type: "object", properties: { action: { type: "string", enum: ["read"], description: "Read only." } }, required: ["action"] } }, run: async () => "trusted implementation" };
+test("edited legacy read and process definitions gain batching and PR watches", () => {
+  editableTool(read);
+  const readFile = join(home, "tools/read.json");
+  const oldRead = JSON.parse(readFileSync(readFile, "utf8"));
+  oldRead.input_schema.required = ["path"];
+  delete oldRead.input_schema.properties.files;
+  oldRead.description = "Prefer exact file ranges.";
+  writeFileSync(readFile, JSON.stringify(oldRead));
+  const loadedRead = editableTool(read);
+  expect(loadedRead.spec.description).toContain("Prefer exact file ranges.");
+  expect(loadedRead.spec.input_schema.required).toBeUndefined();
+  expect(loadedRead.spec.input_schema.properties).toHaveProperty("files");
+
+  editableTool(processTool);
+  const processFile = join(home, "tools/process.json");
+  const oldProcess = JSON.parse(readFileSync(processFile, "utf8"));
+  oldProcess.input_schema.properties.action.enum.pop();
+  delete oldProcess.input_schema.properties.number;
+  delete oldProcess.input_schema.properties.head;
+  writeFileSync(processFile, JSON.stringify(oldProcess));
+  expect(editableTool(processTool).spec.input_schema).toEqual(processTool.spec.input_schema);
+});
 test("edited legacy skill definitions gain search while retaining annotations", () => {
   editableTool(skill);
   const file = join(home, "tools/skill.json");

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { assertLayout } from "../config";
-import { superviseProcess } from "../core/data/processes";
+import { readProcess, superviseProcess, watchPRChecks } from "../core/data/processes";
 // orca / orca start [project] [directory]   open the TUI: one page per orchestrator (binds the original checkout;
 //                                         run inside a git repo to get an orchestrator for it)
 // orca msg <project> <text>        drop a message in the orchestrator's inbox
@@ -10,6 +10,7 @@ import { superviseProcess } from "../core/data/processes";
 // orca agent --project p --role r [--branch b] [--run id]   internal: what spawn (and the TUI, for the orchestrator daemon) runs
 // orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
+import { ghTaskPR } from "../core/data/tasks";
 import { pullHarness } from "../core/install";
 import pkg from "../../package.json";
 import { runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
@@ -20,7 +21,7 @@ import { execution } from "../core/data/projects/lifecycle";
 import { existsSync } from "node:fs";
 import { paths, BUILD_ID } from "../config";
 import { daemonPid, reloadRunningDaemons, requireCurrentDaemon } from "../core/agent-loop/orc";
-import { sessionId } from "../core/tmux";
+import { cliCommand, sessionId } from "../core/tmux";
 import { ensureProject } from "../core/agent-loop/orc";
 import { createClientOrchestrator, daemonKeeper, ensureDaemon, stopDaemon } from "../core/agent-loop/orc";
 import type { Role } from "../protocol";
@@ -28,7 +29,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
+if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -70,10 +71,19 @@ switch (cmd) {
     console.log(`startup will restore ${selected.length} conversation(s): ${selected.join(", ")}; other history is preserved`);
     break;
   }
+  case "watch-pr-checks": {
+    const project = flag("project") ?? usage("missing process project");
+    const id = flag("process") ?? usage("missing process identity");
+    const record = await readProcess(project, id);
+    if (!record.prChecks || record.supervisorPid !== process.ppid) usage("PR watch requires its process supervisor");
+    const watch = record.prChecks;
+    process.exitCode = await watchPRChecks(watch, () => ghTaskPR(project, watch, { attached: true }));
+    break;
+  }
   case "process-supervisor": {
     const project = flag("project") ?? usage("missing process project");
     const id = flag("process") ?? usage("missing process identity");
-    await superviseProcess(project, id);
+    await superviseProcess(project, id, cliCommand());
     break;
   }
   case undefined:
