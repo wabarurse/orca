@@ -11,7 +11,7 @@ let inputSequence = 0;
 /** Codex's unified execution inspired yielding a handle and reading output later.
  * Orca additionally owns a durable event outbox and a separate supervisor process.
  * https://github.com/openai/codex/tree/main/codex-rs/core/src/unified_exec */
-export async function superviseProcess(project: string, id: string): Promise<void> {
+export async function superviseProcess(project: string, id: string, executable: string[]): Promise<void> {
   const dir = processDirectory(project, id);
   await withStorageLock(join(dir, "supervisor.lock"), async () => {
     const p = await readProcess(project, id);
@@ -27,7 +27,8 @@ export async function superviseProcess(project: string, id: string): Promise<voi
     try {
       const cancelled = execution.stale(project, admitted) || await Bun.file(join(dir, "stop")).exists();
       if (cancelled) { p.state = "cancelled"; await addProcessEvent(p, p.state); return; }
-      const argv = await shellCommand(`exec 2>&1\n${p.command}`, p.cwd, false);
+      const argv = p.prChecks ? [...executable, "watch-pr-checks", "--project", project, "--process", id]
+        : await shellCommand(`exec 2>&1\n${p.command}`, p.cwd, false);
       if (execution.stale(project, admitted)) { p.state = "cancelled"; await addProcessEvent(p, p.state); return; }
       proc = Bun.spawn(argv, { cwd: p.cwd, detached: true, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
       p.pid = proc.pid; p.state = "running";

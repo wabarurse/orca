@@ -10,6 +10,7 @@ import { put } from "../inbox";
 export interface ProcessRecord {
   incarnation?: string;
   id: string; project: string; owner: string; role: Role; branch?: string; run?: string; call?: string;
+  prChecks?: { repository: string; number: number; head: string };
   cwd: string; command: string; createdAt: string; updatedAt: string;
   state: "starting" | "running" | "exited" | "failed" | "cancelled" | "timed_out" | "unknown";
   supervisorPid?: number; pid?: number; exitCode?: number; reason?: string; readyUrl?: string; readyAt?: string;
@@ -90,9 +91,16 @@ export async function processOutput(project: string, id: string, cursor = 0, byt
 export async function addProcessEvent(p: ProcessRecord, state: string): Promise<void> {
   const at = new Date().toISOString();
   p.updatedAt = at;
+  const terminal = !liveProcess(p);
+  // A short tail often contains the test summary or exact-head check result.
+  // Keep the complete stream in its existing artifact.
+  const path = join(processDirectory(p.project, p.id), "output.txt");
+  const size = terminal ? Bun.file(path).size : 0;
+  const tail = size > 0 ? await processOutput(p.project, p.id, Math.max(0, size - 1500), 1500)
+    .then(out => out.content, () => undefined) : undefined;
   p.events.push({ event: { id: crypto.randomUUID(), processId: p.id, sequence: p.events.length + 1, state, at },
     text: JSON.stringify({ process: p.id, state, exitCode: p.exitCode, reason: p.reason, readyUrl: p.readyUrl,
-      output: join(processDirectory(p.project, p.id), "output.txt"), owner: p.owner }) });
+      output: path, owner: p.owner, prChecks: p.prChecks, tail }) });
   if (["exited", "failed", "cancelled", "timed_out"].includes(state)) await usageEvent({ kind: "process", project: p.project,
     agent: p.owner, run: p.run, process: p.id, state, durationMs: Math.max(0, Date.parse(at) - Date.parse(p.createdAt)) });
   await saveProcess(p); // The outbox is durable before any inbox publication.

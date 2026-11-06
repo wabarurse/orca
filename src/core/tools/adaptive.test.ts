@@ -2,11 +2,12 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { processTool } from "./process";
 import { read, write, edit } from './files';
 import { launchProcess, readProcess, processOutput, listProcesses, liveProcess, controlProcess } from '../data/processes';
 import { consume, pending } from '../data/inbox';
 import { open } from '../data/transcripts';
-import { paths } from '../../config';
+import { assertLayout, paths } from '../../config';
 import { cliCommand } from '../tmux';
 import { facts, remember, selectedKnowledge, recordCorrection, workingContext } from '../data/knowledge';
 import { message } from './message';
@@ -18,6 +19,7 @@ let home: string, cwd: string, ctx: ToolContext, previous: string | undefined;
 beforeEach(async () => {
   previous = process.env.ORCA_HOME;
   home = await mkdtemp(join(tmpdir(), 'orca-adaptive-')); process.env.ORCA_HOME = home;
+  assertLayout(home);
   cwd = join(home, 'workspace'); await mkdir(cwd); await mkdir(paths.project('test'), { recursive: true });
   ctx = { project: 'test', role: 'worker', branch: 'work', cwd, run: crypto.randomUUID() };
 });
@@ -88,11 +90,69 @@ test('file tools retain path boundaries across assignment presets', async () => 
   await write.run({ path: 'review.txt', content: 'authorized by brief' }, { ...ctx, role: 'reviewer' });
   expect(await Bun.file(join(cwd, 'review.txt')).text()).toBe('authorized by brief');
 });
+test('batch reads share scoped instructions and return each range or error in order', async () => {
+  await mkdir(join(cwd, 'src'));
+  await mkdir(join(cwd, '.git'));
+  await writeFile(join(cwd, 'src/AGENTS.md'), 'Use the scoped rules.');
+  await writeFile(join(cwd, 'src/a.ts'), 'one\ntwo\n');
+  await writeFile(join(cwd, 'src/b.ts'), 'three\n');
+  const result = JSON.parse(await read.run({ files: [
+    { path: 'src/a.ts', lines: 1 }, { path: 'src/missing.ts' }, { path: 'src/b.ts', lines: 1 },
+  ] }, ctx) as string);
+  expect(result.instructions).toHaveLength(1);
+  expect(result.instructions[0]).toContain('Use the scoped rules.');
+  expect(result.files).toEqual([
+    expect.objectContaining({ content: '1: one', next_line: 2, revision: expect.any(String), instructions_index: 0 }),
+    expect.objectContaining({ path: 'src/missing.ts', error: expect.any(String) }),
+    expect.objectContaining({ content: '1: three', next_line: 2, revision: expect.any(String), instructions_index: 0 }),
+  ]);
+  await expect(read.run({ files: [{ path: 'src/a.ts' }], path: 'src/b.ts' }, ctx)).rejects.toThrow('either files');
+});
+
+test('PR checks share a live watch and publish a result for the exact head', async () => {
+  const repo = paths.repo(ctx.project);
+  await mkdir(repo);
+  const git = (...args: string[]) => Bun.spawnSync(['git', ...args], { cwd: repo }).exitCode;
+  expect(git('init', '-q')).toBe(0);
+  expect(git('remote', 'add', 'origin', 'https://github.com/o/r.git')).toBe(0);
+  const head = 'a'.repeat(40);
+  const fixture = { number: 3, url: 'https://github.com/o/r/pull/3', headRefName: 'feat', headRefOid: head, state: 'OPEN',
+    isCrossRepository: false, statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }] };
+  const bin = join(home, 'bin');
+  await mkdir(bin);
+  await writeFile(join(bin, 'gh'), `#!/bin/sh\nsleep 0.5\nprintf '%s\n' '${JSON.stringify(fixture)}'\n`, { mode: 0o700 });
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${bin}:${savedPath}`;
+  try {
+    const input = { action: 'watch_pr', number: 3, head };
+    const results = await Promise.all([
+      processTool.run(input, ctx),
+      processTool.run(input, { ...ctx, role: 'reviewer' }),
+    ]).then(values => values.map(value => JSON.parse(value)));
+    expect(results[0].process).toBe(results[1].process);
+    const reused = results.find(result => result.reused);
+    expect(reused?.owner).toMatch(/^(worker|reviewer)-work$/);
+    const final = await settled(results[0].process);
+    expect(final.exitCode).toBe(0);
+    expect(final.events).toHaveLength(1);
+    const event = JSON.parse(final.events[0]!.text);
+    expect(event.prChecks).toEqual({ repository: 'o/r', number: 3, head });
+    expect(JSON.parse(event.tail)).toMatchObject({ head, checks: 'passed' });
+    expect(await pending(ctx.project, final.owner)).toBe(true);
+
+    const changed = JSON.parse(await processTool.run({ ...input, head: 'b'.repeat(40) }, ctx));
+    const stale = await settled(changed.process);
+    expect(stale.exitCode).toBe(1);
+    expect(JSON.parse(JSON.parse(stale.events[0]!.text).tail)).toMatchObject({ checks: 'head_changed', observedHead: head });
+  } finally { process.env.PATH = savedPath; }
+});
+
 test('background command yields and delivers one durable completion consumed once', async () => {
   const p = record('sleep 0.1; printf finished');
   const result = await launchProcess(p, cliCommand(), 0);
   expect(['starting', 'running']).toContain(result.state);
   const final = await settled(p.id); expect(final.exitCode).toBe(0); expect(final.state).toBe('exited');
+  expect(JSON.parse(final.events[0]!.text).tail).toBe('finished');
   expect((await processOutput('test', p.id)).content).toBe('finished');
   const t = open(paths.transcript('test', p.owner)); let deliveries = 0;
   await consume('test', p.owner, t, async inbox => { deliveries += inbox.length; await t.append({ type: 'message', inbox, message: { role: 'user', content: 'process completed' } }); });

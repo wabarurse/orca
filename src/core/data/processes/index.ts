@@ -2,3 +2,4 @@ export { addProcessEvent, deliverProcessEvents, listProcesses, liveProcess, proc
 export { controlProcess, superviseProcess } from "./supervisor";
 export { recoverableProcesses } from "./store";
 export { launchProcess } from "./launch";
+export { watchPRChecks } from "./pr-checks";

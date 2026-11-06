@@ -14,18 +14,18 @@ export function killGroup(proc: { pid: number; kill(signal: "SIGKILL"): void }):
 }
 
 /** Run argv in cwd; null when it could not start, failed to read, or was killed after `timeoutMs`. */
-export async function run(argv: string[], opts: { cwd: string; timeoutMs: number; env?: Record<string, string | undefined>; signal?: AbortSignal }): Promise<ProcResult | null> {
+export async function run(argv: string[], opts: { cwd: string; timeoutMs: number; env?: Record<string, string | undefined>; signal?: AbortSignal; attached?: boolean }): Promise<ProcResult | null> {
   const inherited = processScope.getStore();
   if (inherited) opts = { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, inherited]) : inherited };
   opts.signal?.throwIfAborted();
   let proc: ReturnType<typeof Bun.spawn<"ignore", "pipe", "pipe">>;
   try {
-    proc = Bun.spawn(argv, { cwd: opts.cwd, env: opts.env ?? process.env, detached: true, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    proc = Bun.spawn(argv, { cwd: opts.cwd, env: opts.env ?? process.env, detached: !opts.attached, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   } catch {
     return null;
   }
   let timedOut = false;
-  const kill = () => killGroup(proc);
+  const kill = () => { if (opts.attached) proc.kill("SIGKILL"); else killGroup(proc); };
   process.once("exit", kill);
   opts.signal?.addEventListener("abort", kill, { once: true });
   const timer = setTimeout(() => { timedOut = true; kill(); }, opts.timeoutMs);

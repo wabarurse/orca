@@ -126,26 +126,57 @@ async function mutate(path: string, expected: unknown, transform: (old: string) 
   });
 }
 
+const readRange = { path: { type: "string" }, start_line: { type: "integer", minimum: 1 }, lines: { type: "integer", minimum: 1, maximum: 500 } };
+
+async function readText(path: string, input: Record<string, unknown>, ctx: ToolContext, cap = 12000) {
+  const data = await contents(path);
+  const start = input.start_line ?? 1, count = input.lines ?? 150;
+  if (!Number.isInteger(start) || Number(start) < 1 || !Number.isInteger(count) || Number(count) < 1 || Number(count) > 500) throw new Error("invalid line range");
+  const lines = data.toString("utf8").split("\n"), selected: string[] = [];
+  let bytes = 0, i = Number(start) - 1;
+  for (; i < Math.min(lines.length, Number(start) - 1 + Number(count)); i++) {
+    const line = `${i + 1}: ${lines[i]}`;
+    if (bytes + Buffer.byteLength(line) > cap) break;
+    selected.push(line); bytes += Buffer.byteLength(line) + 1;
+  }
+  if (!selected.length && i < lines.length) throw new Error("line exceeds read preview budget; use a single-file read or a bounded shell command");
+  return { path, instructions: await repositoryInstructions(ctx.cwd, dirname(path), true), revision: revision(data), total_lines: lines.length,
+    content: selected.join("\n"), next_line: i < lines.length ? i + 1 : null };
+}
+
 export const read: Tool<ToolResult> = {
   parallel: () => true,
-  spec: { name: "read", description: "Read a UTF-8 file in your workspace or saved evidence. Returns numbered lines, a revision for write/edit, and a continuation line. Output is bounded; do not assume the preview is the whole file. Images (png, jpeg, gif, webp; up to 4 MiB and 4096×4096) are returned as images you can see, with their size and an attachment_id; line options do not apply.",
-    input_schema: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer", minimum: 1 }, lines: { type: "integer", minimum: 1, maximum: 500 } }, required: ["path"] } },
+  spec: { name: "read", description: "Read UTF-8 files in your workspace or saved evidence. When you already know several files or ranges you need, send them together in files (up to four text ranges), or use path for a single file. Returns numbered lines, revisions for write/edit, and continuation lines. Output is bounded. For images (png, jpeg, gif, webp; up to 4 MiB and 4096×4096), use path alone to get an image and attachment_id.",
+    input_schema: { type: "object", properties: {
+      ...readRange,
+      files: { type: "array", minItems: 1, maxItems: 4, items: { type: "object", properties: readRange, required: ["path"] } },
+    } } },
   async run(input, ctx) {
-    const path = await filePath(input.path, ctx);
-    const image = sniffImage(await head(path));
-    if (image && await isImage(path)) return readImage(path, image, ctx);
-    const data = await contents(path);
-    const start = input.start_line ?? 1, count = input.lines ?? 150;
-    if (!Number.isInteger(start) || Number(start) < 1 || !Number.isInteger(count) || Number(count) < 1 || Number(count) > 500) throw new Error("invalid line range");
-    const lines = data.toString("utf8").split("\n"), selected: string[] = [];
-    let bytes = 0, i = Number(start) - 1;
-    for (; i < Math.min(lines.length, Number(start) - 1 + Number(count)); i++) {
-      const line = `${i + 1}: ${lines[i]}`;
-      if (bytes + Buffer.byteLength(line) > 12000) break;
-      selected.push(line); bytes += Buffer.byteLength(line) + 1;
+    if (input.files === undefined) {
+      const path = await filePath(input.path, ctx);
+      const image = sniffImage(await head(path));
+      if (image && await isImage(path)) return readImage(path, image, ctx);
+      return JSON.stringify(await readText(path, input, ctx));
     }
-    if (!selected.length && i < lines.length) throw new Error("line exceeds read preview budget; inspect it with a bounded command");
-    return JSON.stringify({ path, instructions: await repositoryInstructions(ctx.cwd, dirname(path), true), revision: revision(data), total_lines: lines.length, content: selected.join("\n"), next_line: i < lines.length ? i + 1 : null });
+    const { files } = input;
+    if (input.path !== undefined || input.start_line !== undefined || input.lines !== undefined) throw new Error("use either files or a single path with its range");
+    if (!Array.isArray(files) || files.length < 1 || files.length > 4) throw new Error("files requires one to four text ranges");
+    const instructions: string[] = [];
+    const results = [];
+    for (const range of files) {
+      ctx.signal?.throwIfAborted();
+      if (!range || typeof range !== "object" || Array.isArray(range)) throw new Error("each file range must be an object");
+      try {
+        const path = await filePath(range.path, ctx);
+        const { instructions: rules, ...result } = await readText(path, range, ctx, Math.floor(12000 / files.length));
+        if (rules && !instructions.includes(rules)) instructions.push(rules);
+        results.push({ ...result, instructions_index: rules ? instructions.indexOf(rules) : null });
+      } catch (error) {
+        results.push({ path: range.path, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (instructions.join("").length > 16000) throw new Error("combined repository instructions exceed the batch budget; read these files individually");
+    return JSON.stringify({ files: results, instructions });
   },
 };
 

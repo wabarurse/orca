@@ -52,11 +52,11 @@ export function parseTaskPR(repository: string, number: number, raw: unknown): P
   };
 }
 /** Null never means merged, green, or absent CI. */
-export async function ghTaskPR(project: string, pr: Pick<TaskPR, "repository" | "number">, opts: { bin?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<PRObservation | null> {
+export async function ghTaskPR(project: string, pr: Pick<TaskPR, "repository" | "number">, opts: { bin?: string; timeoutMs?: number; signal?: AbortSignal; attached?: boolean } = {}): Promise<PRObservation | null> {
   const bin = opts.bin ?? Bun.which("gh", { PATH: process.env.PATH });
   if (!bin) return null;
   const result = await run([bin, "pr", "view", String(pr.number), "--repo", pr.repository, "--json", FIELDS], {
-    cwd: paths.repo(project), timeoutMs: opts.timeoutMs ?? 20_000, env: quietEnv(), signal: opts.signal,
+    cwd: paths.repo(project), timeoutMs: opts.timeoutMs ?? 20_000, env: quietEnv(), signal: opts.signal, attached: opts.attached,
   });
   if (!result || result.code !== 0) return null;
   try { return parseTaskPR(pr.repository, pr.number, JSON.parse(result.out)); }

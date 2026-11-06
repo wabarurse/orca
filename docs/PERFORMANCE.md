@@ -142,3 +142,19 @@ trials. On coding/inspection fixtures, cached-input share rose from 69.6% to
 fell, while mean latency increased about 4%; this establishes no speedup. The
 initial unsuccessful OpenAI body-key experiment, complete cohort rerun, naturally
 warm cache conditions and unrelated baseline test failures remain disclosed.
+
+
+## Waiting for validation
+
+Use background Bash for long local tests and evals. Its terminal event includes
+the exit status, a bounded output tail, and the artifact path. For hosted checks,
+`process({action: "watch_pr", number, head})` runs one supervised watch per live
+PR head within the conversation. Its owner receives completion and can report
+back to other agents. If the PR head changes, the watch ends with a stale-head
+result. A passing watch is an observation about checks on that commit. Review,
+merge readiness, and publication decisions still use their own evidence.
+
+Group independent discovery calls in one model turn. For known text paths, a
+single `read({files: [...]})` accepts up to four file ranges with individual
+revisions and continuation lines. Shared directory instructions appear once in
+the batch response. Use a process output cursor for incremental log reads.

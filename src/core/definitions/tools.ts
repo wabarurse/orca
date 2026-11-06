@@ -5,8 +5,9 @@ import { definition } from "./files";
 // Input structure and validation remain trusted. Annotation edits are effective
 // provider schema edits, not executable extensions or new input capabilities.
 function annotations(base: unknown, edited: unknown, path: string): unknown {
-  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary", "ask.properties.action", "ask.properties.ids", "ask.properties.reason", "skill.properties.search"];
+  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary", "ask.properties.action", "ask.properties.ids", "ask.properties.reason", "skill.properties.search", "read.properties.files", "process.properties.number", "process.properties.head"];
   if (edited === undefined && added.includes(path)) return base;
+  if (path === "process.properties.action.enum" && JSON.stringify(edited) === '["list","status","output","input","stop","forget"]') return base;
   if (path === "spawn.required" && JSON.stringify(edited) === '["prompt","branch","taskId"]') return base;
   if (path === "ask.required" && JSON.stringify(edited) === '["questions"]') return base; // list/close take no questions
   if (path === "runtime.properties.action.enum" && JSON.stringify(edited) === '["status","usage"]') return base;
@@ -38,6 +39,7 @@ function objectAnnotations(a: Record<string, unknown>, edited: unknown, path: st
   if (!edited || typeof edited !== "object" || Array.isArray(edited)) throw new Error(`invalid tool schema: ${path}`);
   const b = { ...edited as Record<string, unknown> }, schemaNode = !path.endsWith(".properties");
   // Old, user-annotated definitions may still contain removed shipped fields.
+  if (path === "read" && !Object.hasOwn(a, "required") && JSON.stringify(b.required) === '["path"]') delete b.required;
   if (path === "spawn.properties" && !Object.hasOwn(a, "baseCommit")) delete b.baseCommit;
   if ((path === "task.properties" || path === "memory.properties") && !Object.hasOwn(a, "commands")) delete b.commands;
   if (Object.keys(b).some(k => !Object.hasOwn(a, k) && !(k === "description" && schemaNode))) throw new Error(`unknown tool schema field: ${path}`);
