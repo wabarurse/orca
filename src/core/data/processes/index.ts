@@ -3,3 +3,6 @@ export { controlProcess, superviseProcess } from "./supervisor";
 export { recoverableProcesses } from "./store";
 export { launchProcess } from "./launch";
 export { watchPRChecks } from "./pr-checks";
+export { createVerification, closeVerification, reconcileVerifications } from "./verification";
+export { listVerifications, readVerification, verificationLock, verificationPaths } from "./verification-store";
+export { pruneSettledProcesses } from "./retention";

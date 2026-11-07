@@ -6,7 +6,7 @@ import { stopTaskRun } from "../data/tasks";
 import { paths } from "../../config";
 import { execution } from "../data/projects/lifecycle";
 import { readdir } from "node:fs/promises";
-import { controlProcess, processDirectory, liveProcess, readProcess } from "../data/processes";
+import { reconcileVerifications, controlProcess, processDirectory, liveProcess, readProcess } from "../data/processes";
 
 export class Cancelled extends Error {
   constructor() { super("cancelled by user"); }
@@ -63,6 +63,7 @@ export async function cancelSession(project: string, id: string, expectedRun?: s
         await controlProcess(project, id, "stop").catch(async error => { if (liveProcess(await readProcess(project, id))) throw error; });
       })));
     } catch (error) { failures.push(error); }
+    try { await reconcileVerifications(project); } catch (error) { failures.push(error); }
   }
   if (!run) {
     if (failures.length) throw new AggregateError(failures, "conversation stop persisted, but some cancellation operations failed");

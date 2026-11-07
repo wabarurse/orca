@@ -1,4 +1,5 @@
 import { appendFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { readVerification, verificationPaths } from "./verification-store";
 import { execution } from "../projects/lifecycle";
 import { join } from "node:path";
 import { killGroup } from "../../proc";
@@ -21,14 +22,26 @@ export async function superviseProcess(project: string, id: string, executable: 
     await saveProcess(p);
     let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined, monitor: ReturnType<typeof setInterval> | undefined;
+    let recordingStop: ReturnType<typeof setTimeout> | undefined;
     let stopping: ProcessRecord["state"] | undefined, busy = false, bytes = 0;
-    const stop = () => { stopping ??= "cancelled"; if (proc) killGroup(proc); };
+    const stop = () => {
+      if (stopping) return;
+      stopping = "cancelled";
+      if (!proc) return;
+      if (p.recording) {
+        try { process.kill(-proc.pid, "SIGINT"); } catch { /* Already stopped. */ }
+        recordingStop = setTimeout(() => { if (proc) killGroup(proc); }, 2000);
+      } else killGroup(proc);
+    };
     const onExit = () => { if (proc) killGroup(proc); };
     try {
       const cancelled = execution.stale(project, admitted) || await Bun.file(join(dir, "stop")).exists();
       if (cancelled) { p.state = "cancelled"; await addProcessEvent(p, p.state); return; }
+      const session = p.verification ? await readVerification(project, p.verification) : undefined;
+      if (session && (session.state !== "active" || execution.stale(project, session.epoch))) throw new Error("verification has ended");
+      const writable = session ? [verificationPaths(project, session.id).evidence, ...(session.simulator ? [verificationPaths(project, session.id).devices] : [])] : [];
       const argv = p.prChecks ? [...executable, "watch-pr-checks", "--project", project, "--process", id]
-        : await shellCommand(`exec 2>&1\n${p.command}`, p.cwd, false);
+        : await shellCommand(`exec 2>&1\n${p.command}`, p.cwd, false, writable, session ? join(p.cwd, ".orca-tmp") : undefined);
       if (execution.stale(project, admitted)) { p.state = "cancelled"; await addProcessEvent(p, p.state); return; }
       proc = Bun.spawn(argv, { cwd: p.cwd, detached: true, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
       p.pid = proc.pid; p.state = "running";
@@ -69,10 +82,13 @@ export async function superviseProcess(project: string, id: string, executable: 
       clearInterval(monitor);
       while (busy) await Bun.sleep(10);
       p.exitCode = code; p.state = stopping ?? (code === 0 ? "exited" : "failed");
+      if (p.artifact && p.state === "exited" && (!await Bun.file(p.artifact).exists() || Bun.file(p.artifact).size === 0)) {
+        p.state = "failed"; p.reason = "capture produced no evidence";
+      }
     } catch (error) {
       p.state = "failed"; p.reason = error instanceof Error ? error.message : String(error);
     } finally {
-      clearTimeout(timer); clearInterval(monitor);
+      clearTimeout(timer); clearTimeout(recordingStop); clearInterval(monitor);
       process.off("exit", onExit); process.off("SIGTERM", stop); process.off("SIGINT", stop);
       if (proc) { killGroup(proc); await proc.exited; }
       while (busy) await Bun.sleep(10);

@@ -4,6 +4,7 @@ import { editableTool } from "../core/definitions";
 // the loop in core/agent-loop/loop/agent.ts. The orchestrator role hands over to
 // the daemon entry (./daemon).
 
+import { reconcileVerifications } from "../core/data/processes";
 import { loadConfig, paths } from "../config";
 import { createAgent, type AgentOptions } from "../core/agent-loop/loop";
 import { execution } from "../core/data/projects/lifecycle";
@@ -64,7 +65,7 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
     }
     throw cancellation.signal.aborted ? cancellation.signal.reason : error;
   }
-  finally { unwatch(); }
+  finally { unwatch(); await reconcileVerifications(opts.project, sessionId(opts.role, opts.branch), opts.run).catch(error => console.warn(`verification cleanup: ${error}`)); }
 }
 
 async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker: Tracker | undefined, epoch: string): Promise<void> {
