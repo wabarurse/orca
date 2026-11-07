@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertLayout, paths } from "../../config";
-import { verify } from "./verify";
+import { sandbox } from "./sandbox";
 import { listVerifications, closeVerification, readProcess, liveProcess, verificationPaths, reconcileVerifications } from "../data/processes";
 import { saveVerification } from "../data/processes/verification-store";
 import { execution } from "../data/projects/lifecycle";
@@ -43,7 +43,7 @@ async function settled(id: string) {
   }
   throw new Error("process did not settle");
 }
-const call = async (input: Record<string, unknown>) => JSON.parse(await verify.run(input, ctx));
+const call = async (input: Record<string, unknown>) => JSON.parse(await sandbox.run(input, ctx));
 
 test("snapshot includes current edits and untracked files; checks and capture keep evidence after cleanup", async () => {
   await writeFile(join(cwd, "app.txt"), "current edit\n");
@@ -69,12 +69,12 @@ test("closing stops owned local apps and refuses launching more commands", async
   await Bun.sleep(250);
   expect((await call({ action: "close", id: v.id })).state).toBe("closed");
   expect(liveProcess(await readProcess("p", p.process))).toBe(false);
-  await expect(verify.run({ action: "run", id: v.id, command: "touch should-not-run" }, ctx)).rejects.toThrow("no longer active");
+  await expect(sandbox.run({ action: "run", id: v.id, command: "touch should-not-run" }, ctx)).rejects.toThrow("no longer active");
 });
 
 test("conversation stop cleans an owned session and another run cannot control it", async () => {
   const v = await call({ action: "create", backend: "local" });
-  await expect(verify.run({ action: "close", id: v.id }, { ...ctx, run: "other" })).rejects.toThrow("another agent run");
+  await expect(sandbox.run({ action: "close", id: v.id }, { ...ctx, run: "other" })).rejects.toThrow("another agent run");
   await execution.stop("p");
   await reconcileVerifications("p");
   const data = await listVerifications("p");
@@ -130,7 +130,7 @@ test("container lifecycle uses labels and removes only the container matched by 
 
 test("partial container provisioning failure retains retryable cleanup state", async () => {
   await fakeBinary("docker", "exit 1");
-  await expect(verify.run({ action: "create", backend: "docker", image: "fixture:local" }, ctx)).rejects.toThrow("failed");
+  await expect(sandbox.run({ action: "create", backend: "docker", image: "fixture:local" }, ctx)).rejects.toThrow("failed");
   const [v] = await listVerifications("p");
   expect(v?.state).toBe("cleanup_failed");
   expect(v?.errors?.join(" ")).toContain("Docker ownership");

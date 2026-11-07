@@ -1,6 +1,6 @@
 # Disposable verification sessions
 
-The `verify` tool owns a temporary environment, supervised commands, and an
+The `sandbox` tool owns a temporary environment, supervised commands, and an
 artifact directory. Use the same session for reproduction, implementation
 checks, UI interaction, screenshots, recordings, and API evidence. Skills and
 installed platform tools supply the workflow.
