@@ -635,7 +635,7 @@ export class App {
   /** "⠋ thinking… 3s" with the word shimmering; the surrounding dim resumes after it. */
   private turnStatus(page: Page): string {
     const now = this.clock.now();
-    const word = shimmer(page.streamed ? "working…" : "thinking…", now);
+    const word = shimmer(page.streamed ? "working…" : page.sent.some(item => !item.retry) ? "queued…" : "thinking…", now);
     return `${this.spinner()} ${word}\x1b[2m ${Math.floor((now - page.busySince) / 1000)}s`;
   }
 
@@ -695,7 +695,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
         this.draw();
         for (const p of this.pages) if (p.project === project && p.view?.live && !agents.some(a => a.name === p.view!.name && a.status === "unknown") && !live.has(p.view.name)) { p.view.live = false; this.draw(); }
       })
-      .catch(() => { for (const p of this.pages) if (p.project === project) Object.assign(p, { agentCount: null, verifiedAgentCount: undefined, unverifiedAgentCount: undefined }); this.draw(); })
+      .catch(() => { for (const p of this.pages) if (p.project === project) Object.assign(p, { agentCount: null, verifiedAgentCount: undefined, unverifiedAgentCount: undefined, waitingAgentCount: undefined }); this.draw(); })
       .finally(() => this.liveChecks.delete(project));
     this.liveChecks.set(project, check);
   }

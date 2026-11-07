@@ -14,6 +14,10 @@ test("confirmed running agents remain visible alongside unverified history witho
   expect(agentCountText(agentCounts([{ ...mixed[0]!, inventoryComplete: false }]))).toBe("1 confirmed agent running (inventory incomplete)");
   expect(agentCountText({ agentCount: null })).toBe("agent status unavailable");
 });
+test("waiting on commands is reported only for verified live agents", () => {
+  const rows = mixed.map(row => ({ ...row, waitingForCommands: true }));
+  expect(agentCountText(agentCounts(rows))).toBe("1 confirmed agent running (1 unverified) · 1 waiting on commands");
+});
 test("TUI refresh shows confirmed counts, clears stale confirmations on failure, and recovers", async () => {
   let fail = false, rows = mixed;
   const fake = fakeOrchestrators(), app = new App({ term: fakeTerm(160), openOrchestrator: fake.openOrchestrator,

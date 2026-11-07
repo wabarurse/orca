@@ -52,6 +52,7 @@ export interface Page {
   settings?: RequestSettings;
   agentCount?: number | null;
   verifiedAgentCount?: number;
+  waitingAgentCount?: number;
   unverifiedAgentCount?: number | null;
 }
 

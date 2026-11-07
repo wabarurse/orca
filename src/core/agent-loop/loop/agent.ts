@@ -25,6 +25,7 @@ import { recordCorrection, recordRuntime } from "../../data/knowledge";
 import { execution } from "../../data/projects/lifecycle";
 import { Cancelled } from "../../tmux";
 import { appendContext, type ContextValue } from "./context";
+import { responseTiming, type ResponseTiming } from "./response-timing";
 
 function staleExecution(deps: AgentDeps): boolean {
   return deps.ctx.executionEpoch !== undefined && execution.stale(deps.ctx.project, deps.ctx.executionEpoch);
@@ -142,7 +143,7 @@ const resultBody = (result: ToolResultBlockParam): string => typeof result.conte
   : (result.content ?? []).map(block => block.type === "text" ? block.text : "").filter(Boolean).join("\n");
 
 /** Preserve result order; optionally overlap independent calls between barriers. */
-async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: string, plain?: boolean) => void): Promise<ToolResultBlockParam[]> {
+async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: string, plain?: boolean) => void, timing?: ResponseTiming): Promise<ToolResultBlockParam[]> {
   const show = echo(deps, write);
   // Run-state writes still have one writer even when tool execution overlaps.
   let tracking = Promise.resolve();
@@ -156,6 +157,7 @@ async function runTools(deps: AgentDeps, content: ContentBlock[], write: (t: str
   return scheduleTools(calls, b => deps.tools[b.name]?.parallel?.(b.input as Record<string, unknown>) ?? false, async block => {
     const call: ToolCall = { id: block.id, name: block.name, input: block.input };
     show.start(call);
+    timing?.record("tool");
     const result = await runTracked(deps, block, track);
     show.end(call, { id: block.id, ok: !result.is_error, text: resultBody(result) });
     return result;
@@ -182,7 +184,7 @@ async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Pro
 }
 
 /** One model request, streamed and appended to the transcript. */
-async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void) {
+async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void, timing?: ResponseTiming) {
   assertExecution(deps);
   await deps.tracker?.model();
   const requestId = crypto.randomUUID();
@@ -214,10 +216,11 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void)
       maxTokens: outputCap(deps),
       messages: delivered,
       tools: Object.values(deps.tools).map((t) => t.spec),
-      onText: (t: string) => write(t),
+      onText: (t: string) => { write(t); if (t.trim()) timing?.record("text"); },
       onNotice: (t: string) => write(`${t}\n`, true),
     };
     await observe("provider-wait");
+    timing?.requested();
     const message = await deps.provider.complete(request);
     deps.signal?.throwIfAborted();
     if (message.content.some((b) => b.type === "text")) write("\n");
@@ -277,8 +280,8 @@ function boundaries(deps: AgentDeps) {
     return current;
   };
 }
-async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<boolean> {
-  const results = await runTools(deps, content, deps.write!);
+async function toolBatch(deps: AgentDeps, content: ContentBlock[], timing?: ResponseTiming): Promise<boolean> {
+  const results = await runTools(deps, content, deps.write!, timing);
   if (!deps.signal?.aborted && !staleExecution(deps)) {
     try {
       const receivedInput = await readInbox(deps, results);
@@ -296,7 +299,7 @@ async function toolBatch(deps: AgentDeps, content: ContentBlock[]): Promise<bool
   await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
   return false;
 }
-async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>): Promise<void> {
+async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>, timing?: ResponseTiming): Promise<void> {
   deps.signal?.throwIfAborted();
   const consumed = await readInbox(deps);
   if (deps.requireInbox && !consumed) return;
@@ -305,9 +308,9 @@ async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>)
   for (;;) {
     const current = await boundary(deps.compactRequested?.() ?? false);
     deps.signal?.throwIfAborted();
-    const message = await ask(current, deps.write!);
+    const message = await ask(current, deps.write!, timing);
     if (message.stop === "tool_use") {
-      refusedTaskBatches = await toolBatch(current, message.content) ? refusedTaskBatches + 1 : 0;
+      refusedTaskBatches = await toolBatch(current, message.content, timing) ? refusedTaskBatches + 1 : 0;
       if (refusedTaskBatches >= 3) {
         throw new Error("task creation stopped after three batches of validation errors. Existing tasks were kept. Check the task list before retrying with corrected fields");
       }
@@ -328,5 +331,14 @@ async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>)
 export function createAgent(input: AgentDeps) {
   const deps = { ...input, compaction: input.compaction ?? {}, write: input.write ?? ((t: string) => { process.stdout.write(t); }) };
   const boundary = boundaries(deps);
-  return { run: () => runLoop(deps, boundary), compact: async () => { await boundary(true); }, maintain: async () => { await boundary(false, true); } };
+  const run = async () => {
+    if (deps.ctx.role !== "orchestrator") return runLoop(deps, boundary);
+    const timing = responseTiming(deps.ctx.project);
+    const current = { ...deps, onInbox(messages: Message[]) { timing.consumed(messages); deps.onInbox?.(messages); } };
+    let outcome: "settled" | "cancelled" | "failed" = "settled";
+    try { await runLoop(current, boundary, timing); }
+    catch (error) { outcome = deps.signal?.aborted ? "cancelled" : "failed"; throw error; }
+    finally { await timing.finish(outcome); }
+  };
+  return { run, compact: async () => { await boundary(true); }, maintain: async () => { await boundary(false, true); } };
 }

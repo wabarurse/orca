@@ -158,3 +158,12 @@ Group independent discovery calls in one model turn. For known text paths, a
 single `read({files: [...]})` accepts up to four file ranges with individual
 revisions and continuation lines. Shared directory instructions appear once in
 the batch response. Use a process output cursor for incremental log reads.
+
+The existing `.runtime/usage.jsonl` records build IDs and tool-call counts on
+model requests. A `response-latency` row for a consumed human input batch
+records time from the oldest inbox enqueue to consumption, consumption to the
+first model request, and model request to first emitted text or tool start.
+Batches that end without a text or tool event record their outcome separately.
+These are daemon measurements. They exclude time before durable inbox enqueue
+and the client's polling/render delay. Use the build ID to compare similar
+tasks before and after batching and event-driven validation.
