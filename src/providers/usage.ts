@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../config";
+import { BUILD_ID, paths } from "../config";
 import type { CompleteRequest, Provider } from "./provider";
 import { ModelRequestError } from "./bounded-request";
 
@@ -50,11 +50,12 @@ export function metered(provider: Provider): Provider {
           const result = await provider.complete(request);
           await usageEvent({ kind: "model", id, ...identity, model: request.model, ...trace,
             durationMs: Math.round(performance.now() - started), usage: result.usage, stop: result.stop,
+            build: BUILD_ID, toolCalls: result.content.filter(block => block.type === "tool_use").length,
             contextTokens: result.inputTokens, ok: true });
           return result;
         } catch (error) {
           await usageEvent({ kind: "model", id, ...identity, model: request.model, ...trace,
-            durationMs: Math.round(performance.now() - started), ok: false, ...failure(error), cancelled: request.signal?.aborted === true });
+            durationMs: Math.round(performance.now() - started), build: BUILD_ID, ok: false, ...failure(error), cancelled: request.signal?.aborted === true });
           throw attributed(error);
         } finally { await Promise.all(scope.getStore()!.pending); }
       });

@@ -571,11 +571,14 @@ describe("tui app", () => {
     await until(() => !!app.page);
     expect(started).toBe(0); // idle: no timer
     term.type("go\r");
-    await until(() => started === 1 && term.screen().includes("⠋ thinking… 0s"));
-    expect(term.screen()).toContain("⠋ thinking… 0s");
+    await until(() => started === 1 && term.screen().includes("⠋ queued… 0s"));
+    expect(term.screen()).toContain("⠋ queued… 0s");
     expect(app.frame().status).not.toContain("thinking");
     now = 2_150;
     ticks[0]!();
+    await until(() => term.screen().includes("⠙ queued… 2s"));
+    app.page!.sent.length = 0; // The consumed input is no longer in the queued preview.
+    app.draw();
     await until(() => term.screen().includes("⠙ thinking… 2s"));
     write("partial text");
     await until(() => term.screen().includes("working… 2s"));

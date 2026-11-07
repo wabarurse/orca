@@ -67,5 +67,6 @@ export async function activeAgentRows(project: string): Promise<AgentInfo[]> {
   const snapshot = await agentActivity(project);
   if (!snapshot.agents.length && !snapshot.verificationComplete) throw new Error("agent activity could not be verified");
   return snapshot.agents.map(a => ({ name: a.agent, live: a.status === "running", status: a.status,
-    inventoryComplete: snapshot.inventoryComplete, queuedMessages: a.queuedMessages }));
+    inventoryComplete: snapshot.inventoryComplete, queuedMessages: a.queuedMessages,
+    waitingForCommands: a.status === "running" && a.record?.step === "waiting for background commands" }));
 }

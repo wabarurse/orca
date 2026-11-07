@@ -20,6 +20,7 @@ test("accounting includes foreground, summaries, tools, search and retries witho
   expect(totals).toMatchObject({ requests: 2, retries: 1, input: 100, cachedInput: 40, output: 10, usageMissing: 1, toolCalls: 1, peakContext: 100 });
   expect((await usageSummary("other")).requests).toBe(0);
   const log = await readFile(join(home, ".runtime/usage.jsonl"), "utf8");
+  expect(JSON.parse(log.trim().split("\n").find(line => line.includes('"kind":"model"'))!)).toMatchObject({ build: expect.any(String), toolCalls: 0 });
   expect(log).not.toContain("private"); expect(log).toContain("rolling-summary"); expect(log).toContain("web-search");
 });
 

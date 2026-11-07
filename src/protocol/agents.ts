@@ -9,6 +9,7 @@ export interface AgentInfo {
   inventoryComplete?: boolean;
   queuedMessages?: number | null;
   activity?: string;
+  waitingForCommands?: boolean;
   /** ISO start of the latest run. */
   startedAt?: string;
   /** ISO end of that run; absent while it is live. */

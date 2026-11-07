@@ -79,6 +79,22 @@ describe("agent loop", () => {
     expect(transcript.entries.at(-1)).toMatchObject({ type: "message", message: { role: "assistant" } });
   });
 
+  test("human input records time to the first tool without recording the payload", async () => {
+    const project = "response-timing";
+    mkdirSync(paths.project(project), { recursive: true });
+    const transcript = fakeTranscript();
+    await put(project, "orchestrator", { from: "user", text: "private timing fixture" });
+    const provider = fakeProvider([[toolUse("first-tool", "echo", { text: "x" })], [text("done")]]);
+    await createAgent({ provider, transcript, tools: { echo }, model: "m",
+      ctx: { ...ctx, project, role: "orchestrator" }, write: () => {} }).run();
+    const log = await Bun.file(join(home, ".runtime/usage.jsonl")).text();
+    const rows = log.trim().split("\n").map(line => JSON.parse(line))
+      .filter(row => row.kind === "response-latency" && row.project === project);
+    expect(rows).toEqual([expect.objectContaining({ outcome: "tool", inputCount: 1, queuedMs: expect.any(Number),
+      consumedToProviderMs: expect.any(Number), providerToOutcomeMs: expect.any(Number), build: expect.any(String) })]);
+    expect(log).not.toContain("private timing fixture");
+  });
+
   test("tool call round-trips its result", async () => {
     const transcript = fakeTranscript();
     await transcript.append(user("go"));
