@@ -1,0 +1,24 @@
+import { afterEach, expect, test } from "bun:test";
+import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { pruneBuildScratch } from "./storage";
+let root: string | undefined, previousPath: string | undefined;
+afterEach(async () => { if (previousPath !== undefined) process.env.PATH = previousPath; if (root) await rm(root, { recursive: true, force: true }); });
+test("build cleanup removes only old unused regular scratch files and previews without deleting", async () => {
+  root = await mkdtemp(join(tmpdir(), "orca-build-retention-"));
+  const bin = join(root, "bin"); await mkdir(bin);
+  await writeFile(join(bin, "lsof"), '#!/bin/sh\ncase "$*" in *bbbb*) echo 123; exit 0;; esac\nexit 1\n');
+  await chmod(join(bin, "lsof"), 0o700);
+  previousPath = process.env.PATH; process.env.PATH = `${bin}:${previousPath}`;
+  const old = join(root, ".aaaa-00000000.bun-build"), live = join(root, ".bbbb-00000000.bun-build");
+  const recent = join(root, ".cccc-00000000.bun-build"), linked = join(root, ".dddd-00000000.bun-build");
+  for (const file of [old, live, recent]) await writeFile(file, "fixture");
+  const ago = new Date(Date.now() - 2 * 86400_000);
+  await utimes(old, ago, ago); await utimes(live, ago, ago); await symlink(old, linked);
+  expect((await pruneBuildScratch(root)).map(v => v.path)).toEqual([old]);
+  expect(await Bun.file(old).exists()).toBe(true);
+  expect((await pruneBuildScratch(root, true)).map(v => v.path)).toEqual([old]);
+  expect(await Bun.file(old).exists()).toBe(false);
+  expect(await Bun.file(live).exists()).toBe(true); expect(await Bun.file(recent).exists()).toBe(true);
+});

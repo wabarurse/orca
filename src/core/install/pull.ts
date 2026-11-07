@@ -1,5 +1,6 @@
 // Explicit harness updates only. The caller's repository and ORCA_HOME are
 // never selection inputs. Tests inject a command boundary, not a runtime override.
+import { pruneBuildScratch } from "./storage";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { lstat, readdir, realpath } from "node:fs/promises";
@@ -164,6 +165,7 @@ export async function pullHarness(options: PullOptions = {}): Promise<string> {
     await clean();
     if (await branch() !== beforeBranch || await checkedGit("rev-parse", "HEAD") !== target) throw new Error("harness checkout changed during build; refusing installation");
     await installation.replace(artifact);
+    await pruneBuildScratch(app, true).catch(error => write(`build scratch cleanup: ${error}`));
     write(`installed ${installation.target} from ${target}. scheduling global orchestrator updates next.`);
     return installation.target;
   });

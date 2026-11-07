@@ -1,4 +1,5 @@
-import { reconcileProcesses } from "../../data/processes";
+import { cleanManagedWorkspaces } from "../../tmux";
+import { pruneSettledProcesses, reconcileProcesses } from "../../data/processes";
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
 // (exec/daemon.ts) runs this loop in the `orchestrator` window of the project's
 // tmux session, so turns, rolling memory, the exit watchdog and the merge watcher
@@ -166,12 +167,18 @@ async function pollTurn(d: Daemon, signal: AbortSignal): Promise<void> {
 
 /** Start a due watcher pass in the background, one at a time. The merge watcher's pass runs `gh` once per
  * active task PR (each up to 20s); awaited in `step`, it held input sent to an idle orchestrator until it ended. */
+const cleanedAt = new Map<string, number>();
 function runWatchers(d: Daemon): void {
   const now = d.o.now();
   if (d.watching || now - d.watchedAt < d.o.watchMs) return;
   d.watchedAt = now;
   const pass: Promise<void> = withProcessScope(d.supervision.signal, async () => {
     await reconcileProcesses(d.o.project).catch(error => d.o.log(`process recovery: ${error}`));
+    if (now - (cleanedAt.get(d.o.project) ?? 0) >= 5 * 60_000) {
+      cleanedAt.set(d.o.project, now);
+      await cleanManagedWorkspaces(d.o.project, true).catch(error => d.o.log(`workspace cleanup: ${error}`));
+      await pruneSettledProcesses(d.o.project, true).catch(error => d.o.log(`process retention: ${error}`));
+    }
     await Promise.all([d.watchdog, d.merges].map(w => w(d.o.project).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`))));
   }).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`)).finally(() => { if (d.watching === pass) d.watching = undefined; });
   d.watching = pass;

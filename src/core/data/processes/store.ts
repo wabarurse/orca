@@ -6,10 +6,14 @@ import { paths } from "../../../config";
 import type { Role, Message } from "../../../protocol";
 import { pidAlive, withStorageLock } from "../storage-lock";
 import { put } from "../inbox";
+import { reconcileVerifications } from "./verification";
 
 export interface ProcessRecord {
   incarnation?: string;
   id: string; project: string; owner: string; role: Role; branch?: string; run?: string; call?: string;
+  verification?: string;
+  recording?: boolean;
+  artifact?: string;
   prChecks?: { repository: string; number: number; head: string };
   cwd: string; command: string; createdAt: string; updatedAt: string;
   state: "starting" | "running" | "exited" | "failed" | "cancelled" | "timed_out" | "unknown";
@@ -100,7 +104,7 @@ export async function addProcessEvent(p: ProcessRecord, state: string): Promise<
     .then(out => out.content, () => undefined) : undefined;
   p.events.push({ event: { id: crypto.randomUUID(), processId: p.id, sequence: p.events.length + 1, state, at },
     text: JSON.stringify({ process: p.id, state, exitCode: p.exitCode, reason: p.reason, readyUrl: p.readyUrl,
-      output: path, owner: p.owner, prChecks: p.prChecks, tail }) });
+      output: path, owner: p.owner, prChecks: p.prChecks, artifact: p.artifact, tail }) });
   if (["exited", "failed", "cancelled", "timed_out"].includes(state)) await usageEvent({ kind: "process", project: p.project,
     agent: p.owner, run: p.run, process: p.id, state, durationMs: Math.max(0, Date.parse(at) - Date.parse(p.createdAt)) });
   await saveProcess(p); // The outbox is durable before any inbox publication.
@@ -116,6 +120,7 @@ export async function deliverProcessEvents(p: ProcessRecord): Promise<void> {
   }
 }
 export async function reconcileProcesses(project: string): Promise<void> {
+  await reconcileVerifications(project);
   for (const snapshot of await recoverableProcesses(project)) {
     if (snapshot.supervisorPid && pidAlive(snapshot.supervisorPid)) continue;
     if (!snapshot.supervisorPid && Date.now() - Date.parse(snapshot.createdAt) < 10000) continue;

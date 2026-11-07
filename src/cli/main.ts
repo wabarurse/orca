@@ -13,7 +13,7 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 import { ghTaskPR } from "../core/data/tasks";
 import { pullHarness } from "../core/install";
 import pkg from "../../package.json";
-import { runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
+import { cleanStorage, runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
 import { afterExit } from "../exec";
 import { put } from "../core/data/inbox";
 import { directories, repoHere, validProjectName } from "../core/data/projects";
@@ -29,7 +29,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
+if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -44,6 +44,7 @@ function usage(error?: string): never {
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
+  orca clean [--apply]            inspect or remove disposable Orca storage
   orca organize                   group saved folders by directory (requires Orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
@@ -59,6 +60,11 @@ function usage(error?: string): never {
 if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 
 switch (cmd) {
+  case "clean": {
+    if (rest.some(arg => !["--apply", "--dry-run"].includes(arg)) || (rest.includes("--apply") && rest.includes("--dry-run"))) usage("clean accepts --apply or --dry-run");
+    console.log(JSON.stringify(await cleanStorage(rest.includes("--apply")), null, 2));
+    break;
+  }
   case "organize": {
     if (rest.length) usage("organize takes no arguments");
     const moved = await organizeProjects();

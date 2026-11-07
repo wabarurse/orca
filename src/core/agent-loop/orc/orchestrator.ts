@@ -1,3 +1,4 @@
+import { reconcileVerifications } from "../../data/processes";
 import { agentContext, clearWorkingContext } from "../../data/knowledge";
 import { listProcesses, liveProcess, controlProcess } from "../../data/processes";
 import { editableTool } from "../../definitions";
@@ -296,7 +297,7 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
   } catch (error) {
     if (!signal.aborted && !(error instanceof Cancelled)) throw error;
     return [];
-  } finally { await release?.(); state.running = false; state.cancellation = undefined; }
+  } finally { if (release) await reconcileVerifications(deps.project, "orchestrator").catch(error => console.warn(`verification cleanup: ${error}`)); await release?.(); state.running = false; state.cancellation = undefined; }
 }
 async function replies(project: string, transcript: Transcript): Promise<Message[]> {
   return consume(project, "user", transcript, inbox => transcript.append({ type: "replies", inbox,

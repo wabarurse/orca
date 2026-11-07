@@ -4,3 +4,4 @@ export { ABANDONED, claim, dirtyCount, markEnded, noticeText, readRun, sendNotic
 export { archiveAgents, exitWatchdog, killProjectSession, listAgents, liveAgents, liveAgentsOrNull, mergeWatch } from "./liveness";
 export { type ModelRequestState } from './exits';
 export { activeAgentRows, agentActivity, type AgentActivity } from "./activity";
+export { cleanManagedWorkspaces } from "./cleanup";
