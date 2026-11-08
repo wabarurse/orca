@@ -9,6 +9,17 @@ Esc clears selection, and reflow/context replacement cancels it. Soft wraps copy
 visible newlines; transient streaming/activity rows are excluded. Legacy X10 wheels
 remain supported, but selection requires SGR reports. See [the TUI reference](REFERENCE.md#using-the-tui) for limitations.
 
+New worker/reviewer reports, runtime events, and external user messages return the
+active orchestrator chat to the latest activity when consumed. This works through
+both live inbox notifications and passive daemon transcript refreshes; the same
+delivery does not jump twice. Initial history restoration and other conversations
+do not move the active viewport. Selecting text or viewing an agent preserves
+that view. Scrolling back during an ongoing response still holds the reading
+position, as does acknowledgement of an already queued local prompt. A plain
+mouse click no longer leaves tail-following pinned after release; Escape restores
+following when it clears a selection that temporarily paused it. Explicit wheel
+or page scrolling during a drag keeps the user's scroll position.
+
 Apple documents [Allow Mouse Reporting](https://support.apple.com/guide/terminal/turn-on-mouse-reporting-trmlc69728a5/mac).
 A terminal that disables reporting can still scroll its own history; the app cannot
 force permission. Native selection/link modifiers are terminal-dependent, not a

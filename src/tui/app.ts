@@ -308,6 +308,9 @@ export class App {
   private screenOwner: Page | Page["view"] | undefined;
   private scrollTop: number | null = null;
   private scrollAnchor?: HistoryAnchor;
+  /** A mouse selection temporarily paused tail-following; a click must not pin it forever. */
+  private selectionPausedFollow = false;
+  private readonly followedInput = new WeakMap<Page, string>();
   private liveCheckedAt = 0;
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
   private readonly liveChecks = new Map<string, Promise<void>>();
@@ -512,6 +515,7 @@ export class App {
 
   /** Consumption is the only normal path from a queued prompt to conversation history. */
   private inbox(page: Page, msgs: Message[]): void {
+    this.followIncoming(page, msgs);
     this.endPartial(page);
     for (const m of msgs) {
       if (m.from !== "user") { this.toPage(page, [reportLine(m.from, m.text)]); continue; }
@@ -524,6 +528,20 @@ export class App {
       // Anything else from elsewhere (`orca msg`) as "> …", a question's answer as nothing: as restore shows them.
       this.toPage(page, fromUserLines([m.text, imageLabels(m.attachments)].filter(Boolean).join("\n")));
     }
+  }
+
+  /** New external input starts fresh activity. Local queued-prompt acknowledgements
+   * and continuing output preserve an intentional scroll through the current turn. */
+  private followIncoming(page: Page, messages: readonly Message[]): void {
+    const incoming = messages.findLast(message => message.from !== "user" || !message.inputId || !page.sent.some(sent => sent.inputId === message.inputId));
+    if (!incoming) return;
+    const key = JSON.stringify([incoming.from, incoming.inputId ?? incoming.event?.id, incoming.ts, incoming.text]);
+    if (this.followedInput.get(page) === key) return;
+    this.followedInput.set(page, key); // Live notification and durable refresh describe the same delivery.
+    if (page !== this.page || page.view || this.selection.active) return;
+    this.scrollTop = null;
+    this.scrollAnchor = undefined;
+    this.selectionPausedFollow = false;
   }
 
   /** A tool call started: it ends the streamed text and runs in the live region until it ends. */
@@ -750,7 +768,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   /** A resize: wait until it settles, drawing nothing meanwhile (the old region's rows no longer match), then reprint. */
   private resized(): void {
-    this.selection.clear();
+    this.clearSelection();
     if (this.closed) return;
     this.cancelClear();
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
@@ -779,12 +797,21 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
 
   private readonly selection = new ConversationSelection();
 
+  private clearSelection(): void {
+    this.selection.clear();
+    if (this.selectionPausedFollow) {
+      this.scrollTop = null;
+      this.scrollAnchor = undefined;
+      this.selectionPausedFollow = false;
+    }
+  }
+
   private selectionAllowed(): boolean {
     return !this.clearing && !this.keyEcho && !this.menu && !this.projectList && this.helpTop === null && !this.taskInbox && !this.page?.questions.expanded;
   }
 
   private validateSelection(owner: typeof this.screenOwner, cols: number): void {
-    if (!this.selectionAllowed() || owner !== this.screenOwner || this.screen?.cols !== cols) this.selection.clear();
+    if (!this.selectionAllowed() || owner !== this.screenOwner || this.screen?.cols !== cols) this.clearSelection();
   }
 
   private viewport(f: Frame): StickyScreen {
@@ -894,17 +921,26 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
    * the record follow again through the same hooks). */
   private syncTranscript(page: Page, running = page.busy): void {
     const consumed = page.orch.consumed?.();
-    if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
     const entries = page.orch.entries?.();
-    if (!entries) return;
+    if (!entries) {
+      if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
+      return;
+    }
     const head = entries.at(-1)?.uuid;
+    const previous = this.renderedHeads.get(page);
+    if (previous && previous !== head) {
+      const at = entries.findLastIndex(entry => entry.uuid === previous);
+      // Startup/replay is not new activity; only entries appended after the rendered head count.
+      if (at !== -1) this.followIncoming(page, entries.slice(at + 1).flatMap(entry => entry.type === "message" && !entry.contextSnapshot ? entry.inbox ?? [] : []));
+    }
+    if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
     if (this.renderedHeads.get(page) === head) return;
     const boundary = entries.findLast(entry => entry.type === "context-boundary")?.uuid, cleared = boundary !== page.contextBoundary;
     page.contextBoundary = boundary;
     if (cleared) {
       this.notices.delete(page); this.notes.delete(page); this.openGroups.delete(page.lines);
       if (page === this.page && !page.view) {
-        this.pending = []; this.screenHistory = []; this.scrollTop = null; this.scrollAnchor = undefined; this.selection.clear();
+        this.pending = []; this.screenHistory = []; this.scrollTop = null; this.scrollAnchor = undefined; this.clearSelection();
       }
     }
     // Status is a live event, never restored from saved metadata or re-emitted by refresh.
@@ -1433,7 +1469,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     if (!context) {
       this.openGroups.delete(page.view?.lines ?? page.lines); clearChatView(page);
       this.notices.delete(page); this.notes.delete(page); this.pending = []; this.screenHistory = [];
-      this.scrollTop = null; this.scrollAnchor = undefined; this.selection.clear(); this.reprint(); return;
+      this.scrollTop = null; this.scrollAnchor = undefined; this.clearSelection(); this.reprint(); return;
     }
     let operation: ClearConfirmation | undefined;
     try {
@@ -1719,20 +1755,24 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     const open = this.openGroups.get(lines) ?? new Set<number>();
     if (!open.delete(start)) open.add(start);
     this.openGroups.set(lines, open);
-    this.selection.clear(); // the rows under it moved
+    this.clearSelection(); // the rows under it moved
     this.reprint();
   }
 
   private async selectionMouse(k: Key): Promise<void> {
     const screen = this.screen;
     if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) {
-      this.selection.clear();
+      this.clearSelection();
       return;
     }
     // Hit-test the painted frame, not the pending scroll destination. Only a
     // new selection pins follow mode; motion/release must not undo queued scroll.
     const completed = this.selection.mouse(k, screen, this.screenHistory);
-    if (k.name === "mousedown" && this.selection.active && this.scrollTop === null) this.scrollTop = screen.start;
+    if (k.name === "mousedown" && this.selection.active && this.scrollTop === null) {
+      this.selectionPausedFollow = true;
+      this.scrollTop = screen.start;
+    }
+    if (!this.selection.active) this.clearSelection();
     this.draw();
     if (completed) await this.copySelection();
   }
@@ -1751,11 +1791,11 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     // Ctrl+C retains the global cancellation/double-press exit path even when
     // the overlay is loading, failed, or waiting on an unresponsive registry.
     if (this.taskTree && !(k.ctrl && k.name === "c")) return this.taskTreeKey(k);
-    if (!this.selectionAllowed()) this.selection.clear();
+    if (!this.selectionAllowed()) this.clearSelection();
     if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) { this.toolClick(k); return this.selectionMouse(k); }
     this.clearNote(k);
     if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
-    if (k.name === "escape" && this.selection.active) { this.selection.clear(); this.draw(); return; }
+    if (k.name === "escape" && this.selection.active) { this.clearSelection(); this.draw(); return; }
     // Editing within this draft is fine. Navigation/modal/send/clear/history keys
     // invalidate asynchronous reads, even if the user returns before completion.
     if (!(k.ctrl && k.name === "v") && !typedText(k) && !["left", "right", "backspace", "delete"].includes(k.name)) this.clipboardGeneration++;
@@ -1771,6 +1811,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   private scroll(k: Key): void {
     const screen = this.screen;
     if (!screen) return;
+    this.selectionPausedFollow = false; // Explicit scrolling owns the viewport, even during a drag.
     const delta = k.name.startsWith("wheel") ? 3 : Math.max(1, screen.bodyHeight - 1);
     const start = this.scrollTop ?? screen.maxStart;
     const top = Math.max(0, Math.min(screen.maxStart, start + (k.name.endsWith("up") ? -delta : delta)));
