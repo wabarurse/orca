@@ -20,13 +20,13 @@ function run() {
     throw Error('clipboard has no image. use your terminal text-paste shortcut for text.');
   }
   var data = p.dataForType(chosen);
-  if (!data || Number(data.length) > ${MAX_IMAGE_BYTES}) throw Error('clipboard image exceeds 4 mib or could not be read.');
+  if (!data || Number(data.length) > ${MAX_IMAGE_BYTES}) throw Error('clipboard image exceeds 64 mib or could not be read.');
   if (chosen !== 'public.png') {
     var rep = $.NSBitmapImageRep.imageRepWithData(data);
     if (!rep || Number(rep.pixelsWide) > 4096 || Number(rep.pixelsHigh) > 4096) throw Error('unsupported or oversized clipboard image.');
     data = rep.representationUsingTypeProperties(4, $({}));
   }
-  if (!data || Number(data.length) > ${MAX_IMAGE_BYTES}) throw Error('converted clipboard image exceeds 4 mib.');
+  if (!data || Number(data.length) > ${MAX_IMAGE_BYTES}) throw Error('converted clipboard image exceeds 64 mib.');
   if (Number(p.changeCount) !== before) throw Error('clipboard changed while reading; try ctrl+v again.');
   return ObjC.unwrap(data.base64EncodedStringWithOptions(0));
 }`;

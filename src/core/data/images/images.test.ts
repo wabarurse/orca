@@ -51,7 +51,7 @@ test("PNG validation rejects invalid MIME, empty/truncated, wrong CRC, excessive
   expect(() => validateImage(png(), "image/jpeg")).toThrow("do not match");
   expect(() => validateImage(Buffer.alloc(0))).toThrow();
   expect(() => validateImage(png().subarray(0, 20))).toThrow();
-  expect(() => validateImage(Buffer.alloc(MAX_IMAGE_BYTES + 1))).toThrow("4 mib");
+  expect(() => validateImage(Buffer.alloc(MAX_IMAGE_BYTES + 1))).toThrow("64 mib");
   const corrupt = png(); corrupt[45] = corrupt[45]! ^ 1; expect(() => validateImage(corrupt)).toThrow("crc");
   expect(() => validateImage(png(4097))).toThrow("dimensions");
   expect(() => validateImage(png(1, 1, 128, Buffer.alloc(10000)))).toThrow();

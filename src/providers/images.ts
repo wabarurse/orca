@@ -5,7 +5,8 @@
 import { inflateSync } from "node:zlib";
 import type { ImageBlockParam } from "@anthropic-ai/sdk/resources/messages";
 
-export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+// Source memory guard. Provider payload preparation has its own smaller budget.
+export const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_PIXELS = 4096 * 4096;
 function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff;
@@ -61,7 +62,7 @@ function webpSize(b: Buffer): { width: number; height: number } {
 export function validateImage(input: Uint8Array, mime = "image/png"): { width: number; height: number } {
   if (!(IMAGE_MIMES as readonly string[]).includes(mime)) throw new Error("unsupported image format; copy a png image (macos also converts tiff/jpeg).");
   const b = Buffer.from(input);
-  if (!b.length || b.length > MAX_IMAGE_BYTES) throw new Error("image must be nonempty and at most 4 mib.");
+  if (!b.length || b.length > MAX_IMAGE_BYTES) throw new Error("image must be nonempty and at most 64 mib.");
   if (mime !== "image/png" && sniffImage(b) !== mime) throw new Error(`image bytes do not match ${mime}.`);
   if (mime === "image/jpeg") return jpegSize(b);
   if (mime === "image/webp") return webpSize(b);
@@ -115,7 +116,10 @@ function validatePng(b: Buffer): { width: number; height: number } {
 export function validatedBase64(block: ImageBlockParam): { data: string; mime: ImageMime } {
   if (block.source.type !== "base64" || !IMAGE_MIMES.includes(block.source.media_type)) throw new Error("image was not resolved to supported image bytes; request refused.");
   const data = block.source.data;
-  if (data.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) throw new Error("invalid image base64.");
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  if (!data.length || data.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 || data.length % 4 || /[^A-Za-z0-9+/]/.test(data.slice(0, data.length - padding))) {
+    throw new Error("invalid image base64.");
+  }
   validateImage(Buffer.from(data, "base64"), block.source.media_type);
   return { data, mime: block.source.media_type };
 }

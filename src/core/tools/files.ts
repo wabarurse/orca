@@ -89,9 +89,9 @@ async function readImage(path: string, mime: ImageMime, ctx: ToolContext): Promi
   const format = mime.slice(6), small = path.slice(0, path.length - extname(path).length) + `-small${extname(path) || ".png"}`;
   const downscale = `downscale a copy and read that, e.g. \`sips -Z 1568 ${q(path)} --out ${q(small)}\` (macOS) or \`magick ${q(path)} -resize 1568x1568 ${q(small)}\``;
   const s = await lstat(path);
-  if (s.size > MAX_IMAGE_BYTES) throw new Error(`${format} image is ${mib(s.size)}, over the 4 MiB image limit; ${downscale}`);
+  if (s.size > MAX_IMAGE_BYTES) throw new Error(`${format} image is ${mib(s.size)}, over the 64 MiB image memory limit; ${downscale}`);
   const data = await readFile(path);
-  if (data.length > MAX_IMAGE_BYTES) throw new Error(`${format} image grew past the 4 MiB image limit; ${downscale}`);
+  if (data.length > MAX_IMAGE_BYTES) throw new Error(`${format} image grew past the 64 MiB image memory limit; ${downscale}`);
   let size: { width: number; height: number };
   try { size = validateImage(data, mime); }
   catch (error) {
@@ -146,7 +146,7 @@ async function readText(path: string, input: Record<string, unknown>, ctx: ToolC
 
 export const read: Tool<ToolResult> = {
   parallel: () => true,
-  spec: { name: "read", description: "Read UTF-8 files in your workspace or saved evidence. When you already know several files or ranges you need, send them together in files (up to four text ranges), or use path for a single file. Returns numbered lines, revisions for write/edit, and continuation lines. Output is bounded. For images (png, jpeg, gif, webp; up to 4 MiB and 4096×4096), use path alone to get an image and attachment_id.",
+  spec: { name: "read", description: "Read UTF-8 files in your workspace or saved evidence. When you already know several files or ranges you need, send them together in files (up to four text ranges), or use path for a single file. Returns numbered lines, revisions for write/edit, and continuation lines. Output is bounded. For images (png, jpeg, gif, webp; up to 64 MiB and 4096×4096), use path alone to get an image and attachment_id.",
     input_schema: { type: "object", properties: {
       ...readRange,
       files: { type: "array", minItems: 1, maxItems: 4, items: { type: "object", properties: readRange, required: ["path"] } },

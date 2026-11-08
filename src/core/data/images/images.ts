@@ -1,6 +1,7 @@
 /** Validated, project-scoped image references. Disk/transcripts never contain data URIs.
  * Bytes are immutable and retained until project deletion (including after /clear).
  */
+import { prepareImage } from "./prepare";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
@@ -55,7 +56,7 @@ async function atomic(path: string, bytes: Uint8Array): Promise<void> {
   } finally { await unlink(temp).catch(() => {}); }
 }
 export async function saveImage(project: string, bytes: Uint8Array, mime = "image/png"): Promise<ImageRef> {
-  if (bytes.length > MAX_IMAGE_BYTES) throw new Error("image must be at most 4 mib.");
+  if (bytes.length > MAX_IMAGE_BYTES) throw new Error("image must be at most 64 mib.");
   bytes = Buffer.from(bytes); // Caller mutations cannot change bytes after validation/queueing.
   validateImage(bytes, mime);
   const identity = projectIdentity(project), ref = { id: crypto.randomUUID(), scope: scope(project), sha256: hash(bytes) };
@@ -125,12 +126,12 @@ export function imageContent(text: string, refs: ImageRef[] = []): MessageParam[
  * nested in a tool_result, their file can be read again) fill what remains, in bytes
  * and in count, newest first; older ones give way to a text note instead of blocking
  * the agent. Prompt images keep their policy: the count cap only limits tool images. */
-export async function materializeImages(project: string, messages: MessageParam[]): Promise<MessageParam[]> {
+export async function materializeImages(project: string, messages: MessageParam[], signal?: AbortSignal): Promise<MessageParam[]> {
   const loaded = new Map<ImageBlockParam, { bytes: Buffer; mime: ImageMime }>();
   const load = async (block: ImageBlockParam): Promise<number> => {
     const ref = blockRef(block);
     if (!ref) throw new Error("unscoped image in saved context; image delivery refused.");
-    const image = await loadTypedImage(project, ref);
+    const image = await prepareImage(project, await loadTypedImage(project, ref), signal);
     loaded.set(block, image);
     return image.bytes.length;
   };

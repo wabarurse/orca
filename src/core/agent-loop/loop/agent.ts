@@ -205,7 +205,7 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void,
     if (deps.loadContext) await recordRuntime(deps.ctx.project, sessionId(deps.ctx.role, deps.ctx.branch), { run: deps.ctx.run, model: deps.model,
       system: deps.system ?? "", tools: Object.values(deps.tools).map(t => t.spec), contextTokens: estimated }).catch(() => {});
     if (!deps.provider) throw new Error("agent: no provider or resolver");
-    const delivered = await materializeImages(deps.ctx.project, messages);
+    const delivered = await materializeImages(deps.ctx.project, messages, deps.signal);
     const request = {
       signal: deps.signal,
       trace: { project: deps.ctx.project, agent: sessionId(deps.ctx.role, deps.ctx.branch), run: deps.ctx.run, purpose: "agent" },
