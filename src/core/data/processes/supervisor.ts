@@ -3,6 +3,7 @@ import { readVerification, verificationPaths } from "./verification-store";
 import { execution } from "../projects/lifecycle";
 import { join } from "node:path";
 import { killGroup } from "../../proc";
+import { completeProcess, type Completion } from "../../process-completion";
 import { shellCommand } from "../../execution";
 import { pidAlive, withStorageLock } from "../storage-lock";
 import { addProcessEvent, liveProcess, processDirectory, readProcess, saveProcess, type ProcessRecord } from "./store";
@@ -21,17 +22,14 @@ export async function superviseProcess(project: string, id: string, executable: 
     p.supervisorPid = process.pid;
     await saveProcess(p);
     let proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">> | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined, monitor: ReturnType<typeof setInterval> | undefined;
-    let recordingStop: ReturnType<typeof setTimeout> | undefined;
+    let monitor: ReturnType<typeof setInterval> | undefined;
+    let completion: Completion | undefined;
+    const cancellation = new AbortController();
     let stopping: ProcessRecord["state"] | undefined, busy = false, bytes = 0;
     const stop = () => {
       if (stopping) return;
       stopping = "cancelled";
-      if (!proc) return;
-      if (p.recording) {
-        try { process.kill(-proc.pid, "SIGINT"); } catch { /* Already stopped. */ }
-        recordingStop = setTimeout(() => { if (proc) killGroup(proc); }, 2000);
-      } else killGroup(proc);
+      cancellation.abort(new Error("command stopped"));
     };
     const onExit = () => { if (proc) killGroup(proc); };
     try {
@@ -47,7 +45,6 @@ export async function superviseProcess(project: string, id: string, executable: 
       p.pid = proc.pid; p.state = "running";
       process.once("exit", onExit); process.once("SIGTERM", stop); process.once("SIGINT", stop);
       await saveProcess(p);
-      if (p.timeoutMs) timer = setTimeout(() => { stopping = "timed_out"; killGroup(proc!); }, p.timeoutMs);
       monitor = setInterval(async () => {
         if (busy) return; busy = true;
         try {
@@ -68,29 +65,34 @@ export async function superviseProcess(project: string, id: string, executable: 
             if (response?.ok) { p.readyAt = new Date().toISOString(); await addProcessEvent(p, "ready"); }
             await response?.body?.cancel();
           }
-        } catch (error) { p.reason = `process control failed: ${error instanceof Error ? error.message : String(error)}`; stopping = "failed"; killGroup(proc!); }
+        } catch (error) { p.reason = `process control failed: ${error instanceof Error ? error.message : String(error)}`; stopping = "failed"; cancellation.abort(new Error(p.reason)); }
         finally { busy = false; }
       }, 250);
-      const capture = async (stream: ReadableStream<Uint8Array>) => {
-        for await (const data of stream) {
+      completion = await completeProcess(proc, { timeoutMs: p.timeoutMs, signal: cancellation.signal,
+        ...(p.recording ? { gracefulStop: () => { process.kill(-proc!.pid, "SIGINT"); }, graceMs: 2000 } : {}),
+        chunk: async data => {
           const allowed = Math.max(0, Math.min(data.length, p.maxBytes - bytes)); bytes += allowed;
           if (allowed) await appendFile(join(dir, "output.txt"), data.subarray(0, allowed), { mode: 0o600 });
-          if (allowed < data.length) { p.reason = "output limit reached; saved output is incomplete"; stopping = "failed"; killGroup(proc!); break; }
-        }
-      };
-      const [, , code] = await Promise.all([capture(proc.stdout), capture(proc.stderr), proc.exited]);
+          if (allowed < data.length) { p.reason = "output limit reached; saved output is incomplete"; stopping = "failed"; throw new Error(p.reason); }
+        } });
       clearInterval(monitor);
       while (busy) await Bun.sleep(10);
-      p.exitCode = code; p.state = stopping ?? (code === 0 ? "exited" : "failed");
+      p.exitCode = completion.code ?? undefined;
+      p.state = completion.cleanupIncomplete ? "unknown" : stopping ?? (completion.timedOut ? "timed_out" : completion.reason || completion.code !== 0 ? "failed" : "exited");
+      p.reason = [p.reason, completion.reason, ...completion.cleanupErrors,
+        completion.cleanupIncomplete ? `cleanup incomplete for process group ${proc.pid}; processes may still be running; command will not be replayed` : undefined].filter(Boolean).join("; ") || undefined;
       if (p.artifact && p.state === "exited" && (!await Bun.file(p.artifact).exists() || Bun.file(p.artifact).size === 0)) {
         p.state = "failed"; p.reason = "capture produced no evidence";
       }
     } catch (error) {
       p.state = "failed"; p.reason = error instanceof Error ? error.message : String(error);
     } finally {
-      clearTimeout(timer); clearTimeout(recordingStop); clearInterval(monitor);
+      clearInterval(monitor);
       process.off("exit", onExit); process.off("SIGTERM", stop); process.off("SIGINT", stop);
-      if (proc) { killGroup(proc); await proc.exited; }
+      if (proc && !completion) {
+        const cleanup = await completeProcess(proc, { timeoutMs: 1, chunk: () => {} });
+        if (cleanup.cleanupIncomplete) { p.state = "unknown"; p.reason = `${p.reason ?? "command failed"}; cleanup incomplete for process group ${proc.pid}: ${cleanup.cleanupErrors.join("; ") || cleanup.reason}`; }
+      }
       while (busy) await Bun.sleep(10);
     }
     await addProcessEvent(p, p.state);
