@@ -5,6 +5,7 @@ import { entryNotice } from "./notices";
 import { existsSync, statSync } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import type { Entry } from "../../protocol";
+import { imageLines } from "./image-lines";
 import { callText, resultText as summaryText, type ToolCall, type ToolOutcome } from "../../protocol";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -39,7 +40,7 @@ function joinedText(blocks: Block[]): Block[] {
 /** One entry as pieces to show, or null for entries with nothing to show. */
 export function parts(entry: Entry): Part[] | null {
   if (entry.type !== "message" && entry.type !== "replies") return null;
-  if (entry.type === "replies") return entry.messages.flatMap((m): Part[] => [dim(`${m.from} → user:`), { md: m.text }]);
+  if (entry.type === "replies") return entry.messages.flatMap((m): Part[] => [dim(`${m.from} → user:`), { md: m.text }, ...imageLines(m.attachments)]);
   const { role, content } = entry.message;
   const text = (t: string): Part => (role === "user" ? `${bold(">")} ${t}` : { md: t });
   if (typeof content === "string") return [text(content)];

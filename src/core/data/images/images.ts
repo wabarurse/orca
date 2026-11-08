@@ -81,6 +81,11 @@ async function readStored(project: string, id: string): Promise<{ bytes: Buffer;
 export async function loadImage(project: string, ref: ImageRef): Promise<Buffer> {
   return (await loadTypedImage(project, ref)).bytes;
 }
+/** Resolve only after validating ownership, file type, size and content hash. */
+export async function imageFile(project: string, ref: ImageRef): Promise<string> {
+  const { mime } = await loadTypedImage(project, ref);
+  return join(imageDir(project), `${ref.id}.${EXTENSIONS[mime]}`);
+}
 async function loadTypedImage(project: string, ref: ImageRef): Promise<{ bytes: Buffer; mime: ImageMime }> {
   assertRef(ref);
   const identity = projectIdentity(project);

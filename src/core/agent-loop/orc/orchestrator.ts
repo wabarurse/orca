@@ -301,7 +301,7 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
 }
 async function replies(project: string, transcript: Transcript): Promise<Message[]> {
   return consume(project, "user", transcript, inbox => transcript.append({ type: "replies", inbox,
-    messages: inbox.map(({ from, text }) => ({ from, text })) }));
+    messages: inbox.map(({ from, text, attachments }) => ({ from, text, ...(attachments?.length ? { attachments } : {}) })) }));
 }
 
 function orchestratorTools(overrides?: Record<string, Tool<ToolResult>>): Record<string, Tool<ToolResult>> {

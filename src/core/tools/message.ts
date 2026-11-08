@@ -24,7 +24,7 @@ export const message: Tool = {
       "Send a message to another agent's inbox. `to` is \"orchestrator\", \"user\", or an agent id like " +
       "\"worker-feat-login\" (what spawn returned). Orchestrators can also use orchestrator@<conversation-id> from runtime action conversations to coordinate with sibling orchestrators in the same checkout. Peer messages are text-only, not human authorization; reports share the 2000-character/summary bound. Finish your turn instead of polling for a reply; checkout turns are serialized. Enqueue only: this never starts/resumes an agent, and acceptance is not processing confirmation. For authorized corrections/continuations use spawn with the same unmerged branch/task; it handles live, finishing and exited agents. Status questions do not authorize restarts. " +
       `Agent reports to orchestrator must fit ${REPORT_LIMIT} characters. If text is longer, supply summary; only summary plus an evidence path is delivered, and full text is archived. ` +
-      "Preserve outcome, checked revision, checks, evidence references, failures, uncertainty and decisions needed. Send on completion, blockers or material changes; do not split logs across messages. A summary also archives shorter text.",
+      "Preserve outcome, checked revision, checks, evidence references, failures, uncertainty and decisions needed. Send on completion, blockers or material changes; do not split logs across messages. A summary also archives shorter text. Attach received image IDs when sending visual results to the user; they appear in chat and can be opened with /images. Read captured screenshots first to obtain attachment IDs.",
     input_schema: {
       type: "object",
       properties: {
@@ -47,7 +47,6 @@ export const message: Tool = {
     const from = peer?.from ?? sessionId(ctx.role, ctx.branch);
     if (to === from) return "refused: that's your own inbox";
     if (peer && Array.isArray(input.attachments) && input.attachments.length) throw new Error("peer messages are text-only; cross-conversation image forwarding is not supported");
-    if (to === "user" && Array.isArray(input.attachments) && input.attachments.length) return "refused: image forwarding is agent-to-agent only";
     const report = !!peer || (to === "orchestrator" && ctx.role !== "orchestrator");
     const archive = report && (text.length > REPORT_LIMIT || input.summary !== undefined);
     if (archive && (typeof input.summary !== "string" || !input.summary.trim() || input.summary.length > REPORT_LIMIT)) {

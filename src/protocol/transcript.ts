@@ -4,6 +4,7 @@
 
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Message } from "./inbox";
+import type { ImageRef } from "./images";
 
 export type Role = "orchestrator" | "worker" | "reviewer";
 
@@ -58,7 +59,7 @@ export interface MetaEntry extends BaseEntry {
 /** What a turn sent the user (drained from the user's inbox when it ended), so a page can show it again where it showed live. */
 export interface RepliesEntry extends BaseEntry {
   type: "replies";
-  messages: { from: string; text: string }[];
+  messages: { from: string; text: string; attachments?: ImageRef[] }[];
 }
 
 /** Explicit reset of model context, not a message or summary. Parent preserves full history. */
