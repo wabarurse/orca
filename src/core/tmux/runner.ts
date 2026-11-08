@@ -69,6 +69,8 @@ export const sessionId = (role: Role, branch?: string) => windowName(role, branc
  * worker's checkout.
  */
 export async function ensureWorktree(project: string, branch: string, signal?: AbortSignal): Promise<string> {
+  // Directory agents share the user's folder; branch is only their stable routing key.
+  if (repositoryBinding(project)?.branch === "") return paths.repo(project);
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
@@ -93,6 +95,7 @@ export async function ensureTaskWorktree(opts: StartOptions): Promise<string> {
 }
 
 export async function removeWorktree(project: string, branch: string): Promise<void> {
+  if (repositoryBinding(project)?.branch === "") return; // Never remove a shared user directory.
   if ((await listProcesses(project)).some(p => p.branch === branch && (liveProcess(p) || p.state === "unknown"))) throw new Error("workspace has active or unknown background processes; reconcile/stop them before removing it");
   need("git");
   const repo = paths.repo(project);
@@ -404,7 +407,6 @@ export const local: Runner = {
   async start(opts) {
     const epoch = opts.executionEpoch ?? execution.epoch(opts.project);
     execution.assertActive(opts.project, epoch);
-    need("git");
     need("tmux");
     if (opts.role !== "orchestrator" && !opts.branch) throw new Error("workers and reviewers require a task branch");
     if (opts.role === "orchestrator" && opts.branch) throw new Error("the orchestrator runs in the original checkout, without a task branch");

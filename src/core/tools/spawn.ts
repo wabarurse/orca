@@ -4,7 +4,7 @@ import { imageContent, validateRefs } from "../data/images";
 import type { ImageRef } from "../../protocol";
 import { delay, launchIdentity, publishLaunch, readRun } from "../tmux";
 import { getTask, invalidateTaskBranch, prepareTaskRun, stopTaskRun, taskForRun } from "../data/tasks";
-import { paths } from "../../config";
+import { paths, repositoryBinding } from "../../config";
 import { local, sessionId, type Runner } from "../tmux";
 import { open } from "../data/transcripts";
 import type { Tool, ToolContext } from "./registry";
@@ -57,7 +57,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, feedback and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Focused outcome through validation, acceptance criteria, authorized scope, relevant preferences/instructions, latest corrections, prior attempts and evidence references; not raw conversation or logs. Request a concise outcome, checked revision, validation, evidence references, uncertainty and decisions needed; full detail stays in artifacts." },
           fresh: { type: "boolean", description: "Start with fresh model context on an idle existing branch; retain workspace and original transcript." },
-          branch: { type: "string", description: "Task branch: an open branch to reuse it, or a new name created from the original checkout's default branch (HEAD for legacy projects). Never use the default branch itself." },
+          branch: { type: "string", description: "Stable assignment key. Git projects use it as a task branch created from the default branch; ordinary directories use it only to route the agent and share the directory. Reuse for feedback on the same result. Never use the Git default branch itself." },
           reviewMode: { type: "string", enum: ["review", "watch-ci"], description: "Optional historical label; the brief defines the assignment. No workflow is selected by this field." },
           role: { type: "string", enum: ["worker", "reviewer"], description: "Default worker." },
         },
@@ -159,7 +159,10 @@ async function launch(runner: Runner, prompt: string | null, branch: string, rol
     await consume(ctx.project, id, t, async inbox => {
       ctx.signal?.throwIfAborted();
       const queued = content(inbox);
-      const next = prompt === null ? null : imageContent(`Branch: ${branch}\n\n${prompt}`, attachments);
+      const workspace = repositoryBinding(ctx.project)?.branch === ""
+        ? `Assignment: ${branch}. Working directory: ${paths.repo(ctx.project)}. This folder is shared with the orchestrator and other agents; no Git branch or isolated worktree is created. Coordinate shared-file edits.`
+        : `Branch: ${branch}`;
+      const next = prompt === null ? null : imageContent(`${workspace}\n\n${prompt}`, attachments);
       // One durable entry: never acknowledge STOP without also preserving its
       // position before this explicit instruction. No text/timestamp inference.
       const blocks = (value: typeof queued) => typeof value === "string" ? [{ type: "text" as const, text: value }] : value;

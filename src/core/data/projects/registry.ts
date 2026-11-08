@@ -5,7 +5,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { $ } from "bun";
 import { conversationIds, loadConfig, paths, readProjectState, writeProjectState, repositoryBinding, saveConfig } from "../../../config";
-import { checkoutHere } from "./workspace";
+import { directoryHere } from "./workspace";
 import { refreshProjectFolders, withFolderLock } from "./folders";
 import type { ProjectEntry } from "../../../protocol";
 
@@ -45,18 +45,19 @@ export async function setDisplayName(project: string, name: string): Promise<str
 
 /** A project's origin URL, or "no remote". */
 export async function remoteOf(project: string): Promise<string> {
+  if (repositoryBinding(project)?.branch === "" || !Bun.which("git")) return "no remote";
   const res = await $`git -C ${paths.repo(project)} remote get-url origin`.quiet().nothrow();
   return res.exitCode === 0 ? res.stdout.toString().trim() : "no remote";
 }
 
-/** Original checkout path, even when origin exists; null outside a repository. */
+/** Canonical working directory; a Git checkout groups its subdirectories. */
 export async function repoHere(cwd = process.cwd()): Promise<string | null> {
-  return checkoutHere(cwd);
+  return directoryHere(cwd);
 }
 
 /** Reuse by canonical checkout identity, never by a shared remote URL. */
 export async function projectFor(directory: string, preferred?: string): Promise<string | null> {
-  const source = await checkoutHere(directory);
+  const source = await directoryHere(directory);
   if (!source) return null;
   const names = await listProjects();
   if (preferred && names.includes(preferred) && existsSync(paths.repo(preferred)) && realpathSync(paths.repo(preferred)) === source) return preferred;

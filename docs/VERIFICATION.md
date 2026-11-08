@@ -6,8 +6,13 @@ checks, UI interaction, screenshots, recordings, and API evidence. Skills and
 installed platform tools supply the workflow.
 
 `create` takes `backend: "local"` or `"docker"`. The workspace snapshots the
-current Git checkout, tracked edits, and up to 32 MiB of untracked source. Ignored
-dependencies are excluded. Docker uses an already available image with `sh` and
+current Git checkout, tracked edits, and up to 32 MiB of untracked source. Without
+Git it copies the current directory, bounded to 256 MiB and 20,000 entries;
+links and special files are refused, and `.git`, `node_modules`, `.venv`,
+`__pycache__`, `.cache`, `.next`, and `.orca-tmp` are excluded. Closing retains a
+`directory-result` copy before discarding the workspace; failed archival retains
+the session for recovery. Git snapshots exclude ignored dependencies.
+Docker uses an already available image with `sh` and
 binds the disposable workspace and retained artifacts. Requested ports publish
 on random localhost ports. Shared Git objects are mounted read-only. The Docker
 host must be able to mount the session directories. Local sessions support
