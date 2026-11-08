@@ -10,7 +10,7 @@ import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-a
 import { paths, legacyProjectIdentities } from "../../../config";
 import { legacy } from "../../../config";
 import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../providers";
-import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
+import { assertProjectIdentity, ensureSessionId, projectIdentity, readSession, withProjectStateLock } from "../projects";
 import type { ImageInput, ImageRef } from "../../../protocol";
 
 export const MAX_IMAGES = 4;
@@ -23,9 +23,17 @@ const MAX_CONTEXT_IMAGES = 20;
 const EXTENSIONS: Record<ImageMime, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
-function scope(project: string): string {
+/** Pre-sessionId scope: tied to the folder id and its conversation identity, so it does not survive a move. Accepted for reading only. */
+export function legacyImageScope(project: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(project)) throw new Error("invalid image project");
   return hash(`${project}\0${projectIdentity(project)}`);
+}
+/** Scope of new refs: derived from the stable sessionId (projects/session-id.ts), so it survives moving the project between machines. */
+export const sessionImageScope = (sessionId: string) => hash(`orca-image-scope-v1\0${sessionId}`);
+/** Scopes this project accepts: the sessionId-derived one (once minted) and the legacy one. */
+export function imageScopes(project: string): { current?: string; legacy: string } {
+  const session = readSession(project);
+  return { ...(session ? { current: sessionImageScope(session.sessionId) } : {}), legacy: legacyImageScope(project) };
 }
 function assertRef(ref: ImageRef): void {
   if (!ref || !UUID.test(ref.id) || !/^[a-f0-9]{64}$/.test(ref.scope) || !/^[a-f0-9]{64}$/.test(ref.sha256)) throw new Error("invalid image reference");
@@ -59,7 +67,9 @@ export async function saveImage(project: string, bytes: Uint8Array, mime = "imag
   if (bytes.length > MAX_IMAGE_BYTES) throw new Error("image must be at most 64 mib.");
   bytes = Buffer.from(bytes); // Caller mutations cannot change bytes after validation/queueing.
   validateImage(bytes, mime);
-  const identity = projectIdentity(project), ref = { id: crypto.randomUUID(), scope: scope(project), sha256: hash(bytes) };
+  const identity = projectIdentity(project);
+  // Minted before taking the project lock: ensureSessionId is lock-free.
+  const ref = { id: crypto.randomUUID(), scope: sessionImageScope(await ensureSessionId(project)), sha256: hash(bytes) };
   return withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
     await safeDir(imageDir(project), true);
@@ -92,7 +102,8 @@ async function loadTypedImage(project: string, ref: ImageRef): Promise<{ bytes: 
   // Pre-UUID transcripts retain hashed device/inode/birth identities. Accept only
   // aliases proven by retained state for this conversation's original fingerprint;
   // matching image bytes alone never authorizes another/deleted conversation.
-  if (ref.scope !== scope(project) && !legacyProjectIdentities(project).some(old => ref.scope === hash(`${project}\0${old}`))) {
+  const { current, legacy: old } = imageScopes(project);
+  if (ref.scope !== current && ref.scope !== old && !legacyProjectIdentities(project).some(old => ref.scope === hash(`${project}\0${old}`))) {
     throw new Error("image belongs to another/deleted project.");
   }
   await safeDir(imageDir(project));
