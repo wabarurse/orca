@@ -53,6 +53,9 @@ Project metadata is scoped to the conversation's persisted UUID. Deleting and re
 
 `.runtime/` is **durable**, despite its name. It includes configuration, credentials, pending input/events, ownership records, supervised command output and recovery state. Deleting it can lose settings, logins and undelivered work. It is not a general cleanup target. Stop participating processes before making a consistent backup, and retain SQLite and any WAL/SHM companions together. No automatic age-based cleanup is introduced here.
 
+Projects bind existing local directories; Git and GitHub are optional. Ordinary
+directory bindings use an empty branch in their repository metadata. Their agents
+share the directory, and deleting a conversation never removes that directory.
 Original repositories stay where the user put them. Git worktrees stay in the repository's sibling `<repo>.orca-worktrees/<namespace>/` directory. They are never moved into cache. The executable and shared installer lock remain under `~/.local/bin/` so different `ORCA_HOME` values do not split installer exclusion.
 
 ## Fresh setup from an older installation

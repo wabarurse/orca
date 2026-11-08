@@ -5,6 +5,8 @@ import { run } from "../../proc";
 import { projectIdentity } from "../projects";
 import { execution } from "../projects/lifecycle";
 import { liveProcess, listProcesses } from "./store";
+import { checkoutHere } from "../projects/workspace";
+import { copyDirectorySnapshot } from "./directory-snapshot";
 import { controlProcess } from "./supervisor";
 import { listVerifications, readVerification, saveVerification, verificationLock, verificationPaths, type Verification } from "./verification-store";
 
@@ -18,6 +20,12 @@ export const containerName = (v: Verification) => `orca-verify-${v.id}`;
 async function snapshot(v: Verification, signal?: AbortSignal) {
   const { workspace, evidence } = verificationPaths(v.project, v.id);
   await mkdir(evidence, { recursive: true, mode: 0o700 });
+  if (!await checkoutHere(v.source)) {
+    await copyDirectorySnapshot(v.source, workspace, signal);
+    await mkdir(join(workspace, ".orca-tmp"), { mode: 0o700 });
+    await writeFile(join(evidence, "source.json"), JSON.stringify({ source: v.source, kind: "directory" }) + "\n", { mode: 0o600 });
+    return;
+  }
   await verificationCommand(["git", "clone", "--shared", "--no-hardlinks", "--no-checkout", "--", v.source, workspace], v.source, signal);
   v.objects = join((await verificationCommand(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], v.source)).trim(), "objects");
   await saveVerification(v);
@@ -47,7 +55,7 @@ async function snapshot(v: Verification, signal?: AbortSignal) {
 export async function createVerification(input: Omit<Verification, "id" | "identity" | "createdAt" | "state" | "source"> & { source: string }, signal?: AbortSignal): Promise<Verification> {
   signal?.throwIfAborted();
   execution.assertActive(input.project, input.epoch);
-  const source = (await verificationCommand(["git", "rev-parse", "--show-toplevel"], await realpath(input.source), signal)).trim();
+  const source = await checkoutHere(input.source) ?? await realpath(input.source);
   const v: Verification = { ...input, simulator: input.simulator ? { ...input.simulator } : undefined, source, id: crypto.randomUUID(),
     identity: projectIdentity(input.project), createdAt: new Date().toISOString(), state: "creating" };
   await withStorageLock(join(verificationPaths(v.project, v.id).root, "..", "admission.lock"), async () => {
@@ -126,6 +134,16 @@ export async function closeVerification(project: string, id: string): Promise<Ve
       await mkdir(evidence, { recursive: true, mode: 0o700 });
       // Preserve edits made during verification before disposing its checkout.
       await attempt(async () => {
+        if (await lstat(workspace).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return false; throw error; })) {
+          if ((await lstat(workspace)).isSymbolicLink() || await realpath(workspace) !== join(await realpath(root), "workspace")) throw new Error("verification workspace path changed");
+          const metadata = await Bun.file(join(evidence, "source.json")).json().catch(() => undefined);
+          if (metadata?.kind === "directory") {
+            // Keep the full small source result, including deletions, before removing scratch.
+            const result = join(evidence, "directory-result");
+            await rm(result, { recursive: true, force: true });
+            await copyDirectorySnapshot(workspace, result);
+          }
+        }
         if (await Bun.file(join(workspace, ".git", "HEAD")).exists()) {
           if ((await lstat(workspace)).isSymbolicLink() || await realpath(workspace) !== join(await realpath(root), "workspace")) throw new Error("verification workspace path changed");
           const patch = await verificationCommand(["git", "diff", "--binary", "HEAD"], workspace);

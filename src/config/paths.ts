@@ -10,6 +10,7 @@ import { conversationPath } from "./conversation-storage";
 // Read lazily so tests can point ORCA_HOME at a temp dir after import.
 const root = () => stateRoot(homedir(), process.env);
 
+// An empty branch explicitly binds an ordinary directory, without Git/worktree semantics.
 export interface RepositoryBinding { version: 1; directory: string; branch: string; worktreeId: string }
 
 /** Project incarnation prevents recreated names from inheriting prior settings or authority. */
@@ -47,7 +48,7 @@ export function repositoryBinding(name: string): RepositoryBinding | undefined {
   const value = readProjectState<RepositoryBinding>(name, "repository");
   if (value === undefined) return;
   if (value?.version !== 1 || typeof value.directory !== "string" || !isAbsolute(value.directory) ||
-      typeof value.branch !== "string" || !value.branch || !/^[a-f0-9-]{36}$/.test(value.worktreeId)) {
+      typeof value.branch !== "string" || !/^[a-f0-9-]{36}$/.test(value.worktreeId)) {
     throw new Error(`invalid repository binding for ${name}`);
   }
   const parent = directoryProject(paths.memory, name);
@@ -75,7 +76,7 @@ export const paths = {
   cache: (name: string) => join(conversationPath(root(), name), "cache"),
   repo: (name: string) => repositoryBinding(name)?.directory ?? join(conversationPath(root(), name), "repo"),
   worktrees,
-  worktree: (name: string, slug: string) => join(worktrees(name), slug),
+  worktree: (name: string, slug: string) => repositoryBinding(name)?.branch === "" ? paths.repo(name) : join(worktrees(name), slug),
   inbox: (name: string) => join(root(), ".runtime", "projects", name, "inbox"),
   runs: (name: string) => join(root(), ".runtime", "projects", name, "runs"),
   questions: (name: string) => join(root(), ".runtime", "projects", name, "questions"),

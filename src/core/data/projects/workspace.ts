@@ -1,5 +1,5 @@
 // Bind conversations to a user's checkout; never copy its repository or credentials.
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readdir, rmdir } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { paths, writeProjectState, repositoryBinding, initializeConversationStorage, type RepositoryBinding } from "../../../config";
@@ -10,8 +10,15 @@ import { command } from "../../proc";
 /** Canonical checkout root, retaining local config and files even when origin exists. */
 export async function checkoutHere(cwd: string): Promise<string | null> {
   if (!existsSync(cwd)) return null;
+  if (!Bun.which("git")) return null;
   const top = await command(["git", "rev-parse", "--show-toplevel"], cwd);
   return top.code === 0 ? realpathSync(top.out.trim()) : null;
+}
+
+/** Git groups subdirectories by checkout; ordinary folders have their own identity. */
+export async function directoryHere(cwd: string): Promise<string | null> {
+  if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return null;
+  return await checkoutHere(cwd) ?? realpathSync(cwd);
 }
 
 async function defaultBranch(directory: string): Promise<string> {
@@ -35,7 +42,7 @@ async function requireBranch(directory: string, branch: string): Promise<void> {
 
 export async function assertMainCheckout(project: string): Promise<void> {
   const binding = repositoryBinding(project);
-  if (binding) await requireBranch(binding.directory, binding.branch);
+  if (binding?.branch) await requireBranch(binding.directory, binding.branch);
 }
 
 function inside(parent: string, child: string): boolean {
@@ -47,14 +54,14 @@ function inside(parent: string, child: string): boolean {
 export async function initializeWorkspace(project: string, source?: string): Promise<void> {
   if (repositoryBinding(project) || existsSync(paths.repo(project))) {
     attachConversation(project);
-    if (source && await checkoutHere(source) !== realpathSync(paths.repo(project))) {
+    if (source && await directoryHere(source) !== realpathSync(paths.repo(project))) {
       throw new Error(`${project} already uses another checkout; create a new project for this directory`);
     }
     return;
   }
   const directory = await originalCheckout(source ?? process.cwd());
-  const branch = await defaultBranch(directory);
-  await requireBranch(directory, branch);
+  const branch = await checkoutHere(directory) ? await defaultBranch(directory) : "";
+  if (branch) await requireBranch(directory, branch);
   const binding: RepositoryBinding = { version: 1, directory, branch, worktreeId: crypto.randomUUID() };
   initializeConversationStorage(paths.root);
   await mkdir(paths.project(project), { recursive: true });
@@ -65,13 +72,14 @@ export async function initializeWorkspace(project: string, source?: string): Pro
 }
 
 async function originalCheckout(source: string): Promise<string> {
-  const directory = await checkoutHere(source);
-  if (!directory) throw new Error("start from a local git checkout or pass its directory; clone remote repositories yourself first");
+  const directory = await directoryHere(source);
+  if (!directory) throw new Error("start from an existing local directory or pass its path");
   await mkdir(paths.root, { recursive: true });
   const state = realpathSync(paths.root);
   if (inside(state, directory) || inside(directory, state)) {
     throw new Error("the original checkout and ORCA_HOME must be separate directories");
   }
+  if (!await checkoutHere(directory)) return directory;
   // A linked worktree is for workers; the first Git worktree is the original checkout.
   const trees = await command(["git", "worktree", "list", "--porcelain", "-z"], directory);
   if (trees.code !== 0 || trees.out.split("\0")[0] !== `worktree ${directory}`) {
@@ -99,7 +107,7 @@ export async function assertWorktree(project: string, directory: string, branch?
 
 /** Delete only clean linked worktrees. Retain local branches and never remove the original checkout. */
 export async function removeProjectWorktrees(project: string): Promise<void> {
-  if (!repositoryBinding(project)) return; // Legacy worktrees are still inside the project directory.
+  if (!repositoryBinding(project)?.branch) return; // Ordinary directories have no owned worktrees.
   const root = paths.worktrees(project);
   const entries = await readdir(root).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return []; throw error; });
   for (const entry of entries) {
@@ -117,7 +125,8 @@ export async function removeProjectWorktrees(project: string): Promise<void> {
 
 /** Validate a directory before a metadata-only relink, leaving the old binding untouched on failure. */
 export async function validateProjectDirectory(source: string): Promise<{ directory: string; branch: string }> {
-  const directory = await originalCheckout(source), branch = await defaultBranch(directory);
-  await requireBranch(directory, branch);
+  const directory = await originalCheckout(source);
+  const branch = await checkoutHere(directory) ? await defaultBranch(directory) : "";
+  if (branch) await requireBranch(directory, branch);
   return { directory, branch };
 }

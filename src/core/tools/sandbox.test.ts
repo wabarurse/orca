@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertLayout, paths } from "../../config";
@@ -44,6 +44,36 @@ async function settled(id: string) {
   throw new Error("process did not settle");
 }
 const call = async (input: Record<string, unknown>) => JSON.parse(await sandbox.run(input, ctx));
+
+test("ordinary directory sandbox needs no Git and retains results while preserving the source", async () => {
+  await rm(join(cwd, ".git"), { recursive: true });
+  await mkdir(join(cwd, "node_modules"));
+  await writeFile(join(cwd, "node_modules/ignored"), "rebuildable");
+  process.env.PATH = "";
+  try {
+    const v = await call({ action: "create", backend: "local" });
+    expect(await readFile(join(v.workspace, "app.txt"), "utf8")).toBe("original\n");
+    expect(await Bun.file(join(v.workspace, "node_modules/ignored")).exists()).toBe(false);
+    await writeFile(join(v.workspace, "app.txt"), "sandbox edit\n");
+    expect((await call({ action: "close", id: v.id })).state).toBe("closed");
+    expect(await readFile(join(v.evidence, "directory-result/app.txt"), "utf8")).toBe("sandbox edit\n");
+    expect(await readFile(join(cwd, "app.txt"), "utf8")).toBe("original\n");
+    expect(await Bun.file(join(cwd, ".git/HEAD")).exists()).toBe(false);
+    expect(await Bun.file(join(v.workspace, "app.txt")).exists()).toBe(false);
+  } finally { process.env.PATH = previousPath; }
+});
+
+test("directory snapshot refuses symlinks and rolls back only its owned workspace", async () => {
+  await rm(join(cwd, ".git"), { recursive: true });
+  const outside = join(home, "private.txt"); await writeFile(outside, "keep private");
+  await symlink(outside, join(cwd, "linked.txt"));
+  await expect(call({ action: "create", backend: "local" })).rejects.toThrow("links or special files");
+  const records = await listVerifications("p");
+  expect(records).toHaveLength(1);
+  expect(records[0]!.state).toBe("closed");
+  expect(await readFile(outside, "utf8")).toBe("keep private");
+  expect(await readFile(join(cwd, "app.txt"), "utf8")).toBe("original\n");
+});
 
 test("snapshot includes current edits and untracked files; checks and capture keep evidence after cleanup", async () => {
   await writeFile(join(cwd, "app.txt"), "current edit\n");

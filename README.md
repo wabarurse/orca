@@ -22,7 +22,12 @@
 '                                                          ''''####''''
 ```
 
-On macOS or Linux with Git, [Bun](https://bun.sh/) 1.4.2+ and [tmux](https://github.com/tmux/tmux), install with:
+Orca works in any local directory. It automatically opens that directory's
+conversations or creates its first. GitHub and a Git repository are optional.
+Workers in ordinary directories share the folder; Git projects use isolated
+worker worktrees. PR and hosted-check features require an appropriate remote.
+
+On macOS or Linux with Git (for installation and updates), [Bun](https://bun.sh/) 1.4.2+ and [tmux](https://github.com/tmux/tmux), install with:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/wabarurse/parallels/main/install.sh | sh

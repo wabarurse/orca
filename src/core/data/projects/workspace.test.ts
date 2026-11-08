@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { paths, repositoryBinding } from "../../../config/config";
 import { ensureProject, createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { ensureWorktree, removeWorktree } from "../../tmux/runner";
-import { deleteProject } from "../../../tui/commands/project";
-import { listProjects, projectFor, repoHere } from "./registry";
+import { deleteProject, restoreConversations } from "../../../tui/commands/project";
+import { listProjects, projectFor, repoHere, remoteOf } from "./registry";
+import { assertMainCheckout, removeProjectWorktrees } from "./workspace";
 import { conversationTurnLock, projectTurnLock } from "./state";
 import { lockOwner, tryStorageLock } from "../storage-lock";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
@@ -31,6 +32,53 @@ beforeEach(async () => {
 afterEach(() => {
   if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
   rmSync(temp, { recursive: true, force: true });
+});
+
+test("ordinary directories work without Git, reopen by exact directory, and never become disposable worktrees", async () => {
+  const folder = join(temp, "notes"), sibling = join(temp, "other notes");
+  mkdirSync(folder); mkdirSync(sibling);
+  await Bun.write(join(folder, "notes.txt"), "keep this");
+  const oldPath = process.env.PATH;
+  process.env.PATH = "";
+  try {
+    expect(await repoHere(folder)).toBe(folder);
+    await ensureProject("plain", folder);
+    expect(await projectFor(folder)).toBe("plain");
+    expect(await projectFor(sibling)).toBeNull();
+    expect(repositoryBinding("plain")?.branch).toBe("");
+    const task = await registerTask("plain", { name: "Organize notes", summary: "Local work", branch: "notes-worker", authorized: true });
+    expect(task.status).toBe("queued");
+    expect(await remoteOf("plain")).toBe("no remote");
+    await assertMainCheckout("plain");
+    expect(await ensureWorktree("plain", "notes-worker")).toBe(folder);
+    expect(paths.worktree("plain", "notes-worker")).toBe(folder);
+    await removeWorktree("plain", "notes-worker");
+    await removeProjectWorktrees("plain");
+    expect(await Bun.file(join(folder, "notes.txt")).text()).toBe("keep this");
+    expect(existsSync(join(folder, ".git"))).toBe(false);
+    const provider = fakeProvider([[text("done")]]);
+    const orch = await createOrchestrator({ project: "plain", provider, tools: {}, write: () => {} });
+    try { await orch.say("help with my notes"); await orch.turn(); }
+    finally { orch.dispose?.(); }
+    expect(provider.calls).toHaveLength(1);
+    await deleteProject("plain", { live: async () => [], stop: async () => {}, kill: async () => {} });
+    expect(await Bun.file(join(folder, "notes.txt")).text()).toBe("keep this");
+  } finally { if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath; }
+});
+
+test("startup automatically creates and reopens an ordinary folder without unrelated conversations", async () => {
+  const folder = join(temp, "plain startup"); mkdirSync(folder);
+  await ensureProject("unrelated", repo);
+  const opened: string[] = [];
+  const open = async (id: string, directory?: string) => { await ensureProject(id, directory); opened.push(id); };
+  await restoreConversations({ source: folder, open, note: () => {} });
+  expect(opened).toHaveLength(1);
+  const id = opened[0]!;
+  expect(paths.repo(id)).toBe(folder);
+  opened.length = 0;
+  await restoreConversations({ source: folder, open, note: () => {} });
+  expect([...new Set(opened)]).toEqual([id]);
+  expect(opened).not.toContain("unrelated");
 });
 
 test("original checkout, generic local login settings and untracked files remain available; reviewer shares worker worktree", async () => {
@@ -214,8 +262,8 @@ test("missing checkout stays discoverable; invalid metadata never silently creat
 });
 
 test("new remote sources, nested state and worker checkouts are refused without cloning", async () => {
-  await expect(ensureProject("remote", "https://example.invalid/repo.git")).rejects.toThrow("local git checkout");
-  await expect(ensureProject("empty", temp)).rejects.toThrow("local git checkout");
+  await expect(ensureProject("remote", "https://example.invalid/repo.git")).rejects.toThrow("existing local directory");
+  await expect(ensureProject("empty", temp)).rejects.toThrow("ORCA_HOME must be separate");
   await ensureProject("p", repo);
   const worker = await ensureWorktree("p", "task/fix");
   await expect(ensureProject("nested", worker)).rejects.toThrow("original checkout");
