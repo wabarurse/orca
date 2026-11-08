@@ -46,12 +46,12 @@ and queue previews show image labels.
   subprocesses have a 5-second timeout and bounded stdout/stderr. These checks
   cannot prove that an arbitrary remote desktop's clipboard is local to a user.
 
-Up to **4 images per prompt**, **4 MiB encoded PNG per image**, maximum dimensions
+Up to **4 images per prompt**, **64 MiB source memory guard per image**, maximum dimensions
 **4096 × 4096**, maximum decoded scanlines **64 MiB**. PNG signature, chunk bounds,
 CRC/order, color depth, dimensions, bounded zlib inflation and scanline filters
 are validated; suffixes and MIME claims are insufficient. Interlaced/animated
 PNGs are deliberately unsupported; recopy/export a non-interlaced still PNG.
-No silent downscaling. macOS source TIFF/JPEG must also fit 4 MiB before conversion.
+No silent downscaling. macOS source TIFF/JPEG and converted PNG use the same 64 MiB memory guard. Before requests, images over 7 MiB get a compressed JPEG copy at the same pixel dimensions using existing sips (macOS) or ImageMagick. Originals remain in the image store; two prepared copies are cached in memory. Temporary conversion files are removed after preparation. If the encoder is unavailable or cannot fit a copy, Orca reports that explicitly.
 This is bounded validation, not a general-purpose image decoder or sandbox for
 malicious local software.
 
@@ -151,7 +151,7 @@ and tool call/result pairing are unchanged. No implicit sharing of all past imag
 `read` on an image file returns the image itself, so an agent can look at a
 screenshot it just took. The format comes from the file's magic bytes (PNG,
 JPEG, GIF, WebP), never its name. The file must stay within the workspace and
-evidence directories, at most **4 MiB** and **4096 × 4096**; PNG gets the full
+evidence directories, at most **64 MiB** and **4096 × 4096**; PNG gets the full
 structural validation, JPEG/GIF/WebP signature and header dimensions. Larger
 images fail with a downscale command to run first (`sips -Z 1568 in.png --out
 in-small.png` on macOS, `magick … -resize 1568x1568` elsewhere).
