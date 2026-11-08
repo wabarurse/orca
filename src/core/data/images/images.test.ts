@@ -20,7 +20,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { anthropic, claudeMessages } from "../../../providers/anthropic";
 import { toResponses } from "../../../providers/openai";
 import { compact, estimate } from "../memory/compaction";
-import { fakeProvider, text } from "../../../test/fake-provider";
+import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
+import { inbox } from "../../tools/inbox";
+import { read } from "../../tools/files";
+import { deliveredImages, openDeliveredImage } from "../../../tui/commands/images";
 import { png } from "../../../test/image-fixture";
 import { render } from "../../../tui/conversation/view";
 import { restore } from "../../../tui/conversation/restore";
@@ -184,6 +187,38 @@ test("explicit spawn and message handoff grants only received images, worker get
   expect(await forwardImages(undefined, ctx(p))).toEqual([]);
   await parent.append({ type: "context-boundary" });
   await expect(forwardImages([ref.id], ctx(p))).rejects.toThrow("not received");
+});
+
+test("worker screenshot travels through orchestrator to durable user chat and an explicitly requested viewer", async () => {
+  const p = project(), worker = open(paths.transcript(p, "worker-visual"));
+  const workerContext = { ...ctx(p), role: "worker" as const, branch: "visual" };
+  const capture = join(home, `${p}-captured.png`); writeFileSync(capture, png(3, 2));
+  const result = await read.run({ path: capture }, workerContext);
+  if (!Array.isArray(result) || result[0]?.type !== "text") throw new Error("expected screenshot result");
+  const id = JSON.parse(result[0].text).attachment_id as string;
+  await worker.append({ type: "message", message: { role: "assistant", content: [toolUse("read-shot", "read", { path: capture })] } });
+  await worker.append({ type: "message", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "read-shot", content: result }] } });
+  expect(await inbox.run({ action: "send", to: "orchestrator", text: "Screenshot captured and checked", attachments: [id] }, workerContext)).toBe("sent to orchestrator");
+  rmSync(capture); // Disposing the capture workspace must not remove the delivered copy.
+  const provider = fakeProvider([[toolUse("show-shot", "inbox", { action: "send", to: "user", text: "Here is the screenshot", attachments: [id] })], [text("done")]]);
+  const orch = await createOrchestrator({ project: p, provider, tools: { inbox }, write() {} });
+  try {
+    const replies = await orch.turn();
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.attachments?.[0]?.id).toBe(id);
+    expect(JSON.stringify(provider.calls[0]!.messages)).toContain(png(3, 2).toString("base64"));
+    const reopened = open(paths.transcript(p, "orchestrator"));
+    const entries = reopened.history!();
+    expect(JSON.stringify(restore(entries, 80))).toContain("/images to open");
+    const images = deliveredImages(entries);
+    expect(images).toHaveLength(1);
+    expect(images[0]!.ref.id).toBe(id);
+    let opened = "";
+    expect(await openDeliveredImage(p, images[0]!.ref, async path => { opened = path; })).toContain("opened image");
+    expect(readFileSync(opened).toString("hex")).toBe(png(3, 2).toString("hex"));
+    await expect(inbox.run({ action: "send", to: "user", text: "guessed image", attachments: [crypto.randomUUID()] }, ctx(p))).rejects.toThrow("not received");
+    await expect(openDeliveredImage(project(), images[0]!.ref, async () => {})).rejects.toThrow("another/deleted");
+  } finally { orch.dispose?.(); }
 });
 
 test("compaction budgets pixels rather than base64, retains inspectable image blocks and explicit handoff IDs", async () => {

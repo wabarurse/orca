@@ -1,6 +1,7 @@
 import { afterContextBoundary } from "../../core/data/transcripts";
 import { imageLabels } from "../../core/data/images";
-import type { Message } from "../../protocol";
+import type { ImageRef, Message } from "../../protocol";
+import { imageLines } from "./image-lines";
 // Rebuild a page's history from its orchestrator's transcript, like
 // `claude --continue` or `codex resume`: what the page showed live, in the
 // same form. User messages as "> …", agents' messages as "From <id>: …", the
@@ -80,6 +81,11 @@ export function reportLine(from: string, text: string): Line {
 
 /** A message to the user, led by its sender. */
 export const replyLine = (from: string, text: string): Line => ({ md: text, label: bold(from) });
+
+/** Attachment references are UI metadata; never turn file paths into shell commands. */
+export function replyLines(message: { from: string; text: string; attachments?: ImageRef[] }): Line[] {
+  return [replyLine(message.from, message.text), ...imageLines(message.attachments)];
+}
 
 /** One message as the page shows it, laid out only when needed. */
 interface Item { lines: () => Line[] }
@@ -202,7 +208,7 @@ function step(state: Fold, e: Entry, sent: Set<string>): void {
   // The run that recorded these also made the held message calls: the entry has them, so they are not shown twice.
   if (e.type === "replies") {
     state.held = [];
-    state.items.push(...e.messages.map((m) => now([replyLine(m.from, m.text)])));
+    state.items.push(...e.messages.map((m) => now(replyLines(m))));
   }
   if (e.type !== "message" || e.contextSnapshot) return;
   if (e.message.role === "user") {

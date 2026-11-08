@@ -4,7 +4,7 @@ import type { ImageRef } from "../../protocol";
 import { sessionId } from "../tmux";
 import { afterContextBoundary, open } from "../data/transcripts";
 import type { ToolContext } from "./registry";
-export const attachmentSchema = { type: "array", maxItems: 4, items: { type: "string" }, description: "Explicit attachment_id UUIDs from images you received in this project/context. Omitted means no images. Sends actual image content, not filenames. Forward relevant images when delegating visual work/review." };
+export const attachmentSchema = { type: "array", maxItems: 4, items: { type: "string" }, description: "Explicit attachment_id UUIDs from images you received in this project/context. Omitted means no images. Sends actual image content, not filenames. Forward relevant images when delegating visual work/review or sending screenshots to the user through inbox." };
 /** Possession of a guessed UUID is not permission: it must occur as a real image
  * block in the sender's own context epoch (not in arbitrary tool/user prose). */
 export async function forwardImages(input: unknown, ctx: ToolContext): Promise<ImageRef[]> {

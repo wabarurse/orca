@@ -39,7 +39,9 @@ import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } fro
 import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
-import { clearChatView, visibleChatEntries, fromUserLines, replyLine, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
+import { clearChatView, visibleChatEntries, fromUserLines, replyLines, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
+import { deliveredImages, openDeliveredImage } from "./commands/images";
+import { open } from "../core/data/transcripts";
 import { bold, dim, fit, sanitize, repositoryTitle } from "./components";
 import { commit, helpPanel, taskInboxPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
 import type { Terminal } from "./components";
@@ -1184,7 +1186,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     try {
       for (const reply of await page.orch.turn()) {
         this.endPartial(page);
-        this.toPage(page, [replyLine(reply.from, reply.text)]);
+        this.toPage(page, replyLines(reply));
       }
     } catch (err) {
       failed = true;
@@ -1216,6 +1218,20 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   }
 
   // --- menus ------------------------------------------------------------------
+
+  private async imagesMenu(page?: Page): Promise<void> {
+    if (!page) return;
+    const transcript = open(paths.transcript(page.project, "orchestrator"));
+    const images = deliveredImages(transcript.history?.() ?? transcript.branch());
+    if (!images.length) return this.note("no images have been sent to you in this conversation", page);
+    this.openMenu("images sent to you · enter opens image viewer", images.map(image => ({
+      label: sanitize(`${image.ref.id.slice(0, 8)} · ${image.from} · ${image.text.split("\n")[0]!.slice(0, 90)}`), value: image,
+    })), async image => {
+      if (!this.validPage(page) || this.page !== page) return;
+      try { this.note(await openDeliveredImage(page.project, image.ref, this.deps.openImage), page); }
+      catch (error) { this.note(error instanceof Error ? error.message : String(error), page); }
+    });
+  }
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
     this.beginMenu(modelOperation);
@@ -1394,6 +1410,7 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/inbox", { run: (_, page) => this.toggleTaskInbox(page), help: { group: "conversation", label: "/inbox", description: "user inbox: tasks / questions; shift+tab switches sections, esc/tab closes" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.agentsMenu(page!), help: { group: "conversation", label: "/agents", description: "follow agents; a shows older, d/D remove finished rows" } }],
+    ["/images", { needsPage: true, run: (_, page) => this.imagesMenu(page), help: { group: "conversation", label: "/images", description: "open images sent to you in the image viewer" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page, false), help: { group: "conversation", label: "/clear", description: "clear visible chat only; keep model context, history and cache" } }],

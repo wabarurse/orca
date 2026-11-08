@@ -106,8 +106,10 @@ Validated image bytes and submission journals remain under the project until
 `/clear-context`. This conservative retention avoids releasing bytes still needed by
 queues, histories or workers. `/clear-context` resets only the orchestrator's context;
 old receipts/history remain, old prompts do not reappear as unconsumed, and old
-images are not forwarded implicitly. This is not secure deletion. There is no history image picker: reattach a
-pre-clear image from the clipboard to include it in a new context. There is no
+images are not forwarded implicitly. This is not secure deletion. `/images` lets
+the user view images agents previously sent to them, including after a clear;
+it does not insert those images into model context or authorize forwarding.
+Reattach a pre-clear image to include it in a new context. There is no
 automatic image garbage collection or disk quota yet. Use project deletion only
 when its normal safety checks permit it and the data is no longer needed.
 
@@ -138,8 +140,16 @@ Delegation must **explicitly** pass relevant IDs:
 {"branch":"visual-task","taskId":"<registered task UUID>","prompt":"Implement this screen","attachments":["<attachment_id>"]}
 ```
 
-The `message` tool accepts the same optional `attachments` list for an agent
-recipient. Omitted means no images; sending to `user` with images is refused.
+The `inbox` tool accepts the same optional `attachments` list for an agent
+recipient or `to: "user"` (the legacy `message` implementation shares this path).
+Omitted means no images. User-directed images are saved in durable reply entries
+and shown as image labels in chat. `/images` lists delivered images newest first;
+selecting one explicitly opens the validated file in the system image viewer.
+There are no automatic popups or inline terminal previews. SSH sessions report
+the remote file location instead of launching a viewer. A worker can read a
+sandbox screenshot, send its ID to the orchestrator, and the orchestrator can
+send that received ID to the user. The image store retains a copy after sandbox
+cleanup; stale, corrupted, or cross-project references cannot be opened.
 Up to four distinct IDs must occur as real user image blocks in the sender's
 current transcript **context epoch**, not just in prose or a guessed UUID.
 Forwarded worker/reviewer inbox/initial context uses the same actual pixel

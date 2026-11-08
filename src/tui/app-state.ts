@@ -62,6 +62,8 @@ export interface AppDeps {
   clipboardText?: (text: string) => Promise<void>;
   /** Explicit Ctrl+V only; tests inject fixture bytes, never the live clipboard. */
   clipboardImage?: () => Promise<ClipboardImage>;
+  /** Explicit /images selection only; tests inject a viewer rather than launching apps. */
+  openImage?: (path: string) => Promise<void>;
   /** Cached header model accessor; defaults to effectiveModel(project). */
   projectModel?: (project: string) => Promise<string>;
   term: Terminal;
