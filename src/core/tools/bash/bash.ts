@@ -1,4 +1,5 @@
 import { killGroup } from "../../proc";
+import { completeProcess, type Completion } from "../../process-completion";
 import { loadConfig } from "../../../config";
 import { outputArtifact, OutputPreview } from "./output";
 import type { Tool } from "../registry";
@@ -64,7 +65,7 @@ export const bash: Tool = {
     const cap = Math.min(config.maxToolResultBytes, Number(requested ?? config.maxToolResultBytes));
     const preview = new OutputPreview(cap);
     const artifact = await outputArtifact(ctx.project);
-    let complete = false, path = "", limited = false, code = 0, timedOut = false;
+    let complete = false, path = "", limited = false, code = 0, timedOut = false, completion: Completion | undefined;
     try {
       if (Buffer.byteLength(artifact.partialPath) + 240 > cap) throw new Error("tool output path exceeds preview budget; increase max_output_bytes and maxToolResultBytes");
       ctx.signal?.throwIfAborted();
@@ -73,31 +74,35 @@ export const bash: Tool = {
       execution.assertActive(ctx.project, epoch);
       const proc = Bun.spawn(argv, { cwd: ctx.cwd, detached: true, stdout: "pipe", stdin: "ignore" });
       const kill = () => killGroup(proc);
-      const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
       process.once("exit", kill);
-      ctx.signal?.addEventListener("abort", kill, { once: true });
-      if (ctx.signal?.aborted) kill();
-      let finished = false;
       try {
-        for await (const chunk of proc.stdout) {
+        completion = await completeProcess(proc, { timeoutMs, signal: ctx.signal, chunk: async chunk => {
           const allowed = Math.min(chunk.length, config.maxToolOutputBytes - preview.bytes);
           if (allowed) { await artifact.write(chunk.subarray(0, allowed)); preview.add(chunk.subarray(0, allowed)); }
-          if (allowed < chunk.length) { limited = true; kill(); break; }
+          if (allowed < chunk.length) { limited = true; throw new Error("output limit reached"); }
+        } });
+        code = completion.code ?? -1; timedOut = completion.timedOut;
+        if (completion.cleanupIncomplete || (completion.reason && !timedOut && !limited)) {
+          const diagnostic = Buffer.from(`\n[command diagnostic: ${[completion.reason, ...completion.cleanupErrors].filter(Boolean).join("; ")}]\n`);
+          await artifact.write(diagnostic); preview.add(diagnostic);
         }
-        code = await proc.exited; finished = true;
         ctx.signal?.throwIfAborted();
-        complete = !limited && !timedOut;
+        complete = !completion.reason && !completion.cleanupIncomplete;
       } finally {
-        if (!finished) kill();
-        await proc.exited;
-        clearTimeout(timer); ctx.signal?.removeEventListener("abort", kill); process.off("exit", kill);
+        process.off("exit", kill);
       }
     } finally { path = await artifact.finish(complete); }
     let footer = limited ? "\n[output limit reached; command terminated; saved output is incomplete]" : timedOut ? `\n[timed out after ${timeoutMs / 1000}s; saved output is incomplete]` : "";
+    if (!limited && !timedOut && completion?.reason) footer += "\n[command failed; saved output is incomplete]";
+    if (completion?.cleanupIncomplete) footer += "\n[cleanup incomplete; command processes may still be running]";
     if (code !== 0) footer += `\n[exit ${code}]`;
     const clipped = !preview.fits(cap, footer);
     if (clipped || !complete) footer += `\n[${complete ? "full" : "partial"} output: ${path}]`;
     const previewCap = requested === undefined && clipped ? Math.min(4096, cap) : cap;
-    return preview.render(previewCap, footer);
+    const failure = completion?.cleanupIncomplete ? "command failed: cleanup incomplete\n"
+      : completion?.reason && !timedOut && !limited ? "command failed: output collection interrupted\n" : "";
+    const output = failure + preview.render(previewCap - Buffer.byteLength(failure), footer);
+    if (failure) throw new Error(output);
+    return output;
   },
 };

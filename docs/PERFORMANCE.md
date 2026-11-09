@@ -2,6 +2,17 @@
 
 Ctrl+C stops the selected conversation, including its orchestrator, workers, reviewers, foreground shell groups and supervised background commands. This applies from an agent view and from the clear confirmation too. A second Ctrl+C within two seconds exits the TUI. Other conversations keep their own lifetimes.
 
+Command collection is bounded independently of process signalling. After the
+parent exits, output pipes have a one-second EOF grace; inherited pipes that stay
+open trigger cleanup and a bounded one-second drain. Timeout/cancellation also
+end the wait if signalling fails or the child never exits. Recording stops retain
+their two-second interrupt grace before forced cleanup. Partial output remains
+available. Permission errors and unconfirmed cleanup are reported rather than
+silently treated as success. Background records become `unknown`, emit a durable
+event, and remain protected from cleanup/forgetting; their commands are not
+automatically replayed. An OS-denied or escaped process can still need manual
+inspection, but it cannot keep the agent's output collector waiting indefinitely.
+
 The stop barrier is durable at `.runtime/projects/<project>/execution-stop.json`, scoped to the project incarnation. Stopping also changes the input epoch. Agents and commands retain the epoch they were admitted under, so a quick human resume cannot accidentally revive old work. Per-run admission records live under `.runtime/projects/<project>/admissions/`. Existing workers also receive their exact-run cancellation files, and commands receive stop files, for compatibility with processes still running the previous build.
 
 Only a newly submitted human message to the orchestrator releases the barrier. Agent reports, process events, old queued messages, compaction, settings changes, reopening a TUI and update helpers do not release it. Daemon keepers and `orca pull` handoffs skip stopped conversations. A new message starts a fresh orchestrator process; it may delegate follow-up work using preserved history and workspaces. No worker is automatically restarted solely because it was interrupted.
