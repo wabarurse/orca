@@ -195,7 +195,7 @@ branch/worktree cleanup, including removal of ignored files.
   then `y` every finished one; a live agent is refused. Removing records a marker
   in project state (`archived-agents`); transcripts, run files and history stay,
   and an agent started again on that name shows again. `/back` returns to
-  the orchestrator. `/inbox` shows registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
+  the orchestrator. `/tasks` shows registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
 - Ctrl+C cancels the current turn; `/quit` exits. The orchestrator daemon and
   background workers/reviewers keep running; see [Using the TUI](#using-the-tui)
   for cancellation details.
@@ -574,12 +574,9 @@ separates the conversation (including streaming output) from the entire footer,
 above any queued previews. It is omitted below eight terminal rows or when it
 would take the last conversation row; input and footer panels keep their space.
 The bottom band puts queued prompt previews immediately above the boxed input,
-then grouped running worker/reviewer, task and **Inbox** counts (unanswered questions only); these
-stack on narrow screens. `N tasks` is the project's registered tasks not yet archived as merged (the
-rows `/inbox` Tasks lists), read when a page opens or is selected and on the task inbox/tree refresh
-poll, never per frame; `? tasks` until read or after a failed read, never a fabricated 0. Every menu
-and user inbox opens below the input and retains its own key hints. There
-is no persistent shortcut row; Ctrl+B, Ctrl+Q and the other keys still work.
+then `x agents | y tasks | z questions` for the selected project. Counts
+wrap on narrow screens and use `?` when unavailable. `/agents`, `/tasks`
+and `/questions` open the matching work views.
 A running turn's "thinking…/working…" shimmers at the selected conversation's
 current tail, not in the pinned footer. Scrolling back hides that activity with
 the tail; it never enters history. Like Codex, the input and your own messages sit on a
@@ -608,7 +605,7 @@ and counts, not in the conversation history. Scroll help with ↑/↓, Page Up/D
 or the wheel; Home/End jumps to its start/end (including advanced diagnostics).
 Esc closes it without changing your draft or leaving an agent view. Help is
 read-only while open; close it before typing. Global cancellation/page shortcuts
-still work, and Ctrl+Q replaces help with the Inbox's Questions section.
+still work, and Ctrl+Q replaces help with Questions.
 
 Informational status notes are not conversation: `/rename <name> to rename`
 after Ctrl+N, a rename's `old → new`, `fetching models…`, `model set to …`
@@ -721,31 +718,16 @@ The orchestrator should reserve questions for necessary unresolved decisions, no
 routine approved work. Clear answers and authorization in chat count, but do not
 close existing queued questions.
 
-The per-project **USER inbox** (`/inbox`) has **Tasks / Questions**, not an agent
-list: `/agents` stays separate. **Shift+Tab** switches sections; **Esc/Tab** closes.
-The footer **Inbox N** counts unanswered questions only (not tasks, queued prompts
-or agents); **0** is a successful empty read and **?** means unknown/failed data.
-Background pending questions show **(+N elsewhere)** (shortened on narrow screens),
-with **?** for unknown background data. Task and question stores remain distinct.
-
-Questions never open automatically or take your draft. Ctrl+Q or `/questions`
-opens the Questions section with the oldest pending question below the input, with numbered options,
-"type your own answer" and "skip — remove from inbox". ↑↓ or 1–9 choose and Enter
-picks. Typing switches to `answer>`; an optionless question starts there.
-Esc, Tab or Ctrl+Q closes the panel without answering or skipping, and restores
-your chat draft. The answer draft and cursor are retained across sections, closing and project switches.
-Project switches close Inbox; explicitly reopen to resume the answer. Only selecting
-"skip" and pressing Enter durably removes that question from Inbox and decrements
-the count, keeping its skipped history. Skip sends no message, applies no default
-and never wakes/resumes an agent, including paused or cancelled work. Silence and
-panel dismissal also never apply a default or grant approval; an optional stored
-default is only a suggestion for an explicit answer. New arrivals update the count, not the input.
-Answering or skipping the last question closes the panel; a later question needs explicit
-opening again. Explicitly opening an empty queue shows No open questions. A half-second guard after opening prevents accidental answers.
+**`/questions`** opens the list of unanswered questions. Select
+a question and press Enter to open its answer form. Use ↑↓ or 1–9 to choose
+an option, or type an answer. Ctrl+Q opens the first answer form directly. Esc or Tab closes the form and restores the chat
+draft. Draft answers are retained across project switches. Explicit Skip
+removes the question from the open list, retains its history and sends no reply.
+New questions update the count and leave the composer in place.
 Menus take precedence over questions; Ctrl+Q does nothing while a menu/project
 list is open. On a one-row terminal the input takes the whole live region: a modal panel
 can be hidden while still owning keys; Esc closes it. In an agent view Questions
-shows a guard, never an answer field: close Inbox, then Esc or `/back` to the
+shows a guard, never an answer field: close Questions, then Esc or `/back` to the
 project orchestrator before answering. A settled question leaves no conversation
 line: an answer is the transient `? question → answer` note above the composer
 (shown once the panel closes, however it closes) and sits in the prompt queue as `? question → answer`
@@ -1154,21 +1136,7 @@ confirmed merges archive rows without deleting history. Readiness requires an
 explicit reviewer validation of the current PR head. This is separate from
 message/question/prompt queues.
 
-**`/inbox`** opens the USER inbox’s **Tasks** section: a read-only
-**Name | Summary | Status | PR link** table below
-the composer/counts, showing only the selected project's active registered tasks.
-Small Tasks/Questions tabs show one compact section at a time. Status is exactly
-one plain label: stored attention (waiting/blocked/cancelled/closed/unknown) takes
-precedence over lifecycle (queued/working/reviewing/ready to merge). No extra
-status detail or reason appears under a task; stored lifecycle, attention and
-reason remain unchanged. Global loading/query-error/stale warnings stay explicit;
-empty means no active registered tasks, not that unregistered work completed.
-Scroll with ↑/↓, Page Up/Down, wheel or Home/End; **r** refreshes the local snapshot;
-**Esc/Tab** closes without submitting or changing drafts. **Shift+Tab** switches
-Tasks / Questions; Ctrl+Q goes directly to Questions; project changes close it and discard late reads. The existing
-poll/watchers refresh rows, so confirmed merged PRs disappear without deleting
-archive history. Long fields/verified URLs wrap; narrow terminals use labelled
-records. Links use the canonical structured URL (OSC 8 where supported); no browser
-command is launched. Status is last observed, not a real-time GitHub guarantee.
-See [TASK_INBOX.md](TASK_INBOX.md) for navigation, read-only/isolation guarantees,
-the API, lifecycle, terminal limitations and storage limits.
+**`/tasks`** opens the project’s task list and details, including status and PR
+links. Type a task number to jump to it. Use `r` to refresh and Esc to
+return to chat. See [Tasks, Agents and Questions](TASK_INBOX.md) for navigation
+and cleanup controls.

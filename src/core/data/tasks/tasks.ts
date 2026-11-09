@@ -329,6 +329,21 @@ export function reviewProgress(runs: TaskRun[]): { rounds: number; unknown: bool
     unknown: started.some(r => !r.reviewMode), ci: started.at(-1)?.reviewMode === "watch-ci" };
 }
 
+/** Explicitly abandon inactive, unmerged work while preserving its ledger membership. */
+export async function abandonTask(project: string, id: string, expectedRevision: number): Promise<Task> {
+  return update(project, s => {
+    const task = find(s, id);
+    active(task);
+    check(task.revision === expectedRevision, "task changed; refresh before abandoning it");
+    check(!task.runs.some(run => !run.endedAt && (run.state === "prepared" || run.state === "started")), "stop active or queued runs first");
+    check(!task.pr || task.publication?.state === "CLOSED", "resolve the open or unverified PR first");
+    unready(task);
+    task.attention = { kind: "cancelled", reason: "abandoned by user" };
+    event(task, "attention");
+    return task;
+  });
+}
+
 /** Confirmed membership removal only, never delete durable records or edges. */
 export async function removeTask(project: string, id: string, confirmed: boolean): Promise<Task> {
   check(confirmed === true, "task removal requires confirmation");

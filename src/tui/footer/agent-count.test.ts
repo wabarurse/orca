@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { agentCounts, agentCountText } from "./agent-count";
+import { runningAgentCount } from "./agent-count";
 import { appFixture } from "../../test/app-fixture";
 import { App } from "../app";
 import type { AgentInfo } from "../../protocol";
@@ -7,16 +7,9 @@ import type { AgentInfo } from "../../protocol";
 const { fakeTerm, fakeOrchestrators, until } = appFixture();
 const mixed: AgentInfo[] = [{ name: "worker-live", live: true, status: "running", inventoryComplete: true },
   { name: "worker-old", live: false, status: "unknown", inventoryComplete: true }];
-test("confirmed running agents remain visible alongside unverified history without inventing an exact total", () => {
-  expect(agentCountText(agentCounts(mixed))).toBe("1 confirmed agent running (1 unverified)");
-  expect(agentCounts(mixed).agentCount).toBeNull();
-  expect(agentCountText(agentCounts([]))).toBe("0 agents running");
-  expect(agentCountText(agentCounts([{ ...mixed[0]!, inventoryComplete: false }]))).toBe("1 confirmed agent running (inventory incomplete)");
-  expect(agentCountText({ agentCount: null })).toBe("agent status unavailable");
-});
-test("waiting on commands is reported only for verified live agents", () => {
-  const rows = mixed.map(row => ({ ...row, waitingForCommands: true }));
-  expect(agentCountText(agentCounts(rows))).toBe("1 confirmed agent running (1 unverified) · 1 waiting on commands");
+test("counts distinct verified running workers and reviewers only", () => {
+  expect(runningAgentCount([...mixed, mixed[0]!, { name: "orchestrator", live: true }])).toBe(1);
+  expect(runningAgentCount([])).toBe(0);
 });
 test("TUI refresh shows confirmed counts, clears stale confirmations on failure, and recovers", async () => {
   let fail = false, rows = mixed;
@@ -24,12 +17,12 @@ test("TUI refresh shows confirmed counts, clears stale confirmations on failure,
     agents: async () => { if (fail) throw new Error("inspection unavailable"); return rows; }, pollMs: 100_000 });
   const running = app.run("counts");
   try {
-    await until(() => !!app.page && app.status(app.page).includes("1 confirmed agent running (1 unverified)"));
+    await until(() => !!app.page && app.status(app.page).includes("1 agents |"));
     fail = true; await app.refreshSessions();
-    await until(() => app.status(app.page!).includes("agent status unavailable"));
-    expect(app.page!.verifiedAgentCount).toBeUndefined();
+    await until(() => app.status(app.page!).includes("? agents |"));
+    expect(app.page!.agentCount).toBeUndefined();
     fail = false; rows = []; await app.refreshSessions();
-    await until(() => app.status(app.page!).includes("0 agents running"));
+    await until(() => app.status(app.page!).includes("0 agents |"));
     expect(Object.values(fake.said)).toEqual([[]]);
   } finally { app.quit(); await running; }
 });

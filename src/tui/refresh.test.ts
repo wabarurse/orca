@@ -99,7 +99,7 @@ test("manual refresh reconciles projects/pins, settings, tasks and closed questi
   await app.refreshSessions();
   expect(page.questions.open).toHaveLength(2); expect(page.questions.expanded).toBe(false);
   const task = await registerTask("a", { name: "Visible task", summary: "Persisted summary", branch: "feat/task", authorized: true });
-  await app.commands.get("/inbox")!.run("", page);
+  await app.commands.get("/tasks")!.run("", page);
   await setTaskAttention("a", task.id, { kind: "cancelled", reason: "must not resume" });
   await skip("a", q1!.id); await answer("a", q2!.id, "answer");
   await setDisplayName("a", "Shared display"); await togglePin("a");
@@ -115,8 +115,7 @@ test("manual refresh reconciles projects/pins, settings, tasks and closed questi
   expect(page.model).toBe("gpt-5.5"); expect(page.settings?.effort).toBe("high");
   expect(page.questions.open).toHaveLength(0);
   expect(page.questions.expanded).toBe(false);
-  expect(app.frame().inbox?.section).toBe("tasks");
-  expect(app.frame().inbox?.lines.join("\n")).toContain("cancelled");
+  expect(app.frame().inbox).toBeNull();
   expect(app.input).toEqual({ text: "retained task-panel draft", cursor: 4 });
   expect(inputEpoch("a")).toBe(epoch);
   expect(await pending("a", "orchestrator")).toBe(true); // answer remains unconsumed

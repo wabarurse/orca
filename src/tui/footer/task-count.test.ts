@@ -46,19 +46,19 @@ test("the status bar shows the page's task count instead of queued messages; rea
     tasks: async project => { reads++; if (fail) throw new Error("registry unreadable"); return rows.get(project) ?? []; } });
   const running = app.run("count-a");
   cleanups.push(async () => { app.quit(); await running; });
-  await until(() => term.screen().includes("0 agents running │ 2 tasks │ inbox"));
+  await until(() => term.screen().includes("0 agents | 2 tasks |"));
   app.page!.sent.push({ inputId: "held", text: "queued prompt" });
   expect(app.status(app.page!)).not.toMatch(/queued/); expect(app.frame().queued?.texts).toEqual(["queued prompt"]);
   const settled = reads;
   for (let i = 0; i < 5; i++) { app.frame(); app.draw(); }
   expect(reads).toBe(settled);
   await app.openPage("count-b");
-  await until(() => app.status(app.page!).includes("1 task │"));
+  await until(() => app.status(app.page!).includes("1 task |"));
   rows.set("count-a", [row("one")]);
   app.switchPage(-1);
-  await until(() => app.status(app.page!).includes("1 task │"));
+  await until(() => app.status(app.page!).includes("1 task |"));
   fail = true;
   await app.refreshSessions(false); // the passive poll owns the task-count refresh
   await until(() => app.status(app.page!).includes("? tasks"));
-  await until(() => term.screen().includes(">[count-a]") && term.screen().includes("0 agents running │ ? tasks │"));
+  await until(() => term.screen().includes(">[count-a]") && term.screen().includes("0 agents | ? tasks |"));
 });
