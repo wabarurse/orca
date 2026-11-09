@@ -1,9 +1,9 @@
-# Tasks, Agents and Questions
+# Tasks, Agents, Questions and Images
 
-Use `/tasks`, `/agents` and `/questions` to open the project’s work views.
+Use `/tasks`, `/agents`, `/questions` and `/images` to open the project’s work views.
 Each shows a list and a details pane, stacked on narrow terminals.
 Use arrow keys to select and focus, Enter to open, `r` to refresh and Esc
-to return to chat. The footer shows this project's agent, task and question
+to return to chat. The footer shows this project's agent, task, question and image
 counts. A question mark indicates an unavailable count.
 
 Tasks support jumping by number, viewing merged history with `a`, archiving
@@ -17,6 +17,15 @@ confirmation. Archiving retains records and transcripts.
 in work views. Space then `a/t/q/p` opens Agents, Tasks, Questions or Images.
 Space then `u/m/e/f` opens Accounts, Model, Effort or Fast mode. Use `:`
 to run any slash command. Esc leaves Insert and retains the chat draft.
+
+Ctrl+A opens Agents, Ctrl+T opens Tasks, and Ctrl+Q opens Questions.
+Home moves to the start of the input line. The Space shortcuts work across
+work pages, settings menus, Help and Projects in Normal mode.
+
+Images lists images delivered to you in this conversation, newest first.
+Enter opens the selected image in the system viewer and keeps the list open.
+The footer count updates as images arrive. Dates use three-letter month names
+and the machine's local timezone, including its daylight saving offset.
 
 ## Answering questions
 
@@ -71,10 +80,10 @@ to run any slash command. Esc leaves Insert and retains the chat draft.
   orphan text is reported separately, never silently assigned to the next question
   or substituted for the original chat draft. Menus/help retain precedence. Ctrl+B
   projects, model/settings menus, `/help`, cancellation and Cancel-default `/clear-context`
-  still work. Ctrl+Q does nothing while a menu/project list owns keys.
-* In an agent transcript, opening Questions shows an explanatory guard and takes
-  no answers: close Questions, then Esc or `/back` to return to the project
-  orchestrator. Closing Questions itself never leaves the agent view.
+  still work. Ctrl+Q opens the Questions page from menus and project lists.
+* In an agent transcript, opening Questions shows the project’s questions.
+  Esc returns to the agent transcript. Selecting a question returns to the
+  orchestrator to answer it.
 * Captured page/panel ownership suppresses late reads and answer UI results after
   closing/deleting/recreating pages. A successful in-flight answer belongs only
   to its original still-open page, even if another page is selected; late errors

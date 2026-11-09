@@ -573,7 +573,7 @@ test("task tree r re-reads the real ledger and says when it refreshed; dots foll
     await setTaskAttention(project, first.id, { kind: "blocked", reason: "stopped" }, first.revision);
     term.type("r"); // no poll, no refreshSessions: only the key
     await until(() => screen().includes("● #2 Second"));
-    await until(() => /Refreshed \d\d:\d\d:\d\d/.test(screen()));
+    await until(() => /Refreshed [A-Z][a-z]{2} \d{1,2}, \d{4}/.test(screen()));
     expect(term.raw()).toContain("\x1b[33m●");
   } finally { app.quit(); await running; }
 });

@@ -308,7 +308,8 @@ describe("orchestrator questions", () => {
     await until(() => app.page!.questions.open.length === 1);
     expect(app.questions.view()).toBeNull();
     expect(app.input.text).toBe("hel");
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     await until(() => !!app.questions.view());
     expect(app.input.text).toBe("");
     term.press({ name: "escape" });
@@ -398,7 +399,7 @@ describe("orchestrator questions", () => {
     expect(await statusOf("qa-esc")).toEqual([["Port?", "skipped", null], ["Host?", "skipped", null]]);
     expect(await drain("qa-esc", "orchestrator")).toEqual([]);
     expect(app.page!.sent).toEqual([]);
-    expect(app.status(app.page!)).toEndWith("0 questions");
+    expect(app.status(app.page!)).toContain("0 questions |");
     expect([app.page!.lines, note(app).includes(answeredNote("Host?", null))]).toEqual([[], true]); // a skip is a transient note, never a line or a default
     expect(app.input.text).toBe("");
     await stop();
@@ -413,7 +414,8 @@ describe("orchestrator questions", () => {
     term.type("chat draft");
     term.press({ name: "d", ctrl: true }); // chat mode: not a question key, the draft is untouched
     expect(await statusOf("qa-del")).toEqual([["Port?", "open", null], ["Host?", "open", null], ["Name?", "open", null]]);
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     await until(() => live(term).includes("? Port? (1 of 3)") && live(term).includes("ctrl+d delete"));
     term.press({ name: "d", ctrl: true }); // pick mode
     await until(() => live(term).includes("? Host? (1 of 2)"));
@@ -427,45 +429,37 @@ describe("orchestrator questions", () => {
     expect(await statusOf("qa-del")).toEqual([["Port?", "skipped", null], ["Host?", "skipped", null], ["Name?", "open", null]]);
     expect(await drain("qa-del", "orchestrator")).toEqual([]);
     expect(app.page!.sent).toEqual([]);
-    expect(app.status(app.page!)).toEndWith("1 questions");
+    expect(app.status(app.page!)).toContain("1 questions |");
     term.press({ name: "escape" });
     await until(() => !live(term).includes("? Name?"));
     expect(app.input.text).toBe("chat draft");
     await withdrawQuestion("qa-del", name!.id, "answered in chat"); // the orchestrator's ask close
-    await until(() => app.status(app.page!).endsWith("0 questions"));
+    await until(() => app.status(app.page!).includes("0 questions |"));
     expect(await drain("qa-del", "orchestrator")).toEqual([]);
     expect(app.input.text).toBe("chat draft");
     await stop();
   });
 
-  test("in an agent view inbox Questions is guarded; esc closes it before leaving the separate view", async () => {
+  test("Questions opens its full page over an agent transcript and Esc returns to that transcript", async () => {
     const transcript = paths.transcript("qa-view", "worker-v");
     mkdirSync(join(transcript, ".."), { recursive: true });
     await Bun.write(transcript, JSON.stringify({ type: "message", message: { role: "assistant", content: "worker line" } }) + "\n");
     await ask1("qa-view", "Which db?", ["postgres"]);
     const { term, app, stop } = await start("qa-view", { agents: async () => [{ name: "worker-v", live: false }] });
-    await until(() => live(term).includes("? Which db?"));
-    term.press({ name: "tab" });
-    term.type("/agents\r");
-    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
-    term.press({ name: "enter" });
-    await until(() => term.screen().includes("worker line"));
-    term.type("/questions\r"); // shown again, but not over an agent view
-    await until(() => live(term).includes("questions belong to the project orchestrator"));
-    expect(live(term)).not.toContain("Which db?");
-    expect(live(term)).toContain("1 questions");
-    expect(live(term)).toContain("questions belong to the project orchestrator");
-    term.type("1");
-    term.press({ name: "enter" });
-    expect(app.input.text).toBe("");
-    term.press({ name: "escape" }); // inbox, not agent
-    expect(app.page!.view).not.toBeNull();
-    term.press({ name: "escape" });
-    await until(() => !app.page!.view);
-    term.press({ name: "q", ctrl: true });
-    await until(() => live(term).includes("? Which db?"));
-    expect(await statusOf("qa-view")).toEqual([["Which db?", "open", null]]);
-    await stop();
+    try {
+      term.press({ name: "escape" });
+      term.type("/agents\r");
+      await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-v"));
+      term.press({ name: "enter" });
+      await until(() => term.screen().includes("worker line"));
+      term.type("/questions\r");
+      await until(() => term.screen().includes("QUESTIONS") && term.screen().includes("Which db?"));
+      expect(app.page!.questions.expanded).toBe(false);
+      term.press({ name: "escape" });
+      await until(() => term.screen().includes("worker line"));
+      expect(app.page!.view?.name).toBe("worker-v");
+      expect(await statusOf("qa-view")).toEqual([["Which db?", "open", null]]);
+    } finally { await stop(); }
   });
 
   test("known commands typed as an answer run as commands; other text is the answer", async () => {
@@ -562,7 +556,8 @@ describe("orchestrator questions", () => {
     expect(live(term)).not.toContain("answer> my answer");
     expect(app.page!.questions.answer.text).toBe("");
     term.press({ name: "escape" }); // clear chat draft
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     await until(() => live(term).includes(PICK));
     expect(app.input.text).toBe("");
     expect(orchs.said["qa-moved"]).toEqual([]);
@@ -583,7 +578,8 @@ describe("orchestrator questions", () => {
     expect(note(app)).toContain("already closed elsewhere");
     await until(() => !app.questions.view());
     term.press({ name: "escape" });
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     // The orchestrator reads the other TUI's answer: a settled question, no line, as a restored page shows it.
     inbox(await drain("qa-race", "orchestrator"));
     await settle(); expect(term.screen()).not.toContain("? Which db? → sqlite");
@@ -661,7 +657,8 @@ describe("orchestrator questions", () => {
     expect(live(term)).not.toContain("One?");
     term.type("\x18");
     await until(() => app.page?.project === "qa-bg");
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     await until(() => live(term).includes("? One? (1 of 2)"));
     expect(live(term)).toContain("2 questions");
     expect(live(term)).not.toContain("qa-bg: 2");

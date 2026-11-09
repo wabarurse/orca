@@ -9,3 +9,4 @@ export type { AppendGuard, Entry, MessageEntry, NewEntry, Role, RollingMemory } 
 
 export { modelRequestText } from './transcript';
 export { type ModelRequestEntry } from './transcript';
+export { formatDateTime } from "./time";

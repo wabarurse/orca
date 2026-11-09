@@ -7,3 +7,4 @@ export { deleteProject, relinkProjectDirectory, restoreConversations, directoryP
 export { sendAgentFeedback } from "./feedback";
 export { runtimeText, usageText } from "./runtime";
 export { checkContextClear } from "./clear";
+export { deliveredImages, openDeliveredImage, type DeliveredImage } from "./images";

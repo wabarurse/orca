@@ -523,7 +523,7 @@ describe("tui app", () => {
     term.press({ name: "end" });
     term.press({ name: "backspace" });
     expect(app.input.text).toBe("hell");
-    term.press({ name: "a", ctrl: true });
+    term.press({ name: "home" });
     term.press({ name: "k", ctrl: true });
     expect(app.input.text).toBe("");
     term.type("first\r");

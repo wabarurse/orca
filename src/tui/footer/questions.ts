@@ -477,13 +477,6 @@ export class Questions {
     this.sync();
   }
 
-  /** Explicit toggle; closing never answers and keeps both the chat and answer drafts. */
-  async toggle(page = this.host.page()): Promise<void> {
-    if (!page) return;
-    if (page.questions.expanded) { this.hide(page); this.host.draw(); }
-    else await this.command(page);
-  }
-
   // --- /questions ---------------------------------------------------------------
 
   /** /questions: read and explicitly open the queue. */

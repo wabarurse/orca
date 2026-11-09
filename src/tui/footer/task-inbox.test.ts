@@ -73,22 +73,22 @@ test("question load/error states never fabricate zero; retry and external closur
   const ui = await setup({ questions: fakeQuestions({ list: async () => { if (fail) throw new Error(malicious); return open; } }) }), { app } = ui;
   const chat = { text: "keep chat", cursor: 2 }; app.input = { ...chat }; app.draw();
   await app.questions.command(app.page);
-  expect(app.status(app.page!)).toEndWith("? questions");
+  expect(app.status(app.page!)).toContain("? questions |");
   const panel = plain(taskInboxPanel(app.frame()).rows);
   expect(panel).toContain("questions unavailable"); expect(panel).not.toContain("No open questions");
   expect(taskInboxPanel(app.frame()).rows.join("")).not.toMatch(/\x1b\]|\x1b\[31m|\u202e/);
   await app.onKey({ name: "enter" }); expect(app.input).toEqual(chat);
   fail = false; await app.questions.command(app.page);
-  expect(app.status(app.page!)).toEndWith("1 questions");
+  expect(app.status(app.page!)).toContain("1 questions |");
   app.input = { text: "orphan\x1b]0;owned\x07\u202e", cursor: 4 }; app.draw();
   fail = true; app.questions.poll(app.pages); await app.page!.questions.polling;
-  expect(app.status(app.page!)).toEndWith("? questions");
+  expect(app.status(app.page!)).toContain("? questions |");
   expect(plain(taskInboxPanel(app.frame()).rows)).toContain("questions unavailable");
   fail = false; open = []; app.questions.poll(app.pages); await app.page!.questions.polling;
   expect(app.input).toEqual(chat); expect(app.frame().inbox).toBeNull();
   expect(plain(app.frame().inputArea!.lines)).toContain("unsent answer: orphan");
   expect(JSON.stringify(app.page!.lines)).not.toContain("owned");
-  expect(app.status(app.page!)).toEndWith("0 questions");
+  expect(app.status(app.page!)).toContain("0 questions |");
 });
 
 test("in-flight answer stays single-flight across polls/sections; errors retain the answer and never consume queued prompts", async () => {
@@ -216,9 +216,9 @@ test("even an empty or control-only question read error remains unknown, not inb
   let fail = false;
   const { app } = await setup({ questions: fakeQuestions({ list: async () => { if (fail) throw new Error("\x1b[2J"); return []; } }) });
   await app.questions.command(app.page);
-  expect(app.status(app.page!)).toEndWith("0 questions");
+  expect(app.status(app.page!)).toContain("0 questions |");
   fail = true; app.questions.poll(app.pages); await app.page!.questions.polling;
-  expect(app.status(app.page!)).toEndWith("? questions");
+  expect(app.status(app.page!)).toContain("? questions |");
   expect(plain(taskInboxPanel(app.frame()).rows)).toContain("questions unavailable");
 });
 
@@ -245,7 +245,7 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   gate.reject(new Error("persistence failed")); await closing;
   expect(app.frame().inbox).toBeNull();
   expect(app.page!.questions.answer).toEqual(answer);
-  expect(app.status(app.page!)).toEndWith("3 questions");
+  expect(app.status(app.page!)).toContain("3 questions |");
   expect(plain(app.frame().inputArea!.lines)).toContain("could not skip: persistence failed");
   expect(await allQuestions("a")).toEqual(qs);
   stale = undefined;
@@ -254,7 +254,7 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
   expect(app.page!.questions.answer.text).toBe(""); // never reassigned to next head
   expect(app.input.text).toBe("");
-  expect(app.status(app.page!)).toEndWith("2 questions");
+  expect(app.status(app.page!)).toContain("2 questions |");
   expect(await pendingInput("a", "orchestrator")).toBe(false);
   expect(await drain("a", "orchestrator")).toEqual([]);
   expect(app.page!.sent).toEqual([{ inputId: "untouched", text: "queued before skip" }]);
@@ -306,7 +306,7 @@ test("external silent skip reports an orphan draft as closed, restores chat and 
   expect(plain(app.frame().inputArea!.lines)).toContain("unsent answer: orphan answer");
   expect(JSON.stringify(app.page!.lines)).not.toContain("default");
   expect(app.page!.questions.answer.text).toBe("");
-  expect(app.status(app.page!)).toEndWith("1 questions");
+  expect(app.status(app.page!)).toContain("1 questions |");
   await app.questions.command(app.page);
   expect(app.input.text).toBe(""); expect(app.questions.view()?.text).toBe("Next?");
   expect(await drain("a", "orchestrator")).toEqual([]);
