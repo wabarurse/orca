@@ -589,7 +589,7 @@ describe("tui app", () => {
 
     // Viewing a live agent through /agents shows the line until it finishes.
     term.type("/agents\r");
-    await until(() => !!app.menu);
+    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
     term.press({ name: "enter" });
     await until(() => app.page!.view?.name === "worker-x" && started === 2 && term.screen().includes("working…"));
     const calls = agentCalls;
@@ -611,7 +611,7 @@ describe("tui app", () => {
     term.type("again\r");
     await until(() => app.page!.busy);
     term.type("/agents\r");
-    await until(() => !!app.menu);
+    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
     term.press({ name: "enter" });
     await until(() => app.page!.view?.live === false && !term.screen().includes("thinking… "));
 
@@ -1000,7 +1000,7 @@ describe("sticky screen", () => {
     term.type("hello\r");
     await until(() => term.screen().includes("worker-x done"));
     term.type("/agents\r");
-    await until(() => !!app.menu);
+    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
     term.press({ name: "enter" });
     await until(() => term.screen().includes("worker line one"));
     expect(term.screen()).not.toContain("viewed says hi");
@@ -1103,7 +1103,7 @@ describe("frames, resizes, startup and crashes", () => {
     expect(app.menu?.title).toContain("pick one"); // Too short to show the panel, but it still owns keys.
     term.press({ name: "escape" });
     expect(app.menu).toBeNull();
-    expect(shown.join("\n")).toContain("agents running");
+    expect(shown.join("\n")).toContain("agents |");
     expect(app.page!.lines.map(raw).join("\n")).toContain("alpha says hi");
     app.quit();
     await running;

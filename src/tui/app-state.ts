@@ -7,7 +7,7 @@ import { archiveAgents, cancelSession } from "../core/tmux";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
 import { login, sendAgentFeedback, modelChoices, effortChoices, setModel, type DeleteOptions } from "./commands";
 import type { Line, MarkdownStream, Calls } from "./conversation";
-import { editor as ed, type PageQuestions, type QuestionStore, type TaskInboxData, type CommandHelp, type Menu } from "./footer";
+import { editor as ed, type PageQuestions, type QuestionStore, type CommandHelp, type Menu } from "./footer";
 
 export interface Page {
   /** The project id: its folder under ~/.orca/projects. Never changes. */
@@ -50,10 +50,7 @@ export interface Page {
   /** The project's selected account, provider:profile, for the header; undefined until read or when unreadable. */
   account?: string;
   settings?: RequestSettings;
-  agentCount?: number | null;
-  verifiedAgentCount?: number;
-  waitingAgentCount?: number;
-  unverifiedAgentCount?: number | null;
+  agentCount?: number;
 }
 
 export interface AppDeps {
@@ -130,34 +127,20 @@ export const TICK_MS = 33;
 export const LIVE_CHECK_MS = 1000;
 /** The open /agents menu redraws this often (its clocks tick in seconds) and re-reads the agent list every AGENTS_REFRESH_MS. */
 export const AGENTS_TICK_MS = 1000;
-export const AGENTS_REFRESH_MS = 2000;
 
 /** The project list (Ctrl+B, /projects): every project on disk, pinned first. Takes the keys while open. */
 export interface ProjectListState { parent?: string; items: ProjectEntry[]; index: number; status: string; confirm: ProjectEntry | null }
 
 export interface ActiveMenu extends Menu {
   pick: (index: number) => Promise<void> | void;
-  /** Set on the /agents menu, whose rows depend on the time: its rows and footer at `now`, built per frame. `items` is then just the row count's source, as last built. */
-  viewAt?: (now: number) => Pick<Menu, "items" | "footer">;
-  /** Set on the /agents menu: keys it handles before navigation (a, d, D and their y/n); true when it took the key. */
-  keys?: (k: Key) => Promise<boolean> | boolean;
-  /** Set on the /agents menu: re-read the agent list and show it, keeping the selected agent by name. */
-  reload?: () => Promise<void>;
 }
-export interface AgentsTimer { menu: ActiveMenu; readAt: number; reading: boolean; stop: () => void }
 export interface TaskTreeState {
   page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
   graphY: number; detailY: number; loading: boolean; error?: string;
   collapsed: Set<string>; frame: number; detailsFocused?: boolean;
-  confirmRemoval?: string; notice?: string; removing?: boolean;
+  confirmRemoval?: string[]; confirmAbandon?: { id: string; revision: number; text: string }; history?: boolean; notice?: string; removing?: boolean;
   jumpInput?: string;
   revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
-}
-
-export interface TaskInboxState extends TaskInboxData {
-  page: Page;
-  top: number;
-  content?: { cols: number; lines: string[]; heading?: string };
 }
 
 export interface ClearConfirmation {

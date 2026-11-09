@@ -4,6 +4,7 @@
 export interface AgentInfo {
   name: string;
   live: boolean;
+  run?: string;
   status?: "running" | "exited" | "unknown";
   /** Inventory read succeeded; individual rows may still have unknown activity. */
   inventoryComplete?: boolean;

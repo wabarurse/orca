@@ -6,5 +6,4 @@ export { chooseModel, type ModelHost } from "./model-flow";
 export { deleteProject, relinkProjectDirectory, restoreConversations, directoryProjectCommand, directoryDefaultsCommand, projectMenu, type DeleteOptions } from "./project";
 export { sendAgentFeedback } from "./feedback";
 export { runtimeText, usageText } from "./runtime";
-export { AgentsList } from "./agents";
 export { checkContextClear } from "./clear";

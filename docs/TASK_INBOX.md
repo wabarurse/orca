@@ -1,39 +1,32 @@
-# USER inbox: Tasks + Questions
+# Tasks, Agents and Questions
 
-The **per-project USER inbox** combines two distinct backing stores: the durable
-structured **task registry** (`tasks.json`) and the existing **questions** store
-(`questions/`). This is a display move, not a migration, scheduler or agent-message
-inbox: no task reconstruction, record recreation, automatic answer/skip or queue
-consumption. **`/agents` remains a separate agent list/transcript view.**
+Use `/tasks`, `/agents` and `/questions` to open the project’s work views.
+Each shows a list and a details pane, stacked on narrow terminals.
+Use arrow keys to select and focus, Enter to open, `r` to refresh and Esc
+to return to chat. The footer shows this project's agent, task and question
+counts. A question mark indicates an unavailable count.
 
-## TUI (`/inbox`, Ctrl+Q, `/questions`)
+Tasks support jumping by number, viewing merged history with `a`, archiving
+merged rows with `d` or `D`, and abandoning eligible work with `A`.
+Agents support finished-run history with `a`, stopping the selected run with
+`s`, and archiving eligible finished runs with `d` or `D`. Mutations require
+confirmation. Archiving retains records and transcripts.
 
-`/inbox` opens **Tasks**, below the multiline composer and counts, like `/help`.
-Small **Tasks / Questions** tabs show one compact scrolling section at a time;
-there are no cards or dashboard containers.
-**Shift+Tab** switches **Tasks / Questions** without selecting an answer; **Esc**
-or plain **Tab** closes. Ctrl+Q opens **Questions** from chat, Tasks or help, and
-closes it when already shown. `/questions` remains a compatible direct shortcut.
-Commands accept no arguments and create no project/session with no page open.
-Question arrivals only update the badge; they never open a panel.
+`/vim` toggles Vim controls. In Normal mode, `i` enters Insert, `gt` and
+`gT` switch tabs, `j/k` and `gg/G` navigate, and `h/l` switch panes
+in work views. Space then `a/t/q/p` opens Agents, Tasks, Questions or Images.
+Space then `u/m/e/f` opens Accounts, Model, Effort or Fast mode. Use `:`
+to run any slash command. Esc leaves Insert and retains the chat draft.
 
-The footer says **Inbox N**: N counts **unanswered questions in the selected
-project**, not tasks, running agents or queued prompts. **Inbox 0** means a
-successful read found no unanswered questions, **Inbox ?** means not yet read or
-a read failed. Background open pages contribute **(+N elsewhere)**; unknown
-background data is **(+? elsewhere)** (or **(+N+? elsewhere)** with known pending
-questions too). Narrow status rows shorten this to **Inbox N +M**. Counts remain
-separate from running-agent counts and queued-prompt counts/previews; tiny screens
-may clip/hide them to preserve the composer. Failed question reads retain their
-last snapshot with a visible stale/error warning, never a fabricated zero.
+## Answering questions
 
 * Chat drafts and unfinished answer drafts (including their cursors) belong to
   their captured page. Switching sections, closing/reopening or switching
-  projects preserves both. Project changes close the inbox; explicitly reopen
+  projects preserves both. Project changes close Questions; explicitly reopen
   Questions to resume its answer. Navigation never submits, consumes pending
   prompts, calls a provider, mutates task records or answers/skips questions.
   Background turns and existing polling continue independently.
-* Questions reuse the existing controller/store. The oldest pending question
+* Questions reuse the existing controller/store. The selected question
   shows numbered options, **type your own answer**, and **skip — remove from inbox**.
   ↑↓ moves among rows (and within multiline answers); 1–9 picks an option on an
   option row; typing enters `answer>`. Enter explicitly sends the selected option
@@ -73,16 +66,15 @@ last snapshot with a visible stale/error warning, never a fabricated zero.
   answer, a close that loses the claim waits briefly for the winner, and an
   answer arriving after a withdrawal is still recorded and delivered once
   (a separate exclusive `.answered` claim). The TUI treats a withdrawal like any
-  close elsewhere, and its next poll updates **Inbox N**.
+  close elsewhere, and its next poll updates the question count.
 * An externally closed row disappears. If it had an unfinished answer, that
   orphan text is reported separately, never silently assigned to the next question
   or substituted for the original chat draft. Menus/help retain precedence. Ctrl+B
   projects, model/settings menus, `/help`, cancellation and Cancel-default `/clear-context`
   still work. Ctrl+Q does nothing while a menu/project list owns keys.
 * In an agent transcript, opening Questions shows an explanatory guard and takes
-  no answers: close Inbox, then Esc or `/back` to return to the project
-  orchestrator. Closing Inbox itself never leaves the agent view. Agent lists
-  are not part of Inbox. Late agent-menu results cannot attach a different page.
+  no answers: close Questions, then Esc or `/back` to return to the project
+  orchestrator. Closing Questions itself never leaves the agent view.
 * Captured page/panel ownership suppresses late reads and answer UI results after
   closing/deleting/recreating pages. A successful in-flight answer belongs only
   to its original still-open page, even if another page is selected; late errors
