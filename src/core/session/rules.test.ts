@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { conversationIds, paths, writeProjectState } from "../../config";
 import { sessionImageScope } from "../data/images";
-import { turnLocks } from "../data/projects";
+import { conversationTurnLock } from "../data/projects";
 import { readSession } from "../data/projects/session-id";
 import { assertBundlePath, assertBundleSize, decodeBundle, encodeBundle, sha256, type BundleManifest } from "./bundle";
 import { exportSession } from "./export";
@@ -133,18 +133,16 @@ test("live agents, unknown liveness, running runs and non-empty inboxes refuse e
   expect(full.err).toContain("worker-feat-x's inbox has 1 undelivered");
 });
 
-test("a turn in progress refuses export and import (the checkout-wide and the conversation turn lock)", async () => {
+test("a turn in progress refuses export and import", async () => {
   const { a, b } = await pair();
   const id = await synced(a, b);
-  for (const which of [0, 1]) {
-    const release = await at(a, () => holdLock(turnLocks("orch-aaaa")[which]!));
-    const held = await session(a, ["push", "demo", "server"], { transport: loopback(b) });
-    release();
-    expect(held.code).toBe(1);
-    expect(held.err).toContain("a turn is in progress");
-  }
+  const release = await at(a, () => holdLock(conversationTurnLock("orch-aaaa")));
+  const held = await session(a, ["push", "demo", "server"], { transport: loopback(b) });
+  release();
+  expect(held.code).toBe(1);
+  expect(held.err).toContain("a turn is in progress");
   await say(a, "orch-aaaa", ["more", "text"]);
-  const releaseB = await at(b, () => holdLock(turnLocks(id)[0]!));
+  const releaseB = await at(b, () => holdLock(conversationTurnLock(id)));
   const dest = await session(a, ["push", "demo", "server"], { transport: loopback(b) });
   releaseB();
   expect(dest.code).toBe(1);

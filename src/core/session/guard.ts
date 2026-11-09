@@ -7,7 +7,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../config";
 import { pidAlive, tryStorageLock } from "../data";
-import { turnLocks, withProjectStateLock } from "../data/projects";
+import { conversationTurnLock, withProjectStateLock } from "../data/projects";
 import { command } from "../proc";
 import { liveAgentsOrNull, readRun } from "../tmux";
 
@@ -50,17 +50,12 @@ export async function assertQuiescent(project: string, deps: TransferDeps, actio
   }
 }
 
-/** Every turn lock of the project (the checkout-wide one shared with sibling conversations, and its own) plus the state lock. */
+/** Hold the conversation turn and state locks during session transfer. */
 export async function withQuietProject<T>(project: string, action: () => Promise<T>): Promise<T> {
-  const releases: (() => Promise<void>)[] = [];
-  try {
-    for (const path of turnLocks(project)) {
-      const release = await tryStorageLock(path, project);
-      if (!release) throw new Error(`a turn is in progress for ${project} (turn lock held); try again when it ends`);
-      releases.push(release);
-    }
-    return await withProjectStateLock(project, action);
-  } finally { for (const release of releases.reverse()) await release(); }
+  const release = await tryStorageLock(conversationTurnLock(project), project);
+  if (!release) throw new Error(`a turn is in progress for ${project} (turn lock held); try again when it ends`);
+  try { return await withProjectStateLock(project, action); }
+  finally { await release(); }
 }
 
 /** One import at a time per machine: two concurrent imports would race on names, folders and the sync records. */

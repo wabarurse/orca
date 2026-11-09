@@ -330,7 +330,7 @@ or kill their windows there (`tmux kill-window -t orca-<project>:<agent>`).
 tasks, images and tool output. `memory.sqlite` holds the repository binding and
 project settings. Discovery uses
 the canonical checkout path, so two clones with the same origin stay distinct.
-Multiple conversations sharing a checkout serialize their main-agent turns.
+Separate conversations sharing a checkout can run turns concurrently.
 Remote URLs are no longer cloned by `start` or `/new`: clone locally first and
 pass the directory. Starting outside Git requires an existing project or an
 explicit local checkout; no empty repository is created inside harness state.

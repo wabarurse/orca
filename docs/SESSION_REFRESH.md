@@ -91,18 +91,10 @@ preview is local to the submitting window; it is not a global inbox inventory.
   a per-file lock (`transcript/<session>.jsonl.lock`). Publication preserves the
   exact old byte prefix. Refresh replaces its snapshot only after successful
   reading/parsing; damaged legacy lines are preserved on disk, not replayed.
-- A turn holds two locks outside the project directory for the **whole
-  orchestrator model/tool turn**: the checkout-wide `checkout-locks/<sha256>`
-  shared by every conversation bound to one original checkout, then the
-  conversation's own `turn-locks/<project>` (one path for legacy clones). Their
-  owner is the project's **orchestrator daemon** (`src/core/agent-loop/orc/daemon.ts`,
-  the `orchestrator` tmux window), the only process that appends to the
-  orchestrator's transcript; TUIs are clients that enqueue input and requests
-  and read the transcript back (`src/core/agent-loop/orc/client.ts`). A losing daemon
-  (two conversations on one checkout) returns without starting a competing turn
-  and holds nothing; its next poll checks again. The winner reloads shared
-  context before starting. Workers retain their existing role/session
-  ownership; this is not new worker scheduling or restart behavior.
+- The orchestrator daemon holds `turn-locks/<project>` for the entire model and
+  tool turn. The lock serializes writers of a conversation's transcript.
+  Conversations on the same checkout can run concurrently. TUIs enqueue input
+  and requests and read back the transcript.
 - One daemon per project: `daemon-locks/<project>` is held for the daemon's
   lifetime (dead-owner takeover as for every lock), and its `owner.json` pid is
   how clients tell the daemon is alive. Requests (`projects/<id>/orchestrator/commands/`)
@@ -129,10 +121,8 @@ preview is local to the submitting window; it is not a global inbox inventory.
   after a consumer's snapshot wait for a later boundary. Per-process submission
   FIFO is preserved. Simultaneous independent windows have no invented global
   keystroke order beyond their persisted filename order.
-- `/clear-context` acquires both turn locks too (in the daemon, on the client's request,
-  after the client's own disk checks); project deletion only the conversation's
-  own, so an idle conversation can be deleted while a sibling on the same checkout
-  is mid-turn. Deletion first asks the daemon to stop and waits for its process
+- `/clear-context` and project deletion acquire the conversation turn lock.
+  Either can run for an idle conversation while a sibling is mid-turn. Deletion first asks the daemon to stop and waits for its process
   (killing its window after 10s, refusing after 3s more), so nothing writes the
   project's files back after they are removed (deletion never touches the shared checkout's files, and the
   worktrees it unregisters live in the project's own namespace). A refusal names

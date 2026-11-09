@@ -31,11 +31,7 @@ export interface DeleteOptions {
 export async function deleteProject(name: string, { live = liveAgentsOrNull, stop = stopDaemon, kill = killProjectSession, beforeRemove }: DeleteOptions = {}): Promise<void> {
   if (!validProjectName(name)) throw new Error(`not a project name: ${name}`);
   if (!existsSync(paths.project(name))) throw new Error(`no project named ${name}`);
-  // Only this conversation's own turn must be excluded, not the checkout-wide one a
-  // sibling conversation (Ctrl+N) holds mid-turn: deletion never touches the shared
-  // checkout's files, and the worktrees it unregisters are in this project's own
-  // namespace, serialised by git itself like the worker worktree add/remove that
-  // already runs during sibling turns without the turn lock.
+  // Deletion owns only this conversation and its managed worktrees.
   const lock = conversationTurnLock(name);
   const release = await tryStorageLock(lock, name);
   if (!release) {

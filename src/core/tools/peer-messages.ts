@@ -56,5 +56,5 @@ function stopped(project: string): boolean | null {
 export function peerReceipt(to: string, project: string, inputId: string): string {
   return JSON.stringify({ to, inputId, enqueued: true, agentStarted: false, processingConfirmed: false,
     projectStopped: stopped(project), observedAt: new Date().toISOString(),
-    nextAction: "Queued only. Finish your turn so the peer can acquire the checkout lock. Do not poll for a reply or restart stopped/exited conversations. A reply, not enqueue acceptance, confirms processing." });
+    nextAction: "Queued only. Do not poll for a reply or restart stopped/exited conversations. A reply, not enqueue acceptance, confirms processing." });
 }
