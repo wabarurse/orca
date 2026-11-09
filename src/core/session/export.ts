@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { loadConfig, repositoryBinding } from "../../config";
 import { session } from "../data/projects";
 import { sessionImageScope } from "../data/images";
-import { LAYOUT_VERSION, MANIFEST_VERSION, SCHEMAS, orcaVersion, encodeBundle, sha256, type BundleFile, type BundleManifest, type TranscriptRecord } from "./bundle";
+import { LAYOUT_VERSION, assertBundleSize, MANIFEST_VERSION, SCHEMAS, orcaVersion, encodeBundle, sha256, type BundleFile, type BundleManifest, type TranscriptRecord } from "./bundle";
 import { chainOf, imageRefs, ledgerDigest, ledgerOf, type ImageRefSeen } from "./ledger";
 import { assertQuiescent, withQuietProject, type TransferDeps } from "./guard";
 import { pendingImports } from "./publish";
@@ -95,6 +95,7 @@ export async function exportSession(project: string, deps: TransferDeps, opts: {
     collectRegistry(snap, c);
     collectMedia(snap, c);
     checkImageRefs(snap, scope, c.refs, warnings);
+    assertBundleSize(c.files);
     if (snap.skipped.length) warnings.push(`not carried (not session content): ${snap.skipped.join(", ")}`);
     const manifest = await manifestFor(snap, c, sessionId, deps);
     return { bundle: encodeBundle(manifest, c.files), manifest, warnings, project };

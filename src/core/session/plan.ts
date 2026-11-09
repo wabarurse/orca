@@ -177,8 +177,9 @@ function nameWrites(i: PlanInput, plan: Plan, takenNames: Set<string>): void {
   const wanted = i.name ?? i.v.manifest.name;
   if (!plan.sourceWins || wanted === i.local.name) return;
   if (takenNames.has(wanted)) { plan.lines.push(`name: kept "${i.local.name}" (another project here is already called "${wanted}")`); return; }
+  // Not a state change: the name is applied after publication through setDisplayName, which re-checks uniqueness
+  // under the folder lock (a direct write here would bypass it).
   plan.name = wanted;
-  plan.state.push({ key: "name", value: wanted });
   plan.lines.push(`name: "${wanted}" (from the sending side)`);
 }
 

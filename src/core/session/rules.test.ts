@@ -9,7 +9,7 @@ import { conversationIds, paths, writeProjectState } from "../../config";
 import { sessionImageScope } from "../data/images";
 import { turnLocks } from "../data/projects";
 import { readSession } from "../data/projects/session-id";
-import { assertBundlePath, decodeBundle, encodeBundle, sha256, type BundleManifest } from "./bundle";
+import { assertBundlePath, assertBundleSize, decodeBundle, encodeBundle, sha256, type BundleManifest } from "./bundle";
 import { exportSession } from "./export";
 import { chainOf, ledgerDigest, ledgerOf } from "./ledger";
 import { importSession } from "./import";
@@ -325,4 +325,11 @@ test("the ssh boundary: remote commands are exact and quoted, host options are r
   const dash = await session(a, ["push", "demo", "-oProxyCommand=evil"], { transport: loopback(b) });
   expect(dash.code).toBe(1);
   expect(SSH_OPTIONS).toEqual(["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4"]);
+});
+
+test("an export over the bundle size limits is refused with a message naming the limit", () => {
+  const huge = (path: string, length: number) => ({ path, bytes: { length } as Uint8Array });
+  expect(() => assertBundleSize([huge("transcripts/orchestrator.jsonl", 2 * 1024 ** 3)])).toThrow("per-file limit");
+  expect(() => assertBundleSize([1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => huge(`images/${i}.png`, 1024 ** 3)))).toThrow("limit of a session bundle");
+  expect(() => assertBundleSize([huge("tasks.json", 10)])).not.toThrow();
 });

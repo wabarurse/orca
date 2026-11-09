@@ -76,6 +76,15 @@ export function assertBundlePath(path: string): void {
   if (!ALLOWED.some(rx => rx.test(path))) throw new Error(`bundle path ${path} is not on the transferable allowlist`);
 }
 
+/** Refuse, with a clear message, a bundle the receiver's decoder would reject (and one too large to hold in memory). */
+export function assertBundleSize(files: BundleFile[]): void {
+  const total = files.reduce((n, f) => n + f.bytes.length, 0), big = files.find(f => f.bytes.length > MAX_FILE);
+  const mb = (n: number) => `${(n / 1024 ** 2).toFixed(0)} MiB`;
+  if (big) throw new Error(`${big.path} is ${mb(big.bytes.length)}, over the ${mb(MAX_FILE)} per-file limit of a session bundle; nothing was exported`);
+  if (total > MAX_TOTAL) throw new Error(`the session is ${mb(total)}, over the ${mb(MAX_TOTAL)} limit of a session bundle; nothing was exported (trim images or start a new conversation)`);
+  if (files.length >= MAX_FILES) throw new Error(`the session has ${files.length} files, over the limit of ${MAX_FILES}; nothing was exported`);
+}
+
 export function encodeBundle(manifest: BundleManifest, files: BundleFile[]): Buffer {
   const parts: Buffer[] = [MAGIC];
   const record = (path: string, bytes: Uint8Array) => {

@@ -16,11 +16,13 @@ import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { conversationIds, paths, repositoryBinding } from "../../config";
 import { sessionImageScope } from "../data/images";
+import { validateSessionTasks } from "../data/tasks";
 import { initializeWorkspace, listProjects, newProjectName, session, setDisplayName, withProjectStateLock } from "../data/projects";
 import { assertQuiescent, withImportLock, withQuietProject, type TransferDeps } from "./guard";
-import { chainOf, ledgerDigest, ledgerOf } from "./ledger";
+import { SCOPE_PLACEHOLDER, sha256 } from "./bundle";
+import { chainOf, ledgerDigest, ledgerOf, replaceScopes } from "./ledger";
 import { resolveTarget, takenNames } from "./local";
-import { planImport, type Plan } from "./plan";
+import { planImport, type Plan, type Write } from "./plan";
 import { pendingImports, publish, recoverImports, type PublishInput } from "./publish";
 import { emptySnapshot, readSnapshot } from "./snapshot";
 import { verifyBundle, type Verified } from "./verify";
@@ -75,8 +77,22 @@ async function bindCheckout(v: Verified, checkout: string | undefined, warnings:
   return bound.directory;
 }
 
+/** Staged questions, images and image prompts must be the bundle's bytes (prompts compared in canonical form: a fork re-scopes them). */
+async function verifyStagedMedia(v: Verified, scope: string, stage: string, order: Write[]): Promise<void> {
+  const incoming = sessionImageScope(v.manifest.sessionId), canonical = (text: string) => sha256(replaceScopes(text, [scope, incoming], SCOPE_PLACEHOLDER));
+  for (const [index, w] of order.entries()) {
+    const bundled = w.area === "questions" ? `questions/${w.path}` : w.path.startsWith("images/inputs/") ? `image-inputs/${w.path.slice("images/inputs/".length)}` : w.path.startsWith("images/") ? w.path : undefined;
+    if (!bundled) continue;
+    const staged = await Bun.file(join(stage, "files", String(index))).bytes(), want = v.files.get(bundled);
+    const same = want && (bundled.startsWith("image-inputs/") ? canonical(Buffer.from(staged).toString("utf8")) === canonical(want.toString("utf8")) : sha256(staged) === sha256(want));
+    if (!same) throw new Error(`staged ${bundled} differs from the bundle; nothing was published`);
+  }
+}
+
 /** Staged transcripts must still be exactly what the manifest promised: ledger digest and contextDigest recomputed. */
-async function verifyStage(v: Verified, plan: Plan, scope: string, stage: string, order: { path: string }[]): Promise<void> {
+async function verifyStage(v: Verified, plan: Plan, scope: string, stage: string, order: Write[]): Promise<void> {
+  await verifyStagedMedia(v, scope, stage, order);
+  if (plan.tasks) validateSessionTasks({ version: 1, tasks: JSON.parse(JSON.stringify(plan.tasks)) });
   const incoming = sessionImageScope(v.manifest.sessionId);
   for (const record of v.manifest.transcripts.filter(r => plan.incoming.includes(r.id))) {
     const index = order.findIndex(w => w.path === `transcript/${record.id}.jsonl`);
@@ -94,7 +110,7 @@ function syncRecord(v: Verified, plan: Plan, o: ImportOptions, now: Date, previo
 function report(project: string, outcome: ImportReport["outcome"], sessionId: string, plan: Plan, o: ImportOptions, extra: { warnings?: string[]; backup?: string } = {}): ImportReport {
   return { project, outcome, sessionId, lines: plan.lines, warnings: [...(extra.warnings ?? []), ...plan.warnings, ...NOTICES], dryRun: !!o.dryRun, ...(extra.backup ? { backup: extra.backup } : {}) };
 }
-const changed = (plan: Plan) => !!(plan.writes.length || plan.state.length || plan.tasks);
+const changed = (plan: Plan) => !!(plan.writes.length || plan.state.length || plan.tasks || plan.name);
 
 async function updateExisting(v: Verified, project: string, adopt: boolean, o: ImportOptions, deps: TransferDeps): Promise<ImportReport> {
   const binding = repositoryBinding(project);
@@ -142,9 +158,8 @@ async function createNew(v: Verified, name: string, fork: boolean, o: ImportOpti
   const project = newProjectName([...new Set([...conversationIds(paths.root), ...(await listProjects())])]);
   const scope = rescope ?? sessionIdScope(v);
   const published = await withProjectStateLock(project, async () => {
-    await initializeWorkspace(project, directory);
     return publish({
-      project, created: true, writes: plan.writes, state: plan.state, tasks: plan.tasks, now: deps.now(), hook: o.hook,
+      project, created: true, prepare: () => initializeWorkspace(project, directory), writes: plan.writes, state: plan.state, tasks: plan.tasks, now: deps.now(), hook: o.hook,
       session: syncRecord(v, plan, o, deps.now(), undefined, sessionId, fork ? v.manifest.sessionId : undefined),
       verify: (stage, order) => verifyStage(v, plan, scope, stage, order),
     });
@@ -153,6 +168,9 @@ async function createNew(v: Verified, name: string, fork: boolean, o: ImportOpti
   plan.lines.push(fork ? `forked as a separate project ${project} with a new session id (the source's was ${v.manifest.sessionId})` : `created project ${project} bound to ${directory}`);
   return report(project, outcome, sessionId, plan, o, { warnings, backup: published.backup });
 }
+
+/** Settle interrupted imports (`orca session recover`) under the import lock, so a running import is never mistaken for a crashed one. */
+export const recoverSessions = (): Promise<string[]> => withImportLock(recoverImports);
 
 /** Import a bundle. Throws TransferRefused when nothing may be written, and Error for anything else that went wrong. */
 export async function importSession(input: Uint8Array, deps: TransferDeps, o: ImportOptions): Promise<ImportReport> {

@@ -8,7 +8,7 @@ import { conversationIds, paths, readProjectState, writeProjectState } from "../
 import { readSession } from "../data/projects/session-id";
 import { allTasks, registerTask } from "../data/tasks";
 import { exportSession } from "./export";
-import { importSession } from "./import";
+import { importSession, recoverSessions } from "./import";
 import { resolveSelector } from "./local";
 import { CrashForTest, pendingImports, recoverImports } from "./publish";
 import { at, cleanup, loopback, machine, project, quiet, read, say, session, type Machine } from "../../test/session-fixture";
@@ -131,4 +131,49 @@ test("a sync record that cannot be written after the commit point is reported an
   expect((await stateOf(b, id)).tasks).toBe(1); // the commit point was passed: tasks are in
   expect((await at(b, () => recoverImports()))[0]).toContain("completed");
   expect(JSON.parse((await stateOf(b, id)).sync).sync.peer).toBe("mac");
+});
+
+test("recover never rolls back an import that is still running: it takes the import lock, so the finished import is intact", async () => {
+  const { b, id, bundle } = await ahead();
+  const seen: string[] = [];
+  const midway = async (p: string) => {
+    if (p !== "files") return;           // the journal is "applying" and files are replaced: exactly what a stale recover would undo
+    // Where kill is denied this very process looks dead to the lock; record the owner as another live process (pid 1), as holdLock does.
+    await at(b, () => writeFile(join(paths.runtime, "session-import.lock", "owner.json"), JSON.stringify({ pid: 1, since: new Date().toISOString() })));
+    seen.push((await session(b, ["recover"])).err);
+    seen.push(await at(b, () => recoverSessions()).then(() => "recovered", e => (e as Error).message));
+  };
+  const ok = await into(b, bundle, { hook: midway });
+  expect(ok.outcome).toBe("updated");
+  expect(seen[0]).toContain("another session import is running");
+  expect(seen[1]).toContain("another session import is running");
+  const after = await stateOf(b, id);
+  expect(after).toMatchObject({ model: "claude-opus-5-5", tasks: 1 });
+  expect(await at(b, () => pendingImports())).toEqual([]);
+});
+
+test("a crash before the journal leaves only an unreferenced staging directory, which recovery removes; a crash right after it removes the half-made project", async () => {
+  const a = await machine("mac"), b = await machine("server");
+  await project(a, "orch-aaaa", "demo"); await say(a, "orch-aaaa", ["hello", "hi there"]);
+  const bundle = await at(a, async () => (await exportSession("orch-aaaa", quiet())).bundle);
+  const crash = (at_: string) => ({ hook: (p: string) => { if (p === at_) throw new CrashForTest(`killed at ${at_}`); } });
+  const projects = () => at(b, () => conversationIds(paths.root));
+  // before the journal: no project exists yet, staging holds files but no journal
+  await expect(into(b, bundle, { checkout: b.repo, ...crash("staged") })).rejects.toThrow("killed at staged");
+  expect(await projects()).toEqual([]);
+  expect((await leftovers(b)).length).toBe(1);
+  expect(await at(b, () => pendingImports())).toEqual([]);
+  const first = await session(b, ["recover"]);
+  expect(first.code).toBe(0);
+  expect(first.err).toContain("incomplete staging directory");
+  expect(await leftovers(b)).toEqual([]);
+  // after the journal, before the folder is built (prepare) and after it: the journal names the project, recovery removes it
+  for (const point of ["journal", "files"]) {
+    await expect(into(b, bundle, { checkout: b.repo, ...crash(point) })).rejects.toThrow(`killed at ${point}`);
+    expect((await at(b, () => pendingImports()))[0]).toContain("(applying)");
+    expect((await session(b, ["recover"])).err).toContain("rolled back the interrupted import");
+    expect(await projects()).toEqual([]);
+    expect(await leftovers(b)).toEqual([]);
+  }
+  expect((await into(b, bundle, { checkout: b.repo })).outcome).toBe("created");
 });

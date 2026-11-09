@@ -36,7 +36,13 @@ const stripAnnotations = (history: Task["history"]) => {
 function mergeArchived(s: Task, d: Task, label: string, notes: string[]): Task | string {
   if (s.archive && d.archive) {
     const same = s.archive.pr.repository === d.archive.pr.repository && s.archive.pr.number === d.archive.pr.number;
-    return same ? d : `${label}: archived against different pull requests`;
+    if (!same) return `${label}: archived against different pull requests`;
+    // Both archived: the one with more history wins when one extends the other (a removal, which is a history event,
+    // is a tombstone and must not be undone by a copy that predates it). Unrelated post-archive histories keep this side's.
+    if (shorter(s.history, d.history)) return d;
+    if (shorter(d.history, s.history)) { notes.push(`${label}: the sending side has later history (e.g. removed from the list); taken`); return s; }
+    if (canon(s) !== canon(d)) notes.push(`${label}: archived on both sides with different later records; the receiving side's kept`);
+    return d;
   }
   const sending = !!s.archive;
   notes.push(`${label}: archived (merged) on the ${sending ? "sending" : "receiving"} side; archive ${sending ? "wins" : "kept"}`);

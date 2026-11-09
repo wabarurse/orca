@@ -13,7 +13,7 @@
 // which updates orca itself.
 
 import { chmod, readFile, writeFile } from "node:fs/promises";
-import { exportSession, importSession, MAGIC, realDeps, recoverImports, resolveSelector, sessionRows, TransferRefused, type ImportReport, type SessionRow, type TransferDeps } from "../core/session";
+import { exportSession, importSession, MAGIC, realDeps, recoverSessions, resolveSelector, sessionRows, TransferRefused, type ImportReport, type SessionRow, type TransferDeps } from "../core/session";
 
 export interface SshResult { code: number; out: Buffer; err: string }
 /** Run `ssh <host> <remote command>` with stdin. Tests replace it with an in-process peer. */
@@ -181,7 +181,7 @@ async function pull(a: Args, env: SessionEnv): Promise<number> {
 }
 async function recover(a: Args, env: SessionEnv): Promise<number> {
   need(a, "recover", 0);
-  const done = await recoverImports();
+  const done = await recoverSessions();
   env.io.err(done.length ? done.map(l => `${l}\n`).join("") : "no interrupted imports\n");
   return 0;
 }

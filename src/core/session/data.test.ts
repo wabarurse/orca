@@ -7,7 +7,7 @@ import { paths, readProjectState, writeProjectState } from "../../config";
 import { imageContent, legacyImageScope, materializeImages, saveImage, sessionImageScope } from "../data/images";
 import { questions } from "../data/inbox";
 import { ensureSessionId } from "../data/projects/session-id";
-import { getTask, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, allTasks } from "../data/tasks";
+import { getTask, observeTaskPR, prepareTaskRun, registerTask, removeTask, setTaskAttention, startTaskRun, allTasks } from "../data/tasks";
 import { open } from "../data/transcripts";
 import { png } from "../../test/image-fixture";
 import { exportSession } from "./export";
@@ -70,6 +70,32 @@ test("tasks: union by id, a strict prefix takes the longer history, conflicts re
   const back = await session(a, ["pull", "demo", "server"], { transport: loopback(b) });
   expect(back.code).toBe(0);
   expect((await at(a, () => getTask("orch-aaaa", T1))).archive?.reason).toBe("merged");
+});
+
+test("a removed (tombstoned) merged task is never resurrected by an older copy, and a removal travels to a side that lacks it", async () => {
+  const { a, b } = await pair();
+  const id = await synced(a, b);
+  await task(a, "orch-aaaa", T1); await task(a, "orch-aaaa", T2);
+  await merged(a, "orch-aaaa", T1, 1); await merged(a, "orch-aaaa", T2, 2);
+  expect((await push(a, b)).code).toBe(0);
+  // b removes T1 from its list; a's copy (a strict prefix of b's history) must not bring it back
+  await at(b, () => removeTask(id, T1, true));
+  const stale = await push(a, b);
+  expect(stale.code).toBe(0);
+  expect((await at(b, () => getTask(id, T1))).removedAt).toBeDefined();
+  // pulling b's tombstone into a takes the longer history
+  const pulled = await session(a, ["pull", "demo", "server"], { transport: loopback(b) });
+  expect(pulled.code).toBe(0);
+  expect(pulled.err).toContain("later history");
+  expect((await at(a, () => getTask("orch-aaaa", T1))).removedAt).toBeDefined();
+  expect((await at(a, () => getTask("orch-aaaa", T2))).removedAt).toBeUndefined();
+  // a removes T2; pushing carries the tombstone to b, and the records stay (nothing is deleted)
+  await at(a, () => removeTask("orch-aaaa", T2, true));
+  expect((await push(a, b)).code).toBe(0);
+  expect((await at(b, () => getTask(id, T2))).removedAt).toBeDefined();
+  expect((await at(b, () => allTasks(id))).map(t => t.id).sort()).toEqual([T1, T2]);
+  // removed on both with the same history: nothing to do
+  expect((await push(a, b)).err).toContain("unchanged");
 });
 
 test("unfinished tasks import as stopped runs with attention unknown; nothing is started", async () => {

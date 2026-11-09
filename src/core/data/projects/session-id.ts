@@ -37,6 +37,7 @@ export function readSession(project: string): SessionFile | undefined {
  * The stable id, minted on first use. Minting is lock-free and race-safe: the record is
  * written to a temporary file and hard-linked into place, which fails if another
  * process won, so every caller observes the same id and no reader sees a partial file.
+ * Where hard links are unsupported it falls back to an exclusive (`wx`) create of the final file.
  */
 export async function ensureSessionId(project: string, id: string = randomUUID()): Promise<string> {
   const existing = readSession(project);
@@ -46,7 +47,14 @@ export async function ensureSessionId(project: string, id: string = randomUUID()
   try {
     await writeFile(temp, JSON.stringify({ version: 1, sessionId: id }) + "\n", { flag: "wx", mode: 0o600 });
     try { await link(temp, file(project)); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") return readSession(project)!.sessionId;
+      // No hard links on this filesystem (FAT, some network mounts): create the final file exclusively. Still
+      // first-writer-wins; only a reader racing the write could see a partial file, and readSession then throws
+      // rather than minting over it.
+      await writeFile(file(project), JSON.stringify({ version: 1, sessionId: id }) + "\n", { flag: "wx", mode: 0o600 }).catch(e => { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; });
+    }
   } finally { await rm(temp, { force: true }); }
   return readSession(project)!.sessionId;
 }

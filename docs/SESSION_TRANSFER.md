@@ -89,6 +89,15 @@ sidecars, `inbox/` (receipts live in the transcript), `merged/`, `input-epoch`, 
 history, `repository.json` and the `archived-agents` marker. Tool outputs (`--include-tool-outputs` in the original
 brief) are **not implemented**. A defensive scan aborts a bundle containing any such path on both ends.
 
+Also **not carried**, because they are machine-local rather than session content: `.identity.json`, `cache/` and
+`worktrees/`. The export reports anything it skipped. Consequence: a transcript can mention paths that do not exist on
+the receiving machine: files under `tool-outputs/` or reports under the sending machine's report directory that a
+tool result refers to, and the sender's absolute checkout paths. Those references **may dangle**; the conversation text
+itself is intact, but a model that tries to re-read such a file will fail to find it.
+
+Size: a bundle is built in memory and is refused at export, with a message naming the limit, when one file exceeds
+1 GiB, the whole exceeds 8 GiB, or it holds 200,000 files or more (the receiver's decoder enforces the same bounds).
+
 ## Checkout binding
 
 Absolute paths are never transferred. A new project requires `--checkout <dir>` (the receiving machine's clone); import
@@ -123,12 +132,25 @@ Not one filesystem transaction; **recoverable**. An import stages and verifies e
 (state root, same filesystem), writes `journal.json`, then: copies each replaced file to
 `sync-backup/<project>/<time>-<id>/` (never inside the project, so the TUI never lists it) and renames the staged file
 over it; writes the state keys; moves the journal to *committing* (the commit point); merges tasks in one SQLite ledger
-transaction (applied last: the ledger forbids regression, so it cannot be undone, but it is atomic and idempotent); and
-writes the sync ledger (`session.json`: peer and agreed ledger heads) last. A failure before the commit point rolls
+transaction (applied last: the ledger forbids regression, so once it succeeds it cannot be undone, but it is atomic and
+idempotent); and writes the sync ledger (`session.json`: peer and agreed ledger heads) last. The real commit point is
+the successful task transaction: a failure of that transaction demotes the journal back to *applying* and the import
+rolls back; only a failure writing the sync record after it rolls forward. A failure before the commit point rolls
 back (restore by copy + rename; a newly created project is removed). If a rollback itself fails, the error names the
 backup and journal and the journal is kept. A crash leaves the journal: every import and `orca session recover` roll it
 back (phase *applying*) or complete it (*committing*), and export and import refuse a project with an unsettled
-journal. `sync-backup/` and finished staging are **kept, not pruned**; delete them when satisfied.
+journal. `recover` runs under the same machine-wide import lock as an import (so it can never act on a journal of an
+import that is still running) and re-reads each journal under the project's state lock before acting. A **new**
+project's journal is written *before* its folder is created, so a crash at any point leaves either nothing or a
+journal that removes the half-made project; a crash before the journal leaves only an unreferenced
+`sync-staging/<id>/`, which `recover` (and the next import) deletes.
+
+The project's state lock (and turn locks) are held for the whole of staging and publication, not only the final
+renames: quiescence has to hold from the check to the last write, and a session's files are written once, so this was
+judged simpler and safer than a two-phase lock. Staged questions, images and image prompts are re-verified against the
+bundle's bytes (as the transcripts are against their digests) and the merged task records are re-validated before
+anything is published. The display name is applied after publication through `/rename`'s own check
+(`setDisplayName`), never written directly, so name uniqueness cannot be bypassed. `sync-backup/` and finished staging are **kept, not pruned**; delete them when satisfied.
 
 ## Not run / not verified
 
