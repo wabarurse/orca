@@ -16,7 +16,7 @@ import { registerTask, setTaskAttention } from "../core/data/tasks/tasks";
 import { setDisplayName, togglePin } from "../core/data/projects/registry";
 import { inputEpoch } from "../core/data/inbox/user-input";
 import { tryStorageLock } from "../core/data/storage-lock";
-import { projectTurnLock } from "../core/data/projects/state";
+import { conversationTurnLock } from "../core/data/projects/state";
 import { saveProjectSettings } from "../core/data/projects/project-settings";
 import { Calls } from "./conversation/tools";
 
@@ -284,7 +284,7 @@ test("a turn that loses shared ownership cannot mark an unrendered snapshot as d
   await open(paths.transcript("a", "orchestrator")).append({ type: "message", message: { role: "assistant", content: "external snapshot not yet rendered" } });
   // pending() can load this snapshot independently of the presentation refresh.
   await refresh();
-  const release = await tryStorageLock(projectTurnLock("a"));
+  const release = await tryStorageLock(conversationTurnLock("a"));
   expect(release).toBeDefined();
   const gate = deferred();
   page.orch.refresh = async () => { await gate.promise; return refresh(); };

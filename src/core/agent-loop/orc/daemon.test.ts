@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CompleteRequest } from "../../../providers/provider";
 import { Cancelled, cancelSession, launchIdentity, publishLaunch } from "../../tmux/cancellation";
-import { conversationTurnLock, projectTurnLock, turnLocksHeld } from "../../data/projects/state";
+import { conversationTurnLock, conversationTurnHeld } from "../../data/projects/state";
 import { paths, saveConfig } from "../../../config/config";
 import { pending, put } from "../../data/inbox/inbox";
 import { createOrchestrator } from "./orchestrator";
@@ -343,12 +343,11 @@ test("compact and model requests are answered during a running turn; clear and s
 test("turn locks left by a dead owner (a daemon killed mid-turn) do not gate the next daemon or a clear", async () => {
   const p = await project("stale-locks");
   const dead = { pid: 2 ** 22 - 1, since: "2026-01-01T00:00:00.000Z", project: p };
-  for (const lock of new Set([projectTurnLock(p), conversationTurnLock(p)])) {
-    mkdirSync(lock, { recursive: true });
-    writeFileSync(join(lock, "owner.json"), JSON.stringify(dead));
-    expect(await lockHeld(lock)).toBe(false);
-  }
-  expect(await turnLocksHeld(p)).toBe(false);
+  const lock = conversationTurnLock(p);
+  mkdirSync(lock, { recursive: true });
+  writeFileSync(join(lock, "owner.json"), JSON.stringify(dead));
+  expect(await lockHeld(lock)).toBe(false);
+  expect(await conversationTurnHeld(p)).toBe(false);
   const live = await tryStorageLock(join(home, "some-other-lock"), p);
   expect(await lockHeld(join(home, "some-other-lock"))).toBe(true);
   await live!();
@@ -358,7 +357,7 @@ test("turn locks left by a dead owner (a daemon killed mid-turn) do not gate the
   expect(await runDaemon({ project: p, run: "run-s", session, exitWhenIdle: true, log() {}, watchers: { watchdog: async () => {}, merges: async () => {} } })).toBe("idle");
   expect(readStatus(p)).toMatchObject({ turns: 1 });
   expect(readStatus(p)?.error).toBeUndefined();
-  expect(await turnLocksHeld(p)).toBe(false);
+  expect(await conversationTurnHeld(p)).toBe(false);
   await session.checkClear!(); // not refused by the stale locks either
   session.dispose?.();
 });

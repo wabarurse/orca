@@ -3,28 +3,12 @@ import { existsSync } from "node:fs";
 // and managed project creation/deletion, across processes.
 // Locks live outside projects so deleting/recreating a directory cannot replace its lock.
 import { join } from "node:path";
-import { createHash } from "node:crypto";
-import { paths, repositoryBinding, projectStateScope, conversationIdentity } from "../../../config";
+import { paths, projectStateScope, conversationIdentity } from "../../../config";
 import { describeOwner, lockHeld, lockOwner, tryStorageLock } from "../storage-lock";
 
-// Separate conversations using one original checkout must never run overlapping turns.
-export const projectTurnLock = (project: string) => {
-  const binding = repositoryBinding(project);
-  return binding
-    ? join(paths.runtime, "checkout-locks", createHash("sha256").update(binding.directory).digest("hex"))
-    : conversationTurnLock(project);
-};
-// This conversation's own turn, taken inside the checkout lock (the same path for
-// legacy clones). Deletion needs only this one: a sibling mid-turn on the shared
-// checkout does not make this conversation busy.
+/** One active turn per conversation, including across daemon versions. */
 export const conversationTurnLock = (project: string) => join(paths.runtime, "turn-locks", project);
-/** The lock paths a turn owns, checkout-wide first; one path for legacy clones. */
-export const turnLocks = (project: string): string[] => [...new Set([projectTurnLock(project), conversationTurnLock(project)])];
-/** Whether a turn is owned by a process that may still be running (a dead owner's lock does not count). */
-export async function turnLocksHeld(project: string): Promise<boolean> {
-  for (const path of turnLocks(project)) if (await lockHeld(path)) return true;
-  return false;
-}
+export const conversationTurnHeld = (project: string): Promise<boolean> => lockHeld(conversationTurnLock(project));
 
 export function projectIdentity(project: string): string {
   return existsSync(paths.project(project)) ? `conversation:${conversationIdentity(paths.root, project).id}` : projectStateScope(project);

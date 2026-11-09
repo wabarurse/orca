@@ -31,8 +31,8 @@ Messages use the existing durable inbox. A receipt confirms enqueue acceptance,
 not processing, and never starts or restarts a daemon. An existing unpaused daemon
 can consume them on its next turn. Stopped conversations retain queued messages
 until fresh human input resumes them; exited daemons are not automatically
-launched. Finish the sending turn so the receiver can acquire the shared checkout
-lock; do not wait/poll for a reply while holding it or exchange empty acknowledgments.
+launched. Conversations on the same checkout can run turns concurrently. Finish
+the sending turn without polling for a reply or exchanging empty acknowledgments.
 
 Reports over 2000 characters require a concise `summary`. Full text is saved in
 the recipient's evidence directory for bounded reads; only the summary and path

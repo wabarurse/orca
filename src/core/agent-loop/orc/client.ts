@@ -15,7 +15,7 @@ import { awaitAck, daemonPid, liveStatus, readStatus, request } from "./channel"
 import type { DaemonStatus } from "../../../protocol";
 import { liveReader, type LiveReader } from "./live";
 import type { LiveEvent, LiveKey } from "../../../protocol";
-import { projectIdentity, turnLocksHeld } from "../../data/projects";
+import { projectIdentity, conversationTurnHeld } from "../../data/projects";
 import { execution } from "../../data/projects/lifecycle";
 import { local, sessionName, tmux, type Runner } from "../../tmux";
 import { pidAlive } from "../../data";
@@ -250,7 +250,7 @@ async function ask(c: Client, what: string, send: () => Promise<string | undefin
 async function checkClear(c: Client): Promise<void> {
   c.checkIdentity();
   if (!await c.alive()) throw new Error("orchestrator is not running; wait for it to start before clearing context");
-  if (c.following || await busy(c) || await turnLocksHeld(c.project)) throw new Error("orchestrator is running or compacting; wait before clearing context");
+  if (c.following || await busy(c) || await conversationTurnHeld(c.project)) throw new Error("orchestrator is running or compacting; wait before clearing context");
   if ((await pendingImageInputs(c.project, c.transcript.consumed?.().inputs)).length) throw new Error("image input is pending; retry it before clearing context");
   if (await pendingInput(c.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
 }

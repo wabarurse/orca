@@ -9,7 +9,7 @@ import { ensureWorktree, removeWorktree } from "../../tmux/runner";
 import { deleteProject, restoreConversations } from "../../../tui/commands/project";
 import { listProjects, projectFor, repoHere, remoteOf } from "./registry";
 import { assertMainCheckout, removeProjectWorktrees } from "./workspace";
-import { conversationTurnLock, projectTurnLock } from "./state";
+import { conversationTurnLock } from "./state";
 import { lockOwner, tryStorageLock } from "../storage-lock";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { bash } from "../../tools/bash/bash";
@@ -152,65 +152,56 @@ test("main branch requirement never switches or stashes user work, including aft
   orch.dispose?.();
 });
 
-test("parallel conversations serialize original-checkout turns and use separate worktree namespaces", async () => {
+test("same-checkout conversations run overlapping turns with separate worktree namespaces", async () => {
   await ensureProject("p", repo);
   await ensureProject("q", repo);
-  expect(projectTurnLock("q")).toBe(projectTurnLock("p"));
-  expect(conversationTurnLock("q")).not.toBe(conversationTurnLock("p"));
   expect(paths.worktrees("q")).not.toBe(paths.worktrees("p"));
-  const release = await tryStorageLock(projectTurnLock("p"), "p");
-  const provider = fakeProvider([]);
-  const orch = await createOrchestrator({ project: "q", provider, write: () => {} });
+  const first = fakeProvider([[text("first")]]), second = fakeProvider([[text("second")]]);
+  const p = await createOrchestrator({ project: "p", provider: first, write: () => {} });
+  const q = await createOrchestrator({ project: "q", provider: second, write: () => {} });
+  const completeFirst = first.complete.bind(first), completeSecond = second.complete.bind(second);
+  second.complete = async req => {
+    expect((await lockOwner(conversationTurnLock("p")))?.project).toBe("p");
+    expect((await lockOwner(conversationTurnLock("q")))?.project).toBe("q");
+    return completeSecond(req);
+  };
+  first.complete = async req => {
+    await q.say("go in parallel");
+    expect(await q.pending()).toBe(true);
+    await q.turn();
+    expect(second.calls).toHaveLength(1);
+    return completeFirst(req);
+  };
   try {
-    await orch.say("wait");
-    expect(await orch.pending()).toBe(false);
-    expect(await orch.turn()).toEqual([]);
-    expect(provider.calls).toHaveLength(0);
-    expect(existsSync(conversationTurnLock("q"))).toBe(false); // A lost checkout lock leaves nothing held.
-  } finally { await release?.(); orch.dispose?.(); }
+    await p.say("go first");
+    await p.turn();
+    expect(first.calls).toHaveLength(1);
+    expect(existsSync(conversationTurnLock("p"))).toBe(false);
+    expect(existsSync(conversationTurnLock("q"))).toBe(false);
+  } finally { p.dispose?.(); q.dispose?.(); }
 });
 
-test("a turn owns the checkout and conversation locks; an idle sibling can be deleted mid-turn, the busy one cannot", async () => {
+test("an active conversation blocks its own deletion and allows deleting an idle sibling", async () => {
   await ensureProject("p", repo);
   await ensureProject("q", repo);
-  const provider = fakeProvider([[text("done")]]);
-  const complete = provider.complete.bind(provider);
-  const held: Record<string, boolean> = {};
-  provider.complete = async req => {
-    for (const [name, path] of Object.entries({ checkout: projectTurnLock("p"), own: conversationTurnLock("p"), sibling: conversationTurnLock("q") })) held[name] = existsSync(path);
-    held.ownerIsP = (await lockOwner(conversationTurnLock("p")))?.project === "p";
-    return complete(req);
-  };
-  const orch = await createOrchestrator({ project: "p", provider, write: () => {} });
-  try {
-    await orch.say("go");
-    await orch.turn();
-    expect(held).toEqual({ checkout: true, own: true, sibling: false, ownerIsP: true });
-    expect(existsSync(projectTurnLock("p"))).toBe(false);
-    expect(existsSync(conversationTurnLock("p"))).toBe(false);
-  } finally { orch.dispose?.(); }
-  // Sibling p mid-turn (its checkout lock held) no longer blocks deleting idle q.
-  const sibling = await tryStorageLock(projectTurnLock("p"), "p");
+  const sibling = await tryStorageLock(conversationTurnLock("p"), "p");
+  expect(sibling).toBeDefined();
   const opts = { live: async () => [], kill: async () => {} };
   try {
     await deleteProject("q", opts);
     expect(existsSync(paths.project("q"))).toBe(false);
     expect(existsSync(paths.project("p"))).toBe(true);
-    // p's own turn running in another session refuses, naming the holder.
-    const own = await tryStorageLock(conversationTurnLock("p"), "p");
-    try {
-      const refusal = await deleteProject("p", opts).catch((error: Error) => error.message);
-      expect(refusal).toContain("p orchestrator is mid-turn in another session");
-      expect(refusal).toContain(`pid ${process.pid} (p) since `);
-      expect(refusal).toContain("wait for that turn to end");
-      expect(existsSync(paths.project("p"))).toBe(true);
-    } finally { await own?.(); }
-    // An unreadable owner is never taken over, and the message says where the lock is.
-    mkdirSync(conversationTurnLock("p"), { recursive: true });
-    const unknown = await deleteProject("p", opts).catch((error: Error) => error.message);
-    expect(unknown).toContain(`${conversationTurnLock("p")} is held by an unknown owner`);
-    rmSync(conversationTurnLock("p"), { recursive: true });
+    const refusal = await deleteProject("p", opts).catch((error: Error) => error.message);
+    expect(refusal).toContain("p orchestrator is mid-turn in another session");
+    expect(refusal).toContain(`pid ${process.pid} (p) since `);
+    expect(refusal).toContain("wait for that turn to end");
+    expect(existsSync(paths.project("p"))).toBe(true);
   } finally { await sibling?.(); }
+  // An unreadable owner is never taken over, and the message says where the lock is.
+  mkdirSync(conversationTurnLock("p"), { recursive: true });
+  const unknown = await deleteProject("p", opts).catch((error: Error) => error.message);
+  expect(unknown).toContain(`${conversationTurnLock("p")} is held by an unknown owner`);
+  rmSync(conversationTurnLock("p"), { recursive: true });
 });
 
 test("deletion refuses local worker files; clean deletion unregisters worktrees and preserves original files, login and branches", async () => {

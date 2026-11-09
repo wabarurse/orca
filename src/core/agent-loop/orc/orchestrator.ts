@@ -10,7 +10,7 @@ import type { ImageRef } from "../../../protocol";
 import { tryStorageLock } from "../../data";
 import { inputEpoch, advanceInputEpoch } from "../../data/inbox";
 import { Cancelled } from "../../tmux";
-import { projectIdentity, turnLocks, turnLocksHeld, withProjectStateLock } from "../../data/projects";
+import { projectIdentity, conversationTurnLock, conversationTurnHeld, withProjectStateLock } from "../../data/projects";
 // The orchestrator session: one turn is: drain its inbox, hand the messages to
 // the model as one user message, run the loop until it stops calling tools,
 // then drain the user's inbox for anything addressed to them. In production
@@ -177,7 +177,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
   };
   const check = async (ownsTurn = false) => {
     checkIdentity();
-    if (state.running || state.requested || (!ownsTurn && await turnLocksHeld(deps.project))) throw new Error("orchestrator is running or compacting; wait before clearing context");
+    if (state.running || state.requested || (!ownsTurn && await conversationTurnHeld(deps.project))) throw new Error("orchestrator is running or compacting; wait before clearing context");
     if ((await pendingImageInputs(deps.project, transcript.consumed?.().inputs)).length) throw new Error("image input is pending; retry it before clearing context");
     if ((await listProcesses(deps.project)).some(p => p.owner === "orchestrator" && (liveProcess(p) || p.state === "unknown"))) throw new Error("background commands still own this context; stop or reconcile them before clearing");
     if (state.submitting || await pendingInput(deps.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
@@ -247,7 +247,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
       finally { state.submitting--; }
     },
     // A lock left by a dead owner (a daemon killed mid-turn) does not count: ownTurn moves it aside.
-    pending: async () => !await turnLocksHeld(deps.project) && await refresh() &&
+    pending: async () => !await conversationTurnHeld(deps.project) && await refresh() &&
       !(await state.isPaused()) && (state.requested || rolling.ready() || await pending(deps.project, "orchestrator")),
     entries: () => transcript.history?.() ?? transcript.branch(),
     consumed: () => transcript.consumed?.().inputs ?? new Set(),
@@ -255,16 +255,9 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
     turn: () => orchestratorTurn(deps, transcript, state, checkIdentity, rolling),
   };
 }
-/** Own the checkout's turn, then this conversation's; on a partial win nothing stays held. */
-async function ownTurn(project: string): Promise<(() => Promise<void>) | undefined> {
-  const releases: (() => Promise<void>)[] = [];
-  const release = async () => { for (const r of [...releases].reverse()) await r(); };
-  for (const path of turnLocks(project)) {
-    const r = await tryStorageLock(path, project).catch(async error => { await release(); throw error; });
-    if (!r) { await release(); return; }
-    releases.push(r);
-  }
-  return release;
+/** Serialize turns within one conversation. */
+function ownTurn(project: string): Promise<(() => Promise<void>) | undefined> {
+  return tryStorageLock(conversationTurnLock(project), project);
 }
 async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, state: TurnControl, checkIdentity: () => void, rolling: RollingCompactor): Promise<Message[]> {
   if (state.running || state.clearing) return [];
