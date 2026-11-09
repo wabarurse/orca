@@ -57,14 +57,31 @@ test("task create explains how to correct authorization and branch before retryi
 
 test("PR creation/no CI is not ready; active reviewer explicitly validates verified exact clean head", async () => {
   const t = await reviewer();
-  expect(JSON.parse(await record()).status).toBe("reviewing");
+  expect(JSON.parse(await record()).status).toBe("pr open");
   expect(await validate({ validated: false })).toContain("not validated");
   expect(await validate({ validation: "" })).toContain("validation is required");
   expect((await getTask(project, t.id)).status).toBe("reviewing");
-  const ready = JSON.parse(await validate()); expect(ready.status).toBe("ready to merge"); expect(ready.internal.readiness.head).toBe(head);
+  const ready = JSON.parse(await validate()); expect(ready.status).toBe("pr open"); expect(ready.internal.readiness.head).toBe(head);
   expect(ready.internal.readiness.checks).toBe("not_configured");
   expect(await validate({}, ctx("orchestrator"))).toContain("taskId");
   expect(await validate({ taskId: t.id }, ctx("orchestrator"))).toContain("active agent");
+});
+
+test("an exited reviewer leaves an open PR visible through attention, get, list, close and reopen", async () => {
+  const t = await reviewer(); await record();
+  await stopTaskRun(project, "reviewer", "waiting", "Review report delivered");
+  const waiting = JSON.parse(await tool.run({ action: "attention", taskId: t.id, kind: "waiting", reason: "Waiting for user to merge" }, ctx()));
+  expect(waiting.status).toBe("pr open");
+  expect(waiting.internal.attention.reason).toBe("Waiting for user to merge");
+  expect(waiting.internal.runs.at(-1).state).toBe("stopped");
+  expect(JSON.parse(await tool.run({ action: "get", taskId: t.id }, ctx())).status).toBe("pr open");
+  expect(JSON.parse(await tool.run({ action: "list" }, ctx()))[0].status).toBe("pr open");
+  snapshot = { ...observed(), state: "CLOSED", ready: false };
+  const refresh = () => tool.run({ action: "pr", taskId: t.id, repository: "o/r", number: 2 }, ctx());
+  expect(JSON.parse(await refresh()).status).toBe("waiting");
+  snapshot = observed(); expect(JSON.parse(await refresh()).status).toBe("pr open");
+  snapshot = { ...observed(), state: "MERGED", mergedAt: new Date().toISOString() };
+  expect(JSON.parse(await refresh()).status).toBe("merged");
 });
 
 test("duplicate registration on a PR branch guides corrections to the existing task without changing it", async () => {

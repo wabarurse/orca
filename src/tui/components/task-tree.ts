@@ -93,7 +93,7 @@ function status(task: TreeTask): TaskDisplayStatus { return publicTaskStatus(tas
 
 /** The row and status text always share the same state and colour. */
 export function taskStateColor(state: TaskDisplayStatus): number {
-  return ({ queued: 90, working: 36, reviewing: 36, "ready to merge": 32, merged: 35, waiting: 33 })[state];
+  return ({ queued: 90, working: 36, waiting: 33, "pr open": 32, merged: 35 })[state];
 }
 function statusColor(task: TreeTask): number {
   return taskStateColor(status(task));
@@ -131,7 +131,7 @@ function dot(task: TreeTask, frame: number): string {
   return paint(statusColor(task), active(task) ? SPINNER[frame % 4]! : "●");
 }
 
-/** One of the six current states; original hold reasons stay in details. */
+/** One of the five current states; original hold reasons stay in details. */
 function rowLabel(task: TreeTask): string {
   return status(task);
 }

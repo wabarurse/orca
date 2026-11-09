@@ -94,14 +94,17 @@ and the machine's local timezone, including its daylight saving offset.
 ### Tasks section (read-only)
 
 The table remains **Name | Summary | Status | PR link**. The current state is
-exactly one of **queued**, **working**, **reviewing**, **ready to merge**,
-**merged**, or **waiting**. Tree rows, inbox rows and task tool responses share
-the same projection. Merged evidence wins; waiting includes every explicit hold
-reason (waiting, blocked, cancelled, closed, unknown) and a closed PR. Hold kinds
-and explanations remain retained in details; waiting never authorizes a restart.
-An open PR is publication evidence, not a readiness or activity claim. Row colors
-follow the displayed state: queued grey, working/reviewing cyan, ready to merge
-green, merged purple, waiting yellow. PR metadata cannot override those colors.
+exactly one of **queued**, **working**, **waiting**, **pr open**, or **merged**.
+Tree rows, task tool responses and compaction task snapshots share the same
+projection. Confirmed merges win, followed by the last verified OPEN PR
+observation. An open PR stays **pr open** even while waiting for review, CI or
+the user. Hold kinds and explanations remain in details. Otherwise every explicit
+hold (waiting, blocked, cancelled, closed, unknown) and a closed PR is **waiting**.
+Review work is **working**. Legacy readiness without an OPEN observation is
+**waiting**; a link or historical checkpoint alone cannot prove a PR is open.
+An open PR is publication evidence, not a readiness or activity claim, and waiting
+never authorizes a restart. Colors: queued grey, working cyan, waiting yellow,
+pr open green, merged purple.
 The stored lifecycle, attention, checkpoints, IDs, task numbers and SQL schema are
 unchanged; historical ledger milestones keep their compatible checkpoint format.
 
@@ -197,11 +200,12 @@ barrel). The layout and the barrel rule are enforced by `src/organization.test.t
 * `listTasks(project): Promise<TaskRow[]>` — active rows, registration order.
   `TaskRow` contains only `id`, `name`, `summary`, `branch`, `status`, optional
   structured `pr` / `attention`, `createdAt` and `updatedAt`. Render table columns
-  **name | summary | status | PR link**; show attention kind instead of the
-  lifecycle label when present, with no reason or other per-task status detail.
-  This does not change the registry or turn attention into a lifecycle event.
+  **name | summary | status | PR link** using `publicTaskStatus`; keep attention
+  kind and reason in details. This does not change the registry or turn attention
+  into a lifecycle event.
 * `TaskStatus` / `taskStatuses`: `queued | working | reviewing | ready_to_merge`.
-  `taskStatusLabels[status]` gives the human label, including **ready to merge**.
+  These are private lifecycle values. Public labels come from `publicTaskStatus`,
+  which also accounts for publication and attention.
 * `TaskPR`: canonical HTTPS GitHub `url`, `repository` (`owner/repo`, lower case),
   positive integer `number`, exact `head` SHA. Never construct links from prose.
 * `getTask(project,id)` and `allTasks(project)` include archived history.

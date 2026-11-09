@@ -38,7 +38,7 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
   return {
     spec: {
       name: "task",
-      description: "Manage the project task list: create assignments, record progress, dependencies, evidence and linked PRs. Tasks are records, not a scheduler or publication gate; reuse the same immutable task for fixes to an unmerged PR. Review, tests and publication follow the authorized brief using ordinary tools. Never merge without explicit permission.",
+      description: "Manage the project task list: create assignments, record progress, dependencies, evidence and linked PRs. Tasks are records, not a scheduler or publication gate; reuse the same immutable task for fixes to an unmerged PR. Review, tests and publication follow the authorized brief using ordinary tools. Never merge without explicit permission. Status: queued, working, waiting, pr open, merged. Verified open PRs stay pr open during holds.",
       input_schema: {
         type: "object", properties: {
           action: { type: "string", enum: ["create", "update", "remove", "register", "list", "get", "pr", "ready", "attention", "dependencies", ...(options.history ? ["search_history", "read_history"] : [])], description: "create/register: requires title (or name), summary, a stable assignment key (Git branch in Git projects), and authorized=true when the user has authorized recording the assignment; list/get: inspect; update: edit title/summary; dependencies: explicit metadata only; pr: attach or refresh a verified PR; ready: optional exact-head evidence annotation, never publication permission; attention: report a blocker; remove: confirmed merged membership removal, history retained." },
