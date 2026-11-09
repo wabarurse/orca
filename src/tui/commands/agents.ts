@@ -9,6 +9,7 @@ export const RECENT_AGENT_MS = 24 * 60 * 60 * 1000;
 export function recentAgent(a: AgentInfo, now: number): boolean {
   if (a.live || a.status === "unknown" || a.queuedMessages) return true;
   if (a.archived) return false;
+  if (a.retained) return true;
   if (a.openTask) return true;
   const at = a.lastActiveAt ? Date.parse(a.lastActiveAt) : NaN;
   return Number.isNaN(at) || now - at < RECENT_AGENT_MS;

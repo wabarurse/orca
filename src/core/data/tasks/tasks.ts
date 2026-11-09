@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { paths } from "../../../config";
+import { canArchiveTask } from "../../../protocol/task";
 // Structured task records, not a scheduler or any of the message/question queues.
 import { ledgerTransaction, existingLedgerTasks } from "./ledger-store";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
@@ -211,6 +212,8 @@ export async function prepareTaskRun(project: string, id: string, branch: string
     if (existing) { check(existing.agent === run.agent && existing.role === run.role, "run identity mismatch"); return; }
     check(!s.tasks.some(x => x.runs.some(r => r.id === run.id)), "duplicate run id");
     check(!s.tasks.some(x => x.branch === branch && x.runs.some(r => r.state === "prepared" || r.state === "started")), "task run still active on branch; reconcile it before retrying");
+    // A new authorized dispatch restores list membership; archiving itself never dispatches.
+    if (t.removedAt) { delete t.removedAt; event(t, "membership_restored"); }
     for (const other of s.tasks.filter(x => !x.archive && x.branch === branch && x.readiness)) {
       unready(other); other.attention = { kind: "waiting", reason: "new run on this branch; readiness must be validated again" }; event(other, "readiness_invalidated", run.id);
     }
@@ -348,8 +351,16 @@ export async function abandonTask(project: string, id: string, expectedRevision:
 export async function removeTask(project: string, id: string, confirmed: boolean): Promise<Task> {
   check(confirmed === true, "task removal requires confirmation");
   return update(project, s => {
-    const task = find(s, id); check(task.archive, "only merged tasks may be removed");
+    const task = find(s, id); check(canArchiveTask(task), "only merged or abandoned/closed tasks with no active runs or open PR may be archived");
     if (!task.removedAt) { task.removedAt = new Date().toISOString(); event(task, "membership_removed"); }
+    return task;
+  });
+}
+/** Restore membership without changing lifecycle, dependencies or running agents. */
+export async function restoreTask(project: string, id: string): Promise<Task> {
+  return update(project, s => {
+    const task = find(s, id);
+    if (task.removedAt) { delete task.removedAt; event(task, "membership_restored"); }
     return task;
   });
 }

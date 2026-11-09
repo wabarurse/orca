@@ -26,6 +26,13 @@ export interface Task {
   archive?: { reason: "merged"; mergedAt: string; archivedAt: string; pr: TaskPR };
   history: TaskEvent[];
 }
+/** Archiving hides a settled task; it never cancels work or closes a PR. */
+export function canArchiveTask(task: Task): boolean {
+  if (task.archive) return true;
+  return (task.attention?.kind === "cancelled" || task.attention?.kind === "closed")
+    && !task.runs.some(run => !run.endedAt && (run.state === "prepared" || run.state === "started"))
+    && (!task.pr || task.publication?.state === "CLOSED");
+}
 /** Small UI projection. No transcripts, prompts, reports or mutable display-name identities. */
 export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr" | "dependsOn" | "publication" | "number" | "checkpoints" | "archive"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
 /** taskPR's validators; tasks.ts shares them for the rest of a record. */

@@ -39,6 +39,31 @@ test("Vim keeps drafts, switches project tabs and routes commands without Ctrl c
   } finally { await stop(); }
 });
 
+test("Normal z/x switches tabs from chat, work pages and menus, while Insert and commands keep the letters", async () => {
+  const { app, term, stop } = await setup("zx-first");
+  try {
+    await app.openPage("zx-second");
+    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
+    term.type("z"); await until(() => app.page?.project === "zx-first");
+    term.type("izx"); await until(() => app.input.text === "zx");
+    expect(app.page!.project).toBe("zx-first");
+    term.press({ name: "escape" }); term.type("x"); await until(() => app.page?.project === "zx-second");
+    term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
+    term.type("z"); await until(() => app.page?.project === "zx-first");
+    expect(app.input.text).toBe("zx");
+    term.type(" m"); await until(() => app.menu?.title.includes("model role") === true);
+    term.type("x"); await until(() => app.page?.project === "zx-second");
+    expect(app.menu).toBeNull();
+    term.type(" b"); await until(() => app.projectList !== null);
+    term.type("z"); await until(() => app.page?.project === "zx-first");
+    expect(app.projectList).toBeNull();
+    await app.onKey({ name: "char", text: " " }); await app.onKey({ name: "char", text: "x" });
+    expect(app.page!.project).toBe("zx-first");
+    term.type(":zx"); await until(() => term.screen().includes(":zx"));
+    expect(app.page!.project).toBe("zx-first");
+  } finally { await stop(); }
+});
+
 test("Questions displays its own split view and answers the selected question", async () => {
   const { app, term, stop } = await setup("questions-split");
   try {

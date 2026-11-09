@@ -1,7 +1,7 @@
 export { Cancelled, cancelSession, delay, launchEpoch, launchIdentity, publishLaunch, takeCancellation, watchCancellation } from "./cancellation";
 export { cliCommand, local, sessionId, sessionName, SETTLED_EXIT, tmux, type Runner } from "./runner";
 export { ABANDONED, claim, dirtyCount, markEnded, noticeText, readRun, sendNotice, supervise, type RunInfo, type Tracker } from "./exits";
-export { archiveAgents, exitWatchdog, killProjectSession, listAgents, liveAgents, liveAgentsOrNull, mergeWatch } from "./liveness";
+export { archiveAgents, restoreAgents, exitWatchdog, killProjectSession, listAgents, liveAgents, liveAgentsOrNull, mergeWatch } from "./liveness";
 export { type ModelRequestState } from './exits';
 export { activeAgentRows, agentActivity, type AgentActivity } from "./activity";
 export { cleanManagedWorkspaces } from "./cleanup";

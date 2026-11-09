@@ -24,7 +24,7 @@ import { sha256 } from "./bundle";
 /** state.json: the project state keys that travel, by their name in the bundle. */
 export const STATE_KEYS = { model: "model", modelSettings: "model-settings", roleModels: "role-models", facts: "facts", workingContext: "working-context", humanSources: "human-sources" } as const;
 /** Project state keys that stay on their machine. A test requires every key the source reads or writes to be in one list. */
-export const LOCAL_STATE_KEYS = ["name", "account", "provider-models", "repository", "archived-agents"] as const;
+export const LOCAL_STATE_KEYS = ["name", "account", "provider-models", "repository", "archived-agents", "work-archive-images", "work-archive-questions"] as const;
 export interface StateFile { version: 1; model?: string; modelSettings?: Record<string, unknown>; roleModels?: Record<string, unknown>; facts?: unknown; workingContext?: unknown; humanSources?: unknown }
 
 export interface ImageFile { id: string; ext: string; sha: string; bytes?: Buffer }

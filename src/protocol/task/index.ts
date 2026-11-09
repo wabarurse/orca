@@ -5,3 +5,4 @@ export { canonicalTask } from './task-ledger';
 export { type LedgerTask } from './task-ledger';
 export { publicTaskStatus, type TaskDisplayStatus } from './task-ledger';
 export { taskPublicationMilestone } from './tasks';
+export { canArchiveTask } from './tasks';

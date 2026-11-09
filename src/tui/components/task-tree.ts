@@ -1,5 +1,5 @@
 import { formatDateTime } from "../../protocol";
-import { workColumns, workRows } from "./work-view";
+import { ARCHIVED_SECTION, archiveTitle, workColumns, workRows } from "./work-view";
 import { publicTaskStatus, type TaskDisplayStatus } from "../../protocol/task";
 import { taskPublicationMilestone } from "../../protocol/task";
 import { check, type Task, type TaskTreeView } from "../../protocol/task";
@@ -68,10 +68,19 @@ function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: num
 /** A single canonical identity, placed under its lowest-UUID prerequisite.
  * Other prerequisites remain explicit references, never implied tree edges.
  */
-function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>, history = false): OutlineNode[] {
+function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>, history = false, sections = false): OutlineNode[] {
   dependencyLayers(tasks); // Validate against retained SQL records before hiding membership.
+  if (sections) {
+    const archived = tasks.filter(t => t.removedAt);
+    return [...outline(tasks, collapsed), ...(archived.length ? [{ id: ARCHIVED_SECTION, depth: 0, children: [] },
+      ...(history ? outlineGroup(archived, collapsed) : [])] : [])];
+  }
   const visible = new Set(tasks.filter(t => history ? !!t.archive : !t.removedAt).map(t => t.id.toLowerCase()));
-  tasks = tasks.filter(t => visible.has(t.id.toLowerCase())).map(t => ({ ...t, dependsOn: t.dependsOn.filter(id => visible.has(id.toLowerCase())) }));
+  return outlineGroup(tasks.filter(t => visible.has(t.id.toLowerCase())), collapsed);
+}
+function outlineGroup(input: TreeTask[], collapsed: ReadonlySet<string>): OutlineNode[] {
+  const visible = new Set(input.map(t => t.id.toLowerCase()));
+  const tasks = input.map(t => ({ ...t, dependsOn: t.dependsOn.filter(id => visible.has(id.toLowerCase())) }));
   const { parents } = dependencyLayers(tasks);
   const primary = parents.map(ps => [...ps].sort((a, b) => a - b)[0]);
   const children = tasks.map((_, i) => tasks.flatMap((t, j) => primary[j] === i ? [t.id] : []));
@@ -136,11 +145,12 @@ function rowLabel(task: TreeTask): string {
   return status(task);
 }
 /** Reveal only the target's primary ancestor chain, retaining unrelated folds. */
-export function selectTaskNumber(input: readonly (Task | TaskTreeView)[], number: number, collapsed: Set<string>): string | undefined {
+export function selectTaskNumber(input: readonly (Task | TaskTreeView)[], number: number, collapsed: Set<string>, includeArchived = false): string | undefined {
   if (!Number.isSafeInteger(number) || number < 1) return;
-  const tasks = treeTasks(input), target = tasks.find((task, i) => !task.removedAt && (task.number ?? i + 1) === number);
+  const tasks = treeTasks(input), target = tasks.find((task, i) => (includeArchived || !task.removedAt) && (task.number ?? i + 1) === number);
   if (!target) return;
-  const nodes = outline(tasks, new Set());
+  dependencyLayers(tasks);
+  const nodes = outlineGroup(tasks.filter(t => !!t.removedAt === !!target.removedAt), new Set());
   let parent = nodes.find(node => node.id === target.id)?.parent;
   while (parent) { collapsed.delete(parent); parent = nodes.find(node => node.id === parent)?.parent; }
   return target.id;
@@ -303,27 +313,34 @@ export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options:
   let p = panels(options);
   try {
     const tasks = treeTasks(input), collapsed = options.collapsed ?? new Set<string>(), frame = options.frame ?? 0;
-    const nodes = outline(tasks, collapsed, options.history);
+    const nodes = outline(tasks, collapsed, options.history, options.workView);
     p = panels(options, nodes.length);
-    const selected = tasks.find(t => t.id === options.selectedId && nodes.some(n => n.id === t.id)) ?? tasks.find(t => t.id === nodes[0]?.id);
+    const selectedId = nodes.some(n => n.id === options.selectedId) ? options.selectedId : nodes[0]?.id;
+    const selected = tasks.find(t => t.id === selectedId);
     const view = { cols: p.graphCols, rows: p.graphRows, x: 0,
       y: offset(options.graphY, Math.max(0, nodes.length - p.graphRows)) };
-    if (options.revealSelected && selected) {
-      const y = nodes.findIndex(n => n.id === selected.id);
+    if (options.revealSelected && selectedId) {
+      const y = nodes.findIndex(n => n.id === selectedId);
       view.y = Math.max(y - view.rows + 1, Math.min(view.y, y));
     }
     const hits: TaskTreeHit[] = [], lines: string[] = [];
     for (const [row, node] of nodes.slice(view.y, view.y + view.rows).entries()) {
+      if (node.id === ARCHIVED_SECTION) {
+        lines.push(fit(`${selectedId === node.id ? "▶ " : "  "}${archiveTitle(tasks.filter(t => t.removedAt).length, !!options.history)}`, view.cols));
+        hits.push({ id: node.id, number: 0, row: row + 1, col: 0, width: view.cols });
+        continue;
+      }
       const i = tasks.findIndex(t => t.id === node.id), task = tasks[i]!;
       lines.push(treeRow(tasks, nodes, node, node.id === selected?.id, collapsed, frame, view.cols));
       hits.push({ id: task.id, number: task.number ?? i + 1, row: row + 1, col: 0, width: view.cols });
     }
-    const detail = detailLines(tasks, selected, p.detailCols, frame).map(line => p.workView ? line.replace(/^Overview:/, "Description:") : line);
+    const detail = (selectedId === ARCHIVED_SECTION ? safeLines("Archived tasks retain their history and dependencies. Enter or → expands; ← collapses. u restores a task without resuming work.", p.detailCols)
+      : detailLines(tasks, selected, p.detailCols, frame)).map(line => p.workView ? line.replace(/^Overview:/, "Description:") : line);
     const dy = offset(options.detailY, Math.max(0, detail.length - p.detailRows));
     if (!nodes.length) lines[0] = "No tasks";
     const footer = `Outline y=${view.y}/${Math.max(0, nodes.length - view.rows)}; details=${dy}/${Math.max(0, detail.length - p.detailRows)}`;
-    return { nodes, animated: nodes.slice(view.y, view.y + view.rows).some(n => active(tasks.find(t => t.id === n.id)!)),
-      lines: compose(p, lines, detail, dy, footer), hits, selectedId: selected?.id,
+    return { nodes, animated: nodes.slice(view.y, view.y + view.rows).some(n => n.id !== ARCHIVED_SECTION && active(tasks.find(t => t.id === n.id)!)),
+      lines: compose(p, lines, detail, dy, footer), hits, selectedId,
       order: nodes.map(n => n.id), errors: [], graph: { ...view, width: view.cols, height: nodes.length },
       details: { height: detail.length, y: dy, rows: p.detailRows } };
   } catch (error) { return failed(p, error); }

@@ -34,6 +34,7 @@ import { limits, type Question } from "../../protocol";
 export interface QuestionStore {
   stamp(project: string): Promise<number>;
   list(project: string): Promise<Question[]>;
+  all?(project: string): Promise<Question[]>;
   answer(project: string, id: string, text: string, inputId?: string): Promise<unknown>;
   skip(project: string, id: string): Promise<unknown>;
 }
@@ -41,6 +42,7 @@ export interface QuestionStore {
 export const fileStore: QuestionStore = {
   stamp: (project) => stat(paths.questions(project)).then((s) => s.mtimeMs, err => { if (err.code === "ENOENT") return -1; throw err; }),
   list: store.list,
+  all: store.all,
   answer: store.answer,
   skip: store.skip,
 };
@@ -55,6 +57,7 @@ const SETTLE_MS = 1000;
 export interface PageQuestions {
   /** Open questions, oldest first, as of the last read. */
   open: Question[];
+  all?: Question[];
   /** Unknown until a successful read; errors never masquerade as zero. */
   loaded: boolean;
   error?: string;
@@ -200,8 +203,10 @@ export class Questions {
     const stamp = await this.store.stamp(page.project);
     if (!this.valid(page)) return;
     if (stamp === q.stamp && q.readAt - stamp > SETTLE_MS) return;
-    const open = (await this.store.list(page.project)).filter((x) => !q.mine.has(x.id));
+    const all = await (this.store.all ?? this.store.list)(page.project);
+    const open = all.filter(x => x.status === "open" && !q.mine.has(x.id));
     if (!this.valid(page)) return;
+    q.all = all;
     q.loaded = true;
     q.error = undefined;
     q.stamp = stamp;

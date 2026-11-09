@@ -6,14 +6,32 @@ Use arrow keys to select and focus, Enter to open, `r` to refresh and Esc
 to return to chat. The footer shows this project's agent, task, question and image
 counts. A question mark indicates an unavailable count.
 
-Tasks support jumping by number, viewing merged history with `a`, archiving
-merged rows with `d` or `D`, and abandoning eligible work with `A`.
-Agents support finished-run history with `a`, stopping the selected run with
-`s`, and archiving eligible finished runs with `d` or `D`. Mutations require
-confirmation. Archiving retains records and transcripts.
+Every page has a collapsed **Archived (N)** section when archived items exist.
+`a` toggles it; select its header and use Enter or right/left to expand/collapse.
+Active items remain visible above it. `d` archives the selected eligible item,
+`D` bulk archives eligible items, and `u` restores an archived item to the main
+list. Archiving asks for confirmation and retains all records/files. Restoring
+does not resume work or reopen/answer questions.
 
-`/vim` toggles Vim controls. In Normal mode, `i` enters Insert, `gt` and
-`gT` switch tabs, `j/k` and `gg/G` navigate, and `h/l` switch panes
+Tasks support jumping by number (including archived tasks), archiving merged or
+abandoned/closed tasks with no active runs or open PR, and abandoning eligible
+work with `A`. IDs, dependencies and history survive archive/restore. A new
+authorized dispatch restores an archived task to the list. Agents support `s`
+to stop the selected run; only verified exited agents without queued messages
+or active/unresolved commands can be manually archived. Older finished agents
+from the existing 24-hour filter appear in Archived, and restored agents stay
+in the main list until explicitly archived again.
+
+Answered, skipped and withdrawn questions automatically appear in Archived.
+Archiving an open question dismisses it without an answer or agent wakeup;
+restoring a closed question shows its saved answer/reason without reopening it.
+Images can be archived/restored while retaining their bytes and chat references.
+Archived images can still be opened and do not count in the footer image count.
+`orca clean` only inspects disposable storage (`--apply` removes eligible
+disposable files); it does not purge these archived records or conversation images.
+
+`/vim` toggles Vim controls. In Normal mode, `i` enters Insert, `z`/`x`
+switch to the previous/next tab (`gT`/`gt` also work), `j/k` and `gg/G` navigate, and `h/l` switch panes
 in work views. Space then `a/t/q/p` opens Agents, Tasks, Questions or Images.
 Space then `u/m/e/f` opens Accounts, Model, Effort or Fast mode. Use `:`
 to run any slash command. Esc leaves Insert and retains the chat draft.
@@ -39,8 +57,9 @@ and the machine's local timezone, including its daylight saving offset.
   shows numbered options, **type your own answer**, and **skip — remove from inbox**.
   ↑↓ moves among rows (and within multiline answers); 1–9 picks an option on an
   option row; typing enters `answer>`. Enter explicitly sends the selected option
-  or typed answer. **Only selecting skip and pressing Enter, or Ctrl+D (delete),
-  dismisses a question**: it durably leaves the unanswered queue and decrements
+  or typed answer. Selecting skip and pressing Enter, Ctrl+D in the answer panel,
+  or confirmed `d`/`D` archival in the Questions page dismisses a question:
+  it durably leaves the unanswered queue and decrements
   counts, retaining its skipped record/history. Ctrl+D deletes the shown
   question from either the pick or `answer>` mode (for one that is outdated or
   already answered in chat); no editing key uses it, so it never clashes with
@@ -116,8 +135,8 @@ establishes readiness/completion.
   Enter, typing and paste do nothing. Close before editing chat.
 * Reads refresh through the existing TUI poll (normally 2s), including after
   watchdog/merge-watcher work. The existing GitHub watcher normally queries every
-  30s. Only a **confirmed exact associated PR merge** removes matching rows on
-  refresh; archived records stay on disk. No separate polling process, transcript
+  30s. A **confirmed exact associated PR merge** marks matching rows merged on
+  refresh; explicit archival moves them to the collapsed section. No separate polling process, transcript
   scan, branch/name guess or archive pruning is added.
 * Loading and query failures are explicit. Failed refreshes label retained
   snapshots potentially stale even while scrolled. Empty means **no active
@@ -164,7 +183,7 @@ There are no checkpoint, prepare_publication, checks, reviewed or publish task a
 | New run on branch, shell tool or new agent instruction after validation | Readiness invalidated, including earlier tasks on that branch |
 | Explicit validated readiness | `ready_to_merge`, bound to the exact PR head and active owning run |
 | Observed PR-head change, check/review blocker, closed PR or failed refresh | Readiness invalidated; closed-unmerged and unknown tasks remain active |
-| Confirmed repository/PR merge | Active row removed; task, runs, events and merge metadata retained |
+| Confirmed repository/PR merge | Row marked merged; task, runs, events and merge metadata retained |
 
 `cancelSession`, `supervise`/`beginRun`, shell `afterExit` and the TUI's existing
 watchdog supply exact-run events. The watchdog gives prepared launches 30 seconds
@@ -256,7 +275,8 @@ non-GitHub PRs, task editing/rebranching, pruning and scheduling are out of scop
 In the Ctrl+T task tree, type a task number and press Enter. Digits accumulate
 without a timer, so `13` selects #13 rather than briefly selecting #1. Backspace
 edits the number; Escape cancels the number entry, and a subsequent Escape returns
-to chat. A missing/removed number leaves selection unchanged and shows a notice.
+to chat. A missing number leaves selection unchanged and shows a notice.
+An archived number expands Archived and selects its retained task.
 The jump uses stable task numbers rather than row positions, unfolds only the
 selected task's primary ancestors, scrolls it into view and focuses the list with
 details reset to the top. Other folded groups and the chat draft stay intact.
