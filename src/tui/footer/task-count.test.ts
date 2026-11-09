@@ -58,7 +58,7 @@ test("the status bar shows the page's task count instead of queued messages; rea
   app.switchPage(-1);
   await until(() => app.status(app.page!).includes("1 task │"));
   fail = true;
-  (app as unknown as { watchPages(): void }).watchPages(); // the existing poll's task-inbox refresh
+  await app.refreshSessions(false); // the passive poll owns the task-count refresh
   await until(() => app.status(app.page!).includes("? tasks"));
   await until(() => term.screen().includes(">[count-a]") && term.screen().includes("0 agents running │ ? tasks │"));
 });

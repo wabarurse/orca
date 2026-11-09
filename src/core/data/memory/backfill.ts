@@ -13,6 +13,7 @@ import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "..
 import { existingTasks } from "../tasks";
 import type { Task } from "../../../protocol/task";
 import { open } from "../transcripts";
+import { tryStorageLock } from "../storage-lock";
 import type { Entry } from "../../../protocol";
 
 export const BACKFILL_VERSION = "1";
@@ -213,9 +214,25 @@ export async function backfillMemory(options: BackfillOptions = {}): Promise<boo
 interface Run { promise: Promise<boolean>; abort: AbortController; owners: number }
 const started = new Map<string, Run>();
 
+function archiveCurrent(): boolean {
+  const db = database();
+  try { return getMeta(db, "backfill_version") === BACKFILL_VERSION; }
+  finally { db.close(); }
+}
+
+async function startupBackfill(options: BackfillOptions): Promise<boolean> {
+  if (archiveCurrent()) return true;
+  const release = await tryStorageLock(join(paths.runtime, "archive-backfill.lock"));
+  if (!release) return false; // Another process owns the shared migration.
+  try {
+    options.signal?.throwIfAborted();
+    return archiveCurrent() || await backfillMemory(options);
+  } finally { await release(); }
+}
+
 function launch(options: BackfillOptions): Run {
   const abort = new AbortController();
-  const promise = backfillMemory({ ...options, signal: abort.signal }).catch(error => {
+  const promise = startupBackfill({ ...options, signal: abort.signal }).catch(error => {
     if (!abort.signal.aborted) report(options, `memory backfill failed; will retry on a later start: ${error instanceof Error ? error.message : error}`);
     return false;
   });
