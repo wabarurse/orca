@@ -3,7 +3,7 @@ import { ContextBlocked, estimate, requireFits, type CompactOptions } from "./co
 import { historicalMessages } from "../images";
 import type { CompleteRequest, Provider, Turn } from "../../../providers";
 import { modelCapabilities, type RequestSettings } from "../../../providers/catalog";
-import type { Task } from "../../../protocol/task";
+import { publicTaskStatus, type Task } from "../../../protocol/task";
 import type { RollingMemory } from "../../../protocol";
 
 const LIMITS = { summary: 32, pending: 16, item: 1000, targetChars: 8000, tokens: 4096, responseChars: 65536 } as const;
@@ -14,7 +14,7 @@ interface SummaryTarget {
 }
 const empty = (): RollingMemory => ({ summary: [], pending: [] });
 export const taskSnapshot = (tasks: Task[]) => tasks.map(t => ({ id: t.id, name: t.name, summary: t.summary, branch: t.branch,
-  status: t.archive ? "merged" : t.status, attention: t.attention, pr: t.pr, run: t.runs.at(-1) }));
+  status: publicTaskStatus(t), attention: t.attention, pr: t.pr, run: t.runs.at(-1) }));
 
 // Only "the rest" is summarized: task records (the ledger) and saved preferences are
 // rendered beside this memory as saved (rolling-memory.ts memoryText), never by the model.

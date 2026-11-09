@@ -48,15 +48,16 @@ export function canonicalTask(task: import("./tasks").Task): LedgerTask {
     dependencies: task.dependsOn ?? [], ...(task.pr ? { prLink: task.pr.url } : {}) };
 }
 
-/** Current user-facing state. Publication checkpoints remain independent history;
- * an open PR cannot override a hold, cancellation or unfinished review. */
-export type TaskDisplayStatus = "queued" | "working" | "reviewing" | "ready to merge" | "merged" | "waiting";
+/** Current user-facing state, using the last verified PR observation. Publication
+ * takes precedence; holds and review evidence remain available in task details. */
+export type TaskDisplayStatus = "queued" | "working" | "waiting" | "pr open" | "merged";
 export function publicTaskStatus(task: Pick<import("./tasks").Task, "archive" | "status" | "attention" | "publication"> & Partial<Pick<import("./tasks").Task, "runs">>): TaskDisplayStatus {
   if (task.archive) return "merged";
+  if (task.publication?.state === "OPEN") return "pr open";
   if (task.attention || task.publication?.state === "CLOSED") return "waiting";
   if (task.status === "queued") {
-    const active = task.runs?.findLast(run => run.state === "started" && !run.endedAt);
-    if (active) return active.role === "reviewer" ? "reviewing" : "working";
+    return task.runs?.some(run => run.state === "started" && !run.endedAt) ? "working" : "queued";
   }
-  return task.status === "ready_to_merge" ? "ready to merge" : task.status;
+  // Legacy validation without a publication observation cannot prove a PR is open.
+  return task.status === "ready_to_merge" ? "waiting" : "working";
 }

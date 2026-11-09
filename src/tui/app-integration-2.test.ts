@@ -134,7 +134,7 @@ test("external question closure preserves both original chat and orphan answer, 
     await app.questions.command(app.page);
     term.type("orphan answer");
     expect(app.input.text).toBe("orphan answer");
-    if (collapsed) term.press({ name: "q", ctrl: true });
+    if (collapsed) term.press({ name: "escape" });
     await answerQuestion(project, first!.id, "someone else's answer");
     await until(() => app.page!.questions.open[0]?.id === next!.id);
     expect(app.input.text).toBe("original chat draft");
@@ -391,7 +391,8 @@ test("boxed input and question vertical editing share rendered geometry across r
     await askQuestions("boxed-question-e", [{ text: "Destination?" }]);
     await until(() => app.page!.questions.open.length === 1);
     expect(app.input.text).toBe(draft);
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     await until(() => app.questions.answering());
     term.type("界".repeat(40) + " answer");
     const answer = app.input.text;
@@ -406,7 +407,8 @@ test("boxed input and question vertical editing share rendered geometry across r
     expect(term.display.col).toBeLessThan(term.cols);
     term.press({ name: "escape" });
     expect(app.input.text).toBe(draft);
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     await until(() => app.questions.answering());
     expect(app.input.text).toBe(answer);
     expect(app.page!.sent).toEqual([]);
@@ -546,7 +548,8 @@ test("ctrl+c through pinned question/modal layers preserves owners and drafts wi
     const chat = { ...app.input };
     await askQuestions(project, [{ text: "Keep this question?" }]);
     await until(() => owner.questions.open.length === 1);
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     await until(() => app.questions.answering());
     term.type("answer draft 👩‍💻");
     const answer = { ...app.input };
@@ -559,7 +562,8 @@ test("ctrl+c through pinned question/modal layers preserves owners and drafts wi
     expect(await owner.orch.pending()).toBe(false);
     term.press({ name: "escape" });
     expect(app.input).toEqual(chat);
-    term.press({ name: "q", ctrl: true });
+    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "enter" });
     await until(() => app.questions.answering());
     expect(app.input).toEqual(answer);
     // A project modal hides, but must not steal, the question's answer buffer.
@@ -729,6 +733,7 @@ describe("explicit footer help", () => {
       expect(app.input).toEqual(chat);
       await help();
       await app.onKey({ name: "q", ctrl: true }); // Explicit opening replaces help.
+      await app.onKey({ name: "enter" });
       expect(app.frame().help).toBeNull();
       expect(app.questions.answering()).toBe(true);
       const answer = { text: "answer draft", cursor: 5 };
@@ -755,6 +760,7 @@ describe("explicit footer help", () => {
       expect(app.frame().inputArea!.lines.join("\n")).toContain("closed elsewhere");
       await app.onKey({ name: "escape" });
       await app.onKey({ name: "q", ctrl: true });
+      await app.onKey({ name: "enter" });
       expect(app.input.text).toBe(""); // Orphan answer never attaches to the next question.
       await app.onKey({ name: "escape" });
       expect(app.input).toEqual(chat);
@@ -873,6 +879,7 @@ describe("queued input footer", () => {
       app.input = { ...chat }; app.draw();
       await askQuestions(a.project, [{ text: "Synthetic question?" }]);
       await app.onKey({ name: "q", ctrl: true });
+      await app.onKey({ name: "enter" });
       app.input = { text: "answer draft 👩‍💻", cursor: 7 }; app.draw();
       const answer = { ...app.input };
       expect(app.questions.answering()).toBe(true);
@@ -891,6 +898,7 @@ describe("queued input footer", () => {
       expect(app.page).toBe(a);
       expect(app.input).toEqual(chat); // project switches close Inbox, not its drafts
       await app.onKey({ name: "q", ctrl: true });
+      await app.onKey({ name: "enter" });
       expect(app.input).toEqual(answer);
       for (const [cols, rows] of [[12, 8], [23, 16], [90, 24]]) {
         term.resize(cols!, rows!);
@@ -898,7 +906,7 @@ describe("queued input footer", () => {
         expect(app.input).toEqual(answer);
         expect(app.frame().queued?.texts).toEqual(["pending A"]);
       }
-      await app.onKey({ name: "q", ctrl: true });
+      await app.onKey({ name: "escape" });
       expect(app.input).toEqual(chat);
       a.view = { name: "worker-synthetic", lines: [], live: true, calls: new Calls(), leave() {} };
       a.name = "Renamed display"; // identity remains the original project id

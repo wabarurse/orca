@@ -1,5 +1,5 @@
-// Task records as the Tasks inbox panel shows them (core/data/tasks/tasks.ts
-// stores and transitions them) and `taskPR`, the pure parser of a PR snapshot.
+// Durable task lifecycle records (core/data/tasks/tasks.ts stores/transitions
+// them). Use publicTaskStatus for display labels; taskPR parses a PR snapshot.
 
 export const taskStatuses = ["queued", "working", "reviewing", "ready_to_merge"] as const;
 export type TaskStatus = typeof taskStatuses[number];

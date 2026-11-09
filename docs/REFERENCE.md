@@ -574,7 +574,7 @@ separates the conversation (including streaming output) from the entire footer,
 above any queued previews. It is omitted below eight terminal rows or when it
 would take the last conversation row; input and footer panels keep their space.
 The bottom band puts queued prompt previews immediately above the boxed input,
-then `x agents | y tasks | z questions` for the selected project. Counts
+then `x agents | y tasks | z questions | n images` for the selected project. Counts
 wrap on narrow screens and use `?` when unavailable. `/agents`, `/tasks`
 and `/questions` open the matching work views.
 A running turn's "thinking…/working…" shimmers at the selected conversation's
@@ -720,14 +720,12 @@ close existing queued questions.
 
 **`/questions`** opens the list of unanswered questions. Select
 a question and press Enter to open its answer form. Use ↑↓ or 1–9 to choose
-an option, or type an answer. Ctrl+Q opens the first answer form directly. Esc or Tab closes the form and restores the chat
+an option, or type an answer. Ctrl+Q opens the Questions page. Esc or Tab closes the form and restores the chat
 draft. Draft answers are retained across project switches. Explicit Skip
 removes the question from the open list, retains its history and sends no reply.
 New questions update the count and leave the composer in place.
-Menus take precedence over questions; Ctrl+Q does nothing while a menu/project
-list is open. On a one-row terminal the input takes the whole live region: a modal panel
-can be hidden while still owning keys; Esc closes it. In an agent view Questions
-shows a guard, never an answer field: close Questions, then Esc or `/back` to the
+Ctrl+Q and Ctrl+A open the Questions and Agents pages from menus and project lists. On a one-row terminal the input takes the whole live region: a modal panel
+can be hidden while still owning keys; Esc closes it. Questions can be browsed from an agent view. Selecting a question returns to the
 project orchestrator before answering. A settled question leaves no conversation
 line: an answer is the transient `? question → answer` note above the composer
 (shown once the panel closes, however it closes) and sits in the prompt queue as `? question → answer`
@@ -1131,9 +1129,10 @@ limits and attribution/compaction semantics.
 
 Authorized work is registered with the `task` tool before `spawn`, with immutable
 task IDs independent of branch reuse. The persisted registry exposes task name,
-summary, queued/working/reviewing/ready-to-merge status and a verified PR link;
-confirmed merges archive rows without deleting history. Readiness requires an
-explicit reviewer validation of the current PR head. This is separate from
+summary, queued/working/waiting/pr open/merged status and a verified PR link;
+the last verified open PR takes precedence over waiting, with blocker reasons
+retained in details. Confirmed merges archive rows without deleting history.
+Optional readiness evidence records validation of the current PR head. This is separate from
 message/question/prompt queues.
 
 **`/tasks`** opens the project’s task list and details, including status and PR

@@ -179,13 +179,14 @@ test("only unended started runs animate; merged checkbox requires archive eviden
   expect(renderTaskTree([ready], { cols: 80, rows: 24 }).errors.join(" ")).toContain("ready requires matching validation");
 });
 
-test("publication evidence stays separate from waiting state and its colour", () => {
+test("open PR state keeps blocker details and becomes waiting when the PR closes", () => {
   const t = task(1); t.pr = pr;
   t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
   t.attention = { kind: "blocked", reason: "conflicting; checks failed" };
   t.runs = [{ id: "w", agent: "worker", role: "worker", state: "failed", preparedAt: "today" }];
   const render = () => renderTaskTree([t], { cols: 120, rows: 60 }).lines.join("\n");
-  for (const value of ["waiting", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
+  for (const value of ["pr open", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
+  expect(renderTaskTree([t], { cols: 120, rows: 60 }).lines[1]).toContain("\x1b[32m●");
   t.publication.state = "CLOSED";
   expect(render()).toContain("waiting");
   expect(renderTaskTree([t], { cols: 120, rows: 60 }).lines[1]).toContain("\x1b[33m●");
@@ -193,7 +194,7 @@ test("publication evidence stays separate from waiting state and its colour", ()
   expect(render()).not.toContain("pr open");
 });
 
-test("six visible task states use one consistent colour independent of PR metadata", () => {
+test("five visible task states use consistent colours with green reserved for verified open PRs", () => {
   const colours = (t: Task) => { const m = renderTaskTree([t], { cols: 120, rows: 30 }).lines[1]!.match(/\x1b\[(\d+)m[●◐]/); return m && Number(m[1]); };
   const base = (n: number) => task(n);
   expect(colours(base(1))).toBe(90);
@@ -201,6 +202,7 @@ test("six visible task states use one consistent colour independent of PR metada
   const building = base(2); building.status = "working"; building.runs = [run]; building.checkpoints = { buildingAt: "today" };
   expect(colours(building)).toBe(36);
   const reviewing = base(3); reviewing.status = "reviewing"; reviewing.checkpoints = { buildingAt: "today" };
+  expect(colours(reviewing)).toBe(36);
   reviewing.attention = { kind: "waiting", reason: "awaiting review" };
   expect(colours(reviewing)).toBe(33); // explicit waiting is a hold, even after work started
   for (const [kind, colour] of [["blocked", 33], ["cancelled", 33], ["closed", 33], ["unknown", 33]] as const) {
@@ -209,22 +211,22 @@ test("six visible task states use one consistent colour independent of PR metada
   }
   const ready = base(5); ready.pr = pr; ready.status = "ready_to_merge";
   ready.readiness = { head: pr.head, run: "r", validatedAt: "today", validation: "checked", checks: "passed" };
-  expect(colours(ready)).toBe(32); // green means ready to merge
+  expect(colours(ready)).toBe(33); // legacy validation alone cannot prove the PR is still open
   const open = base(6); open.pr = pr; open.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
-  expect(colours(open)).toBe(90); // PR publication does not change the recorded work state
+  expect(colours(open)).toBe(32);
   const merged = base(7); merged.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
   expect(colours(merged)).toBe(35);
-  const readyOut = renderTaskTree([ready], { cols: 120, rows: 40 }).lines;
-  expect(readyOut.join("\n")).toContain("State: ready to merge");
-  expect(plainText(readyOut[1]!)).toMatch(/ready to merge$/);
-  expect(plainText(readyOut.join("\n"))).toContain("Details"); // worker and review done, PR here
+  const openOut = renderTaskTree([open], { cols: 120, rows: 40 }).lines;
+  expect(openOut.join("\n")).toContain("State: pr open");
+  expect(plainText(openOut[1]!)).toMatch(/pr open$/);
+  expect(plainText(openOut.join("\n"))).toContain("Details");
 });
 
-test("rows use six states, with PR history kept in details; panel geometry stays bounded", () => {
+test("open PR rows remain pr open during a hold; panel geometry stays bounded", () => {
   const t = task(1); t.pr = pr; t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
-  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/queued$/);
+  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/pr open$/);
   t.attention = { kind: "blocked", reason: "x" };
-  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/waiting$/);
+  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/pr open$/);
   const one = renderTaskTree([task(1)], { cols: 100, rows: 30 });
   expect(one.graph.rows).toBe(1); expect(one.details.rows).toBe(26);
   const many = renderTaskTree(Array.from({ length: 40 }, (_, i) => task(i + 1)), { cols: 100, rows: 30 });

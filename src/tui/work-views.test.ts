@@ -106,3 +106,54 @@ test("Tasks confirms abandonment and retains the task and its dependents", async
     expect((await getTask(project, child.id)).dependsOn).toEqual([parent.id]);
   } finally { await stop(); }
 });
+
+test("Ctrl+Q and Ctrl+A open work pages from chat and other work pages without changing drafts", async () => {
+  const { app, term, stop } = await setup("work-shortcuts");
+  try {
+    await ask("work-shortcuts", [{ text: "Choose one", options: ["A", "B"] }]);
+    app.input = { text: "keep this draft", cursor: 4 };
+    term.press({ name: "q", ctrl: true });
+    await until(() => term.screen().includes("QUESTIONS") && term.screen().includes("Choose one"));
+    expect(app.page!.questions.expanded).toBe(false);
+    expect(app.input.text).toBe("keep this draft");
+    term.press({ name: "a", ctrl: true });
+    await until(() => term.screen().includes("AGENTS"));
+    term.press({ name: "t", ctrl: true });
+    await until(() => term.screen().includes("TASKS"));
+    term.press({ name: "q", ctrl: true });
+    await until(() => term.screen().includes("QUESTIONS"));
+    term.press({ name: "escape" });
+    expect(app.input).toEqual({ text: "keep this draft", cursor: 4 });
+  } finally { await stop(); }
+});
+
+test("Normal mode navigates work pages, settings, help and projects and switches between them", async () => {
+  const { app, term, stop } = await setup("work-vim");
+  try {
+    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
+    term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
+    term.type(" a"); await until(() => term.screen().includes("AGENTS"));
+    term.type(" t"); await until(() => term.screen().includes("TASKS"));
+    term.type(" p"); await until(() => term.screen().includes("IMAGES"));
+    term.type(" m"); await until(() => app.menu?.title.includes("model role") === true);
+    term.type("G"); await until(() => app.menu?.index === 3);
+    term.type("gg"); await until(() => app.menu?.index === 0);
+    term.type("jk"); await until(() => app.menu?.index === 0);
+    term.type(" h"); await until(() => app.frame().help !== null);
+    term.type("G"); await until(() => (app.frame().help?.top ?? 0) > 0);
+    term.type("gg"); await until(() => app.frame().help?.top === 0);
+    term.type(" b"); await until(() => app.projectList !== null);
+    // Keep filesystem discovery independent from navigation coverage.
+    app.projectList!.items = [
+      { name: "first", label: "First", pinned: false },
+      { name: "second", label: "Second", pinned: false },
+    ];
+    term.type("G"); await until(() => app.projectList!.index === 1);
+    term.type("gg"); await until(() => app.projectList!.index === 0);
+    term.type("jk"); await until(() => app.projectList!.index === 0);
+    term.type(" p"); await until(() => term.screen().includes("IMAGES"));
+    term.resize(30, 12);
+    await until(() => term.screen().includes("IMAGES"));
+    expect(app.input.text).toBe("");
+  } finally { await stop(); }
+});

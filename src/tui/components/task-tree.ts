@@ -1,3 +1,4 @@
+import { formatDateTime } from "../../protocol";
 import { workColumns, workRows } from "./work-view";
 import { publicTaskStatus, type TaskDisplayStatus } from "../../protocol/task";
 import { taskPublicationMilestone } from "../../protocol/task";
@@ -92,7 +93,7 @@ function status(task: TreeTask): TaskDisplayStatus { return publicTaskStatus(tas
 
 /** The row and status text always share the same state and colour. */
 export function taskStateColor(state: TaskDisplayStatus): number {
-  return ({ queued: 90, working: 36, reviewing: 36, "ready to merge": 32, merged: 35, waiting: 33 })[state];
+  return ({ queued: 90, working: 36, waiting: 33, "pr open": 32, merged: 35 })[state];
 }
 function statusColor(task: TreeTask): number {
   return taskStateColor(status(task));
@@ -130,7 +131,7 @@ function dot(task: TreeTask, frame: number): string {
   return paint(statusColor(task), active(task) ? SPINNER[frame % 4]! : "●");
 }
 
-/** One of the six current states; original hold reasons stay in details. */
+/** One of the five current states; original hold reasons stay in details. */
 function rowLabel(task: TreeTask): string {
   return status(task);
 }
@@ -214,14 +215,14 @@ function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][]
     [`Task #${selected.number ?? tasks.indexOf(selected) + 1} · ${status(selected)}`, selected.name],
     ["State", status(selected)],
     ["UUID", selected.id],
-    ["Created", selected.createdAt],
+    ["Created", formatDateTime(selected.createdAt)],
     ["Overview", selected.summary],
     ["Dependencies", dependencies.join("; ") || "none"],
   ];
   if (active(selected)) fields.push(["Activity", activity(selected)]);
   const milestone = taskPublicationMilestone(selected);
   if ("label" in milestone) fields.push(["Publication", `${milestone.label} (historical)`]);
-  if ("observedAt" in milestone) fields.push(["Observed", `${milestone.observedAt} (historical; not merge permission)`]);
+  if ("observedAt" in milestone) fields.push(["Observed", `${formatDateTime(milestone.observedAt)} (historical; not merge permission)`]);
   if (selected.attention) fields.push(["Attention", `${selected.attention.kind}: ${selected.attention.reason}`]);
   const latest = selected.runs.at(-1);
   if (latest) fields.push(["Run", `${latest.role}: ${latest.state}`]);
@@ -242,7 +243,7 @@ function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: nu
   for (const [name, value] of fields.slice(1)) {
     lines.push(...safeLines(`${name}: ${value}`, cols), "");
   }
-  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) lines.push(...safeLines(`${checkpoint}: ${at}`, cols));
+  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) lines.push(...safeLines(`${checkpoint}: ${formatDateTime(at)}`, cols));
   const pr = selected.archive?.pr ?? selected.pr;
   if (pr) {
     for (const label of safeLines(`PR: ${pr.repository} #${pr.number}`, cols)) {
@@ -264,7 +265,7 @@ function detailColumns(tasks: TreeTask[], selected: TreeTask, cols: number): str
   if (dependents.length) left.push("", ...safeLines(`Unblocks: ${dependents.map(t => `#${t.number ?? tasks.indexOf(t) + 1} ${t.name}`).join("; ")}`, leftWidth));
   const right = ["Details"];
   for (const [name, value] of fields.slice(1).filter(([name]) => name !== "Overview" && name !== "Dependencies")) right.push(...safeLines(`${name}: ${value}`, rightWidth));
-  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) right.push(...safeLines(`${checkpoint}: ${at}`, rightWidth));
+  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) right.push(...safeLines(`${checkpoint}: ${formatDateTime(at)}`, rightWidth));
   const pr = selected.archive?.pr ?? selected.pr;
   if (pr) {
     for (const label of safeLines(`PR: ${pr.repository} #${pr.number}`, rightWidth)) right.push(`\x1b]8;;${pr.url}\x07${label}\x1b]8;;\x07`);

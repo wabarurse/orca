@@ -1,9 +1,9 @@
-# Tasks, Agents and Questions
+# Tasks, Agents, Questions and Images
 
-Use `/tasks`, `/agents` and `/questions` to open the project’s work views.
+Use `/tasks`, `/agents`, `/questions` and `/images` to open the project’s work views.
 Each shows a list and a details pane, stacked on narrow terminals.
 Use arrow keys to select and focus, Enter to open, `r` to refresh and Esc
-to return to chat. The footer shows this project's agent, task and question
+to return to chat. The footer shows this project's agent, task, question and image
 counts. A question mark indicates an unavailable count.
 
 Tasks support jumping by number, viewing merged history with `a`, archiving
@@ -17,6 +17,15 @@ confirmation. Archiving retains records and transcripts.
 in work views. Space then `a/t/q/p` opens Agents, Tasks, Questions or Images.
 Space then `u/m/e/f` opens Accounts, Model, Effort or Fast mode. Use `:`
 to run any slash command. Esc leaves Insert and retains the chat draft.
+
+Ctrl+A opens Agents, Ctrl+T opens Tasks, and Ctrl+Q opens Questions.
+Home moves to the start of the input line. The Space shortcuts work across
+work pages, settings menus, Help and Projects in Normal mode.
+
+Images lists images delivered to you in this conversation, newest first.
+Enter opens the selected image in the system viewer and keeps the list open.
+The footer count updates as images arrive. Dates use three-letter month names
+and the machine's local timezone, including its daylight saving offset.
 
 ## Answering questions
 
@@ -71,10 +80,10 @@ to run any slash command. Esc leaves Insert and retains the chat draft.
   orphan text is reported separately, never silently assigned to the next question
   or substituted for the original chat draft. Menus/help retain precedence. Ctrl+B
   projects, model/settings menus, `/help`, cancellation and Cancel-default `/clear-context`
-  still work. Ctrl+Q does nothing while a menu/project list owns keys.
-* In an agent transcript, opening Questions shows an explanatory guard and takes
-  no answers: close Questions, then Esc or `/back` to return to the project
-  orchestrator. Closing Questions itself never leaves the agent view.
+  still work. Ctrl+Q opens the Questions page from menus and project lists.
+* In an agent transcript, opening Questions shows the project’s questions.
+  Esc returns to the agent transcript. Selecting a question returns to the
+  orchestrator to answer it.
 * Captured page/panel ownership suppresses late reads and answer UI results after
   closing/deleting/recreating pages. A successful in-flight answer belongs only
   to its original still-open page, even if another page is selected; late errors
@@ -85,14 +94,17 @@ to run any slash command. Esc leaves Insert and retains the chat draft.
 ### Tasks section (read-only)
 
 The table remains **Name | Summary | Status | PR link**. The current state is
-exactly one of **queued**, **working**, **reviewing**, **ready to merge**,
-**merged**, or **waiting**. Tree rows, inbox rows and task tool responses share
-the same projection. Merged evidence wins; waiting includes every explicit hold
-reason (waiting, blocked, cancelled, closed, unknown) and a closed PR. Hold kinds
-and explanations remain retained in details; waiting never authorizes a restart.
-An open PR is publication evidence, not a readiness or activity claim. Row colors
-follow the displayed state: queued grey, working/reviewing cyan, ready to merge
-green, merged purple, waiting yellow. PR metadata cannot override those colors.
+exactly one of **queued**, **working**, **waiting**, **pr open**, or **merged**.
+Tree rows, task tool responses and compaction task snapshots share the same
+projection. Confirmed merges win, followed by the last verified OPEN PR
+observation. An open PR stays **pr open** even while waiting for review, CI or
+the user. Hold kinds and explanations remain in details. Otherwise every explicit
+hold (waiting, blocked, cancelled, closed, unknown) and a closed PR is **waiting**.
+Review work is **working**. Legacy readiness without an OPEN observation is
+**waiting**; a link or historical checkpoint alone cannot prove a PR is open.
+An open PR is publication evidence, not a readiness or activity claim, and waiting
+never authorizes a restart. Colors: queued grey, working cyan, waiting yellow,
+pr open green, merged purple.
 The stored lifecycle, attention, checkpoints, IDs, task numbers and SQL schema are
 unchanged; historical ledger milestones keep their compatible checkpoint format.
 
@@ -188,11 +200,12 @@ barrel). The layout and the barrel rule are enforced by `src/organization.test.t
 * `listTasks(project): Promise<TaskRow[]>` — active rows, registration order.
   `TaskRow` contains only `id`, `name`, `summary`, `branch`, `status`, optional
   structured `pr` / `attention`, `createdAt` and `updatedAt`. Render table columns
-  **name | summary | status | PR link**; show attention kind instead of the
-  lifecycle label when present, with no reason or other per-task status detail.
-  This does not change the registry or turn attention into a lifecycle event.
+  **name | summary | status | PR link** using `publicTaskStatus`; keep attention
+  kind and reason in details. This does not change the registry or turn attention
+  into a lifecycle event.
 * `TaskStatus` / `taskStatuses`: `queued | working | reviewing | ready_to_merge`.
-  `taskStatusLabels[status]` gives the human label, including **ready to merge**.
+  These are private lifecycle values. Public labels come from `publicTaskStatus`,
+  which also accounts for publication and attention.
 * `TaskPR`: canonical HTTPS GitHub `url`, `repository` (`owner/repo`, lower case),
   positive integer `number`, exact `head` SHA. Never construct links from prose.
 * `getTask(project,id)` and `allTasks(project)` include archived history.

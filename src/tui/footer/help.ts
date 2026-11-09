@@ -12,6 +12,7 @@ const NAVIGATION: HelpEntry[] = [
   { label: "ctrl+z / ctrl+x", description: "previous / next project page" },
   { label: "ctrl+b", description: "open or close projects" },
   { label: "ctrl+t", description: "task list; up/down selects; left folds/parent; right expands or focuses details; details up/down scrolls, left returns; terminal gesture opens PR links; r refresh; ctrl+t/esc returns to draft" },
+  { label: "ctrl+a", description: "open the Agents page" },
   { label: "ctrl+q", description: "open the Questions list; arrivals update its count" },
   { label: "ctrl+d (question)", description: "delete shown question; no reply" },
   { label: "pgup/pgdn / wheel", description: "scroll conversation, help or lists (mouse reporting required)" },
@@ -26,7 +27,7 @@ const EDITING: HelpEntry[] = [
   { label: "alt+←/→ / alt+b/f", description: "move by word" },
   { label: "alt+⌫ / ctrl+w", description: "delete previous word" },
   { label: "alt+d", description: "delete next word" },
-  { label: "home/end / ctrl+a/e", description: "start / end of current line" },
+  { label: "home/end / ctrl+e", description: "start / end of current line" },
   { label: "ctrl+u / ctrl+k", description: "delete to start / end of current line" },
   { label: "↑ / ↓", description: "move between input rows, then project input history" },
 ];
