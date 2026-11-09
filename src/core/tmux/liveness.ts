@@ -44,12 +44,15 @@ const ARCHIVED_AGENTS = "archived-agents";
 const validAgentName = (name: string) => /^(worker|reviewer)(-[A-Za-z0-9._-]+)?$/.test(name);
 
 /** The removal markers; anything malformed in the record is ignored (the row shows), never trusted. */
-function archivedAgents(project: string): Map<string, number> {
+function archivedAgents(project: string): Map<string, number | null> {
   let saved: unknown;
   try { saved = readProjectState(project, ARCHIVED_AGENTS); } catch { return new Map(); }
   if (!saved || typeof saved !== "object" || Array.isArray(saved)) return new Map();
-  const out = new Map<string, number>();
-  for (const [name, at] of Object.entries(saved)) if (validAgentName(name) && typeof at === "string" && !Number.isNaN(Date.parse(at))) out.set(name, Date.parse(at));
+  const out = new Map<string, number | null>();
+  for (const [name, at] of Object.entries(saved)) if (validAgentName(name)) {
+    if (at === null) out.set(name, null); // explicit restore, retained in the main list
+    else if (typeof at === "string" && !Number.isNaN(Date.parse(at))) out.set(name, Date.parse(at));
+  }
   return out;
 }
 
@@ -94,9 +97,9 @@ export async function listAgents(project: string): Promise<AgentInfo[]> {
     const lastActiveAt = await lastActive(paths.transcript(project, name), times.endedAt);
     const removedAt = archived.get(name);
     const started = Date.parse(state?.startedAt ?? times.startedAt ?? "");
-    const removed = removedAt !== undefined && !live.has(name) && !(started > removedAt);
+    const removed = removedAt != null && !live.has(name) && !(started > removedAt);
     return { name, run: state?.run, live: live.has(name), status: row.status, inventoryComplete: snapshot.inventoryComplete, queuedMessages: row.queuedMessages,
-      ...times, ...(lastActiveAt ? { lastActiveAt } : {}), ...(tasks.has(name) ? { openTask: true } : {}), ...(removed ? { archived: true } : {}) };
+      ...times, ...(lastActiveAt ? { lastActiveAt } : {}), ...(tasks.has(name) ? { openTask: true } : {}), ...(removed ? { archived: true } : {}), ...(removedAt === null ? { retained: true } : {}) };
   }));
   return agents.sort(byActivity);
 }
@@ -114,11 +117,18 @@ export async function archiveAgents(project: string, names: string[], live: (pro
   const archived = valid.filter((n) => !running.includes(n));
   if (!archived.length) return { archived, live: refused };
   const at = new Date().toISOString();
-  updateState<Record<string, string>>(paths.memory, projectStateScope(project), ARCHIVED_AGENTS, (old) => {
-    const kept = old && typeof old === "object" && !Array.isArray(old) ? Object.fromEntries(Object.entries(old).filter(([n, t]) => validAgentName(n) && typeof t === "string")) : {};
+  updateState<Record<string, string | null>>(paths.memory, projectStateScope(project), ARCHIVED_AGENTS, (old) => {
+    const kept = old && typeof old === "object" && !Array.isArray(old) ? Object.fromEntries(Object.entries(old).filter(([n, t]) => validAgentName(n) && (typeof t === "string" || t === null))) : {};
     return { ...kept, ...Object.fromEntries(archived.map((n) => [n, at])) };
   });
   return { archived, live: refused };
+}
+
+/** Restore list membership only. No process, transcript or queued input changes. */
+export function restoreAgents(project: string, names: string[]): void {
+  updateState<Record<string, string | null>>(paths.memory, projectStateScope(project), ARCHIVED_AGENTS, old => ({
+    ...old, ...Object.fromEntries(names.filter(validAgentName).map(name => [name, null])),
+  }));
 }
 
 /** The worker/reviewer windows among a tmux session's windows: all but the idle shell and the orchestrator daemon's. */

@@ -11,8 +11,8 @@ export function installTaskLedgerSchema(db: Database): void {
     ) STRICT`);
     const row = db.query("SELECT version FROM task_ledger_schema WHERE singleton=1").get() as { version: number } | null;
     if (row && ![1, 2].includes(row.version)) throw new Error("unsupported task ledger schema version");
-    if (row?.version === 2) return;
-    if (row?.version === 1) { upgradeRetention(db); return; }
+    if (row?.version === 2) { allowExplicitRestore(db); return; }
+    if (row?.version === 1) { upgradeRetention(db); allowExplicitRestore(db); return; }
     // No IF NOT EXISTS: an unversioned partial/conflicting schema must fail closed.
     db.exec(`
       CREATE TABLE task_ledger_projects (
@@ -54,7 +54,28 @@ export function installTaskLedgerSchema(db: Database): void {
       INSERT INTO task_ledger_schema VALUES(1,1);
     `);
     upgradeRetention(db);
+    allowExplicitRestore(db);
   }).immediate();
+}
+
+/** Same v2 storage format, with an explicit forward membership event for restore.
+ * Existing v2 binaries retain this trigger, so running writers keep working.
+ * Stale snapshots still cannot undo an archive or regress either revision. */
+function allowExplicitRestore(db: Database): void {
+  const trigger = db.query("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='task_ledger_revision'").get() as { sql: string } | null;
+  if (trigger?.sql.includes("'membership_restored'")) return;
+  db.exec(`DROP TRIGGER task_ledger_revision;
+    CREATE TRIGGER task_ledger_revision BEFORE UPDATE ON task_ledger_records
+    WHEN NEW.revision<OLD.revision OR NEW.membership_revision<OLD.membership_revision
+      OR (NEW.removed_at IS NOT OLD.removed_at AND (
+        NEW.revision<=OLD.revision OR NEW.membership_revision IS NOT NEW.revision
+        OR (OLD.removed_at IS NOT NULL AND NOT (NEW.removed_at IS NULL
+          AND EXISTS (SELECT 1 FROM json_each(NEW.safety_json,'$.legacy.history') event
+            WHERE json_extract(event.value,'$.kind') IS 'membership_restored'
+              AND json_extract(event.value,'$.revision')>OLD.revision
+              AND json_extract(event.value,'$.revision')<=NEW.revision)
+          AND json_extract(NEW.safety_json,'$.legacy.removedAt') IS NULL))))
+    BEGIN SELECT RAISE(ABORT,'task revision/membership cannot regress'); END;`);
 }
 
 /** Version 1 was additive/dormant; version 2 is the activation safety upgrade. */

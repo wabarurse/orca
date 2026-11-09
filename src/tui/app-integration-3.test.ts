@@ -595,7 +595,7 @@ for (const width of [80, 120]) test(`persistent task tree real App ${width}: con
     await until(() => screen().includes("Task #1 · merged"));
     expect(term.raw()).toContain("https://github.com/o/r/pull/1"); // OSC8 + visible fallback; not a physical Cmd gesture claim
     term.press({ name: "down" }); await until(() => screen().includes("Task #2 · queued"));
-    term.type("d"); await until(() => screen().includes("Only verified merged"));
+    term.type("d"); await until(() => screen().includes("Only merged or abandoned/closed"));
     term.press({ name: "up" }); await until(() => screen().includes("Task #1 · merged"));
     term.type("d"); await until(() => screen().includes("y confirm / n cancel"));
     term.type("n"); expect(await listTasks(project)).toHaveLength(2);

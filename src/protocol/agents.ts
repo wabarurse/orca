@@ -23,4 +23,6 @@ export interface AgentInfo {
   openTask?: boolean;
   /** The user removed this finished agent's row (d/D in /agents); it shows again once the agent is started again. */
   archived?: boolean;
+  /** Explicitly restored to the list, so age alone does not archive it again. */
+  retained?: boolean;
 }

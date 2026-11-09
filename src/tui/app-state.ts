@@ -3,7 +3,7 @@ import type { TaskTreeRender, ClipboardImage, Key, Terminal } from "./components
 import type { ImageRef, AgentInfo, ProjectEntry, Message, ToolCall, ToolOutcome, Role } from "../protocol";
 import type { RequestSettings } from "../providers/catalog";
 import type { Orchestrator } from "../core/agent-loop/orc";
-import { archiveAgents, cancelSession } from "../core/tmux";
+import { archiveAgents, restoreAgents, cancelSession } from "../core/tmux";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
 import { login, sendAgentFeedback, modelChoices, effortChoices, setModel, type DeleteOptions } from "./commands";
 import type { Line, MarkdownStream, Calls } from "./conversation";
@@ -79,6 +79,7 @@ export interface AppDeps {
   agents?: (project: string) => Promise<AgentInfo[]>;
   /** How /agents d and D remove finished agents' rows (archiveAgents: a marker in project state); tests stub it. */
   archiveAgents?: typeof archiveAgents;
+  restoreAgents?: typeof restoreAgents;
   /** Sign-in; tests replace it. */
   login?: typeof login;
   modelChoices?: typeof modelChoices;
@@ -138,7 +139,7 @@ export interface TaskTreeState {
   page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
   graphY: number; detailY: number; loading: boolean; error?: string;
   collapsed: Set<string>; frame: number; detailsFocused?: boolean;
-  confirmRemoval?: string[]; confirmAbandon?: { id: string; revision: number; text: string }; history?: boolean; notice?: string; removing?: boolean;
+  confirmRemoval?: string[]; restoring?: boolean; confirmAbandon?: { id: string; revision: number; text: string }; history?: boolean; notice?: string; removing?: boolean;
   jumpInput?: string;
   revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
 }

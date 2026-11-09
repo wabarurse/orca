@@ -5,7 +5,7 @@ import { renderTaskTree, selectTaskNumber } from "../components/task-tree";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const task = (n: number, parents: number[] = []): Task => ({ id: id(n), number: n, name: `Task ${n}`, summary: "", branch: "feat/jump", status: "queued", createdAt: "today", updatedAt: "today", revision: 1, dependsOn: parents.map(id), runs: [], history: [] });
 const view = () => ({ tasks: [task(1), task(13, [1]), task(15, [13]), task(20)], collapsed: new Set([id(1), id(13), id(20)]), selectedId: id(1), detailY: 5,
-  detailsFocused: true, jumpInput: undefined as string | undefined, notice: undefined as string | undefined, revealSelected: false });
+  detailsFocused: true, jumpInput: undefined as string | undefined, notice: undefined as string | undefined, revealSelected: false, history: false });
 test("multi-digit jump selects by durable number, reveals ancestors and preserves unrelated folds", () => {
   const v = view(); taskNumberKey(v, { name: "char", text: "1" });
   expect(v.selectedId).toBe(id(1)); taskNumberKey(v, { name: "char", text: "5" });
@@ -16,12 +16,14 @@ test("multi-digit jump selects by durable number, reveals ancestors and preserve
   const rendered = renderTaskTree(v.tasks, { ...v, cols: 80, rows: 12 });
   expect(rendered.selectedId).toBe(id(15)); expect(rendered.hits.some(h => h.number === 15)).toBe(true);
 });
-test("jump numbers are not array positions; missing and removed numbers never change selection", () => {
+test("jump numbers are not array positions; an archived task expands its section", () => {
   const v = view();
   expect(selectTaskNumber(v.tasks, 2, v.collapsed)).toBeUndefined();
   v.tasks[1]!.removedAt = "today";
   taskNumberKey(v, { name: "char", text: "13" }); taskNumberKey(v, { name: "enter" });
-  expect(v.selectedId).toBe(id(1)); expect(v.notice).toContain("No listed task #13");
+  expect(v.selectedId).toBe(id(13)); expect(v.history).toBe(true);
+  const rendered = renderTaskTree(v.tasks, { ...v, workView: true, cols: 100, rows: 20 });
+  expect(rendered.selectedId).toBe(id(13)); expect(rendered.hits.some(hit => hit.id === id(13))).toBe(true);
 });
 test("backspace edits, Esc cancels only the jump, and modifiers never start a jump", () => {
   const v = view(); expect(taskNumberKey(v, { name: "char", text: "1", ctrl: true })).toBe(false);

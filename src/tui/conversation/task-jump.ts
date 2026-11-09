@@ -3,6 +3,7 @@ import { selectTaskNumber, type Key } from "../components";
 interface JumpView {
   tasks: Task[]; collapsed: Set<string>; jumpInput?: string; notice?: string;
   selectedId?: string; revealSelected?: boolean; detailY: number; detailsFocused?: boolean;
+  history?: boolean;
 }
 /** Digits + Enter, with no timer, command execution or interaction with chat drafts. */
 export function taskNumberKey(view: JumpView, key: Key): boolean {
@@ -20,9 +21,10 @@ export function taskNumberKey(view: JumpView, key: Key): boolean {
   if (key.name === "enter") {
     const number = view.jumpInput; view.jumpInput = undefined;
     try {
-      const id = selectTaskNumber(view.tasks, Number(number), view.collapsed);
+      const id = selectTaskNumber(view.tasks, Number(number), view.collapsed, true);
       if (!id) { view.notice = `No listed task #${number}`; return true; }
       view.selectedId = id; view.revealSelected = true; view.detailY = 0; view.detailsFocused = false;
+      if (view.tasks.find(t => t.id === id)?.removedAt) view.history = true;
       view.notice = `Task #${number} selected`;
     } catch { view.notice = "Cannot jump: task tree is invalid; refresh to retry"; }
     return true;

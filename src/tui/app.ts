@@ -1,7 +1,10 @@
 import { formatDateTime } from "../protocol";
 import { stat } from "node:fs/promises";
 import { abandonTask } from "../core/data/tasks/tasks";
-import { workColumns, workDetails, workRows } from "./components/work-view";
+import { ARCHIVED_SECTION, withArchiveSection, workColumns, workDetails, workRows } from "./components/work-view";
+import { canArchiveTask } from "../protocol/task";
+import { workArchive, setWorkArchived } from "../core/data/projects";
+import type { Question } from "../protocol";
 import { recentAgent } from "./commands/agents";
 import { controlProcess, listProcesses, liveProcess } from "../core/data/processes";
 import { launchIdentity } from "../core/tmux";
@@ -11,7 +14,7 @@ import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./c
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
 import type { ImageRef } from "../protocol";
 import { contextStatus } from "./header";
-import { allTasks, listTasks, removeTask } from "../core/data/tasks";
+import { allTasks, listTasks, removeTask, restoreTask } from "../core/data/tasks";
 import { runningAgentCount, TaskCounts } from "./footer";
 import { cancelSession } from "../core/tmux";
 import { settingChange, effectiveSettings, setEffort } from "../core/data/projects";
@@ -26,7 +29,7 @@ import type { RequestSettings } from "../providers/catalog";
 
 import { accountChoices, login, useAccount, sendAgentFeedback, runtimeText, usageText, restoreConversations, directoryProjectCommand, directoryDefaultsCommand, projectMenu } from "./commands";
 import { checkContextClear, deleteProject, type DeleteOptions } from "./commands";
-import { archiveAgents, listAgents, activeAgentRows, liveAgentsOrNull } from "../core/tmux";
+import { archiveAgents, restoreAgents, listAgents, activeAgentRows, liveAgentsOrNull } from "../core/tmux";
 import type { AgentInfo } from "../protocol";
 import { directories, displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, setDisplayName, shortRemote, togglePin, validProjectName } from "../core/data/projects";
 import type { ProjectEntry } from "../protocol";
@@ -45,7 +48,7 @@ import { historyRows, type Line, type Shown } from "./conversation";
 import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } from "./history";
 import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
-import { pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
+import { fileStore, pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
 import { clearChatView, visibleChatEntries, fromUserLines, replyLines, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
 import { deliveredImages, openDeliveredImage, type DeliveredImage } from "./commands";
 import { open } from "../core/data/transcripts";
@@ -64,6 +67,8 @@ export { lineRows, type Line } from "./conversation";
 
 import { type Page, type AppDeps, type ToolEvents, type Clock, type Note, realClock, SPINNER, FRAME_MS, RESIZE_MS, SPIN_MS, TICK_MS, LIVE_CHECK_MS, AGENTS_TICK_MS, type ProjectListState, type ActiveMenu, type TaskTreeState, type ClearConfirmation, type Command, parseCommand, listKeyId, type KeyLayer, MENU_CHARS, menuKeyId, active, EDITS, typedText } from './app-state';
 export { type Page, type AppDeps, type ToolEvents, type Clock, AGENTS_TICK_MS, type Command, parseCommand, type KeyLayer } from './app-state';
+
+interface WorkItem { id: string; title: string; detail: string; archived?: boolean; section?: boolean; agent?: AgentInfo; image?: DeliveredImage; question?: Question }
 
 export class App {
   pages: Page[] = [];
@@ -134,7 +139,7 @@ export class App {
     view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
-    const controls = [(this.vimCommand !== undefined ? `:${this.vimCommand}` : view.confirmAbandon?.text) ?? (view.confirmRemoval ? `Archive ${view.confirmRemoval.length} merged task(s)? y confirm / n cancel` : view.notice ?? "Esc chat · a archived · d archive · D bulk archive · A abandon · r refresh"),
+    const controls = [(this.vimCommand !== undefined ? `:${this.vimCommand}` : view.confirmAbandon?.text) ?? (view.confirmRemoval ? `Archive ${view.confirmRemoval.length} settled task(s)? y confirm / n cancel` : view.notice ?? "Esc chat · a expand archived · d archive · D bulk · u restore · A abandon · r refresh"),
       view.detailsFocused ? "Details: ↑↓ scroll · ← list · number + Enter jump" : "number + Enter jump · ↑↓ select · ← fold/parent · → unfold/details · Shift+Tab next"].map(line => fit(line, cols));
     if (this.vimMode && lines.length) lines[0] = fit(`[${this.vimMode.toUpperCase()}] ${lines[0]}`, cols);
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
@@ -166,7 +171,17 @@ export class App {
     if (k.name === "escape" || k.ctrl && k.name === "t") return this.toggleTaskTree();
     if (k.name === "char" && k.text === "r") { void this.manualTreeRefresh(view); return; }
     if (k.name === "char" && k.text === "a") {
-      view.history = !view.history; view.selectedId = undefined; view.graphY = 0; view.detailY = 0; this.draw(); return;
+      view.history = !view.history; view.selectedId = ARCHIVED_SECTION; view.revealSelected = true; view.detailY = 0; this.draw(); return;
+    }
+    if (view.selectedId === ARCHIVED_SECTION && ["enter", "left", "right"].includes(k.name)) {
+      view.history = k.name === "enter" ? !view.history : k.name === "right"; view.detailsFocused = false; this.draw(); return;
+    }
+    if (k.name === "char" && k.text === "u") {
+      const task = view.tasks.find(t => t.id === view.selectedId);
+      if (task?.removedAt && !view.loading && !view.error) {
+        view.restoring = true; view.confirmRemoval = [task.id]; void this.confirmTaskRemoval(view);
+      }
+      return;
     }
     if (k.name === "char" && k.text === "A") {
       const task = view.tasks.find(t => t.id === view.selectedId);
@@ -180,15 +195,15 @@ export class App {
       this.draw(); return;
     }
     if (k.name === "char" && k.text === "D" && !view.loading && !view.error) {
-      const ids = view.tasks.filter(task => task.archive && !task.removedAt).map(task => task.id);
+      const ids = view.tasks.filter(task => canArchiveTask(task) && !task.removedAt).map(task => task.id);
       if (ids.length) view.confirmRemoval = ids;
-      else view.notice = "No merged tasks to archive.";
+      else view.notice = "No settled tasks to archive.";
       this.draw(); return;
     }
     if (k.name === "char" && k.text === "d") {
       const selected = view.tasks.find(t => t.id === view.selectedId);
-      if (!view.error && !view.loading && selected?.archive && !selected.removedAt) { view.confirmRemoval = [selected.id]; view.notice = undefined; }
-      else view.notice = "Only verified merged tasks can be removed.";
+      if (!view.error && !view.loading && selected && canArchiveTask(selected) && !selected.removedAt) { view.confirmRemoval = [selected.id]; view.notice = undefined; }
+      else view.notice = "Only merged or abandoned/closed tasks with no active runs or open PR can be archived.";
       this.draw(); return;
     }
     const rendered = view.rendered;
@@ -212,12 +227,16 @@ export class App {
     if (!id || this.taskTree !== view) return;
     view.removing = true;
     try {
-      for (const task of id) await (this.deps.removeTask ?? removeTask)(view.page.project, task, true);
+      for (const task of id) {
+        if (view.restoring) await restoreTask(view.page.project, task);
+        else await (this.deps.removeTask ?? removeTask)(view.page.project, task, true);
+      }
       if (this.taskTree !== view) return;
-      view.notice = "Removed from list; task memory and dependencies retained.";
+      view.notice = view.restoring ? "Restored to list; work not resumed." : "Archived; task memory and dependencies retained.";
       await this.refreshTaskTree();
+      await this.taskCounts.refresh(view.page);
     } catch (error) { view.notice = `Removal refused: ${error instanceof Error ? error.message : String(error)}`; }
-    finally { view.removing = false; view.confirmRemoval = undefined; if (this.taskTree === view) this.draw(); }
+    finally { view.removing = false; view.restoring = false; view.confirmRemoval = undefined; if (this.taskTree === view) this.draw(); }
   }
 
   private selectTreeHit(view: TaskTreeState, rendered: TaskTreeRender, k: Key): void {
@@ -708,7 +727,8 @@ export class App {
   /** Counts only: no shortcuts, repeated identities or transient animation in the footer. */
   status(page: Page): string {
     const questions = page.questions.loaded && !page.questions.error ? page.questions.open.length : "?";
-    return `${page.agentCount ?? "?"} agents | ${this.taskCounts.label(page)} | ${questions} questions | ${this.imageLists.get(page)?.rows.length ?? "?"} images`;
+    const images = this.imageLists.get(page);
+    return `${page.agentCount ?? "?"} agents | ${this.taskCounts.label(page)} | ${questions} questions | ${images?.count ?? "?"} images`;
   }
 
   /** Only the selected conversation can animate; tool rows already carry their own shimmer. */
@@ -1325,20 +1345,24 @@ export class App {
 
   // --- menus ------------------------------------------------------------------
 
-  private readonly imageLists = new WeakMap<Page, { head?: string; rows: DeliveredImage[] }>();
+  private readonly imageLists = new WeakMap<Page, { head?: string; rows: DeliveredImage[]; archived: Record<string, boolean>; count: number }>();
 
   private async readImages(page: Page): Promise<void> {
     const path = paths.transcript(page.project, "orchestrator");
     if (!await Bun.file(path).exists()) { this.updateImages(page, []); return; }
     const transcript = open(path);
     this.updateImages(page, transcript.history?.() ?? transcript.branch());
+    const list = this.imageLists.get(page)!;
+    list.archived = workArchive(page.project, "images");
+    list.count = list.rows.filter(image => !list.archived[image.ref.id]).length;
   }
 
   private updateImages(page: Page, entries: readonly Entry[]): void {
     const head = entries.at(-1)?.uuid;
     const previous = this.imageLists.get(page);
     if (previous && previous.head === head) return;
-    this.imageLists.set(page, { head, rows: deliveredImages(entries) });
+    const rows = deliveredImages(entries), archived = workArchive(page.project, "images");
+    this.imageLists.set(page, { head, rows, archived, count: rows.filter(image => !archived[image.ref.id]).length });
   }
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
@@ -1372,6 +1396,7 @@ export class App {
     selected?: string; detail: number; focused: boolean; history: boolean;
     loading?: boolean; notice?: string; confirm?: { text: string; run: () => Promise<void> };
     busy?: boolean;
+    archived?: Record<string, boolean>;
   } | null = null;
 
   private async openWorkView(kind: "agents" | "questions" | "images", page = this.page): Promise<void> {
@@ -1391,30 +1416,30 @@ export class App {
   private async readWorkView(view: NonNullable<App["workView"]>): Promise<void> {
     try {
       if (view.kind === "agents") view.agents = await (this.deps.agents ?? listAgents)(view.page.project);
-      else if (view.kind === "questions") await this.questions.refresh(view.page);
+      else if (view.kind === "questions") { await this.questions.refresh(view.page); view.archived = workArchive(view.page.project, "questions"); }
       else await this.readImages(view.page);
     } catch (error) { view.notice = error instanceof Error ? error.message : String(error); }
     finally { view.loading = false; if (this.workView === view) this.draw(); }
   }
 
-  private workItems(view: NonNullable<App["workView"]>): { id: string; title: string; detail: string; agent?: AgentInfo; image?: DeliveredImage }[] {
-    if (view.kind === "images") return (this.imageLists.get(view.page)?.rows ?? []).map(image => ({
+  private workItems(view: NonNullable<App["workView"]>): WorkItem[] {
+    if (view.kind === "images") return withArchiveSection((this.imageLists.get(view.page)?.rows ?? []).map(image => ({
       id: image.ref.id, title: image.text.split("\n")[0] || image.ref.id.slice(0, 8),
       detail: [image.text, `From ${image.from}`, formatDateTime(image.at), `Image ${image.ref.id}`].join("\n\n"),
-      image,
-    }));
-    if (view.kind === "questions") return view.page.questions.open.map(question => ({
+      image, archived: this.imageLists.get(view.page)?.archived[image.ref.id] === true,
+    })), view.history);
+    if (view.kind === "questions") return withArchiveSection((view.page.questions.all ?? view.page.questions.open).map(question => ({
       id: question.id, title: question.text.replace(/\s+/g, " "),
-      detail: [question.text, `Asked ${formatDateTime(question.ts)}`, ...(question.options ?? []).map((option, i) => `${i + 1}. ${option}`)].join("\n\n"),
-      agent: undefined,
-    }));
-    return view.agents.filter(agent => agent.status !== "unknown" &&
-      (view.history ? !agent.live : recentAgent(agent, this.clock.now()) && !agent.archived)).map(agent => ({
+      detail: [question.text, `Status: ${question.status}`, `Asked ${formatDateTime(question.ts)}`, ...(question.options ?? []).map((option, i) => `${i + 1}. ${option}`),
+        ...(question.answer ? [`Answer: ${question.answer}`] : []), ...(question.reason ? [`Reason: ${question.reason}`] : [])].join("\n\n"),
+      question, archived: view.archived?.[question.id] ?? question.status !== "open",
+    })), view.history);
+    return withArchiveSection(view.agents.filter(agent => agent.status !== "unknown").map(agent => ({
       id: agent.name, title: `${agent.name} · ${agent.live ? "running" : agent.archived ? "archived" : "exited"}`,
       detail: [agent.name, agent.activity, agent.startedAt && `Started ${formatDateTime(agent.startedAt)}`,
         agent.endedAt && `Exited ${formatDateTime(agent.endedAt)}`, `${agent.queuedMessages ?? "?"} queued messages`].filter(Boolean).join("\n\n"),
-      agent,
-    }));
+      agent, archived: !agent.live && !agent.queuedMessages && (agent.archived || !recentAgent(agent, this.clock.now())),
+    })), view.history);
   }
 
   private workScreen(): StickyScreen {
@@ -1434,11 +1459,11 @@ export class App {
     const detail = workDetails(items[selected]?.detail ?? "", widths.right);
     view.detail = Math.max(0, Math.min(view.detail, detail.length - detailRows));
     const right = detail.slice(view.detail, view.detail + detailRows);
-    const title = view.kind.toUpperCase() + (view.history ? " · HISTORY" : "") + (this.vimMode ? ` · ${this.vimMode.toUpperCase()}` : "");
+    const title = view.kind.toUpperCase() + (this.vimMode ? ` · ${this.vimMode.toUpperCase()}` : "");
     const lines = workRows(title, cols, left, right).slice(0, Math.max(0, rows - 2));
     while (lines.length < rows - 2) lines.push("");
     lines.push(fit(sanitize(view.confirm?.text ?? (this.vimCommand !== undefined ? `:${this.vimCommand}` : view.notice) ?? "↑↓ select · ←→ focus · Enter open · Esc chat"), cols));
-    lines.push(fit(view.confirm ? "y confirm · n/Esc cancel" : view.kind === "agents" ? "a history · s stop · d archive · D bulk archive · r refresh" : view.kind === "questions" ? "Enter answer · r refresh" : "Enter opens image viewer · r refresh", cols));
+    lines.push(fit(view.confirm ? "y confirm · n/Esc cancel" : `a expand archived · d archive · D bulk · u restore · r refresh${view.kind === "agents" ? " · s stop" : ""}`, cols));
     return { rows: lines.slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0, bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
   }
 
@@ -1461,6 +1486,37 @@ export class App {
     const index = Math.max(0, items.findIndex(item => item.id === view.selected));
     const selected = items[index];
     const agent = selected?.agent;
+    if (key === "a") {
+      view.history = !view.history; view.selected = ARCHIVED_SECTION; view.detail = 0; view.focused = false; this.draw(); return;
+    }
+    if (selected?.section && ["enter", "left", "right"].includes(key ?? "")) {
+      view.history = key === "enter" ? !view.history : key === "right"; view.focused = false; this.draw(); return;
+    }
+    if (key === "u" && selected?.archived) {
+      view.busy = true;
+      try {
+        if (agent) await (this.deps.restoreAgents ?? restoreAgents)(view.page.project, [agent.name]);
+        else if (view.kind !== "agents") setWorkArchived(view.page.project, view.kind, [selected.id], false);
+        await this.readWorkView(view);
+        view.notice = "Restored to list. No work resumed or questions reopened.";
+      } catch (error) { view.notice = error instanceof Error ? error.message : String(error); }
+      finally { view.busy = false; this.draw(); }
+      return;
+    }
+    if ((key === "d" || key === "D") && view.kind !== "agents") {
+      const targets = (key === "D" ? items : selected ? [selected] : []).filter(item => !item.section && !item.archived);
+      if (targets.length) {
+        const kind = view.kind;
+        view.confirm = { text: `Archive ${targets.length} ${kind}?${kind === "questions" ? " Open questions will be dismissed without an answer." : " Files retained."}`, run: async () => {
+          for (const item of targets) {
+            if (item.question?.status === "open") await (this.deps.questions ?? fileStore).skip(view.page.project, item.id);
+            setWorkArchived(view.page.project, kind, [item.id], true);
+          }
+          view.notice = "Archived. Saved records retained.";
+        } };
+      } else view.notice = "No items to archive.";
+      this.draw(); return;
+    }
     if (key === "enter" && selected?.image) {
       view.busy = true;
       try { view.notice = await openDeliveredImage(view.page.project, selected.image.ref, this.deps.openImage); }
@@ -1469,13 +1525,14 @@ export class App {
       return;
     }
     if (key === "enter" && selected) {
+      if (selected.section) return;
+      if (selected.question && selected.question.status !== "open") { view.notice = "Closed question; saved answer and reason are shown in details."; this.draw(); return; }
       this.workView = null;
       if (agent) { view.page.view?.leave(); await this.attach(view.page, agent.name, agent.live); }
       else { view.page.view?.leave(); await this.questions.command(view.page, selected.id); }
       this.reprint(); return;
     }
     if (key === "r") { await this.readWorkView(view); return; }
-    if (key === "a" && view.kind === "agents") { view.history = !view.history; view.selected = undefined; view.detail = 0; }
     if (key === "s" && agent?.live && agent.run && agent.status === "running") {
       const run = agent.run;
       view.confirm = { text: `Stop ${agent.name}?`, run: async () => {
@@ -2124,12 +2181,17 @@ export class App {
         await this.vimKey(k);
         return;
       }
+      if (this.vimMode === "normal" && (text === "z" || text === "x")) {
+        this.vimPrefix = undefined; this.menu = null; this.projectList = null;
+        this.switchPage(text === "z" ? -1 : 1); return;
+      }
     }
     // Ctrl+C retains the global cancellation/double-press exit path even when
     // the overlay is loading, failed, or waiting on an unresponsive registry.
     if (!(k.ctrl && k.name === "c")) {
       if (this.workView) return this.workKey(this.workView.confirm ? k : this.vimNavigation(k));
       if (this.taskTree && !this.taskTree.confirmRemoval && !this.taskTree.confirmAbandon && this.vimMode === "normal"
+        && this.taskTree.selectedId !== ARCHIVED_SECTION
         && k.name === "char" && !k.ctrl && !k.alt && (k.text === "h" || k.text === "l")) {
         this.taskTree.detailsFocused = k.text === "l"; this.draw(); return;
       }

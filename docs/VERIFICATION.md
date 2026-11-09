@@ -62,6 +62,9 @@ a 1 GiB budget per conversation; active sessions are excluded from retention.
 `orca clean` or `orca clean --dry-run` inspects disposable storage.
 `orca clean --apply` applies eligible cleanup. The existing daemon maintenance
 pass also cleans merged worker worktrees and old settled process output.
+Archiving tasks, agents, questions or conversation images only changes list
+membership. Neither this command nor disposable-evidence retention purges those
+records, agent transcripts or images stored in the conversation image store.
 
 A worker checkout is eligible only when its recorded PR is merged, its HEAD
 matches the merged PR, every known owner is verified exited, no instructions are
