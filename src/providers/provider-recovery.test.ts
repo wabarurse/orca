@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
 import { openai } from "./openai";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
+import { CredentialError } from "../login/oauth";
 import type { RecoveryPolicy } from "./provider-recovery";
 
 let mock: ReturnType<typeof spyOn> | undefined;
@@ -38,7 +39,7 @@ for (const name of ["claude", "codex"] as const) {
     const notices: string[] = [];
     const events: unknown[] = [];
     const provider = make(fetcher(async () => { calls++; return Response.json({ error: { message: "SECRET", type: "server_error" } }, { status: 503 }); }), { ...policy, onRetry: e => events.push(e) });
-    await expect(provider.complete({ ...req, onNotice: n => notices.push(n) })).rejects.toMatchObject({ kind: "exhausted" });
+    await expect(provider.complete({ ...req, onNotice: n => notices.push(n) })).rejects.toMatchObject({ kind: "exhausted", reason: "provider-service", status: 503 });
     expect(calls).toBe(3);
     expect(events).toHaveLength(2);
     expect(notices).toHaveLength(2);
@@ -48,14 +49,33 @@ for (const name of ["claude", "codex"] as const) {
   test(`${name}: transport failures have no nested SDK retries`, async () => {
     let calls = 0;
     const provider = make(fetcher(async () => { calls++; throw new TypeError("fetch failed"); }));
-    await expect(provider.complete(req)).rejects.toMatchObject({ kind: "exhausted" });
+    await expect(provider.complete(req)).rejects.toMatchObject({ kind: "exhausted", reason: "connection" });
     expect(calls).toBe(3);
   });
   test(`${name}: quota is terminal`, async () => {
     let calls = 0;
     const provider = make(fetcher(async () => { calls++; return Response.json({ error: { type: "insufficient_quota" } }, { status: 429 }); }));
-    await expect(provider.complete(req)).rejects.toMatchObject({ kind: "quota" });
+    await expect(provider.complete(req)).rejects.toMatchObject({ kind: "quota", reason: "quota", status: 429 });
     expect(calls).toBe(1);
+  });
+  for (const [status, reason] of [[403, "permission"], [404, "model-unavailable"], [413, "input-too-large"], [429, "rate-limit"]] as const) {
+    test(`${name}: diagnoses HTTP ${status} without exposing the response body`, async () => {
+      const provider = make(fetcher(async () => Response.json({ error: { message: "SECRET" } }, { status })));
+      const error = await provider.complete(req).catch(error => error);
+      expect(error).toMatchObject({ status, reason });
+      expect(error.message).not.toContain("SECRET");
+    });
+  }
+  test(`${name}: reports rejected credential exchange separately from model HTTP errors`, async () => {
+    const credentials = async () => { throw new CredentialError("oauth-http", "SECRET", 400); };
+    const transport = fetcher(async () => { throw new Error("model request should not be sent"); });
+    const provider = name === "claude"
+      ? anthropic(new Anthropic({ apiKey: null, authToken: null, credentials, fetch: transport }), { recovery: policy })
+      : openai(credentials, { recovery: policy });
+    const error = await provider.complete(req).catch(error => error);
+    expect(error).toMatchObject({ kind: "permanent", reason: "oauth-http", oauthStatus: 400 });
+    expect(error.status).toBeUndefined();
+    expect(error.message).not.toContain("SECRET");
   });
   for (const stage of ["headers", "body", "partial"] as const) test(`${name}: stalled ${stage} is terminal, no replay`, async () => {
     let calls = 0;
@@ -114,7 +134,7 @@ test("Claude: SDK zero retries still refreshes credentials once after 401", asyn
     credentials: async opts => { refresh.push(opts?.forceRefresh); return { token: `token-${refresh.length}`, expiresAt: Date.now() / 1000 + 3600 }; },
     fetch: async () => { calls++; return Response.json({ error: { type: "authentication_error" } }, { status: 401 }); },
   });
-  await expect(anthropic(client, { recovery: policy }).complete(req)).rejects.toMatchObject({ kind: "permanent" });
+  await expect(anthropic(client, { recovery: policy }).complete(req)).rejects.toMatchObject({ kind: "permanent", reason: "authentication", status: 401 });
   expect(calls).toBe(2); expect(refresh).toEqual([undefined, true]);
 });
 
@@ -149,7 +169,7 @@ const refreshScenarios = [
 async function expectRefreshResult(result: ReturnType<ReturnType<typeof openai>["complete"]>, outcome: string, reason: Error) {
   if (outcome === "success") expect((await result).stop).toBe("end");
   else if (outcome === "cancelled") await expect(result).rejects.toBe(reason);
-  else await expect(result).rejects.toMatchObject({ kind: "permanent" });
+  else await expect(result).rejects.toMatchObject({ kind: "permanent", reason: "authentication", status: 401 });
 }
 for (const { outcome, statuses, flags } of refreshScenarios) test(`Codex opt-in 401 refresh: ${outcome}`, async () => {
   let calls = 0;
@@ -176,4 +196,20 @@ for (const { outcome, statuses, flags } of refreshScenarios) test(`Codex opt-in 
   expect(calls).toBe(statuses.length);
   expect(refresh).toEqual([...flags]);
   expect(authorization).toEqual([`Bearer ${initial.accessToken}`, ...Array(calls - 1).fill(`Bearer ${renewed.accessToken}`)]);
+});
+
+test("Codex keeps structured diagnostics when the response fails during streaming", async () => {
+  let calls = 0;
+  mock = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => {
+    calls++;
+    return codexSSE([
+      { type: "response.output_text.delta", delta: "partial" },
+      { type: "response.failed", response: { error: { code: "server_error", message: "SECRET" } } },
+    ]);
+  }, { preconnect: fetch.preconnect }));
+  const provider = openai(async () => fakeCodexTokens(), { recovery: policy, retry: { backoffMs: [0, 0] } });
+  const error = await provider.complete(req).catch(error => error);
+  expect(error).toMatchObject({ kind: "interrupted", reason: "provider-service" });
+  expect(error.message).not.toContain("SECRET");
+  expect(calls).toBe(1);
 });

@@ -3,7 +3,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { BUILD_ID, paths } from "../config";
 import type { CompleteRequest, Provider } from "./provider";
-import { ModelRequestError } from "./bounded-request";
+import { diagnoseModelError, ModelRequestError } from "./model-diagnostics";
 
 type Trace = NonNullable<CompleteRequest["trace"]>;
 const scope = new AsyncLocalStorage<{ trace: Trace; id?: string; pending: Promise<void>[] }>();
@@ -26,9 +26,15 @@ export function recordRetry(provider: string, event: unknown): void {
 
 export function metered(provider: Provider): Provider {
   const identity = { provider: provider.name, account: provider.account };
-  const failure = (error: unknown) => error instanceof ModelRequestError ? { errorKind: error.kind, httpStatus: error.status } : {};
+  const failure = (error: unknown) => error instanceof ModelRequestError ? { errorKind: error.kind, errorReason: error.reason, httpStatus: error.status, oauthStatus: error.oauthStatus } : {};
   const attributed = (error: unknown) => {
-    if (provider.account && error instanceof ModelRequestError) error.message = `${provider.account}: ${error.message}`;
+    if (provider.account && error instanceof ModelRequestError) {
+      const signIn = error.reason === "authentication" || error.reason === "credentials-invalid"
+        || (error.reason === "oauth-http" && [400, 401, 403].includes(error.oauthStatus ?? 0));
+      const [name, profile] = provider.account.split(":");
+      const hint = signIn && profile ? ` Run /login ${name} ${profile}.` : "";
+      error.message = `${provider.account}: ${error.message}${hint}`;
+    }
     return error;
   };
   return { ...provider,
@@ -53,7 +59,8 @@ export function metered(provider: Provider): Provider {
             build: BUILD_ID, toolCalls: result.content.filter(block => block.type === "tool_use").length,
             contextTokens: result.inputTokens, ok: true });
           return result;
-        } catch (error) {
+        } catch (cause) {
+          const error = provider.account && !request.signal?.aborted ? diagnoseModelError(cause) : cause;
           await usageEvent({ kind: "model", id, ...identity, model: request.model, ...trace,
             durationMs: Math.round(performance.now() - started), build: BUILD_ID, ok: false, ...failure(error), cancelled: request.signal?.aborted === true });
           throw attributed(error);

@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../config";
-import { loginOAuth, validateProfile, type OAuthTokens, withCredentialLock, writeTokens, type Fetch, type LoginOptions } from "./oauth";
+import { CredentialError, loginOAuth, validateProfile, type OAuthTokens, withCredentialLock, writeTokens, type Fetch, type LoginOptions } from "./oauth";
 
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -48,7 +48,7 @@ export async function readCodexTokens(profile: string): Promise<CodexTokens | nu
   const file = Bun.file(codexCredentialsPath(profile));
   if (!(await file.exists())) return null;
   try { return tokensFrom(await file.json()); }
-  catch { throw new Error(`codex profile '${profile}' is invalid; run /login openai ${profile} again.`); }
+  catch { throw new CredentialError("credentials-invalid", `codex profile '${profile}' is invalid; run /login openai ${profile} again.`); }
 }
 
 export async function saveCodexTokens(profile: string, tokens: CodexTokens, signal?: AbortSignal): Promise<void> {
@@ -69,8 +69,8 @@ async function requestTokens(body: Record<string, string>, fetcher: Fetch, previ
       body: new URLSearchParams({ client_id: CODEX_CLIENT_ID, ...body }).toString(),
       signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
     });
-  } catch { throw new Error("codex oauth request failed or timed out; try again."); }
-  if (!response.ok) throw new Error(`codex oauth failed (http ${response.status}); run /login openai again.`);
+  } catch { throw new CredentialError("oauth-connection", "codex oauth request failed or timed out; try again."); }
+  if (!response.ok) throw new CredentialError("oauth-http", `codex oauth failed (http ${response.status}); run /login openai again.`, response.status);
   try {
     const data = await response.json() as Record<string, unknown>;
     if (typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in) || data.expires_in <= 0 ||
@@ -79,7 +79,7 @@ async function requestTokens(body: Record<string, string>, fetcher: Fetch, previ
       accessToken: data.access_token, refreshToken: data.refresh_token ?? previous?.refreshToken,
       expiresAt: Date.now() + data.expires_in * 1000, accountId: previous?.accountId,
     });
-  } catch { throw new Error("codex oauth returned invalid credentials; try logging in again."); }
+  } catch { throw new CredentialError("oauth-response", "codex oauth returned invalid credentials; try logging in again."); }
 }
 
 export function codexCredentials(profile: string, fetcher: Fetch = fetch) {
@@ -87,7 +87,7 @@ export function codexCredentials(profile: string, fetcher: Fetch = fetch) {
   let previousToken: string | undefined;
   return async (opts?: { forceRefresh?: boolean }) => withCredentialLock(path, async () => {
     let tokens = await readCodexTokens(profile);
-    if (!tokens) throw new Error(`codex profile '${profile}' is not signed in; run /login openai ${profile}.`);
+    if (!tokens) throw new CredentialError("credentials-invalid", `codex profile '${profile}' is not signed in; run /login openai ${profile}.`);
     if ((opts?.forceRefresh && tokens.accessToken === previousToken) || tokens.expiresAt <= Date.now() + 120_000) {
       tokens = await requestTokens({ grant_type: "refresh_token", refresh_token: tokens.refreshToken }, fetcher, tokens);
       await writeTokens(path, tokens);

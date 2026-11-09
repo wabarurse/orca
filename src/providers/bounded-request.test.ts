@@ -204,3 +204,16 @@ test("response metadata and native clone/bodyUsed semantics survive wrapping", a
   }, {}, async () => source);
   expect(source.body!.locked).toBe(false); expect(timers.size).toBe(0);
 });
+
+test("unknown failures distinguish setup, connection and response without exposing exceptions", async () => {
+  const failure = new Error("SECRET");
+  const before = await result(boundedModelRequest(async () => { throw failure; }));
+  const execute = async (scope: Parameters<Parameters<typeof boundedModelRequest>[0]>[0]) => {
+    await scope.fetch("https://mock.invalid");
+    throw failure;
+  };
+  const transport = await result(boundedModelRequest(execute, {}, async () => { throw failure; }));
+  const after = await result(boundedModelRequest(execute, {}, async () => new Response(null)));
+  expect([before.reason, transport.reason, after.reason]).toEqual(["setup", "connection", "response"]);
+  for (const error of [before, transport, after]) expect(error.message).not.toContain("SECRET");
+});

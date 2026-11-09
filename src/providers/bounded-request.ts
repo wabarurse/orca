@@ -1,15 +1,9 @@
 import { transportAttempt, type RequestScope } from "./bounded-transport";
-import { exhaustedQuota, transientFailure, withTransientRetries, type RetryOptions } from "./retry";
-import { AccountCooldownError } from "./rate-limit";
+import { withTransientRetries, type RetryOptions } from "./retry";
+import { diagnoseModelError, ModelRequestError, type RequestStage } from "./model-diagnostics";
+export { ModelRequestError } from "./model-diagnostics";
 
 export const MODEL_REQUEST_LIMITS = { totalMs: 600_000, idleMs: 90_000 } as const;
-export class ModelRequestError extends Error {
-  constructor(readonly kind: "total-timeout" | "idle-timeout" | "quota" | "interrupted" | "exhausted" | "permanent", readonly status?: number) {
-    const detail = status === 429 ? "HTTP 429: provider rate limit; remaining account allowance is unknown" : status ? `HTTP ${status}` : undefined;
-    super(`Model request ${kind}${detail ? ` (${detail})` : ""}. Check connection or provider account/settings, then explicitly resume; no automatic fallback.`);
-    this.name = "ModelRequestError";
-  }
-}
 type Options = Pick<RetryOptions, "signal" | "backoffMs" | "onRetry"> & { totalMs?: number; idleMs?: number };
 
 function requestDeadline(options: Options) {
@@ -39,19 +33,6 @@ function requestDeadline(options: Options) {
   } };
 }
 
-function terminalError(error: unknown, consumed: boolean): ModelRequestError {
-  if (error instanceof AccountCooldownError) {
-    const result = new ModelRequestError("exhausted", 429);
-    result.message += ` Retry after ${new Date(error.until).toISOString()}.`;
-    return result;
-  }
-  // Existing retry helper maps quota to a sanitized Error; never include raw payloads.
-  if (exhaustedQuota(error) || (error instanceof Error && error.message.startsWith("model: quota exhausted"))) return new ModelRequestError("quota");
-  const raw = (error as { status?: unknown })?.status;
-  const status = typeof raw === "number" && Number.isInteger(raw) && raw >= 400 && raw <= 599 ? raw : undefined;
-  return new ModelRequestError(consumed ? "interrupted" : transientFailure(error) ? "exhausted" : "permanent", status);
-}
-
 async function runAttempt<T>(execute: (scope: RequestScope) => Promise<T>, deadline: ReturnType<typeof requestDeadline>, transport: RequestScope["fetch"], started: () => void): Promise<T> {
   deadline.controller.signal.throwIfAborted();
   deadline.activity();
@@ -78,7 +59,16 @@ export async function boundedModelRequest<T>(execute: (scope: RequestScope) => P
   const deadline = requestDeadline(options);
   const { signal } = deadline.controller;
   let consumed = false;
-  const attempt = (started: () => void) => runAttempt(execute, deadline, transport, () => { consumed = true; started(); });
+  let stage: RequestStage = "setup";
+  const attempt = (started: () => void) => {
+    stage = "setup";
+    return runAttempt(execute, deadline, async (input, init) => {
+      stage = "connection";
+      const response = await transport(input, init);
+      stage = "response";
+      return response;
+    }, () => { consumed = true; started(); });
+  };
   try {
     return await Promise.race([deadline.aborted, withTransientRetries(attempt, {
       signal, backoffMs: options.backoffMs, onRetry: options.onRetry, notice: () => {},
@@ -86,6 +76,6 @@ export async function boundedModelRequest<T>(execute: (scope: RequestScope) => P
   } catch (error) {
     if (options.signal?.aborted) throw options.signal.reason;
     if (signal.aborted) throw signal.reason;
-    throw terminalError(error, consumed);
+    throw diagnoseModelError(error, consumed, stage);
   } finally { deadline.close(); }
 }

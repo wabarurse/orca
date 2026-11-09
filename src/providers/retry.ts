@@ -60,7 +60,7 @@ export async function withTransientRetries<T>(attempt: (started: () => void) => 
     catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
       const quota = exhaustedQuota(error);
-      if (quota) throw new Error(`${plain(what)}${options.model ? ` (${plain(options.model)})` : ""}: quota exhausted — ${quota}`);
+      if (quota) throw new QuotaError(`${plain(what)}${options.model ? ` (${plain(options.model)})` : ""}: quota exhausted — ${quota}`, quota, httpStatus(error));
       const wait = retryAfter(error, consumed, retries, backoffMs);
       if (wait === undefined) throw error;
       emitRetry(options, error, retries + 2, wait);
@@ -102,10 +102,19 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  * Explanations are mapped rather than echoing untrusted bodies (which can contain secrets).
  */
 export function exhaustedQuota(error: unknown): string | undefined {
-  const evidence = quotaEvidence(error);
+  const evidence = providerErrorEvidence(error);
   if (!evidence) return undefined;
   const explanation = quotaExplanation(evidence);
   return explanation ? explanation + quotaReset(evidence.resets_at) : undefined;
+}
+
+export class QuotaError extends Error {
+  constructor(message: string, readonly explanation: string, readonly status?: number) { super(message); }
+}
+
+export function httpStatus(error: unknown): number | undefined {
+  const status = (error as { status?: unknown })?.status;
+  return typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599 ? status : undefined;
 }
 
 type ErrorRecord = Record<string, unknown>;
@@ -115,7 +124,7 @@ const errorRecord = (value: unknown): ErrorRecord | undefined =>
 /** Prefer the nested payload over SDK-copied fields, retaining its reset timestamp.
  * Inspect at most four envelopes, including the initial error; cycles are bounded too.
  */
-function quotaEvidence(error: unknown): ErrorRecord | undefined {
+export function providerErrorEvidence(error: unknown): ErrorRecord | undefined {
   let evidence = errorRecord(error);
   for (let depth = 0; evidence && depth < 4; depth++) {
     const nested = errorRecord(evidence.error) ?? errorRecord(errorRecord(evidence.response)?.error);
