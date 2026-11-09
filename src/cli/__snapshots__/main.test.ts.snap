@@ -5,8 +5,11 @@ exports[`offline CLI usage and owned errors are lowercase without changing suppl
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
+  orca clean [--apply]            inspect or remove disposable Orca storage
+  orca organize                   group saved folders by directory (requires Orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
+  orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
   orca reload                     apply the installed build to running orchestrators after their current turns
@@ -22,8 +25,11 @@ usage:
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
+  orca clean [--apply]            inspect or remove disposable Orca storage
+  orca organize                   group saved folders by directory (requires Orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
+  orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
   orca reload                     apply the installed build to running orchestrators after their current turns

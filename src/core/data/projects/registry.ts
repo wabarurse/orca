@@ -26,13 +26,20 @@ export async function displayName(project: string): Promise<string> {
   return name?.trim() || project;
 }
 
+/** The trimmed display name, or an error: 1-40 printable characters. The one rule for /rename and session transfer. */
+export function validDisplayName(name: string): string {
+  if (typeof name !== "string") throw new Error("names are 1-40 printable characters");
+  name = name.trim();
+  if (!name || name.length > 40 || /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(name)) throw new Error("names are 1-40 printable characters");
+  return name;
+}
+
 /**
  * Update the display name and readable folder link; stable artifacts, identities,
  * tmux routes and open transcripts keep their paths while agents are running.
  */
 export async function setDisplayName(project: string, name: string): Promise<string> {
-  name = name.trim();
-  if (!name || name.length > 40 || /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(name)) throw new Error("names are 1-40 printable characters");
+  name = validDisplayName(name);
   return withFolderLock(async () => {
     for (const other of await listProjects()) {
       if (other !== project && (other === name || (await displayName(other)) === name)) throw new Error(`another project is already called ${name}`);

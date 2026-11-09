@@ -357,6 +357,15 @@ to workers/reviewers; Claude and Codex receive actual pixels.
 See [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md) for terminal boundaries, limits,
 model admission, queue recovery, retention/privacy, compaction and test coverage.
 
+### Moving a project: `orca session`
+
+`orca session ls [host]`, `push|pull <project> <host>` (ssh), `export <project> <file>`, `import <file>` and `recover`
+(`--as`, `--checkout`, `--adopt`, `--dry-run`, `--force` for export). The project is a session id, display name or
+folder id. Per transcript: equal is a no-op, a strict extension fast-forwards, a newer destination is kept, and a
+divergence refuses the whole transfer; there is no timestamp winner. Not related to `orca pull` below. Honesty notes
+(no provider-side session, cold cache, unverified cross-account reasoning replay, secrets and absolute paths in
+transcripts) and the full rules: [SESSION_TRANSFER.md](SESSION_TRANSFER.md).
+
 ### Explicit updates: `orca pull`
 
 From **any** directory (including an unrelated repository), run:

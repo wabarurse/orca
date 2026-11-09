@@ -26,7 +26,7 @@ const ORDER: Order = {
   children: {
     providers: { tiers: [["images", "sanitize", "retry"], ["catalog"], ["search"], ["provider"], ["anthropic", "openai"], ["account"]] },
     core: {
-      tiers: [["proc", "execution"], ["data"], ["definitions"], ["install", "tmux", "prompt"], ["tools"], ["agent-loop"]],
+      tiers: [["proc", "execution"], ["data"], ["definitions"], ["install", "tmux", "prompt"], ["session"], ["tools"], ["agent-loop"]],
       children: {
         data: { tiers: [["storage-lock", "sqlite"], ["projects"], ["run-ownership", "images"], ["inbox"], ["processes", "knowledge", "tasks", "transcripts"], ["memory"]] },
         tools: { tiers: [["registry"], ["*"], ["mount"]] },

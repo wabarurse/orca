@@ -10,7 +10,7 @@ import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-a
 import { paths, legacyProjectIdentities } from "../../../config";
 import { legacy } from "../../../config";
 import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../providers";
-import { assertProjectIdentity, ensureSessionId, projectIdentity, readSession, withProjectStateLock } from "../projects";
+import { assertProjectIdentity, projectIdentity, session, withProjectStateLock } from "../projects";
 import type { ImageInput, ImageRef } from "../../../protocol";
 
 export const MAX_IMAGES = 4;
@@ -32,8 +32,8 @@ export function legacyImageScope(project: string): string {
 export const sessionImageScope = (sessionId: string) => hash(`orca-image-scope-v1\0${sessionId}`);
 /** Scopes this project accepts: the sessionId-derived one (once minted) and the legacy one. */
 export function imageScopes(project: string): { current?: string; legacy: string } {
-  const session = readSession(project);
-  return { ...(session ? { current: sessionImageScope(session.sessionId) } : {}), legacy: legacyImageScope(project) };
+  const saved = session.readSession(project);
+  return { ...(saved ? { current: sessionImageScope(saved.sessionId) } : {}), legacy: legacyImageScope(project) };
 }
 function assertRef(ref: ImageRef): void {
   if (!ref || !UUID.test(ref.id) || !/^[a-f0-9]{64}$/.test(ref.scope) || !/^[a-f0-9]{64}$/.test(ref.sha256)) throw new Error("invalid image reference");
@@ -69,7 +69,7 @@ export async function saveImage(project: string, bytes: Uint8Array, mime = "imag
   validateImage(bytes, mime);
   const identity = projectIdentity(project);
   // Minted before taking the project lock: ensureSessionId is lock-free.
-  const ref = { id: crypto.randomUUID(), scope: sessionImageScope(await ensureSessionId(project)), sha256: hash(bytes) };
+  const ref = { id: crypto.randomUUID(), scope: sessionImageScope(await session.ensureSessionId(project)), sha256: hash(bytes) };
   return withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
     await safeDir(imageDir(project), true);

@@ -74,7 +74,7 @@ export async function ask(project: string, items: NewQuestion[]): Promise<Questi
 }
 
 /** Validate both listing and closing; malformed records must never be rewritten. */
-function checkedQuestion(raw: unknown, name: string): Question {
+export function checkedQuestion(raw: unknown, name: string): Question {
   const q = raw as Question;
   if (!q || typeof q.id !== "string" || `${q.id}.json` !== name || typeof q.text !== "string" || typeof q.ts !== "string"
     || !["open", "answered", "skipped"].includes(q.status)
