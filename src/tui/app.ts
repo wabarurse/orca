@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { navigateOutline, renderTaskTree, type TaskTreeRender } from "./components";
 import { ConversationSelection, hitRow } from "./screen";
 import { writeClipboardText, readClipboardImage, type ClipboardImage } from "./components";
@@ -369,7 +370,6 @@ export class App {
       if (this.page) this.checkLive(this.page.project);
       this.watchPages();
       this.questions.poll(this.pages);
-      if (this.taskTree && !this.taskTree.removing) void this.refreshTaskTree();
       void this.refreshSessions(false); // passive snapshots also follow responses consumed in another window
       if (!this.loggingIn) this.runPending();
     }, this.deps.pollMs ?? 2000);
@@ -870,8 +870,8 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
         await Promise.all([
           ...this.pages.map(page => this.refreshPage(page, forced)),
         ]);
-        await this.refreshProjects().catch(err => this.note(dim(`refresh projects failed: ${err}`)));
-        await this.refreshTaskInbox();
+        if (forced || this.projectList) await this.refreshProjects().catch(err => this.note(dim(`refresh projects failed: ${err}`)));
+        await this.refreshTaskInbox(this.page, forced);
       } while (this.refreshAgain && !this.closed);
     }).finally(() => { this.refreshing = undefined; });
     return this.refreshing;
@@ -881,12 +881,21 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
     return !this.closed && !page.deleting && this.pages.includes(page);
   }
 
+  private readonly metadataAt = new WeakMap<Page, number>();
+
   private async refreshPage(page: Page, forced: boolean): Promise<void> {
     if (!this.validPage(page)) return;
     const nameBefore = page.name, remoteBefore = page.remote;
-    const safe = [this.refreshHeader(page), forced ? this.questions.refresh(page) : Promise.resolve(),
-      displayName(page.project).then(name => { if (this.validPage(page) && page.name === nameBefore) page.name = name; }),
-      remoteOf(page.project).then(remote => { if (this.validPage(page) && page.remote === remoteBefore) page.remote = remote; })];
+    const now = this.clock.now();
+    const metadataDue = forced || now - (this.metadataAt.get(page) ?? -Infinity) >= 30_000;
+    const safe: Promise<unknown>[] = [];
+    if (metadataDue) {
+      this.metadataAt.set(page, now);
+      safe.push(this.refreshHeader(page),
+        displayName(page.project).then(name => { if (this.validPage(page) && page.name === nameBefore) page.name = name; }));
+    }
+    if (forced) safe.push(this.questions.refresh(page),
+      remoteOf(page.project).then(remote => { if (this.validPage(page) && page.remote === remoteBefore) page.remote = remote; }));
     this.checkLive(page.project);
     const results = await Promise.allSettled(safe);
     try {
@@ -895,15 +904,17 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       else if (this.validPage(page)) {
         this.deferredRefresh.delete(page);
         this.syncTranscript(page);
-        await this.recoverImages(page);
+        if (forced || page.sent.length) await this.recoverImages(page);
       }
-      // Don't overwrite a history append/recall that raced the read.
-      const before = page.inputHistory, writing = page.savingHistory;
-      await writing;
-      const saved = await loadHistory(page.project);
-      if (this.validPage(page) && page.inputHistory === before && page.savingHistory === writing && this.historyAt === -1) {
-        page.inputHistory = [...saved.entries, ...before.filter(text => !saved.entries.includes(text))].slice(-MAX_INPUT_HISTORY);
-        page.historyLines = saved.lines;
+      if (metadataDue) {
+        // Don't overwrite a history append/recall that raced the read.
+        const before = page.inputHistory, writing = page.savingHistory;
+        await writing;
+        const saved = await loadHistory(page.project);
+        if (this.validPage(page) && page.inputHistory === before && page.savingHistory === writing && this.historyAt === -1) {
+          page.inputHistory = [...saved.entries, ...before.filter(text => !saved.entries.includes(text))].slice(-MAX_INPUT_HISTORY);
+          page.historyLines = saved.lines;
+        }
       }
       const failed = results.find(r => r.status === "rejected");
       if (failed?.status === "rejected") throw failed.reason;
@@ -1360,7 +1371,6 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
   /** The injected per-poll watchers for every open page, then the task inbox (so rows archived by the daemon's watchers disappear without another interval); each page's daemon is kept alive. */
   private watchPages(): void {
     const watchers = [this.deps.watchdog, this.deps.merges].filter((w): w is NonNullable<typeof w> => !!w);
-    void this.refreshTaskInbox();
     for (const p of this.pages) {
       if (this.authorizedPages.has(p)) void this.keepDaemon(p.project, p);
       if (watchers.length) void Promise.all(watchers.map(w => w(p.project).catch(() => {}))).then(() => this.refreshTaskInbox(p));
@@ -1870,8 +1880,20 @@ if (this.menu !== timer.menu) return this.draw(); // closed (e.g. Enter, while p
       this.pages.includes(view.page) && !view.page.deleting;
   }
 
-  private async refreshTaskInbox(page = this.page): Promise<void> {
-    if (this.taskTree?.page === page) await this.refreshTaskTree();
+  private readonly taskSnapshot = new WeakMap<Page, { stamp: string; at: number }>();
+
+  private async refreshTaskInbox(page = this.page, force = true): Promise<void> {
+    if (!page || !this.validPage(page)) return;
+    const now = this.clock.now();
+    if (!force && !this.deps.tasks && !this.deps.taskCount && !this.deps.treeTasks) {
+      const info = await stat(`${paths.project(page.project)}/tasks.json`, { bigint: true }).catch(() => undefined);
+      const stamp = info ? `${info.ino}:${info.mtimeNs}:${info.size}` : "missing";
+      const previous = this.taskSnapshot.get(page);
+      // SQL is authoritative if a projection write was interrupted.
+      if (previous?.stamp === stamp && now - previous.at < 30_000) return;
+      this.taskSnapshot.set(page, { stamp, at: now });
+    }
+    if (this.taskTree?.page === page && !this.taskTree.removing) await this.refreshTaskTree();
     const view = this.taskInbox; // the status bar's count follows every poll/session refresh, from the open panel's read when there is one
     if (!view || view.page !== page || !this.taskInboxCurrent(view)) return page && this.taskCounts.refresh(page);
     return refreshTaskInboxData(view, () => this.taskCounts.observe(page, (this.deps.tasks ?? listTasks)(page.project)),

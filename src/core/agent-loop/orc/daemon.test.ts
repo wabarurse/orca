@@ -77,7 +77,11 @@ test("the loop runs turns on input, the watchers on their interval, answers requ
   expect(watched).toBe(1);
   await until(() => clock.sleeping() === 1);
   clock.advance(2000); clock.wake();
-  await until(() => watched === 2 && merged === 2);
+  await until(() => watched === 2);
+  expect(merged).toBe(1);
+  await until(() => clock.sleeping() === 1);
+  clock.advance(28_000); clock.wake();
+  await until(() => watched === 3 && merged === 2);
   // Requests are answered in order, under their ids; a model request is answered with whatever is saved by then.
   await until(() => clock.sleeping() === 1);
   const compact = await request(p, { kind: "compact" });

@@ -1,3 +1,4 @@
+import { MERGE_POLL_MS } from "../../tmux/merges";
 import { cleanManagedWorkspaces } from "../../tmux";
 import { pruneSettledProcesses, reconcileProcesses } from "../../data/processes";
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
@@ -29,7 +30,7 @@ export const DAEMON_POLL_MS = 1000;
 export const TURN_POLL_MS = 100;
 /** Requests a running turn can answer: compaction is a flag the turn reads at its next safe boundary, a model change is read at the next request. */
 const IN_TURN = new Set<Command["kind"]>(["compact", "model"]);
-/** The watchers' period (the merge watcher throttles itself further to MERGE_POLL_MS). */
+/** Agent exit and process completion polling interval. */
 export const WATCH_MS = 2000;
 /** The acknowledgements of a cancel and of a /compact request; the client prefixes "orchestrator: " and the TUI shows them as transient notes (tui/conversation/notices.ts). */
 export const CANCEL_ACK = { turn: "turn cancelled; the orchestrator stays paused until you send a message", idle: "nothing was running; queued input stays paused until you send a message" } as const;
@@ -65,7 +66,11 @@ interface Daemon {
   merges: (project: string) => Promise<unknown>;
   watchedAt: number;
   /** The watcher pass in flight (never rejects); input never waits for it. */
-  watching?: Promise<void>;
+  watching?: Promise<unknown>;
+  merging?: Promise<unknown>;
+  maintaining?: Promise<unknown>;
+  mergedAt?: number;
+  maintainedAt?: number;
   turns: number;
   context?: { model: string; used?: number; window: ReturnType<typeof contextWindow> };
   error?: string;
@@ -167,21 +172,30 @@ async function pollTurn(d: Daemon, signal: AbortSignal): Promise<void> {
 
 /** Start a due watcher pass in the background, one at a time. The merge watcher's pass runs `gh` once per
  * active task PR (each up to 20s); awaited in `step`, it held input sent to an idle orchestrator until it ended. */
-const cleanedAt = new Map<string, number>();
 function runWatchers(d: Daemon): void {
   const now = d.o.now();
-  if (d.watching || now - d.watchedAt < d.o.watchMs) return;
-  d.watchedAt = now;
-  const pass: Promise<void> = withProcessScope(d.supervision.signal, async () => {
-    await reconcileProcesses(d.o.project).catch(error => d.o.log(`process recovery: ${error}`));
-    if (now - (cleanedAt.get(d.o.project) ?? 0) >= 5 * 60_000) {
-      cleanedAt.set(d.o.project, now);
+  const background = (action: () => Promise<unknown>) => withProcessScope(d.supervision.signal, action)
+    .catch(error => d.o.log(`orchestrator: watcher failed: ${error}`));
+  if (!d.watching && now - d.watchedAt >= d.o.watchMs) {
+    d.watchedAt = now;
+    d.watching = background(async () => {
+      await Promise.all([
+        reconcileProcesses(d.o.project).catch(error => d.o.log(`process recovery: ${error}`)),
+        d.watchdog(d.o.project),
+      ]);
+    }).finally(() => { d.watching = undefined; });
+  }
+  if (!d.merging && now - (d.mergedAt ?? -Infinity) >= MERGE_POLL_MS) {
+    d.mergedAt = now;
+    d.merging = background(() => d.merges(d.o.project)).finally(() => { d.merging = undefined; });
+  }
+  if (!d.maintaining && now - (d.maintainedAt ?? -Infinity) >= 5 * 60_000) {
+    d.maintainedAt = now;
+    d.maintaining = background(async () => {
       await cleanManagedWorkspaces(d.o.project, true).catch(error => d.o.log(`workspace cleanup: ${error}`));
       await pruneSettledProcesses(d.o.project, true).catch(error => d.o.log(`process retention: ${error}`));
-    }
-    await Promise.all([d.watchdog, d.merges].map(w => w(d.o.project).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`))));
-  }).catch(error => d.o.log(`orchestrator: watcher failed: ${error}`)).finally(() => { if (d.watching === pass) d.watching = undefined; });
-  d.watching = pass;
+    }).finally(() => { d.maintaining = undefined; });
+  }
 }
 
 /** One turn with its own cancel poll; a failed turn is published, never fatal (input stays, the next message resumes). The live file spans the turn: begun before the status says `turn`, gone before it says `idle`. */
@@ -212,7 +226,7 @@ async function step(d: Daemon): Promise<DaemonOutcome | undefined> {
   runWatchers(d); // not awaited: input that lands meanwhile starts its turn now
   if (await d.o.session.pending()) { await runTurn(d); return; }
   if (d.o.exitWhenIdle) {
-    await d.watching; // what the watchers queued (exit and merge notices) still runs before an idle exit
+    await Promise.all([d.watching, d.merging, d.maintaining]); // what the watchers queued (exit and merge notices) still runs before an idle exit
     if (await d.o.session.pending()) { await runTurn(d); return; }
     return "idle";
   }
@@ -244,11 +258,11 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       const outcome = await step(d).catch(error => { if (d.o.gone()) return "deleted" as const; throw error; });
       if (!outcome) continue;
       d.supervision.abort(new Error("conversation stopped"));
-      await d.watching;
+      await Promise.all([d.watching, d.merging, d.maintaining]);
       if (outcome !== "deleted") await publish(d, "stopped");
       return outcome;
     }
-  } finally { d.supervision.abort(new Error("conversation stopped")); await d.watching; watched?.close(); }
+  } finally { d.supervision.abort(new Error("conversation stopped")); await Promise.all([d.watching, d.merging, d.maintaining]); watched?.close(); }
 }
 
 /** The session's output hooks: the window shows streamed text and tool lines like a worker's, and the live file gets the same events. */
