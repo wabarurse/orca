@@ -66,6 +66,8 @@ export interface PageQuestions {
   /** Ids hidden on close; expanded is the explicit open/closed state. */
   hidden: Set<string> | null;
   expanded: boolean;
+  selectedId?: string;
+  drafts?: Map<string, { answer: EditState; index: number }>;
   /** The selected row of the shown question: an option, then "type your own answer", then "skip". */
   index: number;
   /** The answer typed so far, while the input shows something else. */
@@ -133,7 +135,7 @@ type Mode = "chat" | QuestionMode;
 /** What the input holds in a mode: the chat draft, the question's answer, or nothing (a row is being picked). */
 const bufferOf = (m: Mode) => (m === "chat" ? "chat" : m === "answer" ? "answer" : "none");
 
-const head = (q: PageQuestions) => q.open[0];
+const head = (q: PageQuestions) => q.open.find(item => item.id === q.selectedId) ?? q.open[0];
 const visible = (q: PageQuestions) => q.expanded && q.open.length > 0 && (!q.hidden || q.open.some((x) => !q.hidden!.has(x.id)));
 const optionCount = (q: PageQuestions) => head(q)?.options?.length ?? 0;
 /** The "type your own answer" row; "skip" is the one after it. */
@@ -219,6 +221,7 @@ export class Questions {
     // A read can see the head answered by the close still in flight here: it stays until that close ends.
     open = this.keepClosing(q, open);
     q.open = open;
+    if (q.drafts) for (const id of q.drafts.keys()) if (!open.some(item => item.id === id)) q.drafts.delete(id);
     if (before && !open.length) q.expanded = false;
     if (q.hidden && open.some((x) => !q.hidden!.has(x.id))) q.hidden = null;
     if (before && !open.some((x) => x.id === before.id)) this.headGone(page, before);
@@ -276,7 +279,16 @@ export class Questions {
     const h = page && head(page.questions);
     if (mode === "chat" || !h) return null;
     const q = page.questions;
-    return { text: h.text, options: h.options ?? [], index: q.index, ...(h.default ? { default: h.default } : {}), count: q.open.length, mode };
+    return { text: h.text, options: h.options ?? [], index: q.index, ...(h.default ? { default: h.default } : {}), count: q.open.length, position: q.open.indexOf(h) + 1, mode };
+  }
+
+  /** Enter the selected question's answer editor without inserting a navigation key. */
+  startAnswer(page: QuestionPage): boolean {
+    const q = page.questions;
+    if (!q.expanded || !head(q) || q.closing || !this.ready(q) || page.view) return false;
+    q.index = ownRow(q);
+    this.sync();
+    return true;
   }
 
   /** Whether the input is the shown question's answer ("answer>"). */
@@ -475,12 +487,26 @@ export class Questions {
   // --- /questions ---------------------------------------------------------------
 
   /** /questions: read and explicitly open the queue. */
-  async command(page: QuestionPage | undefined): Promise<void> {
+  async command(page: QuestionPage | undefined, selectedId?: string): Promise<void> {
     if (!page) return;
     if (!this.valid(page) || page !== this.host.page()) return;
     this.host.opening?.(page);
     const q = page.questions;
     q.hidden = null;
+    const before = head(q)?.id;
+    q.selectedId = selectedId;
+    const after = head(q)?.id;
+    if (before !== after) {
+      const answer = this.typed(page);
+      if (before && answer.text) (q.drafts ??= new Map()).set(before, { answer, index: q.index });
+      this.reset(page);
+      const draft = after ? q.drafts?.get(after) : undefined;
+      if (draft) {
+        q.index = draft.index;
+        q.answer = draft.answer;
+        if (this.shown.page === page && this.shown.mode === "answer") this.host.input = draft.answer;
+      }
+    }
     q.expanded = true;
     this.sync();
     this.host.draw();

@@ -12,10 +12,9 @@ const NAVIGATION: HelpEntry[] = [
   { label: "ctrl+z / ctrl+x", description: "previous / next project page" },
   { label: "ctrl+b", description: "open or close projects" },
   { label: "ctrl+t", description: "task list; up/down selects; left folds/parent; right expands or focuses details; details up/down scrolls, left returns; terminal gesture opens PR links; r refresh; ctrl+t/esc returns to draft" },
-  { label: "ctrl+q", description: "inbox questions toggle; arrivals never open inbox" },
-  { label: "shift+tab (inbox)", description: "switch tasks / questions; esc or tab closes without answering" },
+  { label: "ctrl+q", description: "open the Questions list; arrivals update its count" },
   { label: "ctrl+d (question)", description: "delete shown question; no reply" },
-  { label: "pgup/pgdn / wheel", description: "scroll conversation, help or inbox tasks (mouse reporting required)" },
+  { label: "pgup/pgdn / wheel", description: "scroll conversation, help or lists (mouse reporting required)" },
   { label: "click ▸", description: "open a run of tool calls (▾ when open); click again to fold it" },
   { label: "ctrl+c", description: "stop conversation and its agents; message to resume; twice within 2s exits" },
   { label: "esc", description: "close panel, else leave agent view, else clear input" },
@@ -30,6 +29,18 @@ const EDITING: HelpEntry[] = [
   { label: "home/end / ctrl+a/e", description: "start / end of current line" },
   { label: "ctrl+u / ctrl+k", description: "delete to start / end of current line" },
   { label: "↑ / ↓", description: "move between input rows, then project input history" },
+];
+
+const VIM: HelpEntry[] = [
+  { label: "i / Esc", description: "enter Insert / return to Normal while preserving the draft" },
+  { label: "gt / gT", description: "next / previous project" },
+  { label: "Space a/t/q/p", description: "Agents / Tasks / Questions / Images" },
+  { label: "Space u/m/e/f", description: "Accounts / Models / Effort / Fast" },
+  { label: "Space b/h/r/s", description: "Projects / Help / Refresh / Stop" },
+  { label: "Space v/x", description: "attach clipboard image / remove last draft image" },
+  { label: "j/k · gg/G", description: "move down/up or jump to the first/last row" },
+  { label: "h/l", description: "focus list/details in work views" },
+  { label: ":", description: "type any slash command and arguments; Tab completes a unique command" },
 ];
 
 /** Word-wrap descriptions, with wrap's single-cell fallback for impossibly narrow glyphs. */
@@ -57,7 +68,7 @@ function groupRows(title: string, entries: HelpEntry[], cols: number, muted = fa
 }
 
 /** Bounded, readable rows: aligned at comfortable widths, stacked on narrow terminals. */
-export function helpLines(commands: ReadonlyMap<string, { help: CommandHelp }>, inView: boolean, cols = 80): string[] {
+export function helpLines(commands: ReadonlyMap<string, { help: CommandHelp }>, inView: boolean, cols = 80, vim = false): string[] {
   cols = Math.max(1, cols);
   const entries = [...commands.values()].map(command => command.help).filter(entry => !entry.viewOnly || inView);
   const group = (id: HelpGroup, title: string) => groupRows(title, entries.filter(entry => entry.group === id), cols, id === "advanced");
@@ -65,8 +76,8 @@ export function helpLines(commands: ReadonlyMap<string, { help: CommandHelp }>, 
     group("conversation", "conversation"),
     group("projects", "projects"),
     group("settings", "model & accounts"),
-    groupRows("keyboard · navigation", NAVIGATION, cols),
-    groupRows("keyboard · editing", EDITING, cols),
+    groupRows("keyboard · navigation", vim ? VIM : NAVIGATION, cols),
+    ...(vim ? [] : [groupRows("keyboard · editing", EDITING, cols)]),
     group("advanced", "advanced & diagnostics"),
   ].flatMap((rows, i) => i ? ["", ...rows] : rows);
 }
