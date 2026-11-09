@@ -273,14 +273,14 @@ describe("orchestrator questions", () => {
     // The new section heading costs one row at 70x16; decisions scroll to selection.
     expect(app.frame().question?.default).toBe("sqlite");
     expect(live(term)).toContain(PICK);
-    expect(live(term)).toContain("inbox 1");
+    expect(live(term)).toContain("1 questions");
     term.press({ name: "down" });
     await until(() => live(term).includes("❯ 2. sqlite"));
     term.press({ name: "enter" });
     await until(() => term.screen().includes("? Which db? → sqlite"));
     expect(await statusOf("qa-opt")).toEqual([["Which db?", "answered", "sqlite"]]);
     await until(() => !live(term).includes(PICK));
-    expect(live(term)).toContain("inbox 0");
+    expect(live(term)).toContain("0 questions");
     expect(orchs.said["qa-opt"]).toEqual([]); // not sent as a chat message
     const inbox = await drain("qa-opt", "orchestrator");
     expect(inbox.map((m) => [m.from, m.text])).toEqual([["user", `[${q!.id}] answer to "Which db?": sqlite`]]);
@@ -373,8 +373,10 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("? Port? (1 of 2)"));
     term.press({ name: "escape" }); // empty input: put off, like Tab
     await until(() => !live(term).includes("? Port?"));
-    expect(live(term)).toContain("inbox 2");
+    expect(live(term)).toContain("2 questions");
     term.type("/questions\r");
+    await until(() => live(term).includes("QUESTIONS") && live(term).includes("Enter answer"));
+    term.press({ name: "enter" });
     await until(() => live(term).includes("? Port? (1 of 2)"));
     term.type("90");
     await until(() => live(term).includes("answer> 90"));
@@ -382,6 +384,8 @@ describe("orchestrator questions", () => {
     await until(() => !live(term).includes("? Port?"));
     expect(await statusOf("qa-esc")).toEqual([["Port?", "open", null], ["Host?", "open", null]]);
     term.type("/questions\r");
+    await until(() => live(term).includes("QUESTIONS") && live(term).includes("Enter answer"));
+    term.press({ name: "enter" });
     await until(() => live(term).includes("answer> 90")); // preserved
     term.press({ name: "down" }); // to the skip row
     await until(() => live(term).includes("❯ skip — remove from inbox"));
@@ -394,7 +398,7 @@ describe("orchestrator questions", () => {
     expect(await statusOf("qa-esc")).toEqual([["Port?", "skipped", null], ["Host?", "skipped", null]]);
     expect(await drain("qa-esc", "orchestrator")).toEqual([]);
     expect(app.page!.sent).toEqual([]);
-    expect(app.status(app.page!)).toEndWith("inbox 0");
+    expect(app.status(app.page!)).toEndWith("0 questions");
     expect([app.page!.lines, note(app).includes(answeredNote("Host?", null))]).toEqual([[], true]); // a skip is a transient note, never a line or a default
     expect(app.input.text).toBe("");
     await stop();
@@ -423,12 +427,12 @@ describe("orchestrator questions", () => {
     expect(await statusOf("qa-del")).toEqual([["Port?", "skipped", null], ["Host?", "skipped", null], ["Name?", "open", null]]);
     expect(await drain("qa-del", "orchestrator")).toEqual([]);
     expect(app.page!.sent).toEqual([]);
-    expect(app.status(app.page!)).toEndWith("inbox 1");
+    expect(app.status(app.page!)).toEndWith("1 questions");
     term.press({ name: "escape" });
     await until(() => !live(term).includes("? Name?"));
     expect(app.input.text).toBe("chat draft");
     await withdrawQuestion("qa-del", name!.id, "answered in chat"); // the orchestrator's ask close
-    await until(() => app.status(app.page!).endsWith("inbox 0"));
+    await until(() => app.status(app.page!).endsWith("0 questions"));
     expect(await drain("qa-del", "orchestrator")).toEqual([]);
     expect(app.input.text).toBe("chat draft");
     await stop();
@@ -443,13 +447,13 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("? Which db?"));
     term.press({ name: "tab" });
     term.type("/agents\r");
-    await until(() => !!app.menu);
+    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
     term.press({ name: "enter" });
     await until(() => term.screen().includes("worker line"));
     term.type("/questions\r"); // shown again, but not over an agent view
     await until(() => live(term).includes("questions belong to the project orchestrator"));
     expect(live(term)).not.toContain("Which db?");
-    expect(live(term)).toContain("inbox 1");
+    expect(live(term)).toContain("1 questions");
     expect(live(term)).toContain("questions belong to the project orchestrator");
     term.type("1");
     term.press({ name: "enter" });
@@ -593,6 +597,8 @@ describe("orchestrator questions", () => {
     // Answered here: the note, and nothing when read.
     await ask1("qa-race", "Again?", ["yes"]);
     term.type("/questions\r");
+    await until(() => live(term).includes("QUESTIONS") && live(term).includes("Enter answer"));
+    term.press({ name: "enter" });
     await until(() => live(term).includes("? Again?"));
     term.press({ name: "enter" });
     await until(() => note(app).includes(answeredNote("Again?", "yes")));
@@ -623,7 +629,7 @@ describe("orchestrator questions", () => {
     await until(() => live(term).includes("? Which db?"));
     term.press({ name: "tab" });
     await until(() => !live(term).includes("? Which db?"));
-    expect(live(term)).toContain("inbox 1"); // still counted
+    expect(live(term)).toContain("1 questions"); // still counted
     term.type("hello\r");
     await until(() => orchs.said["qa-tab"]?.length === 1);
     expect(orchs.said["qa-tab"]).toEqual(["hello"]);
@@ -632,29 +638,32 @@ describe("orchestrator questions", () => {
     term.press({ name: "u", ctrl: true });
 
     await ask1("qa-tab", "Port?");
-    await until(() => live(term).includes("inbox 2")); // arrival only updates the count
+    await until(() => live(term).includes("2 questions")); // arrival only updates the count
     await until(() => !live(term).includes("? Which db?"));
     term.type("/questions\r");
+    await until(() => live(term).includes("QUESTIONS") && live(term).includes("Enter answer"));
+    term.press({ name: "enter" });
     await until(() => live(term).includes("? Which db? (1 of 2)"));
     expect(live(term)).toContain("(1 of 2)");
     expect(orchs.said["qa-tab"]).toEqual(["hello"]);
     await stop();
   });
 
-  test("background pages show their count in the status line", async () => {
+  test("question counts are local to the active page", async () => {
     const { term, app, stop } = await start("qa-fg");
     term.type("/new qa-bg\r");
     await until(() => app.page?.project === "qa-bg" && app.pages.length === 2);
     term.type("\x1a"); // back to qa-fg
     await until(() => app.page?.project === "qa-fg");
     await askQuestions("qa-bg", [{ text: "One?" }, { text: "Two?" }]);
-    await until(() => live(term).includes("(+2 elsewhere)"));
+    await until(() => live(term).includes("0 questions"));
+    expect(live(term)).not.toContain("elsewhere)");
     expect(live(term)).not.toContain("One?");
     term.type("\x18");
     await until(() => app.page?.project === "qa-bg");
     term.press({ name: "q", ctrl: true });
     await until(() => live(term).includes("? One? (1 of 2)"));
-    expect(live(term)).toContain("inbox 2");
+    expect(live(term)).toContain("2 questions");
     expect(live(term)).not.toContain("qa-bg: 2");
     await stop();
   });
@@ -779,7 +788,7 @@ describe("command and key tables", () => {
     expect(help).not.toContain("/back");
     expect(help.indexOf("advanced & diagnostics")).toBeGreaterThan(help.indexOf("keyboard · editing"));
     expect(help.indexOf("/keys")).toBeGreaterThan(help.indexOf("advanced & diagnostics"));
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/clear-context", "/close", "/compact", "/effort", "/fast", "/help", "/inbox", "/keys", "/login", "/model", "/new", "/project", "/project-defaults", "/projects", "/questions", "/quit", "/refresh", "/rename", "/retry-images", "/runtime", "/usage"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/agents", "/back", "/clear", "/clear-context", "/close", "/compact", "/effort", "/fast", "/help", "/images", "/keys", "/login", "/model", "/new", "/paste-image", "/project", "/project-defaults", "/projects", "/questions", "/quit", "/refresh", "/remove-image", "/rename", "/retry-images", "/runtime", "/stop", "/tasks", "/usage", "/vim"]);
   });
 
   test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {
@@ -792,7 +801,7 @@ describe("command and key tables", () => {
     expect(parseCommand("/quit now", commands)).toMatchObject({ name: "/quit", command: undefined });
     expect(parseCommand("/new\tx", commands)).toMatchObject({ name: "/new\tx", command: undefined });
     expect(parseCommand("/nope x", commands)).toMatchObject({ name: "/nope", command: undefined });
-    for (const [name, c] of commands) if (c.needsPage) expect(["/agents", "/compact", "/runtime", "/usage"]).toContain(name);
+    for (const [name, c] of commands) if (c.needsPage) expect(["/agents", "/compact", "/images", "/runtime", "/usage"]).toContain(name);
   });
 
   test("unknown commands note 'unknown command /x' (the name only) above the composer, never in the conversation", async () => {
@@ -885,7 +894,7 @@ describe("command and key tables", () => {
   });
 
   test("key layers run in the documented order", () => {
-    expect(bare().keyLayers.map((l) => l.name)).toEqual(["clear", "keyEcho", "chords", "projects", "menu", "help", "inbox", "questions", "images", "escape", "enter", "editor"]);
+    expect(bare().keyLayers.map((l) => l.name)).toEqual(["clear", "keyEcho", "chords", "projects", "menu", "help", "question-dismiss", "question-guard", "questions", "images", "escape", "enter", "editor"]);
   });
 
   test("a key two layers could take goes to the earlier one", async () => {
@@ -1166,7 +1175,7 @@ describe("tool calls", () => {
     const running = app.run("toolview");
     await until(() => !!app.page);
     term.type("/agents\r");
-    await until(() => !!app.menu);
+    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
     term.press({ name: "enter" });
     await until(() => term.screen().includes("checking") && term.screen().includes("⏺ bash(bun test)"));
     expect(app.page!.view!.lines.some((l) => typeof l !== "string" && "tool" in l)).toBe(false); // still running
@@ -1220,7 +1229,7 @@ test("unfinished calls commit red in turns and finished agent transcripts", asyn
   expect(app.page!.calls.size).toBe(0);
   expect(term.raw()).toContain("\x1b[31m⏺");
   term.type("/agents\r");
-  await until(() => !!app.menu);
+  await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
   term.press({ name: "enter" });
   await until(() => term.screen().includes("⏺ bash(sleep forever)\n  ⎿  interrupted"));
   expect(app.page!.view!.calls.size).toBe(0);

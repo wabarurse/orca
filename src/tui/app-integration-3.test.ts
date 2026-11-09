@@ -6,8 +6,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../config/config";
-import { AGENTS_TICK_MS, App, type AppDeps, type Clock } from "./app";
-import type { AgentInfo } from "../protocol";
+import { App } from "./app";
 import type { Task } from "../protocol/task";
 import type { Message } from "../protocol/inbox";
 import { all as allQuestions, ask as askQuestions } from "../core/data/inbox/questions";
@@ -41,7 +40,7 @@ test("ctrl+g enters /keys without replacing chat, answer, or no-page drafts and 
     app.input = { text: "answer 👩‍💻", cursor: 4 };
     await check();
     expect(app.questions.answering()).toBe(true);
-    await app.onKey({ name: "q", ctrl: true });
+    await app.onKey({ name: "escape" });
     expect(app.input).toEqual({ text: "chat\n界 draft", cursor: 6 });
     expect(orchs.said["keys-drafts"]).toEqual([]);
     await app.closePage();
@@ -347,231 +346,6 @@ test("header denominator: verified claude window, unlisted model shows the sessi
   } finally { app.quit(); await running; }
 });
 
-describe("/agents clocks", () => {
-  const T0 = Date.parse("2024-05-01T10:00:00.000Z");
-  const iso = (ms: number) => new Date(T0 + ms).toISOString();
-  const row = (term: ReturnType<typeof fakeTerm>, name: string) => term.screen().split("\n").find((l) => l.includes(name))?.trim();
-
-  /** An app whose clock and timers the test drives; `agents` is what the list returns now. */
-  async function setup(agents: () => Promise<AgentInfo[]>, extra: Partial<AppDeps> = {}) {
-    const term = fakeTerm(80, 24);
-    const state = { now: T0 + 192_000 };
-    const timers: { fn: () => void; ms: number }[] = [];
-    const clock: Clock = { now: () => state.now, every: (fn, ms) => { const t = { fn, ms }; timers.push(t); return () => { timers.splice(timers.indexOf(t), 1); }; } };
-    const menuTimers = () => timers.filter((t) => t.ms === AGENTS_TICK_MS);
-    const app = new App({ term, clock, pollMs: 100_000, agents, watchdog: async () => {}, merges: async () => {}, openOrchestrator: fakeOrchestrators().openOrchestrator, ...extra });
-    const running = app.run("clocks");
-    await until(() => !!app.page);
-    return { term, state, timers, menuTimers, app, running, stop: async () => { app.quit(); await running; },
-      tick: async (ms: number) => { state.now += ms; for (const t of menuTimers()) t.fn(); await Bun.sleep(30); } };
-  }
-
-  test("a live agent's clock ticks once a second from its start; a finished agent's time is final", async () => {
-    const t = await setup(async () => [
-      { name: "worker-foo", live: true, startedAt: iso(0) },
-      { name: "worker-old", live: false, startedAt: iso(0), endedAt: iso(14 * 60_000 + 2000) },
-      { name: "worker-kill", live: false, startedAt: iso(0), endedAt: iso(61_000), approximateEnd: true },
-      { name: "worker-none", live: false },
-    ]);
-    try {
-      expect(t.menuTimers().length).toBe(0);
-      t.term.type("/agents\r");
-      await until(() => !!t.app.menu);
-      await until(() => row(t.term, "worker-foo") === "❯ worker-foo  live 3m 12s");
-      expect(row(t.term, "worker-old")).toBe("worker-old  finished 14m 02s");
-      expect(row(t.term, "worker-kill")).toBe("worker-kill  finished ~1m 01s");
-      expect(row(t.term, "worker-none")).toBe("worker-none  finished");
-      expect(t.menuTimers().map((x) => x.ms)).toEqual([1000]);
-      await t.tick(1000);
-      await until(() => row(t.term, "worker-foo") === "❯ worker-foo  live 3m 13s");
-      await t.tick(5000);
-      await until(() => row(t.term, "worker-foo") === "❯ worker-foo  live 3m 18s");
-      expect(row(t.term, "worker-old")).toBe("worker-old  finished 14m 02s");
-    } finally { await t.stop(); }
-  });
-
-  test("an agent that exits while the menu is open flips to finished and freezes at its end", async () => {
-    let list = [{ name: "worker-foo", live: true, startedAt: iso(0) } as { name: string; live: boolean; startedAt?: string; endedAt?: string }];
-    let reads = 0;
-    const t = await setup(async () => { reads++; return list; });
-    try {
-      t.term.type("/agents\r");
-      await until(() => row(t.term, "worker-foo") === "❯ worker-foo  live 3m 12s");
-      const opened = reads;
-      await t.tick(1000);
-      expect(reads).toBe(opened); // not due yet: the list is read every other second
-      list = [{ name: "worker-foo", live: false, startedAt: iso(0), endedAt: iso(193_000) }];
-      await t.tick(1000); // now 3m 14s: the list is re-read and shows the end at 3m 13s
-      await until(() => row(t.term, "worker-foo") === "❯ worker-foo  finished 3m 13s");
-      expect(reads).toBe(opened + 1);
-      await t.tick(60_000);
-      await t.tick(60_000);
-      expect(row(t.term, "worker-foo")).toBe("❯ worker-foo  finished 3m 13s");
-    } finally { await t.stop(); }
-  });
-
-  test("list reads never overlap, and a failed read leaves the menu as it was", async () => {
-    let reads = 0, release!: () => void, mode: "ok" | "hold" | "fail" = "ok";
-    const t = await setup(async () => {
-      reads++;
-      if (mode === "hold") await new Promise<void>((r) => (release = r));
-      if (mode === "fail") throw new Error("tmux gone");
-      return [{ name: "worker-foo", live: true, startedAt: iso(0) }];
-    });
-    try {
-      t.term.type("/agents\r");
-      await until(() => !!t.app.menu);
-      const opened = reads;
-      mode = "hold";
-      await t.tick(2000);
-      await t.tick(1000);
-      await t.tick(1000);
-      expect(reads).toBe(opened + 1); // the first re-read is still pending
-      release();
-      mode = "fail";
-      await Bun.sleep(30);
-      await t.tick(2000);
-      await until(() => reads === opened + 2);
-      await Bun.sleep(30);
-      expect(row(t.term, "worker-foo")).toContain("live 3m");
-      mode = "ok";
-      await t.tick(2000);
-      await until(() => reads === opened + 3);
-    } finally { await t.stop(); }
-  });
-
-  test("the selection follows its agent by name when the list reorders or grows, and Enter attaches that agent", async () => {
-    const mk = (...names: string[]) => names.map((name) => ({ name, live: false }));
-    let list = mk("worker-a", "worker-b", "worker-c");
-    const t = await setup(async () => list);
-    try {
-      t.term.type("/agents\r");
-      await until(() => !!t.app.menu);
-      t.term.press({ name: "down" });
-      await until(() => t.app.menu!.index === 1);
-      list = mk("worker-c", "worker-x", "worker-b", "worker-a");
-      await t.tick(2000);
-      await until(() => t.app.menu!.index === 2);
-      expect(row(t.term, "worker-b")).toBe("❯ worker-b  finished");
-      list = mk("worker-c", "worker-a"); // the selected agent vanished: same position, in range
-      await t.tick(2000);
-      await until(() => t.app.menu!.index === 1);
-      list = mk("worker-a", "worker-c", "worker-b");
-      await t.tick(2000);
-      await until(() => t.app.menu!.index === 0);
-      t.term.press({ name: "enter" });
-      await until(() => t.app.page!.view?.name === "worker-a");
-      expect(t.menuTimers().length).toBe(0);
-    } finally { await t.stop(); }
-  });
-
-  test("no menu timer runs before the menu opens, after esc, in another overlay, or after quitting", async () => {
-    const t = await setup(async () => [{ name: "worker-foo", live: true, startedAt: iso(0) }]);
-    try {
-      expect(t.menuTimers().length).toBe(0);
-      t.term.type("/agents\r");
-      await until(() => t.menuTimers().length === 1);
-      t.term.press({ name: "escape" });
-      await until(() => !t.app.menu);
-      expect(t.menuTimers().length).toBe(0);
-
-      t.term.type("/agents\r");
-      await until(() => t.menuTimers().length === 1);
-      await t.app.openProjects(); // another overlay replaces the menu
-      expect(t.menuTimers().length).toBe(0);
-      await t.app.closeProjects();
-
-      t.term.type("/agents\r");
-      await until(() => t.menuTimers().length === 1);
-      t.term.type("");
-      t.app.quit();
-      await t.running;
-      expect(t.timers.length).toBe(0);
-    } finally { await t.stop(); }
-  });
-
-  test("a tick after the menu closed starts no list read, and a read that finds the view moved on closes the menu", async () => {
-    let reads = 0;
-    const t = await setup(async () => { reads++; return [{ name: "worker-foo", live: true, startedAt: iso(0) }]; });
-    try {
-      t.term.type("/agents\r");
-      await until(() => t.menuTimers().length === 1);
-      const tick = t.menuTimers()[0]!.fn;
-      const opened = reads;
-      t.app.menu = null; // closed, but the draw that syncs the timer off has not run yet (Enter while attach runs)
-      t.state.now += 5000;
-      tick();
-      await Bun.sleep(30);
-      expect(reads).toBe(opened);
-      expect(t.menuTimers().length).toBe(0);
-
-      t.term.type("/agents\r");
-      await until(() => t.menuTimers().length === 1);
-      (t.app as unknown as { modelGeneration: number }).modelGeneration++; // another operation superseded the menu
-      await t.tick(2000);
-      await until(() => !t.app.menu && t.menuTimers().length === 0);
-    } finally { await t.stop(); }
-  });
-
-  test("ticks only redraw through the frame throttle", async () => {
-    const t = await setup(async () => [{ name: "worker-foo", live: true, startedAt: iso(0) }]);
-    try {
-      t.term.type("/agents\r");
-      await until(() => row(t.term, "worker-foo") === "❯ worker-foo  live 3m 12s");
-      await settle();
-      const before = t.term.writes.length;
-      t.state.now += 1000;
-      for (let i = 0; i < 20; i++) t.menuTimers()[0]!.fn();
-      await Bun.sleep(40);
-      expect(t.term.writes.length - before).toBeLessThanOrEqual(2);
-      expect(row(t.term, "worker-foo")).toBe("❯ worker-foo  live 3m 13s");
-    } finally { await t.stop(); }
-  });
-
-  test("older finished agents hide behind a; d and D remove finished rows after y, refusing a live one", async () => {
-    const old = iso(-48 * 3600_000);
-    let list: AgentInfo[] = [
-      { name: "worker-foo", live: true, startedAt: iso(0) },
-      { name: "worker-recent", live: false, startedAt: iso(0), endedAt: iso(60_000), lastActiveAt: iso(60_000) },
-      { name: "worker-old", live: false, startedAt: old, endedAt: old, lastActiveAt: old },
-    ];
-    const removed: string[][] = [];
-    const t = await setup(async () => list, { archiveAgents: async (_project, names) => {
-      removed.push(names);
-      list = list.map((a) => names.includes(a.name) ? { ...a, archived: true } : a);
-      return { archived: names, live: [] };
-    } });
-    try {
-      t.term.type("/agents\r");
-      await until(() => t.term.screen().includes("+1 older hidden"));
-      expect(row(t.term, "worker-old")).toBeUndefined();
-      t.term.type("a");
-      await until(() => !!row(t.term, "worker-old"));
-      expect(t.term.screen()).not.toContain("older hidden");
-      t.term.type("a");
-      await until(() => row(t.term, "worker-old") === undefined);
-      t.term.type("d"); // the live worker-foo is selected
-      await until(() => t.term.screen().includes("worker-foo is live"));
-      expect(removed).toEqual([]);
-      t.term.press({ name: "down" });
-      await until(() => t.app.menu!.index === 1);
-      t.term.type("d");
-      await until(() => t.term.screen().includes("remove worker-recent from /agents? y/n"));
-      t.term.type("y");
-      await until(() => t.term.screen().includes("removed 1 agent from /agents"));
-      expect(removed).toEqual([["worker-recent"]]);
-      expect(row(t.term, "worker-recent")).toBeUndefined();
-      expect(t.term.screen()).toContain("+2 older hidden");
-      t.term.type("D");
-      await until(() => t.term.screen().includes("remove 1 finished agent from /agents? y/n"));
-      t.term.press({ name: "escape" }); // cancels the removal; the menu stays
-      await until(() => !t.term.screen().includes("y/n"));
-      expect(t.app.menu).not.toBeNull();
-      expect(removed.length).toBe(1);
-    } finally { await t.stop(); }
-  });
-});
-
 test("task tree activation routes terminal keys, preserves drafts, selects renderer hits and refreshes durable UUIDs", async () => {
   const term = fakeTerm(120, 28), fake = fakeOrchestrators();
   const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -762,12 +536,12 @@ test("task tree cycling reveals long independent registries without changing cha
   try {
     await until(() => !!app.page);
     term.type("keep draft"); term.type("\x14");
-    await until(() => screen().includes("● #1 Independent task 1"));
+    await until(() => screen().includes("● #1 Independent task"));
     for (let i = 0; i < 23; i++) term.type("\x1b[Z");
-    await until(() => screen().includes("● #24 Independent task 24"));
+    await until(() => screen().includes("● #24 Independent task"));
     expect(screen()).toContain("Outline y=");
     term.type("\x1b[Z");
-    await until(() => screen().includes("● #1 Independent task 1"));
+    await until(() => screen().includes("● #1 Independent task"));
     expect(screen()).toContain("Outline y=0/");
     term.press({ name: "right" });
     await until(() => screen().includes("Details: ↑↓ scroll"));

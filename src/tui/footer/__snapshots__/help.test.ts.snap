@@ -16,32 +16,34 @@ Conversation record 30
 2 agents running │ 1 task │ inbox 1
 help · commands & keys                                                  1–9/75
   conversation
+  /vim            toggle Vim navigation and editing modes
+  /stop           confirm a conversation stop
+  /paste-image    attach an image from the clipboard
+  /remove-image   remove the last draft image
   /refresh        reload shared local state; active context waits until idle;
                   never runs work
   /retry-images   retry unconfirmed image prompts by original id; never replay
                   consumed input
-  /inbox          user inbox: tasks / questions; shift+tab switches sections,
-                  esc/tab closes
-  /agents         follow agents; a shows older, d/D remove finished rows
-  /images         open images sent to you in the image viewer
 ↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  conversation
+  /vim            toggle Vim navigation and editing modes
+  /stop           confirm a conversation stop
+  /paste-image    attach an image from the clipboard
+  /remove-image   remove the last draft image
   /refresh        reload shared local state; active context waits until idle;
                   never runs work
   /retry-images   retry unconfirmed image prompts by original id; never replay
                   consumed input
-  /inbox          user inbox: tasks / questions; shift+tab switches sections,
-                  esc/tab closes
-  /agents         follow agents; a shows older, d/D remove finished rows
+  /tasks          open the task list
+  /agents         open agent runs and history
   /images         open images sent to you in the image viewer
   /clear          clear visible chat only; keep model context, history and
                   cache
   /clear-context  clear chat, model context and cache after confirmation
-  /questions      inbox questions (ctrl+q); enter answers or picks skip;
-                  shift+tab tasks
+  /questions      browse unanswered questions and respond
   /help           commands and keyboard shortcuts; esc closes
 
   projects
@@ -73,11 +75,9 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
                      expands or focuses details; details up/down scrolls, left
                      returns; terminal gesture opens PR links; r refresh;
                      ctrl+t/esc returns to draft
-  ctrl+q             inbox questions toggle; arrivals never open inbox
-  shift+tab (inbox)  switch tasks / questions; esc or tab closes without
-                     answering
+  ctrl+q             open the Questions list; arrivals update its count
   ctrl+d (question)  delete shown question; no reply
-  pgup/pgdn / wheel  scroll conversation, help or inbox tasks (mouse reporting
+  pgup/pgdn / wheel  scroll conversation, help or lists (mouse reporting
                      required)
   click ▸            open a run of tool calls (▾ when open); click again to
                      fold it
@@ -119,21 +119,30 @@ Conversation record 30
 │> draft 界                            │
 └──────────────────────────────────────┘
 2 agents running │ 1 task │ inbox 1
-help                           1–9/142
+help                           1–9/144
   conversation
-  /refresh
-    reload shared local state; active
-    context waits until idle; never
-    runs work
-  /retry-images
-    retry unconfirmed image prompts by
-    original id; never replay consumed
-    input
+  /vim
+    toggle Vim navigation and editing
+    modes
+  /stop
+    confirm a conversation stop
+  /paste-image
+    attach an image from the clipboard
+  /remove-image
 ↑↓ scroll · esc close"
 `;
 
 exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  conversation
+  /vim
+    toggle Vim navigation and editing
+    modes
+  /stop
+    confirm a conversation stop
+  /paste-image
+    attach an image from the clipboard
+  /remove-image
+    remove the last draft image
   /refresh
     reload shared local state; active
     context waits until idle; never
@@ -142,13 +151,10 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     retry unconfirmed image prompts by
     original id; never replay consumed
     input
-  /inbox
-    user inbox: tasks / questions;
-    shift+tab switches sections,
-    esc/tab closes
+  /tasks
+    open the task list
   /agents
-    follow agents; a shows older, d/D
-    remove finished rows
+    open agent runs and history
   /images
     open images sent to you in the
     image viewer
@@ -159,9 +165,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     clear chat, model context and
     cache after confirmation
   /questions
-    inbox questions (ctrl+q); enter
-    answers or picks skip; shift+tab
-    tasks
+    browse unanswered questions and
+    respond
   /help
     commands and keyboard shortcuts;
     esc closes
@@ -217,16 +222,13 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     gesture opens PR links; r refresh;
     ctrl+t/esc returns to draft
   ctrl+q
-    inbox questions toggle; arrivals
-    never open inbox
-  shift+tab (inbox)
-    switch tasks / questions; esc or
-    tab closes without answering
+    open the Questions list; arrivals
+    update its count
   ctrl+d (question)
     delete shown question; no reply
   pgup/pgdn / wheel
-    scroll conversation, help or inbox
-    tasks (mouse reporting required)
+    scroll conversation, help or lists
+    (mouse reporting required)
   click ▸
     open a run of tool calls (▾ when
     open); click again to fold it

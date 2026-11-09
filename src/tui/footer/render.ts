@@ -12,7 +12,7 @@ import { layout, scrollWindow } from "./editor";
 export interface Help { lines: string[]; top: number; heading?: string }
 export interface TaskInboxView extends Help {
   state: "loading" | "error" | "ready";
-  section?: "tasks" | "questions";
+  section?: "questions";
   question?: QuestionView | null;
   notice?: string;
 }
@@ -48,6 +48,7 @@ export interface QuestionView {
   default?: string;
   /** Open questions on the page, this one included. */
   count: number;
+  position?: number;
   mode: QuestionMode;
 }
 
@@ -117,13 +118,12 @@ export function inputArea(input: Input, cols: number, rows: number, reserved = 0
 /** Pack the three count groups, stacking at narrow widths; on tiny screens input and tail win. */
 export function statusRows(status: string | null | undefined, cols: number, rows: number): string[] {
   if (!status || rows < 3) return [];
-  const groups = sanitize(status).split(" │ ");
+  const separator = status.includes(" | ") ? " | " : " │ ";
+  const groups = sanitize(status).split(separator);
   const out: string[] = [];
-  for (const full of groups) {
-    // Keep the background unanswered badge recognizable when stacking counts.
-    const group = visibleLength(full) > cols ? full.replace(/^(inbox \S+) \(\+(.+) elsewhere\)$/, "$1 +$2") : full;
+  for (const group of groups) {
     const last = out.at(-1);
-    if (last && visibleLength(`${last} │ ${group}`) <= cols) out[out.length - 1] = `${last} │ ${group}`;
+    if (last && visibleLength(last + separator + group) <= cols) out[out.length - 1] = last + separator + group;
     else out.push(fit(group, cols));
   }
   return out.slice(0, Math.max(0, rows - 2)).map(dim);
@@ -175,7 +175,7 @@ export function questionRows(q: QuestionView, cols: number, height: number): str
   const footer = [dim(QUESTION_HINTS[q.mode])];
   const room = height - footer.length;
   const items = questionItems({ options: q.options.map(plainText), default: q.default && plainText(q.default) });
-  const head = wordWrap(`${bold("?")} ${plainText(q.text)}${q.count > 1 ? dim(` (1 of ${q.count})`) : ""}`, cols);
+  const head = wordWrap(`${bold("?")} ${plainText(q.text)}${q.count > 1 ? ` (${q.position ?? 1} of ${q.count})` : ""}`, cols);
   const textRows = Math.max(0, Math.min(head.length, room > 1 ? Math.max(1, room - items.length) : 0));
   const text = head.slice(0, textRows);
   if (textRows > 0 && textRows < head.length) text[textRows - 1] += "…";
@@ -240,30 +240,20 @@ export function helpPanel(f: Frame): { rows: string[]; top: number; bodyHeight: 
 
 /** Same bounded footer geometry as help, without displacing the composer. */
 export function taskInboxPanel(f: Frame): ReturnType<typeof helpPanel> {
-  const state = f.inbox?.state;
-  if (f.inbox?.section === "questions") {
-    const view = f.inbox;
-    // Questions retain their selected-row window. Spend the available footer
-    // on decisions rather than a second (task-style) scrolling hint row.
-    const height = Math.min(18, footerBase(f).free);
-    const panel = { rows: [] as string[], top: 0, bodyHeight: Math.max(0, height - 1), maxTop: 0 };
-    if (height <= 0) return panel;
-    if (height === 1) return { ...panel, rows: [fit(dim("esc close inbox"), f.cols)] };
-    const title = view.state === "error"
-      ? f.cols >= 48 ? "inbox · tasks / [questions] · error · shift+tab" : "inbox · questions · error"
-      : f.cols >= 48 ? "inbox · tasks / [questions] · shift+tab switch" : "inbox · questions · shift+tab";
-    const room = panel.bodyHeight;
-    const notice = view.notice ? wrap(plainText(view.notice), f.cols).slice(0, Math.max(0, room - (view.question ? 3 : 1))) : [];
-    const content = view.question ? questionRows(view.question, f.cols, room - notice.length)
-      : [...view.lines.slice(0, Math.max(0, room - notice.length - 1)), dim("esc/tab close · shift+tab tasks")];
-    return { ...panel, rows: [bold(title), ...notice.map(dim), ...content].map(row => fit(row, f.cols)) };
-  }
-  return scrollPanel(f, f.inbox,
-    state === "error" ? "inbox · [tasks] / questions · error (snapshot may be stale)" : state === "loading" ? "inbox · [tasks] / questions · loading" : "inbox · [tasks] / questions · read-only",
-    state === "error" ? "inbox · tasks · error" : state === "loading" ? "inbox · tasks · loading" : "inbox · [tasks]", true);
+  const view = f.inbox;
+  const height = Math.min(18, footerBase(f).free);
+  const panel = { rows: [] as string[], top: 0, bodyHeight: Math.max(0, height - 1), maxTop: 0 };
+  if (!view || height <= 0) return panel;
+  if (height === 1) return { ...panel, rows: [fit(dim("esc closes question"), f.cols)] };
+  const title = view.state === "error" ? "questions · error" : "questions";
+  const room = panel.bodyHeight;
+  const notice = view.notice ? wrap(plainText(view.notice), f.cols).slice(0, Math.max(0, room - (view.question ? 3 : 1))) : [];
+  const content = view.question ? questionRows(view.question, f.cols, room - notice.length)
+    : [...view.lines.slice(0, Math.max(0, room - notice.length - 1)), dim("esc/tab close")];
+  return { ...panel, rows: [bold(title), ...notice.map(dim), ...content].map(row => fit(row, f.cols)) };
 }
 
-function scrollPanel(f: Frame, view: Help | null | undefined, title: string, shortTitle: string, inbox = false): ReturnType<typeof helpPanel> {
+function scrollPanel(f: Frame, view: Help | null | undefined, title: string, shortTitle: string): ReturnType<typeof helpPanel> {
   const { free } = footerBase(f);
   // stickyRows already reserves one body row; leave two more for content and its separator.
   const height = Math.min(free, 18, Math.max(1, Math.floor(f.rows * 0.65)), Math.max(1, free - 2));
@@ -277,12 +267,10 @@ function scrollPanel(f: Frame, view: Help | null | undefined, title: string, sho
   title = f.cols >= 48 ? title : shortTitle;
   const gap = f.cols - visibleLength(title) - visibleLength(range) - 2;
   const heading = bold(title) + (gap > 0 && range ? " ".repeat(gap) + dim(range) : "");
-  const hint = inbox
-    ? f.cols >= 64 ? "esc/tab close · shift+tab questions · ↑↓/pgup/pgdn · r refresh" : f.cols >= 38 ? "esc close · shift+tab switch · r refresh" : "esc close · shift+tab"
-    : f.cols >= 58 ? "↑↓ / wheel scroll · pgup/pgdn · home/end · esc close" : f.cols >= 24 ? "↑↓ scroll · esc close" : "esc close · ↑↓";
+  const hint = f.cols >= 58 ? "↑↓ / wheel scroll · pgup/pgdn · home/end · esc close" : f.cols >= 24 ? "↑↓ scroll · esc close" : "esc close · ↑↓";
   // Even when only one panel row fits, dismissal stays discoverable. If no
   // rows fit the help key layer still owns keys, like other hidden modals.
-  const rows = height === 1 ? [dim(`esc close ${inbox ? "inbox" : "help"}`)] : [heading, ...headingRows, ...lines.slice(top, top + bodyHeight), dim(hint)];
+  const rows = height === 1 ? [dim("esc close help")] : [heading, ...headingRows, ...lines.slice(top, top + bodyHeight), dim(hint)];
   return { rows: rows.map(row => fit(row, f.cols)), top, bodyHeight, maxTop };
 }
 

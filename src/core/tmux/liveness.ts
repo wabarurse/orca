@@ -95,7 +95,7 @@ export async function listAgents(project: string): Promise<AgentInfo[]> {
     const removedAt = archived.get(name);
     const started = Date.parse(state?.startedAt ?? times.startedAt ?? "");
     const removed = removedAt !== undefined && !live.has(name) && !(started > removedAt);
-    return { name, live: live.has(name), status: row.status, inventoryComplete: snapshot.inventoryComplete, queuedMessages: row.queuedMessages,
+    return { name, run: state?.run, live: live.has(name), status: row.status, inventoryComplete: snapshot.inventoryComplete, queuedMessages: row.queuedMessages,
       ...times, ...(lastActiveAt ? { lastActiveAt } : {}), ...(tasks.has(name) ? { openTask: true } : {}), ...(removed ? { archived: true } : {}) };
   }));
   return agents.sort(byActivity);

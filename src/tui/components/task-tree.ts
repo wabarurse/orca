@@ -1,3 +1,4 @@
+import { workColumns, workRows } from "./work-view";
 import { publicTaskStatus, type TaskDisplayStatus } from "../../protocol/task";
 import { taskPublicationMilestone } from "../../protocol/task";
 import { check, type Task, type TaskTreeView } from "../../protocol/task";
@@ -8,6 +9,7 @@ export interface TaskTreeOptions {
   cols: number; rows: number; selectedId?: string;
   /** Independent list and details line offsets; caller owns scrolling. */
   graphY?: number; detailY?: number; revealSelected?: boolean;
+  workView?: boolean; history?: boolean;
   collapsed?: ReadonlySet<string>; frame?: number;
 }
 export interface TaskTreeHit { id: string; number: number; row: number; col: number; width: number }
@@ -20,7 +22,7 @@ export interface TaskTreeRender {
   details: { height: number; y: number; rows: number };
 }
 export interface OutlineNode { id: string; depth: number; parent?: string; children: string[] }
-interface Panels { cols: number; rows: number; graphCols: number; graphRows: number; detailCols: number; detailRows: number }
+interface Panels { workView?: boolean; cols: number; rows: number; graphCols: number; graphRows: number; detailCols: number; detailRows: number }
 const size = (n: number, max: number) => Number.isFinite(n) ? Math.max(1, Math.min(max, Math.floor(n))) : 1;
 const offset = (n: number | undefined, max: number) => Number.isFinite(n) ? Math.max(0, Math.min(max, Math.floor(n!))) : 0;
 /** wordWrap alone permits a two-cell grapheme in a one-cell column. */
@@ -35,6 +37,11 @@ function safeLines(value: string, cols: number): string[] {
 /** The tree is the main panel: ~60% of the rows, shrunk to its node count; details take the rest (title, blank, footer = 3). */
 function panels(options: TaskTreeOptions, nodeCount = Infinity): Panels {
   const cols = size(options.cols, 500), rows = size(options.rows, 200);
+  const widths = workColumns(cols);
+  if (options.workView && widths.split) {
+    const bodyRows = Math.max(0, rows - 2);
+    return { cols, rows, graphCols: widths.left, detailCols: widths.right, graphRows: bodyRows, detailRows: bodyRows, workView: true };
+  }
   const graphCols = cols, detailCols = cols;
   const graphRows = Math.max(1, Math.min(Math.max(1, nodeCount), Math.floor((rows - 3) * 0.6)));
   const detailRows = Math.max(0, rows - graphRows - 3);
@@ -60,9 +67,9 @@ function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: num
 /** A single canonical identity, placed under its lowest-UUID prerequisite.
  * Other prerequisites remain explicit references, never implied tree edges.
  */
-function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>): OutlineNode[] {
+function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>, history = false): OutlineNode[] {
   dependencyLayers(tasks); // Validate against retained SQL records before hiding membership.
-  const visible = new Set(tasks.filter(t => !t.removedAt).map(t => t.id.toLowerCase()));
+  const visible = new Set(tasks.filter(t => history ? !!t.archive : !t.removedAt).map(t => t.id.toLowerCase()));
   tasks = tasks.filter(t => visible.has(t.id.toLowerCase())).map(t => ({ ...t, dependsOn: t.dependsOn.filter(id => visible.has(id.toLowerCase())) }));
   const { parents } = dependencyLayers(tasks);
   const primary = parents.map(ps => [...ps].sort((a, b) => a - b)[0]);
@@ -270,6 +277,10 @@ function detailColumns(tasks: TreeTask[], selected: TreeTask, cols: number): str
 
 const LEGEND = "├─ first prerequisite · +#n other prerequisites · ▾▸ fold";
 function compose(p: Panels, graph: string[], detail: string[], detailY: number, footer: string): string[] {
+  if (p.workView) {
+    const left = Array.from({ length: p.graphRows }, (_, row) => graph[row] ?? "");
+    return [...workRows("TASKS", p.cols, left, detail.slice(detailY, detailY + p.detailRows)), fit(footer, p.cols)].slice(0, p.rows);
+  }
   const lines = [p.cols >= 70 ? fit(`TASKS  ${dim(LEGEND)}`, p.cols) : safeLines("TASKS", p.cols)[0]!];
   for (let row = 0; row < p.graphRows; row++) lines.push(graph[row] ?? "");
   lines.push(dim("─".repeat(p.cols)));
@@ -291,7 +302,7 @@ export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options:
   let p = panels(options);
   try {
     const tasks = treeTasks(input), collapsed = options.collapsed ?? new Set<string>(), frame = options.frame ?? 0;
-    const nodes = outline(tasks, collapsed);
+    const nodes = outline(tasks, collapsed, options.history);
     p = panels(options, nodes.length);
     const selected = tasks.find(t => t.id === options.selectedId && nodes.some(n => n.id === t.id)) ?? tasks.find(t => t.id === nodes[0]?.id);
     const view = { cols: p.graphCols, rows: p.graphRows, x: 0,
@@ -306,7 +317,7 @@ export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options:
       lines.push(treeRow(tasks, nodes, node, node.id === selected?.id, collapsed, frame, view.cols));
       hits.push({ id: task.id, number: task.number ?? i + 1, row: row + 1, col: 0, width: view.cols });
     }
-    const detail = detailLines(tasks, selected, p.detailCols, frame);
+    const detail = detailLines(tasks, selected, p.detailCols, frame).map(line => p.workView ? line.replace(/^Overview:/, "Description:") : line);
     const dy = offset(options.detailY, Math.max(0, detail.length - p.detailRows));
     if (!nodes.length) lines[0] = "No tasks";
     const footer = `Outline y=${view.y}/${Math.max(0, nodes.length - view.rows)}; details=${dy}/${Math.max(0, detail.length - p.detailRows)}`;

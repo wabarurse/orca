@@ -94,7 +94,7 @@ test("header caches model and filters subagent counts; unchanged background fram
   let model = "model-a", reads = 0;
   const app = new App({ term, clock, pollMs: 100_000, taskCount: async () => [], projectModel: async () => { reads++; return model; }, agents: async () => [{ name: "orchestrator", live: true }, { name: "worker-a", live: true }, { name: "reviewer-a", live: true }, { name: "worker-old", live: false }], openOrchestrator: fakeOrchestrators().openOrchestrator });
   const running = app.run("header-test");
-  await until(() => term.screen().includes("model-a") && term.screen().includes("2 agents running │ 0 tasks"));
+  await until(() => term.screen().includes("model-a") && term.screen().includes("2 agents | 0 tasks"));
   const readOnce = reads;
   app.frame(); app.frame();
   expect(reads).toBe(readOnce);
