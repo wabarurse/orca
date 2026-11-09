@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -10,7 +10,8 @@ import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { content, consume, pending, put } from "../inbox/inbox";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
-import { imageBlock, imageContent, loadImage, materializeImages, pendingImageInputs, saveImage, saveImageInput, validateRefs } from "./images";
+import { ensureSessionId, readSession } from "../projects/session-id";
+import { imageBlock, imageContent, imageScopes, legacyImageScope, sessionImageScope, loadImage, materializeImages, pendingImageInputs, saveImage, saveImageInput, validateRefs } from "./images";
 import { MAX_IMAGE_BYTES, sniffImage, validatedBase64, validateImage } from "../../../providers/images";
 import { forwardImages } from "../../tools/attachments";
 import { message } from "../../tools/message";
@@ -373,4 +374,49 @@ test.each(["claude-fable-5-1", "claude-unknown"])("%s sends validated images unc
   await expect(provider.complete({ model, messages: malformed, tools: [], maxTokens: 100, onText() {} })).rejects.toThrow("base64");
   expect(() => toResponses(malformed)).toThrow("base64");
   expect(calls).toBe(1);
+});
+
+test("new image refs derive their scope from the stable sessionId, minted lazily and never changed", async () => {
+  const p = project();
+  expect(readSession(p)).toBeUndefined();
+  const a = await saveImage(p, png()), b = await saveImage(p, png());
+  const { sessionId } = readSession(p)!;
+  expect(a.scope).toBe(sessionImageScope(sessionId));
+  expect(b.scope).toBe(a.scope);
+  expect(a.scope).not.toBe(legacyImageScope(p));
+  expect(imageScopes(p).current).toBe(a.scope);
+  expect(await ensureSessionId(p)).toBe(sessionId);
+  // Concurrent first minting yields one id.
+  const q = project();
+  const ids = await Promise.all([ensureSessionId(q), ensureSessionId(q), ensureSessionId(q)]);
+  expect(new Set(ids).size).toBe(1);
+});
+
+test("legacy folder-derived refs keep loading for existing projects, but only for their own project", async () => {
+  const a = project(), b = project(), ref = await saveImage(a, png());
+  const legacyRef = { ...ref, scope: legacyImageScope(a) };
+  expect(await loadImage(a, legacyRef)).toEqual(png());
+  await expect(loadImage(b, legacyRef)).rejects.toThrow("another/deleted");
+  await expect(loadImage(a, { ...ref, scope: "0".repeat(64) })).rejects.toThrow("another/deleted");
+});
+
+test("image-bearing transcript and images load byte-identically in a project with another folder id and inode", async () => {
+  const a = project(), ref = await saveImage(a, png());
+  const transcript = open(paths.transcript(a, "orchestrator"));
+  await transcript.append({ type: "message", message: { role: "user", content: imageContent("look", [ref]) } });
+  const b = project();
+  mkdirSync(join(paths.project(b), "transcript"), { recursive: true });
+  mkdirSync(join(paths.project(b), "images"), { recursive: true });
+  cpSync(paths.transcript(a, "orchestrator"), paths.transcript(b, "orchestrator"));
+  cpSync(join(paths.project(a), "images"), join(paths.project(b), "images"), { recursive: true });
+  cpSync(join(paths.project(a), "session.json"), join(paths.project(b), "session.json"));
+  expect(statSync(paths.project(a)).ino).not.toBe(statSync(paths.project(b)).ino);
+  const moved = await open(paths.transcript(b, "orchestrator")).chain();
+  const out = await materializeImages(b, moved);
+  expect(JSON.stringify(out)).toContain(png().toString("base64"));
+  expect(await loadImage(b, ref)).toEqual(png());
+  // Without the session record the same bytes are refused, as before.
+  const c = project();
+  cpSync(join(paths.project(a), "images"), join(paths.project(c), "images"), { recursive: true });
+  await expect(loadImage(c, ref)).rejects.toThrow("another/deleted");
 });

@@ -1,4 +1,5 @@
 export { assertProjectIdentity, conversationTurnLock, projectIdentity, matchesProjectIdentity, turnLocks, turnLocksHeld, withProjectStateLock } from "./state";
+export * as session from "./session";
 export { effectiveSettings, effectiveSettingsReport, setEffort, settingChange } from "./project-settings";
 export { accountForModel, effectiveAccount, lastProviderModel, saveProjectAccount, seedProjectAccount } from "./project-account";
 export { effectiveModel, projectModelResolver, roleOverrides, saveProjectModel, saveRoleModel, validateModel } from "./project-model";
