@@ -27,7 +27,13 @@ test("accounting includes foreground, summaries, tools, search and retries witho
 test("failure diagnostics identify the selected account and HTTP status without exposing payloads", async () => {
   prior = process.env.ORCA_HOME; home = await mkdtemp(join(tmpdir(), "orca-usage-error-")); process.env.ORCA_HOME = home;
   const provider = metered({ ...fakeProvider([]), account: "anthropic:personal", complete: async () => { throw new ModelRequestError("exhausted", 429); } });
-  await expect(provider.complete({ model: "test", messages: [], tools: [], maxTokens: 10, onText() {} })).rejects.toThrow("anthropic:personal: Model request exhausted (HTTP 429");
+  await expect(provider.complete({ model: "test", messages: [], tools: [], maxTokens: 10, onText() {} })).rejects.toThrow("anthropic:personal: Provider rate limit");
   const events = (await readFile(join(home, ".runtime/usage.jsonl"), "utf8")).trim().split("\n").map(s => JSON.parse(s));
-  expect(events[0]).toMatchObject({ account: "anthropic:personal", errorKind: "exhausted", httpStatus: 429, ok: false });
+  expect(events[0]).toMatchObject({ account: "anthropic:personal", errorKind: "exhausted", errorReason: "rate-limit", httpStatus: 429, ok: false });
+});
+
+test("account-specific authentication guidance survives metering", async () => {
+  prior = process.env.ORCA_HOME; home = await mkdtemp(join(tmpdir(), "orca-usage-auth-")); process.env.ORCA_HOME = home;
+  const provider = metered({ ...fakeProvider([]), account: "openai:work", complete: async () => { throw new ModelRequestError("permanent", 401, "authentication"); } });
+  await expect(provider.complete({ model: "test", messages: [], tools: [], maxTokens: 10, onText() {} })).rejects.toThrow("Run /login openai work.");
 });

@@ -3,6 +3,14 @@ import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { paths } from "../config";
 
+export class CredentialError extends Error {
+  constructor(readonly reason: "credentials-invalid" | "credential-lock" | "oauth-connection" | "oauth-http" | "oauth-response",
+    message: string, readonly oauthStatus?: number) {
+    super(message);
+    this.name = "CredentialError";
+  }
+}
+
 export interface OAuthTokens {
   accessToken: string;
   refreshToken: string;
@@ -49,7 +57,7 @@ export async function withCredentialLock<T>(path: string, action: () => Promise<
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       // Never steal a lock on a timer: a paused worker can still own it.
-      if (Date.now() >= deadline) throw new Error(`subscription credential lock timed out: ${lock}. if a process was killed, stop the agents and remove this lock directory before retrying.`);
+      if (Date.now() >= deadline) throw new CredentialError("credential-lock", `subscription credential lock timed out: ${lock}. if a process was killed, stop the agents and remove this lock directory before retrying.`);
       await Bun.sleep(50);
     }
   }

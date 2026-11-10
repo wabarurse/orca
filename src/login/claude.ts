@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../config";
-import { loginOAuth, validateProfile, withCredentialLock, writeTokens, type Fetch, type LoginOptions, type OAuthTokens as ClaudeTokens } from "./oauth";
+import { CredentialError, loginOAuth, validateProfile, withCredentialLock, writeTokens, type Fetch, type LoginOptions, type OAuthTokens as ClaudeTokens } from "./oauth";
 export { validateProfile } from "./oauth";
 
 export const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -39,7 +39,7 @@ export async function readClaudeTokens(profile: string): Promise<ClaudeTokens | 
   try {
     return tokensFrom(await file.json());
   } catch {
-    throw new Error(`claude profile '${profile}' is invalid; run /login anthropic ${profile} again.`);
+    throw new CredentialError("credentials-invalid", `claude profile '${profile}' is invalid; run /login anthropic ${profile} again.`);
   }
 }
 
@@ -63,10 +63,10 @@ async function requestTokens(body: Record<string, string>, fetcher: Fetch, fallb
       redirect: "error",
     });
   } catch {
-    throw new Error("claude oauth request failed or timed out; try again.");
+    throw new CredentialError("oauth-connection", "claude oauth request failed or timed out; try again.");
   }
   // Never include the response body: providers can echo credentials on errors.
-  if (!response.ok) throw new Error(`claude oauth failed (http ${response.status}); run /login anthropic again.`);
+  if (!response.ok) throw new CredentialError("oauth-http", `claude oauth failed (http ${response.status}); run /login anthropic again.`, response.status);
   try {
     const data = await response.json() as Record<string, unknown>;
     if (typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in) || data.expires_in <= 0 ||
@@ -77,7 +77,7 @@ async function requestTokens(body: Record<string, string>, fetcher: Fetch, fallb
       expiresAt: Date.now() + data.expires_in * 1000,
     });
   } catch {
-    throw new Error("claude oauth returned invalid credentials; try logging in again.");
+    throw new CredentialError("oauth-response", "claude oauth returned invalid credentials; try logging in again.");
   }
 }
 
@@ -87,7 +87,7 @@ export function claudeCredentials(profile: string, fetcher: Fetch = fetch) {
   let previousToken: string | undefined;
   return async (opts?: { forceRefresh?: boolean }) => withCredentialLock(path, async () => {
     let tokens = await readClaudeTokens(profile);
-    if (!tokens) throw new Error(`claude profile '${profile}' is not signed in; run /login anthropic ${profile}.`);
+    if (!tokens) throw new CredentialError("credentials-invalid", `claude profile '${profile}' is not signed in; run /login anthropic ${profile}.`);
     // Another process may already have replaced the token rejected by this client.
     const rejected = opts?.forceRefresh && tokens.accessToken === previousToken;
     if (rejected || tokens.expiresAt <= Date.now() + REFRESH_MARGIN_MS) {

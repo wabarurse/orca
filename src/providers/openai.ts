@@ -1,3 +1,4 @@
+import { diagnoseModelError } from "./model-diagnostics";
 import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
 import { createHash } from "node:crypto";
 import { validatedBase64 } from "./images";
@@ -212,6 +213,7 @@ async function completedOutput(stream: AsyncIterable<CodexStreamEvent>, onText: 
       completed = output;
     }
     else if (FAILED_EVENTS.has(event.type)) {
+      if (!strict && drain) throw diagnoseModelError(event, true, "response");
       if (!strict && exhaustedQuota(event)) throw event; // Keep structured stream evidence for the persistent error path.
       if (strict) throw new SearchError("incomplete");
       throw new Error("codex response failed or was incomplete; no tool calls were executed.");
