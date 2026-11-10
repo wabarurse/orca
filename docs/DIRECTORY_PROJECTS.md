@@ -60,7 +60,9 @@ Existing conversation-specific account/model/role/effort/fast settings are prese
 - `/project-defaults inherit` clears its local setting overrides so it follows the directory defaults again.
 - `/project` shows the directory project's identity and location.
 - `/project rename <name>` changes the directory project's display name; `/rename` names the conversation.
-- `/project relink <directory>` validates a new original checkout before changing the directory reference. Active conversation turns, agents and unresolved commands block relinking. Validation failure leaves the old reference unchanged. Relinking changes metadata, not workspace contents.
+- `/project relink <directory>` validates a new original checkout before changing the directory reference. Active conversation turns, agents and commands that may still be running block relinking. Validation failure leaves the old reference unchanged. Relinking changes metadata, not workspace contents.
+
+Conversation deletion and directory relinking inspect recorded command supervisors, command PIDs and process groups. An old `unknown` result does not block them once all three are confirmed gone; the result remains unknown, not successful. Live processes, permission errors and missing process identities still block the action, with the command ID and reason in the error. These checks do not stop commands, retry them or send events to agents.
 
 Missing directories remain listed and conversations remain readable. Relink explicitly when a checkout moves; Orca does not infer identity from a remote URL or silently bind another repository.
 

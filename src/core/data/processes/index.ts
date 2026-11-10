@@ -1,4 +1,5 @@
 export { addProcessEvent, deliverProcessEvents, listProcesses, liveProcess, processDirectory, processOutput, readProcess, reconcileProcesses, saveProcess, type ProcessRecord } from "./store";
+export { processCleanupBlocker } from "./cleanup-guard";
 export { controlProcess, superviseProcess } from "./supervisor";
 export { recoverableProcesses } from "./store";
 export { launchProcess } from "./launch";
