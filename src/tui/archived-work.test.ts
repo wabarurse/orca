@@ -86,8 +86,8 @@ test("closed questions expand alongside open questions; restoring only changes l
 });
 
 test("image archive survives reopening, preserves bytes and can be viewed and restored with Vim", async () => {
-  const project = "archived-images", { app, term, stop } = await setup(project, { openImage: async path => { opened.push(path); } });
-  const opened: string[] = [];
+  const project = "archived-images", { app, term, stop } = await setup(project);
+  term.inlineImages = true;
   try {
     const ref = await saveImage(project, png());
     const record = open(paths.transcript(project, "orchestrator"));
@@ -100,8 +100,8 @@ test("image archive survives reopening, preserves bytes and can be viewed and re
     term.press({ name: "escape" }); term.type(" p");
     await until(() => term.screen().includes("▸ Archived (1)"));
     expect(term.screen()).not.toContain("Old screenshot");
-    term.type("lj"); await until(() => term.screen().includes(ref.id));
-    term.press({ name: "enter" }); await until(() => opened.length === 1);
+    term.type("lj"); await until(() => term.screen().includes("Old screenshot"));
+    await until(() => term.raw().includes("1337;File="));
     term.type("u"); await until(() => app.status(app.page!).endsWith("1 images"));
     expect(await Bun.file(path).bytes()).toEqual(before);
     expect(workArchive("another-conversation", "images")[ref.id]).toBeUndefined();

@@ -1,5 +1,5 @@
-// Explicitly opened questions in the composer-first TUI. Arrivals only update
-// the count; Ctrl+Q or /questions opens the oldest question BELOW the input.
+// Question state and answer delivery for the dedicated Questions page. Arrivals
+// only update the count; answering never opens a panel below the chat input.
 // Esc/Tab/Ctrl+Q closes without answering/skipping and restores the saved chat
 // draft; a typed answer remains with the question for reopening. Selecting
 // skip and pressing Enter skips; Ctrl+D deletes the shown question directly

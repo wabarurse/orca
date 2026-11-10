@@ -97,6 +97,7 @@ export class FakeScreen {
   /** OSC 11 queries seen, and the replies they got (the terminal's input, for the test to feed back). */
   queries = 0;
   replies: string[] = [];
+  imageWrites: { row: number; col: number; parameters: string; data: string }[] = [];
   /** Cursor on the visible screen (0-based). */
   row = 0;
   col = 0;
@@ -155,6 +156,10 @@ export class FakeScreen {
     [/^\x1b\[\?(\d+)([hl])/, (m) => this.mode(Number(m[1]), m[2] === "h")],
     [/^\x1b\[([0-9;:]*)m/, (m) => { this.bg = sgrBackground(m[1]!, this.bg); this.style = sgrStyle(m[1]!, this.style); }],
     [/^\x1b\]11;\?(?:\x07|\x1b\\)/, () => this.query()],
+    [/^\x1b\]1337;ReportCellSize(?:\x07|\x1b\\)/, () => {}],
+    [/^\x1b\]1337;File=([^:\x07\x1b]*):([A-Za-z0-9+/=]*)(?:\x07|\x1b\\)/, m => {
+      this.imageWrites.push({ row: this.row, col: this.col, parameters: m[1]!, data: m[2]! });
+    }],
     [/^\x1b\[([0-9;:]*)([ABCDGHJK])/, (m) => CSI[m[2]!]!(this, m[1] ? m[1].split(";").map((p) => Number(p) || 0) : [])],
     [/^\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/, () => {}], // OSC 8 links take no room
   ];

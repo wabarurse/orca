@@ -48,9 +48,9 @@ import { historyRows, type Line, type Shown } from "./conversation";
 import { appendHistory, keepable, loadHistory, remember, MAX_INPUT_HISTORY } from "./history";
 import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
-import { fileStore, pageQuestions, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
+import { fileStore, pageQuestions, questionPageRows, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
 import { clearChatView, visibleChatEntries, fromUserLines, replyLines, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
-import { deliveredImages, openDeliveredImage, type DeliveredImage } from "./commands";
+import { deliveredImages, deliveredImageData, type DeliveredImage } from "./commands";
 import { open } from "../core/data/transcripts";
 import { bold, dim, fit, sanitize, repositoryTitle } from "./components";
 import { commit, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
@@ -60,7 +60,7 @@ import { chapterRows, headerHeight } from "./header";
 import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./conversation";
 import { Calls, collapseCalls, groupStart, groupStarts } from "./conversation";
 import type { ToolCall, ToolOutcome } from "../protocol";
-import { stickyRows, stickyUpdate, type StickyScreen } from "./screen";
+import { stickyRows, imagePreviewUpdate, type ImagePlacement, type StickyScreen } from "./screen";
 
 export { helpLines } from "./footer";
 export { lineRows, type Line } from "./conversation";
@@ -139,7 +139,7 @@ export class App {
     view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
-    const controls = [(this.vimCommand !== undefined ? `:${this.vimCommand}` : view.confirmAbandon?.text) ?? (view.confirmRemoval ? `Archive ${view.confirmRemoval.length} settled task(s)? y confirm / n cancel` : view.notice ?? "Esc chat · a expand archived · d archive · D bulk · u restore · A abandon · r refresh"),
+    const controls = [(this.vimCommand !== undefined ? `:${this.vimCommand}` : view.confirmAbandon?.text) ?? (view.confirmRemoval ? `Archive ${view.confirmRemoval.length} settled task(s)? y confirm / n cancel` : view.notice ?? "q/Esc back · a expand archived · d archive · D bulk · u restore · A abandon · r refresh"),
       view.detailsFocused ? "Details: ↑↓ scroll · ← list · number + Enter jump" : "number + Enter jump · ↑↓ select · ← fold/parent · → unfold/details · Shift+Tab next"].map(line => fit(line, cols));
     if (this.vimMode && lines.length) lines[0] = fit(`[${this.vimMode.toUpperCase()}] ${lines[0]}`, cols);
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
@@ -219,7 +219,7 @@ export class App {
   /** `r`: say a re-read started and when it landed; an unchanged registry otherwise changes nothing visible. */
   private async manualTreeRefresh(view: TaskTreeState): Promise<void> {
     view.notice = "Refreshing…"; this.draw(); await this.refreshTaskTree();
-    if (this.taskTree === view && view.notice === "Refreshing…") { view.notice = view.error ? undefined : `Refreshed ${formatDateTime(this.clock.now())} · Esc chat`; this.draw(); }
+    if (this.taskTree === view && view.notice === "Refreshing…") { view.notice = view.error ? undefined : `Refreshed ${formatDateTime(this.clock.now())} · q/Esc back`; this.draw(); }
   }
 
   private async confirmTaskRemoval(view: TaskTreeState): Promise<void> {
@@ -407,7 +407,11 @@ export class App {
     this.questions = new Questions({
       page: () => app.page,
       valid: page => !app.closed && app.pages.includes(page as Page) && !(page as Page).deleting,
-      opening: () => { app.cancelClear(); app.modelGeneration++; app.workView = null; app.helpTop = null; app.menu = null; app.projectList = null; },
+      opening: page => {
+        app.cancelClear(); app.modelGeneration++; app.helpTop = null; app.menu = null; app.projectList = null; app.taskTree = null;
+        if (app.workView?.kind !== "questions" || app.workView.page !== page)
+          app.workView = { page: page as Page, kind: "questions", agents: [], detail: 0, focused: true, history: false };
+      },
       get input() { return app.input; },
       set input(v) { app.input = { text: v.text, cursor: v.cursor }; },
       say: (line, page) => app.note(line, page as Page),
@@ -802,7 +806,8 @@ export class App {
   }
 
   private inputWidth(prompt: string): number {
-    return inputGeometry(prompt, this.deps.term.cols, this.composerRows()).width;
+    const cols = this.workView?.kind === "questions" && this.page?.questions.expanded ? workColumns(this.deps.term.cols).right : this.deps.term.cols;
+    return inputGeometry(prompt, cols, this.composerRows()).width;
   }
 
   private prompt(): string {
@@ -847,12 +852,14 @@ export class App {
     this.lastFrame = Date.now();
     try {
       if (!this.taskTree) this.questions.sync(); // the input holds the chat draft or the shown question's answer
+      this.imagePlacement = undefined;
       const next = this.workView ? this.workScreen() : this.taskTree ? this.treeScreen() : this.viewport(this.frame());
-      const output = stickyUpdate(next, this.screen);
+      const output = imagePreviewUpdate(next, this.screen, this.imagePlacement, this.paintedImage);
       if (!this.taskTree && !this.workView) this.needReprint = false;
       // Synchronized output, so the terminal shows the whole update at once.
       if (output) this.deps.term.write(`\x1b[?2026h${output}\x1b[?2026l`);
       this.screen = next;
+      this.paintedImage = this.imagePlacement;
       this.deps.term.eraseOnExit("");
     } catch (err) {
       // A bad frame must not take the app down. Its lines are still in the page's history; say so once and reprint next time.
@@ -1379,6 +1386,7 @@ export class App {
   /** What opening any menu first closes or invalidates. */
   private beginMenu(modelOperation?: number): void {
     this.clipboardGeneration++;
+    if (this.page) this.questions.hide(this.page);
     this.workView = null; this.taskTree = null;
     this.cancelClear();
     if (modelOperation === undefined) this.modelGeneration++;
@@ -1397,7 +1405,22 @@ export class App {
     loading?: boolean; notice?: string; confirm?: { text: string; run: () => Promise<void> };
     busy?: boolean;
     archived?: Record<string, boolean>;
+    preview?: { id: string; loading: boolean; data?: Awaited<ReturnType<typeof deliveredImageData>>; error?: string };
   } | null = null;
+  private imagePlacement?: ImagePlacement;
+  private paintedImage?: ImagePlacement;
+
+  /** At most one read per view at a time; rapid navigation skips stale results. */
+  private previewImage(view: NonNullable<App["workView"]>, image: DeliveredImage): void {
+    if (view.preview?.loading || view.preview?.id === image.ref.id && (view.preview.data || view.preview.error)) return;
+    const preview: NonNullable<typeof view.preview> = view.preview = { id: image.ref.id, loading: true };
+    void (this.deps.imageData ?? deliveredImageData)(view.page.project, image.ref).then(data => {
+      if (this.workView === view && view.selected === image.ref.id) preview.data = data;
+    }, error => { preview.error = error instanceof Error ? error.message : String(error); }).finally(() => {
+      preview.loading = false;
+      if (this.workView === view) this.draw();
+    });
+  }
 
   private async openWorkView(kind: "agents" | "questions" | "images", page = this.page): Promise<void> {
     if (!page || !this.validPage(page)) return;
@@ -1458,19 +1481,55 @@ export class App {
     while (left.length < listRows) left.push("");
     const detail = workDetails(items[selected]?.detail ?? "", widths.right);
     view.detail = Math.max(0, Math.min(view.detail, detail.length - detailRows));
-    const right = detail.slice(view.detail, view.detail + detailRows);
+    const question = view.kind === "questions" ? this.questions.view() : null;
+    const form = question ? questionPageRows(question, { ...this.input, prompt: "answer> " }, widths.right, detailRows) : undefined;
+    let right = form?.rows ?? detail.slice(view.detail, view.detail + detailRows);
+    const image = items[selected]?.image;
+    if (view.kind === "images" && image) {
+      if (!this.deps.term.inlineImages) right = [...right.slice(0, 4), "", ...workDetails("Inline previews need image support in the terminal. Update Hermit to enable them.", widths.right)];
+      else {
+        this.previewImage(view, image);
+        const preview = view.preview, data = preview?.id === image.ref.id ? preview.data : undefined;
+        const caption = workDetails(image.text || "Image", widths.right).slice(0, Math.min(3, Math.max(0, detailRows - 2)));
+        right = [...caption, "", ...(data ? [] : workDetails(preview?.id === image.ref.id && preview.error ? preview.error : "Loading image…", widths.right))];
+        const height = detailRows - caption.length - 1;
+        if (data && height > 0) this.imagePlacement = { id: image.ref.id, ...data,
+          row: (widths.split ? 1 : listRows + 2) + caption.length + 1, col: widths.split ? widths.left + 3 : 0, width: widths.right, height,
+          cellWidth: this.deps.term.imageCell?.width ?? 8, cellHeight: this.deps.term.imageCell?.height ?? 16 };
+      }
+    }
     const title = view.kind.toUpperCase() + (this.vimMode ? ` · ${this.vimMode.toUpperCase()}` : "");
     const lines = workRows(title, cols, left, right).slice(0, Math.max(0, rows - 2));
     while (lines.length < rows - 2) lines.push("");
-    lines.push(fit(sanitize(view.confirm?.text ?? (this.vimCommand !== undefined ? `:${this.vimCommand}` : view.notice) ?? "↑↓ select · ←→ focus · Enter open · Esc chat"), cols));
-    lines.push(fit(view.confirm ? "y confirm · n/Esc cancel" : `a expand archived · d archive · D bulk · u restore · r refresh${view.kind === "agents" ? " · s stop" : ""}`, cols));
-    return { rows: lines.slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0, bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
+    const notice = view.page.questions.error && view.kind === "questions" ? `questions unavailable: ${view.page.questions.error}`
+      : view.page.questions.closing && view.kind === "questions" ? QUESTION_PROGRESS[view.page.questions.closing] : this.noteRow(view.page) ?? view.notice;
+    lines.push(fit(sanitize(view.confirm?.text ?? (this.vimCommand !== undefined ? `:${this.vimCommand}` : notice) ?? (question ? (this.vimMode === "insert" ? "Insert · Esc normal · Enter send" : this.vimMode === "normal" ? "i answer · digits choose · q back" : "Type answer · Enter send · Esc back") : view.kind === "images" ? "↑↓ select · automatic preview · q/Esc back" : "↑↓ select · ←→ focus · Enter open · q/Esc back")), cols));
+    lines.push(fit(view.confirm ? "y confirm · n/Esc cancel" : question ? "Tab back to list · Ctrl+D dismiss" : `a expand archived · d archive · D bulk · u restore · r refresh${view.kind === "agents" ? " · s stop" : ""}`, cols));
+    return { rows: lines.slice(0, rows), cols, cursor: form?.cursor ? Math.min(rows - 1, (widths.split ? 1 : listRows + 2) + form.cursor.row) : Math.max(0, rows - 1),
+      col: form?.cursor ? (widths.split ? widths.left + 3 : 0) + form.cursor.col : 0, bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
   }
 
   private async workKey(k: Key): Promise<void> {
     const view = this.workView!;
     const key = k.name === "char" ? k.text : k.name;
     if (view.busy) return;
+    if (view.kind === "questions" && view.page.questions.expanded) {
+      if (key === "escape" && this.vimMode === "insert") { this.vimMode = "normal"; this.draw(); return; }
+      if (key === "escape" || key === "tab") { this.questions.hide(view.page); view.focused = false; this.draw(); return; }
+      if (view.page.questions.error || view.page.questions.closing) return;
+      if (this.vimMode === "normal" && key === "i") {
+        if (this.questions.startAnswer(view.page)) this.vimMode = "insert";
+      } else if (!(this.vimMode === "normal" && k.name === "char" && !/^[1-9]$/.test(k.text ?? ""))) {
+        const before = view.page.questions.open.map(q => q.id).join();
+        if (this.questions.takes(k)) await this.questions.handle(k);
+        else if (this.questions.answering()) this.edit(k);
+        if (before !== view.page.questions.open.map(q => q.id).join()) {
+          this.questions.hide(view.page); if (this.vimMode) this.vimMode = "normal";
+          await this.readWorkView(view);
+        }
+      }
+      this.draw(); return;
+    }
     if (view.confirm) {
       if (key === "y") {
         view.busy = true;
@@ -1517,22 +1576,15 @@ export class App {
       } else view.notice = "No items to archive.";
       this.draw(); return;
     }
-    if (key === "enter" && selected?.image) {
-      view.busy = true;
-      try { view.notice = await openDeliveredImage(view.page.project, selected.image.ref, this.deps.openImage); }
-      catch (error) { view.notice = error instanceof Error ? error.message : String(error); }
-      finally { view.busy = false; if (this.workView === view) this.draw(); }
-      return;
-    }
+    if (key === "enter" && selected?.image) return; // selection already previews it in this page
     if (key === "enter" && selected) {
       if (selected.section) return;
       if (selected.question && selected.question.status !== "open") { view.notice = "Closed question; saved answer and reason are shown in details."; this.draw(); return; }
-      this.workView = null;
-      if (agent) { view.page.view?.leave(); await this.attach(view.page, agent.name, agent.live); }
+      if (agent) { this.workView = null; view.page.view?.leave(); await this.attach(view.page, agent.name, agent.live); }
       else { view.page.view?.leave(); await this.questions.command(view.page, selected.id); }
       this.reprint(); return;
     }
-    if (key === "r") { await this.readWorkView(view); return; }
+    if (key === "r") { view.preview = undefined; await this.readWorkView(view); return; }
     if (key === "s" && agent?.live && agent.run && agent.status === "running") {
       const run = agent.run;
       view.confirm = { text: `Stop ${agent.name}?`, run: async () => {
@@ -1715,7 +1767,7 @@ export class App {
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/tasks", { run: () => this.toggleTaskTree(), help: { group: "conversation", label: "/tasks", description: "open the task list" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.openWorkView("agents", page!), help: { group: "conversation", label: "/agents", description: "open agent runs and history" } }],
-    ["/images", { needsPage: true, run: (_, page) => this.openWorkView("images", page), help: { group: "conversation", label: "/images", description: "browse images sent to you; Enter opens the selected image" } }],
+    ["/images", { needsPage: true, run: (_, page) => this.openWorkView("images", page), help: { group: "conversation", label: "/images", description: "browse images sent to you; selection previews them here" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page, false), help: { group: "conversation", label: "/clear", description: "clear visible chat only; keep model context, history and cache" } }],
@@ -2172,24 +2224,28 @@ export class App {
   }
 
   async onKey(k: Key): Promise<void> {
+    this.clearNote(k);
     const confirming = this.clearing || this.workView?.confirm || this.taskTree?.confirmRemoval || this.taskTree?.confirmAbandon || this.projectList?.confirm;
     if (!this.keyEcho && !confirming) {
-      if (k.ctrl && !k.alt && ["a", "q", "t"].includes(k.name)) return this.chords.get(k.name)!();
-      const text = k.name === "char" && !k.ctrl && !k.alt ? k.text : undefined;
+      if (k.ctrl && !k.alt && this.chords.has(k.name)) return this.chords.get(k.name)!();
+      if (k.ctrl && !k.alt && k.name === "b") return this.projectsKey(k);
+      const text = !k.ctrl && !k.alt ? (k.name === "char" ? k.text : k.shift && /^[hl]$/.test(k.name) ? k.name.toUpperCase() : undefined) : undefined;
       if (this.vimMode === "normal" && (this.vimCommand !== undefined || text === " " || text === ":" ||
         this.vimPrefix?.key === " " || this.vimPrefix?.key === "g" && (text === "t" || text === "T"))) {
         await this.vimKey(k);
         return;
       }
-      if (this.vimMode === "normal" && (text === "z" || text === "x")) {
+      if (this.vimMode === "normal" && (text === "H" || text === "L")) {
         this.vimPrefix = undefined; this.menu = null; this.projectList = null;
-        this.switchPage(text === "z" ? -1 : 1); return;
+        this.switchPage(text === "H" ? -1 : 1); return;
       }
+      if (text === "q" && (this.vimMode === "normal" || !this.vimMode && !this.questions.answering()) &&
+        (this.workView || this.taskTree || this.projectList || this.menu || this.helpTop !== null || this.page?.view)) k = { name: "escape" };
     }
     // Ctrl+C retains the global cancellation/double-press exit path even when
     // the overlay is loading, failed, or waiting on an unresponsive registry.
     if (!(k.ctrl && k.name === "c")) {
-      if (this.workView) return this.workKey(this.workView.confirm ? k : this.vimNavigation(k));
+      if (this.workView && !this.keyEcho) return this.workKey(this.workView.confirm ? k : this.vimNavigation(k));
       if (this.taskTree && !this.taskTree.confirmRemoval && !this.taskTree.confirmAbandon && this.vimMode === "normal"
         && this.taskTree.selectedId !== ARCHIVED_SECTION
         && k.name === "char" && !k.ctrl && !k.alt && (k.text === "h" || k.text === "l")) {
@@ -2241,6 +2297,7 @@ export class App {
   /** Explicit modal, independent of chat/answer buffers and conversation scroll. */
   private toggleHelp(): void {
     if (this.vimMode) this.vimMode = "normal";
+    if (this.page) this.questions.hide(this.page);
     this.workView = null; this.taskTree = null;
     this.cancelClear();
     this.helpTop = this.helpTop === null ? 0 : null;

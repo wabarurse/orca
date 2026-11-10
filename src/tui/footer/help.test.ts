@@ -81,7 +81,7 @@ test("help wraps without overflow and sticky geometry/cursor survive tiny termin
   }
 });
 
-test("menu/projects precede help, help precedes questions, and closing leaves no persistent hints", () => {
+test("menu/projects precede help; closing never reveals the removed question footer", () => {
   const f = frame(80, 24);
   f.question = { text: "Hidden question", options: [], index: 0, count: 1, mode: "answer" };
   expect(plain(liveRows(f).rows)).not.toContain("Hidden question");
@@ -92,7 +92,7 @@ test("menu/projects precede help, help precedes questions, and closing leaves no
   expect(plain(liveRows(f).rows)).toContain("Menu panel");
   expect(plain(liveRows(f).rows)).not.toContain("Project panel");
   f.menu = null; f.projects = null; f.help = null;
-  expect(plain(liveRows(f).rows)).toContain("Hidden question");
+  expect(plain(liveRows(f).rows)).not.toContain("Hidden question");
   f.question = null;
   expect(plain(liveRows(f).rows)).not.toMatch(/help|esc|ctrl|↑↓/);
 });

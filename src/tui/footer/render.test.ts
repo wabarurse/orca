@@ -319,10 +319,10 @@ describe("questions", () => {
     expect(two[1]).toBe(PICK);
     expect(questionRows(long, 30, 3).map(strip).slice(1)).toEqual(["❯ 2. sqlite", PICK]);
     expect(questionRows(long, 30, 0)).toEqual([]);
-    // In the live region: a 5-row terminal keeps the hint (cut to the width), the status line and the input.
+    // Question state cannot resurrect the old form under the chat composer.
     const live = rows({ cols: 30, rows: 5, input: { prompt: "> ", text: "", cursor: 0 }, menu: null, status: "status", question: long });
     expect(live.slice(0, 2)).toEqual(["> ", "status"]);
-    expect(live.at(-1)).toBe(PICK.slice(0, 29) + "…");
+    expect(live.join("\n")).not.toContain("choose");
     expect(live.length).toBeLessThanOrEqual(5);
   });
 
