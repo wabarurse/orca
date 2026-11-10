@@ -26,7 +26,7 @@ import type { Tracker } from "../../tmux";
 import { loadConfig, paths, type Config } from "../../../config";
 import { consume, pending, pendingInput, put, userInEpoch } from "../../data/inbox";
 import type { Message } from "../../../protocol";
-import { rolePrompt } from "../../prompt";
+import { rolePrompt, RESPONSE_STYLE } from "../../prompt";
 import type { Provider } from "../../../providers";
 import { registry } from "../../tools";
 import { toolsFor, type Tool, type ToolResult } from "../../tools";
@@ -305,7 +305,7 @@ async function turnAgent(deps: OrchestratorDeps, transcript: Transcript, compact
   const config = await loadConfig();
   const loadProvider = deps.loadProvider ?? (deps.provider ? async () => deps.provider! : undefined);
   return createAgent({
-    loadContext: query => agentContext(deps.project, paths.repo(deps.project), query),
+    loadContext: async query => ({ ...await agentContext(deps.project, paths.repo(deps.project), query), "response-style": RESPONSE_STYLE }),
     signal, requireInbox: true, onContext,
     toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(deps.project, loadProvider, "orchestrator"),

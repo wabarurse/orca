@@ -16,6 +16,7 @@ import { startTaskRun, stopTaskRun } from "../../data/tasks/tasks";
 import { task } from "../../tools/task";
 import { makeSpawn } from "../../tools/spawn";
 import { open } from "../../data/transcripts/transcript";
+import { RESPONSE_STYLE } from "../../prompt";
 
 const home = mkdtempSync(join(tmpdir(), "orca-e2e-"));
 process.env.ORCA_HOME = home;
@@ -35,6 +36,34 @@ const runner: Runner = {
 const tools = { task, spawn: makeSpawn(runner), inbox };
 const project = "demo";
 const taskId = crypto.randomUUID();
+
+test("response guidance is appended once, preserves the prefix and returns after compaction", async () => {
+  const project = "response-guidance";
+  const provider = fakeProvider([[text("First answer.")], [text("Follow-up answer.")], [text("Continued answer.")]]);
+  const styleBlocks = (messages: typeof provider.calls[number]["messages"]) => messages.flatMap(m =>
+    typeof m.content === "string" ? [] : m.content.filter(b => b.type === "text" && b.text.startsWith("[Orca reference context: response-style]")));
+  const orch = await createOrchestrator({ project, provider, tools: {}, write: () => {} });
+  try {
+    await orch.say("Explain the result."); await orch.turn();
+    const first = provider.calls[0]!;
+    expect(styleBlocks(first.messages)).toHaveLength(1);
+    expect(JSON.stringify(styleBlocks(first.messages))).toContain(RESPONSE_STYLE);
+    await orch.say("And the next part?"); await orch.turn();
+    const second = provider.calls[1]!;
+    expect(styleBlocks(second.messages)).toHaveLength(1);
+    expect(second.messages.slice(0, first.messages.length)).toEqual(first.messages);
+  } finally { orch.dispose?.(); }
+
+  const transcript = open(paths.transcript(project, "orchestrator"));
+  await transcript.append({ type: "summary", text: "Earlier explanation retained.", retained: [] });
+  const resumed = await createOrchestrator({ project, provider, tools: {}, write: () => {} });
+  try {
+    await resumed.say("Continue."); await resumed.turn();
+    expect(styleBlocks(provider.calls[2]!.messages)).toHaveLength(1);
+    expect(JSON.stringify(styleBlocks(provider.calls[2]!.messages))).toContain(RESPONSE_STYLE);
+    expect(provider.calls).toHaveLength(3); // no separate rewrite/summary request
+  } finally { resumed.dispose?.(); }
+});
 
 test("user asks for a feature: orchestrator spawns a worker and replies", async () => {
   const provider = fakeProvider([
