@@ -30,18 +30,22 @@ Archived images can still be opened and do not count in the footer image count.
 `orca clean` only inspects disposable storage (`--apply` removes eligible
 disposable files); it does not purge these archived records or conversation images.
 
-`/vim` toggles Vim controls. In Normal mode, `i` enters Insert, `z`/`x`
+`/vim` toggles Vim controls. In Normal mode, `i` enters Insert, `H`/`L` (Shift+h / Shift+l)
 switch to the previous/next tab (`gT`/`gt` also work), `j/k` and `gg/G` navigate, and `h/l` switch panes
 in work views. Space then `a/t/q/p` opens Agents, Tasks, Questions or Images.
 Space then `u/m/e/f` opens Accounts, Model, Effort or Fast mode. Use `:`
-to run any slash command. Esc leaves Insert and retains the chat draft.
+to run any slash command. `q` goes back from pages and menus in Normal mode;
+Insert mode types it normally. Esc leaves Insert and retains the chat draft.
 
 Ctrl+A opens Agents, Ctrl+T opens Tasks, and Ctrl+Q opens Questions.
 Home moves to the start of the input line. The Space shortcuts work across
 work pages, settings menus, Help and Projects in Normal mode.
 
-Images lists images delivered to you in this conversation, newest first.
-Enter opens the selected image in the system viewer and keeps the list open.
+Images lists images delivered to you in this conversation, newest first. Selection previews the image inside the page in image-capable terminals, including Hermit with its image add-on. Navigation never launches an external viewer.
+The image fits the detail pane and updates on selection or resize. Unsupported
+terminals show a compatibility message. WebP/large images use a temporary PNG
+preview (sips on macOS or ImageMagick on Linux), cleaned after conversion; stored
+originals are unchanged. Video playback is not included.
 The footer count updates as images arrive. Dates use three-letter month names
 and the machine's local timezone, including its daylight saving offset.
 
@@ -54,7 +58,10 @@ and the machine's local timezone, including its daylight saving offset.
   prompts, calls a provider, mutates task records or answers/skips questions.
   Background turns and existing polling continue independently.
 * Questions reuse the existing controller/store. The selected question
-  shows numbered options, **type your own answer**, and **skip — remove from inbox**.
+  opens its answer form in the detail pane, with numbered options,
+  **type your own answer**, and **skip — remove from inbox**. No question controls
+  appear under the chat composer. A successful answer returns to the list.
+  In Vim Normal mode, `i` starts editing; `q` returns to the list without sending.
   ↑↓ moves among rows (and within multiline answers); 1–9 picks an option on an
   option row; typing enters `answer>`. Enter explicitly sends the selected option
   or typed answer. Selecting skip and pressing Enter, Ctrl+D in the answer panel,
@@ -101,8 +108,8 @@ and the machine's local timezone, including its daylight saving offset.
   projects, model/settings menus, `/help`, cancellation and Cancel-default `/clear-context`
   still work. Ctrl+Q opens the Questions page from menus and project lists.
 * In an agent transcript, opening Questions shows the project’s questions.
-  Esc returns to the agent transcript. Selecting a question returns to the
-  orchestrator to answer it.
+  q/Esc returns to the agent transcript. Selecting a question opens its answer
+  form on the Questions page and leaves the transcript view.
 * Captured page/panel ownership suppresses late reads and answer UI results after
   closing/deleting/recreating pages. A successful in-flight answer belongs only
   to its original still-open page, even if another page is selected; late errors

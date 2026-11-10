@@ -21,6 +21,9 @@ export const repositoryTitle = (directory: string): string => basename(directory
 export interface Terminal {
   cols: number;
   rows: number;
+  /** Confirmed by the terminal's inline-image cell-size reply, never TERM alone. */
+  inlineImages?: boolean;
+  imageCell?: { width: number; height: number };
   write(s: string): void;
   /** Terminal window/tab title; optional on test and embedded terminals. */
   setTitle?(title: string): void;
@@ -79,11 +82,19 @@ export function realTerminal(stdin = process.stdin, stdout = process.stdout, pro
 }
 
 class RealTerminal implements Terminal {
+  inlineImages = false;
+  imageCell?: { width: number; height: number };
   private opened = false;
   private title = "";
   /** Closed, but waiting out the reply window with stdin still read (and dropped) in raw mode. */
   private draining = false;
   private eraser = "";
+  private readonly resizeHandlers: (() => void)[] = [];
+  private readonly resized = () => {
+    if (!this.opened) return;
+    this.stdout.write("\x1b]1337;ReportCellSize\x07");
+    for (const cb of this.resizeHandlers) cb();
+  };
   private readonly keyHandlers: ((k: Key) => void)[] = [];
   /** When the background query went out; null once answered or its window is over. It goes out once. */
   private asked: number | null = null;
@@ -111,7 +122,7 @@ class RealTerminal implements Terminal {
     this.title = safe;
   }
   onKey(cb: (k: Key) => void): void { this.keyHandlers.push(cb); }
-  onResize(cb: () => void): void { this.stdout.on("resize", cb); }
+  onResize(cb: () => void): void { this.resizeHandlers.push(cb); }
   eraseOnExit(text: string): void { this.eraser = text; }
 
   /** Whether the background reply is still expected. */
@@ -128,6 +139,15 @@ class RealTerminal implements Terminal {
 
   /** An OSC reply: the first background reply in time sets the shade; anything else is dropped. */
   private reply(body: string): void {
+    if (this.opened && /^1337;ReportCellSize=\d+(?:\.\d+)?;\d+(?:\.\d+)?(?:;\d+(?:\.\d+)?)?$/.test(body)) {
+      const [height, width] = body.slice("1337;ReportCellSize=".length).split(";").map(Number);
+      if (height! > 0 && width! > 0 && Number.isFinite(height) && Number.isFinite(width)) {
+        const changed = this.imageCell?.height !== height || this.imageCell?.width !== width;
+        this.inlineImages = true; this.imageCell = { height: height!, width: width! };
+        if (changed) for (const cb of this.resizeHandlers) cb();
+      }
+      return;
+    }
     const bg = body.startsWith("11;") ? parseBgReply(body) : null;
     if (!bg || this.asked === null) return;
     if (this.awaiting()) useTerminalBackground(bg);
@@ -139,6 +159,7 @@ class RealTerminal implements Terminal {
     this.asked = this.clock.now();
     this.background = new Promise<void>((resolve) => { this.settle = resolve; });
     this.stdout.write(BG_QUERY);
+    this.stdout.write("\x1b]1337;ReportCellSize\x07");
     this.stopWait = this.clock.setTimer(() => this.windowOver(), BG_REPLY_MS);
   }
 
@@ -170,6 +191,7 @@ class RealTerminal implements Terminal {
     this.opened = true;
     this.title = "";
     this.install(true);
+    this.stdout.on("resize", this.resized);
     this.stdin.setRawMode(true);
     // Keep raw bytes: legacy X10 payloads are not UTF-8; the reader decodes text.
     this.stdin.on("data", this.onData);
@@ -191,6 +213,7 @@ class RealTerminal implements Terminal {
   private release(): void {
     this.draining = false;
     this.install(false);
+    this.stdout.off?.("resize", this.resized);
     this.stdin.off("data", this.onData);
     this.reader.close();
     attempt(() => this.stdin.setRawMode(false));

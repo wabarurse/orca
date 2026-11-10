@@ -39,23 +39,23 @@ test("Vim keeps drafts, switches project tabs and routes commands without Ctrl c
   } finally { await stop(); }
 });
 
-test("Normal z/x switches tabs from chat, work pages and menus, while Insert and commands keep the letters", async () => {
+test("Normal H/L switches tabs from chat, work pages and menus, while Insert and commands keep text", async () => {
   const { app, term, stop } = await setup("zx-first");
   try {
     await app.openPage("zx-second");
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type("z"); await until(() => app.page?.project === "zx-first");
+    term.type("H"); await until(() => app.page?.project === "zx-first");
     term.type("izx"); await until(() => app.input.text === "zx");
     expect(app.page!.project).toBe("zx-first");
-    term.press({ name: "escape" }); term.type("x"); await until(() => app.page?.project === "zx-second");
+    term.press({ name: "escape" }); term.type("L"); await until(() => app.page?.project === "zx-second");
     term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
-    term.type("z"); await until(() => app.page?.project === "zx-first");
+    term.type("H"); await until(() => app.page?.project === "zx-first");
     expect(app.input.text).toBe("zx");
     term.type(" m"); await until(() => app.menu?.title.includes("model role") === true);
-    term.type("x"); await until(() => app.page?.project === "zx-second");
+    term.type("L"); await until(() => app.page?.project === "zx-second");
     expect(app.menu).toBeNull();
     term.type(" b"); await until(() => app.projectList !== null);
-    term.type("z"); await until(() => app.page?.project === "zx-first");
+    term.type("H"); await until(() => app.page?.project === "zx-first");
     expect(app.projectList).toBeNull();
     await app.onKey({ name: "char", text: " " }); await app.onKey({ name: "char", text: "x" });
     expect(app.page!.project).toBe("zx-first");
@@ -77,11 +77,55 @@ test("Questions displays its own split view and answers the selected question", 
     term.type("j");
     term.press({ name: "enter" });
     await until(() => app.frame().question?.text === "Second question?");
+    expect(term.screen()).toContain("QUESTIONS");
+    expect(term.screen()).not.toContain("0 agents | 0 tasks");
     await app.onKey({ name: "char", text: "1" });
     await until(() => app.page!.questions.open.length === 1);
     const stored = await all("questions-split");
     expect(stored.find(q => q.id === questions[0]!.id)?.status).toBe("open");
     expect(stored.find(q => q.id === questions[1]!.id)?.answer).toBe("two");
+  } finally { await stop(); }
+});
+
+test("q backs out of pages and menus; question drafts survive and Insert q/H/L remain text", async () => {
+  const { app, term, stop } = await setup("vim-question-drafts");
+  try {
+    await ask(app.page!.project, [{ text: "Describe the result" }]);
+    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
+    term.type("ichat draft"); await until(() => app.input.text === "chat draft");
+    term.press({ name: "escape" });
+    for (const command of ["a", "t", "p", "b", "m", "h"]) {
+      await app.onKey({ name: "char", text: " " }); await app.onKey({ name: "char", text: command });
+      await app.onKey({ name: "char", text: "q" });
+      expect(app.menu).toBeNull(); expect(app.projectList).toBeNull();
+      expect(app.input.text).toBe("chat draft");
+    }
+    term.type(" q"); await until(() => term.screen().includes("Describe the result"));
+    await app.onKey({ name: "enter" });
+    await app.onKey({ name: "char", text: "i" });
+    term.type("qHL answer"); await until(() => app.input.text === "qHL answer");
+    expect(term.screen()).toContain("QUESTIONS");
+    term.press({ name: "escape" }); // Insert -> Normal, preserving answer
+    await app.onKey({ name: "char", text: "q" }); // form -> list
+    expect(app.page!.questions.expanded).toBe(false);
+    expect(app.input.text).toBe("chat draft");
+    await app.onKey({ name: "char", text: "q" }); // list -> chat
+    await until(() => !term.screen().includes("QUESTIONS"));
+    expect(term.screen()).not.toContain("Describe the result");
+    term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
+    await app.onKey({ name: "enter" });
+    expect(app.input.text).toBe("qHL answer");
+    // Opening another page restores the chat buffer; it cannot capture unseen answers.
+    term.type(" m"); await until(() => app.menu !== null);
+    expect(app.page!.questions.expanded).toBe(false);
+    expect(app.input.text).toBe("chat draft");
+    await app.onKey({ name: "char", text: "q" });
+    term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
+    await app.onKey({ name: "enter" });
+    await app.onKey({ name: "enter" });
+    await until(() => app.page!.questions.open.length === 0);
+    expect((await all(app.page!.project))[0]!.answer).toBe("qHL answer");
+    expect(app.input.text).toBe("chat draft");
   } finally { await stop(); }
 });
 

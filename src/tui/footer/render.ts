@@ -170,9 +170,9 @@ export const questionItems = (q: Pick<QuestionView, "options" | "default">): str
  * then its rows (scrolled to keep the selection in view), and the hint for
  * the mode. On short terminals the hint and selected decision win over text.
  */
-export function questionRows(q: QuestionView, cols: number, height: number): string[] {
+export function questionRows(q: QuestionView, cols: number, height: number, showHint = true): string[] {
   if (height <= 0) return [];
-  const footer = [dim(QUESTION_HINTS[q.mode])];
+  const footer = showHint ? [dim(QUESTION_HINTS[q.mode])] : [];
   const room = height - footer.length;
   const items = questionItems({ options: q.options.map(plainText), default: q.default && plainText(q.default) });
   const head = wordWrap(`${bold("?")} ${plainText(q.text)}${q.count > 1 ? ` (${q.position ?? 1} of ${q.count})` : ""}`, cols);
@@ -279,8 +279,9 @@ function overlayRows(f: Frame, height: number): string[] {
   if (f.menu) return menuRows(f.menu, height);
   if (f.projects) return projectRows(f.projects, height);
   if (f.help) return helpPanel(f).rows;
-  if (f.inbox) return taskInboxPanel(f).rows;
-  return f.question ? questionRows(f.question, f.cols, height) : [];
+  // Questions are answered on their full-page view. Never resurrect the old
+  // below-composer panel, including when legacy callers pass its frame fields.
+  return [];
 }
 
 /** Queued previews immediately ABOVE input; counts/panels below. Input and status win on tiny screens. */

@@ -131,7 +131,7 @@ for (const transition of ["close", "project", "recreate"] as const) {
   });
 }
 
-test("status feedback stays above the answer input and the next key clears it while closing the panel", async () => {
+test("answer feedback stays temporary; settling returns to the question list and the next key clears it", async () => {
   let open = [syntheticQuestion("q1"), syntheticQuestion("q2")];
   const ui = await setup({ questions: fakeQuestions({ list: async () => open, answer: async (_p, id) => { open = open.filter(q => q.id !== id); } }) }), { app } = ui;
   const page = app.page!;
@@ -139,7 +139,7 @@ test("status feedback stays above the answer input and the next key clears it wh
   app.input = { text: "first", cursor: 5 }; app.draw();
   await app.onKey({ name: "enter" });
   await until(() => page.questions.open.length === 1);
-  expect(app.frame().inbox?.section).toBe("questions"); // q2 keeps the panel open; status is still above the input
+  expect(app.frame().inbox).toBeNull(); // Answer form closes; the Questions list remains open.
   expect(plain(app.frame().inputArea!.lines)).toContain("? Question q1? → first");
   await app.onKey({ name: "escape" }); // closes the panel and clears the visible status
   expect(app.frame().inbox).toBeNull();
@@ -253,7 +253,7 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   expect(attempts).toBe(2);
   expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
   expect(app.page!.questions.answer.text).toBe(""); // never reassigned to next head
-  expect(app.input.text).toBe("");
+  expect(app.input).toEqual(chat); // Returning to the list restores the chat draft.
   expect(app.status(app.page!)).toContain("2 questions |");
   expect(await pendingInput("a", "orchestrator")).toBe(false);
   expect(await drain("a", "orchestrator")).toEqual([]);

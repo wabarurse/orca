@@ -167,3 +167,22 @@ test("terminal titles are plain, deduplicated, and only written while open", () 
   term.setTitle!("orca · ignored");
   expect(writes.length).toBe(count);
 });
+
+test("image capability replies are consumed, invalid metrics ignored, and changed cells redraw without a query loop", () => {
+  const t = make(); let redraws = 0;
+  t.term.onResize(() => redraws++);
+  t.term.open();
+  expect(t.term.inlineImages).toBe(false);
+  for (const value of ["0;8", "16;0", "Infinity;8", "16;NaN"]) t.input(`\x1b]1337;ReportCellSize=${value}\x07`);
+  expect(t.term.inlineImages).toBe(false);
+  t.input("\x1b]1337;ReportCellSize=16;8.4;2\x07");
+  expect(t.term.inlineImages).toBe(true);
+  expect(t.term.imageCell).toEqual({ height: 16, width: 8.4 });
+  expect(redraws).toBe(1);
+  t.input("\x1b]1337;ReportCellSize=16;8.4\x07");
+  expect(redraws).toBe(1);
+  t.input("\x1b]1337;ReportCellSize=18;9\x07");
+  expect(redraws).toBe(2);
+  expect(t.keys).toEqual([]);
+  t.term.close(); t.advance(BG_REPLY_MS);
+});
