@@ -15,6 +15,12 @@ async function save(file: string, state: unknown): Promise<void> {
   await writeFile(tmp, JSON.stringify(state), { mode: 0o600 }); await rename(tmp, file);
 }
 
+/** Last recorded value for a key; read-only, never touches delivery. */
+export async function observation(project: string, key: string): Promise<unknown> {
+  const state = await read<State>(filename(project, key));
+  return state && JSON.parse(state.value);
+}
+
 /** Durable change detection and outbox. Replay uses the same delivery identity. */
 export async function observe(project: string, key: string, value: unknown, text: string, options: { defer?: boolean; existingOnly?: boolean; initialSilent?: boolean; beforePublish?: () => void; normalize?: (value: unknown, previous?: unknown) => unknown } = {}): Promise<void> {
   const dir = directory(project);
