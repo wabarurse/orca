@@ -179,4 +179,4 @@ These are daemon measurements. They exclude time before durable inbox enqueue
 and the client's polling/render delay. Use the build ID to compare similar
 tasks before and after batching and event-driven validation.
 
-Verification environments use the existing process supervisor and runtime maintenance tick. Merged worktree and settled-log cleanup run at most once per five minutes in a live daemon. See [verification sessions](VERIFICATION.md) for ownership and retention.
+Verification environments use the existing process supervisor and runtime maintenance tick. Workspace discovery and inactivity archiving run at most once per five minutes in a live daemon, without recursive size scans or model calls. Permanent workspace cleanup and size inspection run only through explicit `orca clean`. See [workspace cleanup](WORKSPACE_CLEANUP.md) and [verification sessions](VERIFICATION.md) for ownership and retention.

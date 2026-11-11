@@ -50,6 +50,13 @@ export function readState<T>(file: string, scope: string, key: string): T | unde
   const value = stateValue(db, file, scope, key);
   return value === undefined ? undefined : JSON.parse(value) as T;
 }
+/** Enumerate one small metadata namespace; never scans filesystem contents. */
+export function stateEntries<T>(file: string, scope: string, prefix = ""): [string, T][] {
+  const db = connect(file, false);
+  if (!db || !exists(db)) return [];
+  return (db.query("SELECT key,value FROM orca_state WHERE scope=? AND key>=? AND key<? ORDER BY key").all(scope, prefix, prefix + "\uffff") as { key: string; value: string }[])
+    .map(row => [row.key, JSON.parse(row.value) as T]);
+}
 /** Synchronous transaction prevents lost updates across worker processes. Undefined deletes. */
 export function updateState<T>(file: string, scope: string, key: string, update: (old: T | undefined) => T | undefined): T | undefined {
   const db = connect(file, true)!;

@@ -11,6 +11,7 @@ import type { Tool, ToolContext } from "./registry";
 import { withStorageLock } from "../data";
 import { join } from "node:path";
 import { execution } from "../data/projects/lifecycle";
+import { workspaces } from "../data/projects";
 
 // Orchestrator-only. Seeds the agent's transcript with the prompt, then starts
 // it in a worktree on `branch`. Spawning again on the same branch and role
@@ -173,6 +174,7 @@ async function launch(runner: Runner, prompt: string | null, branch: string, rol
     ctx.signal?.throwIfAborted();
     execution.assertActive(ctx.project, ctx.executionEpoch);
     await runner.start({ project: ctx.project, role, branch, run, executionEpoch: ctx.executionEpoch, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+    for (const ref of attachments) workspaces.own(ctx.project, "image", ref.id, { directory: workspaces.taskDirectory(ctx.project, branch) });
     return id;
   } catch (error) {
     await stopTaskRun(ctx.project, run, ctx.signal?.aborted ? "cancelled" : "blocked", "agent launch failed; no successful start confirmed", true);

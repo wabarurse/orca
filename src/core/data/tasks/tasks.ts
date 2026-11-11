@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { paths } from "../../../config";
 import { canArchiveTask } from "../../../protocol/task";
 // Structured task records, not a scheduler or any of the message/question queues.
-import { ledgerTransaction, existingLedgerTasks } from "./ledger-store";
-import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
+import { ledgerTransaction, existingLedgerTasks, purgeLedgerTasks } from "./ledger-store";
+import { assertProjectIdentity, projectIdentity, withProjectStateLock, workspaces } from "../projects";
 import { clean } from "../inbox";
 import { check, object, sha, taskDependencies, taskPR, taskPublicationObservation, taskStatuses, type AttentionKind, type PRObservation, type Task, type TaskAttention, type TaskPR, type TaskReadiness, type TaskRow, type TaskRun, type TaskStatus } from "../../../protocol/task";
 
@@ -115,7 +115,18 @@ async function update<T>(project: string, action: (s: Store) => T): Promise<T> {
   const identity = projectIdentity(project);
   return withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
-    return ledgerTransaction(project, validateTask, store => action(store));
+    const changed: Task[] = [];
+    const result = ledgerTransaction(project, validateTask, store => {
+      const revisions = new Map(store.tasks.map(t => [t.id, t.revision]));
+      const result = action(store);
+      for (const t of store.tasks) if (revisions.get(t.id) !== t.revision) {
+        workspaces.assertAvailable(project, "task", t.id, workspaces.taskDirectory(project, t.branch));
+        changed.push(t);
+      }
+      return result;
+    });
+    for (const t of changed) workspaces.own(project, "task", t.id, { directory: workspaces.taskDirectory(project, t.branch), at: t.updatedAt, exclusive: true });
+    return result;
   });
 }
 function event(t: Task, kind: string, run?: string): void {
@@ -130,7 +141,10 @@ function current(s: Store, run: string): { task: Task; run: TaskRun } | undefine
   for (const task of s.tasks) { const r = task.runs.at(-1); if (!task.archive && r?.id === run) return { task, run: r }; }
 }
 
-export async function allTasks(project: string): Promise<Task[]> { return (await read(project)).tasks; }
+export async function allTasks(project: string): Promise<Task[]> { return (await read(project)).tasks.map(t => {
+  const archivedAt = workspaces.archived(project, "task", t.id);
+  return archivedAt && !t.removedAt ? { ...t, removedAt: archivedAt } : t;
+}); }
 export async function getTask(project: string, id: string): Promise<Task> { return find(await read(project), id); }
 export async function listTasks(project: string): Promise<TaskRow[]> {
   return (await allTasks(project)).filter(t => !t.removedAt).map(({ id, number, checkpoints, archive, name, summary, branch, status, createdAt, updatedAt, attention, pr, publication, runs, dependsOn }) => ({ id, number, checkpoints, archive, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), ...(publication ? { publication } : {}), review: reviewProgress(runs) }));
@@ -358,10 +372,19 @@ export async function removeTask(project: string, id: string, confirmed: boolean
 }
 /** Restore membership without changing lifecycle, dependencies or running agents. */
 export async function restoreTask(project: string, id: string): Promise<Task> {
+  const target = await getTask(project, id);
+  workspaces.restore(project, "task", target.id);
   return update(project, s => {
     const task = find(s, id);
     if (task.removedAt) { delete task.removedAt; event(task, "membership_restored"); }
     return task;
+  });
+}
+export async function purgeTasks(project: string, ids: string[]): Promise<void> {
+  const identity = projectIdentity(project);
+  await withProjectStateLock(project, async () => {
+    assertProjectIdentity(project, identity);
+    purgeLedgerTasks(project, ids);
   });
 }
 export async function updateTaskMetadata(project: string, id: string, fields: { title?: string; summary?: string }): Promise<Task> {

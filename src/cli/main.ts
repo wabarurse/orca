@@ -46,7 +46,7 @@ function usage(error?: string): never {
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
-  orca clean [--apply]            inspect or remove disposable Orca storage
+  orca clean [--apply]            preview archived workspace cleanup; --apply deletes eligible storage
   orca organize                   group saved folders by directory (requires Orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)

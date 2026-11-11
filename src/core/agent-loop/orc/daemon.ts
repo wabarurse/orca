@@ -1,5 +1,5 @@
 import { MERGE_POLL_MS } from "../../tmux/merges";
-import { cleanManagedWorkspaces } from "../../tmux";
+import { archiveInactiveWorkspaces } from "../../tmux";
 import { pruneSettledProcesses, reconcileProcesses } from "../../data/processes";
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
 // (exec/daemon.ts) runs this loop in the `orchestrator` window of the project's
@@ -192,7 +192,7 @@ function runWatchers(d: Daemon): void {
   if (!d.maintaining && now - (d.maintainedAt ?? -Infinity) >= 5 * 60_000) {
     d.maintainedAt = now;
     d.maintaining = background(async () => {
-      await cleanManagedWorkspaces(d.o.project, true).catch(error => d.o.log(`workspace cleanup: ${error}`));
+      await archiveInactiveWorkspaces(d.o.project).catch(error => d.o.log(`workspace cleanup: ${error}`));
       await pruneSettledProcesses(d.o.project, true).catch(error => d.o.log(`process retention: ${error}`));
     }).finally(() => { d.maintaining = undefined; });
   }

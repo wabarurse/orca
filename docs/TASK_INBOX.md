@@ -27,8 +27,10 @@ Archiving an open question dismisses it without an answer or agent wakeup;
 restoring a closed question shows its saved answer/reason without reopening it.
 Images can be archived/restored while retaining their bytes and chat references.
 Archived images can still be opened and do not count in the footer image count.
-`orca clean` only inspects disposable storage (`--apply` removes eligible
-disposable files); it does not purge these archived records or conversation images.
+Workspace inactivity also groups linked items under Archived after 14 days.
+`orca clean` previews eligible workspace cleanup; `--apply` permanently removes
+its owned records and unreferenced files. Manually archiving one item does not
+make an active workspace eligible. See [workspace cleanup](WORKSPACE_CLEANUP.md).
 
 `/vim` toggles Vim controls. In Normal mode, `i` enters Insert, `H`/`L` (Shift+h / Shift+l)
 switch to the previous/next tab (`gT`/`gt` also work), `j/k` and `gg/G` navigate, and `h/l` switch panes

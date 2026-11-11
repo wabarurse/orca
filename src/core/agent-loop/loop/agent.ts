@@ -8,6 +8,7 @@ import type { RequestSettings } from "../../../providers/catalog";
 
 import type { ContentBlock, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { projectModelResolver } from "../../data/projects";
+import { workspaces } from "../../data/projects";
 import { budget, compact, outputCap, requireFits, type CompactOptions, type ContextDeps } from "../../data/memory";
 import type { Tracker } from "../../tmux";
 import type { ModelRequestState } from "../../tmux";
@@ -94,8 +95,11 @@ async function runTool(deps: AgentDeps, name: string, input: Record<string, unkn
   const tool = deps.tools[name];
   if (!tool) return { type: "tool_result", tool_use_id: "", content: `unknown tool: ${name}`, is_error: true };
   try {
-    const content = await tool.run(input, { ...deps.ctx, signal: deps.signal,
-      selected: deps.provider ? { model: deps.model, provider: deps.provider, settings: deps.settings } : undefined });
+    const content = await workspaces.within(deps.ctx.project, deps.ctx.cwd, () => {
+      workspaces.own(deps.ctx.project, "agent", sessionId(deps.ctx.role, deps.ctx.branch), { exclusive: true });
+      return tool.run(input, { ...deps.ctx, signal: deps.signal,
+        selected: deps.provider ? { model: deps.model, provider: deps.provider, settings: deps.settings } : undefined });
+    });
     const refused = (name === "task" || name === "inbox") && typeof content === "string" && content.startsWith("refused:");
     return { type: "tool_result", tool_use_id: "", content, ...(refused ? { is_error: true } : {}) };
   } catch (err) {

@@ -140,6 +140,30 @@ export function ledgerTransaction<T>(project: string, validate: (raw: unknown) =
   } finally { db.close(); }
 }
 
+/** Explicit workspace cleanup only, under the project lock. Keep numbering and
+ * binding receipts. The retention guard is restored in the same transaction;
+ * concurrent/ordinary writers never observe an unguarded ledger. */
+export function purgeLedgerTasks(project: string, ids: string[]): void {
+  const db = database();
+  try {
+    db.transaction(() => {
+      const saved = db.query("SELECT repository FROM task_ledger_projects WHERE project_id=?").get(project) as { repository: string } | null;
+      if (!saved || !matchesBinding(project, saved.repository)) throw new Error("task cleanup identity changed");
+      const store = load(db, project), selected = new Set(ids);
+      if (store.tasks.some(t => !selected.has(t.id) && t.dependsOn?.some(id => selected.has(id)))) throw new Error("tasks are still referenced by retained dependencies");
+      const guard = db.query("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='task_ledger_retain'").get() as { sql: string } | null;
+      if (!guard?.sql) throw new Error("task retention guard is unavailable");
+      db.exec("DROP TRIGGER task_ledger_retain");
+      for (const id of selected) db.query("DELETE FROM task_ledger_records WHERE project_id=? AND id=?").run(project, id);
+      db.exec(guard.sql);
+      for (const table of ["tasks", "entry_tasks"]) if (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
+        for (const id of selected) db.query(`DELETE FROM ${table} WHERE project=? AND ${table === "tasks" ? "id" : "task_id"}=?`).run(project, id);
+      }
+    }).immediate();
+    projectView(db, project);
+  } finally { db.close(); }
+}
+
 /** Read-only durable lookup: no import, repair, project creation or membership writes. */
 export function searchLedger(input: Record<string, unknown>): unknown[] {
   if (!existsSync(paths.memory)) return [];

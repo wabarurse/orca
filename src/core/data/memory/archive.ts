@@ -259,6 +259,19 @@ export function purgeProject(project: string): void {
     }).immediate();
   } finally { db.close(); }
 }
+/** Explicit session cleanup removes the corresponding searchable copies too. */
+export function purgeAgent(project: string, agent: string): void {
+  if (!existsSync(archivePath())) return;
+  const db = database();
+  try {
+    db.transaction(() => {
+      db.query("INSERT INTO entry_search(entry_search,rowid,body) SELECT 'delete',rowid,body FROM entries WHERE project=? AND agent=?").run(project, agent);
+      db.query("DELETE FROM entry_tasks WHERE project=? AND entry_id IN (SELECT id FROM entries WHERE project=? AND agent=?)").run(project, project, agent);
+      db.query("DELETE FROM entries WHERE project=? AND agent=?").run(project, agent);
+      db.query("DELETE FROM sources WHERE project=? AND agent=?").run(project, agent);
+    }).immediate();
+  } finally { db.close(); }
+}
 
 function integer(value: unknown, fallback: number, max: number): number {
   if (value === undefined) return fallback;

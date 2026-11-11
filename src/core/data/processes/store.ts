@@ -1,5 +1,5 @@
 import { usageEvent } from "../../../providers";
-import { assertProjectIdentity } from "../projects";
+import { assertProjectIdentity, workspaces } from "../projects";
 import { mkdir, readdir, rename, writeFile, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
@@ -9,6 +9,7 @@ import { put } from "../inbox";
 import { reconcileVerifications } from "./verification";
 
 export interface ProcessRecord {
+  workspaceSession?: string;
   incarnation?: string;
   id: string; project: string; owner: string; role: Role; branch?: string; run?: string; call?: string;
   verification?: string;
@@ -30,6 +31,10 @@ export function processDirectory(project: string, id?: string): string {
 export async function saveProcess(p: ProcessRecord): Promise<void> {
   if (p.incarnation) assertProjectIdentity(p.project, p.incarnation, "saving process state");
   const dir = processDirectory(p.project, p.id);
+  if (p.workspaceSession) {
+    workspaces.touch(p.workspaceSession, p.updatedAt);
+    workspaces.own(p.project, "process", p.id, { session: workspaces.get(p.workspaceSession), path: dir });
+  }
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await withStorageLock(join(dir, "record.lock"), async () => {
     const active = join(processDirectory(p.project), "active");

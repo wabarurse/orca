@@ -2,7 +2,7 @@ import { imageContent, validateRefs } from "../images";
 import { format, type Message } from "../../../protocol";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { withStorageLock } from "../storage-lock";
-import { projectIdentity, assertProjectIdentity, withProjectStateLock } from "../projects";
+import { projectIdentity, assertProjectIdentity, withProjectStateLock, workspaces } from "../projects";
 import { execution } from "../projects/lifecycle";
 import { inputEpoch } from "./user-input";
 // Every agent has its own inbox: a durable FIFO queue of files under
@@ -47,6 +47,9 @@ export async function put(project: string, to: string, msg: Omit<Message, "ts">,
     assertProjectIdentity(project, identity);
     beforePublish?.();
     await validateRefs(project, full.attachments);
+    workspaces.restore(project, "agent", to);
+    const destination = workspaces.resource(project, "agent", to)?.owners.map(workspaces.get).find(w => w && !w.cleanedAt);
+    for (const ref of full.attachments ?? []) workspaces.own(project, "image", ref.id, { directory: destination?.path ?? paths.repo(project) });
     if (beforePublish) mkdirSync(d, { recursive: true });
     await Bun.write(tmp, JSON.stringify(full) + "\n");
     await rename(tmp, join(d, name));

@@ -1,4 +1,4 @@
-import { projectIdentity } from "../projects";
+import { projectIdentity, workspaces } from "../projects";
 import { execution } from "../projects/lifecycle";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,6 +11,8 @@ export async function launchProcess(record: ProcessRecord, executable: string[],
   const epoch = admittedEpoch ?? execution.epoch(record.project);
   execution.assertActive(record.project, epoch);
   record.incarnation = projectIdentity(record.project);
+  const owner = workspaces.resource(record.project, "agent", record.owner)?.owners.map(workspaces.get).find(w => w && !w.cleanedAt);
+  record.workspaceSession = workspaces.own(record.project, "process", record.id, { directory: owner?.path ?? record.cwd })?.id;
   const existing = await withStorageLock(join(processDirectory(record.project), "admission.lock"), async () => {
     execution.assertActive(record.project, epoch);
     const records = await listProcesses(record.project);
