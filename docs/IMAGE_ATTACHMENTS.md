@@ -148,8 +148,13 @@ Delegation must **explicitly** pass relevant IDs:
 The `inbox` tool accepts the same optional `attachments` list for an agent
 recipient or `to: "user"` (the legacy `message` implementation shares this path).
 Omitted means no images. User-directed images are saved in durable reply entries
-and shown as image labels in chat. `/images` lists delivered images newest first;
-selecting one explicitly opens the validated file in the system image viewer.
+and shown as image labels in chat. `/images` lists delivered images and retained
+sandbox recordings newest first. Enter opens a validated image in Preview on
+macOS or a video in the default video player; Linux uses `xdg-open`. Moving
+the selection never opens a file. Recordings (MP4/MOV/M4V/WebM) are discovered
+only in this conversation's registered evidence when the page opens or refreshes,
+including closed sandboxes while their evidence is retained. Files are opened
+in place without new copies or a preview cache.
 There are no automatic popups or inline terminal previews. SSH sessions report
 the remote file location instead of launching a viewer. A worker can read a
 sandbox screenshot, send its ID to the orchestrator, and the orchestrator can

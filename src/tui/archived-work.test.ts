@@ -94,14 +94,14 @@ test("image archive survives reopening, preserves bytes and can be viewed and re
     await record.append({ type: "replies", messages: [{ from: "worker", text: "Old screenshot", attachments: [ref] }] });
     const path = await imageFile(project, ref), before = await Bun.file(path).bytes();
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type(" p"); await until(() => term.screen().includes("Old screenshot"));
+    term.type("P"); await until(() => term.screen().includes("Old screenshot"));
     term.type("dy"); await until(() => term.screen().includes("Archived (1)"));
     expect(app.status(app.page!)).toEndWith("0 images");
-    term.press({ name: "escape" }); term.type(" p");
+    term.press({ name: "escape" }); term.type("P");
     await until(() => term.screen().includes("▸ Archived (1)"));
     expect(term.screen()).not.toContain("Old screenshot");
     term.type("lj"); await until(() => term.screen().includes("Old screenshot"));
-    await until(() => term.raw().includes("1337;File="));
+    expect(term.raw()).not.toContain("1337;File=");
     term.type("u"); await until(() => app.status(app.page!).endsWith("1 images"));
     expect(await Bun.file(path).bytes()).toEqual(before);
     expect(workViews.workArchive("another-conversation", "images")[ref.id]).toBeUndefined();

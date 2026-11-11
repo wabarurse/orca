@@ -32,24 +32,34 @@ Workspace inactivity also groups linked items under Archived after 14 days.
 its owned records and unreferenced files. Manually archiving one item does not
 make an active workspace eligible. See [workspace cleanup](WORKSPACE_CLEANUP.md).
 
-`/vim` toggles Vim controls. The mode label sits on the input box's top border (beside the bottom controls on full-page lists). In Normal mode, `i` enters Insert, `Space h`/`Space l`
-switch to the previous/next tab (`gT`/`gt` also work), `j/k` and `gg/G` navigate, and `h/l` switch panes
-in work views. Space then `a/t/q/p` opens Agents, Tasks, Questions or Images.
-Space then `u/m/e/f` opens Accounts, Model, Effort or Fast mode; `Space ?` opens Help. Use `:`
-to run any slash command. `q` goes back from pages and menus in Normal mode;
-Insert mode types it normally. Esc leaves Insert and retains the chat draft.
+`/vim` toggles Vim controls. The mode label sits on the input box's top border
+(beside the bottom controls on full-page lists). In Normal mode, hold Shift and
+press a shortcut; no Space prefix or terminal-specific integration is needed:
 
-Ctrl+A opens Agents, Ctrl+T opens Tasks, and Ctrl+Q opens Questions.
-Home moves to the start of the input line. The Space shortcuts work across
-work pages, settings menus, Help and Projects in Normal mode.
+- Shift+H/L: previous/next project (`gT`/`gt` also work).
+- Shift+A/T/Q/P: Agents, Tasks, Questions, Images & Videos.
+- Shift+U/M/E/F: Accounts, Model, Effort, Fast mode.
+- Shift+B/R/S: Projects, Refresh, Stop.
+- Shift+V/X: attach clipboard image, remove last draft image.
+- `?` (Shift+/): Help. `:`: run any slash command.
 
-Images lists images delivered to you in this conversation, newest first. Selection previews the image inside the page in image-capable terminals, including Hermit with its image add-on. Navigation never launches an external viewer.
-The image fits the detail pane and updates on selection or resize. Unsupported
-terminals show a compatibility message. WebP/large images use a temporary PNG
-preview (sips on macOS or ImageMagick on Linux), cleaned after conversion; stored
-originals are unchanged. Video playback is not included.
-The footer count updates as images arrive. Dates use three-letter month names
-and the machine's local timezone, including its daylight saving offset.
+These shortcuts work across chat, work pages, settings, Help and Projects.
+Confirmations and command entry retain their own input. `i` enters Insert;
+Esc returns to Normal and preserves the draft. Uppercase letters are ordinary
+text in Insert mode. `q` goes back, `j/k` and `gg/G` navigate, and `h/l`
+switch panes. In Tasks, `c` requests abandonment with confirmation (Shift+A
+always opens Agents). Ctrl+A/T/Q still open Agents/Tasks/Questions.
+
+Images & Videos lists images delivered in this conversation and retained
+recordings from its registered sandboxes, newest first. Selection only shows
+details. Enter opens the selected image in Preview on macOS, or a video in the
+system video player; Linux uses the default desktop viewer. No inline terminal
+previews, automatic popups, image conversion or preview cache. Over SSH, Orca
+reports the remote file location instead. Recordings are discovered on page
+open or `r` refresh; supported formats are MP4, MOV, M4V and WebM. Existing
+sandbox evidence cleanup still applies. The footer counts delivered images,
+and includes recordings once the page has discovered them. Dates use
+three-letter month names and the machine's local timezone.
 
 ## Answering questions
 

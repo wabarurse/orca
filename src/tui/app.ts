@@ -50,7 +50,7 @@ import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { fileStore, pageQuestions, questionPageRows, Questions, QUESTION_DELAY_MS, QUESTION_PROGRESS, type PageQuestions, type QuestionStore } from "./footer";
 import { clearChatView, visibleChatEntries, fromUserLines, replyLines, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
-import { deliveredImages, deliveredImageData, type DeliveredImage } from "./commands";
+import { capturedVideos, deliveredImages, openDeliveredMedia, type DeliveredMedia } from "./commands";
 import { open } from "../core/data/transcripts";
 import { bold, dim, fit, sanitize, repositoryTitle } from "./components";
 import { commit, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type TaskInboxView, type Input, type InputArea, type Menu } from "./footer";
@@ -60,7 +60,7 @@ import { chapterRows, headerHeight } from "./header";
 import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./conversation";
 import { Calls, collapseCalls, groupStart, groupStarts } from "./conversation";
 import type { ToolCall, ToolOutcome } from "../protocol";
-import { stickyRows, imagePreviewUpdate, type ImagePlacement, type StickyScreen } from "./screen";
+import { stickyRows, stickyUpdate, type StickyScreen } from "./screen";
 
 export { helpLines } from "./footer";
 export { lineRows, type Line } from "./conversation";
@@ -68,7 +68,7 @@ export { lineRows, type Line } from "./conversation";
 import { type Page, type AppDeps, type ToolEvents, type Clock, type Note, realClock, SPINNER, FRAME_MS, RESIZE_MS, SPIN_MS, TICK_MS, LIVE_CHECK_MS, AGENTS_TICK_MS, type ProjectListState, type ActiveMenu, type TaskTreeState, type ClearConfirmation, type Command, parseCommand, listKeyId, type KeyLayer, MENU_CHARS, menuKeyId, active, EDITS, typedText } from './app-state';
 export { type Page, type AppDeps, type ToolEvents, type Clock, AGENTS_TICK_MS, type Command, parseCommand, type KeyLayer } from './app-state';
 
-interface WorkItem { id: string; title: string; detail: string; archived?: boolean; section?: boolean; agent?: AgentInfo; image?: DeliveredImage; question?: Question }
+interface WorkItem { id: string; title: string; detail: string; archived?: boolean; section?: boolean; agent?: AgentInfo; media?: DeliveredMedia; question?: Question }
 
 export class App {
   pages: Page[] = [];
@@ -139,7 +139,7 @@ export class App {
     view.graphY = rendered.graph.y; view.detailY = rendered.details.y;
     const lines = view.error || view.loading
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
-    const controls = [(this.vimCommand !== undefined ? `:${this.vimCommand}` : view.confirmAbandon?.text) ?? (view.confirmRemoval ? `Archive ${view.confirmRemoval.length} settled task(s)? y confirm / n cancel` : view.notice ?? "q/Esc back · a expand archived · d archive · D bulk · u restore · A abandon · r refresh"),
+    const controls = [(this.vimCommand !== undefined ? `:${this.vimCommand}` : view.confirmAbandon?.text) ?? (view.confirmRemoval ? `Archive ${view.confirmRemoval.length} settled task(s)? y confirm / n cancel` : view.notice ?? "q/Esc back · a expand archived · d archive · D bulk · u restore · c abandon · r refresh"),
       view.detailsFocused ? "Details: ↑↓ scroll · ← list · number + Enter jump" : "number + Enter jump · ↑↓ select · ← fold/parent · → unfold/details · Shift+Tab next"].map(line => fit(line, cols));
     if (this.vimMode) controls[0] = fit(`[${this.vimMode.toUpperCase()}] ${controls[0]}`, cols);
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
@@ -183,7 +183,7 @@ export class App {
       }
       return;
     }
-    if (k.name === "char" && k.text === "A") {
+    if (k.name === "char" && k.text === "c") {
       const task = view.tasks.find(t => t.id === view.selectedId);
       if (!task || task.archive || view.loading || view.error) return;
       const runs = task.runs.filter(run => !run.endedAt && (run.state === "prepared" || run.state === "started"));
@@ -731,7 +731,7 @@ export class App {
   status(page: Page): string {
     const questions = page.questions.loaded && !page.questions.error ? page.questions.open.length : "?";
     const images = this.imageLists.get(page);
-    return `${page.agentCount ?? "?"} agents | ${this.taskCounts.label(page)} | ${questions} questions | ${images?.count ?? "?"} images`;
+    return `${page.agentCount ?? "?"} agents | ${this.taskCounts.label(page)} | ${questions} questions | ${images?.count ?? "?"} ${images?.rows.some(row => row.kind === "video") ? "media" : "images"}`;
   }
 
   /** Only the selected conversation can animate; tool rows already carry their own shimmer. */
@@ -851,14 +851,12 @@ export class App {
     this.lastFrame = Date.now();
     try {
       if (!this.taskTree) this.questions.sync(); // the input holds the chat draft or the shown question's answer
-      this.imagePlacement = undefined;
       const next = this.workView ? this.workScreen() : this.taskTree ? this.treeScreen() : this.viewport(this.frame());
-      const output = imagePreviewUpdate(next, this.screen, this.imagePlacement, this.paintedImage);
+      const output = stickyUpdate(next, this.screen);
       if (!this.taskTree && !this.workView) this.needReprint = false;
       // Synchronized output, so the terminal shows the whole update at once.
       if (output) this.deps.term.write(`\x1b[?2026h${output}\x1b[?2026l`);
       this.screen = next;
-      this.paintedImage = this.imagePlacement;
       this.deps.term.eraseOnExit("");
     } catch (err) {
       // A bad frame must not take the app down. Its lines are still in the page's history; say so once and reprint next time.
@@ -1351,24 +1349,28 @@ export class App {
 
   // --- menus ------------------------------------------------------------------
 
-  private readonly imageLists = new WeakMap<Page, { head?: string; rows: DeliveredImage[]; archived: Record<string, boolean>; count: number }>();
+  private readonly imageLists = new WeakMap<Page, { head?: string; rows: DeliveredMedia[]; archived: Record<string, boolean>; count: number }>();
 
-  private async readImages(page: Page): Promise<void> {
+  private async readImages(page: Page, includeVideos = false): Promise<void> {
     const path = paths.transcript(page.project, "orchestrator");
-    if (!await Bun.file(path).exists()) { this.updateImages(page, []); return; }
-    const transcript = open(path);
-    this.updateImages(page, transcript.history?.() ?? transcript.branch());
+    const transcript = await Bun.file(path).exists() ? open(path) : undefined;
+    this.updateImages(page, transcript ? transcript.history?.() ?? transcript.branch() : []);
+    const videos = includeVideos ? await capturedVideos(page.project) : undefined;
     const list = this.imageLists.get(page)!;
+    if (videos) list.rows = [...list.rows.filter(row => row.kind === "image"), ...videos].sort((a, b) => b.at.localeCompare(a.at));
     list.archived = workViews.workArchive(page.project, "images");
-    list.count = list.rows.filter(image => !list.archived[image.ref.id]).length;
+    list.count = list.rows.filter(media => !(list.archived[media.id] ?? media.archived)).length;
   }
 
   private updateImages(page: Page, entries: readonly Entry[]): void {
     const head = entries.at(-1)?.uuid;
     const previous = this.imageLists.get(page);
     if (previous && previous.head === head) return;
-    const rows = deliveredImages(entries), archived = workViews.workArchive(page.project, "images");
-    this.imageLists.set(page, { head, rows, archived, count: rows.filter(image => !archived[image.ref.id]).length });
+    const rows: DeliveredMedia[] = [...deliveredImages(entries).map(image => ({ ...image, kind: "image" as const, id: image.ref.id })),
+      ...(previous?.rows.filter(row => row.kind === "video") ?? [])];
+    rows.sort((a, b) => b.at.localeCompare(a.at));
+    const archived = workViews.workArchive(page.project, "images");
+    this.imageLists.set(page, { head, rows, archived, count: rows.filter(media => !(archived[media.id] ?? media.archived)).length });
   }
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
@@ -1404,22 +1406,7 @@ export class App {
     loading?: boolean; notice?: string; confirm?: { text: string; run: () => Promise<void> };
     busy?: boolean;
     archived?: Record<string, boolean>;
-    preview?: { id: string; loading: boolean; data?: Awaited<ReturnType<typeof deliveredImageData>>; error?: string };
   } | null = null;
-  private imagePlacement?: ImagePlacement;
-  private paintedImage?: ImagePlacement;
-
-  /** At most one read per view at a time; rapid navigation skips stale results. */
-  private previewImage(view: NonNullable<App["workView"]>, image: DeliveredImage): void {
-    if (view.preview?.loading || view.preview?.id === image.ref.id && (view.preview.data || view.preview.error)) return;
-    const preview: NonNullable<typeof view.preview> = view.preview = { id: image.ref.id, loading: true };
-    void (this.deps.imageData ?? deliveredImageData)(view.page.project, image.ref).then(data => {
-      if (this.workView === view && view.selected === image.ref.id) preview.data = data;
-    }, error => { preview.error = error instanceof Error ? error.message : String(error); }).finally(() => {
-      preview.loading = false;
-      if (this.workView === view) this.draw();
-    });
-  }
 
   private async openWorkView(kind: "agents" | "questions" | "images", page = this.page): Promise<void> {
     if (!page || !this.validPage(page)) return;
@@ -1439,16 +1426,16 @@ export class App {
     try {
       if (view.kind === "agents") view.agents = await (this.deps.agents ?? listAgents)(view.page.project);
       else if (view.kind === "questions") { await this.questions.refresh(view.page); view.archived = workViews.workArchive(view.page.project, "questions"); }
-      else await this.readImages(view.page);
+      else await this.readImages(view.page, true);
     } catch (error) { view.notice = error instanceof Error ? error.message : String(error); }
     finally { view.loading = false; if (this.workView === view) this.draw(); }
   }
 
   private workItems(view: NonNullable<App["workView"]>): WorkItem[] {
-    if (view.kind === "images") return withArchiveSection((this.imageLists.get(view.page)?.rows ?? []).map(image => ({
-      id: image.ref.id, title: image.text.split("\n")[0] || image.ref.id.slice(0, 8),
-      detail: [image.text, `From ${image.from}`, formatDateTime(image.at), `Image ${image.ref.id}`].join("\n\n"),
-      image, archived: this.imageLists.get(view.page)?.archived[image.ref.id] === true,
+    if (view.kind === "images") return withArchiveSection((this.imageLists.get(view.page)?.rows ?? []).map(media => ({
+      id: media.id, title: media.text.split("\n")[0] || media.id.slice(0, 8),
+      detail: [media.text, `From ${media.from}`, formatDateTime(media.at), `${media.kind === "image" ? "Image" : "Video"} ${media.id}`, "Enter opens the desktop viewer."].join("\n\n"),
+      media, archived: this.imageLists.get(view.page)?.archived[media.id] ?? media.archived,
     })), view.history);
     if (view.kind === "questions") return withArchiveSection((view.page.questions.all ?? view.page.questions.open).map(question => ({
       id: question.id, title: question.text.replace(/\s+/g, " "),
@@ -1482,27 +1469,13 @@ export class App {
     view.detail = Math.max(0, Math.min(view.detail, detail.length - detailRows));
     const question = view.kind === "questions" ? this.questions.view() : null;
     const form = question ? questionPageRows(question, { ...this.input, prompt: "answer> ", mode: this.vimMode }, widths.right, detailRows) : undefined;
-    let right = form?.rows ?? detail.slice(view.detail, view.detail + detailRows);
-    const image = items[selected]?.image;
-    if (view.kind === "images" && image) {
-      if (!this.deps.term.inlineImages) right = [...right.slice(0, 4), "", ...workDetails("Inline previews need image support in the terminal. Update Hermit to enable them.", widths.right)];
-      else {
-        this.previewImage(view, image);
-        const preview = view.preview, data = preview?.id === image.ref.id ? preview.data : undefined;
-        const caption = workDetails(image.text || "Image", widths.right).slice(0, Math.min(3, Math.max(0, detailRows - 2)));
-        right = [...caption, "", ...(data ? [] : workDetails(preview?.id === image.ref.id && preview.error ? preview.error : "Loading image…", widths.right))];
-        const height = detailRows - caption.length - 1;
-        if (data && height > 0) this.imagePlacement = { id: image.ref.id, ...data,
-          row: (widths.split ? 1 : listRows + 2) + caption.length + 1, col: widths.split ? widths.left + 3 : 0, width: widths.right, height,
-          cellWidth: this.deps.term.imageCell?.width ?? 8, cellHeight: this.deps.term.imageCell?.height ?? 16 };
-      }
-    }
-    const title = view.kind.toUpperCase();
+    const right = form?.rows ?? detail.slice(view.detail, view.detail + detailRows);
+    const title = view.kind === "images" ? "IMAGES & VIDEOS" : view.kind.toUpperCase();
     const lines = workRows(title, cols, left, right).slice(0, Math.max(0, rows - 2));
     while (lines.length < rows - 2) lines.push("");
     const notice = view.page.questions.error && view.kind === "questions" ? `questions unavailable: ${view.page.questions.error}`
       : view.page.questions.closing && view.kind === "questions" ? QUESTION_PROGRESS[view.page.questions.closing] : this.noteRow(view.page) ?? view.notice;
-    lines.push(fit(sanitize(view.confirm?.text ?? (this.vimCommand !== undefined ? `:${this.vimCommand}` : notice) ?? (question ? (this.vimMode === "insert" ? "Insert · Esc normal · Enter send" : this.vimMode === "normal" ? "i answer · digits choose · q back" : "Type answer · Enter send · Esc back") : view.kind === "images" ? "↑↓ select · automatic preview · q/Esc back" : "↑↓ select · ←→ focus · Enter open · q/Esc back")), cols));
+    lines.push(fit(sanitize(view.confirm?.text ?? (this.vimCommand !== undefined ? `:${this.vimCommand}` : notice) ?? (question ? (this.vimMode === "insert" ? "Insert · Esc normal · Enter send" : this.vimMode === "normal" ? "i answer · digits choose · q back" : "Type answer · Enter send · Esc back") : view.kind === "images" ? "↑↓ select · Enter open in desktop viewer · q/Esc back" : "↑↓ select · ←→ focus · Enter open · q/Esc back")), cols));
     if (this.vimMode && !form?.cursor) lines[lines.length - 1] = fit(`[${this.vimMode.toUpperCase()}] ${lines.at(-1)}`, cols);
     lines.push(fit(view.confirm ? "y confirm · n/Esc cancel" : question ? "Tab back to list · Ctrl+D dismiss" : `a expand archived · d archive · D bulk · u restore · r refresh${view.kind === "agents" ? " · s stop" : ""}`, cols));
     return { rows: lines.slice(0, rows), cols, cursor: form?.cursor ? Math.min(rows - 1, (widths.split ? 1 : listRows + 2) + form.cursor.row) : Math.max(0, rows - 1),
@@ -1512,6 +1485,7 @@ export class App {
   private async workKey(k: Key): Promise<void> {
     const view = this.workView!;
     const key = k.name === "char" ? k.text : k.name;
+    if (view.busy && !view.confirm && key === "escape") { this.workView = null; this.reprint(); return; }
     if (view.busy) return;
     if (view.kind === "questions" && view.page.questions.expanded) {
       if (key === "escape" && this.vimMode === "insert") { this.vimMode = "normal"; this.draw(); return; }
@@ -1576,7 +1550,13 @@ export class App {
       } else view.notice = "No items to archive.";
       this.draw(); return;
     }
-    if (key === "enter" && selected?.image) return; // selection already previews it in this page
+    if (key === "enter" && selected?.media) {
+      view.busy = true;
+      try { view.notice = await (this.deps.openMedia ?? openDeliveredMedia)(view.page.project, selected.media); }
+      catch (error) { view.notice = error instanceof Error ? error.message : String(error); }
+      finally { view.busy = false; if (this.workView === view) this.draw(); }
+      return;
+    }
     if (key === "enter" && selected) {
       if (selected.section) return;
       if (selected.question && selected.question.status !== "open") { view.notice = "Closed question; saved answer and reason are shown in details."; this.draw(); return; }
@@ -1584,7 +1564,7 @@ export class App {
       else { view.page.view?.leave(); await this.questions.command(view.page, selected.id); }
       this.reprint(); return;
     }
-    if (key === "r") { view.preview = undefined; await this.readWorkView(view); return; }
+    if (key === "r") { await this.readWorkView(view); return; }
     if (key === "s" && agent?.live && agent.run && agent.status === "running") {
       const run = agent.run;
       view.confirm = { text: `Stop ${agent.name}?`, run: async () => {
@@ -1767,7 +1747,7 @@ export class App {
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/tasks", { run: () => this.toggleTaskTree(), help: { group: "conversation", label: "/tasks", description: "open the task list" } }],
     ["/agents", { needsPage: true, run: (_, page) => this.openWorkView("agents", page!), help: { group: "conversation", label: "/agents", description: "open agent runs and history" } }],
-    ["/images", { needsPage: true, run: (_, page) => this.openWorkView("images", page), help: { group: "conversation", label: "/images", description: "browse images sent to you; selection previews them here" } }],
+    ["/images", { needsPage: true, run: (_, page) => this.openWorkView("images", page), help: { group: "conversation", label: "/images", description: "browse images and recordings; Enter opens the desktop viewer" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
     ["/clear", { run: (_, page) => this.clearCommand(page, false), help: { group: "conversation", label: "/clear", description: "clear visible chat only; keep model context, history and cache" } }],
@@ -2000,12 +1980,12 @@ export class App {
   }
 
   private vimMode: "normal" | "insert" | undefined;
-  private vimPrefix?: { key: " " | "g"; at: number };
+  private vimPrefix?: { key: "g"; at: number };
   private vimCommand?: string;
   private readonly vimActions = new Map<string, string>([
-    ["a", "/agents"], ["t", "/tasks"], ["q", "/questions"], ["p", "/images"],
-    ["b", "/projects"], ["u", "/accounts"], ["e", "/effort"], ["?", "/help"],
-    ["r", "/refresh"], ["v", "/paste-image"], ["x", "/remove-image"], ["s", "/stop"],
+    ["A", "/agents"], ["T", "/tasks"], ["Q", "/questions"], ["P", "/images"],
+    ["B", "/projects"], ["U", "/accounts"], ["E", "/effort"], ["?", "/help"],
+    ["R", "/refresh"], ["V", "/paste-image"], ["X", "/remove-image"], ["S", "/stop"],
   ]);
 
   private vimNavigation(k: Key): Key {
@@ -2044,27 +2024,20 @@ export class App {
     const prefix = this.vimPrefix;
     this.vimPrefix = undefined;
     if (prefix && this.clock.now() - prefix.at < 1500) {
-      if (prefix.key === " " && key) {
-        if (key === "h" || key === "l") {
-          this.menu = null; this.projectList = null;
-          this.switchPage(key === "h" ? -1 : 1);
-        } else if (key === "m") this.vimModelMenu();
-        else if (key === "f") this.vimFastMenu();
-        else {
-          const command = this.vimActions.get(key);
-          if (command) await this.submit(command);
-        }
-        this.draw(); return true;
-      }
       if (prefix.key === "g" && (key === "t" || key === "T")) {
         this.menu = null; this.projectList = null;
         this.switchPage(key === "t" ? 1 : -1); return true;
       }
       if (prefix.key === "g" && key === "g") { this.jumpChat(false); return true; }
     }
-    if (this.vimMode === "normal" && (key === " " || key === ":")) {
-      if (key === " ") this.vimPrefix = { key, at: this.clock.now() };
-      else this.vimCommand = "";
+    if (this.vimMode === "normal" && key && (this.vimActions.has(key) || ["H", "L", "M", "F", ":"].includes(key))) {
+      if (key === "H" || key === "L") {
+        this.menu = null; this.projectList = null;
+        this.switchPage(key === "H" ? -1 : 1);
+      } else if (key === "M") this.vimModelMenu();
+      else if (key === "F") this.vimFastMenu();
+      else if (key === ":") this.vimCommand = "";
+      else await this.submit(this.vimActions.get(key)!);
       this.draw(); return true;
     }
     if (this.page?.questions.expanded && !this.questions.answering()) {
@@ -2082,7 +2055,7 @@ export class App {
     }
     if (this.page?.questions.expanded && k.name === "escape") return false;
     if (this.page?.questions.expanded && !typedText(k)) return false;
-    if (key === " " || key === "g") this.vimPrefix = { key, at: this.clock.now() };
+    if (key === "g") this.vimPrefix = { key, at: this.clock.now() };
     else if (key === "i") this.vimMode = "insert";
     else if (key === ":") this.vimCommand = "";
     else if (key === "j" || key === "k") this.scroll({ name: key === "j" ? "down" : "up" });
@@ -2227,14 +2200,17 @@ export class App {
   }
 
   async onKey(k: Key): Promise<void> {
+    // Kitty/modifyOtherKeys may report Shift+letter separately; legacy terminals
+    // send the uppercase character. Normalize both without changing Ctrl/Alt.
+    if (k.shift && !k.ctrl && !k.alt && /^[a-z?/]$/.test(k.name)) k = { name: "char", text: k.name === "/" ? "?" : k.name.toUpperCase() };
     this.clearNote(k);
     const confirming = this.clearing || this.workView?.confirm || this.taskTree?.confirmRemoval || this.taskTree?.confirmAbandon || this.projectList?.confirm;
     if (!this.keyEcho && !confirming) {
       if (k.ctrl && !k.alt && this.chords.has(k.name)) return this.chords.get(k.name)!();
       if (k.ctrl && !k.alt && k.name === "b") return this.projectsKey(k);
-      const text = !k.ctrl && !k.alt ? (k.name === "char" ? k.text : k.shift && /^[hl]$/.test(k.name) ? k.name.toUpperCase() : undefined) : undefined;
-      if (this.vimMode === "normal" && (this.vimCommand !== undefined || text === " " || text === ":" ||
-        this.vimPrefix?.key === " " || this.vimPrefix?.key === "g" && (text === "t" || text === "T"))) {
+      const text = !k.ctrl && !k.alt && k.name === "char" ? k.text : undefined;
+      if (this.vimMode === "normal" && (this.vimCommand !== undefined || text === ":" ||
+        text && (this.vimActions.has(text) || ["H", "L", "M", "F"].includes(text)) || this.vimPrefix?.key === "g" && (text === "t" || text === "T"))) {
         await this.vimKey(k);
         return;
       }

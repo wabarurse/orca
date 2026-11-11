@@ -24,7 +24,8 @@ import { compact, estimate } from "../memory/compaction";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { inbox } from "../../tools/inbox";
 import { read } from "../../tools/files";
-import { deliveredImages, deliveredImageData } from "../../../tui/commands/images";
+import { deliveredImages } from "../../../tui/commands/images";
+import { openDeliveredMedia } from "../../../tui/commands/media";
 import { png } from "../../../test/image-fixture";
 import { render } from "../../../tui/conversation/view";
 import { restore } from "../../../tui/conversation/restore";
@@ -214,9 +215,12 @@ test("worker screenshot travels through orchestrator to durable user chat and an
     const images = deliveredImages(entries);
     expect(images).toHaveLength(1);
     expect(images[0]!.ref.id).toBe(id);
-    expect((await deliveredImageData(p, images[0]!.ref)).data).toBe(png(3, 2).toString("base64"));
+    const media = { ...images[0]!, kind: "image" as const, id };
+    let opened = false;
+    await openDeliveredMedia(p, media, async file => { opened = true; expect(await Bun.file(file).bytes()).toEqual(new Uint8Array(png(3, 2))); });
+    expect(opened).toBe(true);
     await expect(inbox.run({ action: "send", to: "user", text: "guessed image", attachments: [crypto.randomUUID()] }, ctx(p))).rejects.toThrow("not received");
-    await expect(deliveredImageData(project(), images[0]!.ref)).rejects.toThrow("another/deleted");
+    await expect(openDeliveredMedia(project(), media, async () => { throw new Error("must not open"); })).rejects.toThrow("another/deleted");
   } finally { orch.dispose?.(); }
 });
 
