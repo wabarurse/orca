@@ -20,23 +20,6 @@ function reader() {
 }
 
 describe("parseKeys", () => {
-  test("held-Space chords are atomic, validated and safe across input chunks", () => {
-    expect(parseKeys("\x1b[777;104~\x1b[777;108~")).toEqual([
-      { name: "space-chord", text: "h" }, { name: "space-chord", text: "l" },
-    ]);
-    for (const body of ["777", "777;32", "777;127", "777;104;1", "777;-1", "777;1.5"]) {
-      expect(parseKeys(`\x1b[${body}~`)).toEqual([]);
-    }
-    const sequence = "\x1b[777;116~";
-    for (let split = 1; split < sequence.length; split++) {
-      const r = reader();
-      r.feed(sequence.slice(0, split)); expect(r.got).toEqual([]);
-      r.feed(sequence.slice(split));
-      expect(r.got).toEqual([{ name: "space-chord", text: "t" }]);
-      r.close();
-    }
-  });
-
   test("printable runs are batched", () => {
     expect(parseKeys("hello")).toEqual([{ name: "char", text: "hello" }]);
   });

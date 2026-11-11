@@ -8,50 +8,12 @@ const { fakeTerm, fakeOrchestrators, until } = appFixture();
 
 async function setup(project: string, extra: Partial<AppDeps> = {}) {
   const term = fakeTerm(120, 28), fake = fakeOrchestrators();
-  let spaceChords = false;
-  Object.assign(term, { setSpaceChords: (enabled: boolean) => { spaceChords = enabled; } });
   const app = new App({ term, pollMs: 100_000, agents: async () => [], taskCount: async () => [],
     questionDelayMs: 0, openOrchestrator: fake.openOrchestrator, ...extra });
   const running = app.run(project);
   await until(() => app.page?.project === project);
-  return { app, term, fake, get spaceChords() { return spaceChords; }, stop: async () => { app.quit(); await running; } };
+  return { app, term, fake, stop: async () => { app.quit(); await running; } };
 }
-
-test("held-Space events repeat across pages, with no sticky prefix or changes to typing", async () => {
-  const fixture = await setup("held-first");
-  const { app, term, fake, stop } = fixture;
-  const chord = (text: string) => app.onKey({ name: "space-chord", text });
-  const char = (text: string) => app.onKey({ name: "char", text });
-  try {
-    await app.openPage("held-second");
-    expect(fixture.spaceChords).toBe(false);
-    await chord("h"); expect(app.page!.project).toBe("held-second");
-    term.type("/vim\r"); await until(() => fixture.spaceChords);
-    for (const [key, project] of [["h", "held-first"], ["l", "held-second"], ["h", "held-first"]] as const) {
-      await chord(key); expect(app.page!.project).toBe(project);
-    }
-    for (const [key, title] of [["a", "AGENTS"], ["t", "TASKS"], ["q", "QUESTIONS"], ["p", "IMAGES"]] as const) {
-      await chord(key); await until(() => term.screen().includes(title));
-      expect(fixture.spaceChords).toBe(true);
-    }
-    await chord("b"); expect(app.projectList).not.toBeNull();
-    await chord("l"); expect(app.page!.project).toBe("held-second");
-    expect(app.projectList).toBeNull();
-    await chord("m"); expect(app.menu?.title).toContain("model role");
-    await chord("h"); expect(app.menu).toBeNull();
-    await char("l"); expect(app.page!.project).toBe("held-first"); // released: local motion
-    await char("i"); expect(fixture.spaceChords).toBe(false);
-    await char("draft h l"); await chord("l");
-    expect(app.input.text).toBe("draft h l"); expect(app.page!.project).toBe("held-first");
-    await app.onKey({ name: "escape" }); expect(fixture.spaceChords).toBe(true);
-    await char(":"); expect(fixture.spaceChords).toBe(false);
-    await chord("l"); await char("help");
-    expect(app.page!.project).toBe("held-first");
-    await app.onKey({ name: "escape" }); expect(fixture.spaceChords).toBe(true);
-    expect(app.input.text).toBe("draft h l");
-    expect(Object.values(fake.said).flat()).toEqual([]);
-  } finally { await stop(); }
-});
 
 test("Vim keeps drafts, switches project tabs and routes commands without Ctrl chords", async () => {
   const { app, term, fake, stop } = await setup("vim-first");
@@ -213,23 +175,15 @@ test("Agents history hides unverified rows and archives only eligible finished r
 test("Tasks confirms abandonment and retains the task and its dependents", async () => {
   const { registerTask, getTask, setTaskDependencies } = await import("../core/data/tasks/tasks");
   const project = "tasks-abandon";
-  const fixture = await setup(project, { taskCount: undefined });
-  const { app, term, stop } = fixture;
+  const { app, term, stop } = await setup(project, { taskCount: undefined });
   try {
     const parent = await registerTask(project, { name: "Parent", summary: "Keep the ledger", branch: "feat/parent", authorized: true });
     const child = await registerTask(project, { name: "Child", summary: "Dependent work", branch: "feat/child", authorized: true });
     await setTaskDependencies(project, child.id, [parent.id]);
-    term.type("/vim\r"); await until(() => fixture.spaceChords);
     await app.commands.get("/tasks")!.run("", app.page);
     await until(() => term.screen().includes("Task #1 · queued"));
     term.type("A"); await until(() => term.screen().includes("1 dependents retained"));
-    expect(fixture.spaceChords).toBe(false);
-    await app.onKey({ name: "space-chord", text: "y" });
-    await app.onKey({ name: "space-chord", text: "h" });
-    expect(app.page!.project).toBe(project);
-    expect((await getTask(project, parent.id)).attention).toBeUndefined();
     term.type("n"); expect((await getTask(project, parent.id)).attention).toBeUndefined();
-    expect(fixture.spaceChords).toBe(true);
     term.type("A"); await until(() => term.screen().includes("1 dependents retained"));
     term.type("y"); await until(() => term.screen().includes("Task abandoned"));
     expect((await getTask(project, parent.id)).attention?.kind).toBe("cancelled");

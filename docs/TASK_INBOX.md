@@ -43,19 +43,6 @@ Ctrl+A opens Agents, Ctrl+T opens Tasks, and Ctrl+Q opens Questions.
 Home moves to the start of the input line. The Space shortcuts work across
 work pages, settings menus, Help and Projects in Normal mode.
 
-With Hermit's held-Space support, keep Space down and press `h`, `l`, `b`, `t`
-or any other Space shortcut repeatedly. Release Space to return to ordinary
-navigation. Tapping Space then a key still works, including in other terminals.
-Both Orca and Hermit must include this support. Insert mode, `:` command entry,
-key diagnostics and confirmations keep their normal input behavior.
-
-The bridge uses `OSC 777;orca;space-chords=1 BEL` to opt in, `=0` to opt out,
-and `CSI 777;<printable ASCII code> ~` for each chord. Orca announces only mode
-changes and disables the bridge on close/signals/crashes; Hermit cancels holds
-on focus loss and disables it on return to the primary terminal screen. Orca
-also checks its current input mode before handling each chord. This is an
-optional terminal extension; it does not require an agent or model request.
-
 Images lists images delivered to you in this conversation, newest first. Selection previews the image inside the page in image-capable terminals, including Hermit with its image add-on. Navigation never launches an external viewer.
 The image fits the detail pane and updates on selection or resize. Unsupported
 terminals show a compatibility message. WebP/large images use a temporary PNG

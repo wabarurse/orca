@@ -27,8 +27,6 @@ export interface Terminal {
   write(s: string): void;
   /** Terminal window/tab title; optional on test and embedded terminals. */
   setTitle?(title: string): void;
-  /** Opt in to Hermit's held-Space shortcuts only while Normal mode owns input. */
-  setSpaceChords?(enabled: boolean): void;
   onKey(cb: (key: Key) => void): void;
   onResize(cb: () => void): void;
   /** Enter raw mode and bracketed paste. */
@@ -43,8 +41,7 @@ export interface Terminal {
 
 // Restore the primary screen and disable all modes we enabled on every exit path.
 const ENTER = "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?2004h";
-const SPACE_CHORDS_OFF = "\x1b]777;orca;space-chords=0\x07";
-const LEAVE = SPACE_CHORDS_OFF + "\x1b[0m\x1b[?1002l\x1b[?1006l\x1b[?1000l\x1b[?2004l\x1b[?1049l\x1b[?25h";
+const LEAVE = "\x1b[0m\x1b[?1002l\x1b[?1006l\x1b[?1000l\x1b[?2004l\x1b[?1049l\x1b[?25h";
 /** On a crash or signal: end any synchronized update, paste mode and a hidden cursor first. */
 const RESCUE = `\x1b[?2026l${LEAVE}`;
 
@@ -89,7 +86,6 @@ class RealTerminal implements Terminal {
   imageCell?: { width: number; height: number };
   private opened = false;
   private title = "";
-  private spaceChords = false;
   /** Closed, but waiting out the reply window with stdin still read (and dropped) in raw mode. */
   private draining = false;
   private eraser = "";
@@ -124,11 +120,6 @@ class RealTerminal implements Terminal {
     if (safe === this.title) return;
     this.stdout.write(`\x1b]0;${safe}\x07`);
     this.title = safe;
-  }
-  setSpaceChords(enabled: boolean): void {
-    if (!this.opened || enabled === this.spaceChords) return;
-    this.stdout.write(`\x1b]777;orca;space-chords=${enabled ? 1 : 0}\x07`);
-    this.spaceChords = enabled;
   }
   onKey(cb: (k: Key) => void): void { this.keyHandlers.push(cb); }
   onResize(cb: () => void): void { this.resizeHandlers.push(cb); }
@@ -199,7 +190,6 @@ class RealTerminal implements Terminal {
     if (this.opened || this.draining) return;
     this.opened = true;
     this.title = "";
-    this.spaceChords = false;
     this.install(true);
     this.stdout.on("resize", this.resized);
     this.stdin.setRawMode(true);

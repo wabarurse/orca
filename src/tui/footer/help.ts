@@ -34,7 +34,7 @@ const EDITING: HelpEntry[] = [
 
 const VIM: HelpEntry[] = [
   { label: "i / Esc", description: "enter Insert / return to Normal while preserving the draft" },
-  { label: "Space h / Space l", description: "previous / next project tab; hold Space in Hermit" },
+  { label: "Space h / Space l", description: "previous / next project tab (gT / gt also work)" },
   { label: "q", description: "back from pages and menus; Insert mode still types q" },
   { label: "Space a/t/q/p", description: "Agents / Tasks / Questions / Images" },
   { label: "Space u/m/e/f", description: "Accounts / Models / Effort / Fast" },

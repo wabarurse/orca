@@ -157,7 +157,6 @@ export class FakeScreen {
     [/^\x1b\[([0-9;:]*)m/, (m) => { this.bg = sgrBackground(m[1]!, this.bg); this.style = sgrStyle(m[1]!, this.style); }],
     [/^\x1b\]11;\?(?:\x07|\x1b\\)/, () => this.query()],
     [/^\x1b\]1337;ReportCellSize(?:\x07|\x1b\\)/, () => {}],
-    [/^\x1b\]777;orca;space-chords=[01](?:\x07|\x1b\\)/, () => {}],
     [/^\x1b\]1337;File=([^:\x07\x1b]*):([A-Za-z0-9+/=]*)(?:\x07|\x1b\\)/, m => {
       this.imageWrites.push({ row: this.row, col: this.col, parameters: m[1]!, data: m[2]! });
     }],

@@ -818,7 +818,6 @@ export class App {
   /** Coalesce changed pinned rows and the conversation viewport into the next frame. */
   draw(): void {
     if (this.closed) return;
-    this.deps.term.setSpaceChords?.(this.spaceChordsEnabled());
     if (!this.taskTree) this.questions.sync(); // the input holds the chat draft or the shown question's answer, as the state now wants
     this.animate();
     if (this.frameQueued || this.resizeTimer) return;
@@ -2003,12 +2002,6 @@ export class App {
   private vimMode: "normal" | "insert" | undefined;
   private vimPrefix?: { key: " " | "g"; at: number };
   private vimCommand?: string;
-  private confirming(): boolean {
-    return !!(this.clearing || this.workView?.confirm || this.taskTree?.confirmRemoval || this.taskTree?.confirmAbandon || this.projectList?.confirm);
-  }
-  private spaceChordsEnabled(): boolean {
-    return this.vimMode === "normal" && this.vimCommand === undefined && !this.keyEcho && !this.confirming();
-  }
   private readonly vimActions = new Map<string, string>([
     ["a", "/agents"], ["t", "/tasks"], ["q", "/questions"], ["p", "/images"],
     ["b", "/projects"], ["u", "/accounts"], ["e", "/effort"], ["?", "/help"],
@@ -2235,15 +2228,8 @@ export class App {
 
   async onKey(k: Key): Promise<void> {
     this.clearNote(k);
-    if (k.name === "space-chord") {
-      // Recheck locally: input may already be in flight when the mode changes.
-      if (this.spaceChordsEnabled() && /^[!-~]$/.test(k.text ?? "")) {
-        this.vimPrefix = { key: " ", at: this.clock.now() };
-        await this.vimKey({ name: "char", text: k.text });
-      }
-      return;
-    }
-    if (!this.keyEcho && !this.confirming()) {
+    const confirming = this.clearing || this.workView?.confirm || this.taskTree?.confirmRemoval || this.taskTree?.confirmAbandon || this.projectList?.confirm;
+    if (!this.keyEcho && !confirming) {
       if (k.ctrl && !k.alt && this.chords.has(k.name)) return this.chords.get(k.name)!();
       if (k.ctrl && !k.alt && k.name === "b") return this.projectsKey(k);
       const text = !k.ctrl && !k.alt ? (k.name === "char" ? k.text : k.shift && /^[hl]$/.test(k.name) ? k.name.toUpperCase() : undefined) : undefined;

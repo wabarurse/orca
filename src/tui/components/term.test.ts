@@ -12,9 +12,8 @@ function make(background?: string) {
   screen.background = background;
   let onData: ((chunk: string | Uint8Array) => void) | null = null;
   const raw: boolean[] = [];
-  const writes: string[] = [];
   const stdin = { isTTY: true, setRawMode: (on: boolean) => { raw.push(on); }, setEncoding() {}, on: (_: string, fn: (c: string | Uint8Array) => void) => { onData = fn; }, off: () => { onData = null; }, resume() {}, pause() {} };
-  const stdout = { isTTY: true, columns: 40, rows: 5, write: (s: string) => { writes.push(s); screen.write(s); return true; }, on() {} };
+  const stdout = { isTTY: true, columns: 40, rows: 5, write: (s: string) => { screen.write(s); return true; }, on() {} };
   const procHandlers = new Map<string, (...a: unknown[]) => void>();
   const proc = { on: (e: string, fn: () => void) => { procHandlers.set(e, fn); }, off: (e: string) => { procHandlers.delete(e); }, exit() {}, stderr: { write() {} } };
   const timers: { at: number; fn: () => void }[] = [];
@@ -27,27 +26,8 @@ function make(background?: string) {
   const term = realTerminal(stdin as never, stdout as never, proc as never, clock);
   const keys: Key[] = [];
   term.onKey((k) => keys.push(k));
-  return { term, screen, clock, advance, keys, raw, writes, procHandlers, timers, input: (s: string | Uint8Array) => onData?.(s), get reading() { return onData !== null; } };
+  return { term, screen, clock, advance, keys, raw, procHandlers, timers, input: (s: string | Uint8Array) => onData?.(s), get reading() { return onData !== null; } };
 }
-
-test("held-Space mode is deduplicated and disabled on every terminal exit", () => {
-  const on = "\x1b]777;orca;space-chords=1\x07", off = "\x1b]777;orca;space-chords=0\x07";
-  for (const exit of ["close", "SIGTERM", "SIGHUP", "uncaughtException", "exit"]) {
-    const t = make();
-    t.term.setSpaceChords?.(true); expect(t.writes).toEqual([]);
-    t.term.open(); t.advance(BG_REPLY_MS);
-    t.term.setSpaceChords?.(true); t.term.setSpaceChords?.(true);
-    expect(t.writes.filter(s => s === on)).toHaveLength(1);
-    t.term.setSpaceChords?.(false); t.term.setSpaceChords?.(false);
-    expect(t.writes.filter(s => s === off)).toHaveLength(1);
-    t.term.setSpaceChords?.(true);
-    if (exit === "close") t.term.close(); else t.procHandlers.get(exit)!(new Error("test"));
-    expect(t.writes.at(-1)).toContain(off);
-    t.term.open(); t.term.setSpaceChords?.(true);
-    expect(t.writes.at(-1)).toBe(on);
-    t.term.close();
-  }
-});
 
 const settled = async (p: Promise<void> | undefined) => {
   let done = false;
