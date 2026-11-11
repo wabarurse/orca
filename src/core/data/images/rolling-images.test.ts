@@ -192,7 +192,7 @@ for (const action of ["clear", "cancel"] as const) test(`external ${action} veto
 test("failed rolling checkpoint append keeps image context, searchable originals and receipts intact", async () => {
   const f = await fixture(), worker = summary(), inputId = await commit(f.project, f.transcript, f.refs); await tail(f.transcript);
   const bytes = readFileSync(f.transcript.path, "utf8");
-  const broken = open(f.transcript.path, { ...disk, rename: async () => { throw new Error("disk full"); } });
+  const broken = open(f.transcript.path, { ...disk, open: async () => { throw new Error("disk full"); } });
   const { rolling, deps } = controller(f, worker, broken);
   await rolling.boundary(deps, true);
   expect(readFileSync(f.transcript.path, "utf8")).toBe(bytes);

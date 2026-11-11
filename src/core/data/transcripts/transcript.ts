@@ -1,4 +1,4 @@
-// Logically append-only JSONL, atomically published byte-preserving file images.
+// Append-only JSONL: each record is appended and fsynced in place (transcript-storage.ts).
 // One line per entry (the entry types are protocol/transcript.ts). Entries form a
 // tree via parentUuid; the conversation sent to the model is the chain from the
 // latest leaf back to the root. Compaction appends a `summary` entry whose parent
@@ -101,7 +101,9 @@ export function open(path: string, io: Storage = disk): Transcript {
   async function append(partial: NewEntry, signal?: AbortSignal, guard?: AppendGuard): Promise<Entry> {
     return withStorageLock(lock, async () => {
       signal?.throwIfAborted();
-      await reload(); // choose parent and publish against the SAME locked disk head
+      // Choose parent and publish against the SAME locked disk head. Every append grows the
+      // file, so an unchanged version means this snapshot already is that head.
+      if (observed === undefined || version() !== observed) await reload();
       if (guard && head !== guard.head) throw new Error("transcript changed before checkpoint publication");
       guard?.check?.();
       const entry = { ...partial, parentUuid: partial.parentUuid ?? head,

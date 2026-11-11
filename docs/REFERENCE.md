@@ -1083,8 +1083,9 @@ which the model can inspect with bounded shell reads. `max_output_bytes` adjusts
 call's preview from 512 bytes up to the configured cap (at most 64 KiB).
 A command exceeding `maxToolOutputBytes` (64 MiB by default) is terminated;
 its saved output is explicitly partial, as are timeouts and cancelled commands.
-Before the next command, completed outputs are pruned to seven days and a
-256 MiB project budget. Active files are excluded until stale, and newly completed
+Before the next command, on `orca clean` and once when an orchestrator daemon starts
+(for every project), outputs no workspace session owns are pruned to seven days and a
+256 MiB project budget; outputs a session owns stay until that session is archived and cleaned. Active files are excluded until stale, and newly completed
 files can temporarily exceed the budget. Saved output is temporary, not an archive.
 
 `timeout_ms` sets a command's maximum runtime (1–600000 milliseconds; default

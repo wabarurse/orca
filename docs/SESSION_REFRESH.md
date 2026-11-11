@@ -87,9 +87,9 @@ preview is local to the submitting window; it is not a global inbox inventory.
   reuse) or unreadable owners are never taken over. Processes in another PID
   namespace (containers sharing one ORCA_HOME) look dead to `kill(pid, 0)`, so
   takeover is only safe when every orca process shares the host's PID namespace.
-- Transcript reload, parent selection and staged/fsync/rename publication share
-  a per-file lock (`transcript/<session>.jsonl.lock`). Publication preserves the
-  exact old byte prefix. Refresh replaces its snapshot only after successful
+- Transcript reload, parent selection and append/fsync publication share
+  a per-file lock (`transcript/<session>.jsonl.lock`). Publication appends in place and
+  never rewrites the old bytes; an append reloads only when the file's version changed. Refresh replaces its snapshot only after successful
   reading/parsing; damaged legacy lines are preserved on disk, not replayed.
 - The orchestrator daemon holds `turn-locks/<project>` for the entire model and
   tool turn. The lock serializes writers of a conversation's transcript.
@@ -159,8 +159,8 @@ consumer as a workaround. No recovery action is performed by refresh or tests.
 Legacy non-cooperating filesystem editors, network filesystems with weaker
 locking/rename semantics, power-loss guarantees beyond the existing publication
 protocol, and automatic dead-owner recovery are outside scope. Reload/receipt
-scanning is linear in saved history, and copy-on-write append remains linear in
-file size; no receipt pruning is introduced because it could permit duplicates.
+scanning is linear in saved history (an append itself costs only its record, but a
+refresh after another process's append re-reads the file); no receipt pruning is introduced because it could permit duplicates.
 
 ## Local validation and reviewer handoff
 

@@ -17,8 +17,8 @@ export interface Resource {
 }
 const sessions = "workspace-sessions", resourcesScope = "workspace-resources";
 const inspection = new AsyncLocalStorage<Map<string, Map<string, unknown>>>();
-/** The CLI preview runs discovery/archival against an in-memory overlay. */
-export const preview = <T>(action: () => T): T => inspection.run(new Map(), action);
+/** The CLI preview runs discovery/archival against an in-memory overlay; a preview inside a preview shares its overlay. */
+export const preview = <T>(action: () => T): T => inspection.getStore() ? action() : inspection.run(new Map(), action);
 function read<T>(file: string, area: string, key: string): T | undefined {
   const overlay = inspection.getStore()?.get(area);
   return overlay?.has(key) ? structuredClone(overlay.get(key)) as T | undefined : readState<T>(file, area, key);
