@@ -141,7 +141,7 @@ export class App {
       ? [fit(sanitize(view.error ?? "Loading tasks…"), cols)] : rendered.lines;
     const controls = [(this.vimCommand !== undefined ? `:${this.vimCommand}` : view.confirmAbandon?.text) ?? (view.confirmRemoval ? `Archive ${view.confirmRemoval.length} settled task(s)? y confirm / n cancel` : view.notice ?? "q/Esc back · a expand archived · d archive · D bulk · u restore · A abandon · r refresh"),
       view.detailsFocused ? "Details: ↑↓ scroll · ← list · number + Enter jump" : "number + Enter jump · ↑↓ select · ← fold/parent · → unfold/details · Shift+Tab next"].map(line => fit(line, cols));
-    if (this.vimMode && lines.length) lines[0] = fit(`[${this.vimMode.toUpperCase()}] ${lines[0]}`, cols);
+    if (this.vimMode) controls[0] = fit(`[${this.vimMode.toUpperCase()}] ${controls[0]}`, cols);
     const content = Array.from({ length: Math.max(0, rows - 2) }, (_, i) => lines[i] ?? "");
     return { rows: [...content, ...controls].slice(0, rows), cols, cursor: Math.max(0, rows - 1), col: 0,
       bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
@@ -688,7 +688,6 @@ export class App {
     const settings = page.settings;
     const model = `${page.model ? roleModelsLabel(page.model, page.roles) : "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
     const lines = chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), directory, remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
-    if (this.vimMode && lines.length) lines[0] = fit(`[${this.vimMode.toUpperCase()}] ${lines[0]}`, this.deps.term.cols);
     return lines;
   }
 
@@ -794,7 +793,7 @@ export class App {
 
   /** The input and its laid-out area, keeping the window's top row between frames. */
   private inputFrame(reserved: number): { input: Input; area: InputArea } {
-    const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, top: this.inputTop };
+    const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, top: this.inputTop, mode: this.vimMode };
     const area = inputArea(input, this.deps.term.cols, this.composerRows(), reserved);
     input.top = this.inputTop = area.top;
     return { input, area };
@@ -1482,7 +1481,7 @@ export class App {
     const detail = workDetails(items[selected]?.detail ?? "", widths.right);
     view.detail = Math.max(0, Math.min(view.detail, detail.length - detailRows));
     const question = view.kind === "questions" ? this.questions.view() : null;
-    const form = question ? questionPageRows(question, { ...this.input, prompt: "answer> " }, widths.right, detailRows) : undefined;
+    const form = question ? questionPageRows(question, { ...this.input, prompt: "answer> ", mode: this.vimMode }, widths.right, detailRows) : undefined;
     let right = form?.rows ?? detail.slice(view.detail, view.detail + detailRows);
     const image = items[selected]?.image;
     if (view.kind === "images" && image) {
@@ -1498,12 +1497,13 @@ export class App {
           cellWidth: this.deps.term.imageCell?.width ?? 8, cellHeight: this.deps.term.imageCell?.height ?? 16 };
       }
     }
-    const title = view.kind.toUpperCase() + (this.vimMode ? ` · ${this.vimMode.toUpperCase()}` : "");
+    const title = view.kind.toUpperCase();
     const lines = workRows(title, cols, left, right).slice(0, Math.max(0, rows - 2));
     while (lines.length < rows - 2) lines.push("");
     const notice = view.page.questions.error && view.kind === "questions" ? `questions unavailable: ${view.page.questions.error}`
       : view.page.questions.closing && view.kind === "questions" ? QUESTION_PROGRESS[view.page.questions.closing] : this.noteRow(view.page) ?? view.notice;
     lines.push(fit(sanitize(view.confirm?.text ?? (this.vimCommand !== undefined ? `:${this.vimCommand}` : notice) ?? (question ? (this.vimMode === "insert" ? "Insert · Esc normal · Enter send" : this.vimMode === "normal" ? "i answer · digits choose · q back" : "Type answer · Enter send · Esc back") : view.kind === "images" ? "↑↓ select · automatic preview · q/Esc back" : "↑↓ select · ←→ focus · Enter open · q/Esc back")), cols));
+    if (this.vimMode && !form?.cursor) lines[lines.length - 1] = fit(`[${this.vimMode.toUpperCase()}] ${lines.at(-1)}`, cols);
     lines.push(fit(view.confirm ? "y confirm · n/Esc cancel" : question ? "Tab back to list · Ctrl+D dismiss" : `a expand archived · d archive · D bulk · u restore · r refresh${view.kind === "agents" ? " · s stop" : ""}`, cols));
     return { rows: lines.slice(0, rows), cols, cursor: form?.cursor ? Math.min(rows - 1, (widths.split ? 1 : listRows + 2) + form.cursor.row) : Math.max(0, rows - 1),
       col: form?.cursor ? (widths.split ? widths.left + 3 : 0) + form.cursor.col : 0, bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };

@@ -147,6 +147,14 @@ describe("live", () => {
     const f = frame({ rows: 9, cols: 8, input: { prompt: "> ", text: "你好世界ab", cursor: 6 } });
     expect(rows(f)).toEqual(box(["> 你好", "  世界", "  ab"], 8));
     expect(liveRows(f)).toMatchObject({ cursor: 3, col: 5 });
+    for (const mode of ["insert", "normal"] as const) for (const [cols, height] of [[8, 9], [20, 9], [8, 5], [2, 3], [2, 2]]) {
+      const plain = inputArea(f.input, cols!, height!);
+      const labeled = inputArea({ ...f.input, mode }, cols!, height!);
+      expect(labeled.col).toBe(plain.col);
+      expect(labeled.lines[labeled.row]).toBe(plain.lines[plain.row]);
+      expect(labeled.lines.every(line => visibleLength(line) <= cols!)).toBe(true);
+      expect(labeled.lines.length).toBeLessThanOrEqual(height!);
+    }
   });
 
   test("a long menu keeps the selection in view and fits the screen", () => {
