@@ -1,5 +1,11 @@
 # Workspace sessions and cleanup
 
+Conversation deletion checks owned worktrees before stopping its idle daemon.
+Finder's regular `.DS_Store` file at the worktree root is ignored during Git
+inspection and removed during successful cleanup. Other unexpected files,
+symlinks, non-worktree folders and source changes are preserved; a refusal names
+the path that needs attention.
+
 A workspace directory is the ownership boundary for a session. A Git worktree
 and an ordinary user directory both work; no task, PR, or Git repository is
 required. Any number of agents, tasks, questions, images, commands and sandbox

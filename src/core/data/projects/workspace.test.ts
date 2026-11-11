@@ -66,6 +66,51 @@ test("ordinary directories work without Git, reopen by exact directory, and neve
   } finally { if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath; }
 });
 
+test("Finder metadata alone does not block conversation deletion", async () => {
+  await ensureProject("finder", repo);
+  const root = paths.worktrees("finder"); mkdirSync(root, { recursive: true });
+  await Bun.write(join(root, ".DS_Store"), "Finder metadata");
+  const calls: string[] = [];
+  await deleteProject("finder", { live: async () => [], stop: async () => { calls.push("stop"); }, kill: async () => { calls.push("kill"); } });
+  expect(calls).toEqual(["stop", "kill"]);
+  expect(existsSync(root)).toBe(false);
+  expect(existsSync(paths.project("finder"))).toBe(false);
+  expect(existsSync(join(repo, ".git"))).toBe(true);
+});
+
+test("Finder metadata beside a clean worktree is removed without deleting its branch", async () => {
+  await ensureProject("finder", repo);
+  const tree = await ensureWorktree("finder", "feat/clean");
+  await Bun.write(join(paths.worktrees("finder"), ".DS_Store"), "Finder metadata");
+  await removeProjectWorktrees("finder");
+  expect(existsSync(tree)).toBe(false);
+  expect(await git(repo, "branch", "--list", "feat/clean")).toContain("feat/clean");
+});
+
+test("unexpected worktree entries get an actionable error before stopping the daemon", async () => {
+  await ensureProject("finder", repo);
+  const root = paths.worktrees("finder"); mkdirSync(root, { recursive: true });
+  const draft = join(root, "report.md"); await Bun.write(draft, "keep this report");
+  await Bun.write(join(root, ".DS_Store"), "Finder metadata");
+  const calls: string[] = [];
+  await expect(deleteProject("finder", { live: async () => [], stop: async () => { calls.push("stop"); }, kill: async () => { calls.push("kill"); } })).rejects.toThrow(draft);
+  expect(calls).toEqual([]);
+  expect(await Bun.file(draft).text()).toBe("keep this report");
+  expect(existsSync(paths.project("finder"))).toBe(true);
+});
+
+test("a directory or link named .DS_Store is preserved and never treated as disposable metadata", async () => {
+  await ensureProject("finder", repo);
+  const root = paths.worktrees("finder"); mkdirSync(root, { recursive: true });
+  const metadata = join(root, ".DS_Store"); symlinkSync(repo, metadata);
+  await expect(removeProjectWorktrees("finder")).rejects.toThrow("unexpected file");
+  expect(existsSync(join(repo, ".git"))).toBe(true);
+  rmSync(metadata); mkdirSync(metadata);
+  await Bun.write(join(metadata, "draft"), "keep");
+  await expect(removeProjectWorktrees("finder")).rejects.toThrow("cannot inspect worktree");
+  expect(await Bun.file(join(metadata, "draft")).text()).toBe("keep");
+});
+
 test("startup automatically creates and reopens an ordinary folder without unrelated conversations", async () => {
   const folder = join(temp, "plain startup"); mkdirSync(folder);
   await ensureProject("unrelated", repo);

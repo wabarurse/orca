@@ -49,23 +49,25 @@ test("Vim keeps drafts, switches project tabs and routes commands without Ctrl c
   } finally { await stop(); }
 });
 
-test("Normal H/L switches tabs from chat, work pages and menus, while Insert and commands keep text", async () => {
+test("Normal Space+h/l switches tabs from chat, work pages and menus, while Insert and commands keep text", async () => {
   const { app, term, stop } = await setup("zx-first");
   try {
     await app.openPage("zx-second");
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type("H"); await until(() => app.page?.project === "zx-first");
-    term.type("izx"); await until(() => app.input.text === "zx");
+    await app.onKey({ name: "char", text: "H" }); await app.onKey({ name: "char", text: "L" });
+    expect(app.page!.project).toBe("zx-second"); // The old Shift shortcuts no longer change projects.
+    term.type(" h"); await until(() => app.page?.project === "zx-first");
+    term.type("izx h l"); await until(() => app.input.text === "zx h l");
     expect(app.page!.project).toBe("zx-first");
-    term.press({ name: "escape" }); term.type("L"); await until(() => app.page?.project === "zx-second");
+    term.press({ name: "escape" }); term.type(" l"); await until(() => app.page?.project === "zx-second");
     term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
-    term.type("H"); await until(() => app.page?.project === "zx-first");
-    expect(app.input.text).toBe("zx");
+    term.type(" h"); await until(() => app.page?.project === "zx-first");
+    expect(app.input.text).toBe("zx h l");
     term.type(" m"); await until(() => app.menu?.title.includes("model role") === true);
-    term.type("L"); await until(() => app.page?.project === "zx-second");
+    term.type(" l"); await until(() => app.page?.project === "zx-second");
     expect(app.menu).toBeNull();
     term.type(" b"); await until(() => app.projectList !== null);
-    term.type("H"); await until(() => app.page?.project === "zx-first");
+    term.type(" h"); await until(() => app.page?.project === "zx-first");
     expect(app.projectList).toBeNull();
     await app.onKey({ name: "char", text: " " }); await app.onKey({ name: "char", text: "x" });
     expect(app.page!.project).toBe("zx-first");
@@ -104,7 +106,7 @@ test("q backs out of pages and menus; question drafts survive and Insert q/H/L r
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
     term.type("ichat draft"); await until(() => app.input.text === "chat draft");
     term.press({ name: "escape" });
-    for (const command of ["a", "t", "p", "b", "m", "h"]) {
+    for (const command of ["a", "t", "p", "b", "m", "?"]) {
       await app.onKey({ name: "char", text: " " }); await app.onKey({ name: "char", text: command });
       await app.onKey({ name: "char", text: "q" });
       expect(app.menu).toBeNull(); expect(app.projectList).toBeNull();
@@ -221,7 +223,7 @@ test("Normal mode navigates work pages, settings, help and projects and switches
     term.type("G"); await until(() => app.menu?.index === 3);
     term.type("gg"); await until(() => app.menu?.index === 0);
     term.type("jk"); await until(() => app.menu?.index === 0);
-    term.type(" h"); await until(() => app.frame().help !== null);
+    term.type(" ?"); await until(() => app.frame().help !== null);
     term.type("G"); await until(() => (app.frame().help?.top ?? 0) > 0);
     term.type("gg"); await until(() => app.frame().help?.top === 0);
     term.type(" b"); await until(() => app.projectList !== null);
