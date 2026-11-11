@@ -32,10 +32,10 @@ Workspace inactivity also groups linked items under Archived after 14 days.
 its owned records and unreferenced files. Manually archiving one item does not
 make an active workspace eligible. See [workspace cleanup](WORKSPACE_CLEANUP.md).
 
-`/vim` toggles Vim controls. The mode label sits on the input box's top border (beside the bottom controls on full-page lists). In Normal mode, `i` enters Insert, `H`/`L` (Shift+h / Shift+l)
+`/vim` toggles Vim controls. The mode label sits on the input box's top border (beside the bottom controls on full-page lists). In Normal mode, `i` enters Insert, `Space h`/`Space l`
 switch to the previous/next tab (`gT`/`gt` also work), `j/k` and `gg/G` navigate, and `h/l` switch panes
 in work views. Space then `a/t/q/p` opens Agents, Tasks, Questions or Images.
-Space then `u/m/e/f` opens Accounts, Model, Effort or Fast mode. Use `:`
+Space then `u/m/e/f` opens Accounts, Model, Effort or Fast mode; `Space ?` opens Help. Use `:`
 to run any slash command. `q` goes back from pages and menus in Normal mode;
 Insert mode types it normally. Esc leaves Insert and retains the chat draft.
 

@@ -2004,7 +2004,7 @@ export class App {
   private vimCommand?: string;
   private readonly vimActions = new Map<string, string>([
     ["a", "/agents"], ["t", "/tasks"], ["q", "/questions"], ["p", "/images"],
-    ["b", "/projects"], ["u", "/accounts"], ["e", "/effort"], ["h", "/help"],
+    ["b", "/projects"], ["u", "/accounts"], ["e", "/effort"], ["?", "/help"],
     ["r", "/refresh"], ["v", "/paste-image"], ["x", "/remove-image"], ["s", "/stop"],
   ]);
 
@@ -2045,7 +2045,10 @@ export class App {
     this.vimPrefix = undefined;
     if (prefix && this.clock.now() - prefix.at < 1500) {
       if (prefix.key === " " && key) {
-        if (key === "m") this.vimModelMenu();
+        if (key === "h" || key === "l") {
+          this.menu = null; this.projectList = null;
+          this.switchPage(key === "h" ? -1 : 1);
+        } else if (key === "m") this.vimModelMenu();
         else if (key === "f") this.vimFastMenu();
         else {
           const command = this.vimActions.get(key);
@@ -2234,10 +2237,6 @@ export class App {
         this.vimPrefix?.key === " " || this.vimPrefix?.key === "g" && (text === "t" || text === "T"))) {
         await this.vimKey(k);
         return;
-      }
-      if (this.vimMode === "normal" && (text === "H" || text === "L")) {
-        this.vimPrefix = undefined; this.menu = null; this.projectList = null;
-        this.switchPage(text === "H" ? -1 : 1); return;
       }
       if (text === "q" && (this.vimMode === "normal" || !this.vimMode && !this.questions.answering()) &&
         (this.workView || this.taskTree || this.projectList || this.menu || this.helpTop !== null || this.page?.view)) k = { name: "escape" };

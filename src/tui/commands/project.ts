@@ -48,6 +48,7 @@ export async function deleteProject(name: string, { live = liveAgentsOrNull, sto
       const blocker = processCleanupBlocker(command);
       if (blocker) throw new Error(`cannot delete conversation: ${blocker}`);
     }
+    await removeProjectWorktrees(name, { dryRun: true });
     await stop(name); // the daemon must be gone before its files are, or it writes them back
     await kill(name);
     await withProjectStateLock(name, async () => {

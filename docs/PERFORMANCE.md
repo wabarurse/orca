@@ -166,7 +166,12 @@ PR observer. One runtime pass coalesces explicit watches and task-linked PRs.
 Notifications go to the orchestrator for changed heads, CI, review/comment activity,
 closure and merge. Watches continue after CI settles and workers finish; they
 spawn no shell and consume no command slot. They retire when the PR closes or
-merges. Explicit `process stop` disables the PR observation until a new registration,
+merges, or its linked tasks are cancelled, removed or closed. Existing open PRs
+establish a silent baseline, including already-failing CI. Temporarily unknown
+fields retain their last known notification value for the same head; readiness
+still uses the actual current observation and fails closed. A polling pass sends
+one durable inbox message for all meaningful changes, with its delivery identity
+preserved across restarts. Explicit `process stop` disables the PR observation until a new registration,
 even after its old handle is forgotten. Ctrl+C fences in-flight observations;
 stopped registrations never restart themselves. Notifications grant no permission
 to retry commands, publish, merge or deploy.
