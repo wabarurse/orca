@@ -46,8 +46,8 @@ function usage(error?: string): never {
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
-  orca clean [--apply]            preview archived workspace cleanup; --apply deletes eligible storage
-  orca organize                   group saved folders by directory (requires Orca stopped)
+  orca clean [--preview]          delete eligible archived storage; --preview lists without deleting
+  orca organize                   group saved folders by directory (requires orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
@@ -64,8 +64,9 @@ if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 
 switch (cmd) {
   case "clean": {
-    if (rest.some(arg => !["--apply", "--dry-run"].includes(arg)) || (rest.includes("--apply") && rest.includes("--dry-run"))) usage("clean accepts --apply or --dry-run");
-    console.log(JSON.stringify(await cleanStorage(rest.includes("--apply")), null, 2));
+    // Keep old explicit flags as aliases, particularly --dry-run's non-destructive meaning.
+    if (rest.length > 1 || rest.some(arg => !["--preview", "--apply", "--dry-run"].includes(arg))) usage("clean accepts --preview (or legacy --dry-run / --apply)");
+    console.log(JSON.stringify(await cleanStorage(!rest.includes("--preview") && !rest.includes("--dry-run")), null, 2));
     break;
   }
   case "organize": {

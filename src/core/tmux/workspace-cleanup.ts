@@ -20,6 +20,7 @@ export interface CleanupOptions {
   now?: number;
   activity?: typeof agentActivity;
   openPaths?: () => Promise<string[] | null>;
+  cacheRoots?: string[];
 }
 async function localOpenPaths(): Promise<string[] | null> {
   const uid = process.getuid?.();
@@ -36,7 +37,7 @@ function guards(options: CleanupOptions) {
   const projects = new Map<string, Promise<{ activity: Awaited<ReturnType<typeof agentActivity>>; processes: Awaited<ReturnType<typeof listProcesses>>; sandboxes: Awaited<ReturnType<typeof listVerifications>> }>>();
   let opened: Promise<string[] | null> | undefined;
   const inspect = processInspection();
-  return async (w: workspaces.Workspace, turnLocksHeld = false): Promise<string | undefined> => {
+  const check = async (w: workspaces.Workspace, turnLocksHeld: boolean): Promise<string | undefined> => {
     if (existsSync(w.path) && workspaces.fingerprint(w.path) !== w.fingerprint) return "workspace directory identity changed";
     const resources = owned.get(w.id) ?? [];
     for (const member of w.members) {
@@ -69,10 +70,14 @@ function guards(options: CleanupOptions) {
     const roots = [w.path, ...resources.filter(r => r.kind === "cache" && r.path).map(r => r.path!)];
     if (open.some(path => roots.some(root => path === root || path.startsWith(root + sep)))) return "local process uses workspace or build cache";
   };
+  return async (w: workspaces.Workspace, turnLocksHeld = false): Promise<string | undefined> => {
+    try { return await check(w, turnLocksHeld); }
+    catch (error) { return `inspection failed (${error})`; }
+  };
 }
 
 /** Maintenance only discovers and archives. It never deletes storage, invokes
- * a model or starts work. Only explicit --apply performs permanent cleanup. */
+ * a model or starts work. Only the explicit clean command performs permanent cleanup. */
 export async function archiveInactiveWorkspaces(project: string, options: CleanupOptions = {}): Promise<void> {
   const now = options.now ?? Date.now();
   if (workspaces.list().some(w => w.cleaning && w.members.some(m => m.project === project))) return;
@@ -102,8 +107,8 @@ async function locks(w: workspaces.Workspace): Promise<() => Promise<void>> {
 export async function cleanManagedWorkspaces(project: string, apply = false, options: CleanupOptions = {}): Promise<CleanupResult[]> {
   const execute = async () => {
     await archiveInactiveWorkspaces(project, options);
-    await discoverBuildCaches();
-    return cleanRegistered(project, apply, options);
+    const issues = await discoverBuildCaches(options.cacheRoots, project);
+    return [...issues, ...await cleanRegistered(project, apply, options)];
   };
   return apply ? execute() : workspaces.preview(execute);
 }

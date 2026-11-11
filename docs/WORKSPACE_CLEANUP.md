@@ -33,10 +33,12 @@ disposable; only a verified managed Git worktree can be removed wholesale.
 - Permanent deletion is explicit:
 
   ```sh
-  orca clean             # Preview discovery, archiving and cleanup; no persistent changes
-  orca clean --dry-run   # Same preview
-  orca clean --apply     # Recheck and remove eligible archived sessions
+  orca clean --preview  # Preview discovery, archiving and cleanup; no persistent changes
+  orca clean            # Recheck and remove eligible archived sessions
   ```
+
+The old `--dry-run` and `--apply` flags remain aliases for preview and deletion,
+respectively. Conflicting or unknown flags fail before cleanup.
 
 Preview discovery uses an in-memory metadata overlay. Both modes report each
 workspace, its disposition and estimated allocated bytes for eligible files.
@@ -80,6 +82,14 @@ evidence now follows workspace archival and explicit cleanup instead of expiring
 after seven days. Legacy evidence without ownership retains its prior bounded
 policy until discovery associates it with a workspace.
 
+## Active sessions
+
+Activity is tracked per workspace, so an active conversation does not by itself
+prevent cleanup of an independent inactive worker worktree. Resources assigned
+to an active main checkout still remain, however. Legacy artifacts without a
+trustworthy worker association stay attached there; individual items do not yet
+age out independently inside a continuously active workspace.
+
 ## Existing installs and interrupted cleanup
 
 Discovery reads registered Git worktrees under Orca's managed directory, agent
@@ -94,8 +104,12 @@ deletion. Liveness is checked again after size inspection. Unknown ownership,
 `lsof` being unavailable, permission errors, active processes, undelivered completions and unresolved
 sandbox cleanup preserve resources. A dead command's unknown outcome is not
 rewritten or replayed; existing PID/process-group checks determine liveness.
+A deleted or recreated conversation owner is reported against its affected cache
+and workspace; it never transfers ownership to the replacement conversation.
+Cache discovery and per-workspace inspection failures retain affected resources
+while unrelated eligible sessions can still be cleaned.
 If cleanup is interrupted, its claim blocks new admissions until a subsequent
-`orca clean --apply` resumes cleanup. Failures retain their metadata and can be
+`orca clean` resumes cleanup. Failures retain their metadata and can be
 retried; cleanup never starts an agent to finish them.
 
 
