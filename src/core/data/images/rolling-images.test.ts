@@ -9,7 +9,7 @@ import { paths, saveConfig } from "../../../config/config";
 import { estimate } from "../memory/compaction";
 import { forwardImages } from "../../tools/attachments";
 import { historicalMessages } from "./history";
-import { blockRef, imageContent, loadImage, pendingImageInputs, saveImage, saveImageInput } from "./images";
+import { blockRef, imageBlock, imageContent, loadImage, materializeImages, pendingImageInputs, saveImage, saveImageInput } from "./images";
 import type { ImageRef } from "../../../protocol/images";
 import { content, consume, pending, put } from "../inbox/inbox";
 import { archivePath, archiveTranscript, entryText, queryHistory } from "../memory/archive";
@@ -23,6 +23,7 @@ import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import { png } from "../../../test/image-fixture";
 import { open, type Transcript } from "../transcripts/transcript";
 import { disk } from "../transcripts/transcript-storage";
+import { read } from "../../tools/files";
 import { message } from "../../tools/message";
 import { orchestratorTask } from "../../tools/task";
 
@@ -55,7 +56,7 @@ function ids(messages: MessageParam[]) {
   return messages.flatMap(m => typeof m.content === "string" ? [] : m.content.flatMap(b => b.type === "image" ? [blockRef(b)!.id] : []));
 }
 function pixels(messages: MessageParam[]) {
-  return messages.flatMap(m => typeof m.content === "string" ? [] : m.content.flatMap(b => b.type === "image" && b.source.type === "base64" ? [b.source.data] : []));
+  return messages.flatMap(m => typeof m.content === "string" ? [] : m.content.flatMap(b => b.type === "image" ? [b] : b.type === "tool_result" && Array.isArray(b.content) ? b.content.filter(i => i.type === "image") : []).flatMap(b => b.source.type === "base64" ? [b.source.data] : []));
 }
 async function commit(project: string, t: Transcript, refs: ImageRef[], prompt = "same visual brief ".repeat(2000)) {
   const inputId = crypto.randomUUID();
@@ -79,7 +80,7 @@ function controller(f: Awaited<ReturnType<typeof fixture>>, worker: ReturnType<t
   return { rolling, deps, foreground };
 }
 
-for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> rolling checkpoints/SQLite -> refresh/provider pixels -> explicit worker handoff`, async () => {
+for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> rolling checkpoints/SQLite -> explicit image reload -> provider pixels and worker handoff`, async () => {
   const f = await fixture(model), worker = summary(), foreground = fakeProvider(Array.from({ length: 8 }, () => [text("inspected")]));
   const orch = await createOrchestrator({ project: f.project, transcript: f.transcript, provider: foreground, tools: {}, write() {},
     rolling: { triggerTokens: 1e9, tailTokens: 200, loadProvider: async () => worker.provider } });
@@ -92,7 +93,7 @@ for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> r
     if (round) { await orch.say("follow-up prose ".repeat(2000)); await orch.turn(); }
     await orch.compact!(); await orch.turn();
     expect(f.transcript.branch()[0]?.type).toBe("summary");
-    expect(ids(await f.transcript.chain())).toEqual(f.refs.map(r => r.id));
+    expect(ids(await f.transcript.chain())).toEqual([]);
     expect(f.transcript.history!().slice(0, history.length)).toEqual(history);
     expect(orch.consumed!().has(inputId)).toBe(true);
   }
@@ -119,13 +120,23 @@ for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> r
   const calls = foreground.calls.length;
   await put(f.project, "orchestrator", { from: "user", text: "identical retry", inputId, attachments: f.refs });
   await refreshed.turn(); expect(foreground.calls).toHaveLength(calls); expect(await pending(f.project, "orchestrator")).toBe(false);
+  const restored = await read.run({ attachment_id: f.refs[0]!.id }, f.ctx);
+  const restoredOther = await read.run({ attachment_id: f.refs[1]!.id }, f.ctx);
+  expect(Array.isArray(restored)).toBe(true); expect(Array.isArray(restoredOther)).toBe(true);
+  await f.transcript.append({ type: "message", message: { role: "assistant", content: [toolUse("r", "read", { attachment_id: f.refs[0]!.id }), toolUse("s", "read", { attachment_id: f.refs[1]!.id })] } });
+  await f.transcript.append({ type: "message", message: { role: "user", content: [
+    { type: "tool_result", tool_use_id: "r", content: restored as any }, { type: "tool_result", tool_use_id: "s", content: restoredOther as any },
+  ] } });
+  await refreshed.refresh!();
   await refreshed.say("inspect these again"); await refreshed.turn();
   const delivered = foreground.calls.at(-1)!.messages, expected = [png(), png(2, 1, 250)].map(b => b.toString("base64"));
   expect(pixels(delivered)).toEqual(expected); expect(pixels(claudeMessages(delivered))).toEqual(expected);
-  const urls = (toResponses(delivered) as any[]).flatMap(m => Array.isArray(m.content) ? m.content.filter((b: any) => b.type === "input_image").map((b: any) => b.image_url) : []);
+  const urls = (toResponses(delivered) as any[]).flatMap(m => [m.content, m.output].flatMap(blocks => Array.isArray(blocks) ? blocks.filter((b: any) => b.type === "input_image").map((b: any) => b.image_url) : []));
   expect(urls).toEqual(expected.map(b => `data:image/png;base64,${b}`));
   expect(await forwardImages([f.refs[1]!.id], f.ctx)).toEqual([f.refs[1]!]);
-  expect(await message.run({ to: "worker-visual", text: "implement this specific image", attachments: [f.refs[1]!.id] }, f.ctx)).toContain("sent to");
+  await expect(read.run({ attachment_id: f.refs[0]!.id, path: "x" }, f.ctx)).rejects.toThrow("attachment_id alone");
+  await expect(read.run({ attachment_id: crypto.randomUUID() }, f.ctx)).rejects.toThrow("not received");
+  expect(JSON.parse(await message.run({ to: "worker-visual", text: "implement this specific image", attachments: [f.refs[1]!.id] }, f.ctx)).enqueued).toBe(true);
   const agentProvider = fakeProvider([[text("worker saw it")]]), agentTranscript = open(paths.transcript(f.project, "worker-visual"));
   await createAgent({ transcript: agentTranscript, provider: agentProvider, tools: {}, model, ctx: { ...f.ctx, role: "worker", branch: "visual" }, write() {} }).run();
   expect(pixels(agentProvider.calls[0]!.messages)).toEqual([expected[1]!]);
@@ -137,6 +148,7 @@ for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> r
   await expect(queryHistory(f.project, { action: "read_history", entryId: original.uuid })).rejects.toThrow("current context scope");
   expect(JSON.parse(await queryHistory(f.project, { action: "search_history", query: f.refs[0]!.id })).entries).toEqual([]);
   expect(await loadImage(f.project, f.refs[0]!)).toEqual(png());
+  await expect(read.run({ attachment_id: f.refs[0]!.id }, f.ctx)).rejects.toThrow("not received");
   // Mere historical text can be mentioned/searched in the new scope, but does
   // not reintroduce pixels or grant forwarding permission after a clear.
   await open(f.transcript.path).append({ type: "message", message: { role: "user", content: `old attachment_id=${f.refs[0]!.id}` } });
@@ -147,7 +159,7 @@ for (const model of ["claude-sonnet-4-6", "gpt-5.5"]) test(`${model}: queue -> r
   expect(ids(await open(f.transcript.path).chain())).toEqual([]);
 });
 
-for (const prompt of ["", "same visual brief ".repeat(2000)]) test(`${prompt ? "identical-text/different-ID" : "image-only"} arrival during background summary keeps exact receipts and pixels on both sides of the cut`, async () => {
+for (const prompt of ["", "same visual brief ".repeat(2000)]) test(`${prompt ? "identical-text/different-ID" : "image-only"} arrival during background summary archives older pixels and keeps new arrivals and receipts exact`, async () => {
   const f = await fixture(), worker = summary(true);
   const first = await commit(f.project, f.transcript, [f.refs[0]!]); await tail(f.transcript);
   const { rolling, deps } = controller(f, worker);
@@ -155,7 +167,7 @@ for (const prompt of ["", "same visual brief ".repeat(2000)]) test(`${prompt ? "
   const other = open(f.transcript.path), second = await commit(f.project, other, [f.refs[1]!], prompt);
   worker.release.resolve(); await rolling.finish(); await rolling.boundary(deps, false, true);
   expect(f.transcript.branch()[0]?.type).toBe("summary");
-  expect(ids(await f.transcript.chain())).toEqual(f.refs.map(r => r.id));
+  expect(ids(await f.transcript.chain())).toEqual([f.refs[1]!.id]);
   expect(f.transcript.consumed!().inputs).toEqual(new Set([first, second]));
   expect((await f.transcript.chain()).at(-1)?.content).toEqual((await other.chain()).at(-1)?.content);
   expect(await pendingImageInputs(f.project, f.transcript.consumed!().inputs)).toEqual([]);
@@ -188,27 +200,57 @@ test("failed rolling checkpoint append keeps image context, searchable originals
   expect(JSON.parse(await queryHistory(f.project, { action: "search_history", query: f.refs[0]!.id })).entries).toHaveLength(1);
 });
 
-test("retained image budget blocks requests rather than dropping pixels", async () => {
+test("archiving old images recovers a context that previously exceeded the foreground budget", async () => {
   const f = await fixture(), worker = summary();
   await commit(f.project, f.transcript, f.refs); await commit(f.project, f.transcript, f.refs); await tail(f.transcript);
   const { rolling, deps, foreground } = controller(f, worker);
   deps.compaction = { contextLimit: 30000, outputReserve: 2000 };
-  await expect(createAgent({ ...deps, compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle) }).run()).rejects.toThrow("context blocked");
-  expect(worker.calls).toHaveLength(2); expect(foreground.calls).toHaveLength(0);
-  expect(ids(await f.transcript.chain())).toEqual([...f.refs, ...f.refs].map(r => r.id));
-  expect(estimate(await f.transcript.chain())).toBeGreaterThan(24000);
+  await createAgent({ ...deps, compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle) }).run();
+  expect(worker.calls.length).toBeGreaterThan(0); expect(foreground.calls).toHaveLength(1);
+  expect(ids(await f.transcript.chain())).toEqual([]);
+  expect(estimate(await f.transcript.chain())).toBeLessThan(5000);
 
 });
 
-test("missing retained bytes fail at the provider boundary after rolling; committed image prompts are never replayed", async () => {
+test("missing archived bytes do not block unrelated requests, but explicit image reload fails", async () => {
   const f = await fixture(), worker = summary(), inputId = await commit(f.project, f.transcript, f.refs); await tail(f.transcript);
   const { rolling, deps, foreground } = controller(f, worker); await rolling.boundary(deps, true);
   rmSync(join(paths.project(f.project), "images", `${f.refs[0]!.id}.png`));
   const next = crypto.randomUUID(); await put(f.project, "orchestrator", { from: "user", inputId: next, text: "inspect again" });
-  await expect(createAgent({ ...deps, requireInbox: true }).run()).rejects.toThrow();
-  expect(foreground.calls).toHaveLength(0); expect(f.transcript.consumed!().inputs).toEqual(new Set([inputId, next]));
-  expect(ids(await open(f.transcript.path).chain())).toEqual(f.refs.map(r => r.id));
-  await createAgent({ ...deps, requireInbox: true }).run(); expect(foreground.calls).toHaveLength(0);
+  await createAgent({ ...deps, requireInbox: true }).run();
+  expect(foreground.calls).toHaveLength(1); expect(f.transcript.consumed!().inputs).toEqual(new Set([inputId, next]));
+  expect(ids(await open(f.transcript.path).chain())).toEqual([]);
+  await expect(read.run({ attachment_id: f.refs[0]!.id }, f.ctx)).rejects.toThrow();
+  await createAgent({ ...deps, requireInbox: true }).run(); expect(foreground.calls).toHaveLength(1);
+});
+
+test("manual compact repairs an old checkpoint with 41 pinned images without clearing the conversation", async () => {
+  const f = await fixture(), worker = summary();
+  // Reproduce the old checkpoint shape: every image reattached ahead of a recent tail.
+  const old = Array.from({ length: 40 }, () => imageBlock(f.refs[0]!));
+  const latest = { role: "user" as const, content: imageContent("keep this latest visual request exactly", [f.refs[1]!]) };
+  await f.transcript.append({ type: "message", message: { role: "user", content: old } });
+  await f.transcript.append({ type: "message", message: latest });
+  await f.transcript.append({ type: "summary", text: "old summary", memory,
+    retained: [{ role: "user", content: old }, { role: "assistant", content: "earlier findings ".repeat(15000) }, latest], boundary: f.transcript.head() });
+  const history = f.transcript.history!(), before = estimate(await f.transcript.chain());
+  const { rolling, deps, foreground } = controller(f, worker);
+  await rolling.boundary(deps, true);
+  const after = await f.transcript.chain();
+  expect(before).toBeGreaterThan(300000);
+  expect(estimate(after)).toBeLessThan(10000);
+  expect(ids(after)).toEqual([f.refs[1]!.id]);
+  expect(after.at(-1)).toEqual(latest);
+  expect(f.transcript.history!()).toEqual(history);
+  expect(await loadImage(f.project, f.refs[0]!)).toEqual(png());
+  await createAgent(deps).run(); // A real loop/provider serialization boundary, with a fake model response.
+  expect(pixels(foreground.calls[0]!.messages)).toEqual([png(2, 1, 250).toString("base64")]);
+  const restored = await read.run({ attachment_id: f.refs[0]!.id }, f.ctx);
+  expect(Array.isArray(restored)).toBe(true);
+  const request = await materializeImages(f.project, [{ role: "user", content: restored as any }]);
+  expect(pixels(request)).toEqual([png().toString("base64")]);
+  await rolling.boundary(deps, true); // Old checkpoints must never resurrect older pixels.
+  expect(ids(await f.transcript.chain())).not.toContain(f.refs[0]!.id);
 });
 
 test("text-only memory/search sanitizes inline/nested image bytes and URLs without treating arbitrary tool inputs as blocks", async () => {

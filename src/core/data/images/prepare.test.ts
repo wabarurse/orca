@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { paths } from "../../../config";
 import { prepareImage } from "./prepare";
-import { saveImage, imageBlock, materializeImages } from "./images";
+import { saveImage, imageBlock, loadImage, materializeImages } from "./images";
 import { read } from "../../tools/files";
 import { readClipboardImage } from "../../../tui/components/clipboard";
 import { validatedBase64, validateImage } from "../../../providers/images";
@@ -48,4 +48,29 @@ test.skipIf(process.platform !== "darwin" || !Bun.which("sips"))("large request 
   expect(validatedBase64((request!.content as any[])[0]).mime).toBe("image/jpeg");
   expect(await Bun.file(join(paths.project(project), "images", `${ref.id}.png`)).bytes()).toHaveLength(bytes.length);
   expect(await readdir(join(paths.project(project), "images", "prepared"))).toEqual([]);
+});
+
+test.skipIf(!Bun.which("sips") && !Bun.which("magick") && !Bun.which("convert"))("41 historical prompt images prepare a provider-safe copy of a 2816x4048 screenshot", async () => {
+  const project = "many-images", bytes = png(2816, 4048);
+  await mkdir(paths.project(project), { recursive: true });
+  const ref = await saveImage(project, bytes), small = await saveImage(project, png());
+  const messages = [{ role: "user" as const, content: [imageBlock(ref), ...Array.from({ length: 40 }, () => imageBlock(small))] }];
+  const original = JSON.stringify(messages);
+  const [request] = await materializeImages(project, messages);
+  const blocks = request!.content as any[];
+  expect(blocks).toHaveLength(41);
+  for (const block of blocks) {
+    const image = validatedBase64(block), size = validateImage(Buffer.from(image.data, "base64"), image.mime);
+    expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(3000);
+  }
+  const prepared = await prepareImage(project, { bytes, mime: "image/png" }, undefined, 3000);
+  expect(prepared.mime).toBe("image/png");
+  expect(validateImage(prepared.bytes, prepared.mime).height).toBe(3000);
+  expect(await prepareImage(project, { bytes, mime: "image/png" }, undefined, 3000)).toBe(prepared);
+  expect(await loadImage(project, ref)).toEqual(bytes);
+  expect(JSON.stringify(messages)).toBe(original);
+  expect(await readdir(join(paths.project(project), "images", "prepared"))).toEqual([]);
+  // A subsequent small request must not reuse the many-image downscale.
+  const single = await materializeImages(project, [{ role: "user", content: [imageBlock(ref)] }]);
+  expect(validatedBase64((single[0]!.content as any[])[0]).data).toBe(bytes.toString("base64"));
 });

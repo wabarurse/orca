@@ -6,6 +6,7 @@ import { paths } from "../../config";
 import { MAX_IMAGE_BYTES, sniffImage, validateImage, type ImageMime } from "../../providers";
 import { withStorageLock } from "../data";
 import { imageBlock, saveImage } from "../data/images";
+import { forwardImages } from "./attachments";
 import type { Tool, ToolContext, ToolResult } from "./registry";
 
 const MAX_FILE = 2 * 1024 * 1024;
@@ -146,12 +147,18 @@ async function readText(path: string, input: Record<string, unknown>, ctx: ToolC
 
 export const read: Tool<ToolResult> = {
   parallel: () => true,
-  spec: { name: "read", description: "Read UTF-8 files in your workspace or saved evidence. When you already know several files or ranges you need, send them together in files (up to four text ranges), or use path for a single file. Returns numbered lines, revisions for write/edit, and continuation lines. Output is bounded. For images (png, jpeg, gif, webp; up to 64 MiB and 4096×4096), use path alone to get an image and attachment_id.",
+  spec: { name: "read", description: "Read UTF-8 files in your workspace or saved evidence. When you already know several files or ranges you need, send them together in files (up to four text ranges), or use path for a single file. Returns numbered lines, revisions for write/edit, and continuation lines. Output is bounded. For images (png, jpeg, gif, webp; up to 64 MiB and 4096×4096), use path alone to get an image and attachment_id. Use attachment_id alone to inspect an image you previously received, including after compaction; originals remain saved.",
     input_schema: { type: "object", properties: {
       ...readRange,
+      attachment_id: { type: "string", description: "Previously received image UUID; mutually exclusive with path, files and line ranges." },
       files: { type: "array", minItems: 1, maxItems: 4, items: { type: "object", properties: readRange, required: ["path"] } },
     } } },
   async run(input, ctx) {
+    if (input.attachment_id !== undefined) {
+      if ([input.path, input.files, input.start_line, input.lines].some(v => v !== undefined)) throw new Error("use attachment_id alone, or path/files with optional line ranges");
+      const [ref] = await forwardImages([input.attachment_id], ctx);
+      return [{ type: "text", text: JSON.stringify({ attachment_id: ref!.id, restored: true }) }, imageBlock(ref!)];
+    }
     if (input.files === undefined) {
       const path = await filePath(input.path, ctx);
       const image = sniffImage(await head(path));

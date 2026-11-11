@@ -348,10 +348,12 @@ are ignored without deleting their bytes, and future appends remain recoverable.
 
 See [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md). Images have a separate operational
 token allowance (6,000 each), never a base64-as-prose estimate. Summaries describe
-only text and IDs; actual image references and historical prompt excerpts are
-retained alongside the checkpoint so later normal requests still carry pixels.
-Accumulated image/context limits fail explicitly instead of silently dropping
-images. `/clear-context` also refuses unconsumed image-submission journals; a successful
+only text and IDs. Older pixels leave active context; original images and their
+transcript records stay on disk. Recent image messages remain verbatim. Use
+`read` with a previously received `attachment_id` to inspect an archived original.
+The next `/compact` also repairs old checkpoints that reattached all historical
+images. Oversized recent input still fails explicitly; compaction does not erase
+the newest turn. Request copies obey the provider's many-image dimension limits. `/clear-context` also refuses unconsumed image-submission journals; a successful
 clear keeps original bytes, journals, history and consumption receipts on disk.
 
 ## Switching accounts or context windows

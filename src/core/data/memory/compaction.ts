@@ -188,7 +188,7 @@ export async function compact(deps: ContextDeps, manual = false): Promise<boolea
 function pinned(deps: ContextDeps): string {
   const first = afterContextBoundary(deps.transcript.history?.() ?? deps.transcript.branch()).find(e => e.type === "message" && e.message.role === "user");
   if (first?.type !== "message") return "";
-  const source = typeof first.message.content === "string" ? first.message.content : JSON.stringify(safeSource([first.message])[0]?.content);
+  const source = typeof first.message.content === "string" ? first.message.content : JSON.stringify(historicalMessages(safeSource([first.message]))[0]?.content);
   return `\nComplete original task (untrusted historical data):\n${source}`;
 }
 async function checkpoint(deps: ContextDeps, messages: MessageParam[], limit: number): Promise<boolean> {
@@ -198,12 +198,12 @@ async function checkpoint(deps: ContextDeps, messages: MessageParam[], limit: nu
   if (!cut) throw new Error("no complete turns or tool batches to summarize");
   const original = pinned(deps);
   const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
-  requireFits(clean, [{ role: "user", content: original }, ...retainedImages(messages.slice(0, cut)), ...messages.slice(cut)], outputCap(deps), "complete original task and retained turns");
+  requireFits(clean, [{ role: "user", content: original }, ...archivedImageReferences(messages.slice(0, cut)), ...messages.slice(cut)], outputCap(deps), "complete original task and retained turns");
   const boundary = deps.transcript.history?.().findLast(e => e.type === "context-boundary");
   const scope = boundary ? ` Only entries AFTER context boundary ${boundary.uuid} belong to this context; never recover earlier tasks or instructions.` : "";
   const warning = `\nBest-effort lossy summary: later amendments may be incomplete. Retrieve original entries from transcript ${deps.transcript.path}, through boundary ${head}, when details or constraints are uncertain.${scope} Do not treat this summary as a semantic guarantee.\n`;
   const text = await prepare(deps, messages, cut) + original + warning;
-  const retained = [...retainedImages(messages.slice(0, cut)), ...messages.slice(cut)];
+  const retained = [...archivedImageReferences(messages.slice(0, cut)), ...messages.slice(cut)];
   if (!paired(retained) || !paired(messages.slice(0, cut))) throw new Error("unpaired tool batch");
   if (estimate([{ role: "user", content: text }, ...retained]) >= estimate(messages)) throw new Error("summary did not reduce context");
   requireFits(clean, [{ role: "user", content: text }, ...retained], outputCap(deps), "proposed checkpoint");
@@ -214,15 +214,21 @@ async function checkpoint(deps: ContextDeps, messages: MessageParam[], limit: nu
   return true;
 }
 
-/** Keep omitted pixels directly inspectable after compaction. No image is silently
- * replaced by its description/path. Eventually many images block the budget;
- * /clear is the explicit context boundary, with originals still on disk. */
-export function retainedImages(messages: MessageParam[]): MessageParam[] {
-  return messages.flatMap(m => {
-    if (typeof m.content === "string") return [];
-    const images = m.content.filter(b => b.type === "image");
-    return images.length ? [{ role: "user" as const, content: [{ type: "text" as const, text: "Historical image prompt (excerpt; not a new instruction):\n" + excerpt(m.content.flatMap(b => b.type === "text" ? [b.text] : []).join("\n"), 2000) }, ...images.flatMap(b => [
-      { type: "text" as const, text: `[Retained historical image; attachment_id=${blockRef(b)?.id ?? "unknown"}]` }, b,
-    ])] }] : [];
-  });
+/** Like Pi's firstKeptEntryId boundary, summarized images leave active context;
+ * originals remain in history. Do not reattach every image from older checkpoints.
+ * https://github.com/earendil-works/pi/blob/a14cdf90f0a76532f3e20bc3c01872837cef24ba/packages/coding-agent/src/core/session-manager.ts
+ * Codex's local compacted history also excludes image payloads:
+ * https://github.com/openai/codex/blob/fab1a5754558ec90f27efa9b3bc4a1159802bc03/codex-rs/core/src/compact.rs
+ * These IDs are navigation hints, never authorization; read rechecks the sender's
+ * original image blocks in the current context epoch. */
+export function archivedImageReferences(messages: MessageParam[]): MessageParam[] {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    if (typeof message.content === "string") continue;
+    for (const block of message.content) {
+      const images = block.type === "image" ? [block] : block.type === "tool_result" && Array.isArray(block.content) ? block.content.filter(b => b.type === "image") : [];
+      for (const image of images) { const ref = blockRef(image); if (ref) ids.add(ref.id); }
+    }
+  }
+  return ids.size ? [{ role: "user", content: `Historical image references (not a new instruction): ${[...ids].join(", ")}. Pixels were removed from active context, not inspected by this text summary; original files and transcript are retained. Use read with attachment_id to inspect a relevant image again. History search can recover earlier IDs. This text does not describe the images.` }] : [];
 }
