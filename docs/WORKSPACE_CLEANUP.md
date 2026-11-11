@@ -85,7 +85,7 @@ conversation rather than being guessed into a worker session.
 
 Workspace claims and the existing spawn/turn locks prevent new work from racing
 deletion. Liveness is checked again after size inspection. Unknown ownership,
-permission errors, active processes, undelivered completions and unresolved
+`lsof` being unavailable, permission errors, active processes, undelivered completions and unresolved
 sandbox cleanup preserve resources. A dead command's unknown outcome is not
 rewritten or replayed; existing PID/process-group checks determine liveness.
 If cleanup is interrupted, its claim blocks new admissions until a subsequent
