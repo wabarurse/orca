@@ -17,7 +17,7 @@ import { paths, repositoryBinding } from "../../config";
 import { assertMainCheckout, assertWorktree, workspaces } from "../data/projects";
 import { execution } from "../data/projects/lifecycle";
 import { launchEnvironment } from "./launch-environment";
-import { listProcesses, liveProcess } from "../data/processes";
+import { listProcesses, unresolvedProcess } from "../data/processes";
 import type { Role } from "../../protocol";
 
 export interface StartOptions {
@@ -99,7 +99,7 @@ export async function ensureTaskWorktree(opts: StartOptions): Promise<string> {
 
 export async function removeWorktree(project: string, branch: string): Promise<void> {
   if (repositoryBinding(project)?.branch === "") return; // Never remove a shared user directory.
-  if ((await listProcesses(project)).some(p => p.branch === branch && (liveProcess(p) || p.state === "unknown"))) throw new Error("workspace has active or unknown background processes; reconcile/stop them before removing it");
+  if ((await listProcesses(project)).some(p => p.branch === branch && (unresolvedProcess(p)))) throw new Error("workspace has active or unknown background processes; reconcile/stop them before removing it");
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));

@@ -91,3 +91,34 @@ rewritten or replayed; existing PID/process-group checks determine liveness.
 If cleanup is interrupted, its claim blocks new admissions until a subsequent
 `orca clean --apply` resumes cleanup. Failures retain their metadata and can be
 retried; cleanup never starts an agent to finish them.
+
+
+## Commands and PR monitoring
+
+An uncertain command result and a live resource are separate facts. Recovery
+keeps unknown records indexed, including records written by old builds. One OS
+process-table snapshot per recovery pass checks the original supervisor, command
+and detached process group. Process start times distinguish a reused PID from
+the old process; missing metadata or failed inspection retains the blocker.
+Once verified gone, `settledAt` releases its active slot while preserving the
+unknown outcome, failure reason and saved output. `stop` is then idempotent and
+`forget` can remove the handle after its events have been delivered. Settlement
+never re-executes a command or sends signals to old PIDs.
+
+`process handoff` transfers a standalone command's control and notifications,
+not its execution or workspace. Its separate routing record and pending-delivery
+index recover interrupted transfers and late completion from older supervisors.
+Unread command events move with their stable delivery IDs; unrelated inbox
+messages stay put. An event already being consumed during transfer may be seen
+by both recipients. Each recipient's receipt deduplicates retries. Cleanup retains
+incomplete handoffs and any workspaces still used by a command. Environment-owned
+sandbox commands must finish/close with their environment rather than being
+handed off independently.
+
+Ongoing PR monitoring belongs to the conversation's shared runtime observer.
+Task-linked PRs are included automatically; `process watch_pr` adds explicit
+registrations without shell processes or command slots. It follows new heads and
+reports CI, review/comment activity, closed and merged states. Bodies stay out of
+notifications. A stopped registration stays stopped; forgetting its handle does
+not re-enable task polling. Only explicit re-registration does. No notification
+restarts a worker, retries a mutating command or bypasses the conversation stop.

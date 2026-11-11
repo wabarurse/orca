@@ -1,10 +1,10 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { listProcesses, liveProcess, processDirectory } from "./store";
+import { listProcesses, unresolvedProcess, processDirectory } from "./store";
 import { workspaces } from "../projects";
 
 export async function pruneSettledProcesses(project: string, apply = false) {
-  const candidates = (await listProcesses(project)).filter(p => !liveProcess(p) && p.state !== "unknown" && p.events.every(e => e.delivered))
+  const candidates = (await listProcesses(project)).filter(p => !unresolvedProcess(p) && !p.custody?.pending && p.events.every(e => e.delivered))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const changes: { path: string; disposition: string }[] = [];
   let bytes = 0;

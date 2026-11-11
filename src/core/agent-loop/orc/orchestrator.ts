@@ -1,6 +1,6 @@
 import { reconcileVerifications } from "../../data/processes";
 import { agentContext, clearWorkingContext } from "../../data/knowledge";
-import { listProcesses, liveProcess, controlProcess } from "../../data/processes";
+import { processOwner, unresolvedProcess, listProcesses, liveProcess, controlProcess } from "../../data/processes";
 import { editableTool } from "../../definitions";
 import { budget, type CompactOptions } from "../../data/memory";
 import { contextWindow, type ContextWindow } from "../../../providers/catalog";
@@ -179,7 +179,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
     checkIdentity();
     if (state.running || state.requested || (!ownsTurn && await conversationTurnHeld(deps.project))) throw new Error("orchestrator is running or compacting; wait before clearing context");
     if ((await pendingImageInputs(deps.project, transcript.consumed?.().inputs)).length) throw new Error("image input is pending; retry it before clearing context");
-    if ((await listProcesses(deps.project)).some(p => p.owner === "orchestrator" && (liveProcess(p) || p.state === "unknown"))) throw new Error("background commands still own this context; stop or reconcile them before clearing");
+    if ((await listProcesses(deps.project)).some(p => !p.prWatch && processOwner(p) === "orchestrator" && unresolvedProcess(p))) throw new Error("background commands still own this context; stop or reconcile them before clearing");
     if (state.submitting || await pendingInput(deps.project, "orchestrator")) throw new Error("input is pending; context was not cleared");
   };
   const refresh = async () => {
@@ -233,7 +233,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
     },
     cancel: (preserveEpoch = false) => {
       rolling.reset(); state.cancel(preserveEpoch);
-      void listProcesses(deps.project).then(ps => Promise.all(ps.filter(p => p.owner === "orchestrator" && liveProcess(p))
+      void listProcesses(deps.project).then(ps => Promise.all(ps.filter(p => processOwner(p) === "orchestrator" && liveProcess(p))
         .map(p => controlProcess(deps.project, p.id, "stop")))).catch(error => deps.write?.(`command cancellation failed: ${String(error)}\n`, true));
     },
     dispose: () => rolling.dispose(),

@@ -1,6 +1,6 @@
 import { BUILD_ID } from "../../config";
 import { runtimeContexts, usageSummary } from "../data/knowledge";
-import { listProcesses } from "../data/processes";
+import { listProcesses, processOwner } from "../data/processes";
 import { agentActivity } from "../tmux";
 import type { Tool } from "./registry";
 import { peerConversations } from "./peer-messages";
@@ -17,6 +17,6 @@ export const runtime: Tool = {
       agents: activity.agents.map(({ record: _record, ...agent }) => agent), contextObservations,
       errors: [...activity.errors, ...(contextObservations === null ? ["historical context observations unavailable"] : []), ...(processes === null ? ["recorded process observations unavailable"] : [])],
       applicationSchedules: "not_inspected", processVerification: "recorded_states_only",
-      processes: processes?.map(p => ({ id: p.id, owner: p.owner, state: p.state, readyUrl: p.readyAt ? p.readyUrl : undefined, observedAt: p.updatedAt })) ?? null });
+      processes: processes?.map(p => ({ id: p.id, owner: processOwner(p), kind: p.prWatch ? "pr_watch" : "command", state: p.state, settledAt: p.settledAt, readyUrl: p.readyAt ? p.readyUrl : undefined, observedAt: p.updatedAt })) ?? null });
   },
 };

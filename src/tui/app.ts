@@ -6,7 +6,7 @@ import { canArchiveTask } from "../protocol/task";
 import { workViews } from "../core/data/projects";
 import type { Question } from "../protocol";
 import { recentAgent } from "./commands/agents";
-import { controlProcess, listProcesses, liveProcess } from "../core/data/processes";
+import { controlProcess, processOwner, listProcesses, unresolvedProcess, liveProcess } from "../core/data/processes";
 import { launchIdentity } from "../core/tmux";
 import { navigateOutline, renderTaskTree, type TaskTreeRender } from "./components";
 import { ConversationSelection, hitRow } from "./screen";
@@ -1603,7 +1603,7 @@ export class App {
     if ((key === "d" || key === "D") && view.kind === "agents") {
       const eligible = (row: AgentInfo) => row.status === "exited" && !row.live && !row.archived && row.queuedMessages === 0;
       const candidates = (key === "D" ? view.agents : agent ? [agent] : []).filter(eligible);
-      const blocked = new Set((await listProcesses(view.page.project)).filter(p => liveProcess(p) || p.state === "unknown").map(p => p.owner));
+      const blocked = new Set((await listProcesses(view.page.project)).filter(p => unresolvedProcess(p)).map(p => processOwner(p)));
       const runs = new Map(candidates.filter(row => !blocked.has(row.name)).map(row => [row.name, row.run]));
       const names = [...runs.keys()];
       if (this.workView !== view) return;
@@ -1612,7 +1612,7 @@ export class App {
         const current = await (this.deps.agents ?? listAgents)(view.page.project);
         const commands = await listProcesses(view.page.project);
         const safe = current.filter(row => runs.has(row.name) && runs.get(row.name) === row.run && eligible(row) &&
-          !commands.some(p => p.owner === row.name && (liveProcess(p) || p.state === "unknown"))).map(row => row.name);
+          !commands.some(p => processOwner(p) === row.name && (unresolvedProcess(p)))).map(row => row.name);
         const result = await (this.deps.archiveAgents ?? archiveAgents)(view.page.project, safe);
         view.notice = `Archived ${result.archived.length} of ${names.length} agents. Transcripts retained.`;
       } };

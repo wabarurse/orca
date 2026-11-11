@@ -3,7 +3,7 @@ import { join, sep } from "node:path";
 import { paths } from "../../config";
 import { workspaces, projectIdentity, conversationTurnHeld, conversationTurnLock } from "../data/projects";
 import { existingTasks, purgeTasks } from "../data/tasks";
-import { listProcesses, listVerifications, processCleanupBlocker } from "../data/processes";
+import { listProcesses, listVerifications, processCleanupBlocker, processInspection, processOwner } from "../data/processes";
 import { pendingCount } from "../data/inbox";
 import { pendingImageInputs } from "../data/images";
 import { open as openTranscript } from "../data/transcripts";
@@ -35,6 +35,7 @@ function guards(options: CleanupOptions) {
   }
   const projects = new Map<string, Promise<{ activity: Awaited<ReturnType<typeof agentActivity>>; processes: Awaited<ReturnType<typeof listProcesses>>; sandboxes: Awaited<ReturnType<typeof listVerifications>> }>>();
   let opened: Promise<string[] | null> | undefined;
+  const inspect = processInspection();
   return async (w: workspaces.Workspace, turnLocksHeld = false): Promise<string | undefined> => {
     if (existsSync(w.path) && workspaces.fingerprint(w.path) !== w.fingerprint) return "workspace directory identity changed";
     const resources = owned.get(w.id) ?? [];
@@ -53,9 +54,10 @@ function guards(options: CleanupOptions) {
       if (agents.has("orchestrator") && ((!turnLocksHeld && await conversationTurnHeld(member.project)) || await pendingCount(member.project, "orchestrator"))) return "orchestrator activity or queued work";
       const transcript = paths.transcript(member.project, "orchestrator");
       if (agents.has("orchestrator") && (await pendingImageInputs(member.project, existsSync(transcript) ? openTranscript(transcript).consumed?.().inputs : undefined)).length) return "saved image input is still pending";
-      for (const p of processes) if (p.workspaceSession === w.id || p.cwd === w.path || agents.has(p.owner)) {
-        const reason = processCleanupBlocker(p);
+      for (const p of processes) if (p.workspaceSession === w.id || p.cwd === w.path || agents.has(p.owner) || agents.has(processOwner(p))) {
+        const reason = processCleanupBlocker(p, undefined, inspect);
         if (reason) return reason;
+        if (p.custody?.pending) return "command handoff delivery is incomplete";
         if (p.notify && p.events.some(e => !e.delivered)) return "undelivered command completion";
       }
       if (sandboxes.some(v => v.state !== "closed" && (v.source === w.path || resources.some(r => r.project === member.project && r.kind === "sandbox" && r.key === v.id)))) return "sandbox cleanup is incomplete";

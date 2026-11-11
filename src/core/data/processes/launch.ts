@@ -4,12 +4,13 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
 import { withStorageLock } from "../storage-lock";
-import { addProcessEvent, listProcesses, liveProcess, processDirectory, processOutput, readProcess, saveProcess, type ProcessRecord } from "./store";
+import { addProcessEvent, listProcesses, liveProcess, unresolvedProcess, processOwner, reconcileProcesses, processDirectory, processOutput, readProcess, saveProcess, type ProcessRecord } from "./store";
 
 export async function launchProcess(record: ProcessRecord, executable: string[], yieldMs: number, signal?: AbortSignal, admittedEpoch?: string) {
   signal?.throwIfAborted();
   const epoch = admittedEpoch ?? execution.epoch(record.project);
   execution.assertActive(record.project, epoch);
+  await reconcileProcesses(record.project);
   record.incarnation = projectIdentity(record.project);
   const owner = workspaces.resource(record.project, "agent", record.owner)?.owners.map(workspaces.get).find(w => w && !w.cleanedAt);
   record.workspaceSession = workspaces.own(record.project, "process", record.id, { directory: owner?.path ?? record.cwd })?.id;
@@ -18,11 +19,11 @@ export async function launchProcess(record: ProcessRecord, executable: string[],
     const records = await listProcesses(record.project);
     const watch = record.prChecks;
     if (watch) {
-      const current = records.find(p => (liveProcess(p) || p.state === "unknown") && p.prChecks?.repository === watch.repository &&
+      const current = records.find(p => !p.prWatch && unresolvedProcess(p) && p.prChecks?.repository === watch.repository &&
         p.prChecks.number === watch.number && p.prChecks.head === watch.head);
       if (current) return current;
     }
-    if (records.filter(p => liveProcess(p) || p.state === "unknown").length >= 16) throw new Error("project already has 16 active commands; stop or finish existing work");
+    if (records.filter(p => !p.prWatch && unresolvedProcess(p)).length >= 16) throw new Error("project already has 16 active or unresolved commands; inspect status for cleanup blockers");
     if (records.length >= 512) throw new Error("process history is full; forget terminal handles with process before launching more");
     await saveProcess(record);
     await Bun.write(join(processDirectory(record.project, record.id), "execution-epoch"), epoch);
@@ -36,7 +37,7 @@ export async function launchProcess(record: ProcessRecord, executable: string[],
       record.state = "failed"; record.reason = "supervisor could not start"; await addProcessEvent(record, "failed"); throw error;
     } finally { await log.close(); }
   });
-  if (existing) return { process: existing.id, state: existing.state, owner: existing.owner, reused: true };
+  if (existing) return { process: existing.id, state: existing.state, owner: processOwner(existing), reused: true };
   const deadline = Date.now() + yieldMs;
   do {
     const p = await readProcess(record.project, record.id);

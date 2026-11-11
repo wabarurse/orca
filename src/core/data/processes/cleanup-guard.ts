@@ -1,13 +1,16 @@
 import { liveProcess, type ProcessRecord } from "./store";
+import { processInspection } from "./inspection";
 
 /** An unknown outcome is not evidence that a command is still running. Cleanup
  * may proceed when its supervisor, command and detached process group are all
  * gone. Keep the saved outcome intact; never replay, signal or deliver events.
- * Only ESRCH proves absence: permission errors, PID reuse and incomplete legacy
+ * OS inspection must prove absence; failed inspection and incomplete legacy
  * records stay blocked. A dead group leader alone does not exclude descendants. */
-export function processCleanupBlocker(p: ProcessRecord, probe: (pid: number) => void = pid => { process.kill(pid, 0); }): string | undefined {
-  if (!liveProcess(p) && p.state !== "unknown") return;
+export function processCleanupBlocker(p: ProcessRecord, probe?: (pid: number) => void, inspect = processInspection()): string | undefined {
+  if (!liveProcess(p) && (p.state !== "unknown" || p.settledAt)) return;
   const command = `command ${p.id} (${p.owner})`;
+  if (p.prWatch) return `${command}: PR watch is still active`;
+  if (!probe) { const reason = inspect(p); return reason ? `${command}: ${reason}` : undefined; }
   for (const [kind, pid] of [["supervisor", p.supervisorPid], ["command", p.pid]] as const) {
     if (!Number.isSafeInteger(pid) || pid! <= 0 || pid! > 0x7fffffff) return `${command}: cannot verify ${kind}; missing or invalid PID`;
   }

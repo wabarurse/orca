@@ -4,7 +4,7 @@ import { pidAlive, withStorageLock } from "../storage-lock";
 import { run } from "../../proc";
 import { projectIdentity, workspaces } from "../projects";
 import { execution } from "../projects/lifecycle";
-import { liveProcess, listProcesses } from "./store";
+import { liveProcess, unresolvedProcess, listProcesses } from "./store";
 import { checkoutHere } from "../projects/workspace";
 import { copyDirectorySnapshot } from "./directory-snapshot";
 import { controlProcess } from "./supervisor";
@@ -110,10 +110,10 @@ export async function closeVerification(project: string, id: string): Promise<Ve
     const errors: string[] = [];
     const attempt = async (action: () => Promise<unknown>) => { try { await action(); } catch (e) { errors.push(String(e)); } };
     const { root, workspace, devices, evidence } = verificationPaths(project, id);
-    const processes = (await listProcesses(project)).filter(p => p.verification === id && (liveProcess(p) || p.state === "unknown"));
-    for (const p of processes) if (liveProcess(p)) await attempt(() => controlProcess(project, p.id, "stop"));
+    const processes = (await listProcesses(project)).filter(p => p.verification === id && unresolvedProcess(p));
+    for (const p of processes) await attempt(() => controlProcess(project, p.id, "stop"));
     for (let i = 0; i < 40 && processes.length; i++) {
-      const remaining = (await listProcesses(project)).filter(p => p.verification === id && (liveProcess(p) || p.state === "unknown"));
+      const remaining = (await listProcesses(project)).filter(p => p.verification === id && unresolvedProcess(p));
       if (!remaining.length) break;
       await Bun.sleep(100);
       if (i === 39) errors.push("verification commands have not stopped; retaining workspace");

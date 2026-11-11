@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { conversationIds, conversationIdentity, organizeConversationStorage, paths } from "../config";
 import { lockHeld, tryStorageLock } from "../core/data";
 import { directories } from "../core/data/projects";
-import { listProcesses, liveProcess } from "../core/data/processes";
+import { listProcesses, unresolvedProcess } from "../core/data/processes";
 import { tmux } from "../core/tmux";
 
 async function inspect(argv: string[]): Promise<string> {
@@ -48,7 +48,7 @@ export async function organizeProjects(inventory = participants): Promise<number
       for (const kind of ["turn-locks", "project-locks", "daemon-locks"]) {
         if (await lockHeld(join(paths.runtime, kind, id))) throw new Error(`${id} still has a participant; nothing was moved`);
       }
-      if ((await listProcesses(id)).some(p => liveProcess(p) || p.state === "unknown")) throw new Error(`${id} has an unresolved background process; nothing was moved`);
+      if ((await listProcesses(id)).some(p => unresolvedProcess(p))) throw new Error(`${id} has an unresolved background process; nothing was moved`);
       if (existsSync(join(paths.project(id), "repo")) || existsSync(join(paths.project(id), "worktrees"))) {
         throw new Error(`${id} has legacy in-folder Git workspaces; relocate/recover these explicitly before organizing. Nothing was moved.`);
       }

@@ -9,7 +9,9 @@ end the wait if signalling fails or the child never exits. Recording stops retai
 their two-second interrupt grace before forced cleanup. Partial output remains
 available. Permission errors and unconfirmed cleanup are reported rather than
 silently treated as success. Background records become `unknown`, emit a durable
-event, and remain protected from cleanup/forgetting; their commands are not
+event, and remain protected until OS inspection verifies that their recorded
+processes and process group are gone. Recovery then records `settledAt`, releasing
+capacity without changing the unknown outcome or discarding evidence; commands are not
 automatically replayed. An OS-denied or escaped process can still need manual
 inspection, but it cannot keep the agent's output collector waiting indefinitely.
 
@@ -159,11 +161,26 @@ warm cache conditions and unrelated baseline test failures remain disclosed.
 
 Use background Bash for long local tests and evals. Its terminal event includes
 the exit status, a bounded output tail, and the artifact path. For hosted checks,
-`process({action: "watch_pr", number, head})` runs one supervised watch per live
-PR head within the conversation. Its owner receives completion and can report
-back to other agents. If the PR head changes, the watch ends with a stale-head
-result. A passing watch is an observation about checks on that commit. Review,
-merge readiness, and publication decisions still use their own evidence.
+`process({action: "watch_pr", number, head})` registers with the existing shared
+PR observer. One runtime pass coalesces explicit watches and task-linked PRs.
+Notifications go to the orchestrator for changed heads, CI, review/comment activity,
+closure and merge. Watches continue after CI settles and workers finish; they
+spawn no shell and consume no command slot. They retire when the PR closes or
+merges. Explicit `process stop` disables the PR observation until a new registration,
+even after its old handle is forgotten. Ctrl+C fences in-flight observations;
+stopped registrations never restart themselves. Notifications grant no permission
+to retry commands, publish, merge or deploy.
+
+For other standalone background commands, `process handoff` takes `id`, `to`
+(an existing agent ID in the same conversation, or `orchestrator`) and `reason`
+(the remaining responsibility). The process, execution epoch, original workspace
+and output stay unchanged. Control, unread events and future events transfer;
+no agent or command is launched. A durable receipt names the current state and
+output. Routing survives late supervisor writes and forwards unread events from
+older supervisors. The destination may be idle: delivery is not execution.
+Sandbox commands remain bound to their environment's cleanup lifetime and cannot
+be handed off independently. Stop unneeded previews/tunnels and close environments.
+Review, merge readiness and publication decisions still need their own evidence.
 
 Group independent discovery calls in one model turn. For known text paths, a
 single `read({files: [...]})` accepts up to four file ranges with individual

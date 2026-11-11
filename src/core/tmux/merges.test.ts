@@ -69,3 +69,70 @@ test("historical merged tasks are retained without replaying old merge notificat
   expect(await mergeWatcher({ repo: async () => "o/r" })(project)).toEqual([]);
   expect(existsSync(join(paths.inbox(project), "orchestrator"))).toBe(false);
 });
+
+test("closed PRs, new commits, CI and review changes notify once across observer restarts", async () => {
+  const task = await linked();
+  let current: PRObservation = { ...observation("OPEN"), checks: "pending", reviewDecision: "REVIEW_REQUIRED" };
+  const poll = () => mergeWatcher({ repo: async () => "o/r", pr: async () => current, everyMs: 0 })(project);
+  await poll(); // Initial pending/open baseline is silent.
+  expect(existsSync(join(paths.inbox(project), "orchestrator"))).toBe(false);
+  current = { ...current, checks: "passed" };
+  await poll(); await poll(); expect(messages()).toHaveLength(1);
+  current = { ...current, pr: { ...current.pr, head: "b".repeat(40) }, checks: "pending" };
+  await poll(); expect(messages()).toHaveLength(2);
+  current = { ...current, reviewDecision: "CHANGES_REQUESTED" };
+  await poll(); expect(messages()).toHaveLength(3);
+  current = { ...current, reviewActivity: "new-review-comment" };
+  await poll(); expect(messages()).toHaveLength(4);
+  current = { ...current, state: "CLOSED" };
+  await poll(); await poll(); expect(messages()).toHaveLength(5);
+  expect(messages().some(m => m.text.includes("[pr-closed]"))).toBe(true);
+  expect((await getTask(project, task.id)).attention?.kind).toBe("closed");
+  expect((await getTask(project, task.id)).archive).toBeUndefined();
+});
+
+test("project-owned watches need no task or worker and coalesce with linked task PRs", async () => {
+  const { registerPRWatch, readProcess } = await import("../data/processes");
+  const handle = await registerPRWatch(project, { repository: "o/r", number: 7, head });
+  let calls = 0;
+  const poll = (state: PRObservation["state"]) => mergeWatcher({ repo: async () => "o/r", pr: async () => { calls++; return observation(state); }, everyMs: 0 })(project);
+  await poll("OPEN"); expect(calls).toBe(1);
+  expect(messages()).toHaveLength(1);
+  await linked(); await poll("CLOSED"); expect(calls).toBe(2);
+  expect(messages()).toHaveLength(2);
+  expect((await readProcess(project, handle.process)).state).toBe("exited");
+});
+
+test("stopping a watch prevents late notifications and task polling until explicit registration", async () => {
+  const { registerPRWatch, controlProcess } = await import("../data/processes");
+  await linked();
+  const handle = await registerPRWatch(project, { repository: "o/r", number: 7, head });
+  const gate = Promise.withResolvers<PRObservation>();
+  let calls = 0;
+  const poll = mergeWatcher({ repo: async () => "o/r", pr: async () => { calls++; return gate.promise; }, everyMs: 0 });
+  const running = poll(project);
+  for (let i = 0; calls === 0 && i < 100; i++) await Bun.sleep(5);
+  await controlProcess(project, handle.process, "stop");
+  const { processTool } = await import("../tools/process");
+  await processTool.run({ action: "forget", id: handle.process }, { project, role: "orchestrator", cwd: root });
+  gate.resolve(observation("CLOSED")); await running;
+  expect(existsSync(join(paths.inbox(project), "orchestrator"))).toBe(false);
+  await poll(project); expect(calls).toBe(1);
+  await registerPRWatch(project, { repository: "o/r", number: 7, head });
+  await poll(project); expect(calls).toBe(2); expect(messages()).toHaveLength(1);
+});
+
+test("Ctrl+C fences an in-flight PR observation and does not publish or restart work", async () => {
+  const { execution } = await import("../data/projects/lifecycle");
+  const task = await linked(), gate = Promise.withResolvers<PRObservation>();
+  let called = false;
+  const poll = mergeWatcher({ repo: async () => "o/r", pr: async () => { called = true; return gate.promise; } });
+  const pending = poll(project);
+  for (let i = 0; !called && i < 100; i++) await Bun.sleep(5);
+  await execution.stop(project);
+  gate.resolve(observation("CLOSED"));
+  await expect(pending).rejects.toThrow("stopped");
+  expect((await getTask(project, task.id)).attention).toBeUndefined();
+  expect(existsSync(join(paths.inbox(project), "orchestrator"))).toBe(false);
+  expect(await poll(project)).toEqual([]);
+});

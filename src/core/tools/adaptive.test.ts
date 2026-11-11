@@ -109,42 +109,29 @@ test('batch reads share scoped instructions and return each range or error in or
   await expect(read.run({ files: [{ path: 'src/a.ts' }], path: 'src/b.ts' }, ctx)).rejects.toThrow('either files');
 });
 
-test('PR checks share a live watch and publish a result for the exact head', async () => {
+test('PR monitoring shares a project-owned registration and survives completed CI', async () => {
   const repo = paths.repo(ctx.project);
   await mkdir(repo);
   const git = (...args: string[]) => Bun.spawnSync(['git', ...args], { cwd: repo }).exitCode;
   expect(git('init', '-q')).toBe(0);
   expect(git('remote', 'add', 'origin', 'https://github.com/o/r.git')).toBe(0);
-  const head = 'a'.repeat(40);
-  const fixture = { number: 3, url: 'https://github.com/o/r/pull/3', headRefName: 'feat', headRefOid: head, state: 'OPEN',
-    isCrossRepository: false, statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }] };
-  const bin = join(home, 'bin');
-  await mkdir(bin);
-  await writeFile(join(bin, 'gh'), `#!/bin/sh\nsleep 0.5\nprintf '%s\n' '${JSON.stringify(fixture)}'\n`, { mode: 0o700 });
-  const savedPath = process.env.PATH;
-  process.env.PATH = `${bin}:${savedPath}`;
-  try {
-    const input = { action: 'watch_pr', number: 3, head };
-    const results = await Promise.all([
-      processTool.run(input, ctx),
-      processTool.run(input, { ...ctx, role: 'reviewer' }),
-    ]).then(values => values.map(value => JSON.parse(value)));
-    expect(results[0].process).toBe(results[1].process);
-    const reused = results.find(result => result.reused);
-    expect(reused?.owner).toMatch(/^(worker|reviewer)-work$/);
-    const final = await settled(results[0].process);
-    expect(final.exitCode).toBe(0);
-    expect(final.events).toHaveLength(1);
-    const event = JSON.parse(final.events[0]!.text);
-    expect(event.prChecks).toEqual({ repository: 'o/r', number: 3, head });
-    expect(JSON.parse(event.tail)).toMatchObject({ head, checks: 'passed' });
-    expect(await pending(ctx.project, final.owner)).toBe(true);
-
-    const changed = JSON.parse(await processTool.run({ ...input, head: 'b'.repeat(40) }, ctx));
-    const stale = await settled(changed.process);
-    expect(stale.exitCode).toBe(1);
-    expect(JSON.parse(JSON.parse(stale.events[0]!.text).tail)).toMatchObject({ checks: 'head_changed', observedHead: head });
-  } finally { process.env.PATH = savedPath; }
+  const head = 'a'.repeat(40), input = { action: 'watch_pr', number: 3, head };
+  const results = await Promise.all([processTool.run(input, ctx), processTool.run(input, { ...ctx, role: 'reviewer' })])
+    .then(values => values.map(value => JSON.parse(value)));
+  expect(results[0].process).toBe(results[1].process);
+  expect(results.find(result => result.reused)).toMatchObject({ owner: 'orchestrator', commandSlot: false });
+  const p = await readProcess(ctx.project, results[0].process);
+  expect(p.supervisorPid).toBeUndefined(); expect(p.pid).toBeUndefined();
+  const { mergeWatcher } = await import('../tmux/merges');
+  const observation = { pr: { repository: 'o/r', number: 3, url: 'https://github.com/o/r/pull/3', head },
+    branch: 'feat', state: 'OPEN' as const, ready: false, checks: 'passed' as const };
+  await mergeWatcher({ repo: async () => 'o/r', pr: async () => observation })(ctx.project);
+  expect((await readProcess(ctx.project, p.id)).state).toBe('running');
+  expect(await pending(ctx.project, 'orchestrator')).toBe(true);
+  const updated = JSON.parse(await processTool.run({ ...input, head: 'b'.repeat(40) }, ctx));
+  expect(updated.process).toBe(p.id); // one watch follows this PR across pushes
+  await mergeWatcher({ repo: async () => 'o/r', pr: async () => ({ ...observation, state: 'CLOSED' }) })(ctx.project);
+  expect((await readProcess(ctx.project, p.id)).state).toBe('exited');
 });
 
 test('background command yields and delivers one durable completion consumed once', async () => {
