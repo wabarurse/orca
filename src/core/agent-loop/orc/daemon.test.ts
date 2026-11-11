@@ -416,3 +416,31 @@ test("a turn streams its text, tool starts and ends to the live file, keyed by r
   expect((await awaitAck(p, stop, { alive: async () => true })).ok).toBe(true);
   session.dispose?.();
 });
+
+test("daemon publishes foreground and compaction transitions independently, without rewriting unchanged idle status", async () => {
+  const p = await project("activity-snapshot"), clock = fakeClock();
+  const gate = Promise.withResolvers<void>();
+  let pendingTurn = true, activity = { working: false, compacting: true };
+  const session = { activity: () => activity, say: async () => {}, pending: async () => pendingTurn,
+    turn: async () => { pendingTurn = false; await gate.promise; return []; } };
+  const running = runDaemon({ project: p, run: "activity-run", session, sleep: clock.sleep, log() {},
+    watchers: { watchdog: async () => {}, merges: async () => {} } });
+  try {
+    await until(() => readStatus(p)?.state === "turn");
+    expect(readStatus(p)?.activity).toEqual({ working: false, compacting: true });
+    const since = readStatus(p)!.since;
+    activity = { working: true, compacting: true };
+    await until(() => readStatus(p)?.activity?.working === true);
+    expect(readStatus(p)!.since).toBe(since);
+    activity = { working: false, compacting: true }; gate.resolve();
+    await until(() => readStatus(p)?.state === "idle" && clock.sleeping() > 0);
+    expect(readStatus(p)?.activity).toEqual(activity);
+    const file = join(paths.orchestrator(p), "status.json"), before = Bun.file(file).lastModified;
+    clock.wake(); await until(() => clock.sleeping() > 0);
+    expect(Bun.file(file).lastModified).toBe(before);
+    activity = { working: false, compacting: false }; clock.wake();
+    await until(() => readStatus(p)?.activity?.compacting === false && clock.sleeping() > 0);
+  } finally {
+    gate.resolve(); await request(p, { kind: "stop" }); clock.wake(); await running;
+  }
+});

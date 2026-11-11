@@ -1,5 +1,5 @@
 export type { AgentInfo } from "./agents";
-export type { Ack, Command, DaemonState, DaemonStatus, LiveEvent, LiveKey, Request, TurnEvent } from "./daemon";
+export type { Ack, Command, DaemonState, DaemonStatus, OrchestratorActivity, LiveEvent, LiveKey, Request, TurnEvent } from "./daemon";
 export type { ImageInput, ImageRef } from "./images";
 export { format, parseFormatted, type Message } from "./inbox";
 export type { ProjectEntry } from "./projects";
