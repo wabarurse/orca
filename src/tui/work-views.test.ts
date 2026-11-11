@@ -20,10 +20,16 @@ test("Vim keeps drafts, switches project tabs and routes commands without Ctrl c
   try {
     await app.openPage("vim-second");
     term.type("/vim\r"); await until(() => term.screen().includes("[NORMAL]"));
+    expect(term.display.screen()[0]).not.toContain("[NORMAL]");
+    expect(term.display.screen().some(row => row.startsWith("┌─ [NORMAL]"))).toBe(true);
     term.type("gT"); await until(() => app.page?.project === "vim-first");
     term.type("idraft text"); await until(() => app.input.text === "draft text");
     await until(() => term.screen().includes("[INSERT]"));
+    const cursor = [term.display.row, term.display.col];
+    expect(term.display.screen()[0]).not.toContain("[INSERT]");
+    expect(term.display.screen().some(row => row.startsWith("┌─ [INSERT]"))).toBe(true);
     term.press({ name: "escape" }); await until(() => term.screen().includes("[NORMAL]"));
+    expect([term.display.row, term.display.col]).toEqual(cursor);
     expect(app.input.text).toBe("draft text");
     term.type("gt"); await until(() => app.page?.project === "vim-second");
     term.type("gT"); await until(() => app.page?.project === "vim-first");
@@ -33,9 +39,13 @@ test("Vim keeps drafts, switches project tabs and routes commands without Ctrl c
     term.type(" f"); await until(() => app.menu?.title.includes("Fast mode") === true);
     term.press({ name: "escape" });
     term.type(":tasks\r"); await until(() => term.screen().includes("TASKS"));
+    expect(term.display.screen()[0]).not.toContain("[NORMAL]");
+    expect(term.display.screen().slice(-2).join("\n")).toContain("[NORMAL]");
     term.press({ name: "escape" }); await until(() => !term.screen().includes("TASKS"));
     expect(app.input.text).toBe("draft text");
     expect(Object.values(fake.said).flat()).toEqual([]);
+    term.type(":vim\r"); await until(() => !term.screen().includes("[NORMAL]"));
+    expect(app.input.text).toBe("draft text");
   } finally { await stop(); }
 });
 
@@ -105,6 +115,9 @@ test("q backs out of pages and menus; question drafts survive and Insert q/H/L r
     await app.onKey({ name: "char", text: "i" });
     term.type("qHL answer"); await until(() => app.input.text === "qHL answer");
     expect(term.screen()).toContain("QUESTIONS");
+    await until(() => term.screen().includes("[INSERT]"));
+    expect(term.display.screen()[0]).not.toContain("INSERT");
+    expect(term.display.screen().findIndex(row => row.includes("[INSERT]"))).toBeGreaterThan(0);
     term.press({ name: "escape" }); // Insert -> Normal, preserving answer
     await app.onKey({ name: "char", text: "q" }); // form -> list
     expect(app.page!.questions.expanded).toBe(false);
@@ -223,6 +236,8 @@ test("Normal mode navigates work pages, settings, help and projects and switches
     term.type(" p"); await until(() => term.screen().includes("IMAGES"));
     term.resize(30, 12);
     await until(() => term.screen().includes("IMAGES"));
+    expect(term.display.screen()[0]).not.toContain("NORMAL");
+    expect(term.display.screen().slice(-2).join("\n")).toContain("[NORMAL]");
     expect(app.input.text).toBe("");
   } finally { await stop(); }
 });
