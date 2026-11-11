@@ -16,6 +16,7 @@ import type { ImageRef } from "../protocol";
 import { contextStatus } from "./header";
 import { allTasks, listTasks, removeTask, restoreTask } from "../core/data/tasks";
 import { runningAgentCount, TaskCounts } from "./footer";
+import { InputFeedback, compactedNotice } from "./footer";
 import { cancelSession } from "../core/tmux";
 import { settingChange, effectiveSettings, setEffort } from "../core/data/projects";
 import type { RequestSettings } from "../providers/catalog";
@@ -65,7 +66,7 @@ import { stickyRows, stickyUpdate, type StickyScreen } from "./screen";
 export { helpLines } from "./footer";
 export { lineRows, type Line } from "./conversation";
 
-import { type Page, type AppDeps, type ToolEvents, type Clock, type Note, realClock, SPINNER, FRAME_MS, RESIZE_MS, SPIN_MS, TICK_MS, LIVE_CHECK_MS, AGENTS_TICK_MS, type ProjectListState, type ActiveMenu, type TaskTreeState, type ClearConfirmation, type Command, parseCommand, listKeyId, type KeyLayer, MENU_CHARS, menuKeyId, active, EDITS, typedText } from './app-state';
+import { type Page, type AppDeps, type ToolEvents, type Clock, realClock, SPINNER, FRAME_MS, RESIZE_MS, SPIN_MS, TICK_MS, LIVE_CHECK_MS, AGENTS_TICK_MS, type ProjectListState, type ActiveMenu, type TaskTreeState, type ClearConfirmation, type Command, parseCommand, listKeyId, type KeyLayer, MENU_CHARS, menuKeyId, active, EDITS, typedText } from './app-state';
 export { type Page, type AppDeps, type ToolEvents, type Clock, AGENTS_TICK_MS, type Command, parseCommand, type KeyLayer } from './app-state';
 
 interface WorkItem { id: string; title: string; detail: string; archived?: boolean; section?: boolean; agent?: AgentInfo; media?: DeliveredMedia; question?: Question }
@@ -394,9 +395,8 @@ export class App {
   /** Pages whose last rendering left out calls the running turn has not finished (they show as running rows instead); re-rendered once the turn ends. */
   private readonly hidRunning = new WeakSet<Page>();
   private readonly notices = new WeakMap<Page, Line[]>();
-  /** Each page's transient status note (one row above the composer; the next keypress on that page after it was drawn clears it), and the one shown while no page is open. */
-  private readonly notes = new WeakMap<Page, Note>();
-  private looseNote: Note | undefined;
+  /** Reusable page-scoped progress and ephemeral feedback above the composer. */
+  private readonly feedback = new InputFeedback<Page>();
 
   /** The active page's oldest open question in the live region, and the keys it takes (questions.ts). */
   readonly questions: Questions;
@@ -520,34 +520,33 @@ export class App {
 
   /**
    * Runtime feedback ("model set to …", a rename, what the daemon
-   * keeper did): one dim row directly above the composer, replacing the page's
+   * keeper did): bounded text above the composer, replacing the page's
    * previous note, never in the conversation or its restored history. Like the
    * project list's status, the next keypress clears it; a mouse event does not.
    */
   note(text: string, page = this.page): void {
     if (Bun.stripANSI(text).trimStart().startsWith("[model request]")) return; // Older daemons still emit lifecycle diagnostics.
-    const note: Note = { text };
-    if (page) this.notes.set(page, note); else this.looseNote = note;
+    if (page?.orch?.activity?.() && /^(?:compacting older conversation in the background…|orchestrator: compaction requested;)/.test(text.trim())) return;
+    this.feedback.set(page, "notice", { content: compactedNotice(text.trim()), lifetime: "ephemeral" });
     this.draw();
   }
 
   /** The next input key clears the note, even before its queued frame paints; scrolling and mouse selection leave it. */
   private clearNote(k: Key): void {
     if (/^(?:wheel|mouse|page)/.test(k.name)) return;
-    const page = this.page;
-    const note = page ? this.notes.get(page) : this.looseNote;
-    if (!note) return;
-    if (page) this.notes.delete(page); else this.looseNote = undefined;
+    this.feedback.dismiss(this.page);
     this.draw();
   }
 
   /** The shown page's note, cut to one row. Rendering never changes its lifetime. */
   private noteRow(page: Page | undefined): string | undefined {
-    const note = page ? this.notes.get(page) : this.looseNote;
-    if (!note) return undefined;
-    return dim(fit(sanitize(note.text.replace(/\s*\n\s*/g, " ")), this.deps.term.cols));
+    return this.feedbackRows(page)[0];
   }
-
+  private feedbackRows(page: Page | undefined): string[] {
+    if (page?.orch?.activity?.()?.compacting) this.feedback.set(page, "compaction", { content: "Compacting…", loading: true, lifetime: "persistent" });
+    else this.feedback.remove(page, "compaction");
+    return this.feedback.rows(page, this.deps.term.cols, this.clock.now());
+  }
   private keepNotice(page: Page, line: Line): void {
     const notes = this.notices.get(page) ?? [];
     notes.push(line); this.notices.set(page, notes);
@@ -656,15 +655,13 @@ export class App {
     const prefix = "/" + (this.vimCommand ?? "").replace(/^\//, "");
     const matches = this.vimCommand !== undefined && !prefix.includes(" ")
       ? [...this.commands.keys()].filter(name => name.startsWith(prefix)).slice(0, 5) : [];
-    const note = this.vimCommand !== undefined
-      ? fit(sanitize(`:${this.vimCommand} ▏ ${matches.join("  ")}`), this.deps.term.cols)
-      : this.noteRow(page); // Errors must remain visible while answering questions too.
-    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0) + (note ? 1 : 0));
+    const notes = [...this.feedbackRows(page), ...(this.vimCommand !== undefined ? [fit(sanitize(`:${this.vimCommand} ▏ ${matches.join("  ")}`), this.deps.term.cols)] : [])];
+    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0) + notes.length);
     if (showImages) {
       area.lines.unshift(dim(`${imageLabels(refs)} · ctrl+y remove last`.slice(0, this.deps.term.cols)));
       area.row++;
     }
-    if (note) { area.lines.unshift(note); area.row++; }
+    area.lines.unshift(...notes); area.row += notes.length;
     return {
       cols: this.deps.term.cols, rows: this.deps.term.rows,
       partial: page && !page.view ? page.md.pending : "",
@@ -738,7 +735,7 @@ export class App {
   activity(page: Page): string | undefined {
     if ((page.view?.calls ?? page.calls).size) return undefined;
     if (page.view) return page.view.live ? dim(`${this.spinner()} ${shimmer("working…", this.clock.now())}`) : undefined;
-    return page.busy ? dim(this.turnStatus(page)) : undefined;
+    return page.busy && page.orch.activity?.()?.working !== false ? dim(this.turnStatus(page)) : undefined;
   }
 
   /** Fast frames only for visible animation, never because a background page is busy. */
@@ -758,7 +755,7 @@ export class App {
   private animate(): void {
     const fast = this.shimmering();
     const ms = fast ? TICK_MS : SPIN_MS;
-    const want = !this.closed && (fast || this.pages.some(active) || !!this.taskTree?.rendered?.animated);
+    const want = !this.closed && (fast || this.pages.some(active) || !!this.page?.orch.activity?.()?.compacting || !!this.taskTree?.rendered?.animated);
     if (this.tickMs !== ms || !want) { this.stopSpinner?.(); this.stopSpinner = null; }
     this.tickMs = ms;
     if (want && !this.stopSpinner) this.stopSpinner = this.clock.every(() => this.tick(), ms);
@@ -1022,7 +1019,7 @@ export class App {
     const boundary = entries.findLast(entry => entry.type === "context-boundary")?.uuid, cleared = boundary !== page.contextBoundary;
     page.contextBoundary = boundary;
     if (cleared) {
-      this.notices.delete(page); this.notes.delete(page); this.openGroups.delete(page.lines);
+      this.notices.delete(page); this.feedback.clear(page); this.openGroups.delete(page.lines);
       if (page === this.page && !page.view) {
         this.pending = []; this.screenHistory = []; this.scrollTop = null; this.scrollAnchor = undefined; this.clearSelection();
       }
@@ -1081,7 +1078,7 @@ export class App {
     }
     const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null, calls: new Calls() };
     // Runtime status belongs above the input, including failures and aborted requests.
-    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => this.note(text, page) };
+    const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); this.draw(); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => this.note(text, page) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
     // Like `claude --continue`: the page starts with what its transcript showed live (from the transcript the orchestrator loaded), and ↑ recalls what was typed.
     // A turn already running elsewhere (the daemon's) shows its unfinished calls live, not as interrupted.
@@ -1099,7 +1096,7 @@ export class App {
     this.notices.set(page, [...this.looseLines]);
     page.lines.unshift(...this.looseLines);
     this.looseLines = [];
-    if (this.looseNote !== undefined) { this.notes.set(page, this.looseNote); this.looseNote = undefined; }
+    this.feedback.move(undefined, page);
     page.model = await this.readModel(project); page.roles = activeRoles(project, page.model); page.account = await pageAccount(project);
     page.settings = await effectiveSettings(project, page.model).catch(() => undefined);
     try { page.sent.push(...(await pendingImageInputs(project, page.orch.consumed?.())).map(input => ({ ...input, retry: true }))); }
@@ -1769,7 +1766,7 @@ export class App {
     if (!page) return this.note(dim(context ? "open a project before clearing context" : "open a project before clearing chat"));
     if (!context) {
       this.openGroups.delete(page.view?.lines ?? page.lines); clearChatView(page);
-      this.notices.delete(page); this.notes.delete(page); this.pending = []; this.screenHistory = [];
+      this.notices.delete(page); this.feedback.clear(page); this.pending = []; this.screenHistory = [];
       this.scrollTop = null; this.scrollAnchor = undefined; this.clearSelection(); this.reprint(); return;
     }
     let operation: ClearConfirmation | undefined;
@@ -1884,8 +1881,8 @@ export class App {
     this.note("fetching effort levels…", page);
     let picker: Awaited<ReturnType<typeof effortChoices>>;
     try { picker = await (this.deps.effortChoices ?? effortChoices)(page.project); }
-    catch (err) { this.notes.delete(page); return this.note(dim(err instanceof Error ? err.message : String(err)), page); }
-    if (this.notes.delete(page)) this.draw();
+    catch (err) { this.feedback.clear(page); return this.note(dim(err instanceof Error ? err.message : String(err)), page); }
+    if (this.feedback.clear(page)) this.draw();
     if (!this.modelPageCurrent(page, operation)) return;
     if (picker.note) this.note(picker.note, page);
     this.openMenu(`effort for ${picker.model}   (/effort <level|default> sets directly)`, picker.choices, (level) => this.saveSetting(page, operation, `set effort for ${picker.model} to ${level}?`, () => setEffort(page.project, picker.model, level, identity)), operation);
@@ -1900,7 +1897,7 @@ export class App {
       project, identity, dim,
       current: () => this.modelPageCurrent(page, operation),
       note: (text) => this.note(text, page),
-      unnote: () => { if (this.notes.delete(page)) this.draw(); },
+      unnote: () => { if (this.feedback.clear(page)) this.draw(); },
       open: (title, choices, pick) => this.openMenu(title, choices, pick, operation),
       confirm: (question, scope, save) => this.confirmAll(page, operation, question, save, scope),
       projectModel: () => this.readModel(project),

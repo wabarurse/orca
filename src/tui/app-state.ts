@@ -108,8 +108,6 @@ export interface AppDeps {
 export interface ToolEvents { onRefresh?(): void; onTool(call: ToolCall): void; onToolResult(outcome: ToolOutcome): void; /** Runtime acknowledgements, progress and failures share the status row above the composer. */ notice?(text: string): void }
 
 export interface Clock { now(): number; every(fn: () => void, ms: number): () => void }
-/** A transient status note and whether a frame has drawn its row yet (only then does a key clear it). */
-export interface Note { text: string }
 
 export const realClock: Clock = {
   now: () => Date.now(),

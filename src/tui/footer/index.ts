@@ -5,3 +5,4 @@ export { commit, helpPanel, inputArea, inputGeometry, liveRows, statusRows, task
 export { TaskCounts } from "./task-count";
 export { questionPageRows } from "./question-page";
 export { runningAgentCount } from "./agent-count";
+export { InputFeedback, compactedNotice, type Feedback } from "./feedback";

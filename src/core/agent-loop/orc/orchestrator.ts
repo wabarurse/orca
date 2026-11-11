@@ -6,7 +6,7 @@ import { budget, type CompactOptions } from "../../data/memory";
 import { contextWindow, type ContextWindow } from "../../../providers/catalog";
 import { contextMessages } from "../../data/transcripts";
 import { pendingImageInputs } from "../../data/images";
-import type { ImageRef } from "../../../protocol";
+import type { ImageRef, OrchestratorActivity } from "../../../protocol";
 import { tryStorageLock } from "../../data";
 import { inputEpoch, advanceInputEpoch } from "../../data/inbox";
 import { Cancelled } from "../../tmux";
@@ -64,6 +64,7 @@ export interface OrchestratorDeps {
 }
 
 export interface Orchestrator {
+  activity?(): OrchestratorActivity | undefined;
   /** Conservative current-context estimate, never cumulative billing usage. */
   contextUsage?(model: string): number | undefined;
   /** The limit compaction uses for this model with the session's options (estimated when unverified). */
@@ -132,6 +133,7 @@ class TurnControl {
   cancellation?: AbortController;
   requested = false;
   running = false;
+  working = false;
   clearing?: AbortController;
   submitting = 0;
   refreshing?: Promise<void>;
@@ -203,6 +205,10 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
       return cachedUsed;
     },
     contextWindow: model => contextWindow(state.context?.compaction ?? configured, model),
+    activity: () => {
+      const { compacting, waiting, compacted } = rolling.progress();
+      return { working: state.working && !waiting, compacting: state.requested || compacting, compacted };
+    },
     checkClear: async () => {
       if (state.clearing) throw new Error("context clear in progress");
       await check();
@@ -277,6 +283,7 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     deps.onRefresh?.();
     if (await state.isPaused()) return [];
     const hasInbox = await pending(deps.project, "orchestrator");
+    state.working = hasInbox;
     if (!state.requested && !hasInbox && !rolling.ready()) return [];
     try { await assertMainCheckout(deps.project); }
     catch (error) { state.pause(); throw error; } // Retain input without a failing poll/retry loop.
@@ -290,7 +297,7 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
   } catch (error) {
     if (!signal.aborted && !(error instanceof Cancelled)) throw error;
     return [];
-  } finally { if (release) await reconcileVerifications(deps.project, "orchestrator").catch(error => console.warn(`verification cleanup: ${error}`)); await release?.(); state.running = false; state.cancellation = undefined; }
+  } finally { state.working = false; if (release) await reconcileVerifications(deps.project, "orchestrator").catch(error => console.warn(`verification cleanup: ${error}`)); await release?.(); state.running = false; state.cancellation = undefined; }
 }
 async function replies(project: string, transcript: Transcript): Promise<Message[]> {
   return consume(project, "user", transcript, inbox => transcript.append({ type: "replies", inbox,

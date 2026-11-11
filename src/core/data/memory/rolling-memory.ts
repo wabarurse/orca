@@ -78,7 +78,7 @@ export function rollingCut(messages: MessageParam[], tailTokens: number): number
 }
 
 const checkpoint = (t: Transcript) => t.branch().find(e => e.type === "summary")?.uuid;
-/** The progress lines background compaction reports (the TUI shows them as transient notes: tui/conversation/notices.ts); failures are worded inline. */
+/** Detailed progress for logs/older clients; new TUIs use structured activity and a one-time completion notice. */
 export const ROLLING_STATUS = {
   started: "compacting older conversation in the background…",
   unchanged: "background summary did not reduce context; original history kept.",
@@ -130,11 +130,16 @@ export class RollingCompactor {
   private generation = 0;
   private target?: string;
   private failure?: string;
+  private waiting = false;
+  private publishing = false;
+  private completed?: { id: string; before: number; after: number };
   constructor(private project: string, private transcript: Transcript, private options: RollingOptions = {}) {}
+  progress() { return { compacting: !!this.job, waiting: this.waiting || this.publishing, compacted: this.completed }; }
   ready(): boolean { return !!this.job?.settled; }
   reset(): void {
     this.generation++; this.job?.abort.abort(new Error("rolling compaction cancelled")); this.job = undefined;
     this.retryAfter = 0; this.deferUntil = 0; this.failures = 0; this.finished = undefined; this.failure = undefined;
+    this.waiting = false;
   }
   dispose(): void { this.disposed = true; this.reset(); }
   /** Read-only refresh can invalidate work, never start or publish a summary. */
@@ -200,8 +205,9 @@ export class RollingCompactor {
   private async join(job: Job, signal?: AbortSignal): Promise<void> {
     const cancel = () => job.abort.abort(signal?.reason);
     signal?.addEventListener("abort", cancel, { once: true });
+    this.waiting = true;
     try { signal?.throwIfAborted(); await job.promise; signal?.throwIfAborted(); }
-    finally { signal?.removeEventListener("abort", cancel); }
+    finally { this.waiting = false; signal?.removeEventListener("abort", cancel); }
   }
 
   private async start(deps: ContextDeps, messages: MessageParam[], tailTokens: number): Promise<void> {
@@ -269,9 +275,11 @@ export class RollingCompactor {
   }
 
   private async apply(deps: ContextDeps, job: Job): Promise<void> {
+    this.publishing = true;
     let outcome: Outcome | undefined;
     try { outcome = await this.publish(deps, job); }
     finally {
+      this.publishing = false;
       if (this.job === job) this.job = undefined;
       // Keep a finished summary that was declined or failed to publish (a cancelled one never):
       // the next start reuses it if its prefix is unchanged. A throw backs off in boundary().
@@ -322,14 +330,16 @@ export class RollingCompactor {
       const retained = [...archivedImageReferences(current.slice(0, job.cut)), ...current.slice(job.cut)];
       const proposed: MessageParam[] = [{ role: "user", content: text }, ...retained];
       const clean = { ...deps, compaction: { ...deps.compaction, measured: undefined } };
-      if (!paired(proposed) || estimate(proposed) >= estimate(current)) { status(deps, ROLLING_STATUS.unchanged); return "declined"; }
+      const before = estimate(current), after = estimate(proposed);
+      if (!paired(proposed) || after >= before) { status(deps, ROLLING_STATUS.unchanged); return "declined"; }
       // New arrivals can outgrow even a valid summary. Commit the reduction; the loop
       // still refuses a model request until requireFits passes (possibly after another pass).
-      await this.transcript.append({ type: "summary", text, memory, retained, boundary: job.head }, signal, { head, check: authorize });
+      const entry = await this.transcript.append({ type: "summary", text, memory, retained, boundary: job.head }, signal, { head, check: authorize });
+      this.completed = { id: entry.uuid, before, after };
       if (deps.compaction) deps.compaction.measured = undefined;
       this.failures = 0; this.deferUntil = 0; this.failure = undefined;
       this.retryAfter = fits(clean, proposed) ? Date.now() + RETRY_MS : 0;
-      status(deps, ROLLING_STATUS.done(estimate(current), estimate(proposed)));
+      status(deps, ROLLING_STATUS.done(before, after));
       return "published";
     });
   }

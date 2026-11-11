@@ -14,6 +14,21 @@ pages handle it between complete model/tool batches or after the final response.
 It injects no user message. Status goes through the scoped plain writer (stdout
 in standalone agents), never assistant content.
 
+The TUI shows a persistent `Compacting…` animation above the input while memory
+work is queued, running or being published. Typing does not dismiss it. Compaction
+alone does not show `thinking…`; concurrent foreground model/tool work keeps its
+own activity indicator. After a checkpoint commits, a one-time notice such as
+`Compacted 302k → 65k` replaces the loader and clears on the next keypress.
+These are estimated history-token counts, not billed usage. Reconnect restores
+an active loader, but does not replay an old completion. Cancellation, failure or
+daemon death removes the loader; failures retain the existing error notices.
+
+`tui/footer/feedback.ts` is the reusable composer feedback area: owner-scoped text
+or multiple lines, optional animation, and persistent or ephemeral lifetime.
+It is presentation only. Daemon status carries independent foreground/compaction
+activity and the last committed checkpoint ID/counts; existing polls publish
+only changed snapshots, with no extra worker, inference, timer or status-write loop.
+
 **Compaction is lossy, best-effort summarization, not a semantic guarantee.**
 Recent verbatim entries override summaries. Original entries remain on disk and
 in UI replay; retrieve details when uncertain. Worker checkpoints pin the original

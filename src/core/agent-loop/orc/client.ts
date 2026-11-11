@@ -23,6 +23,7 @@ import type { ToolCall, ToolOutcome } from "../../../protocol";
 import { open, type Transcript } from "../../data/transcripts";
 import { inputEpoch } from "../../data/inbox";
 import { requireCurrentDaemon } from "./build";
+import { ROLLING_STATUS } from "../../data/memory";
 
 /** How often a following client looks at the status and transcript. */
 export const FOLLOW_MS = 250;
@@ -141,6 +142,8 @@ interface Follow { seen: string | null; turnsAt: number; engaged: boolean; abort
 
 /** What a client shares between its methods. */
 interface Client {
+  observed?: DaemonStatus;
+  observing?: Promise<DaemonStatus | undefined>;
   project: string;
   transcript: Transcript;
   deps: ClientDeps;
@@ -154,7 +157,23 @@ interface Client {
   disposed: boolean;
 }
 
-const busy = async (c: Client) => (await c.status(c.project))?.state === "turn";
+/** Status is a snapshot; completion is delivered once to already-attached clients.
+ * Reopening or restarting must not replay yesterday's success notification. */
+async function observeStatus(c: Client, notify = true): Promise<DaemonStatus | undefined> {
+  return c.observing ??= readActivity(c, notify).finally(() => { c.observing = undefined; });
+}
+async function readActivity(c: Client, notify: boolean): Promise<DaemonStatus | undefined> {
+  const prior = c.observed, next = await c.status(c.project);
+  if (c.disposed) return;
+  c.observed = next;
+  if (notify && prior?.run === next?.run && next?.activity?.compacted && next.activity.compacted.id !== prior?.activity?.compacted?.id) {
+    const { before, after } = next.activity.compacted;
+    c.notice(ROLLING_STATUS.done(before, after));
+  }
+  if (notify && JSON.stringify(prior?.activity) !== JSON.stringify(next?.activity)) c.deps.onRefresh?.();
+  return next;
+}
+const busy = async (c: Client) => (await observeStatus(c))?.state === "turn";
 
 /** Reload the transcript; a new head is handed to the TUI to re-sync from disk. */
 async function sync(c: Client, f: Follow): Promise<void> {
@@ -167,7 +186,12 @@ async function sync(c: Client, f: Follow): Promise<void> {
 function show(c: Client, e: Exclude<LiveEvent, { kind: "start" }>): void {
   switch (e.kind) {
     case "text": c.deps.write?.(e.text); break;
-    case "status": for (const line of e.text.replace(/\n$/, "").split("\n")) c.notice(line); break;
+    case "status": for (const line of e.text.replace(/\n$/, "").split("\n")) {
+      // Structured snapshots survive missed live events and reconnects. Keep
+      // failures as notices; suppress duplicate start/success text on new daemons.
+      if (c.observed?.activity && (line === ROLLING_STATUS.started || line.startsWith("compaction complete:"))) continue;
+      c.notice(line);
+    } break;
     case "tool_start": c.deps.onTool?.(e.call); break;
     case "tool_end": c.deps.onToolResult?.(e.outcome); break;
     case "truncated": c.notice("orchestrator: live output truncated (over 1 MiB this turn); the full text shows when the turn ends"); break;
@@ -208,7 +232,7 @@ async function pause(c: Client, f: Follow): Promise<void> {
 /** One look while following: "dead", "done" (the followed turn ended), "none" (nothing started within the grace) or "wait". */
 async function observe(c: Client, f: Follow, deadline: number): Promise<"dead" | "done" | "none" | "wait"> {
   await sync(c, f);
-  const s = f.status = await c.status(c.project);
+  const s = f.status = await observeStatus(c);
   if (!s) return "dead";
   if (s.turns > f.turnsAt || s.state === "turn") f.engaged = true;
   if (f.engaged && s.state !== "turn") {
@@ -225,7 +249,7 @@ async function follow(c: Client): Promise<void> {
   c.following = f; // before the first await: pending() must not schedule a second follow meanwhile
   const deadline = Date.now() + (c.deps.graceMs ?? START_GRACE_MS);
   try {
-    const start = await c.status(c.project);
+    const start = await observeStatus(c);
     f.turnsAt = start?.turns ?? 0;
     f.engaged = start?.state === "turn";
     while (await observe(c, f, deadline) === "wait") await pause(c, f);
@@ -301,12 +325,13 @@ export async function createClientOrchestrator(deps: ClientDeps): Promise<Orches
   const config = await loadConfig();
   const c = client(deps);
   // Reattach streamed replies/tools, but don't replay old temporary feedback.
-  const attached = await c.status(project).catch(() => undefined);
+  const attached = await observeStatus(c, false).catch(() => undefined);
   if (attached?.state === "turn") {
     const key = { run: attached.run, turn: attached.turns };
     c.noticeCursor = { ...key, seq: liveReader(project).read(key).at(-1)?.seq ?? -1 };
   }
   return {
+    activity: () => c.observed?.state === "stopped" || !c.observed ? { working: false, compacting: false } : c.observed.activity,
     contextUsage: model => contextOf(project, model)?.used,
     contextWindow: model => contextOf(project, model)?.window ?? contextWindow({ fallback: config.contextLimitFallback }, model),
     submission: () => inputEpoch(project),
@@ -320,7 +345,7 @@ export async function createClientOrchestrator(deps: ClientDeps): Promise<Orches
     observeModel: model => ask(c, "model", () => request(project, { kind: "model", model })),
     entries: () => c.transcript.history?.() ?? c.transcript.branch(),
     consumed: () => c.transcript.consumed?.().inputs ?? new Set(),
-    refresh: async () => { if (c.following) return false; c.checkIdentity(); await c.transcript.refresh?.(); return !c.following; },
+    refresh: async () => { if (c.following) return false; c.checkIdentity(); await observeStatus(c); await c.transcript.refresh?.(); return !c.following; },
     dispose: () => { c.disposed = true; c.following?.abort.abort(new Error("page closed")); },
   };
 }

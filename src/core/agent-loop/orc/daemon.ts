@@ -59,6 +59,7 @@ export type DaemonOutcome = "stopped" | "deleted" | "idle";
 
 type Settled = Required<Omit<DaemonOptions, "watchers" | "exitWhenIdle" | "live">> & Pick<DaemonOptions, "exitWhenIdle" | "live">;
 interface Daemon {
+  published?: import("../../../protocol").DaemonStatus;
   supervision: AbortController;
   epoch: string;
   o: Settled;
@@ -103,8 +104,15 @@ export function watchedSleep(dirs: string[]): { sleep: (ms: number) => Promise<v
 }
 
 async function publish(d: Daemon, state: DaemonState): Promise<void> {
-  await writeStatus(d.o.project, { build: BUILD_ID, pid: process.pid, run: d.o.run, state, since: new Date().toISOString(), turns: d.turns,
-    ...(d.context ? { context: d.context } : {}), ...(d.error ? { error: d.error } : {}) }).catch(error => d.o.log(`orchestrator: could not publish status: ${error}`));
+  const activity = d.o.session.activity?.();
+  const next = { build: BUILD_ID, pid: process.pid, run: d.o.run, state,
+    since: d.published?.state === state ? d.published.since : new Date().toISOString(), turns: d.turns,
+    ...(activity ? { activity: state === "stopped" ? { ...activity, working: false, compacting: false } : activity } : {}),
+    ...(d.context ? { context: d.context } : {}), ...(d.error ? { error: d.error } : {}) };
+  // Existing polls publish only transitions, not a status write every 100 ms.
+  if (JSON.stringify(next) === JSON.stringify(d.published)) return;
+  try { await writeStatus(d.o.project, next); d.published = next; }
+  catch (error) { d.o.log(`orchestrator: could not publish status: ${error}`); }
 }
 
 /** The header's estimate after a turn, from the session that just ran it. */
@@ -166,6 +174,7 @@ async function pollTurn(d: Daemon, signal: AbortSignal): Promise<void> {
     if (!d.o.gone()) assertLaunch(d);
     await takeCancel(d, true);
     await handleRequests(d, kind => IN_TURN.has(kind));
+    await publish(d, "turn");
     await delay(TURN_POLL_MS, signal).catch(() => {});
   }
 }
@@ -225,6 +234,7 @@ async function step(d: Daemon): Promise<DaemonOutcome | undefined> {
   await takeCancel(d, false);
   runWatchers(d); // not awaited: input that lands meanwhile starts its turn now
   if (await d.o.session.pending()) { await runTurn(d); return; }
+  await publish(d, "idle");
   if (d.o.exitWhenIdle) {
     await Promise.all([d.watching, d.merging, d.maintaining]); // what the watchers queued (exit and merge notices) still runs before an idle exit
     if (await d.o.session.pending()) { await runTurn(d); return; }

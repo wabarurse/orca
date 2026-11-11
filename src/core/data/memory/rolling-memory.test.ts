@@ -80,6 +80,7 @@ test("foreground proceeds while the summarizer works; idle publication preserves
     rolling: { triggerTokens: 5000, tailTokens: 200, loadProvider: async () => worker.provider } });
   await orch.say("Actually, use detailed explanations for this task.");
   await orch.turn(); await worker.entered;
+  expect(orch.activity!()).toMatchObject({ working: false, compacting: true });
   expect(foreground.calls).toHaveLength(2); expect(worker.calls).toHaveLength(1);
   expect(worker.calls[0]).toMatchObject({ model: "gpt-6-sol", tools: [], settings: { effort: "low", fast: false }, maxTokens: 8192 });
   expect(transcript.branch()[0]?.type).toBe("message");
@@ -91,6 +92,7 @@ test("foreground proceeds while the summarizer works; idle publication preserves
   expect(await orch.pending()).toBe(true);
   await orch.turn();
   expect(foreground.calls).toHaveLength(2); expect(await orch.pending()).toBe(false);
+  expect(orch.activity!()).toMatchObject({ working: false, compacting: false, compacted: { id: transcript.branch()[0]!.uuid } });
   expect((await transcript.chain()).slice(1)).toEqual(recent);
   expect(transcript.history!()).toEqual(history); expect(history.slice(0, original.length)).toEqual(original);
   expect(estimate(await transcript.chain())).toBeLessThan(estimate(before) / 5);
@@ -323,6 +325,7 @@ test("cancel and clear discard an in-flight result, including a provider ignorin
     rolling: { triggerTokens: 5000, tailTokens: 200, loadProvider: async () => worker.provider } });
   await orch.say("go"); await orch.turn(); await worker.entered;
   orch.cancel!(); expect(worker.calls[0]!.signal!.aborted).toBe(true);
+  expect(orch.activity!()).toMatchObject({ working: false, compacting: false });
   await orch.clear!(); worker.release(); await Bun.sleep(1);
   expect(await orch.pending()).toBe(false); expect(await transcript.chain()).toEqual([]);
   expect(JSON.parse(await queryHistory(project, { action: "search_history", query: "old work" })).entries).toEqual([]);
@@ -683,4 +686,22 @@ test("hard limits bypass the failure deferral after cooldown, while ordinary tur
   expect(worker.calls).toHaveLength(1);
   expect(transcript.branch()[0]?.type).toBe("summary");
   expect(internals.failures).toBe(0); expect(internals.deferUntil).toBe(0);
+});
+
+test("manual compaction reports maintenance without foreground work, then the committed reduction", async () => {
+  const { project, transcript } = await fixture(), worker = gated(), provider = fakeProvider([]);
+  const orch = await createOrchestrator({ project, transcript, provider, tools: {}, write() {},
+    rolling: { triggerTokens: 5000, tailTokens: 200, loadProvider: async () => worker.provider } });
+  try {
+    await orch.compact!(); expect(orch.activity!()).toMatchObject({ working: false, compacting: true });
+    const turn = orch.turn(); await worker.entered;
+    expect(orch.activity!()).toMatchObject({ working: false, compacting: true });
+    expect(provider.calls).toHaveLength(0);
+    worker.release(); await turn;
+    const activity = orch.activity!()!;
+    expect(activity).toMatchObject({ working: false, compacting: false });
+    expect(activity.compacted!.before).toBeGreaterThan(activity.compacted!.after);
+    expect(activity.compacted!.id).toBe(transcript.branch()[0]!.uuid);
+    expect(provider.calls).toHaveLength(0);
+  } finally { worker.release(); orch.dispose?.(); }
 });

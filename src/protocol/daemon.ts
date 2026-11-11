@@ -7,6 +7,12 @@ import type { ContextWindow } from "../providers/catalog";
 import type { ToolCall, ToolOutcome } from "./toolview";
 
 export type DaemonState = "idle" | "turn" | "stopped";
+/** Presentation only: maintaining memory is not foreground model/tool work. */
+export interface OrchestratorActivity {
+  working: boolean;
+  compacting: boolean;
+  compacted?: { id: string; before: number; after: number };
+}
 export interface DaemonStatus {
   build?: string;
   pid: number;
@@ -16,6 +22,7 @@ export interface DaemonStatus {
   since: string;
   /** Turns started by this daemon, so a client can tell a turn began and ended between two reads. */
   turns: number;
+  activity?: OrchestratorActivity;
   /** The last turn's context estimate for the header; absent until a turn ran. */
   context?: { model: string; used?: number; window: ContextWindow };
   /** The last turn's failure, until the next turn. */

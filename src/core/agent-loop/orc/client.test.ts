@@ -204,3 +204,27 @@ test("following clients get the turn's live text and tool events through the in-
   await release!();
   session.dispose?.();
 });
+
+test("compaction status survives missed live events; completion is one-time and never replayed on reconnect", async () => {
+  const project = "compaction-status"; mkdirSync(paths.project(project), { recursive: true });
+  let current: import("../../../protocol").DaemonStatus | undefined = { pid: process.pid, run: "run-progress", state: "idle", turns: 1, since: new Date().toISOString(), activity: { working: false, compacting: true } };
+  const notices: string[] = [];
+  let refreshes = 0;
+  const options = { project, status: async () => current, onRefresh: () => { refreshes++; }, notice: (s: string) => notices.push(s) };
+  const client = await createClientOrchestrator(options);
+  expect(client.activity!()).toEqual({ working: false, compacting: true });
+  expect(notices).toEqual([]);
+  current = { ...current, activity: { working: false, compacting: false, compacted: { id: "checkpoint-1", before: 302194, after: 65368 } } };
+  await Promise.all([client.pending(), client.refresh!()]);
+  expect(notices).toHaveLength(1); expect(notices[0]).toContain("~302194 → ~65368");
+  expect(refreshes).toBeGreaterThan(0);
+  await client.pending(); await client.refresh!(); expect(notices).toHaveLength(1);
+  const reattached = await createClientOrchestrator(options); await reattached.pending();
+  expect(notices).toHaveLength(1);
+  current = { ...current, activity: { working: false, compacting: true, compacted: current.activity!.compacted } };
+  await client.pending(); expect(client.activity!()!.compacting).toBe(true);
+  current = undefined;
+  await client.pending(); expect(client.activity!()).toEqual({ working: false, compacting: false });
+  expect(notices).toHaveLength(1);
+  client.dispose?.(); reattached.dispose?.();
+});
