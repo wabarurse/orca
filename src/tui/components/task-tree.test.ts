@@ -179,7 +179,7 @@ test("only unended started runs animate; merged checkbox requires archive eviden
   expect(renderTaskTree([ready], { cols: 80, rows: 24 }).errors.join(" ")).toContain("ready requires matching validation");
 });
 
-test("open PR state keeps blocker details and becomes waiting when the PR closes", () => {
+test("open PR state keeps blocker details and becomes closed when the PR closes", () => {
   const t = task(1); t.pr = pr;
   t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
   t.attention = { kind: "blocked", reason: "conflicting; checks failed" };
@@ -188,13 +188,13 @@ test("open PR state keeps blocker details and becomes waiting when the PR closes
   for (const value of ["pr open", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
   expect(renderTaskTree([t], { cols: 120, rows: 60 }).lines[1]).toContain("\x1b[32m●");
   t.publication.state = "CLOSED";
-  expect(render()).toContain("waiting");
-  expect(renderTaskTree([t], { cols: 120, rows: 60 }).lines[1]).toContain("\x1b[33m●");
+  expect(render()).toContain("State: closed");
+  expect(renderTaskTree([t], { cols: 120, rows: 60 }).lines[1]).toContain("\x1b[31m●");
   delete t.publication;
   expect(render()).not.toContain("pr open");
 });
 
-test("five visible task states use consistent colours with green reserved for verified open PRs", () => {
+test("six visible task states use consistent colours with green reserved for published open PRs", () => {
   const colours = (t: Task) => { const m = renderTaskTree([t], { cols: 120, rows: 30 }).lines[1]!.match(/\x1b\[(\d+)m[●◐]/); return m && Number(m[1]); };
   const base = (n: number) => task(n);
   expect(colours(base(1))).toBe(90);
@@ -205,7 +205,7 @@ test("five visible task states use consistent colours with green reserved for ve
   expect(colours(reviewing)).toBe(36);
   reviewing.attention = { kind: "waiting", reason: "awaiting review" };
   expect(colours(reviewing)).toBe(33); // explicit waiting is a hold, even after work started
-  for (const [kind, colour] of [["blocked", 33], ["cancelled", 33], ["closed", 33], ["unknown", 33]] as const) {
+  for (const [kind, colour] of [["blocked", 33], ["cancelled", 31], ["closed", 31], ["unknown", 33]] as const) {
     const t = base(4); t.status = "working"; t.runs = [run]; t.attention = { kind, reason: "x" };
     expect(colours(t)).toBe(colour);
   }
@@ -220,6 +220,15 @@ test("five visible task states use consistent colours with green reserved for ve
   expect(openOut.join("\n")).toContain("State: pr open");
   expect(plainText(openOut[1]!)).toMatch(/pr open$/);
   expect(plainText(openOut.join("\n"))).toContain("Details");
+  open.iterationStartedAt = "2026-01-02";
+  const iteration = renderTaskTree([open], { cols: 120, rows: 40 });
+  expect(plainText(iteration.lines[1]!)).toMatch(/working$/);
+  expect(plainText(iteration.lines.join("\n"))).toContain("State: working");
+  expect(iteration.lines.join("\n")).toContain(pr.url);
+  expect(colours(open)).toBe(36);
+  open.publication!.state = "CLOSED";
+  expect(plainText(renderTaskTree([open], { cols: 120, rows: 40 }).lines[1]!)).toMatch(/closed$/);
+  expect(colours(open)).toBe(31);
 });
 
 test("open PR rows remain pr open during a hold; panel geometry stays bounded", () => {

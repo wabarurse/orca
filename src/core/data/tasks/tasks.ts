@@ -49,6 +49,7 @@ function validateTask(raw: unknown): asserts raw is Task {
   }
   if (raw.pr !== undefined) taskPR(raw.pr);
   if (raw.publication !== undefined) taskPublicationObservation(raw.publication, raw.pr === undefined ? undefined : taskPR(raw.pr));
+  if (raw.iterationStartedAt !== undefined) check(stamp(raw.iterationStartedAt), "invalid iteration timestamp");
   if (raw.attention !== undefined) attention(raw.attention);
   if (raw.readiness !== undefined) {
     const r = raw.readiness;
@@ -147,7 +148,7 @@ export async function allTasks(project: string): Promise<Task[]> { return (await
 }); }
 export async function getTask(project: string, id: string): Promise<Task> { return find(await read(project), id); }
 export async function listTasks(project: string): Promise<TaskRow[]> {
-  return (await allTasks(project)).filter(t => !t.removedAt).map(({ id, number, checkpoints, archive, name, summary, branch, status, createdAt, updatedAt, attention, pr, publication, runs, dependsOn }) => ({ id, number, checkpoints, archive, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), ...(publication ? { publication } : {}), review: reviewProgress(runs) }));
+  return (await allTasks(project)).filter(t => !t.removedAt).map(({ id, number, checkpoints, archive, name, summary, branch, status, createdAt, updatedAt, attention, pr, publication, iterationStartedAt, runs, dependsOn }) => ({ id, number, checkpoints, archive, name, summary, branch, status, createdAt, updatedAt, ...(dependsOn !== undefined ? { dependsOn } : {}), ...(attention ? { attention } : {}), ...(pr ? { pr } : {}), ...(publication ? { publication } : {}), ...(iterationStartedAt ? { iterationStartedAt } : {}), review: reviewProgress(runs) }));
 }
 /** Case-folded references resolve to actual stored IDs, never guessed or filtered edges. */
 function dependencyResolver(tasks: Task[]): (id: string) => Task {
@@ -243,7 +244,22 @@ export async function startTaskRun(project: string, run: string): Promise<void> 
     const c = current(s, run); if (!c || c.run.state !== "prepared") return;
     c.run.state = "started"; c.run.startedAt = new Date().toISOString();
     c.task.status = c.run.role === "worker" ? "working" : "reviewing";
+    if (c.run.role === "worker" && c.task.publication?.state === "OPEN") c.task.iterationStartedAt = c.run.startedAt;
     delete c.task.attention; event(c.task, "run_started", run);
+  });
+}
+/** Explicit work in an existing run (or by the coordinator). Metadata only:
+ * never dispatch a process, erase the PR link, or reset publication checkpoints. */
+export async function startTaskWork(project: string, id: string, run?: string, expectedRevision?: number): Promise<Task> {
+  return update(project, s => {
+    const t = find(s, id); active(t);
+    if (expectedRevision !== undefined) check(t.revision === expectedRevision, "task changed; retry work update");
+    if (run) check(current(s, run)?.task.id === t.id && t.runs.at(-1)?.state === "started", "work requires this task's active run");
+    check(t.attention?.kind !== "cancelled", "task cancelled; resume through an authorized new run");
+    if (t.iterationStartedAt && t.status === "working" && !t.attention) return t;
+    unready(t); t.status = "working"; delete t.attention;
+    t.iterationStartedAt = new Date().toISOString(); event(t, "work_started", run);
+    return t;
   });
 }
 export async function stopTaskRun(project: string, run: string, kind: AttentionKind, reason: string, failedLaunch = false): Promise<void> {
@@ -290,7 +306,7 @@ export async function setTaskAttention(project: string, id: string, note: TaskAt
     unready(t); t.attention = note; event(t, "attention"); return t;
   });
 }
-export async function observeTaskPR(project: string, id: string, observation: PRObservation, expectedRevision?: number): Promise<Task> {
+export async function observeTaskPR(project: string, id: string, observation: PRObservation, expectedRevision?: number, options: { published?: boolean } = {}): Promise<Task> {
   const pr = taskPR(observation.pr);
   check(["OPEN", "CLOSED", "MERGED"].includes(observation.state), "invalid observation state");
   return update(project, s => {
@@ -300,6 +316,9 @@ export async function observeTaskPR(project: string, id: string, observation: PR
     check(t.branch === observation.branch, "pr branch mismatch");
     check(!t.pr || samePR(t.pr, pr), "task already associated with another pr");
     const before = JSON.stringify(t);
+    // Only task(pr) after publication acknowledges the iteration. A watcher can
+    // see the old or a partially pushed head while implementation continues.
+    if (options.published || observation.state !== "OPEN") delete t.iterationStartedAt;
     if (t.pr?.head !== pr.head || !observation.ready || observation.state !== "OPEN") unready(t);
     t.pr = pr;
     if (observation.state === "MERGED") {
@@ -313,7 +332,7 @@ export async function observeTaskPR(project: string, id: string, observation: PR
       || !samePR(t.publication.pr, pr) || t.publication.pr.head !== pr.head)) {
       t.publication = { pr: { ...pr }, state: observation.state, observedAt: new Date().toISOString() };
     }
-    if (before !== JSON.stringify(t)) event(t, t.archive ? "merged" : "pr_observed");
+    if (before !== JSON.stringify(t)) event(t, t.archive ? "merged" : options.published ? "pr_published" : "pr_observed");
     return t;
   });
 }
