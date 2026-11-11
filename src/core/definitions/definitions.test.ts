@@ -12,7 +12,7 @@ import { ask } from "../tools/ask";
 import { runtime } from "../tools/runtime";
 import { skill } from "../tools/skill";
 import { processTool } from "../tools/process";
-import { read } from "../tools/files";
+import { edit, read } from "../tools/files";
 const root = mkdtempSync(join(tmpdir(), "orca-definitions-"));
 const old = process.env.ORCA_HOME;
 let home: string;
@@ -186,4 +186,21 @@ test("an edited legacy ask definition gains list/close without losing annotation
   expect(loaded.spec.description).toContain("My ask guidance");
   expect(loaded.spec.input_schema.required).toEqual([]);
   expect(Object.keys(loaded.spec.input_schema.properties as object)).toEqual(["action", "questions", "ids", "reason"]);
+});
+test("a pre-upgrade edit definition follows the new default; an annotated one gains replace_all and loses the required revision", () => {
+  const legacy: Tool = { ...edit, spec: { name: "edit", description: "Replace one exact, nonempty, unique text match in a UTF-8 file. Supply expected_revision from read. Stale or ambiguous edits fail without changing the file.",
+    input_schema: { type: "object", properties: { path: { type: "string" }, expected_revision: { type: "string" }, old_text: { type: "string" }, new_text: { type: "string" } }, required: ["path", "expected_revision", "old_text", "new_text"] } } };
+  editableTool(legacy);
+  const file = join(home, "tools/edit.json");
+  expect(editableTool(edit).spec).toEqual(edit.spec);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ description: edit.spec.description, input_schema: edit.spec.input_schema });
+  const annotated = { description: "Keep edits small.", input_schema: legacy.spec.input_schema };
+  writeFileSync(file, JSON.stringify(annotated));
+  const loaded = editableTool(edit);
+  expect(loaded.spec.description).toBe(`Keep edits small.\nMandatory tool contract: ${edit.spec.description}`);
+  expect(loaded.spec.input_schema).toEqual(edit.spec.input_schema);
+  expect(readFileSync(file, "utf8")).toBe(JSON.stringify(annotated));
+  annotated.input_schema.required = ["path"];
+  writeFileSync(file, JSON.stringify(annotated));
+  expect(() => editableTool(edit)).toThrow("immutable tool schema");
 });

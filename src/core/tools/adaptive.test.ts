@@ -47,7 +47,7 @@ test('read/edit/write preserve newer content, reject ambiguous edits and create 
   await expect(write.run({ path: 'sample.txt', content: 'lost' }, ctx)).rejects.toThrow('exists');
   expect(await readFile(join(cwd, 'sample.txt'), 'utf8')).toBe('one\nthree\n');
   const now = JSON.parse(await read.run({ path: 'sample.txt' }, ctx) as string);
-  await expect(edit.run({ path: 'sample.txt', expected_revision: now.revision, old_text: '\n', new_text: '' }, ctx)).rejects.toThrow('exactly one');
+  await expect(edit.run({ path: 'sample.txt', expected_revision: now.revision, old_text: '\n', new_text: '' }, ctx)).rejects.toThrow('matches 2 locations (lines 1, 2)');
 });
 test('write on an existing file names its current revision; retrying with it replaces, a stale one never does', async () => {
   await write.run({ path: 'exists.txt', content: 'first\n' }, ctx);

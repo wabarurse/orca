@@ -2,6 +2,7 @@ import { killGroup } from "../../proc";
 import { completeProcess, type Completion } from "../../process-completion";
 import { loadConfig } from "../../../config";
 import { outputArtifact, OutputPreview } from "./output";
+import { hint } from "./hints";
 import type { Tool } from "../registry";
 import { launchProcess } from "../../data/processes";
 import { execution } from "../../data/projects/lifecycle";
@@ -24,7 +25,7 @@ export const bash: Tool = {
   parallel: input => input.independent === true,
   spec: {
     name: "bash",
-    description: "Run a non-interactive shell command in the working directory, inheriting the harness PATH. No sudo. Set timeout_ms to 10000–30000 for short checks that may stall (a database or service connection), and use the client's own timeouts. For looking things up on the web use web_search, not curl; use curl only to fetch a specific, already-known URL. Full output is saved outside the repository; large results include a preview and path to inspect with shell tools. Normal-sized output is returned intact. Set max_output_bytes to adjust the preview (up to the configured cap). Group related searches into one bounded command. Issue independent read-only commands together with independent=true; never use it for edits, shared writes, or commands requiring another call's result. All other calls run in order.",
+    description: "Run a non-interactive shell command in the working directory, inheriting the harness PATH. No sudo. Change files with edit or write rather than sed -i or scripted rewrites. Set timeout_ms to 10000–30000 for short checks that may stall (a database or service connection), and use the client's own timeouts. For looking things up on the web use web_search, not curl; use curl only to fetch a specific, already-known URL. Full output is saved outside the repository; large results include a preview and path to inspect with shell tools. Normal-sized output is returned intact. Set max_output_bytes to adjust the preview (up to the configured cap). Group related searches into one bounded command. Issue independent read-only commands together with independent=true; never use it for edits, shared writes, or commands requiring another call's result. All other calls run in order.",
     input_schema: {
       type: "object",
       properties: {
@@ -92,7 +93,9 @@ export const bash: Tool = {
         process.off("exit", kill);
       }
     } finally { path = await artifact.finish(complete); }
-    let footer = limited ? "\n[output limit reached; command terminated; saved output is incomplete]" : timedOut ? `\n[timed out after ${timeoutMs / 1000}s; saved output is incomplete]` : "";
+    // The hint leads the footer: the exit and output-path notes stay last, where their readers expect them.
+    const nudge = hint(command);
+    let footer = (nudge ? `\n${nudge}` : "") + (limited ? "\n[output limit reached; command terminated; saved output is incomplete]" : timedOut ? `\n[timed out after ${timeoutMs / 1000}s; saved output is incomplete]` : "");
     if (!limited && !timedOut && completion?.reason) footer += "\n[command failed; saved output is incomplete]";
     if (completion?.cleanupIncomplete) footer += "\n[cleanup incomplete; command processes may still be running]";
     if (code !== 0) footer += `\n[exit ${code}]`;
