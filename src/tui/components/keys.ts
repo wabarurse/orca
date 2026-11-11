@@ -10,7 +10,7 @@ export interface Key {
    *  "left", "right", "home", "end", "pageup", "pagedown", "delete", or a
    *  "paste" (bracketed paste, see text), an "osc" reply from the terminal
    *  (text is its body, e.g. "11;rgb:0000/0000/0000"), or a single character for modifier
-   *  chords such as Ctrl+N ({ name: "n", ctrl }). */
+   *  chords such as Ctrl+N ({ name: "n", ctrl }), or "space-chord" from Hermit. */
   name: string;
   /** One-based terminal cell coordinates for left-button selection events. */
   x?: number;
@@ -18,7 +18,7 @@ export interface Key {
   ctrl?: boolean;
   alt?: boolean;
   shift?: boolean;
-  /** Printable text for name "char" (consecutive characters are batched) and "paste"; the body for "osc". */
+  /** Printable text for "char", "paste" and "space-chord"; the body for "osc". */
   text?: string;
 }
 
@@ -55,6 +55,9 @@ function fromKitty(params: string): Key | null {
 
 /** CSI n;mod ~: xterm's modifyOtherKeys (27;mod;code) or a named key. */
 function fromTilde(nums: number[]): Key | null {
+  // Hermit's opt-in held-Space bridge; never treat a chord as draft text.
+  if (nums[0] === 777) return nums.length === 2 && Number.isInteger(nums[1]) && nums[1]! >= 33 && nums[1]! <= 126
+    ? { name: "space-chord", text: String.fromCharCode(nums[1]!) } : null;
   if (nums[0] === 27 && Number.isFinite(nums[2])) return fromCode(nums[2]!, nums[1] || 1);
   const name = TILDE_KEYS[String(nums[0])];
   return name ? withMods({ name }, nums[1] || 1) : null;
