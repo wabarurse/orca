@@ -17,7 +17,7 @@ import { sessionId } from "../core/tmux";
 import { registry } from "../core/tools";
 import { toolsFor, type Tool, type ToolResult } from "../core/tools";
 import { pending } from "../core/data/inbox";
-import { recoverableProcesses, listProcesses, liveProcess, controlProcess, reconcileProcesses } from "../core/data/processes";
+import { recoverableProcesses, processOwner, listProcesses, liveProcess, controlProcess, reconcileProcesses } from "../core/data/processes";
 import { agentContext } from "../core/data/knowledge";
 
 /**
@@ -61,7 +61,7 @@ async function startAgent(opts: AgentOptions, tracker?: Tracker): Promise<void> 
   try { await agentSession(opts, cancellation.signal, tracker, epoch); }
   catch (error) {
     if (cancellation.signal.aborted) {
-      for (const p of await listProcesses(opts.project)) if (p.owner === sessionId(opts.role, opts.branch) && liveProcess(p)) await controlProcess(opts.project, p.id, "stop").catch(() => {});
+      for (const p of await listProcesses(opts.project)) if (processOwner(p) === sessionId(opts.role, opts.branch) && liveProcess(p)) await controlProcess(opts.project, p.id, "stop").catch(() => {});
     }
     throw cancellation.signal.aborted ? cancellation.signal.reason : error;
   }
@@ -107,7 +107,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker: Tr
     while (!await pending(opts.project, id)) {
       signal.throwIfAborted();
       await reconcileProcesses(opts.project);
-      if (!(await recoverableProcesses(opts.project)).some(p => p.owner === id && liveProcess(p))) {
+      if (!(await recoverableProcesses(opts.project)).some(p => processOwner(p) === id && liveProcess(p))) {
         if (!await pending(opts.project, id)) return;
         break;
       }

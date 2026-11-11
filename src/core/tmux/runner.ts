@@ -14,10 +14,10 @@ import { existsSync, mkdirSync, lstatSync } from "node:fs";
 import { basename, resolve, dirname } from "node:path";
 import { $ } from "bun";
 import { paths, repositoryBinding } from "../../config";
-import { assertMainCheckout, assertWorktree } from "../data/projects";
+import { assertMainCheckout, assertWorktree, workspaces } from "../data/projects";
 import { execution } from "../data/projects/lifecycle";
 import { launchEnvironment } from "./launch-environment";
-import { listProcesses, liveProcess } from "../data/processes";
+import { listProcesses, unresolvedProcess } from "../data/processes";
 import type { Role } from "../../protocol";
 
 export interface StartOptions {
@@ -77,12 +77,13 @@ export async function ensureWorktree(project: string, branch: string, signal?: A
   if (["", ".", ".."].includes(slug(branch))) throw new Error("invalid worker branch");
   const base = repositoryBinding(project)?.branch;
   if (branch === base) throw new Error("workers must use a task branch, not the default branch");
-  if (existsSync(dir)) { await assertWorktree(project, dir, branch); return dir; }
+  if (existsSync(dir)) { await assertWorktree(project, dir, branch); workspaces.ensure(project, dir, { disposable: true, repo, branch }); return dir; }
   if (!existsSync(repo)) throw new Error(`runner: repo not found at ${repo}`);
 
   const exists = (await command(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo, signal)).code === 0;
   const res = await command(["git", "worktree", "add", ...(exists ? [dir, branch] : ["-b", branch, dir, base ? `refs/heads/${base}` : "HEAD"])], repo, signal);
   if (res.code !== 0) throw new Error(`runner: git worktree add failed: ${res.err.trim()}`);
+  workspaces.ensure(project, dir, { disposable: true, repo, branch });
   return dir;
 }
 
@@ -91,12 +92,14 @@ export async function ensureTaskWorktree(opts: StartOptions): Promise<string> {
   if (!opts.branch) throw new Error("task branch required");
   const task = opts.run ? await taskForRun(opts.project, opts.run) : undefined;
   if (task && task.branch !== opts.branch) throw new Error("task run branch mismatch");
-  return ensureWorktree(opts.project, opts.branch, opts.signal);
+  const dir = await ensureWorktree(opts.project, opts.branch, opts.signal);
+  if (task) workspaces.own(opts.project, "task", task.id, { directory: dir, exclusive: true });
+  return dir;
 }
 
 export async function removeWorktree(project: string, branch: string): Promise<void> {
   if (repositoryBinding(project)?.branch === "") return; // Never remove a shared user directory.
-  if ((await listProcesses(project)).some(p => p.branch === branch && (liveProcess(p) || p.state === "unknown"))) throw new Error("workspace has active or unknown background processes; reconcile/stop them before removing it");
+  if ((await listProcesses(project)).some(p => p.branch === branch && (unresolvedProcess(p)))) throw new Error("workspace has active or unknown background processes; reconcile/stop them before removing it");
   need("git");
   const repo = paths.repo(project);
   const dir = paths.worktree(project, slug(branch));
@@ -422,6 +425,7 @@ export const local: Runner = {
     await tmux.ensureSession(session, paths.repo(opts.project), opts.signal);
     await tmux.checkServer(opts.signal);
     const id = sessionId(opts.role, opts.branch);
+    workspaces.own(opts.project, "agent", id, { directory: cwd, exclusive: true });
     const run = opts.run ?? crypto.randomUUID();
     if (!opts.run) publishLaunch(opts.project, id, run, epoch);
     const launch = await launchEnvironment(opts.project, agentCommand(opts, run));

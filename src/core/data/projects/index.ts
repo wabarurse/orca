@@ -6,4 +6,5 @@ export { effectiveModel, projectModelResolver, roleOverrides, saveProjectModel, 
 export { assertMainCheckout, assertWorktree, initializeWorkspace, removeProjectWorktrees } from "./workspace";
 export { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "./registry";
 export * as directories from "./catalog";
-export { workArchive, setWorkArchived, type WorkArchiveKind } from "./work-archive";
+export * as workViews from "./work-archive";
+export * as workspaces from "./workspace-sessions";

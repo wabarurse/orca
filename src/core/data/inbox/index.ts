@@ -3,3 +3,4 @@ export { consume, content, pending, pendingCount, pendingInput, put, userInEpoch
 export * as questions from "./questions";
 export { ask, clean, cleanQuestions } from "./questions";
 export { observe } from "./observations";
+export { transferProcessEvents } from "./transfer";

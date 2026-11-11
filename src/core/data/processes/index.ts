@@ -1,4 +1,7 @@
-export { addProcessEvent, deliverProcessEvents, listProcesses, liveProcess, processDirectory, processOutput, readProcess, reconcileProcesses, saveProcess, type ProcessRecord } from "./store";
+export { addProcessEvent, deliverProcessEvents, listProcesses, liveProcess, unresolvedProcess, processOwner, processDirectory, processOutput, readProcess, reconcileProcesses, saveProcess, type ProcessRecord } from "./store";
+export { processInspection } from "./inspection";
+export { handoffProcess } from "./handoff";
+export { registerPRWatch, prWatchEnabled } from "./pr-watch";
 export { processCleanupBlocker } from "./cleanup-guard";
 export { controlProcess, superviseProcess } from "./supervisor";
 export { recoverableProcesses } from "./store";

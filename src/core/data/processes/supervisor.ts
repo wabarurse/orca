@@ -4,9 +4,11 @@ import { execution } from "../projects/lifecycle";
 import { join } from "node:path";
 import { killGroup } from "../../proc";
 import { completeProcess, type Completion } from "../../process-completion";
+import { processInspection } from "./inspection";
+import { setPRWatchEnabled } from "./pr-watch";
 import { shellCommand } from "../../execution";
 import { pidAlive, withStorageLock } from "../storage-lock";
-import { addProcessEvent, liveProcess, processDirectory, readProcess, saveProcess, type ProcessRecord } from "./store";
+import { addProcessEvent, liveProcess, unresolvedProcess, processDirectory, readProcess, saveProcess, type ProcessRecord } from "./store";
 
 let inputSequence = 0;
 
@@ -101,6 +103,21 @@ export async function superviseProcess(project: string, id: string, executable: 
 
 export async function controlProcess(project: string, id: string, action: "stop" | "input", text?: string): Promise<void> {
   const p = await readProcess(project, id);
+  if (action === "stop" && p.state === "unknown" && !p.settledAt && !processInspection()(p)) {
+    p.settledAt = new Date().toISOString(); await saveProcess(p);
+  }
+  if (p.prWatch) {
+    if (action === "input") throw new Error("PR watches have no stdin");
+    await withStorageLock(join(processDirectory(project), "admission.lock"), async () => {
+      const latest = await readProcess(project, id);
+      if (!liveProcess(latest)) return;
+      if (latest.prChecks) setPRWatchEnabled(project, latest.prChecks, false);
+      latest.state = "cancelled"; latest.reason = "PR watch stopped"; await saveProcess(latest);
+    });
+    return;
+  }
+  if (action === "stop" && !unresolvedProcess(p)) return; // Already stopped, including reconciled unknown outcomes.
+  if (p.state === "unknown") throw new Error("command outcome is unknown and cleanup is unresolved; status reports the remaining blocker; it will not be restarted or signalled by stale PID");
   if (!liveProcess(p)) throw new Error("process is already terminal; inspect its status");
   const dir = processDirectory(project, id);
   if (action === "stop") { await writeFile(join(dir, "stop"), "requested\n"); return; }

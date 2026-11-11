@@ -2,9 +2,9 @@ import { cp, mkdir, realpath, rm, writeFile, lstat, readdir, appendFile } from "
 import { dirname, join, relative } from "node:path";
 import { pidAlive, withStorageLock } from "../storage-lock";
 import { run } from "../../proc";
-import { projectIdentity } from "../projects";
+import { projectIdentity, workspaces } from "../projects";
 import { execution } from "../projects/lifecycle";
-import { liveProcess, listProcesses } from "./store";
+import { liveProcess, unresolvedProcess, listProcesses } from "./store";
 import { checkoutHere } from "../projects/workspace";
 import { copyDirectorySnapshot } from "./directory-snapshot";
 import { controlProcess } from "./supervisor";
@@ -58,6 +58,7 @@ export async function createVerification(input: Omit<Verification, "id" | "ident
   const source = await checkoutHere(input.source) ?? await realpath(input.source);
   const v: Verification = { ...input, simulator: input.simulator ? { ...input.simulator } : undefined, source, id: crypto.randomUUID(),
     identity: projectIdentity(input.project), createdAt: new Date().toISOString(), state: "creating" };
+  workspaces.own(v.project, "sandbox", v.id, { directory: source, path: verificationPaths(v.project, v.id).evidence });
   await withStorageLock(join(verificationPaths(v.project, v.id).root, "..", "admission.lock"), async () => {
     if ((await listVerifications(v.project)).filter(s => s.state !== "closed").length >= 4) throw new Error("close an existing verification session before creating another");
     await saveVerification(v); // Ownership is durable before provisioning.
@@ -109,10 +110,10 @@ export async function closeVerification(project: string, id: string): Promise<Ve
     const errors: string[] = [];
     const attempt = async (action: () => Promise<unknown>) => { try { await action(); } catch (e) { errors.push(String(e)); } };
     const { root, workspace, devices, evidence } = verificationPaths(project, id);
-    const processes = (await listProcesses(project)).filter(p => p.verification === id && (liveProcess(p) || p.state === "unknown"));
-    for (const p of processes) if (liveProcess(p)) await attempt(() => controlProcess(project, p.id, "stop"));
+    const processes = (await listProcesses(project)).filter(p => p.verification === id && unresolvedProcess(p));
+    for (const p of processes) await attempt(() => controlProcess(project, p.id, "stop"));
     for (let i = 0; i < 40 && processes.length; i++) {
-      const remaining = (await listProcesses(project)).filter(p => p.verification === id && (liveProcess(p) || p.state === "unknown"));
+      const remaining = (await listProcesses(project)).filter(p => p.verification === id && unresolvedProcess(p));
       if (!remaining.length) break;
       await Bun.sleep(100);
       if (i === 39) errors.push("verification commands have not stopped; retaining workspace");
@@ -202,6 +203,9 @@ export async function pruneVerificationEvidence(project: string): Promise<void> 
   const closed = (await listVerifications(project)).filter(v => v.state === "closed").sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   let retained = 0;
   for (const v of closed) {
+    // Workspace-owned evidence follows archive/explicit-clean retention. Legacy
+    // unowned evidence keeps its existing bounded policy until discovered.
+    if (workspaces.resource(project, "sandbox", v.id)) continue;
     const paths = verificationPaths(project, v.id);
     retained += await evidenceBytes(paths.evidence);
     if (Date.now() - Date.parse(v.createdAt) < 7 * 86400_000 && retained <= 1024 ** 3) continue;

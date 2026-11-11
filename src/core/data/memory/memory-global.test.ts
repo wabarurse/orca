@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deleteProject } from "../../../tui/commands/project";
 import { paths, saveConfig } from "../../../config/config";
-import { archivePath, archiveTranscript, database, purgeProject, queryHistory, taskTimes } from "./archive";
+import { archivePath, archiveTranscript, database, purgeProject, purgeAgent, queryHistory, taskTimes } from "./archive";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { getTask, observeTaskPR, prepareTaskRun, registerTask, startTaskRun, stopTaskRun } from "../tasks/tasks";
 import type { Task } from "../../../protocol/task/tasks";
@@ -36,6 +36,19 @@ const rows = <T>(sql: string, ...params: string[]) => {
   const db = new Database(archivePath(), { readonly: true });
   try { return db.query(sql).all(...params) as T[]; } finally { db.close(); }
 };
+
+test("workspace cleanup removes one agent's index and FTS postings without affecting other conversations", async () => {
+  home(); mk("alpha", "beta");
+  await say("alpha", "user", "archived narwhal"); await say("beta", "user", "retained narwhal");
+  await indexed("alpha"); await indexed("beta");
+  purgeAgent("alpha", "worker-old");
+  expect(rows("SELECT id FROM entries")).toHaveLength(2);
+  purgeAgent("alpha", "orchestrator");
+  expect(rows("SELECT project FROM entries")).toEqual([{ project: "beta" }]);
+  expect(rows("SELECT project FROM sources")).toEqual([{ project: "beta" }]);
+  expect(rows("SELECT entries.project FROM entry_search JOIN entries ON entries.rowid=entry_search.rowid WHERE entry_search MATCH 'narwhal'"))
+    .toEqual([{ project: "beta" }]);
+});
 
 test("two projects share one private file with project and agent columns", async () => {
   const dir = home(); mk("alpha", "beta");

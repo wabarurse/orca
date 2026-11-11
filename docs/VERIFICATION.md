@@ -54,27 +54,28 @@ recovery also handles expired sessions, orphaned owners, and failed cleanup.
 A machine or daemon shutdown can defer recovery until Orca runs again. Defaults
 are four active sessions per conversation, a 60-minute session lifetime (up to
 six hours), and 2 CPUs/2 GiB per container. Capture commands and tests keep their
-own outcome evidence. Closed-session evidence is retained for seven days within
-a 1 GiB budget per conversation; active sessions are excluded from retention.
+own outcome evidence. Workspace-owned evidence stays available until its
+workspace is archived and explicitly cleaned. Legacy unowned evidence retains
+its seven-day/1 GiB policy until discovery associates it with a workspace.
 
 # Storage maintenance
 
 `orca clean` or `orca clean --dry-run` inspects disposable storage.
-`orca clean --apply` applies eligible cleanup. The existing daemon maintenance
-pass also cleans merged worker worktrees and old settled process output.
-Archiving tasks, agents, questions or conversation images only changes list
-membership. Neither this command nor disposable-evidence retention purges those
-records, agent transcripts or images stored in the conversation image store.
+`orca clean --apply` removes eligible archived workspaces and their owned
+records, transcripts and unreferenced images/evidence. The existing maintenance
+pass archives workspaces after 14 inactive days; it does not delete them.
+Individual view archives remain presentation only. See
+[workspace cleanup](WORKSPACE_CLEANUP.md) for ownership and recovery details.
 
-A worker checkout is eligible only when its recorded PR is merged, its HEAD
-matches the merged PR, every known owner is verified exited, no instructions are
-queued, and there are no source edits or untracked files. Only recognized ignored
-build directories qualify for removal. The branch launch lock prevents a new
-assignment racing cleanup. Local branches and transcripts remain available.
-Ambiguous processes and unknown ignored files are retained and reported.
+A disposable worker checkout needs no task or merged PR, but every owner must be
+inactive with no queued work. Source edits, untracked files and unknown ignored
+files prevent checkout deletion; recognized ignored build files can be reclaimed
+independently. Local branches remain. Shared resources and retained references
+are preserved. Cleanup never stops a running environment to make it eligible.
 
-Settled process logs have a seven-day/1 GiB retention budget. Undelivered events,
-active processes, and unknown processes are preserved. Pull also prunes old Bun
+Workspace-owned settled process logs follow the same archive/clean lifecycle;
+legacy unowned logs retain the seven-day/1 GiB budget. Undelivered events and
+unverified process liveness block cleanup. Pull also prunes old Bun
 scratch executables after `lsof` confirms no open handles. User research clones,
 shared Docker images, named volumes, and caches outside owned sessions need an
 explicit ownership decision. There is no global Docker or simulator prune.

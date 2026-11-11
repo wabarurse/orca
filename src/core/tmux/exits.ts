@@ -17,6 +17,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { open as openFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../config";
+import { workspaces } from "../data/projects";
 import { pidAlive } from "../data";
 import { put } from "../data/inbox";
 import { run } from "../proc";
@@ -35,6 +36,7 @@ export interface ModelRequestState {
 }
 
 export interface RunState {
+  cwd?: string;
   modelRequest?: ModelRequestState;
   run: string;
   /** The agent process, so the watchdog can confirm it is gone. */
@@ -82,6 +84,7 @@ export async function readRun(project: string, id: string): Promise<RunState | n
 }
 
 async function writeRun(project: string, id: string, s: RunState): Promise<void> {
+  workspaces.own(project, "agent", id, { directory: s.cwd, at: s.endedAt ?? s.ts, exclusive: true });
   mkdirSync(paths.runs(project), { recursive: true });
   const path = file(project, id);
   const tmp = `${path}.${crypto.randomUUID().slice(0, 8)}.tmp`;
@@ -198,7 +201,7 @@ async function pruneClaims(project: string, now = Date.now()): Promise<void> {
 export async function beginRun(info: RunInfo, pid = process.pid): Promise<Tracker & { state: () => RunState; end: () => Promise<void> }> {
   const { project, id, run } = info;
   await pruneClaims(project);
-  const s: RunState = { run, pid, role: info.role, branch: info.branch, state: "running", step: "starting", tool: "", ts: "", startedAt: new Date().toISOString() };
+  const s: RunState = { run, pid, cwd: info.cwd, role: info.role, branch: info.branch, state: "running", step: "starting", tool: "", ts: "", startedAt: new Date().toISOString() };
   const save = () => writeRun(project, id, { ...s, ts: new Date().toISOString() });
   const set = async (patch: Partial<RunState>) => {
     Object.assign(s, patch);

@@ -1,7 +1,7 @@
 import { formatDateTime } from "../../protocol";
 import { BUILD_ID } from "../../config";
 import { runtimeContexts, usageSummary } from "../../core/data/knowledge";
-import { listProcesses, liveProcess } from "../../core/data/processes";
+import { processOwner, listProcesses, unresolvedProcess } from "../../core/data/processes";
 import { liveStatus } from "../../core/agent-loop/orc";
 import { agentActivity } from "../../core/tmux";
 
@@ -12,7 +12,7 @@ export async function runtimeText(project: string): Promise<string> {
     ...activity.agents.map(a => `${a.agent}: ${a.status}; ${a.queuedMessages ?? "unknown"} queued${a.task ? `; task #${a.task.number ?? a.task.id} ${a.task.name}` : ""}; ${a.reason}`),
     "Historical context observations (not activity):",
     ...agents.map(a => `${a.agent}: loaded ${a.build}; ${a.model}; ~${a.contextTokens} context tokens; observed ${formatDateTime(a.updatedAt)}`),
-    ...processes.filter(p => liveProcess(p) || p.state === "unknown").map(p => `${p.owner}: recorded ${p.state} command ${p.id}${p.readyAt ? `; preview observed ready ${p.readyUrl} at ${formatDateTime(p.readyAt)}` : ""}`),
+    ...processes.filter(p => unresolvedProcess(p)).map(p => `${processOwner(p)}: recorded ${p.state} command ${p.id}${p.readyAt ? `; preview observed ready ${p.readyUrl} at ${formatDateTime(p.readyAt)}` : ""}`),
     ...activity.errors, "Application cron/schedules and production toggles were not inspected. Queued messages do not start agents.",
     "Loaded identities are observations, not proof that source changes were installed. Older observations are not liveness checks."].join("\n");
 }

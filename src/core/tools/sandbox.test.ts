@@ -112,7 +112,7 @@ test("conversation stop cleans an owned session and another run cannot control i
   expect(await Bun.file(join(v.workspace, "app.txt")).exists()).toBe(false);
 });
 
-test("expiry removes the session and older closed evidence is pruned", async () => {
+test("expiry removes scratch while workspace-owned evidence waits for explicit cleanup", async () => {
   const v = await call({ action: "create", backend: "local" });
   await saveVerification({ ...v, expiresAt: new Date(Date.now() - 1000).toISOString() });
   await reconcileVerifications("p", undefined, undefined, true);
@@ -120,8 +120,8 @@ test("expiry removes the session and older closed evidence is pruned", async () 
   expect(closed?.state).toBe("closed");
   await saveVerification({ ...closed!, createdAt: "2026-01-01T00:00:00Z" });
   await reconcileVerifications("p", undefined, undefined, true);
-  expect(await listVerifications("p")).toHaveLength(0);
-  expect(await Bun.file(join(v.evidence, "source.json")).exists()).toBe(false);
+  expect(await listVerifications("p")).toHaveLength(1);
+  expect(await Bun.file(join(v.evidence, "source.json")).exists()).toBe(true);
 });
 
 test("capture success requires evidence and a recording can finalize on close", async () => {

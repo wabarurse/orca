@@ -3,7 +3,7 @@ import { appFixture } from "../test/app-fixture";
 import { App, type AppDeps } from "./app";
 import { all, answer, ask } from "../core/data/inbox/questions";
 import { abandonTask, allTasks, getTask, registerTask, removeTask, restoreTask, setTaskDependencies, prepareTaskRun, startTaskRun, stopTaskRun } from "../core/data/tasks/tasks";
-import { workArchive } from "../core/data/projects";
+import { workViews } from "../core/data/projects";
 import { archiveAgents, restoreAgents } from "../core/tmux/liveness";
 import { paths, readProjectState } from "../config";
 import { open } from "../core/data/transcripts";
@@ -81,7 +81,7 @@ test("closed questions expand alongside open questions; restoring only changes l
     term.type("y"); await until(() => term.screen().includes("Archived (2)"));
     expect((await all(project)).find(q => q.id === pending!.id)?.status).toBe("skipped");
     expect(fake.said[project]).toEqual([]);
-    expect(workArchive(project, "questions")[closed!.id]).toBe(true);
+    expect(workViews.workArchive(project, "questions")[closed!.id]).toBe(true);
   } finally { await stop(); }
 });
 
@@ -104,7 +104,7 @@ test("image archive survives reopening, preserves bytes and can be viewed and re
     await until(() => term.raw().includes("1337;File="));
     term.type("u"); await until(() => app.status(app.page!).endsWith("1 images"));
     expect(await Bun.file(path).bytes()).toEqual(before);
-    expect(workArchive("another-conversation", "images")[ref.id]).toBeUndefined();
+    expect(workViews.workArchive("another-conversation", "images")[ref.id]).toBeUndefined();
   } finally { await stop(); }
 });
 

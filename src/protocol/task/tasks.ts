@@ -55,6 +55,9 @@ export interface PRObservation {
   ready: boolean; checks: "passed" | "not_configured" | "pending" | "failed" | "unknown";
   /** Whether it merges cleanly into its base; "unknown" (or absent) while GitHub has not computed it. */
   mergeable?: "mergeable" | "conflicting" | "unknown";
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
+  /** Fingerprint of review/comment activity; bodies stay out of runtime events. */
+  reviewActivity?: string;
 }
 
 /** Dormant tree model, separate from the durable Task and existing inbox rows. */

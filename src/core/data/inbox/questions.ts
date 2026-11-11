@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { paths } from "../../../config";
 import { put } from "./inbox";
 import { limits, type NewQuestion, type Question } from "../../../protocol";
+import { workspaces } from "../projects";
 
 /** Trim, turn newlines and tabs into spaces, refuse control, line-separator and bidi characters and over-long text. */
 export function clean(value: string, max: number, what: string): string {
@@ -67,6 +68,7 @@ export async function ask(project: string, items: NewQuestion[]): Promise<Questi
     const q: Question = { id, text: item.text, status: "open", ts };
     if (item.options?.length) q.options = item.options;
     if (item.default) q.default = item.default;
+    workspaces.own(project, "question", id, { path: file(project, id), at: ts });
     await write(project, q);
     out.push(q);
   }
@@ -198,6 +200,7 @@ async function answerWithdrawn(project: string, q: Question, reply: NonNullable<
 export async function answer(project: string, id: string, text: string, inputId?: string): Promise<Question> {
   const a = clean(text, limits.answer, "answer");
   if (!a) throw new Error("empty answer");
+  workspaces.restore(project, "question", id);
   return close(project, id, { reply: { answer: a, userEpoch: inputEpoch(project), inputId } });
 }
 

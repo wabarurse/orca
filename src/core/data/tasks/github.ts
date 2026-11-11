@@ -1,5 +1,6 @@
 // Read-only GitHub identity and task PR validation. No publishing or merging here.
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { paths } from "../../../config";
 import { run } from "../../proc";
 import { taskPR, type TaskPR, type PRObservation } from "../../../protocol/task";
@@ -21,8 +22,16 @@ export async function originRepo(project: string): Promise<string | null> {
   return ok(res) ? githubRepo(res!.out) : null;
 }
 
-const FIELDS = "number,url,headRefName,headRefOid,state,mergedAt,isDraft,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,isCrossRepository";
+const FIELDS = "number,url,headRefName,headRefOid,state,mergedAt,isDraft,mergeable,mergeStateStatus,reviewDecision,latestReviews,comments,statusCheckRollup,isCrossRepository";
 const obj = (raw: unknown): raw is Record<string, unknown> => !!raw && typeof raw === "object" && !Array.isArray(raw);
+function reviewActivity(raw: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(raw.latestReviews) || !Array.isArray(raw.comments)) return;
+  const values = [raw.latestReviews, raw.comments].map(items => items.map(item => {
+    if (!obj(item)) return "unknown";
+    return JSON.stringify([item.id, item.author, item.state, item.submittedAt, item.createdAt, item.updatedAt, item.body]);
+  }).sort());
+  return createHash("sha256").update(JSON.stringify(values)).digest("hex");
+}
 /** Unknown check types/conclusions fail closed, including skipped/neutral checks. */
 function checks(raw: unknown): PRObservation["checks"] {
   if (!Array.isArray(raw)) return "unknown";
@@ -47,6 +56,8 @@ export function parseTaskPR(repository: string, number: number, raw: unknown): P
   const mergeable = raw.mergeable === "CONFLICTING" || raw.mergeStateStatus === "DIRTY" ? "conflicting" : raw.mergeable === "MERGEABLE" ? "mergeable" : "unknown";
   return {
     pr, branch: raw.headRefName, state, ...(state === "MERGED" ? { mergedAt: raw.mergedAt as string } : {}), checks: result, mergeable,
+    ...(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""].includes(String(raw.reviewDecision)) ? { reviewDecision: raw.reviewDecision as PRObservation["reviewDecision"] } : {}),
+    reviewActivity: reviewActivity(raw),
     ready: state === "OPEN" && raw.isDraft === false && raw.mergeable === "MERGEABLE" && raw.mergeStateStatus === "CLEAN"
       && (raw.reviewDecision === "APPROVED" || raw.reviewDecision === "") && ["passed", "not_configured"].includes(result),
   };

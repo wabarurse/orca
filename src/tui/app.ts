@@ -3,10 +3,10 @@ import { stat } from "node:fs/promises";
 import { abandonTask } from "../core/data/tasks/tasks";
 import { ARCHIVED_SECTION, withArchiveSection, workColumns, workDetails, workRows } from "./components/work-view";
 import { canArchiveTask } from "../protocol/task";
-import { workArchive, setWorkArchived } from "../core/data/projects";
+import { workViews } from "../core/data/projects";
 import type { Question } from "../protocol";
 import { recentAgent } from "./commands/agents";
-import { controlProcess, listProcesses, liveProcess } from "../core/data/processes";
+import { controlProcess, processOwner, listProcesses, unresolvedProcess, liveProcess } from "../core/data/processes";
 import { launchIdentity } from "../core/tmux";
 import { navigateOutline, renderTaskTree, type TaskTreeRender } from "./components";
 import { ConversationSelection, hitRow } from "./screen";
@@ -1360,7 +1360,7 @@ export class App {
     const transcript = open(path);
     this.updateImages(page, transcript.history?.() ?? transcript.branch());
     const list = this.imageLists.get(page)!;
-    list.archived = workArchive(page.project, "images");
+    list.archived = workViews.workArchive(page.project, "images");
     list.count = list.rows.filter(image => !list.archived[image.ref.id]).length;
   }
 
@@ -1368,7 +1368,7 @@ export class App {
     const head = entries.at(-1)?.uuid;
     const previous = this.imageLists.get(page);
     if (previous && previous.head === head) return;
-    const rows = deliveredImages(entries), archived = workArchive(page.project, "images");
+    const rows = deliveredImages(entries), archived = workViews.workArchive(page.project, "images");
     this.imageLists.set(page, { head, rows, archived, count: rows.filter(image => !archived[image.ref.id]).length });
   }
 
@@ -1439,7 +1439,7 @@ export class App {
   private async readWorkView(view: NonNullable<App["workView"]>): Promise<void> {
     try {
       if (view.kind === "agents") view.agents = await (this.deps.agents ?? listAgents)(view.page.project);
-      else if (view.kind === "questions") { await this.questions.refresh(view.page); view.archived = workArchive(view.page.project, "questions"); }
+      else if (view.kind === "questions") { await this.questions.refresh(view.page); view.archived = workViews.workArchive(view.page.project, "questions"); }
       else await this.readImages(view.page);
     } catch (error) { view.notice = error instanceof Error ? error.message : String(error); }
     finally { view.loading = false; if (this.workView === view) this.draw(); }
@@ -1555,7 +1555,7 @@ export class App {
       view.busy = true;
       try {
         if (agent) await (this.deps.restoreAgents ?? restoreAgents)(view.page.project, [agent.name]);
-        else if (view.kind !== "agents") setWorkArchived(view.page.project, view.kind, [selected.id], false);
+        else if (view.kind !== "agents") workViews.setWorkArchived(view.page.project, view.kind, [selected.id], false);
         await this.readWorkView(view);
         view.notice = "Restored to list. No work resumed or questions reopened.";
       } catch (error) { view.notice = error instanceof Error ? error.message : String(error); }
@@ -1569,7 +1569,7 @@ export class App {
         view.confirm = { text: `Archive ${targets.length} ${kind}?${kind === "questions" ? " Open questions will be dismissed without an answer." : " Files retained."}`, run: async () => {
           for (const item of targets) {
             if (item.question?.status === "open") await (this.deps.questions ?? fileStore).skip(view.page.project, item.id);
-            setWorkArchived(view.page.project, kind, [item.id], true);
+            workViews.setWorkArchived(view.page.project, kind, [item.id], true);
           }
           view.notice = "Archived. Saved records retained.";
         } };
@@ -1603,7 +1603,7 @@ export class App {
     if ((key === "d" || key === "D") && view.kind === "agents") {
       const eligible = (row: AgentInfo) => row.status === "exited" && !row.live && !row.archived && row.queuedMessages === 0;
       const candidates = (key === "D" ? view.agents : agent ? [agent] : []).filter(eligible);
-      const blocked = new Set((await listProcesses(view.page.project)).filter(p => liveProcess(p) || p.state === "unknown").map(p => p.owner));
+      const blocked = new Set((await listProcesses(view.page.project)).filter(p => unresolvedProcess(p)).map(p => processOwner(p)));
       const runs = new Map(candidates.filter(row => !blocked.has(row.name)).map(row => [row.name, row.run]));
       const names = [...runs.keys()];
       if (this.workView !== view) return;
@@ -1612,7 +1612,7 @@ export class App {
         const current = await (this.deps.agents ?? listAgents)(view.page.project);
         const commands = await listProcesses(view.page.project);
         const safe = current.filter(row => runs.has(row.name) && runs.get(row.name) === row.run && eligible(row) &&
-          !commands.some(p => p.owner === row.name && (liveProcess(p) || p.state === "unknown"))).map(row => row.name);
+          !commands.some(p => processOwner(p) === row.name && (unresolvedProcess(p)))).map(row => row.name);
         const result = await (this.deps.archiveAgents ?? archiveAgents)(view.page.project, safe);
         view.notice = `Archived ${result.archived.length} of ${names.length} agents. Transcripts retained.`;
       } };

@@ -6,6 +6,7 @@
 import { stat } from "node:fs/promises";
 import { paths, projectStateScope, readProjectState, updateState } from "../../config";
 import { existingTasks } from "../data/tasks";
+import { workspaces } from "../data/projects";
 import { watchdog, type RunState } from "./exits";
 import { mergeWatcher } from "./merges";
 import { sessionName, tmux } from "./runner";
@@ -97,7 +98,7 @@ export async function listAgents(project: string): Promise<AgentInfo[]> {
     const lastActiveAt = await lastActive(paths.transcript(project, name), times.endedAt);
     const removedAt = archived.get(name);
     const started = Date.parse(state?.startedAt ?? times.startedAt ?? "");
-    const removed = removedAt != null && !live.has(name) && !(started > removedAt);
+    const removed = !live.has(name) && (workspaces.archived(project, "agent", name) || (removedAt != null && !(started > removedAt)));
     return { name, run: state?.run, live: live.has(name), status: row.status, inventoryComplete: snapshot.inventoryComplete, queuedMessages: row.queuedMessages,
       ...times, ...(lastActiveAt ? { lastActiveAt } : {}), ...(tasks.has(name) ? { openTask: true } : {}), ...(removed ? { archived: true } : {}), ...(removedAt === null ? { retained: true } : {}) };
   }));
@@ -126,6 +127,7 @@ export async function archiveAgents(project: string, names: string[], live: (pro
 
 /** Restore list membership only. No process, transcript or queued input changes. */
 export function restoreAgents(project: string, names: string[]): void {
+  for (const name of names.filter(validAgentName)) workspaces.restore(project, "agent", name);
   updateState<Record<string, string | null>>(paths.memory, projectStateScope(project), ARCHIVED_AGENTS, old => ({
     ...old, ...Object.fromEntries(names.filter(validAgentName).map(name => [name, null])),
   }));

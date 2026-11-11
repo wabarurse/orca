@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { bash } from "./bash";
 import { paths } from "../../../config/config";
 import { OutputPreview, pruneOutputs } from "./output";
+import { workspaces } from "../../data/projects";
 let home: string;
 const before = process.env.ORCA_HOME;
 beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "tool-output-")); process.env.ORCA_HOME = home; });
@@ -77,6 +78,14 @@ test("retention evicts old completed files, preserves active output and ignores 
   await bash.run({ command: "printf newest" }, context());
   await pruneOutputs(directory(), Date.now(), 1);
   expect((await readdir(directory())).filter(f => f.endsWith(".txt"))).toEqual(["notes.txt"]);
+});
+
+test("workspace-owned output remains available until explicit workspace cleanup", async () => {
+  await workspaces.within("test", home, () => bash.run({ command: "printf evidence" }, context()));
+  const [file] = await saved();
+  expect(workspaces.resource("test", "artifact", file!.path)).toBeTruthy();
+  await pruneOutputs(directory(), Date.now() + 30 * 86400_000, 1, "test");
+  expect(await Bun.file(file!.path).text()).toBe("evidence");
 });
 
 

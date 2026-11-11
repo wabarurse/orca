@@ -42,3 +42,14 @@ test("read-only gh path uses explicit repository/number and treats timeout, erro
     fake(body); expect(await ghTaskPR("p", { repository: "o/r", number: 7 }, { bin, timeoutMs: 30 })).toBeNull();
   }
 });
+
+test("review/comment edits change their fingerprint without sending bodies into runtime events", () => {
+  const review = { id: "r1", author: { login: "reviewer" }, state: "COMMENTED", submittedAt: "2026-11-11T12:00:00Z", body: "Please fix this" };
+  const first = parseTaskPR("o/r", 7, raw({ latestReviews: [review], comments: [] }));
+  expect(first.reviewActivity).toMatch(/^[a-f0-9]{64}$/);
+  const edited = parseTaskPR("o/r", 7, raw({ latestReviews: [{ ...review, body: "Also fix that" }], comments: [] }));
+  expect(edited.reviewActivity).not.toBe(first.reviewActivity);
+  const comment = { id: "c1", createdAt: "2026-11-11T13:00:00Z", body: "Follow-up" };
+  expect(parseTaskPR("o/r", 7, raw({ latestReviews: [review], comments: [comment] })).reviewActivity).not.toBe(first.reviewActivity);
+  expect(JSON.stringify(first)).not.toContain(review.body);
+});

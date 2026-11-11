@@ -1,13 +1,15 @@
 import { mkdir, open, readdir, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
+import { workspaces } from "../../data/projects";
 
 const RETENTION_MS = 7 * 86400_000;
 const STORED_BYTES = 256 * 1024 * 1024;
 const filename = /^[0-9a-f-]{36}\.(txt|partial|running)$/;
 
-/** Completed outputs are bounded by age/space. Live files are excluded until stale. */
-export async function pruneOutputs(dir: string, now = Date.now(), byteLimit = STORED_BYTES): Promise<void> {
+/** Unowned legacy outputs are bounded by age/space. Registered outputs follow
+ * workspace archive/explicit-clean retention; live files are excluded until stale. */
+export async function pruneOutputs(dir: string, now = Date.now(), byteLimit = STORED_BYTES, project?: string): Promise<void> {
   const entries = await readdir(dir);
   const files = (await Promise.all(entries.filter(name => filename.test(name)).map(async name => {
     const path = join(dir, name);
@@ -16,6 +18,7 @@ export async function pruneOutputs(dir: string, now = Date.now(), byteLimit = ST
   }))).filter(f => f !== null).sort((a, b) => b.time - a.time || b.name.localeCompare(a.name));
   let total = 0;
   for (const f of files) {
+    if (project && workspaces.resource(project, "artifact", f.path)) continue;
     if (f.name.endsWith(".running") && now - f.time < RETENTION_MS) continue;
     total += f.bytes;
     if (now - f.time > RETENTION_MS || total > byteLimit) await unlink(f.path).catch(e => { if (e.code !== "ENOENT") throw e; });
@@ -27,7 +30,7 @@ export async function outputArtifact(project: string) {
   const dir = join(paths.project(project), "tool-outputs");
   await mkdir(dir, { recursive: true, mode: 0o700 });
   // Storage failure must be reported before starting a command with side effects.
-  await pruneOutputs(dir);
+  await pruneOutputs(dir, Date.now(), STORED_BYTES, project);
   const stem = join(dir, crypto.randomUUID());
   const running = `${stem}.running`;
   const file = await open(running, "wx", 0o600);
@@ -45,6 +48,7 @@ export async function outputArtifact(project: string) {
       await file.close();
       const path = `${stem}.${complete ? "txt" : "partial"}`;
       await rename(running, path);
+      workspaces.own(project, "artifact", path, { path });
       // Only clean before the next command; the file just returned stays available.
       return path;
     },

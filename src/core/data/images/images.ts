@@ -10,7 +10,7 @@ import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-a
 import { paths, legacyProjectIdentities } from "../../../config";
 import { legacy } from "../../../config";
 import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../providers";
-import { assertProjectIdentity, projectIdentity, session, withProjectStateLock } from "../projects";
+import { assertProjectIdentity, projectIdentity, session, withProjectStateLock, workspaces } from "../projects";
 import type { ImageInput, ImageRef } from "../../../protocol";
 
 export const MAX_IMAGES = 4;
@@ -72,6 +72,7 @@ export async function saveImage(project: string, bytes: Uint8Array, mime = "imag
   const ref = { id: crypto.randomUUID(), scope: sessionImageScope(await session.ensureSessionId(project)), sha256: hash(bytes) };
   return withProjectStateLock(project, async () => {
     assertProjectIdentity(project, identity);
+    workspaces.own(project, "image", ref.id);
     await safeDir(imageDir(project), true);
     await atomic(join(imageDir(project), `${ref.id}.${EXTENSIONS[mime as ImageMime]}`), bytes);
     return ref;
