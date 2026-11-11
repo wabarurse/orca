@@ -102,7 +102,7 @@ function status(task: TreeTask): TaskDisplayStatus { return publicTaskStatus(tas
 
 /** The row and status text always share the same state and colour. */
 export function taskStateColor(state: TaskDisplayStatus): number {
-  return ({ queued: 90, working: 36, waiting: 33, "pr open": 32, merged: 35 })[state];
+  return ({ queued: 90, working: 36, waiting: 33, "pr open": 32, merged: 35, closed: 31 })[state];
 }
 function statusColor(task: TreeTask): number {
   return taskStateColor(status(task));
@@ -159,6 +159,7 @@ export function selectTaskNumber(input: readonly (Task | TaskTreeView)[], number
 /** worker → review → PR → merged: 0 nothing yet, 4 merged. */
 function stage(task: TreeTask): number {
   if (task.archive) return 4;
+  if (task.iterationStartedAt) return 1;
   if (task.pr || task.status === "ready_to_merge" || taskPublicationMilestone(task).kind !== "unknown") return 3;
   if (task.status === "reviewing" || task.runs.some(run => run.role === "reviewer")) return 2;
   if (task.status === "working" || task.runs.some(run => run.role === "worker")) return 1;

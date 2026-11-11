@@ -122,17 +122,21 @@ and the machine's local timezone, including its daylight saving offset.
 ### Tasks section (read-only)
 
 The table remains **Name | Summary | Status | PR link**. The current state is
-exactly one of **queued**, **working**, **waiting**, **pr open**, or **merged**.
+exactly one of **queued**, **working**, **waiting**, **pr open**, **merged**, or **closed**.
 Tree rows, task tool responses and compaction task snapshots share the same
-projection. Confirmed merges win, followed by the last verified OPEN PR
-observation. An open PR stays **pr open** even while waiting for review, CI or
-the user. Hold kinds and explanations remain in details. Otherwise every explicit
-hold (waiting, blocked, cancelled, closed, unknown) and a closed PR is **waiting**.
+projection. Confirmed merges win; a PR closed without merging is **closed**.
+Resuming implementation marks **working** while retaining the PR link and
+publication history. An unpublished iteration blocked or paused before pushing
+is **waiting**. After publication is recorded with `task pr`, the task is
+**pr open**, including while awaiting review, CI or the user. Routine PR polling
+cannot clear an iteration, even if it observes a different head. Cancelled or
+explicitly closed tasks without an open PR are **closed**; other holds are
+**waiting**. Reasons remain in details.
 Review work is **working**. Legacy readiness without an OPEN observation is
 **waiting**; a link or historical checkpoint alone cannot prove a PR is open.
 An open PR is publication evidence, not a readiness or activity claim, and waiting
 never authorizes a restart. Colors: queued grey, working cyan, waiting yellow,
-pr open green, merged purple.
+pr open green, merged purple, closed red.
 The stored lifecycle, attention, checkpoints, IDs, task numbers and SQL schema are
 unchanged; historical ledger milestones keep their compatible checkpoint format.
 
@@ -173,7 +177,16 @@ task editor, historical archive browser or replacement for agent message queues.
 
 The coordinator can register an authorized assignment with `task create` or `task register`, giving it a title/name, summary and branch. Tasks retain immutable UUIDs and stable project numbers; duplicate retries are idempotent. `task update` edits title/summary. `task dependencies` records explicit prerequisites without scheduling agents or gating publication.
 
-`spawn` accepts an optional taskId to associate a run; ordinary delegation requires no task. Agents can update their own active task, while the coordinator manages the list. Publish through ordinary Git/GitHub tools only when authorized, then attach repository and PR number with `task pr`. Any active owner can record the PR; no reviewer handoff is required.
+`spawn` accepts an optional taskId to associate a run; ordinary delegation requires no task. Agents can update their own active task, while the coordinator manages the list. Publish through ordinary Git/GitHub tools only when authorized. Immediately after creating a PR or pushing updates to an existing PR for an assigned task, call `task` with `action: "pr"`, `repository` and `number`; active workers/reviewers default to their run's task. Do this before waiting for review/CI or reporting completion. A verified OPEN PR, including a draft, sets the displayed status to **pr open** immediately in the ledger; the TUI picks it up on its next normal refresh. No reviewer handoff or 30-second GitHub watcher tick is required. A branch push without a PR does not change the task to **pr open**. Failed linking must be reported with the PR URL, without claiming the task updated.
+
+Before implementation resumes in the same run, use `task work`. This records an
+unpublished iteration, clears old readiness and marks **working** without
+starting any process. A newly started worker on an open-PR task does this
+automatically; launch preparation and reviewer-only runs do not. `task pr`
+acknowledges publication and ends the iteration. Use `task get/list` to inspect
+status, not `task pr`. Closing or merging the PR also ends the iteration.
+The optional iteration timestamp lives in the existing task safety record;
+checkpoint storage and SQL schema stay compatible, with no data migration.
 
 `task ready` is an optional annotation of validation evidence on an exact clean PR head. It requires observed eligibility and current evidence; it grants no merge permission and never gates publication. `task attention` records a blocker, cancellation or unresolved decision without authorizing execution. Confirmed membership removal retains SQL history.
 

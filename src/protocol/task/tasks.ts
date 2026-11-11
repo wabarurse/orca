@@ -23,6 +23,8 @@ export interface Task {
   /** Explicit prerequisite task IDs; absent in legacy records. Not a scheduling signal. */
   dependsOn?: string[];
   runs: TaskRun[]; pr?: TaskPR; publication?: TaskPublicationObservation; readiness?: TaskReadiness; attention?: TaskAttention;
+  /** Unpublished iteration; only an explicit publication receipt clears it, not PR polling. */
+  iterationStartedAt?: string;
   archive?: { reason: "merged"; mergedAt: string; archivedAt: string; pr: TaskPR };
   history: TaskEvent[];
 }
@@ -34,7 +36,7 @@ export function canArchiveTask(task: Task): boolean {
     && (!task.pr || task.publication?.state === "CLOSED");
 }
 /** Small UI projection. No transcripts, prompts, reports or mutable display-name identities. */
-export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr" | "dependsOn" | "publication" | "number" | "checkpoints" | "archive"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
+export type TaskRow = Pick<Task, "id" | "name" | "summary" | "branch" | "status" | "createdAt" | "updatedAt" | "attention" | "pr" | "dependsOn" | "publication" | "iterationStartedAt" | "number" | "checkpoints" | "archive"> & { review?: { rounds: number; unknown: boolean; ci: boolean } };
 /** taskPR's validators; tasks.ts shares them for the rest of a record. */
 export const sha = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{40,64}$/.test(s);
 export const object = (s: unknown): s is Record<string, unknown> => !!s && typeof s === "object" && !Array.isArray(s);

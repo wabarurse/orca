@@ -83,6 +83,7 @@ export function treeTasks(input: readonly (Task | TaskTreeView)[]): TreeTask[] {
     check(edgeCount <= 1024, "Graph limit: 1024 dependencies");
     if (raw.number !== undefined) check(Number.isSafeInteger(raw.number) && Number(raw.number) > 0, "invalid project task number");
     if (raw.removedAt !== undefined) string(raw.removedAt);
+    if (raw.iterationStartedAt !== undefined) check(Number.isFinite(Date.parse(string(raw.iterationStartedAt))), "invalid iteration timestamp");
     if (raw.checkpoints !== undefined) {
       check(object(raw.checkpoints), "invalid checkpoints");
       for (const key of ["queuedAt", "buildingAt", "prOpenAt", "mergedAt"]) if (raw.checkpoints[key] !== undefined) string(raw.checkpoints[key]);
@@ -90,7 +91,7 @@ export function treeTasks(input: readonly (Task | TaskTreeView)[]): TreeTask[] {
     const task = { ...values, number: raw.number, checkpoints: raw.checkpoints, removedAt: raw.removedAt, status: raw.status, revision: raw.revision,
       dependsOn: taskDependencies(raw.dependsOn, values.id!), runs: runs(raw.runs),
       pr: raw.pr === undefined ? undefined : pr(raw.pr), readiness: readiness(raw.readiness),
-      attention: attention(raw.attention), archive: archive(raw.archive),
+      attention: attention(raw.attention), archive: archive(raw.archive), iterationStartedAt: raw.iterationStartedAt,
     } as TreeTask;
     if (raw.publication !== undefined) {
       check(object(raw.publication), "invalid publication");

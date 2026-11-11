@@ -1131,7 +1131,7 @@ limits and attribution/compaction semantics.
 
 Authorized work is registered with the `task` tool before `spawn`, with immutable
 task IDs independent of branch reuse. The persisted registry exposes task name,
-summary, queued/working/waiting/pr open/merged status and a verified PR link;
+summary, queued/working/waiting/pr open/merged/closed status and a verified PR link;
 the last verified open PR takes precedence over waiting, with blocker reasons
 retained in details. Confirmed merges archive rows without deleting history.
 Optional readiness evidence records validation of the current PR head. This is separate from

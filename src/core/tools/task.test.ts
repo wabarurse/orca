@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../config/config";
-import { getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, startTaskRun, stopTaskRun } from "../data/tasks/tasks";
+import { getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, startTaskRun, startTaskWork, stopTaskRun } from "../data/tasks/tasks";
 import type { PRObservation } from "../../protocol/task/tasks";
+import { publicTaskStatus } from "../../protocol/task/task-ledger";
 import { rolePrompt } from "../prompt/shared";
 import { defaults } from "../../config/config";
 import { makeTaskTool, orchestratorTask, task as agentTask } from "./task";
@@ -39,7 +40,7 @@ test("task tool is explicit structured JSON, role-scoped; no new scheduling/publ
   expect(task.status).toBe("queued");
   expect(JSON.parse(await tool.run({ action: "list" }, ctx()))).toEqual([task]);
   expect(JSON.parse(await tool.run({ action: "get", taskId: task.id }, ctx())).id).toBe(task.id);
-  expect(rolePrompt("orchestrator")).toContain("optional assignments");
+  expect(rolePrompt("orchestrator")).toContain("Delegation, review, testing and publication are independent");
   expect(rolePrompt("reviewer")).toContain("No mandatory review rounds");
 });
 
@@ -78,7 +79,7 @@ test("an exited reviewer leaves an open PR visible through attention, get, list,
   expect(JSON.parse(await tool.run({ action: "list" }, ctx()))[0].status).toBe("pr open");
   snapshot = { ...observed(), state: "CLOSED", ready: false };
   const refresh = () => tool.run({ action: "pr", taskId: t.id, repository: "o/r", number: 2 }, ctx());
-  expect(JSON.parse(await refresh()).status).toBe("waiting");
+  expect(JSON.parse(await refresh()).status).toBe("closed");
   snapshot = observed(); expect(JSON.parse(await refresh()).status).toBe("pr open");
   snapshot = { ...observed(), state: "MERGED", mergedAt: new Date().toISOString() };
   expect(JSON.parse(await refresh()).status).toBe("merged");
@@ -194,4 +195,71 @@ test("workers link PRs and record optional evidence without a reviewer handoff",
   for (const action of ["checkpoint", "prepare_publication", "checks", "reviewed", "publish"]) expect(await tool.run({ action }, worker)).toContain("unknown task action");
   for (const role of ["worker", "reviewer"] as const) for (const name of ["read", "edit", "write", "bash", "process"]) expect(toolsFor[role]).toContain(name);
   expect(registry).not.toHaveProperty("complexity");
+});
+
+test("PR iteration stays working through polls and changes back only after publication is acknowledged", async () => {
+  const t = await registerTask(project, { name: "PR iteration", summary: "Fix the existing PR", branch: "feat/x", authorized: true });
+  await prepareTaskRun(project, t.id, t.branch, { id: "worker", role: "worker", agent: "worker-feat-x" });
+  await startTaskRun(project, "worker");
+  const worker = ctx("worker", "worker");
+  const action = async (action: string) => JSON.parse(await tool.run({ action, repository: "o/r", number: 2 }, worker));
+  snapshot = { ...observed(), ready: false, checks: "pending", reviewDecision: "REVIEW_REQUIRED" };
+  beforeHead = async () => { throw new Error("publication must not wait for clean-head readiness validation"); };
+  expect((await action("pr")).status).toBe("pr open");
+  const checkpoint = (await getTask(project, t.id)).checkpoints?.prOpenAt;
+  expect((await action("work")).status).toBe("working");
+  const working = await getTask(project, t.id);
+  expect((await action("work")).internal.revision).toBe(working.revision); // idempotent
+  expect(working.pr?.url).toBe(observed().pr.url);
+  expect(working.readiness).toBeUndefined();
+  // Watcher observations, including another head, are not a worker's completion receipt.
+  for (const head of [observed().pr.head, "b".repeat(40)]) {
+    snapshot = { ...snapshot!, pr: { ...snapshot!.pr, head } };
+    await observeTaskPR(project, t.id, snapshot);
+    expect(publicTaskStatus(await getTask(project, t.id))).toBe("working");
+    expect(publicTaskStatus((await listTasks(project))[0]!)).toBe("working");
+  }
+  snapshot = null;
+  expect(await tool.run({ action: "pr", repository: "o/r", number: 2 }, worker)).toContain("lookup failed/unknown");
+  expect(publicTaskStatus(await getTask(project, t.id))).toBe("working");
+  snapshot = { ...observed(), pr: { ...observed().pr, head: "b".repeat(40) }, ready: false, checks: "failed" };
+  expect((await action("pr")).status).toBe("pr open");
+  expect((await getTask(project, t.id)).iterationStartedAt).toBeUndefined();
+  expect((await getTask(project, t.id)).checkpoints?.prOpenAt).toBe(checkpoint);
+  await stopTaskRun(project, "worker", "waiting", "Waiting for review");
+  expect(publicTaskStatus(await getTask(project, t.id))).toBe("pr open");
+  expect(await tool.run({ action: "work", taskId: t.id }, worker)).toContain("active agent");
+  // Launch preparation alone is not working. A real resumed worker is.
+  await prepareTaskRun(project, t.id, t.branch, { id: "next", role: "worker", agent: "worker-feat-x" });
+  expect(publicTaskStatus(await getTask(project, t.id))).toBe("pr open");
+  await startTaskRun(project, "next");
+  expect(publicTaskStatus(await getTask(project, t.id))).toBe("working");
+  await stopTaskRun(project, "next", "blocked", "Fixes could not be pushed");
+  expect(publicTaskStatus(await getTask(project, t.id))).toBe("waiting");
+  await observeTaskPR(project, t.id, { ...snapshot, state: "CLOSED" });
+  expect(publicTaskStatus(await getTask(project, t.id))).toBe("closed");
+  expect((await getTask(project, t.id)).iterationStartedAt).toBeUndefined();
+});
+
+test("status-only reviewer runs preserve pr open, while explicit reviewer fixes mark working", async () => {
+  const t = await reviewer(); await record();
+  await stopTaskRun(project, "reviewer", "waiting", "Initial review done");
+  await prepareTaskRun(project, t.id, t.branch, { id: "review2", role: "reviewer", agent: "reviewer-feat-x" });
+  await startTaskRun(project, "review2");
+  expect(publicTaskStatus(await getTask(project, t.id))).toBe("pr open");
+  const edited = JSON.parse(await tool.run({ action: "work" }, ctx("reviewer", "review2")));
+  expect(edited.status).toBe("working");
+  const published = JSON.parse(await tool.run({ action: "pr", repository: "o/r", number: 2 }, ctx("reviewer", "review2")));
+  expect(published.status).toBe("pr open");
+});
+
+test("a publication lookup cannot clear an iteration started while GitHub was being queried", async () => {
+  const t = await reviewer(); await record();
+  const raced = makeTaskTool({ repo: async () => repository, pr: async () => {
+    await startTaskWork(project, t.id, "reviewer");
+    return observed();
+  } });
+  const result = await raced.run({ action: "pr", repository: "o/r", number: 2 }, ctx("reviewer", "reviewer"));
+  expect(result).toContain("task changed during pr lookup");
+  expect(publicTaskStatus(await getTask(project, t.id))).toBe("working");
 });

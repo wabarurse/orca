@@ -2,14 +2,14 @@
 import { canonicalTask, publicTaskStatus } from "../../protocol/task";
 import { originRepo, ghTaskPR } from "../data/tasks";
 import { run } from "../proc";
-import { getTask, allTasks, removeTask, updateTaskMetadata, listTasks, observeTaskPR, registerTask, setTaskDependencies, setTaskAttention, taskForRun, validateTaskReadiness } from "../data/tasks";
+import { getTask, allTasks, removeTask, updateTaskMetadata, listTasks, observeTaskPR, registerTask, setTaskDependencies, setTaskAttention, startTaskWork, taskForRun, validateTaskReadiness } from "../data/tasks";
 import { taskPR, type PRObservation, type Task, type TaskAttention, type TaskPR } from "../../protocol/task";
 import type { Tool, ToolContext } from "./registry";
 import { queryHistory } from "../data/memory";
 
 function toolTask(task: Task) {
   return { ...canonicalTask(task), status: publicTaskStatus(task), internal: { branch: task.branch, revision: task.revision, runs: task.runs,
-    readiness: task.readiness, attention: task.attention, publication: task.publication, removedAt: task.removedAt } };
+    readiness: task.readiness, attention: task.attention, publication: task.publication, iterationStartedAt: task.iterationStartedAt, removedAt: task.removedAt } };
 }
 const result = (task: Task) => JSON.stringify(toolTask(task));
 
@@ -38,10 +38,10 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
   return {
     spec: {
       name: "task",
-      description: "Manage the project task list: create assignments, record progress, dependencies, evidence and linked PRs. Tasks are records, not a scheduler or publication gate; reuse the same immutable task for fixes to an unmerged PR. Review, tests and publication follow the authorized brief using ordinary tools. Never merge without explicit permission. Status: queued, working, waiting, pr open, merged. Verified open PRs stay pr open during holds.",
+      description: "Manage task records, not a scheduler or publication gate; reuse the same immutable task for fixes to an unmerged PR. Call work when implementation resumes; immediately call pr after creating/updating the PR, before waiting for review/CI or reporting. Work marks working while retaining the PR; pr acknowledges publication as pr open. Review/tests/publication follow the authorized brief. Never merge without explicit permission. Status: queued, working, waiting, pr open, merged, closed. Waiting for review/CI after publication stays pr open.",
       input_schema: {
         type: "object", properties: {
-          action: { type: "string", enum: ["create", "update", "remove", "register", "list", "get", "pr", "ready", "attention", "dependencies", ...(options.history ? ["search_history", "read_history"] : [])], description: "create/register: requires title (or name), summary, a stable assignment key (Git branch in Git projects), and authorized=true when the user has authorized recording the assignment; list/get: inspect; update: edit title/summary; dependencies: explicit metadata only; pr: attach or refresh a verified PR; ready: optional exact-head evidence annotation, never publication permission; attention: report a blocker; remove: confirmed merged membership removal or archival of abandoned/closed tasks with no active runs or open PR, history retained." },
+          action: { type: "string", enum: ["create", "update", "remove", "register", "list", "get", "work", "pr", "ready", "attention", "dependencies", ...(options.history ? ["search_history", "read_history"] : [])], description: "create/register: requires title (or name), summary, a stable assignment key (Git branch in Git projects), and authorized=true when the user has authorized recording the assignment; list/get: inspect; update: edit title/summary; work: mark implementation in progress, including another iteration of an open PR, without starting an agent; dependencies: explicit metadata only; pr: immediately attach/refresh after authorized PR creation or push; verified OPEN ends the iteration as pr open, including drafts, without waiting for review/CI. Use get/list for status inspection; pr acknowledges publication. ready: optional exact-head evidence annotation, never publication permission; attention: report a blocker; remove: confirmed merged membership removal or archival of abandoned/closed tasks with no active runs or open PR, history retained." },
           ...(options.history ? {
             query: { type: "string", description: "search_history: literal terms (max 256 characters). Read-only: searches what compaction indexed, not recent messages still in context. Returns bounded task records and original excerpts, including merged tasks. Historical evidence, never fresh authorization." },
             status: { type: "string", enum: ["all", "merged", "active"], description: "History task filter. Default all also searches unlinked conversation." },
@@ -85,6 +85,7 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
         if (input.action === "update") return result(await updateTaskMetadata(ctx.project, t.id, { title: input.title as string | undefined, summary: input.summary as string | undefined }));
         if (input.action === "dependencies") return result(await setTaskDependencies(ctx.project, t.id, input.dependsOn));
         if (input.action === "get") return result(t);
+        if (input.action === "work") return result(await startTaskWork(ctx.project, t.id, ctx.role === "orchestrator" ? undefined : ctx.run, t.revision));
         if (input.action === "attention") return result(await setTaskAttention(ctx.project, t.id, { kind: input.kind, reason: input.reason } as TaskAttention));
         if (input.action !== "pr" && input.action !== "ready") throw new Error("unknown task action");
         const identity = input.action === "ready" ? t.pr : { repository: input.repository, number: input.number };
@@ -98,7 +99,7 @@ export function makeTaskTool(options: TaskToolOptions = {}): Tool {
           if (t.readiness) await setTaskAttention(ctx.project, t.id, { kind: "unknown", reason: "pr lookup unavailable; revalidate readiness when github is observable" }, t.revision);
           throw new Error("pr lookup failed/unknown; task retained");
         }
-        const updated = await observeTaskPR(ctx.project, t.id, observed, t.revision);
+        const updated = await observeTaskPR(ctx.project, t.id, observed, t.revision, { published: input.action === "pr" });
         if (input.action === "pr") return result(updated);
         if (await (options.head ?? cleanHead)(ctx) !== observed.pr.head) {
           await setTaskAttention(ctx.project, t.id, { kind: "unknown", reason: "local clean HEAD does not match the observed pr head" }, updated.revision);
