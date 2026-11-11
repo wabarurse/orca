@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { runConnections } from "./connections";
 import { assertLayout } from "../config";
 import { readProcess, superviseProcess, watchPRChecks } from "../core/data/processes";
 // orca / orca start [project] [directory]   open the TUI: one page per orchestrator (binds the original checkout;
@@ -31,7 +32,7 @@ import { realEnv, runSession } from "./session";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "session"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
+if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "session", "connections"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -51,6 +52,7 @@ function usage(error?: string): never {
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
+  orca connections [list|save|test|tools|login|logout|enable|disable|remove] [--project ID]
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
   orca reload                     apply the installed build to running orchestrators after their current turns
@@ -63,6 +65,7 @@ function usage(error?: string): never {
 if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 
 switch (cmd) {
+  case "connections": await runConnections(rest); break;
   case "clean": {
     if (rest.some(arg => !["--apply", "--dry-run"].includes(arg)) || (rest.includes("--apply") && rest.includes("--dry-run"))) usage("clean accepts --apply or --dry-run");
     console.log(JSON.stringify(await cleanStorage(rest.includes("--apply")), null, 2));

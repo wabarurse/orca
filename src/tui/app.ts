@@ -1,3 +1,4 @@
+import { connectionsCommand } from "./commands";
 import { formatDateTime } from "../protocol";
 import { stat } from "node:fs/promises";
 import { abandonTask } from "../core/data/tasks/tasks";
@@ -1755,6 +1756,7 @@ export class App {
     }, help: { group: "conversation", label: "/stop", description: "confirm a conversation stop" } }],
     ["/paste-image", { run: () => this.pasteImage(), help: { group: "conversation", label: "/paste-image", description: "attach an image from the clipboard" } }],
     ["/remove-image", { run: () => this.removeImage(), help: { group: "conversation", label: "/remove-image", description: "remove the last draft image" } }],
+    ["/connections", { args: true, run: (args, page) => connectionsCommand(args, { project: page?.project, current: () => this.page === page, note: text => this.note(text), open: (title, choices, pick) => this.openMenu(title, choices, pick), draft: text => { this.input = { text, cursor: text.length }; this.draw(); } }), help: { group: "settings", label: "/connections", description: "manage MCP servers, login and available tools" } }],
     ["/runtime", { needsPage: true, run: async (_, page) => this.note(await runtimeText(page!.project)), help: { group: "advanced", label: "/runtime", description: "loaded builds, context observations and background commands" } }],
     ["/usage", { needsPage: true, run: async (_, page) => this.note(await usageText(page!.project)), help: { group: "advanced", label: "/usage", description: "measured project tokens, cached input and request time" } }],
     ["/refresh", { run: () => this.refreshSessions(), help: { group: "conversation", label: "/refresh", description: "reload shared local state; active context waits until idle; never runs work" } }],
@@ -2407,7 +2409,6 @@ export class App {
     if (moved) this.input = moved;
     else this.recall(dir);
   }
-
 
   /** Track input until an exact committed receipt (local callback or shared refresh); failed writes are reported explicitly. */
   private async send(page: Page, text: string, submission?: string, inputId: string = crypto.randomUUID(), attachments: ImageRef[] = []): Promise<void> {
