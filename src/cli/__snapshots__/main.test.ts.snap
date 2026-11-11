@@ -5,8 +5,8 @@ exports[`offline CLI usage and owned errors are lowercase without changing suppl
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
-  orca clean [--apply]            preview archived workspace cleanup; --apply deletes eligible storage
-  orca organize                   group saved folders by directory (requires Orca stopped)
+  orca clean [--preview]          delete eligible archived storage; --preview lists without deleting
+  orca organize                   group saved folders by directory (requires orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
@@ -25,8 +25,8 @@ usage:
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
-  orca clean [--apply]            preview archived workspace cleanup; --apply deletes eligible storage
-  orca organize                   group saved folders by directory (requires Orca stopped)
+  orca clean [--preview]          delete eligible archived storage; --preview lists without deleting
+  orca organize                   group saved folders by directory (requires orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)

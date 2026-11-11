@@ -5,8 +5,8 @@ import { cleanManagedWorkspaces } from "../core/tmux";
 import { listVerifications, pruneSettledProcesses } from "../core/data/processes";
 import { workspaces } from "../core/data/projects";
 
-/** Inspect by default. Applying is restricted to Orca-owned disposable resources. */
-export async function cleanStorage(apply = false) {
+/** The caller selects preview or deletion explicitly; only owned disposable resources qualify. */
+export async function cleanStorage(apply: boolean) {
   const changes: { path: string; disposition: string }[] = [];
   const current = conversationIds(paths.root);
   const projects = new Set([...current, ...workspaces.list().filter(w => !w.cleanedAt).map(w => w.members[0]!.project)]);

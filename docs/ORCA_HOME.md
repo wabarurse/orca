@@ -93,4 +93,4 @@ Directory projects are logical records in memory.sqlite; artifact directories re
 
 Existing flat layout-3 homes stay readable until `orca organize` runs. This is an offline, resumable command: close TUIs and stop Orca sessions first, after authorized agents finish. Active/unknown participants and unresolved commands refuse migration; the command never stops work itself. Artifact directories move by same-filesystem rename to `.conversations/`, retaining their UUID, inode, task IDs and image references. New homes use the grouped view immediately. Legacy in-folder Git clones/worktrees require separate explicit relocation and are refused rather than moved unsafely. See [named project folders](DIRECTORY_PROJECTS.md#named-project-folders).
 
-Disposable verification environments and their evidence lifecycle are documented in [verification sessions](VERIFICATION.md). `orca clean --dry-run` inspects eligible storage before applying cleanup.
+Disposable verification environments and their evidence lifecycle are documented in [verification sessions](VERIFICATION.md). `orca clean --preview` inspects eligible storage before applying cleanup.

@@ -60,8 +60,8 @@ its seven-day/1 GiB policy until discovery associates it with a workspace.
 
 # Storage maintenance
 
-`orca clean` or `orca clean --dry-run` inspects disposable storage.
-`orca clean --apply` removes eligible archived workspaces and their owned
+`orca clean --preview` inspects disposable storage without deleting it.
+`orca clean` removes eligible archived workspaces and their owned
 records, transcripts and unreferenced images/evidence. The existing maintenance
 pass archives workspaces after 14 inactive days; it does not delete them.
 Individual view archives remain presentation only. See

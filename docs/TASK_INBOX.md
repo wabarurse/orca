@@ -28,7 +28,7 @@ restoring a closed question shows its saved answer/reason without reopening it.
 Images can be archived/restored while retaining their bytes and chat references.
 Archived images can still be opened and do not count in the footer image count.
 Workspace inactivity also groups linked items under Archived after 14 days.
-`orca clean` previews eligible workspace cleanup; `--apply` permanently removes
+`orca clean --preview` previews eligible workspace cleanup; `orca clean` permanently removes
 its owned records and unreferenced files. Manually archiving one item does not
 make an active workspace eligible. See [workspace cleanup](WORKSPACE_CLEANUP.md).
 

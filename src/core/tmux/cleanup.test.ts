@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,7 +16,7 @@ import { workArchive } from "../data/projects/work-archive";
 import { discoverBuildCaches } from "./workspace-caches";
 import { updateContext, workingContext, remember, facts } from "../data/knowledge";
 let root: string, repo: string, worktree: string, previous: string | undefined;
-const later = () => ({ now: Date.now() + 15 * 86400_000, openPaths: async () => [] as string[] });
+const later = () => ({ now: Date.now() + 15 * 86400_000, openPaths: async () => [] as string[], cacheRoots: [] as string[] });
 const row = (rows: Awaited<ReturnType<typeof cleanManagedWorkspaces>>) => rows.find(r => r.path === worktree)!;
 const git = (cwd: string, ...args: string[]) => {
   const r = Bun.spawnSync(["git", ...args], { cwd });
@@ -173,6 +173,59 @@ test("external build caches require exact workspace identity; shared downloads a
   expect(row(await cleanManagedWorkspaces("p", true, later())).disposition).toBe("removed archived session");
   expect(existsSync(cache)).toBe(false);
   expect(existsSync(shared)).toBe(true);
+});
+
+for (const replacement of [false, true]) test(`a ${replacement ? "recreated" : "deleted"} cache owner cannot block another session or inherit its cache`, async () => {
+  await ensureProject("gone", repo);
+  const shared = workspaces.ensure("p", repo);
+  workspaces.ensure("gone", repo);
+  const caches = join(root, "build-caches"), stale = join(caches, "a".repeat(32)), valid = join(caches, "b".repeat(32));
+  for (const [path, source] of [[stale, repo], [valid, worktree]] as const) {
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, "DO_NOT_BUILD_HERE"), source);
+    writeFileSync(join(path, "compiled"), "generated");
+  }
+  rmSync(paths.project("gone"), { recursive: true });
+  if (replacement) await ensureProject("gone", repo);
+  const before = JSON.stringify(workspaces.resources()), sessions = JSON.stringify(workspaces.list());
+  const options = { ...later(), cacheRoots: [caches] };
+  const preview = await cleanManagedWorkspaces("p", false, options);
+  expect(preview.find(r => r.path === stale)?.disposition).toContain("owner gone was removed or changed identity");
+  expect(preview.find(r => r.session === shared.id && r.path === repo)?.disposition).toContain("identity changed or was removed");
+  expect(row(preview).disposition).toStartWith("eligible:");
+  expect(JSON.stringify(workspaces.resources())).toBe(before);
+  expect(JSON.stringify(workspaces.list())).toBe(sessions);
+  expect(existsSync(valid)).toBe(true);
+  const cleaned = await cleanManagedWorkspaces("p", true, options);
+  expect(row(cleaned).disposition).toBe("removed archived session");
+  expect(existsSync(valid)).toBe(false);
+  expect(existsSync(stale)).toBe(true);
+  expect(existsSync(repo)).toBe(true);
+  if (replacement) expect(workspaces.resource("gone", "cache", stale)).toBeUndefined();
+});
+
+test("one broken cache path is reported without blocking another session's cleanup", async () => {
+  const caches = join(root, "build-caches"), stale = join(caches, "a".repeat(32));
+  mkdirSync(caches); symlinkSync(join(root, "missing"), stale);
+  const options = { ...later(), cacheRoots: [caches] };
+  const result = await cleanManagedWorkspaces("p", true, options);
+  expect(result.find(r => r.path === stale)?.disposition).toContain("build cache inspection failed");
+  expect(row(result).disposition).toBe("removed archived session");
+  expect(lstatSync(stale).isSymbolicLink()).toBe(true);
+});
+
+test("an unreadable registered cache blocks its owner while another worktree is cleaned", async () => {
+  const other = await ensureWorktree("p", "other-task");
+  const cache = join(root, "broken-cache"); mkdirSync(cache);
+  writeFileSync(join(cache, "DO_NOT_BUILD_HERE"), worktree);
+  workspaces.own("p", "cache", cache, { directory: worktree, path: cache });
+  rmSync(join(cache, "DO_NOT_BUILD_HERE"));
+  mkdirSync(join(cache, "DO_NOT_BUILD_HERE"));
+  const result = await cleanManagedWorkspaces("p", true, later());
+  expect(row(result).disposition).toContain("inspection failed");
+  expect(result.find(r => r.path === other)?.disposition).toBe("removed archived session");
+  expect(existsSync(worktree)).toBe(true);
+  expect(existsSync(cache)).toBe(true);
 });
 
 test("retained dependency edges protect task records", async () => {
