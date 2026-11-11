@@ -5,12 +5,12 @@ import { blockRef } from "./images";
 function marker(image: ImageBlockParam, read = false): TextBlockParam {
   const ref = blockRef(image), id = ref ? `; attachment_id=${ref.id}` : " (unscoped)";
   return { type: "text", text: read
-    ? `[Historical image read by a tool${id}; not inspected by this text summary/search and not retained past it; read the file again to see it.]`
-    : `[Historical image${id}; pixels retained separately, not inspected by this text summary/search.]` };
+    ? `[Historical image read by a tool${id}; not inspected by this text summary/search and not retained past it; use read with attachment_id to inspect the saved original again.]`
+    : `[Historical image${id}; original saved on disk, not inspected by this text summary/search. Use read with attachment_id to inspect it again.]` };
 }
 
 /** Text-only summaries/search are not vision calls. Keep IDs searchable, not
- * bytes or URLs; real scoped blocks survive separately in checkpoints and raw
+ * bytes or URLs; real scoped blocks survive in original transcript and raw
  * archive records. Also sanitize legacy inline/nested images, never echo them.
  * Only inspect content blocks, never arbitrary tool input objects. */
 export function historicalMessages(messages: MessageParam[]): MessageParam[] {

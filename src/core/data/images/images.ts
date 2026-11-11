@@ -16,8 +16,7 @@ import type { ImageInput, ImageRef } from "../../../protocol";
 export const MAX_IMAGES = 4;
 /** Encoded image bytes one model request may carry. */
 const MAX_CONTEXT_IMAGE_BYTES = 16 * 1024 * 1024;
-/** Images one request may carry: past 20, Anthropic shrinks every image's limit to
- * 2000 px (so a 4096 px screenshot fails) and refuses more than 100 outright. */
+/** Bound rereadable tool images; prompt images are retained until compaction. */
 const MAX_CONTEXT_IMAGES = 20;
 /** Stored file extension per format; PNG first (clipboard images and every older store). */
 const EXTENSIONS: Record<ImageMime, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
@@ -144,11 +143,17 @@ export function imageContent(text: string, refs: ImageRef[] = []): MessageParam[
  * and in count, newest first; older ones give way to a text note instead of blocking
  * the agent. Prompt images keep their policy: the count cap only limits tool images. */
 export async function materializeImages(project: string, messages: MessageParam[], signal?: AbortSignal): Promise<MessageParam[]> {
+  // Anthropic counts historical images too. Above 20 images, each edge must be
+  // <= 3000 px. Tool images only fill up to 20, so prompt count decides this limit.
+  // Prepare copies, never mutate saved originals or transcript references.
+  // https://platform.claude.com/docs/en/build-with-claude/vision#request-limits
+  const promptCount = messages.reduce((n, m) => n + (Array.isArray(m.content) ? m.content.filter(b => b.type === "image").length : 0), 0);
+  const maxDimension = promptCount > MAX_CONTEXT_IMAGES ? 3000 : Infinity;
   const loaded = new Map<ImageBlockParam, { bytes: Buffer; mime: ImageMime }>();
   const load = async (block: ImageBlockParam): Promise<number> => {
     const ref = blockRef(block);
     if (!ref) throw new Error("unscoped image in saved context; image delivery refused.");
-    const image = await prepareImage(project, await loadTypedImage(project, ref), signal);
+    const image = await prepareImage(project, await loadTypedImage(project, ref), signal, maxDimension);
     loaded.set(block, image);
     return image.bytes.length;
   };
@@ -163,7 +168,7 @@ export async function materializeImages(project: string, messages: MessageParam[
       if (block.type !== "image") continue;
       if (message.role !== "user") throw new Error("assistant image input is unsupported.");
       total += await load(block); count++;
-      if (total > MAX_CONTEXT_IMAGE_BYTES) throw new Error("image context exceeds 16 mib of encoded image bytes. no image was discarded. use an explicit /clear for a new task; original history is preserved.");
+      if (total > MAX_CONTEXT_IMAGE_BYTES) throw new Error("image context exceeds 16 MiB of encoded image bytes. Run /compact to archive older images, then resume; originals and history are preserved.");
     }
   }
   // Newest first; the first tool image that does not fit ends the fill, so what is
@@ -177,7 +182,7 @@ export async function materializeImages(project: string, messages: MessageParam[
   const deliver = (block: ImageBlockParam): ImageBlockParam | TextBlockParam => {
     const image = loaded.get(block);
     if (image) return { type: "image", source: { type: "base64", media_type: image.mime, data: image.bytes.toString("base64") } };
-    return { type: "text", text: `[Image omitted from this request: this context's images exceed the request limit (${MAX_CONTEXT_IMAGES} images or 16 MiB) (attachment_id=${blockRef(block)?.id ?? "unknown"}). Read the file again to inspect it.]` };
+    return { type: "text", text: `[Image omitted from this request: this context's images exceed the request limit (${MAX_CONTEXT_IMAGES} images or 16 MiB) (attachment_id=${blockRef(block)?.id ?? "unknown"}). Use read with attachment_id to inspect it again, or /compact to archive older images.]` };
   };
   return messages.map(message => typeof message.content === "string" ? message : { ...message, content: message.content.map(block =>
     block.type === "image" && message.role === "user" ? deliver(block)

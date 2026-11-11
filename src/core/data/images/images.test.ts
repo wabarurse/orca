@@ -220,7 +220,7 @@ test("worker screenshot travels through orchestrator to durable user chat and an
   } finally { orch.dispose?.(); }
 });
 
-test("compaction budgets pixels rather than base64, retains inspectable image blocks and explicit handoff IDs", async () => {
+test("worker compaction archives older pixels while preserving reload and handoff IDs", async () => {
   const p = project(), ref = await saveImage(p, png()), t = open(paths.transcript(p, "orchestrator"));
   await t.append({ type: "message", message: { role: "user", content: imageContent("original task", [ref]) } });
   await t.append({ type: "message", message: { role: "assistant", content: "long history ".repeat(8000) } });
@@ -228,8 +228,12 @@ test("compaction budgets pixels rather than base64, retains inspectable image bl
   const provider = fakeProvider([[text("summarized history")]]);
   expect(await compact({ transcript: t, provider, model: "claude-sonnet-4-6", tools: {}, write() {}, compaction: { contextLimit: 128000 } }, true)).toBe(true);
   const chain = await t.chain();
-  expect(imageCount(chain)).toBe(1);
-  expect(imageCount(await materializeImages(p, chain))).toBe(1);
+  expect(imageCount(chain)).toBe(0);
+  expect(imageCount(await materializeImages(p, chain))).toBe(0);
+  expect(JSON.stringify(chain)).toContain(ref.id);
+  expect(JSON.stringify(chain)).not.toContain("orca-image:");
+  const restored = await read.run({ attachment_id: ref.id }, ctx(p));
+  expect(Array.isArray(restored)).toBe(true);
   expect(JSON.stringify(provider.calls[0]!.messages)).not.toContain("base64");
   expect(await forwardImages([ref.id], ctx(p))).toEqual([ref]);
   expect(estimate([{ role: "user", content: [imageBlock(ref)] }])).toBeLessThan(6200);
@@ -327,7 +331,7 @@ test("magic-byte sniffing and header checks for jpeg, gif and webp; tool-read im
   const out = JSON.stringify(await materializeImages(p, refs.map(tool)));
   expect(out.split("Image omitted from this request").length).toBe(2);
   expect(out).toContain(`attachment_id=${refs[0]!.id}`);
-  await expect(materializeImages(p, [{ role: "user", content: refs.map(imageBlock) }])).rejects.toThrow("16 mib");
+  await expect(materializeImages(p, [{ role: "user", content: refs.map(imageBlock) }])).rejects.toThrow("16 MiB");
 });
 
 test("a request carries at most 20 images: prompt images first, then the newest tool-read images; older ones become the note", async () => {

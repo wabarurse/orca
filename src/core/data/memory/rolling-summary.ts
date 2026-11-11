@@ -128,7 +128,7 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
   if (modelCapabilities(target.model).effort.includes("low")) settings.effort = "low";
   let memory = options.previous ?? empty();
   // Neither reasoning nor image bytes/URLs go to the text-only summary model.
-  // Original scoped references stay in SQLite/JSONL and the retained context.
+  // Original scoped references stay in SQLite/JSONL; only recent images stay in active context.
   const source = JSON.stringify(historicalMessages(messages));
   const parts = [...chunks(source)].reverse();
   while (parts.length) {

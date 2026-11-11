@@ -51,7 +51,7 @@ Up to **4 images per prompt**, **64 MiB source memory guard per image**, maximum
 CRC/order, color depth, dimensions, bounded zlib inflation and scanline filters
 are validated; suffixes and MIME claims are insufficient. Interlaced/animated
 PNGs are deliberately unsupported; recopy/export a non-interlaced still PNG.
-No silent downscaling. macOS source TIFF/JPEG and converted PNG use the same 64 MiB memory guard. Before requests, images over 7 MiB get a compressed JPEG copy at the same pixel dimensions using existing sips (macOS) or ImageMagick. Originals remain in the image store; two prepared copies are cached in memory. Temporary conversion files are removed after preparation. If the encoder is unavailable or cannot fit a copy, Orca reports that explicitly.
+Originals are never downscaled. macOS source TIFF/JPEG and converted PNG use the same 64 MiB memory guard. Before requests, images over 7 MiB get a compressed JPEG copy using existing sips (macOS) or ImageMagick. Copies retain dimensions except when the provider's many-image limit requires resizing (see below). Originals remain in the image store; two prepared copies are cached in memory. Temporary conversion files are removed after preparation. If the encoder is unavailable or cannot fit a copy, Orca reports that explicitly.
 This is bounded validation, not a general-purpose image decoder or sandbox for
 malicious local software.
 
@@ -204,22 +204,36 @@ Materialized context has a **16 MiB encoded-image-byte total cap**; base64 trans
 is larger. Multiple prompts and repeated forwarding of the same image count
 separately. Large accumulated histories can therefore block another request.
 
-Both **orchestrator rolling memory** (merged PR #74) and worker/reviewer
-checkpoints send summarizers textual IDs with explicit warnings that they did
-not inspect pixels. `image-history.ts` supplies text-only historical markers for
-summaries and search; it never serializes image bytes/URLs as model prose. Actual
-image-reference blocks and bounded historical prompt excerpts are retained
-alongside each checkpoint/recent tail. Repeated checkpoints retain each image
-occurrence exactly once; new messages arriving during background work remain
-verbatim. The following normal request still receives inspectable pixels.
+Both orchestrator rolling memory and worker/reviewer checkpoints send summarizers
+textual IDs with explicit warnings that they did not inspect pixels. The summarized
+prefix becomes memory plus small attachment-ID references; **older image blocks are
+not reattached** to every checkpoint. The recent tail and messages arriving during
+background work remain verbatim. Original images and transcript records stay on disk.
+An existing checkpoint made by the old retain-all-images policy is repaired by the
+next `/compact`; no migration, deletion, or re-upload is required.
 
-The rolling `gpt-6-luna` summarizer remains text-only and uses the account/scheduling
-policy of #74; there is no new vision/provider fallback. Its summary can reduce
-prose while retained images still exceed the foreground budget. In that case a
-checkpoint may commit the reduction, but the foreground request is explicitly
-blocked. Worker checkpoints instead refuse an over-budget proposal. Neither path
-silently drops images. Use an explicit `/clear-context` for a new task when accumulation
-blocks context; original transcripts/images remain on disk.
+This follows Pi's boundary between summarized history and the recent tail, and
+Codex's text-only local compacted history. Codex also has distinct remote paths,
+including configurable image retention; Claude Code's public compaction documentation
+does not specify an exact image-retention policy. See the pinned source links in
+`compaction.ts`; no unofficial Claude Code implementation is used.
+
+Use `read({attachment_id: "…"})` to inspect an archived image again. This restores the
+same image ID as a tool-result image without making another stored copy. The tool
+requires an original received image block in this agent's current context epoch;
+IDs in summaries or guessed UUIDs alone grant no access. A missing or corrupt archived
+file only fails an explicit reload, rather than breaking unrelated future requests.
+
+At the request boundary, more than 20 prompt images trigger request-copy resizing to
+at most 3000 pixels per edge, preserving aspect ratio and original files. This prevents
+Anthropic's many-image HTTP 400 even before compaction. Small requests keep original
+dimensions; requests within both limits keep exact bytes. Resized screenshots prefer
+PNG; large payloads can use JPEG. Preparation needs sips (macOS) or ImageMagick and
+caches at most two copies in memory; temporary files are removed on success/failure.
+See [Anthropic image limits](https://platform.claude.com/docs/en/build-with-claude/vision#request-limits).
+The existing 16 MiB request-byte budget remains. If retained recent input still
+exceeds the budget, the request fails explicitly; `/compact` never clears the latest
+turn merely to force a request through. No change to compaction thresholds.
 
 The global SQLite `~/.orca/memory.sqlite` (rows keyed by project and agent) keeps the **original scoped references** losslessly in
 `entries.raw`, and indexes searchable `attachment_id` markers plus prompt text in
@@ -227,8 +241,8 @@ The global SQLite `~/.orca/memory.sqlite` (rows keyed by project and agent) keep
 orchestrator can use `task search_history` (including an attachment UUID query)
 and paged `read_history` to recover prompt/ID associations **within the current
 clear scope**. Search/read results are historical **text**, not new images or new
-permissions. Pixels remain directly inspectable in retained context, so no history
-image-read tool or implicit cross-task image sharing is needed. Explicit
+permissions. Pixels in the recent tail remain directly inspectable; archived pixels are loaded
+explicitly with the read tool. There is no implicit cross-task image sharing. Explicit
 spawn/message forwarding still requires a real original image in the sender's
 current context epoch, not merely a retrieved or guessed UUID. After `/clear-context`,
 old history IDs cannot retrieve/forward old images; reattach from the clipboard.
@@ -243,7 +257,7 @@ and conditional checkpoint publication intact when changing memory semantics.
 checkpoint tails must not replace original history for that check. Combined
 regressions in `rolling-images.test.ts` cover repeated compaction, search/reload,
 both provider serializers, explicit worker pixels, clear/cancel, newer arrivals,
-failed publication, missing bytes and image-budget refusal.
+failed publication, missing bytes, image-budget recovery and request-copy resizing.
 
 ## Validation and reviewer constraints
 
