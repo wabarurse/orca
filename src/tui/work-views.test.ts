@@ -34,9 +34,9 @@ test("Vim keeps drafts, switches project tabs and routes commands without Ctrl c
     term.type("gt"); await until(() => app.page?.project === "vim-second");
     term.type("gT"); await until(() => app.page?.project === "vim-first");
     expect(app.input.text).toBe("draft text");
-    term.type(" m"); await until(() => app.menu?.title.includes("model role") === true);
+    term.type("M"); await until(() => app.menu?.title.includes("model role") === true);
     term.press({ name: "escape" });
-    term.type(" f"); await until(() => app.menu?.title.includes("Fast mode") === true);
+    term.type("F"); await until(() => app.menu?.title.includes("Fast mode") === true);
     term.press({ name: "escape" });
     term.type(":tasks\r"); await until(() => term.screen().includes("TASKS"));
     expect(term.display.screen()[0]).not.toContain("[NORMAL]");
@@ -49,25 +49,25 @@ test("Vim keeps drafts, switches project tabs and routes commands without Ctrl c
   } finally { await stop(); }
 });
 
-test("Normal Space+h/l switches tabs from chat, work pages and menus, while Insert and commands keep text", async () => {
+test("Normal Shift+H/L switches tabs from chat, work pages and menus, while Insert and commands keep text", async () => {
   const { app, term, stop } = await setup("zx-first");
   try {
     await app.openPage("zx-second");
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    await app.onKey({ name: "char", text: "H" }); await app.onKey({ name: "char", text: "L" });
-    expect(app.page!.project).toBe("zx-second"); // The old Shift shortcuts no longer change projects.
-    term.type(" h"); await until(() => app.page?.project === "zx-first");
+    await app.onKey({ name: "char", text: "h" }); await app.onKey({ name: "char", text: "l" });
+    expect(app.page!.project).toBe("zx-second"); // Plain h/l retain local navigation.
+    term.type("H"); await until(() => app.page?.project === "zx-first");
     term.type("izx h l"); await until(() => app.input.text === "zx h l");
     expect(app.page!.project).toBe("zx-first");
-    term.press({ name: "escape" }); term.type(" l"); await until(() => app.page?.project === "zx-second");
-    term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
-    term.type(" h"); await until(() => app.page?.project === "zx-first");
+    term.press({ name: "escape" }); term.type("L"); await until(() => app.page?.project === "zx-second");
+    term.type("Q"); await until(() => term.screen().includes("QUESTIONS"));
+    term.type("H"); await until(() => app.page?.project === "zx-first");
     expect(app.input.text).toBe("zx h l");
-    term.type(" m"); await until(() => app.menu?.title.includes("model role") === true);
-    term.type(" l"); await until(() => app.page?.project === "zx-second");
+    term.type("M"); await until(() => app.menu?.title.includes("model role") === true);
+    term.type("L"); await until(() => app.page?.project === "zx-second");
     expect(app.menu).toBeNull();
-    term.type(" b"); await until(() => app.projectList !== null);
-    term.type(" h"); await until(() => app.page?.project === "zx-first");
+    term.type("B"); await until(() => app.projectList !== null);
+    term.type("H"); await until(() => app.page?.project === "zx-first");
     expect(app.projectList).toBeNull();
     await app.onKey({ name: "char", text: " " }); await app.onKey({ name: "char", text: "x" });
     expect(app.page!.project).toBe("zx-first");
@@ -84,7 +84,7 @@ test("Questions displays its own split view and answers the selected question", 
     await until(() => term.screen().includes("0 agents | 0 tasks | 2 questions"));
     expect(app.commands.has("/inbox")).toBe(false);
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type(" q");
+    term.type("Q");
     await until(() => term.screen().includes("QUESTIONS") && term.screen().includes("Second question?") && term.screen().includes(" │ "));
     term.type("j");
     term.press({ name: "enter" });
@@ -107,12 +107,12 @@ test("q backs out of pages and menus; question drafts survive and Insert q/H/L r
     term.type("ichat draft"); await until(() => app.input.text === "chat draft");
     term.press({ name: "escape" });
     for (const command of ["a", "t", "p", "b", "m", "?"]) {
-      await app.onKey({ name: "char", text: " " }); await app.onKey({ name: "char", text: command });
+      await app.onKey({ name: "char", text: command.toUpperCase() });
       await app.onKey({ name: "char", text: "q" });
       expect(app.menu).toBeNull(); expect(app.projectList).toBeNull();
       expect(app.input.text).toBe("chat draft");
     }
-    term.type(" q"); await until(() => term.screen().includes("Describe the result"));
+    term.type("Q"); await until(() => term.screen().includes("Describe the result"));
     await app.onKey({ name: "enter" });
     await app.onKey({ name: "char", text: "i" });
     term.type("qHL answer"); await until(() => app.input.text === "qHL answer");
@@ -127,15 +127,15 @@ test("q backs out of pages and menus; question drafts survive and Insert q/H/L r
     await app.onKey({ name: "char", text: "q" }); // list -> chat
     await until(() => !term.screen().includes("QUESTIONS"));
     expect(term.screen()).not.toContain("Describe the result");
-    term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
+    term.type("Q"); await until(() => term.screen().includes("QUESTIONS"));
     await app.onKey({ name: "enter" });
     expect(app.input.text).toBe("qHL answer");
     // Opening another page restores the chat buffer; it cannot capture unseen answers.
-    term.type(" m"); await until(() => app.menu !== null);
+    term.type("M"); await until(() => app.menu !== null);
     expect(app.page!.questions.expanded).toBe(false);
     expect(app.input.text).toBe("chat draft");
     await app.onKey({ name: "char", text: "q" });
-    term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
+    term.type("Q"); await until(() => term.screen().includes("QUESTIONS"));
     await app.onKey({ name: "enter" });
     await app.onKey({ name: "enter" });
     await until(() => app.page!.questions.open.length === 0);
@@ -182,9 +182,9 @@ test("Tasks confirms abandonment and retains the task and its dependents", async
     await setTaskDependencies(project, child.id, [parent.id]);
     await app.commands.get("/tasks")!.run("", app.page);
     await until(() => term.screen().includes("Task #1 · queued"));
-    term.type("A"); await until(() => term.screen().includes("1 dependents retained"));
+    term.type("c"); await until(() => term.screen().includes("1 dependents retained"));
     term.type("n"); expect((await getTask(project, parent.id)).attention).toBeUndefined();
-    term.type("A"); await until(() => term.screen().includes("1 dependents retained"));
+    term.type("c"); await until(() => term.screen().includes("1 dependents retained"));
     term.type("y"); await until(() => term.screen().includes("Task abandoned"));
     expect((await getTask(project, parent.id)).attention?.kind).toBe("cancelled");
     expect((await getTask(project, child.id)).dependsOn).toEqual([parent.id]);
@@ -215,18 +215,18 @@ test("Normal mode navigates work pages, settings, help and projects and switches
   const { app, term, stop } = await setup("work-vim");
   try {
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type(" q"); await until(() => term.screen().includes("QUESTIONS"));
-    term.type(" a"); await until(() => term.screen().includes("AGENTS"));
-    term.type(" t"); await until(() => term.screen().includes("TASKS"));
-    term.type(" p"); await until(() => term.screen().includes("IMAGES"));
-    term.type(" m"); await until(() => app.menu?.title.includes("model role") === true);
+    term.type("Q"); await until(() => term.screen().includes("QUESTIONS"));
+    term.type("A"); await until(() => term.screen().includes("AGENTS"));
+    term.type("T"); await until(() => term.screen().includes("TASKS"));
+    term.type("P"); await until(() => term.screen().includes("IMAGES"));
+    term.type("M"); await until(() => app.menu?.title.includes("model role") === true);
     term.type("G"); await until(() => app.menu?.index === 3);
     term.type("gg"); await until(() => app.menu?.index === 0);
     term.type("jk"); await until(() => app.menu?.index === 0);
-    term.type(" ?"); await until(() => app.frame().help !== null);
+    term.type("?"); await until(() => app.frame().help !== null);
     term.type("G"); await until(() => (app.frame().help?.top ?? 0) > 0);
     term.type("gg"); await until(() => app.frame().help?.top === 0);
-    term.type(" b"); await until(() => app.projectList !== null);
+    term.type("B"); await until(() => app.projectList !== null);
     // Keep filesystem discovery independent from navigation coverage.
     app.projectList!.items = [
       { name: "first", label: "First", pinned: false },
@@ -235,11 +235,46 @@ test("Normal mode navigates work pages, settings, help and projects and switches
     term.type("G"); await until(() => app.projectList!.index === 1);
     term.type("gg"); await until(() => app.projectList!.index === 0);
     term.type("jk"); await until(() => app.projectList!.index === 0);
-    term.type(" p"); await until(() => term.screen().includes("IMAGES"));
+    term.type("P"); await until(() => term.screen().includes("IMAGES"));
     term.resize(30, 12);
     await until(() => term.screen().includes("IMAGES"));
     expect(term.display.screen()[0]).not.toContain("NORMAL");
     expect(term.display.screen().slice(-2).join("\n")).toContain("[NORMAL]");
     expect(app.input.text).toBe("");
+  } finally { await stop(); }
+});
+
+test("Shift commands accept legacy and modified-key input without taking over Insert, commands or confirmations", async () => {
+  const { app, term, stop } = await setup("shift-routing");
+  try {
+    await app.openPage("shift-other");
+    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
+    term.type("\x1b[104;2u"); await until(() => app.page?.project === "shift-routing");
+    term.type("\x1b[27;2;108~"); await until(() => app.page?.project === "shift-other");
+    const calls: string[] = [];
+    const shortcuts = { A: "/agents", T: "/tasks", Q: "/questions", P: "/images", B: "/projects", U: "/accounts", E: "/effort",
+      R: "/refresh", S: "/stop", V: "/paste-image", X: "/remove-image", "?": "/help" };
+    for (const [key, command] of Object.entries(shortcuts)) {
+      app.commands.get(command)!.run = async () => { calls.push(command); };
+      await app.onKey({ name: "char", text: key });
+      await app.onKey({ name: key === "?" ? "/" : key.toLowerCase(), shift: true });
+      expect(calls.slice(-2)).toEqual([command, command]);
+    }
+    const before = calls.length;
+    await app.onKey({ name: "char", text: "i" });
+    for (const key of Object.keys(shortcuts)) await app.onKey({ name: key.toLowerCase(), shift: true });
+    expect(app.input.text).toBe(Object.keys(shortcuts).join(""));
+    expect(calls).toHaveLength(before);
+    await app.onKey({ name: "escape" });
+    term.type(":HLTA"); await until(() => term.screen().includes(":HLTA"));
+    expect(app.page!.project).toBe("shift-other"); expect(calls).toHaveLength(before);
+    await app.onKey({ name: "escape" });
+    app.page!.orch.checkClear = async () => {};
+    app.page!.orch.clear = async () => { throw new Error("must not clear"); };
+    await app.commands.get("/clear-context")!.run("", app.page);
+    expect(app.menu?.title).toContain("clear conversation");
+    await app.onKey({ name: "char", text: "H" }); await app.onKey({ name: "char", text: "A" });
+    expect(app.page!.project).toBe("shift-other"); expect(calls).toHaveLength(before);
+    await app.onKey({ name: "escape" });
   } finally { await stop(); }
 });

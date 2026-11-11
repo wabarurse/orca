@@ -39,7 +39,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
                   consumed input
   /tasks          open the task list
   /agents         open agent runs and history
-  /images         browse images sent to you; selection previews them here
+  /images         browse images and recordings; Enter opens the desktop viewer
   /clear          clear visible chat only; keep model context, history and
                   cache
   /clear-context  clear chat, model context and cache after confirmation
@@ -157,8 +157,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   /agents
     open agent runs and history
   /images
-    browse images sent to you;
-    selection previews them here
+    browse images and recordings;
+    Enter opens the desktop viewer
   /clear
     clear visible chat only; keep
     model context, history and cache

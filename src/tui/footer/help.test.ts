@@ -96,3 +96,9 @@ test("menu/projects precede help; closing never reveals the removed question foo
   f.question = null;
   expect(plain(liveRows(f).rows)).not.toMatch(/help|esc|ctrl|↑↓/);
 });
+
+test("Vim help lists Shift shortcuts without Space prefixes", () => {
+  const text = plain(helpLines(commands, false, 100, true));
+  for (const label of ["Shift+H / Shift+L", "Shift+A/T/Q/P", "Shift+U/M/E/F", "Shift+B/R/S", "Shift+V/X", "Shift+/"]) expect(text).toContain(label);
+  expect(text).not.toContain("Space");
+});

@@ -34,12 +34,12 @@ const EDITING: HelpEntry[] = [
 
 const VIM: HelpEntry[] = [
   { label: "i / Esc", description: "enter Insert / return to Normal while preserving the draft" },
-  { label: "Space h / Space l", description: "previous / next project tab (gT / gt also work)" },
+  { label: "Shift+H / Shift+L", description: "previous / next project tab (gT / gt also work)" },
   { label: "q", description: "back from pages and menus; Insert mode still types q" },
-  { label: "Space a/t/q/p", description: "Agents / Tasks / Questions / Images" },
-  { label: "Space u/m/e/f", description: "Accounts / Models / Effort / Fast" },
-  { label: "Space b/?/r/s", description: "Projects / Help / Refresh / Stop" },
-  { label: "Space v/x", description: "attach clipboard image / remove last draft image" },
+  { label: "Shift+A/T/Q/P", description: "Agents / Tasks / Questions / Images" },
+  { label: "Shift+U/M/E/F", description: "Accounts / Models / Effort / Fast" },
+  { label: "Shift+B/R/S · ?", description: "Projects / Refresh / Stop · Help (Shift+/)" },
+  { label: "Shift+V/X", description: "attach clipboard image / remove last draft image" },
   { label: "j/k · gg/G", description: "move down/up or jump to the first/last row" },
   { label: "h/l", description: "focus list/details in work views" },
   { label: ":", description: "type any slash command and arguments; Tab completes a unique command" },
