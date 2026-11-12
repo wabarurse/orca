@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { installBinary } from "../../../scripts/install";
+import { installBinary } from "./installation";
 import { open } from "../data/transcripts/transcript";
 import { agentCommand, slug, tmuxSocket } from "../tmux/runner";
 import { assertLayout, paths, writeProjectState, repositoryBinding } from "../../config";
@@ -239,7 +239,7 @@ test("development CLI re-entry uses absolute Bun without Bun on PATH", async () 
 test("local install script builds from its checkout, upgrades fixture HOME, and leaves state untouched", async () => {
   const sentinel = join(state, ".runtime", "config.toml");
   writeFileSync(sentinel, "# fixture state, do not edit\n");
-  const result = await exec([process.execPath, join(source, "scripts/install.ts")], root);
+  const result = await exec([process.execPath, join(source, "src/cli/scripts/install.ts")], root);
   expect(result.code).toBe(0);
   expect(result.out).toContain("installed");
   expect((await exec([installed, "version"])).out).toMatch(new RegExp(`^${pkg.version.replaceAll(".", "\\.")} \\([^)]+\\)\\n$`));

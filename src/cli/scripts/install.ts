@@ -2,13 +2,12 @@
 // Local-only installer. Never touches ORCA_HOME, auth, projects, or shell files.
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { prepareArtifact, withInstallation } from "../src/core/install/installation";
-export { installBinary } from "../src/core/install/installation";
+import { prepareArtifact, withInstallation } from "../../core/install";
 
 async function main() {
   if (process.argv.length !== 2) throw new Error("usage: bun run install:local (installs to $HOME/.local/bin/orca)");
   if (typeof Bun.isStandaloneExecutable !== "boolean") throw new Error("bun 1.4.2 or newer is required to build orca");
-  const app = resolve(import.meta.dir, "..");
+  const app = resolve(import.meta.dir, "../../..");
   const target = await withInstallation(homedir(), false, async installation => {
     const artifact = await prepareArtifact(app);
     const build = Bun.spawn([process.execPath, "run", "build"], { cwd: app, stdin: "inherit", stdout: "inherit", stderr: "inherit" });

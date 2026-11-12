@@ -10,8 +10,8 @@
     "dev": "bun src/cli/main.ts",
     "check": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun scripts/build.ts",
-    "install:local": "bun scripts/install.ts"
+    "build": "bun src/cli/scripts/build.ts",
+    "install:local": "bun src/cli/scripts/install.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",

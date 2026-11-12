@@ -13,9 +13,9 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 // orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
 import { ghTaskPR } from "../core/data/tasks";
-import { pullHarness } from "../core/install";
+import { cleanStorage, pull } from "./scripts";
 import pkg from "../../package.json";
-import { cleanStorage, runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
+import { runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
 import { afterExit } from "../exec";
 import { put } from "../core/data/inbox";
 import { directories, repoHere, validProjectName } from "../core/data/projects";
@@ -163,14 +163,7 @@ switch (cmd) {
   }
   case "pull":
     if (rest.length) usage("pull takes no arguments; it only updates ~/.orca/.runtime/app");
-    try {
-      const binary = await pullHarness();
-      await activateInstalled(binary);
-    }
-    catch (error) {
-      console.error(`orca pull: ${error instanceof Error ? error.message : String(error)}\nthe installed executable was not replaced on failure; the harness checkout/dependencies may have advanced. inspect the error and retry after resolving it.`);
-      process.exitCode = 1;
-    }
+    await pull();
     break;
   case "mcp": await runMcp(rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }); break;
   case "session":

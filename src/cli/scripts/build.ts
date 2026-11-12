@@ -3,10 +3,10 @@
 import { constants } from "node:fs";
 import { copyFile, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { owned, prepareArtifact } from "../src/core/install/installation";
-import { legacy } from "../src/config/legacy";
+import { owned, prepareArtifact } from "../../core/install";
+import { legacy } from "../../config";
 
-const app = resolve(import.meta.dir, "..");
+const app = resolve(import.meta.dir, "../../..");
 const artifact = await prepareArtifact(app);
 const compatibilityArtifact = join(app, "dist", legacy.executable);
 const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: app }).stdout.toString().trim();

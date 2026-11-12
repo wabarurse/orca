@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { paths } from "../config";
+import { paths } from "../../config";
 import { cleanStorage } from "./clean";
 
 let home: string;

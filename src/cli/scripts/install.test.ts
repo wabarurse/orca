@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installBinary } from "./install";
+import { installBinary } from "../../core/install/installation";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -102,12 +102,16 @@ test("refuses directories and group/world-writable files rather than replacing t
 test("script build failure leaves a previous installation untouched", async () => {
   const { root, home, source, target } = await fixture();
   await installBinary(source, home);
-  const app = join(root, "app"); await mkdir(join(app, "scripts"), { recursive: true });
-  await mkdir(join(app, "src", "core", "install"), { recursive: true });
-  await writeFile(join(app, "src", "core", "install", "installation.ts"), await readFile(join(import.meta.dir, "../src/core/install/installation.ts")));
-  await writeFile(join(app, "scripts", "install.ts"), await readFile(join(import.meta.dir, "install.ts")));
+  // The script and what it imports, laid out as in the checkout.
+  const app = join(root, "app"), repo = join(import.meta.dir, "../../..");
+  for (const file of ["src/cli/scripts/install.ts", "src/core/proc.ts", "src/core/process-completion.ts", "src/core/process-signals.ts",
+    ...["index.ts", "installation.ts", "pull.ts", "storage.ts", "git-credentials.ts"].map(name => `src/core/install/${name}`)]) {
+    await mkdir(join(app, file, ".."), { recursive: true });
+    await writeFile(join(app, file), await readFile(join(repo, file)));
+  }
+  await cp(join(repo, "src/config"), join(app, "src/config"), { recursive: true });
   await writeFile(join(app, "package.json"), JSON.stringify({ scripts: { build: "exit 18" } }));
-  const child = Bun.spawn([process.execPath, join(app, "scripts", "install.ts")], {
+  const child = Bun.spawn([process.execPath, join(app, "src/cli/scripts/install.ts")], {
     cwd: root, env: { HOME: home, ORCA_HOME: join(root, "state"), PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe",
   });
   const err = await new Response(child.stderr).text();

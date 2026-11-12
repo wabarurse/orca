@@ -1,10 +1,10 @@
 import { join } from "node:path";
-import { conversationIds, paths } from "../config";
-import { pruneBuildScratch } from "../core/install";
-import { cleanup } from "../core/tmux";
-import { listVerifications, pruneSettledProcesses } from "../core/data/processes";
-import { workspaces } from "../core/data/projects";
-import { pruneProjectOutputs } from "../core/tools/bash";
+import { conversationIds, paths } from "../../config";
+import { pruneBuildScratch } from "../../core/install";
+import { cleanup } from "../../core/tmux";
+import { listVerifications, pruneSettledProcesses } from "../../core/data/processes";
+import { workspaces } from "../../core/data/projects";
+import { pruneProjectOutputs } from "../../core/tools/bash";
 
 /** The caller selects preview or deletion explicitly; only owned disposable resources qualify. */
 export async function cleanStorage(apply: boolean) {
