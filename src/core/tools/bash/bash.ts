@@ -46,9 +46,12 @@ export const bash: Tool = {
     execution.assertActive(ctx.project, epoch);
     const command = String(input.command ?? "");
     if (SUDO.test(command)) return "refused: sudo is not allowed";
-    const timeout = input.timeout_ms;
-    if (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 0 || timeout > MAX_TIMEOUT_MS || (timeout === 0 && input.background !== true && input.yield_ms === undefined))) throw new Error("timeout_ms must be 1–600000; zero requires a supervised background command");
-    const timeoutMs = timeout ?? MAX_TIMEOUT_MS;
+    const supervised = input.background === true || input.yield_ms !== undefined;
+    const given = input.timeout_ms;
+    if (given !== undefined && (typeof given !== "number" || !Number.isFinite(given) || given < 0)) throw new Error("timeout_ms must be a number from 1 to 600000; zero requires a supervised background command");
+    // An over-long or foreground-zero timeout means "as long as allowed": run with the maximum rather than
+    // refusing the command and costing a round trip (92 such refusals in a week of traces).
+    const timeoutMs = given === undefined ? MAX_TIMEOUT_MS : given === 0 ? (supervised ? 0 : MAX_TIMEOUT_MS) : Math.min(MAX_TIMEOUT_MS, Math.max(1, Math.floor(given)));
     const requested = input.max_output_bytes;
     if (requested !== undefined && (typeof requested !== "number" || !Number.isSafeInteger(requested) || requested < 512 || requested > 65536)) throw new Error("max_output_bytes must be an integer from 512 to 65536");
     ctx.signal?.throwIfAborted();

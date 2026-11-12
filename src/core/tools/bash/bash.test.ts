@@ -34,10 +34,14 @@ test("no exit line on success", async () => {
 });
 
 test("invalid timeouts are rejected before starting a command", async () => {
-  for (const timeout_ms of [null, 0, -1, 1.5, 600001, NaN, Infinity, "1000", true]) {
+  for (const timeout_ms of [null, -1, NaN, Infinity, "1000", true]) {
     await expect(bash.run({ command: "touch invalid-timeout-started", timeout_ms }, ctx(home))).rejects.toThrow("timeout_ms must be");
   }
   expect(await Bun.file(join(home, "invalid-timeout-started")).exists()).toBe(false);
+});
+
+test("an over-long, fractional or foreground-zero timeout runs with a usable limit instead of being refused", async () => {
+  for (const timeout_ms of [0, 1500.5, 600001, 86_400_000]) expect(await bash.run({ command: "echo ran", timeout_ms }, ctx(home))).toBe("ran\n");
 });
 
 test("timeout kills the shell and child, preserves partial output and reports failure", async () => {

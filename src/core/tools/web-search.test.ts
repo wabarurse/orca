@@ -16,6 +16,8 @@ test("all role allowlists include search and enforce scoped capabilities", () =>
   expect(Object.keys(registry)).toEqual(expect.arrayContaining(["read", "write", "edit", "bash", "process", "context", "remember", "skill", "runtime"]));
   expect(registry.web_search).toBe(web_search);
   expect(toolsFor.worker).toContain("write");
+  // The working brief is the orchestrator's: workers and reviewers were offered updates they could never make.
+  expect(toolsFor.worker).not.toContain("context"); expect(toolsFor.reviewer).not.toContain("context"); expect(toolsFor.orchestrator).toContain("context");
   expect(toolsFor.reviewer).not.toContain("write");
   expect(toolsFor.worker).not.toContain("spawn");
   for (const tools of Object.values(toolsFor)) expect(tools).toContain("web_search");
