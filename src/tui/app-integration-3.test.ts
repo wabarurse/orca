@@ -273,8 +273,8 @@ test('a click on a link opens it, a drag over it selects; the work page is selec
     await app.onKey({ name: 'o', ctrl: true });
     expect(copied).toEqual(['LINKED', 'Projects', 'Projects']);
     // A key puts the highlight away and still does its own job.
-    await app.onKey({ name: 'escape' }); await settle();
-    expect(term.display.screen().some(row => row.includes('go LINKED now'))).toBe(true);
+    await app.onKey({ name: 'escape' });
+    await until(() => term.display.screen().some(row => row.includes('go LINKED now')));
     await app.onKey({ name: 'o', ctrl: true });
     expect(copied).toHaveLength(3);
   } finally { app.quit(); await running; }
