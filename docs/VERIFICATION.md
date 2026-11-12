@@ -22,7 +22,7 @@ boots a device in a private macOS simulator set.
 `run` accepts a shell command and returns the existing supervised process handle.
 Completion arrives through the existing inbox with exit status and output. Run
 apps via their foreground executable so the supervisor owns their process group.
-Use `process` to inspect output or stop a command. `ORCA_ARTIFACTS` points to the
+Use `process` to inspect output or stop a command. Outside a session every command's `ORCA_ARTIFACTS` is `tool-outputs/evidence/<agent>` in the project (`evidenceDirectory`). In a session `ORCA_ARTIFACTS` points to the
 retained evidence directory. Local temporary files and XDG caches use disposable
 session storage. Configure other tool-specific caches in that directory too.
 

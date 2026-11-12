@@ -75,6 +75,7 @@ Rules:
 - Structured task inbox: `src/core/data/tasks/tasks.ts` persists authorized tasks in per-project `tasks.json` (UUIDs, stages, PR identity/head, exact runs, attention, retained merge history). `spawn(prompt, branch, taskId, role)` without a taskId reuses the branch's open task or registers one (`taskForBranch`), so no agent runs untracked. Retries, review/CI corrections and fixes to the same unmerged PR keep its ID and branch, including after a ready report; refresh PR state before resuming and revalidate readiness after changes. Separate follow-ups get new IDs and need new branches after PR publication. Transcripts/windows/worktrees remain branch-keyed. No prose-derived state or task scheduling. See `docs/TASK_INBOX.md` for schema, query API and lifecycle producers.
 - Agents only know their cwd. Never read the host or another worker's worktree.
 - Tool results are byte-capped when appended to the transcript.
+- Evidence has one home: every supervised command runs with `ORCA_ARTIFACTS` set to `projects/<id>/tool-outputs/evidence/<agent>` (`evidenceDirectory` in `core/data/processes/launch.ts`; a sandbox command sets its own), which `read` can open and the tool-output pruning covers. Agents must not create folders elsewhere in the home.
 - Prefer `Bun.file`, `Bun.$`, and `bun:test` over npm packages.
 
 
