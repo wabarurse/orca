@@ -265,7 +265,10 @@ test('a click on a link opens it, a drag over it selects; the work page is selec
     expect(copied).toEqual(['LINKED']); expect(opened).toHaveLength(1);
 
     await app.onKey({ name: 'b', ctrl: true });
-    await until(() => term.display.screen().some(row => row.includes('Projects')));
+    // The tab line moves while the page's lists load; locate the word once two looks agree.
+    let seen = '';
+    await until(() => { const now = term.display.screen().join('\n'), settled = now === seen && now.includes('Projects'); seen = now; return settled; });
+    await settle();
     const tab = find('Projects');
     drag(tab.y, tab.x, tab.x + 7); await settle();
     expect(copied).toEqual(['LINKED', 'Projects']);
