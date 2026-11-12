@@ -99,7 +99,7 @@ test("tracked spawn never treats runner return as a started worker, and actual s
   const tool = makeSpawn({ async running() { return []; }, async start(o) { starts++; run = o.run!; }, async stop() {} });
   const ctx = { project, role: "orchestrator" as const, cwd: home };
   expect(await tool.run({ branch: "one-off", prompt: "do it" }, ctx)).toBe("worker-one-off");
-  expect(await allTasks(project)).toHaveLength(0);
+  expect((await allTasks(project)).map(x => [x.name, x.branch])).toEqual([["do it", "one-off"]]);
   const t = await registerTask(project, input());
   await tool.run({ taskId: t.id, branch: t.branch, prompt: "do it" }, ctx);
   expect(starts).toBe(2); expect((await getTask(project, t.id)).status).toBe("queued");

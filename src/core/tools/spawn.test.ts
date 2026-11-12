@@ -356,3 +356,18 @@ test("empty launch transaction serializes a racing STOP; failed commit leaves ol
   });
   expect((await open(t.path).chain()).map(m => m.content)).toEqual(["resume", "[orchestrator] STOP racing"]);
 });
+
+test("a spawn without a taskId registers a task for the branch, and the next one on that branch reuses it", async () => {
+  const { allTasks, startTaskRun } = await import("../data/tasks/tasks");
+  mkdirSync(paths.project("auto"), { recursive: true });
+  const runner: Runner = {
+    async start(opts) { await startTaskRun(opts.project, opts.run!); await stopTaskRun(opts.project, opts.run!, "waiting", "Test worker finished"); },
+    async stop() {}, async running() { return []; },
+  };
+  const tool = realSpawn(runner), octx: ToolContext = { project: "auto", role: "orchestrator", cwd: "/" };
+  expect(await tool.run({ prompt: "Fix the trace page\n\nDetails follow.", branch: "fix/trace" }, octx)).toBe("worker-fix-trace");
+  expect(await tool.run({ prompt: "Address the review", branch: "fix/trace" }, octx)).toBe("worker-fix-trace");
+  expect(await tool.run({ prompt: "Long brief", branch: "feat/named", title: "Minter traces" }, octx)).toBe("worker-feat-named");
+  const tasks = await allTasks("auto");
+  expect(tasks.map(t => [t.name, t.branch, t.runs.length])).toEqual([["Fix the trace page", "fix/trace", 2], ["Minter traces", "feat/named", 1]]);
+});

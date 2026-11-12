@@ -3,7 +3,7 @@ import { consume, content, pending, put } from "../data/inbox";
 import { imageContent, validateRefs } from "../data/images";
 import type { ImageRef } from "../../protocol";
 import { delay, launchIdentity, publishLaunch, readRun } from "../tmux";
-import { getTask, invalidateTaskBranch, prepareTaskRun, stopTaskRun, taskForRun } from "../data/tasks";
+import { getTask, invalidateTaskBranch, prepareTaskRun, stopTaskRun, taskForBranch, taskForRun } from "../data/tasks";
 import { paths, repositoryBinding } from "../../config";
 import { local, sessionId, type Runner } from "../tmux";
 import { open } from "../data/transcripts";
@@ -50,11 +50,12 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
   return {
     spec: {
       name: "spawn",
-      description: "Delegate an outcome whose intermediate work would grow coordinator context: many reads, long outputs or repeated trials/checks, regardless of task type. Keep bounded actions with short results direct when delegation adds overhead. This does not authorize commit, review, publication or CI. New work starts with a fresh brief, not the orchestrator transcript. Branch is optional: a new work branch is allocated if omitted. Reuse an existing branch for feedback on the same unmerged result. If that branch's agent of the same role is still live (even after reporting, e.g. supervising a dev server), the prompt is delivered to its inbox and it continues in its current run; no new agent starts. Set fresh=true to reset only the idle worker's model context while retaining workspace and full history. taskId is optional; supply it to associate an assignment with a task. Reviewer role is an explicit independent assessment, not an automatic next stage. Never reuse a merged branch.",
+      description: "Delegate an outcome whose intermediate work would grow coordinator context: many reads, long outputs or repeated trials/checks, regardless of task type. Keep bounded actions with short results direct when delegation adds overhead. This does not authorize commit, review, publication or CI. New work starts with a fresh brief, not the orchestrator transcript. Branch is optional: a new work branch is allocated if omitted. Reuse an existing branch for feedback on the same unmerged result. If that branch's agent of the same role is still live (even after reporting, e.g. supervising a dev server), the prompt is delivered to its inbox and it continues in its current run; no new agent starts. Set fresh=true to reset only the idle worker's model context while retaining workspace and full history. Every assignment is a task on the Tasks page: without taskId the branch's open task is reused, or one is created from title. Reviewer role is an explicit independent assessment, not an automatic next stage. Never reuse a merged branch.",
       input_schema: {
         type: "object",
         properties: {
           attachments: attachmentSchema,
+          title: { type: "string", description: "Short name for the task created when the branch has none; defaults to the prompt's first line." },
           taskId: { type: "string", description: "Registered authorized task UUID. Keep it for retries, feedback and fixes to the same unmerged PR, even after CI or a ready report. Register a new ID only for separate work." },
           prompt: { type: "string", description: "Focused outcome through validation, acceptance criteria, authorized scope, relevant preferences/instructions, latest corrections, prior attempts and evidence references; not raw conversation or logs. Request a concise outcome, checked revision, validation, evidence references, uncertainty and decisions needed; full detail stays in artifacts." },
           fresh: { type: "boolean", description: "Start with fresh model context on an idle existing branch; retain workspace and original transcript." },
@@ -103,7 +104,14 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
       if (other) return `refused: ${other} is still running on ${branch} and one agent works on a branch at a time, so this ${role} prompt was not delivered; send to ${other} with inbox instead, or spawn the ${role} again after ${other} reports and exits`;
       if (busy.length) return deliver(runner, id, prompt, branch, role, checked, ctx, attachments);
 
-      return launch(runner, prompt, branch, role, input.taskId as string | undefined, { ...ctx, executionEpoch: epoch, fresh: input.fresh === true }, attachments, reviewMode);
+      // No work runs untracked: without a taskId the branch's open task is used, or one is registered from the brief.
+      let taskId = input.taskId as string | undefined;
+      if (!taskId) {
+        const line = (typeof input.title === "string" && input.title.trim() || prompt.split("\n").find(l => l.trim()) || branch).replace(/\s+/g, " ").trim();
+        try { taskId = (await taskForBranch(ctx.project, { name: line.slice(0, 100), summary: prompt.replace(/\s+/g, " ").slice(0, 400), branch })).id; }
+        catch (error) { return `refused: no task could be created for ${branch}: ${error instanceof Error ? error.message : String(error)}`; }
+      }
+      return launch(runner, prompt, branch, role, taskId, { ...ctx, executionEpoch: epoch, fresh: input.fresh === true }, attachments, reviewMode);
       });
     },
   };

@@ -219,6 +219,11 @@ export async function registerTask(project: string, input: { id?: string; name: 
     event(t, "registered"); s.tasks.push(t); return t;
   });
 }
+/** The branch's open task, registered from the brief when it has none: what spawn tracks when the caller names no task. */
+export async function taskForBranch(project: string, input: { name: string; summary: string; branch: string }): Promise<Task> {
+  const open = (await read(project)).tasks.filter(t => t.branch === input.branch && !t.archive).at(-1);
+  return open ?? registerTask(project, { ...input, authorized: true });
+}
 /** Persist ownership before dispatch; never assert a process started before confirmation. */
 export async function prepareTaskRun(project: string, id: string, branch: string, run: Pick<TaskRun, "id" | "agent" | "role" | "reviewMode">): Promise<void> {
   await update(project, s => {
