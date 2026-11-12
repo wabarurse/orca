@@ -56,6 +56,14 @@ test("sixteen legacy unknown records release command slots without changing thei
   await expect(readProcess(project, old[0]!.id)).rejects.toThrow();
 });
 
+test("every command gets an evidence folder inside the project's tool outputs", async () => {
+  const p = record({ state: "starting", pid: undefined, supervisorPid: undefined, reason: undefined,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), command: 'printf proof > "$ORCA_ARTIFACTS/shot.txt"' });
+  await launchProcess(p, cliCommand(), 0);
+  for (let i = 0; i < 100 && unresolvedProcess(await readProcess(project, p.id)); i++) await Bun.sleep(30);
+  expect(await Bun.file(join(paths.project(project), "tool-outputs", "evidence", "worker-source", "shot.txt")).text()).toBe("proof");
+});
+
 test("OS inspection distinguishes PID reuse, surviving descendants and unavailable inspection", () => {
   const p = record({ pid: 102, supervisorPid: 101 });
   let calls = 0;

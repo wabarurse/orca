@@ -1,11 +1,14 @@
 import { projectIdentity, workspaces } from "../projects";
 import { execution } from "../projects/lifecycle";
-import { open } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
 import { withStorageLock } from "../storage-lock";
 import { makeProcessRoom } from "./retention";
 import { addProcessEvent, listProcesses, liveProcess, unresolvedProcess, processOwner, reconcileProcesses, processDirectory, processOutput, readProcess, saveProcess, type ProcessRecord } from "./store";
+
+/** Where an agent's commands save screenshots, logs and other evidence: inside tool-outputs, so read can open it and clean prunes it. */
+export const evidenceDirectory = (project: string, owner: string) => join(paths.project(project), "tool-outputs", "evidence", owner);
 
 export async function launchProcess(record: ProcessRecord, executable: string[], yieldMs: number, signal?: AbortSignal, admittedEpoch?: string) {
   signal?.throwIfAborted();
@@ -28,10 +31,13 @@ export async function launchProcess(record: ProcessRecord, executable: string[],
     if (!await makeProcessRoom(record.project, records)) throw new Error("process history is full of unsettled or undelivered handles; inspect them with process list");
     await saveProcess(record);
     await Bun.write(join(processDirectory(record.project, record.id), "execution-epoch"), epoch);
+    // Every command gets the same evidence folder, so agents never invent one elsewhere in the home; a sandbox command sets its own.
+    const evidence = evidenceDirectory(record.project, record.owner);
+    await mkdir(evidence, { recursive: true });
     const log = await open(join(processDirectory(record.project, record.id), "supervisor.log"), "a", 0o600);
     try {
       const child = Bun.spawn([...executable, "process-supervisor", "--project", record.project, "--process", record.id], {
-        cwd: record.cwd, env: { ...process.env, ORCA_HOME: paths.root }, detached: true, stdin: "ignore", stdout: log.fd, stderr: log.fd,
+        cwd: record.cwd, env: { ...process.env, ORCA_HOME: paths.root, ORCA_ARTIFACTS: evidence }, detached: true, stdin: "ignore", stdout: log.fd, stderr: log.fd,
       });
       child.unref();
     } catch (error) {
