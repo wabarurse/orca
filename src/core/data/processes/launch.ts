@@ -4,6 +4,7 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
 import { withStorageLock } from "../storage-lock";
+import { makeProcessRoom } from "./retention";
 import { addProcessEvent, listProcesses, liveProcess, unresolvedProcess, processOwner, reconcileProcesses, processDirectory, processOutput, readProcess, saveProcess, type ProcessRecord } from "./store";
 
 export async function launchProcess(record: ProcessRecord, executable: string[], yieldMs: number, signal?: AbortSignal, admittedEpoch?: string) {
@@ -24,7 +25,7 @@ export async function launchProcess(record: ProcessRecord, executable: string[],
       if (current) return current;
     }
     if (records.filter(p => !p.prWatch && unresolvedProcess(p)).length >= 16) throw new Error("project already has 16 active or unresolved commands; inspect status for cleanup blockers");
-    if (records.length >= 512) throw new Error("process history is full; forget terminal handles with process before launching more");
+    if (!await makeProcessRoom(record.project, records)) throw new Error("process history is full of unsettled or undelivered handles; inspect them with process list");
     await saveProcess(record);
     await Bun.write(join(processDirectory(record.project, record.id), "execution-epoch"), epoch);
     const log = await open(join(processDirectory(record.project, record.id), "supervisor.log"), "a", 0o600);

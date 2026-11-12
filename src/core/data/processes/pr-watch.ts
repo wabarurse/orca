@@ -3,6 +3,7 @@ import { paths, readProjectState, writeProjectState } from "../../../config";
 import { projectIdentity, workspaces } from "../projects";
 import { execution } from "../projects/lifecycle";
 import { withStorageLock } from "../storage-lock";
+import { makeProcessRoom } from "./retention";
 import { listProcesses, liveProcess, processDirectory, reconcileProcesses, saveProcess, type ProcessRecord } from "./store";
 
 type PR = { repository: string; number: number };
@@ -21,7 +22,7 @@ export async function registerPRWatch(project: string, watch: NonNullable<Proces
     const existing = records.find(p => p.prWatch && liveProcess(p) && p.watchEpoch === epoch &&
       p.prChecks?.repository === watch.repository && p.prChecks.number === watch.number);
     if (existing) { setPRWatchEnabled(project, watch, true); return { process: existing.id, state: "watching", owner: "orchestrator", reused: true, commandSlot: false }; }
-    if (records.length >= 512) throw new Error("process history is full; forget settled handles before registering more watches");
+    if (!await makeProcessRoom(project, records)) throw new Error("process history is full of unsettled or undelivered handles; inspect them with process list");
     const at = new Date().toISOString(), id = crypto.randomUUID(), cwd = paths.repo(project);
     const workspaceSession = workspaces.own(project, "process", id, { directory: cwd })?.id;
     await saveProcess({ project, id, owner: "orchestrator", role: "orchestrator", incarnation: projectIdentity(project), workspaceSession,
