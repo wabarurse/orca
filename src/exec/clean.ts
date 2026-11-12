@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { conversationIds, paths } from "../config";
 import { pruneBuildScratch } from "../core/install";
-import { cleanManagedWorkspaces } from "../core/tmux";
+import { cleanup } from "../core/tmux";
 import { listVerifications, pruneSettledProcesses } from "../core/data/processes";
 import { workspaces } from "../core/data/projects";
 import { pruneProjectOutputs } from "../core/tools/bash";
@@ -16,7 +16,7 @@ export async function cleanStorage(apply: boolean) {
       if (current.includes(project)) for (const v of await listVerifications(project)) changes.push({ path: v.id, disposition: `verification ${v.state}` });
       // One preview overlay for both: the outputs discovery would register count as registered here too.
       const inspect = async () => {
-        changes.push(...await cleanManagedWorkspaces(project, apply));
+        changes.push(...await cleanup.cleanManagedWorkspaces(project, apply));
         if (current.includes(project)) changes.push(...await pruneProjectOutputs(project, apply));
       };
       await (apply ? inspect() : workspaces.preview(inspect));

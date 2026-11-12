@@ -169,6 +169,24 @@ export function finish(id: string, complete: boolean): void {
     return old;
   });
 }
+/** A deleted conversation owns nothing afterwards: its items lose their records, it leaves every
+ * session, and a session nobody is left in is dropped with its path index. Call before the
+ * conversation's folder goes, while its identity can still be read. */
+export function release(project: string): void {
+  const identity = projectIdentity(project);
+  for (const [key, r] of entries<Resource>(paths.memory, resourcesScope)) {
+    if (r.project === project && r.identity === identity) write<Resource>(paths.memory, resourcesScope, key, () => undefined);
+  }
+  for (const [id, w] of entries<Workspace>(paths.memory, sessions)) {
+    if (!w.members?.some(m => m.project === project && m.identity === identity)) continue;
+    const left = write<Workspace>(paths.memory, sessions, id, old => {
+      if (!old) return old;
+      old.members = old.members.filter(m => !(m.project === project && m.identity === identity));
+      return old.members.length ? old : undefined;
+    });
+    if (!left) write<string>(paths.memory, "workspace-paths", w.path, old => old === id ? undefined : old);
+  }
+}
 export function forget(id: string, r: Resource): void {
   const key = JSON.stringify([r.identity, r.kind, r.key]);
   write<Resource>(paths.memory, resourcesScope, key, old => {

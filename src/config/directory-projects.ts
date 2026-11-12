@@ -75,6 +75,26 @@ export function updateDirectory(file: string, id: string, patch: { name?: string
     return old;
   });
 }
+/** A deleted conversation leaves its folder; the folder itself stays so a new conversation can start there. */
+export function detachConversation(file: string, conversation: string): void {
+  updateState<Catalog>(file, scope, key, old => {
+    if (!old) return old;
+    for (const p of old.projects) { p.conversations = p.conversations.filter(id => id !== conversation); delete p.incarnations[conversation]; }
+    if (old.open) old.open = old.open.filter(id => id !== conversation);
+    if (old.selected === conversation) delete old.selected;
+    return old;
+  });
+}
+/** Only an empty folder record can go: its conversations are deleted first, one by one. */
+export function removeDirectory(file: string, id: string): void {
+  updateState<Catalog>(file, scope, key, old => {
+    const project = old?.projects.find(p => p.id === id);
+    if (!project) return old;
+    if (project.conversations.length) throw new Error("project still has conversations");
+    old!.projects = old!.projects.filter(p => p.id !== id);
+    return old;
+  });
+}
 export function saveOpenConversations(file: string, open: string[], selected?: string): void {
   updateState<Catalog>(file, scope, key, old => ({ ...(old ?? empty()), open: [...new Set(open)], selected }));
 }
