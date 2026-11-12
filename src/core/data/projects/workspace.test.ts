@@ -8,7 +8,7 @@ import { ensureProject, createOrchestrator } from "../../agent-loop/orc/orchestr
 import { ensureWorktree, removeWorktree } from "../../tmux/runner";
 import { deleteProject, restoreConversations } from "../../../tui/commands/project";
 import { listProjects, projectFor, repoHere, remoteOf } from "./registry";
-import { assertMainCheckout, removeProjectWorktrees } from "./workspace";
+import { assertMainCheckout } from "./workspace";
 import { conversationTurnLock } from "./state";
 import { lockOwner, tryStorageLock } from "../storage-lock";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
@@ -17,6 +17,7 @@ import { registerTask, observeTaskPR } from "../tasks";
 import { mergeWatcher } from "../../tmux/merges";
 
 let temp: string, repo: string, previous: string | undefined;
+const quiet = { live: async () => [], stop: async () => {}, kill: async () => {} };
 const git = async (cwd: string, ...args: string[]) => {
   const result = await Bun.$`git -C ${cwd} ${args}`.quiet();
   return result.stdout.toString().trim();
@@ -53,7 +54,6 @@ test("ordinary directories work without Git, reopen by exact directory, and neve
     expect(await ensureWorktree("plain", "notes-worker")).toBe(folder);
     expect(paths.worktree("plain", "notes-worker")).toBe(folder);
     await removeWorktree("plain", "notes-worker");
-    await removeProjectWorktrees("plain");
     expect(await Bun.file(join(folder, "notes.txt")).text()).toBe("keep this");
     expect(existsSync(join(folder, ".git"))).toBe(false);
     const provider = fakeProvider([[text("done")]]);
@@ -82,8 +82,9 @@ test("Finder metadata beside a clean worktree is removed without deleting its br
   await ensureProject("finder", repo);
   const tree = await ensureWorktree("finder", "feat/clean");
   await Bun.write(join(paths.worktrees("finder"), ".DS_Store"), "Finder metadata");
-  await removeProjectWorktrees("finder");
+  await deleteProject("finder", quiet);
   expect(existsSync(tree)).toBe(false);
+  expect(existsSync(paths.worktrees("finder"))).toBe(false);
   expect(await git(repo, "branch", "--list", "feat/clean")).toContain("feat/clean");
 });
 
@@ -103,11 +104,12 @@ test("a directory or link named .DS_Store is preserved and never treated as disp
   await ensureProject("finder", repo);
   const root = paths.worktrees("finder"); mkdirSync(root, { recursive: true });
   const metadata = join(root, ".DS_Store"); symlinkSync(repo, metadata);
-  await expect(removeProjectWorktrees("finder")).rejects.toThrow("unexpected file");
+  await expect(deleteProject("finder", quiet)).rejects.toThrow("unexpected file");
   expect(existsSync(join(repo, ".git"))).toBe(true);
   rmSync(metadata); mkdirSync(metadata);
   await Bun.write(join(metadata, "draft"), "keep");
-  await expect(removeProjectWorktrees("finder")).rejects.toThrow("cannot inspect worktree");
+  await expect(deleteProject("finder", quiet)).rejects.toThrow("cannot inspect worktree");
+  expect(existsSync(paths.project("finder"))).toBe(true);
   expect(await Bun.file(join(metadata, "draft")).text()).toBe("keep");
 });
 

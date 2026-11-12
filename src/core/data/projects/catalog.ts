@@ -1,7 +1,7 @@
 // Directory projects and conversation membership are separate from runtime/storage IDs.
 import { validateProjectDirectory } from "./workspace";
 import { existsSync } from "node:fs";
-import { loadConfig, paths, attachDirectory, directoryProject, inheritedSettings, projectCatalog, readProjectState, saveOpenConversations, updateDirectory, writeProjectState, type DirectoryProject } from "../../../config";
+import { loadConfig, paths, attachDirectory, detachConversation, removeDirectory, directoryProject, inheritedSettings, projectCatalog, readProjectState, saveOpenConversations, updateDirectory, writeProjectState, type DirectoryProject } from "../../../config";
 import { repositoryBinding } from "../../../config";
 import { listProjects, displayName, orderedProjects } from "./registry";
 import type { ProjectEntry } from "../../../protocol";
@@ -15,6 +15,9 @@ export function attachConversation(conversation: string): DirectoryProject | und
   const defaults = Object.fromEntries(inheritedSettings.map(key => [key, readProjectState(conversation, key)]).filter(([, value]) => value !== undefined));
   return attachDirectory(paths.memory, conversation, binding.directory, binding.branch, defaults);
 }
+/** Deleting a conversation removes its membership; deleting a folder removes its (then empty) record. */
+export const detach = (conversation: string) => detachConversation(paths.memory, conversation);
+export const removeFolder = (id: string) => removeDirectory(paths.memory, id);
 export function parentProject(conversation: string): DirectoryProject | undefined {
   return directoryProject(paths.memory, conversation);
 }
