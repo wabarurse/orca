@@ -6,6 +6,7 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 // orca msg <project> <text>        drop a message in the orchestrator's inbox
 // orca stop <project>             stop the project's orchestrator daemon (its tmux window); the TUI restarts it on its next open
 // orca pull                       update the dedicated harness clone from origin/main
+// orca mcp [test|login|logout] [name]                 the MCP servers in ~/.orca/mcp.json (see docs/MCP.md)
 // orca session ls|push|pull|export|import|recover   move a conversation between machines (see docs/SESSION_TRANSFER.md)
 // orca version                    print the package.json version
 // orca agent --project p --role r [--branch b] [--run id]   internal: what spawn (and the TUI, for the orchestrator daemon) runs
@@ -28,10 +29,11 @@ import { createClientOrchestrator, daemonKeeper, ensureDaemon, stopDaemon } from
 import type { Role } from "../protocol";
 import { App } from "../tui";
 import { realEnv, runSession } from "./session";
+import { runMcp } from "./mcp";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "session"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
+if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "session", "mcp"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -50,6 +52,7 @@ function usage(error?: string): never {
   orca organize                   group saved folders by directory (requires orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
+  orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
   orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
@@ -169,6 +172,7 @@ switch (cmd) {
       process.exitCode = 1;
     }
     break;
+  case "mcp": await runMcp(rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }); break;
   case "session":
     process.exitCode = await runSession(rest, realEnv());
     break;

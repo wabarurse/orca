@@ -22,6 +22,7 @@ Layout 3 keeps the public home small and separates original evidence from rebuil
   worktrees/
     phoebe--3f2a9c1e/          # worker checkouts: one folder per repository and conversation
       fix-login/               # one Git worktree per task branch; removed when its work is merged or closed
+  mcp.json                     # your MCP servers; edit by hand (docs/MCP.md)
   memory.sqlite                # project metadata, facts, working briefs, ledger/index
   .runtime/
     config.toml                # global configuration and pinned projects

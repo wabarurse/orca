@@ -88,6 +88,8 @@ export const paths = {
   get root() { return root(); },
   get config() { return join(root(), ".runtime", "config.toml"); },
   get memory() { return join(root(), "memory.sqlite"); },
+  /** The user's MCP servers: one readable file they edit by hand (core/mcp/config.ts). */
+  get mcp() { return join(root(), "mcp.json"); },
   get runtime() { return join(root(), ".runtime"); },
   runtimeProject: (name: string) => join(root(), ".runtime", "projects", name),
   /** The socket of orca's own tmux server, so a stale user server (started from a since-moved directory) cannot break agent windows. */
