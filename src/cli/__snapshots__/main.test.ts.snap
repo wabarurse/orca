@@ -10,7 +10,6 @@ exports[`offline CLI usage and owned errors are lowercase without changing suppl
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
-  orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
   orca reload                     apply the installed build to running orchestrators after their current turns
@@ -31,7 +30,6 @@ usage:
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
-  orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
   orca reload                     apply the installed build to running orchestrators after their current turns

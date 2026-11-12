@@ -76,31 +76,6 @@ export async function allTasksLocked(project: string): Promise<Task[]> {
   projectId(project);
   return ledgerTransaction(project, validateTask, store => store.tasks);
 }
-/** Session import: validate a bundle's task records as the ledger would, without touching any store. */
-export function validateSessionTasks(raw: unknown): Task[] {
-  check(object(raw) && raw.version === 1 && Array.isArray(raw.tasks), "unsupported task file");
-  const ids = new Set<string>(), runs = new Set<string>();
-  for (const task of raw.tasks) {
-    validateTask(task);
-    check(!ids.has(task.id.toLowerCase()), "duplicate task id");
-    ids.add(task.id.toLowerCase());
-    for (const run of task.runs) { check(!runs.has(run.id), "duplicate run id"); runs.add(run.id); }
-  }
-  return raw.tasks;
-}
-/** Session import (core/session): the caller owns the project lock. Applies merged records in one ledger transaction: a task
- * already stored keeps its project-local `number`, a new one is numbered on save. Nothing is started or consumed. */
-export async function applySessionTasks(project: string, merged: Task[]): Promise<void> {
-  projectId(project);
-  ledgerTransaction(project, validateTask, store => {
-    const at = new Map(store.tasks.map((t, i) => [t.id.toLowerCase(), i]));
-    for (const task of merged) {
-      const next = structuredClone(task), i = at.get(task.id.toLowerCase());
-      if (i === undefined) { delete next.number; store.tasks.push(next); }
-      else { next.number = store.tasks[i]!.number; store.tasks[i] = next; }
-    }
-  });
-}
 /** Reads never wait for the project lock: an existing ledger is one consistent SQLite (WAL) snapshot. Only a project
  * without a ledger yet takes the lock, since its first read imports the legacy file (a write). */
 async function read(project: string): Promise<Store> {

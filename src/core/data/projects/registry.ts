@@ -26,7 +26,7 @@ export async function displayName(project: string): Promise<string> {
   return name?.trim() || project;
 }
 
-/** The trimmed display name, or an error: 1-40 printable characters. The one rule for /rename and session transfer. */
+/** The trimmed display name, or an error: 1-40 printable characters. The one rule for /rename. */
 export function validDisplayName(name: string): string {
   if (typeof name !== "string") throw new Error("names are 1-40 printable characters");
   name = name.trim();

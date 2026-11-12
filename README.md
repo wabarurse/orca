@@ -37,8 +37,6 @@ This builds the app in `~/.orca/.runtime/app`, installs `~/.local/bin/orca`, and
 
 Run `orca pull` from any directory to update the global installation and reload running orchestrators after their current turns finish. Reopen existing TUIs for interface updates; workers and reviewers finish on their loaded builds. Progress is in `~/.orca/.runtime/updates.log`. When upgrading from a version that predates automatic reloads, run `orca reload` once after the first pull. See [update behavior and recovery](docs/REFERENCE.md#explicit-updates-orca-pull).
 
-To move a conversation to another machine, use `orca session push|pull <project> <host>` (ssh) or `orca session export|import <file>`: transcripts, tasks, questions and images move whole; diverged histories are refused rather than merged or overwritten. No provider state exists to move, so the first request after a move is a prompt-cache miss. See [docs/SESSION_TRANSFER.md](docs/SESSION_TRANSFER.md).
-
 See the [install details](docs/REFERENCE.md#2-install-once) to inspect the script first, skip shell changes, or install manually.
 
 Existing homes are refused without modification. There is no automatic upgrade to layout 3: preserve the stopped old home and initialize a fresh one as described in [home layout and fresh setup](docs/ORCA_HOME.md). The historical migration script only produces layout 2.

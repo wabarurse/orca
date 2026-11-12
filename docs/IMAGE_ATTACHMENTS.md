@@ -60,11 +60,9 @@ malicious local software.
 Image bytes are saved atomically **before** references are published. A reference
 contains a random image UUID, SHA-256, and a scope derived from the project's
 stable `sessionId` (`projects/.conversations/<id>/session.json`, minted at the first image save
-or session export, never changed by `/rename`), so references stay valid when a
-project moves between machines (docs/SESSION_TRANSFER.md). Refs written before
+never changed by `/rename`). Refs written before
 this change carry the older scope derived from the folder id and its conversation identity;
-they are still accepted for reading in their own project (and a session export
-refuses them, see docs/SESSION_TRANSFER.md). Only that project's validated local image can be
+they are still accepted for reading in their own project. Only that project's validated local image can be
 resolved; arbitrary paths/URLs, cross-project references, changed bytes, and
 symlinked image files/directories are refused. Saved inbox/transcript records
 contain references and labels, **never data URIs or raw image bytes**.
