@@ -1,9 +1,9 @@
 // Synthetic, isolated idle CPU probe; never runs model or GitHub requests.
-// Usage: bun scripts/benchmark-idle.ts [source-checkout]
+// Usage: bun evals/idle-cpu/benchmark.ts [source-checkout]
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-const source = process.argv[2] ?? new URL("..", import.meta.url).pathname;
+const source = process.argv[2] ?? new URL("../..", import.meta.url).pathname;
 const root = mkdtempSync(join(tmpdir(), "orca-idle-benchmark-"));
 process.env.ORCA_HOME = root;
 process.env.PARALLELS_HOME = join(root, "legacy");

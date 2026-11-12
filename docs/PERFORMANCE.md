@@ -53,7 +53,7 @@ On 2026-10-30, a live 10-second sample showed eight idle orchestrators using app
 
 This is an idle CPU regression measurement, not a battery-life estimate, a model-cost benchmark or a comparison against Pi. Provider latency, selected reasoning effort and workload remain separate factors. Transcript publication has since become an in-place append whose cost is the record (see COMPACTION.md); this measurement predates that and covers unchanged reads only.
 
-Reproduce with `bun scripts/benchmark-idle.ts` in a checkout, or pass a different source checkout as its argument. The script overrides `ORCA_HOME` with a temporary synthetic home and removes that fixture afterward.
+Reproduce with `bun evals/idle-cpu/benchmark.ts` in a checkout, or pass a different source checkout as its argument. The script overrides `ORCA_HOME` with a temporary synthetic home and removes that fixture afterward.
 
 ## Pi reference
 

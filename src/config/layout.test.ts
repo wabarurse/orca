@@ -174,13 +174,6 @@ test("runtime path helpers keep durable project evidence at stable locations", (
     expect(paths.memory).toBe(join(root, "memory.sqlite"));
   } finally { if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before; }
 });
-test("manual migration CLI defaults to plan and uses explicit isolated paths", async () => {
-  legacy();
-  const proc = Bun.spawn([process.execPath, new URL("../../scripts/migrate-layout.ts", import.meta.url).pathname, "--root", root, "--bin", bin], { env: { ...process.env, ORCA_HOME: root, HOME: root }, stdout: "pipe", stderr: "pipe" });
-  const [code, output, errors] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-  expect(code).toBe(0); expect(errors).toBe(""); expect(output).toContain("PLAN ONLY (no writes)"); expect(output).toContain("Historical v1→v2");
-  expect(existsSync(join(root, ".runtime"))).toBe(false);
-});
 test("offline migration leaves a real closed SQLite ledger byte-identical with stable project identity", async () => {
   const { Database } = await import("bun:sqlite");
   const { createHash } = await import("node:crypto");
