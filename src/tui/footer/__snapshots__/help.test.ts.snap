@@ -17,7 +17,7 @@ Conversation record 30
 help · commands & keys                                                  1–9/71
   conversation
   /vim            toggle Vim navigation and editing modes
-  /clear-context  clear chat, model context and cache after confirmation
+  /clear-context  reset the project: history, tasks and agents go
   /help           commands and keyboard shortcuts; esc closes
 
   projects
@@ -30,7 +30,7 @@ help · commands & keys                                                  1–9/7
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  conversation
   /vim            toggle Vim navigation and editing modes
-  /clear-context  clear chat, model context and cache after confirmation
+  /clear-context  reset the project: history, tasks and agents go
   /help           commands and keyboard shortcuts; esc closes
 
   projects
@@ -121,8 +121,8 @@ help                           1–9/126
     toggle Vim navigation and editing
     modes
   /clear-context
-    clear chat, model context and
-    cache after confirmation
+    reset the project: history, tasks
+    and agents go
   /help
     commands and keyboard shortcuts;
 ↑↓ scroll · esc close"
@@ -134,8 +134,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     toggle Vim navigation and editing
     modes
   /clear-context
-    clear chat, model context and
-    cache after confirmation
+    reset the project: history, tasks
+    and agents go
   /help
     commands and keyboard shortcuts;
     esc closes

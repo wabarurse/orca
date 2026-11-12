@@ -57,6 +57,8 @@ export interface AppDeps {
   clipboardText?: (text: string) => Promise<void>;
   /** Explicit Ctrl+V only; tests inject fixture bytes, never the live clipboard. */
   clipboardImage?: () => Promise<ClipboardImage>;
+  /** /clear-context's reset (commands/project.ts `resetProject`); tests with fake orchestrators replace it. */
+  resetProject?: typeof import("./commands").resetProject;
   /** A clicked link; tests inject this instead of launching a browser. */
   openUrl?: (url: string) => Promise<void>;
   /** Explicit media activation; tests inject this instead of launching desktop apps. */
@@ -136,6 +138,8 @@ export interface ClearConfirmation {
   controller: AbortController;
   menu?: ActiveMenu;
   committing?: boolean;
+  /** The question named what the reset removes, uncommitted worktree files included. */
+  discard?: boolean;
 }
 
 /**

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { paths } from "../../config";
 import { ensureProject } from "../agent-loop/orc/orchestrator";
 import { ensureWorktree } from "./runner";
-import { registerTask } from "../data/tasks";
+import { existingTasks, registerTask } from "../data/tasks";
 import { ask } from "../data/inbox/questions";
 import { directories, workspaces } from "../data/projects";
 import { deleteFolder, deleteProject, describeDeletion, folderNode, projectNode } from "./ownership";
@@ -58,8 +58,8 @@ test("the tree reads folder → projects → sessions → items, and says what a
   expect(worktrees.find(s => s.path === dirty)!.items.task).toEqual([task.id]);
   expect(folder.projects.find(node => node.id === "q")!.sessions.filter(s => s.worktree)).toEqual([]);
 
-  expect(describeDeletion([p])).toBe("2 worktrees, 1 with uncommitted files that will be lost");
-  expect(describeDeletion(folder.projects)).toBe("2 conversations, 2 worktrees, 1 with uncommitted files that will be lost");
+  expect(describeDeletion([p])).toBe("1 task, 1 question, 2 worktrees, 1 with uncommitted files that will be lost");
+  expect(describeDeletion(folder.projects)).toBe("2 conversations, 1 task, 1 question, 2 worktrees, 1 with uncommitted files that will be lost");
   expect(describeDeletion([await projectNode("q")])).toBe("");
 });
 
@@ -87,6 +87,10 @@ test("deleting a project removes its worktrees and every record under it, and no
   expect(workspaces.list().flatMap(w => w.members.map(m => m.project)).includes("p")).toBe(false);
   expect(workspaces.list().some(w => w.path === repo && w.members.some(m => m.project === "q"))).toBe(true);
   expect((await directories.directoryProjects()).find(f => f.id === folder.id)!.conversations).toEqual(["q"]);
+  expect(existingTasks("q")).toEqual([]);
+  // Its tasks left the ledger too: a project created again under the same name starts at #1.
+  await ensureProject("p", repo);
+  expect((await registerTask("p", { name: "Again", summary: "Work", branch: "task/again", authorized: true })).number).toBe(1);
   // The sibling keeps its worktree, its items and the repository.
   expect(existsSync(theirs)).toBe(true);
   expect(workspaces.resource("q", "question", kept[0]!.id)).toBeTruthy();
