@@ -4,7 +4,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { disconnectServers, EXAMPLE, loginServer, logoutServer, readServers, signedIn, usableServer, withServer, type Entry } from "../core/mcp";
+import { disconnectServers, EXAMPLE, loginServer, logoutServer, readServers, signedIn, usableServer, withServer, type Entry } from "../../core/mcp";
 
 export const MCP_USAGE = `orca mcp                 list the servers in ~/.orca/mcp.json (creates the file if missing)
   orca mcp test [name]     connect and count each server's tools

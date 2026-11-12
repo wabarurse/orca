@@ -13,7 +13,7 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 // orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
 import { ghTaskPR } from "../core/data/tasks";
-import { cleanStorage, pull } from "./scripts";
+import { cleanStorage, pull, realEnv, runMcp, runSession } from "./scripts";
 import pkg from "../../package.json";
 import { runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
 import { afterExit } from "../exec";
@@ -28,8 +28,6 @@ import { ensureProject } from "../core/agent-loop/orc";
 import { createClientOrchestrator, daemonKeeper, ensureDaemon, stopDaemon } from "../core/agent-loop/orc";
 import type { Role } from "../protocol";
 import { App } from "../tui";
-import { realEnv, runSession } from "./session";
-import { runMcp } from "./mcp";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);

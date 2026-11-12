@@ -10,7 +10,7 @@ import { paths } from "../config";
 import { initializeWorkspace, setDisplayName, withProjectStateLock } from "../core/data/projects";
 import { open } from "../core/data/transcripts";
 import type { TransferDeps } from "../core/session";
-import { runSession, type SessionEnv, type Transport } from "../cli/session";
+import { runSession, type SessionEnv, type Transport } from "../cli/scripts/session";
 
 export interface Machine { name: string; home: string; repo: string; dir: string }
 export const ORIGIN = "https://example.invalid/org/repo.git";
