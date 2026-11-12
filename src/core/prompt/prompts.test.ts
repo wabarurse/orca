@@ -14,7 +14,7 @@ describe("adaptive role contracts", () => {
   test("one loop preserves delegation preference without mandatory publication", () => {
     const p = rolePrompt("orchestrator");
     expect(p).toContain("Delegate substantial");
-    expect(p).toContain("without taskId");
+    expect(p).toContain("every assignment as a task");
     expect(p).toContain("do not impose");
     expect(p).toContain("never auto-merge");
     expect(p).toContain("fresh=true");
