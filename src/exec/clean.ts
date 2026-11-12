@@ -4,6 +4,7 @@ import { pruneBuildScratch } from "../core/install";
 import { cleanManagedWorkspaces } from "../core/tmux";
 import { listVerifications, pruneSettledProcesses } from "../core/data/processes";
 import { workspaces } from "../core/data/projects";
+import { pruneProjectOutputs } from "../core/tools/bash";
 
 /** The caller selects preview or deletion explicitly; only owned disposable resources qualify. */
 export async function cleanStorage(apply: boolean) {
@@ -13,7 +14,12 @@ export async function cleanStorage(apply: boolean) {
   for (const project of projects) {
     try {
       if (current.includes(project)) for (const v of await listVerifications(project)) changes.push({ path: v.id, disposition: `verification ${v.state}` });
-      changes.push(...await cleanManagedWorkspaces(project, apply));
+      // One preview overlay for both: the outputs discovery would register count as registered here too.
+      const inspect = async () => {
+        changes.push(...await cleanManagedWorkspaces(project, apply));
+        if (current.includes(project)) changes.push(...await pruneProjectOutputs(project, apply));
+      };
+      await (apply ? inspect() : workspaces.preview(inspect));
       if (current.includes(project)) changes.push(...await pruneSettledProcesses(project, apply));
     } catch (error) { changes.push({ path: project, disposition: `kept: inspection failed (${error})` }); }
   }

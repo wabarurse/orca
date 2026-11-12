@@ -78,7 +78,7 @@ test("failed context append keeps inbox retryable and never notifies consumption
   let failRead = false, failWrite = false;
   const t = open(paths.transcript("failure", "orchestrator"), { ...disk,
     read: path => failRead ? Promise.reject(Error("read failed")) : disk.read(path),
-    rename: (a, b) => failWrite ? Promise.reject(Error("write failed")) : disk.rename(a, b),
+    open: (path, flags) => failWrite ? Promise.reject(Error("write failed")) : disk.open(path, flags),
   });
   const provider = fakeProvider([[text("ok")]]), seen: string[] = [];
   const orch = await createOrchestrator({ project: "failure", transcript: t, provider, tools: {}, write() {}, onInbox: ms => seen.push(...ms.map(m => m.inputId!)) });

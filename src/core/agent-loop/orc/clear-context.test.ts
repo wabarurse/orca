@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createOrchestrator } from "./orchestrator";
 import { open } from "../../data/transcripts/transcript";
-import { disk, type Storage } from "../../data/transcripts/transcript-storage";
+import { APPEND, disk, type Storage } from "../../data/transcripts/transcript-storage";
 import { compact } from "../../data/memory/compaction";
 import { drain, pendingInput, put } from "../../data/inbox/inbox";
 import { paths, saveConfig } from "../../../config/config";
@@ -159,9 +159,9 @@ for (const reason of ["cancel", "new-input", "failure"]) test(`${reason} during 
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
   const io: Storage = { ...disk, open: async (path, flags) => {
     const file = await disk.open(path, flags);
-    return { write: b => file.write(b), close: () => file.close(), sync: async () => {
+    return { ...file, sync: async () => {
       await file.sync();
-      if (armed && flags === "wx") { entered.resolve(); await release.promise; if (reason === "failure") throw Error("storage failed"); }
+      if (armed && flags === APPEND) { entered.resolve(); await release.promise; if (reason === "failure") throw Error("storage failed"); }
     } };
   } };
   const { project, transcript } = await fixture(io);
@@ -201,8 +201,8 @@ test("external-process send during publication waits for the boundary and remain
   const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
   const io: Storage = { ...disk, open: async (path, flags) => {
     const file = await disk.open(path, flags);
-    return { write: b => file.write(b), close: () => file.close(), sync: async () => {
-      await file.sync(); if (armed && flags === "wx") { entered.resolve(); await release.promise; }
+    return { ...file, sync: async () => {
+      await file.sync(); if (armed && flags === APPEND) { entered.resolve(); await release.promise; }
     } };
   } };
   const { project, transcript, dir } = await fixture(io);

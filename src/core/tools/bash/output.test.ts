@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm, stat, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, symlink, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "./bash";
 import { paths } from "../../../config/config";
-import { OutputPreview, pruneOutputs } from "./output";
+import { OutputPreview, pruneAllOutputs, pruneOutputs } from "./output";
 import { workspaces } from "../../data/projects";
 let home: string;
 const before = process.env.ORCA_HOME;
@@ -86,6 +86,80 @@ test("workspace-owned output remains available until explicit workspace cleanup"
   expect(workspaces.resource("test", "artifact", file!.path)).toBeTruthy();
   await pruneOutputs(directory(), Date.now() + 30 * 86400_000, 1, "test");
   expect(await Bun.file(file!.path).text()).toBe("evidence");
+});
+
+const DAY = 86400_000;
+async function put(path: string, text: string, ageDays = 0) {
+  await mkdir(join(path, ".."), { recursive: true });
+  await Bun.write(path, text);
+  if (ageDays) { const at = new Date(Date.now() - ageDays * DAY); await utimes(path, at, at); }
+  return path;
+}
+const exists = (path: string) => Bun.file(path).exists();
+
+test("unowned harness-named outputs go by age and byte limit at any depth; other files are never removed; preview deletes nothing", async () => {
+  const dir = directory(), id = () => crypto.randomUUID();
+  const oldReport = await put(join(dir, "reports", `${id()}.txt`), "report", 8);
+  const newReport = await put(join(dir, "reports", `${id()}.txt`), "report");
+  const oldVideo = await put(join(dir, "evidence-x", "runs", "video.mp4"), "v".repeat(4096), 8);
+  const newVideo = await put(join(dir, "evidence-y", "video.mp4"), "v".repeat(4096));
+  const stalePartial = await put(join(dir, `${id()}.partial`), "cut", 8);
+  const staleRunning = await put(join(dir, `${id()}.running`), "dead", 8);
+  const liveRunning = await put(join(dir, `${id()}.running`), "live");
+  const sandbox = await put(join(dir, "verification", id(), "old.log"), "sandbox evidence", 30);
+  const outside = await put(join(home, "outside.txt"), "not ours", 30);
+  await symlink(outside, join(dir, "link.txt")); await symlink(home, join(dir, "linked-dir"));
+  const expected = [oldReport, stalePartial, staleRunning].sort();
+
+  const preview = await pruneOutputs(dir, Date.now(), undefined, undefined, false);
+  expect(preview.map(p => p.path).sort()).toEqual(expected);
+  expect(preview.every(p => p.disposition.startsWith("eligible:"))).toBe(true);
+  for (const path of expected) expect(await exists(path)).toBe(true);
+
+  const removed = await pruneOutputs(dir);
+  expect(removed.map(p => p.path).sort()).toEqual(expected);
+  for (const path of expected) expect(await exists(path)).toBe(false);
+  for (const path of [newReport, oldVideo, newVideo, liveRunning, sandbox, outside]) expect(await exists(path)).toBe(true);
+  expect(await readdir(join(dir, "reports"))).toHaveLength(1);
+
+  // The byte limit evicts harness-named files (nested too), never a folder an agent just filled.
+  const over = await pruneOutputs(dir, Date.now(), 1);
+  expect(over.map(p => p.path)).toEqual([newReport]);
+  expect(await exists(newVideo)).toBe(true); expect(await exists(liveRunning)).toBe(true);
+});
+
+test("a registered top-level folder keeps everything under it, whatever its age or size", async () => {
+  const dir = directory(), folder = join(dir, "evidence-owned");
+  const video = await put(join(folder, "fix", "video.mp4"), "v".repeat(4096), 30);
+  const named = await put(join(folder, `${crypto.randomUUID()}.partial`), "cut", 30);
+  const loose = await put(join(dir, "evidence-loose", "video.mp4"), "v", 30);
+  workspaces.within("test", home, () => workspaces.own("test", "artifact", folder, { path: folder }));
+  expect(workspaces.resource("test", "artifact", folder)).toBeTruthy();
+  expect((await pruneOutputs(dir, Date.now(), 1, "test")).map(p => p.path)).toEqual([]);
+  expect(await exists(video)).toBe(true); expect(await exists(named)).toBe(true); expect(await exists(loose)).toBe(true);
+});
+
+test("the all-projects pass prunes an idle project, keeps registered and running outputs, and survives a project it cannot read", async () => {
+  await workspaces.within("test", home, () => bash.run({ command: "printf evidence" }, context()));
+  const [owned] = await saved(); await utimes(owned!.path, new Date(0), new Date(0));
+  const idle = join(paths.project("idle"), "tool-outputs");
+  const old = await put(join(idle, `${crypto.randomUUID()}.txt`), "old", 8);
+  const nested = await put(join(idle, "evidence", "clip.mp4"), "old", 8);
+  const running = await put(join(idle, `${crypto.randomUUID()}.running`), "live");
+  const fresh = await put(join(idle, `${crypto.randomUUID()}.txt`), "fresh");
+  await mkdir(paths.project("empty"), { recursive: true });
+  await put(join(paths.project("broken"), "tool-outputs"), "not a directory");
+
+  const preview = await pruneAllOutputs(false);
+  expect(preview.filter(p => p.disposition.startsWith("eligible:")).map(p => p.path).sort()).toEqual([old]);
+  expect(await exists(old)).toBe(true); expect(await exists(nested)).toBe(true);
+
+  const rows = await pruneAllOutputs(true);
+  expect(rows.filter(p => p.disposition.startsWith("removed")).map(p => p.path).sort()).toEqual([old]);
+  expect(rows.filter(p => p.disposition.startsWith("kept:")).map(p => p.path)).toEqual(["broken"]);
+  expect(await exists(old)).toBe(false); expect(await exists(nested)).toBe(true);
+  expect(await exists(running)).toBe(true); expect(await exists(fresh)).toBe(true);
+  expect(await Bun.file(owned!.path).text()).toBe("evidence");
 });
 
 

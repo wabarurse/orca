@@ -233,7 +233,7 @@ test("cancelling spawn during its live-agent wait never starts a replacement", a
 
 for (const previous of [false, true]) test(`cancel before supervisor publication targets exact ${previous ? "respawn with old state" : "initial launch"}, not replacement`, async () => {
   const { cancelSession, launchIdentity, publishLaunch, watchCancellation } = await import("../tmux/cancellation");
-  const { disk } = await import("../data/transcripts/transcript-storage");
+  const { APPEND, disk } = await import("../data/transcripts/transcript-storage");
   const { spyOn } = await import("bun:test");
   const project = `early-${previous}`, id = "worker-early";
   if (previous) {
@@ -244,9 +244,9 @@ for (const previous of [false, true]) test(`cancel before supervisor publication
   let identity: string | undefined;
   let off = () => {};
   const diskOpen = disk.open;
-  // Pause at the first staging write, before the transcript becomes visible.
+  // Pause at the first append, before the transcript becomes visible.
   const hook = spyOn(disk, "open").mockImplementation(async (path, flags) => {
-    if (path.includes(id) && flags === "wx") {
+    if (path.includes(id) && flags === APPEND) {
       identity = launchIdentity(project, id);
       expect(identity).toBeTruthy();
       expect(identity).not.toBe("old");

@@ -183,10 +183,10 @@ checkpoint retrieval warnings explicitly exclude earlier epochs. Clearing is not
 secure deletion: old context remains readable in saved history/files, and agents
 may independently send reports referring to earlier work.
 
-The same staged/fsync/rename protocol below protects the boundary. Pre-publication
+The same append protocol below protects the boundary. Pre-publication
 failure or cancellation leaves the prior bytes/head/context usable. Rebuildable
 cache may already have been evicted; a cache cleanup failure prevents the boundary
-from being committed. After rename,
+from being committed. After the commit point,
 the clear is committed even if a late cancellation arrives; directory durability
 failure is a warning, not a rollback. The session blocks overlapping turns and
 compaction while publishing. Local `say()` during publication cancels a not-yet-
@@ -321,11 +321,10 @@ completed text summary is accepted, including Codex encrypted reasoning items.
 ## Persistence and replay
 
 A checkpoint is one logical JSONL record containing the parent/boundary and retained
-messages. `transcript-storage.ts` publishes complete file images via same-directory
-copy-on-write + rename: the previous byte prefix is preserved exactly, never trimmed
-or re-serialized. This trades O(history size) I/O per append for simple recoverable
-publication. It does not preserve the old inode; no old messages are deleted.
-The same publication protocol protects normal appends too. Newly staged files have
+messages. `transcript-storage.ts` appends it in place: the previous bytes are never
+read (one byte decides the separator), rewritten, trimmed or re-serialized, so an
+append costs the record, not the history. The inode stays; no old messages are deleted.
+The same publication protocol protects normal appends too. New files have
 0600 permissions. Updated writers serialize reload/parent selection/publication
 with a per-transcript directory lock, and orchestrators additionally own a
 cross-process lock for the whole model/tool turn. Reloads use the latest committed
@@ -333,25 +332,33 @@ disk head; old binaries and arbitrary external writers do not participate in thi
 protocol. Inbox receipts survive compaction and context clear, so cleanup residue
 cannot replay previously consumed prompts. See [SESSION_REFRESH.md](SESSION_REFRESH.md).
 
-1. Read published bytes, append a separator if a legacy damaged final line lacks
-   a newline, and encode the new record in a unique temporary file.
-2. Loop until all bytes are written (including short writes), fsync and close the
-   staged file. Any write/sync/close failure here leaves the published file/head
-   unchanged. Orphan `.pending` files are ignored on restart (cleanup is best-effort).
-3. **Successful rename is the logical commit point** under ordinary POSIX filesystem
-   semantics. Update the in-memory head synchronously after it succeeds. The staged
-   file's complete contents were already fsynced; reopen sees the same record.
-4. Fsync and close the containing directory. Failure after publication is a warning,
-   **not an append failure**: the visible record/head remain committed, but survival
-   of the directory entry through power loss is uncertain. Initial ancestor directory
+1. Open the file for append (created 0600), take its length, and read its last byte:
+   a damaged final line without a newline gets a separator first.
+2. Loop until the separator, record and newline are written (including short writes),
+   then fsync. A write or sync failure, a cancellation, or a refusing `authorize`
+   truncates the file back to its prior length: the published bytes/head are unchanged.
+   Legacy orphan `.pending` files are ignored.
+3. **The commit point is the signal and `authorize` passing after that fsync**; nothing
+   is awaited between them and the synchronous update of the in-memory head. If the
+   rollback truncation itself fails, the disk decides: a complete record line is
+   reported committed with a warning (every reader sees it), an incomplete one is a
+   torn tail that readers skip and the next append separates. A process killed
+   between write and fsync can leave either; reopen reads whatever is complete.
+   A rollback that is followed by power loss before its own sync may resurface the
+   withdrawn record.
+4. A close failure after the commit, and a failed fsync of the containing directory
+   (done only when the file was new or empty), are warnings, **not an append
+   failure**: the visible record/head remain committed. Initial ancestor directory
    creation is not recursively fsynced. No guarantee is claimed against arbitrary
-   storage corruption or filesystem behavior that violates rename/fsync semantics.
+   storage corruption or filesystem behavior that violates append/fsync semantics.
+   Readers that do not take the transcript lock can observe a record while it is
+   being written; an incomplete line never parses.
 
 Thus “failed summary leaves bytes unchanged” describes inference/validation and
 pre-publication failure, not an arbitrary I/O failure after the commit point. UI
 status errors cannot turn an already committed checkpoint into a reported failure.
-Tests inject short writes, partial-write exceptions, sync/close failures and
-post-publication directory failures, then append again and reopen.
+Tests inject short writes, partial-write exceptions, sync/close/truncate failures and
+post-commit directory failures, then append again and reopen.
 
 `Transcript.chain()`/`branch()` follow context checkpoints. `history()` traverses
 original entries through checkpoints and excludes synthetic checkpoint tails,

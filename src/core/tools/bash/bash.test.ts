@@ -110,3 +110,16 @@ test("already-cancelled tools never start a command", async () => {
   await expect(bash.run({ command: "touch should-not-exist" }, { ...ctx(home), signal: controller.signal })).rejects.toThrow("cancelled");
   expect(await Bun.file(join(home, "should-not-exist")).exists()).toBe(false);
 });
+
+test("an in-place rewrite still runs and gets one hint line, before the exit note", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "orca-hint-")));
+  await Bun.write(join(dir, "a.txt"), "one\n");
+  const hint = "hint: edit(path, old_text, new_text) changes a file in one call and needs no prior read.";
+  const sed = "sed -i.bak 's/one/two/' a.txt";
+  expect(await bash.run({ command: sed }, ctx(dir))).toBe(`\n${hint}`);
+  expect(await Bun.file(join(dir, "a.txt")).text()).toBe("two\n");
+  const failed = await bash.run({ command: `${sed}; echo done; exit 2` }, ctx(dir));
+  expect(failed).toBe(`done\n\n${hint}\n[exit 2]`);
+  expect(toolSummary("bash", { ok: true, text: failed })).toMatchObject({ failed: true });
+  expect(bash.spec.description).toContain("Change files with edit or write rather than sed -i or scripted rewrites.");
+});

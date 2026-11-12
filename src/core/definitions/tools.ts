@@ -5,11 +5,12 @@ import { definition } from "./files";
 // Input structure and validation remain trusted. Annotation edits are effective
 // provider schema edits, not executable extensions or new input capabilities.
 function annotations(base: unknown, edited: unknown, path: string): unknown {
-  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary", "ask.properties.action", "ask.properties.ids", "ask.properties.reason", "skill.properties.search", "read.properties.files", "process.properties.number", "process.properties.head"];
+  const added = ["spawn.properties.fresh", "bash.properties.background", "bash.properties.yield_ms", "bash.properties.ready_url", "message.properties.summary", "ask.properties.action", "ask.properties.ids", "ask.properties.reason", "skill.properties.search", "read.properties.files", "process.properties.number", "process.properties.head", "process.properties.timeout_s", "edit.properties.replace_all"];
   if (edited === undefined && added.includes(path)) return base;
-  if (path === "process.properties.action.enum" && JSON.stringify(edited) === '["list","status","output","input","stop","forget"]') return base;
+  if (path === "process.properties.action.enum" && ['["list","status","output","input","stop","forget"]', '["list","status","output","input","stop","forget","handoff","watch_pr"]'].includes(JSON.stringify(edited))) return base;
   if (path === "spawn.required" && JSON.stringify(edited) === '["prompt","branch","taskId"]') return base;
   if (path === "ask.required" && JSON.stringify(edited) === '["questions"]') return base; // list/close take no questions
+  if (path === "edit.required" && JSON.stringify(edited) === '["path","expected_revision","old_text","new_text"]') return base; // the revision became optional
   if (path === "runtime.properties.action.enum" && JSON.stringify(edited) === '["status","usage"]') return base;
   if (path === "bash.properties.timeout_ms.minimum" && edited === 1 && base === 0) return base;
   // Upgrade older edited schemas without overwriting user annotation files. Only

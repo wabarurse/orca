@@ -1,6 +1,7 @@
 import { MERGE_POLL_MS } from "../../tmux/merges";
 import { archiveInactiveWorkspaces } from "../../tmux";
 import { pruneSettledProcesses, reconcileProcesses } from "../../data/processes";
+import { pruneAllOutputs } from "../../tools/bash";
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
 // (exec/daemon.ts) runs this loop in the `orchestrator` window of the project's
 // tmux session, so turns, rolling memory, the exit watchdog and the merge watcher
@@ -72,6 +73,8 @@ interface Daemon {
   maintaining?: Promise<unknown>;
   mergedAt?: number;
   maintainedAt?: number;
+  /** The all-projects saved-output prune has run (once per daemon). */
+  pruned?: boolean;
   turns: number;
   context?: { model: string; used?: number; window: ReturnType<typeof contextWindow> };
   error?: string;
@@ -203,6 +206,12 @@ function runWatchers(d: Daemon): void {
     d.maintaining = background(async () => {
       await archiveInactiveWorkspaces(d.o.project).catch(error => d.o.log(`workspace cleanup: ${error}`));
       await pruneSettledProcesses(d.o.project, true).catch(error => d.o.log(`process retention: ${error}`));
+      // Once per daemon, after this project's discovery has registered its outputs: every project's
+      // unowned saved outputs, since an idle project never prunes its own. One line for what failed.
+      if (d.pruned) return;
+      d.pruned = true;
+      const kept = await pruneAllOutputs(true).then(rows => rows.filter(row => row.disposition.startsWith("kept:")), error => [{ path: "", disposition: String(error) }]);
+      if (kept.length) d.o.log(`tool output retention: ${kept.map(row => `${row.path} ${row.disposition}`.trim()).join("; ")}`);
     }).finally(() => { d.maintaining = undefined; });
   }
 }

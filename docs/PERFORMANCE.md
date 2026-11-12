@@ -47,7 +47,7 @@ On 2026-10-30, a live 10-second sample showed eight idle orchestrators using app
 | CPU as a fraction of one core | 28.9% | 0.54% |
 | Idle checks | 99 | 5 |
 
-This is an idle CPU regression measurement, not a battery-life estimate, a model-cost benchmark or a comparison against Pi. Provider latency, selected reasoning effort and workload remain separate factors. Foreground transcript publication still preserves whole atomic file images; this change optimizes unchanged reads, not that write path.
+This is an idle CPU regression measurement, not a battery-life estimate, a model-cost benchmark or a comparison against Pi. Provider latency, selected reasoning effort and workload remain separate factors. Transcript publication has since become an in-place append whose cost is the record (see COMPACTION.md); this measurement predates that and covers unchanged reads only.
 
 Reproduce with `bun scripts/benchmark-idle.ts` in a checkout, or pass a different source checkout as its argument. The script overrides `ORCA_HOME` with a temporary synthetic home and removes that fixture afterward.
 
@@ -160,7 +160,14 @@ warm cache conditions and unrelated baseline test failures remain disclosed.
 ## Waiting for validation
 
 Use background Bash for long local tests and evals. Its terminal event includes
-the exit status, a bounded output tail, and the artifact path. For hosted checks,
+the exit status, a bounded output tail, and the artifact path. To block mid-task,
+`process({action: "wait", id, timeout_s})` (default 300, at most 900 seconds)
+polls persisted state in local code, with no model request, and returns the
+status, `waitedMs`, `returned` (`settled`, `ready`, `pr_changed`, `inbox`,
+`cancelled` or `timeout`) and the last 2,000 output bytes. It returns early when
+the agent's inbox has a message, and for a PR watch when the shared observer
+records a changed observation. It only reads: the completion event is still
+delivered through the inbox as usual. Agents use it instead of `sleep`. For hosted checks,
 `process({action: "watch_pr", number, head})` registers with the existing shared
 PR observer. One runtime pass coalesces explicit watches and task-linked PRs.
 Notifications go to the orchestrator for changed heads, CI, review/comment activity,

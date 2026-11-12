@@ -13,7 +13,7 @@ import { estimate } from "./compaction";
 import type { CompleteRequest, Provider } from "../../../providers/provider";
 import { fakeProvider, text } from "../../../test/fake-provider";
 import { open, type Transcript } from "../transcripts/transcript";
-import { disk } from "../transcripts/transcript-storage";
+import { APPEND, disk } from "../transcripts/transcript-storage";
 import { advanceInputEpoch } from "../inbox/user-input";
 
 const previous = process.env.ORCA_HOME;
@@ -186,8 +186,8 @@ for (const cancel of ["local", "shared"] as const) test(`${cancel} cancellation 
   let block = false;
   const staged = open(transcript.path, { ...disk, open: async (path, flags) => {
     const file = await disk.open(path, flags);
-    return { write: bytes => file.write(bytes), close: () => file.close(), sync: async () => {
-      await file.sync(); if (block && flags === "wx") { entered.resolve(); await released.promise; }
+    return { ...file, sync: async () => {
+      await file.sync(); if (block && flags === APPEND) { entered.resolve(); await released.promise; }
     } };
   } });
   const rolling = controller(worker, staged), current = { ...deps, transcript: staged };
@@ -249,7 +249,7 @@ test("one-shot CLI cannot resume a paused project with old input", async () => {
 test("failed checkpoint publication keeps committed prompts/receipts without resending or acknowledging new queued input", async () => {
   const { project, transcript, foreground, session } = await fixture(), worker = summary();
   let fail = false;
-  const storage = open(transcript.path, { ...disk, rename: (from, to) => fail ? Promise.reject(new Error("checkpoint write failed")) : disk.rename(from, to) });
+  const storage = open(transcript.path, { ...disk, open: (path, flags) => fail && flags === APPEND ? Promise.reject(new Error("checkpoint write failed")) : disk.open(path, flags) });
   const seen: string[] = [];
   const a = await session(worker, { transcript: storage, onInbox: (messages: { inputId?: string }[]) => seen.push(...messages.map(m => m.inputId!)) });
   await a.say("committed", undefined, "committed"); await a.turn(); await worker.entered.promise;

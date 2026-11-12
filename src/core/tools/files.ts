@@ -104,27 +104,69 @@ async function readImage(path: string, mime: ImageMime, ctx: ToolContext): Promi
   return [{ type: "text", text: JSON.stringify(meta) }, imageBlock(ref)];
 }
 
-async function mutate(path: string, expected: unknown, transform: (old: string) => string, create: boolean) {
+/** One locked, atomic change. `expected` (a revision) is enforced whenever it is given;
+ * edit may omit it, since its exact old_text match names the content it replaces. */
+export async function mutate(path: string, expected: unknown, transform: (old: string) => { text: string; report?: Record<string, unknown> }, create: boolean) {
   const lock = join(paths.runtime, "file-locks", revision(path));
   return withStorageLock(lock, async () => {
     const old = await contents(path).catch(error => { if (create && error.code === "ENOENT") return undefined; throw error; });
     // The current revision makes the retry direct; replacing still names exactly that content (compare-and-swap).
     if (create && old) throw new Error(`file exists (revision ${revision(old)}). To replace all of it, retry write with expected_revision "${revision(old)}"; to change part of it, use edit. Read it first if you have not seen its current content.`);
-    if (!create && (typeof expected !== "string" || !old || revision(old) !== expected)) throw new Error("file changed or expected_revision is missing; read the current file before editing");
-    const next = transform(old?.toString("utf8") ?? "");
+    const seen = old ? revision(old) : null;
+    if (!create && expected !== undefined && seen !== expected) throw new Error(`file changed: expected_revision does not match the current revision "${seen}"; nothing was changed. Check the current content before retrying.`);
+    const { text: next, report } = transform(old?.toString("utf8") ?? "");
     if (Buffer.byteLength(next) > MAX_FILE) throw new Error("write exceeds 2 MiB");
     const staged = join(dirname(path), `.orca-write-${crypto.randomUUID()}`);
     try {
       await writeFile(staged, next, { flag: "wx", mode: 0o600 });
       if (old) {
         const s = await lstat(path);
-        if (!s.isFile() || s.isSymbolicLink() || revision(await readFile(path)) !== expected) throw new Error("file changed during edit; no changes applied");
+        // Compared with what was read under the lock: a writer outside the lock must not be overwritten.
+        if (!s.isFile() || s.isSymbolicLink() || revision(await readFile(path)) !== seen) throw new Error("file changed during edit; no changes applied");
         await chmod(staged, s.mode & 0o777);
         await rename(staged, path);
       } else await link(staged, path); // Exclusive create: never overwrite a raced file.
     } finally { await unlink(staged).catch(() => {}); }
-    return JSON.stringify({ path, revision: revision(next), bytes: Buffer.byteLength(next), previous_revision: old ? revision(old) : null });
+    return JSON.stringify({ path, revision: revision(next), bytes: Buffer.byteLength(next), previous_revision: seen, ...report });
   });
+}
+
+const PREVIEW_BYTES = 1000, PREVIEW_LINE_BYTES = 200;
+const lineAt = (text: string, offset: number) => { let n = 1; for (let i = text.indexOf("\n"); i >= 0 && i < offset; i = text.indexOf("\n", i + 1)) n++; return n; };
+const clip = (line: string) => Buffer.byteLength(line) <= PREVIEW_LINE_BYTES ? line
+  : Buffer.from(line).subarray(0, PREVIEW_LINE_BYTES).toString("utf8").replace(/\uFFFD+$/, "") + "…";
+/** The changed regions of the new text as numbered lines with one line of context each side,
+ * within PREVIEW_BYTES; what does not fit is named by an explicit marker. */
+export function editPreview(text: string, regions: { start: number; end: number }[]): string {
+  const lines = text.split("\n"), out: string[] = [];
+  let bytes = 0, last = 0, shown = 0;
+  for (const region of regions) {
+    const from = Math.max(1, lineAt(text, region.start) - 1), to = Math.min(lines.length, lineAt(text, region.end) + 1);
+    for (let n = Math.max(from, last + 1); n <= to; n++) {
+      const row = `${n}: ${clip(lines[n - 1]!)}`, gap = last && n > last + 1 ? "…\n" : "";
+      if (bytes + Buffer.byteLength(gap + row) + 1 > PREVIEW_BYTES) {
+        return [...out, `[preview truncated before line ${n}; ${shown} of ${regions.length} changed region${regions.length === 1 ? "" : "s"} shown in full]`].join("\n");
+      }
+      if (gap) out.push("…");
+      out.push(row); bytes += Buffer.byteLength(gap + row) + 1; last = n;
+    }
+    shown++;
+  }
+  return out.join("\n");
+}
+/** Every offset where `needle` occurs; overlapping matches count, so an ambiguous edit is never called unique. */
+function occurrences(text: string, needle: string, step: number): number[] {
+  const found: number[] = [];
+  for (let i = text.indexOf(needle); i >= 0; i = text.indexOf(needle, i + step)) found.push(i);
+  return found;
+}
+const some = (numbers: number[], max = 12) => numbers.slice(0, max).join(", ") + (numbers.length > max ? ", …" : "");
+/** Why nothing matched, with the nearest lines when only whitespace differs, so the retry needs no read. */
+function noMatch(text: string, old: string): Error {
+  const wanted = old.split("\n").map(l => l.trim()).find(Boolean), lines = text.split("\n");
+  const near = wanted ? lines.flatMap((l, i) => l.trim() === wanted ? [i + 1] : []) : [];
+  const where = !near.length ? "" : ` Its first line appears, with different whitespace or different following lines, at line ${some(near, 5)}: ${JSON.stringify(clip(lines[near[0]! - 1]!))}.`;
+  return new Error(`old_text not found (0 matches); nothing was changed. It must match the file exactly, including whitespace and indentation.${where}`);
 }
 
 const readRange = { path: { type: "string" }, start_line: { type: "integer", minimum: 1 }, lines: { type: "integer", minimum: 1, maximum: 500 } };
@@ -147,7 +189,7 @@ async function readText(path: string, input: Record<string, unknown>, ctx: ToolC
 
 export const read: Tool<ToolResult> = {
   parallel: () => true,
-  spec: { name: "read", description: "Read UTF-8 files in your workspace or saved evidence. When you already know several files or ranges you need, send them together in files (up to four text ranges), or use path for a single file. Returns numbered lines, revisions for write/edit, and continuation lines. Output is bounded. For images (png, jpeg, gif, webp; up to 64 MiB and 4096×4096), use path alone to get an image and attachment_id. Use attachment_id alone to inspect an image you previously received, including after compaction; originals remain saved.",
+  spec: { name: "read", description: "Read UTF-8 files in your workspace or saved evidence. When you already know several files or ranges you need, send them together in files (up to four text ranges), or use path for a single file. Returns numbered lines, a revision (write needs it to replace a file; edit does not) and continuation lines. Output is bounded. For images (png, jpeg, gif, webp; up to 64 MiB and 4096×4096), use path alone to get an image and attachment_id. Use attachment_id alone to inspect an image you previously received, including after compaction; originals remain saved.",
     input_schema: { type: "object", properties: {
       ...readRange,
       attachment_id: { type: "string", description: "Previously received image UUID; mutually exclusive with path, files and line ranges." },
@@ -193,20 +235,33 @@ export const write: Tool = {
   async run(input, ctx) {
     if (typeof input.content !== "string") throw new Error("content must be a string");
     const text = input.content;
-    return mutate(await filePath(input.path, ctx, true), input.expected_revision, () => text, input.expected_revision === undefined);
+    return mutate(await filePath(input.path, ctx, true), input.expected_revision, () => ({ text }), input.expected_revision === undefined);
   },
 };
 
 export const edit: Tool = {
-  spec: { name: "edit", description: "Replace one exact, nonempty, unique text match in a UTF-8 file. Supply expected_revision from read. Stale or ambiguous edits fail without changing the file.",
-    input_schema: { type: "object", properties: { path: { type: "string" }, expected_revision: { type: "string" }, old_text: { type: "string" }, new_text: { type: "string" } }, required: ["path", "expected_revision", "old_text", "new_text"] } },
+  spec: { name: "edit", description: "Change a UTF-8 file by exact text replacement, in one call: no prior read or revision is needed, the exact match of old_text is the check. old_text must match exactly one location unless replace_all is true; a failure changes nothing and names the matching lines. Returns a numbered preview of the changed lines, so there is no need to re-read.",
+    input_schema: { type: "object", properties: {
+      path: { type: "string" },
+      old_text: { type: "string", description: "Exact text to replace, with its whitespace; include enough surrounding text to be unique." },
+      new_text: { type: "string" },
+      replace_all: { type: "boolean", description: "Replace every occurrence of old_text instead of requiring a single match. Default false." },
+      expected_revision: { type: "string", description: "Optional revision from read; when given, the edit is refused if the file has changed since." },
+    }, required: ["path", "old_text", "new_text"] } },
   async run(input, ctx) {
     if (typeof input.old_text !== "string" || !input.old_text || typeof input.new_text !== "string") throw new Error("old_text must be nonempty; new_text must be a string");
-    const old = input.old_text, next = input.new_text;
+    if (input.replace_all !== undefined && typeof input.replace_all !== "boolean") throw new Error("replace_all must be a boolean");
+    if (input.expected_revision !== undefined && typeof input.expected_revision !== "string") throw new Error("expected_revision must be a string when given");
+    const old = input.old_text, next = input.new_text, all = input.replace_all === true;
+    if (old === next) throw new Error("old_text and new_text are identical; nothing to change");
     return mutate(await filePath(input.path, ctx, true), input.expected_revision, text => {
-      const first = text.indexOf(old);
-      if (first < 0 || text.indexOf(old, first + 1) >= 0) throw new Error("edit must match exactly one location; read and include more context");
-      return text.slice(0, first) + next + text.slice(first + old.length);
+      const found = occurrences(text, old, all ? old.length : 1);
+      if (!found.length) throw noMatch(text, old);
+      if (found.length > 1 && !all) throw new Error(`old_text matches ${found.length} locations (lines ${some(found.map(i => lineAt(text, i)))}); nothing was changed. Add surrounding text so it matches one, or set replace_all to true to replace all ${found.length}.`);
+      let result = "", at = 0;
+      const regions = found.map(i => { result += text.slice(at, i); const start = result.length; result += next; at = i + old.length; return { start, end: result.length }; });
+      result += text.slice(at);
+      return { text: result, report: { ...(all ? { replacements: found.length } : {}), preview: editPreview(result, regions) } };
     }, false);
   },
 };
