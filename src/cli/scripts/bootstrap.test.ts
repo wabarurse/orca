@@ -3,7 +3,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } fro
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-const root = resolve(import.meta.dir, "..");
+const root = resolve(import.meta.dir, "../../..");
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
@@ -11,13 +11,15 @@ async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "orca-bootstrap-"));
   temporary.push(dir);
   const home = join(dir, "user's home"), bin = join(dir, "bin"), source = join(dir, "source"), cwd = join(dir, "unrelated project");
-  for (const path of [home, bin, source, cwd, join(source, "scripts"), join(source, "src"), join(source, "src/core"), join(source, "src/core/install"), join(source, "src/config")]) {
+  for (const path of [home, bin, source, cwd, join(source, "src"), join(source, "src/cli"), join(source, "src/cli/scripts"), join(source, "src/core"), join(source, "src/core/install"), join(source, "src/config")]) {
     await mkdir(path, { mode: 0o755 });
   }
   await cp(join(root, "src/config"), join(source, "src/config"), { recursive: true });
-  await cp(join(root, "scripts/install.ts"), join(source, "scripts/install.ts"));
-  await cp(join(root, "src/core/install/installation.ts"), join(source, "src/core/install/installation.ts"));
-  await writeFile(join(source, "package.json"), JSON.stringify({ scripts: { "install:local": "bun scripts/install.ts", build: "bun build-fixture.ts" } }));
+  await cp(join(root, "src/cli/scripts/install.ts"), join(source, "src/cli/scripts/install.ts"));
+  // The installer imports the install barrel: copy that folder's modules and the one core file they use.
+  for (const name of ["index.ts", "installation.ts", "pull.ts", "storage.ts", "git-credentials.ts"]) await cp(join(root, "src/core/install", name), join(source, "src/core/install", name));
+  for (const name of ["proc.ts", "process-completion.ts", "process-signals.ts"]) await cp(join(root, "src/core", name), join(source, "src/core", name));
+  await writeFile(join(source, "package.json"), JSON.stringify({ scripts: { "install:local": "bun src/cli/scripts/install.ts", build: "bun build-fixture.ts" } }));
   await writeFile(join(source, "build-fixture.ts"), `import { chmodSync, writeFileSync } from "node:fs";
 writeFileSync("dist/orca", "#!/bin/sh\\necho fixture-orca\\n"); chmodSync("dist/orca", 0o755);`);
   await writeFile(join(dir, "git.ts"), `import { cpSync, writeFileSync } from "node:fs";

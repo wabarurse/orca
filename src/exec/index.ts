@@ -2,4 +2,3 @@ export { afterExit } from "./after-exit";
 export { runAgent } from "./run";
 export { scheduleReload, activateInstalled } from "./update";
 export { organizeProjects } from "./organize";
-export { cleanStorage } from "./clean";
