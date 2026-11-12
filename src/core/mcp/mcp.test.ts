@@ -8,7 +8,7 @@ import { readServers, usableServer, serverKey, loginKey } from "./config";
 import { connected, disconnectServers, withServer } from "./client";
 import { loginServer, logoutServer, oauthProvider, signedIn } from "./auth";
 import { mcp } from "../tools/mcp";
-import { runMcp } from "../../cli/mcp";
+import { runMcp } from "../../cli/scripts/mcp";
 
 let home: string, previous: string | undefined;
 beforeEach(async () => { previous = process.env.ORCA_HOME; home = await mkdtemp(join(tmpdir(), "orca-mcp-")); process.env.ORCA_HOME = home; });
