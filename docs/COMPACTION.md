@@ -144,6 +144,22 @@ The visual-only `/clear` command was removed with the command trim; only `/clear
 
 ## Clear model context and cache
 
+**What it does now:** `/clear-context` resets the project to how it was when it was
+created. Confirming deletes everything under it through the same cascade as deleting
+the project (see [the ownership tree](WORKSPACE_CLEANUP.md#the-ownership-tree)): its
+history, tasks, questions, images, agents and worktrees, and nothing is kept on disk.
+A project with the same id is then created in the same folder and gets its display
+name, model/account/effort settings and pin back, and its page reopens in the same
+tab with your draft. The question names what will be removed ("3 tasks, 2 agents, 1
+worktree, 1 with uncommitted files that will be lost"). Local branches and their
+commits stay, as do saved facts and the folder itself. It is refused, with nothing
+removed, while an agent is live or cannot be checked, a command may still be
+running, input is queued or the conversation is mid-turn.
+
+The confirmation rules below are unchanged. The paragraphs after them describe the
+earlier behaviour (a context boundary that kept the saved transcript); boundaries
+already in a transcript are still read that way, but the command no longer writes one.
+
 `/clear-context` takes no arguments and opens a **local, Cancel-default** confirmation
 in the existing bottom menu area. Enter alone cancels. Select **Clear context**
 with an arrow, then Enter to confirm. Escape cancels the confirmation. Ctrl+C

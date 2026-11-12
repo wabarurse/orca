@@ -286,7 +286,7 @@ test("Vim's Shift letters call their actions directly, with legacy and modified-
     app.page!.orch.checkClear = async () => {};
     app.page!.orch.clear = async () => { throw new Error("must not clear"); };
     await app.commands.get("/clear-context")!.run("", app.page);
-    expect(app.menu?.title).toContain("clear conversation");
+    expect(app.menu?.title).toContain("clear ");
     await key(app, "H"); await key(app, "A");
     expect(app.page!.project).toBe("shift-other"); expect(app.work.open).toBe(false);
     await app.onKey({ name: "escape" });

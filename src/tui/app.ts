@@ -17,7 +17,7 @@ import { settingChange, effectiveSettings, setEffort } from "../core/data/projec
 // (work-page.ts). Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, login, useAccount, sendAgentFeedback, restoreConversations } from "./commands";
+import { accountChoices, deletionSummary, login, resetProject, useAccount, sendAgentFeedback, restoreConversations } from "./commands";
 import { checkContextClear } from "./commands";
 import { activeAgentRows, liveAgentsOrNull } from "../core/tmux";
 import { directories, displayName, listProjects, newProjectName, remoteOf, setDisplayName, shortRemote } from "../core/data/projects";
@@ -1156,7 +1156,7 @@ export class App {
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
-    ["/clear-context", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear-context", description: "clear chat, model context and cache after confirmation" } }],
+    ["/clear-context", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear-context", description: "reset the project: history, tasks and agents go" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
     ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [orch|worker|reviewer]", description: "choose the model for all agents or one role" } }],
     ["/accounts", { run: (_, page) => this.accountsMenu(page), help: { group: "settings", label: "/accounts", description: "choose a subscription account" } }],
@@ -1176,10 +1176,10 @@ export class App {
       await page.orch.checkClear!();
       if (!this.clearCurrent(operation)) return;
       this.checkClearPage(page);
-      this.helpTop = null;
-      this.work.close();
+      const losing = await deletionSummary({ name: page.project }).then(text => { operation!.discard = true; return text; }, () => "");
+      this.helpTop = null; this.work.close();
       this.menu = operation.menu = {
-        title: dim(`clear conversation, context and cache for ${page.name}? saved transcript stays. ↑↓ enter · esc`),
+        title: dim(`clear ${page.name}? removes its history${losing ? `, ${losing}` : ""}; name, folder and settings stay. ↑↓ enter · esc`),
         items: ["cancel", "clear context"], index: 0,
         pick: index => { if (index === 1) return this.confirmClear(operation!); this.cancelClear(); this.draw(); },
       };
@@ -1192,9 +1192,7 @@ export class App {
     }
   }
 
-  private checkClearPage(page: Page): void {
-    checkContextClear(page, this.page, this.pages, this.queued.get(page));
-  }
+  private checkClearPage(page: Page): void { checkContextClear(page, this.page, this.pages, this.queued.get(page)); }
 
   private clearCurrent(operation: ClearConfirmation): boolean {
     return this.clearing === operation && !operation.controller.signal.aborted && !this.closed
@@ -1214,14 +1212,16 @@ export class App {
     operation.committing = true;
     const page = operation.page;
     try {
-      this.checkClearPage(page);
+      this.checkClearPage(page); await page.orch.checkClear!(); // Input may have landed since the question opened.
       if (projectIdentity(page.project) !== operation.identity) throw new Error("project changed; reopen it before clearing context");
-      // Backend rechecks inside its publication lock and blocks overlapping turns.
-      await page.orch.clear!(operation.controller.signal);
-      this.syncTranscript(page);
-      this.note("conversation, model context and cache cleared.", page);
+      // The project as if just created (commands/project.ts): its page closes once the checks pass and reopens in the same tab.
+      const at = this.pages.indexOf(page), draft = this.input;
+      await (this.deps.resetProject ?? resetProject)(page.project, { ...this.deps.projects, discard: operation.discard, beforeRemove: () => { if (!this.clearCurrent(operation)) throw new Error("you moved to another page"); this.closePage(at); } });
+      const fresh = await this.openPage(page.project);
+      this.pages.splice(at, 0, ...this.pages.splice(this.pages.indexOf(fresh), 1)); this.active = at; this.input = draft;
+      this.note("cleared: history, tasks, questions, images and agents removed.", fresh);
     } catch (error) {
-      if (this.clearCurrent(operation)) this.note(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), page);
+      this.note(dim(`cannot clear: ${error instanceof Error ? error.message : error}`), this.pages.includes(page) ? page : this.page);
     } finally {
       if (this.clearing === operation) this.cancelClear();
       this.draw();

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App, type AppDeps } from "./app";
@@ -7,8 +7,11 @@ import type { Terminal } from "./components/term";
 import { FakeScreen } from "./components/testing";
 import { Calls } from "./conversation/tools";
 import { open } from "../core/data/transcripts/transcript";
-import { createOrchestrator } from "../core/agent-loop/orc/orchestrator";
+import { createOrchestrator, ensureProject } from "../core/agent-loop/orc/orchestrator";
 import { paths, saveConfig } from "../config/config";
+import { readProjectState, repositoryBinding, writeProjectState } from "../config";
+import { allTasks, registerTask } from "../core/data/tasks";
+import { displayName, setDisplayName } from "../core/data/projects";
 import { put, drain } from "../core/data/inbox/inbox";
 import { ask, all } from "../core/data/inbox/questions";
 import { fakeProvider } from "../test/fake-provider";
@@ -26,6 +29,9 @@ async function setup(extra: Partial<AppDeps> = {}) {
   process.env.ORCA_HOME = home;
   await saveConfig({ model: "unknown", compact: false });
   const project = "p";
+  // A real folder project: the reset deletes it through the cascade and creates it again in the same folder.
+  const folder = mkdtempSync(join(tmpdir(), "clear-ui-folder-"));
+  await ensureProject(project, folder);
   const t = open(paths.transcript(project, "orchestrator"));
   await t.append({ type: "message", message: { role: "user", content: "original UI history" } });
   const provider = fakeProvider([]);
@@ -34,19 +40,20 @@ async function setup(extra: Partial<AppDeps> = {}) {
   const screen = new FakeScreen(100, 24);
   const term: Terminal = { cols: 100, rows: 24, write: s => { screen.write(s); if (closed) exit += s; }, onKey() {}, onResize(cb) { resize = cb; }, open() {}, close() { closed = true; }, eraseOnExit() {} };
   const app = new App({ term, pollMs: 100000, agents: async () => [], watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0,
+    projects: { live: async () => [], stop: async () => {}, kill: async () => {} },
     openOrchestrator: async (project, _url, write, onInbox) => createOrchestrator({ project, provider, tools: {}, write, onInbox }), ...extra });
   const running = app.run(project);
   await until(() => !!app.page);
-  cleanups.push(async () => { app.quit(); await running; rmSync(home, { recursive: true, force: true }); });
+  cleanups.push(async () => { app.quit(); await running; rmSync(home, { recursive: true, force: true }); rmSync(folder, { recursive: true, force: true }); });
   const command = () => app.commands.get("/clear-context")!.run("", app.page);
   const context = () => open(t.path).chain();
-  return { app, project, t, term, screen, provider, command, context, running, exit: () => exit,
+  return { app, project, folder, t, term, screen, provider, command, context, running, exit: () => exit,
     resize(cols: number, rows: number) { term.cols = cols; term.rows = rows; screen.resize(cols, rows); resize(); },
     confirm: async () => { await app.onKey({ name: "down" }); await app.onKey({ name: "enter" }); } };
 }
 const uiText = (app: App) => JSON.stringify(app.page?.lines);
 
-test("bare /clear-context is local, cancel-default and excluded from recall; esc preserves drafts/history; explicit confirmation clears UI and exit replay but keeps saved transcript", async () => {
+test("bare /clear-context is local, cancel-default and excluded from recall; esc preserves drafts/history; explicit confirmation resets the project: history, tasks and questions go, its name and settings stay", async () => {
   const ui = await setup(), { app } = ui;
   const before = await Bun.file(ui.t.path).text();
   app.input = { text: "/clear-context", cursor: 14 };
@@ -59,7 +66,13 @@ test("bare /clear-context is local, cancel-default and excluded from recall; esc
   expect(await Bun.file(ui.t.path).text()).toBe(before);
   app.input = { text: "draft 界", cursor: 5 };
   const lines = [...app.page!.lines];
+  // What the project holds, and what the user chose for it.
+  await registerTask(ui.project, { name: "Old task", summary: "Work", branch: "old-task", authorized: true });
+  await ask(ui.project, [{ text: "Old question?" }]);
+  await setDisplayName(ui.project, "Kept name");
+  writeProjectState(ui.project, "model", "kept-model");
   await ui.command();
+  expect(Bun.stripANSI(app.menu!.title)).toContain("removes its history, 1 task, 1 question; name, folder and settings stay");
   await until(() => ui.screen.text().includes("clear context"));
   const visible = ui.screen.screen().map(Bun.stripANSI);
   expect(visible.findIndex(row => row.includes("clear context"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 tasks")));
@@ -72,12 +85,18 @@ test("bare /clear-context is local, cancel-default and excluded from recall; esc
   await ui.command(); await ui.confirm();
   expect(await ui.context()).toEqual([]);
   expect(app.page!.lines).toEqual([]);
-  expect(Bun.stripANSI(app.frame().inputArea!.lines.join("\n"))).toContain("conversation, model context and cache cleared");
+  expect(Bun.stripANSI(app.frame().inputArea!.lines.join("\n"))).toContain("cleared: history, tasks, questions, images and agents removed.");
+  expect(await allTasks(ui.project)).toEqual([]); expect(await all(ui.project)).toEqual([]);
+  expect(await displayName(ui.project)).toBe("Kept name"); expect(readProjectState<string>(ui.project, "model")).toBe("kept-model");
+  expect(repositoryBinding(ui.project)!.directory).toBe(realpathSync(ui.folder)); expect(app.pages).toHaveLength(1);
   await until(() => !ui.screen.text().includes("original UI history"));
   await app.onKey({ name: "char", text: "a" });
   expect(Bun.stripANSI(app.frame().inputArea!.lines.join("\n"))).not.toContain("cleared");
   expect(ui.provider.calls).toHaveLength(0);
-  expect(open(ui.t.path).history!().map(e => e.type)).toEqual(["message", "context-boundary"]);
+  // Nothing of the old conversation is kept on disk, and the new one numbers its tasks from 1.
+  expect(open(ui.t.path).history!().filter(e => e.type !== "meta")).toEqual([]);
+  expect(readFileSync(ui.t.path, "utf8")).not.toContain("original UI history");
+  expect((await registerTask(ui.project, { name: "New task", summary: "Work", branch: "new-task", authorized: true })).number).toBe(1);
   expect(app.input).toEqual({ text: "drafta 界", cursor: 6 });
   app.quit(); await ui.running;
   expect(ui.exit()).not.toContain("original UI history");
@@ -189,8 +208,8 @@ test("tiny hidden confirmation still owns typing and Escape, preserving chat and
   expect(app.input).toEqual({ text: "chat draft", cursor: 4 });
   await ui.command(); await ui.confirm();
   expect(app.input).toEqual({ text: "chat draft", cursor: 4 });
-  expect(page.questions.answer).toEqual({ text: "answer draft", cursor: 5 });
-  expect((await all(ui.project))[0]?.status).toBe("open");
+  expect(await all(ui.project)).toEqual([]); // the question went with the project, and its answer draft with it
+  expect(app.page).not.toBe(page); expect(app.page!.project).toBe(ui.project);
   expect(await ui.context()).toEqual([]);
 });
 
@@ -259,10 +278,11 @@ test("clear drops cached rows and local notices across refresh, reopen and anoth
   await Bun.write(join(paths.cache(ui.project), "rendered/old"), "cached old conversation");
   await ui.command(); await ui.confirm();
   await until(() => !ui.screen.text().includes("original UI history"));
-  expect(page.lines).toEqual([]);
+  expect(app.page).not.toBe(page); // the project's page was closed and opened again
+  expect(app.page!.lines).toEqual([]);
   expect(await Bun.file(join(paths.cache(ui.project), "rendered/old")).exists()).toBe(false);
   await app.refreshSessions();
-  expect(page.lines).toEqual([]);
+  expect(app.page!.lines).toEqual([]);
   expect(ui.screen.text()).not.toContain("old local diagnostic");
   app.closePage(); await app.openPage(ui.project);
   expect(app.page!.lines).toEqual([]);
@@ -276,8 +296,8 @@ test("clear drops cached rows and local notices across refresh, reopen and anoth
   await app.refreshSessions();
   expect(app.page!.lines).toEqual([]);
   const disk = await Bun.file(ui.t.path).text();
-  expect(disk).toContain("original UI history");
-  expect(disk).toContain("fresh answer");
+  expect(disk).not.toContain("original UI history"); // removed by this client's reset
+  expect(disk).toContain("fresh answer"); // another client's boundary only hides, as old transcripts expect
 });
 
 test("a clear from another client preserves an open worker view while resetting the chat behind it", async () => {

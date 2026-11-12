@@ -18,11 +18,12 @@
 import { existsSync } from "node:fs";
 import { lstat, readdir, rm, rmdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { loadConfig, paths, repositoryBinding, saveConfig, siblingWorktreeFolder } from "../../config";
+import { loadConfig, paths, projectStateScope, repositoryBinding, saveConfig, siblingWorktreeFolder, stateEntries, updateState } from "../../config";
 import { describeOwner, lockOwner, tryStorageLock } from "../data";
 import { assertWorktree, conversationTurnHeld, conversationTurnLock, directories, displayName, projectIdentity, validProjectName, withProjectStateLock, workspaces } from "../data/projects";
 import { listProcesses, processCleanupBlocker } from "../data/processes";
 import { purgeProject } from "../data/memory";
+import { purgeLedgerProject } from "../data/tasks";
 import { command } from "../proc";
 import { killProjectSession, liveAgentsOrNull } from "./liveness";
 import { inspectCheckout } from "./workspace-disposal";
@@ -87,10 +88,13 @@ export async function folderNode(id: string): Promise<FolderNode> {
 
 /** What deleting these projects removes, for the question put to the user before it happens. */
 export function describeDeletion(projects: ProjectNode[]): string {
-  const worktrees = projects.flatMap(p => p.sessions.filter(s => s.worktree && !s.problem));
+  const sessions = projects.flatMap(p => p.sessions), worktrees = sessions.filter(s => s.worktree && !s.problem);
   const uncommitted = worktrees.filter(s => s.uncommitted).length;
-  const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  return [projects.length > 1 ? count(projects.length, "conversation") : "", worktrees.length ? count(worktrees.length, "worktree") : "",
+  const count = (n: number, word: string) => n ? `${n} ${word}${n === 1 ? "" : "s"}` : "";
+  // Each project's own items; the orchestrator is the conversation itself, not something inside it.
+  const items = (kind: workspaces.Kind) => projects.reduce((sum, p) => sum + new Set(p.sessions.flatMap(s => s.items[kind] ?? []).filter(key => key !== "orchestrator")).size, 0);
+  return [projects.length > 1 ? count(projects.length, "conversation") : "", count(items("task"), "task"), count(items("agent"), "agent"),
+    count(items("question"), "question"), count(items("image"), "image"), count(worktrees.length, "worktree"),
     uncommitted ? `${uncommitted} with uncommitted files that will be lost` : ""].filter(Boolean).join(", ");
 }
 
@@ -103,7 +107,7 @@ export interface DeleteOptions {
   live?: (project: string) => Promise<string[] | null>;
   /** Close the project's idle tmux session; defaults to killProjectSession. Tests replace it. */
   kill?: (project: string) => Promise<void>;
-  /** Runs once the checks pass, before the project's own files are removed (the TUI closes its page here). */
+  /** Runs once the checks pass, before anything is removed (the TUI closes its page here); a throw leaves everything in place. */
   beforeRemove?: (project: string) => Promise<void> | void;
   /** Remove worktrees that hold uncommitted files too. Without it they refuse the deletion; the
    * TUI sets it after telling the user how many there are. Branches and commits always stay. */
@@ -169,11 +173,14 @@ export async function deleteProject(name: string, options: DeleteOptions): Promi
     await withProjectStateLock(name, async () => {
       const node = await projectNode(name);
       await assertDeletable(name, node, { ...options, live: async () => [] });
+      await options.beforeRemove?.(name); // The last point a caller can refuse: nothing has been removed yet.
       await deleteSessions(name, node);
-      await options.beforeRemove?.(name);
+      purgeLedgerProject(name); // Its tasks, while its identity can still be read.
+      const scope = projectStateScope(name), settings = stateEntries(paths.memory, scope).map(([key]) => key);
       directories.detach(name);
       await rm(paths.runtimeProject(name), { recursive: true, force: true });
       await rm(paths.project(name), { recursive: true, force: true });
+      for (const key of settings) updateState(paths.memory, scope, key, () => undefined); // Unreachable once its identity is gone.
       await directories.refreshFolders();
       // Best effort: the project is already gone, and the backfill's orphan cleanup removes leftovers.
       try { purgeProject(name); } catch { /* rebuildable index */ }

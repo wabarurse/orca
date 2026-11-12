@@ -2,7 +2,9 @@
 // supplies what that layer cannot import: stopping the project's daemon.
 
 import { ownership } from "../../core/tmux";
-import { stopDaemon } from "../../core/agent-loop/orc";
+import { ensureProject, stopDaemon } from "../../core/agent-loop/orc";
+import { inheritedSettings, loadConfig, paths, projectStateScope, readState, repositoryBinding, saveConfig, writeProjectState } from "../../config";
+import { directories } from "../../core/data/projects";
 
 /** `stop` defaults to the daemon client's `stopDaemon`; tests replace it. */
 export type DeleteOptions = Partial<ownership.DeleteOptions>;
@@ -12,6 +14,26 @@ const withStop = (options: DeleteOptions): ownership.DeleteOptions => ({ stop: s
 export const deleteProject = (name: string, options: DeleteOptions = {}) => ownership.deleteProject(name, withStop(options));
 /** Delete a folder's conversations, then its record. The directory on disk is kept. */
 export const deleteFolder = (id: string, options: DeleteOptions = {}) => ownership.deleteFolder(id, withStop(options));
+/** What survives a reset: what the user chose for the project, never what happened in it. */
+const KEPT = ["name", ...inheritedSettings];
+/**
+ * /clear-context: the project as if it had just been created. Everything under it goes through
+ * the same cascade as a deletion (history, tasks, questions, images, agents, worktrees); then a
+ * project with the same id is created in the same folder and gets its name, settings and pin back.
+ * Refused, with nothing removed, in every case a deletion is.
+ */
+export async function resetProject(name: string, options: DeleteOptions = {}): Promise<void> {
+  const binding = repositoryBinding(name);
+  if (!binding) throw new Error("this project predates folder projects and cannot be reset; delete it and start a new conversation");
+  const scope = projectStateScope(name);
+  const kept = KEPT.map(key => [key, readState<unknown>(paths.memory, scope, key)] as const).filter(([, value]) => value !== undefined);
+  const pinned = (await loadConfig()).pinned.includes(name);
+  await ownership.deleteProject(name, withStop(options));
+  await ensureProject(name, binding.directory);
+  for (const [key, value] of kept) writeProjectState(name, key, value);
+  if (pinned) await saveConfig({ pinned: [...new Set([...(await loadConfig()).pinned, name])] });
+  await directories.refreshFolders();
+}
 /** What a deletion will remove, read before asking the user. */
 export async function deletionSummary(entry: { name: string; directory?: string }): Promise<string> {
   const projects = entry.directory ? (await ownership.folderNode(entry.name)).projects : [await ownership.projectNode(entry.name)];

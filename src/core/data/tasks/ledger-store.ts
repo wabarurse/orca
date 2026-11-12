@@ -164,6 +164,29 @@ export function purgeLedgerTasks(project: string, ids: string[]): void {
   } finally { db.close(); }
 }
 
+/** Deleting the project itself, under its lock and while its identity can still be read: every
+ * task record and the binding go, so a project created later under the same name starts its own
+ * ledger at #1 instead of failing closed on the old one. Both retention guards are restored in
+ * the same transaction. A ledger bound to another identity is never touched. */
+export function purgeLedgerProject(project: string): void {
+  if (!existsSync(paths.memory)) return;
+  const db = database();
+  try {
+    db.transaction(() => {
+      if (!db.query("SELECT name FROM sqlite_master WHERE name='task_ledger_projects'").get()) return;
+      const saved = db.query("SELECT repository FROM task_ledger_projects WHERE project_id=?").get(project) as { repository: string } | null;
+      if (!saved) return;
+      if (!matchesBinding(project, saved.repository)) throw new Error("task ledger belongs to another project identity; nothing was deleted");
+      const guards = (db.query("SELECT sql FROM sqlite_master WHERE type='trigger' AND name IN ('task_ledger_retain','task_ledger_project_retain')").all() as { sql: string }[]).map(row => row.sql);
+      if (guards.length !== 2 || guards.some(sql => !sql)) throw new Error("task retention guard is unavailable");
+      db.exec("DROP TRIGGER task_ledger_retain; DROP TRIGGER task_ledger_project_retain");
+      db.query("DELETE FROM task_ledger_records WHERE project_id=?").run(project);
+      db.query("DELETE FROM task_ledger_projects WHERE project_id=?").run(project);
+      for (const sql of guards) db.exec(sql);
+    }).immediate();
+  } finally { db.close(); }
+}
+
 /** Read-only durable lookup: no import, repair, project creation or membership writes. */
 export function searchLedger(input: Record<string, unknown>): unknown[] {
   if (!existsSync(paths.memory)) return [];
