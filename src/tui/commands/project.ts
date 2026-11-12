@@ -65,30 +65,6 @@ export async function deleteProject(name: string, { live = liveAgentsOrNull, sto
   } finally { await release(); }
 }
 
-
-/** Explicit relink of a missing/moved directory; the project UUID and conversations remain. */
-export async function relinkProjectDirectory(conversation: string, directory: string): Promise<string> {
-  const { directories } = await import("../../core/data/projects");
-  const project = directories.parentProject(conversation);
-  if (!project) throw new Error("conversation has no directory project");
-  const releases: (() => Promise<void>)[] = [];
-  try {
-    for (const id of [...project.conversations].sort()) {
-      const release = await tryStorageLock(conversationTurnLock(id), id);
-      if (!release) throw new Error("a conversation is running; stop it before relinking");
-      releases.push(release);
-      const agents = await liveAgentsOrNull(id);
-      if (agents === null || agents.length) throw new Error("stop active agents before relinking the project");
-      for (const command of await listProcesses(id)) {
-        const blocker = processCleanupBlocker(command);
-        if (blocker) throw new Error(`cannot relink project: ${blocker}`);
-      }
-    }
-    const canonical = await directories.relinkDirectoryProject(project.id, directory);
-    return `project relinked to ${canonical}; conversations and workspaces preserved`;
-  } finally { for (const release of releases.reverse()) await release(); }
-}
-
 /** Open this checkout's conversations, creating its first when needed. Opening
  * does not submit input or start model work. */
 export async function restoreConversations(options: {
@@ -115,32 +91,5 @@ export async function restoreConversations(options: {
   }
   const selected = saved.selected && opening.includes(saved.selected) ? saved.selected : existing;
   if (selected && known.includes(selected)) await options.open(selected);
-  if (!options.source && !known.length) options.note("/new <conversation name> <directory> to add a project");
-}
-
-export async function directoryProjectCommand(conversation: string, args: string): Promise<string> {
-  const { directories } = await import("../../core/data/projects");
-  const project = directories.attachConversation(conversation);
-  if (!project) return "conversation is not attached to a directory project";
-  if (args.startsWith("rename ")) await directories.renameDirectoryProject(project.id, args.slice(7));
-  else if (args.startsWith("relink ")) return relinkProjectDirectory(conversation, args.slice(7));
-  else if (args) return "usage: /project [rename <name>|relink <directory>]";
-  return `${project.name} · ${project.id} · ${project.directory}`;
-}
-export async function directoryDefaultsCommand(conversation: string, args: string): Promise<string> {
-  const { directories } = await import("../../core/data/projects");
-  if (args === "inherit") directories.inheritDefaults(conversation);
-  else if (!args || args === "save") directories.promoteDefaults(conversation);
-  else return "usage: /project-defaults [save|inherit]";
-  return args === "inherit" ? "conversation inherits project defaults" : "current settings saved as directory project defaults";
-}
-
-/** Project groups reflect their open conversations without reading state during paint. */
-export function projectMenu(list: { items: import("../../protocol").ProjectEntry[]; index: number; status: string; parent?: string }, pages: { project: string; busy: boolean }[], selected?: string) {
-  const items = list.items.map(it => {
-    const members = new Set([it.name, ...(it.conversations ?? [])]), open = pages.filter(page => members.has(page.project));
-    return { ...it, open: !!open.length, active: !!selected && members.has(selected), busy: open.some(p => p.busy) };
-  });
-  const hint = list.parent ? "↑↓ enter opens  n new conversation  d deletes  esc projects" : items.some(it => it.directory) ? "↑↓ enter conversations  p pins  esc closes" : undefined;
-  return { items, index: list.index, status: list.status, hint };
+  if (!options.source && !known.length) options.note("no projects yet: run orca inside a repository to add one");
 }

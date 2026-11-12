@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { append, commit, erase, inputArea, live, liveRows, menuRows, NOTHING, projectRows, questionRows, reprint, windowStart, type Frame, type ProjectList, type QuestionView } from "./render";
+import { append, commit, erase, inputArea, live, liveRows, menuRows, NOTHING, reprint, type Frame, type QuestionView } from "./render";
 import { sanitize, expandTabs, visibleLength, wrap } from "../components/text";
 import { FakeScreen } from "../components/testing";
 import { setUserFill } from "../components/style";
@@ -188,36 +188,6 @@ describe("live", () => {
     expect(strip(r[3]!)).toBe("z".repeat(39) + "…");
   });
 
-  const projects = (over: Partial<ProjectList> = {}): ProjectList => ({
-    items: [
-      { name: "orch-p1n0", label: "pinned", pinned: true, open: false, active: false, busy: false }, // rows show the label, not the id
-      { name: "one", label: "one", pinned: false, open: true, active: true, busy: false },
-      { name: "two", label: "two", pinned: false, open: true, active: false, busy: true },
-    ],
-    index: 1, status: "", ...over,
-  });
-
-  test("the project list sits below the multi-row input and status", () => {
-    const f = frame({ cols: 60, rows: 12, partial: "half", status: "1 agent running", projects: projects(), input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 13 } });
-    expect(rows(f)).toEqual(["half", ...box(["> one", "  two", "  three"], 60), "1 agent running", "projects", "  *  pinned", "❯  ● one", "   ○ two ·", "↑↓ enter opens   p pins   d deletes   esc closes"]);
-    expect(liveRows(f)).toMatchObject({ cursor: 4, col: 8 });
-  });
-
-  test("project rows scroll to keep the selection in view, with the status under the list", () => {
-    const many = Array.from({ length: 10 }, (_, i) => ({ name: `id${i}`, label: `p${i}`, pinned: false, open: false, active: false, busy: false }));
-    const out = projectRows({ items: many, index: 8, status: "delete p8? y/n" }, 6).map(strip);
-    expect(out).toEqual(["projects", "     p6", "     p7", "❯    p8", "delete p8? y/n", "↑↓ enter opens   p pins   d deletes   esc closes"]);
-    expect(projectRows({ items: [], index: 0, status: "" }, 5).map(strip)).toEqual(["projects", "  none yet", "↑↓ enter opens   p pins   d deletes   esc closes"]);
-    expect(windowStart(10, 0, 3)).toBe(0);
-    expect(windowStart(10, 9, 3)).toBe(7);
-    expect(windowStart(2, 1, 5)).toBe(0);
-  });
-
-  test("on a short terminal the status and hint stay ahead of the list", () => {
-    expect(projectRows(projects({ status: "delete one? y/n" }), 2).map(strip)).toEqual(["delete one? y/n", "↑↓ enter opens   p pins   d deletes   esc closes"]);
-    expect(projectRows(projects({ status: "delete one? y/n" }), 1).map(strip)).toEqual(["delete one? y/n"]);
-    expect(rows(frame({ cols: 60, rows: 4, projects: projects({ status: "delete one? y/n" }) }))).toEqual(["> hi", "projects", "delete one? y/n", "↑↓ enter opens   p pins   d deletes   esc closes"]);
-  });
 });
 
 describe("on a faithful terminal", () => {
@@ -302,41 +272,11 @@ describe("sanitize", () => {
 });
 
 describe("questions", () => {
-  const PICK = "↑↓/1–9 choose · enter pick · type answer · ctrl+d delete · esc later";
-  const q = (over: Partial<QuestionView> = {}): QuestionView => ({ text: "Which db?", options: ["postgres", "sqlite"], index: 0, default: "sqlite", count: 1, mode: "pick", ...over });
-
-  test("a question with options: text, numbered options, type your own, skip describing silent removal, the hint for the mode", () => {
-    expect(questionRows(q(), 70, 10).map(strip)).toEqual(["? Which db?", "❯ 1. postgres", "  2. sqlite", "  type your own answer", "  skip — remove from inbox", PICK]);
-    expect(questionRows(q({ index: 2, count: 3, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db? (1 of 3)", "  1. postgres", "  2. sqlite", "❯ type your own answer", "  skip — remove from inbox", "enter send · ctrl+d delete · esc/tab close"]);
-  });
-
-  test("a question without options: type your own answer, then the same silent skip without a default", () => {
-    expect(questionRows(q({ options: [], default: undefined, mode: "answer" }), 70, 10).map(strip)).toEqual(["? Which db?", "❯ type your own answer", "  skip — remove from inbox", "enter send · ctrl+d delete · esc/tab close"]);
-  });
-
-  test("long text word-wraps", () => {
-    const out = questionRows(q({ text: "Should the importer keep going when one row fails to parse?", options: [], default: undefined }), 20, 10).map(strip);
-    expect(out.slice(0, 4)).toEqual(["? Should the", "importer keep going", "when one row fails", "to parse?"]);
-  });
-
-  test("on a short terminal the hint and selected decision stay ahead of text", () => {
-    const long = q({ text: "word ".repeat(40).trim(), index: 1 });
-    expect(questionRows(long, 30, 1).map(strip)).toEqual([PICK]);
-    const two = questionRows(long, 30, 2).map(strip);
-    expect(two[0]).toBe("❯ 2. sqlite");
-    expect(two[1]).toBe(PICK);
-    expect(questionRows(long, 30, 3).map(strip).slice(1)).toEqual(["❯ 2. sqlite", PICK]);
-    expect(questionRows(long, 30, 0)).toEqual([]);
-    // Question state cannot resurrect the old form under the chat composer.
-    const live = rows({ cols: 30, rows: 5, input: { prompt: "> ", text: "", cursor: 0 }, menu: null, status: "status", question: long });
+  test("a question's form is the Questions page's: the footer never draws it", () => {
+    const q: QuestionView = { text: "Which db?", options: ["postgres", "sqlite"], index: 0, default: "sqlite", count: 1, mode: "pick" };
+    const live = rows({ cols: 30, rows: 5, input: { prompt: "> ", text: "", cursor: 0 }, menu: null, status: "status", question: q });
     expect(live.slice(0, 2)).toEqual(["> ", "status"]);
-    expect(live.join("\n")).not.toContain("choose");
-    expect(live.length).toBeLessThanOrEqual(5);
-  });
-
-  test("a menu or the project list wins over the question", () => {
-    const f = frame({ rows: 10, menu: { title: "models", items: ["a"], index: 0 }, question: q() });
-    expect(rows(f).join("\n")).not.toContain("Which db?");
+    expect(rows(frame({ rows: 10, menu: { title: "models", items: ["a"], index: 0 }, question: q })).join("\n")).not.toContain("Which db?");
   });
 });
 

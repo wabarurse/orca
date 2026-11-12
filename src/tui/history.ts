@@ -16,19 +16,16 @@ export const MAX_INPUT_HISTORY = 500;
 /** The file is trimmed back to MAX_INPUT_HISTORY entries once it holds this many lines. */
 export const COMPACT_AT = 2 * MAX_INPUT_HISTORY;
 
-/** /clear and /clear-context are deliberately not recalled: use a freshly typed command.
- * Commands safe to keep: they carry nothing secret. /new is kept unless its URL has credentials. */
-const SAFE_COMMANDS = new Set(["/refresh", "/inbox", "/compact", "/agents", "/model", "/help", "/projects", "/back", "/close", "/quit", "/keys", "/rename", "/new", "/questions"]);
-
-/** A URL with a user or password in it (`https://user:token@host`, `ssh://user@host`). */
-const CREDENTIAL_URL = /[a-z][a-z0-9+.-]*:\/\/[^\s/@]+@/i;
+/** /clear-context is deliberately not recalled: use a freshly typed command.
+ * Commands safe to keep: they carry nothing secret. */
+const SAFE_COMMANDS = new Set(["/compact", "/model", "/help", "/quit", "/rename"]);
 
 /** Whether a sent line may be kept in the history (and on disk). */
 export function keepable(text: string, signingIn: boolean): boolean {
   if (signingIn || !text.trim()) return false;
   if (!text.startsWith("/")) return true;
   const command = text.split(/\s/, 1)[0]!;
-  return SAFE_COMMANDS.has(command) && !(command === "/new" && CREDENTIAL_URL.test(text));
+  return SAFE_COMMANDS.has(command);
 }
 
 /** `history` with `text` added last: blank text and a repeat of the last entry change nothing; the oldest entries go past the cap. */

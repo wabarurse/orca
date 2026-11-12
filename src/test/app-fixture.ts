@@ -102,5 +102,11 @@ export function appFixture() {
     while (!cond() && Date.now() < deadline) await Bun.sleep(5);
     expect(cond()).toBe(true);
   }
-  return { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until };
+  /** The Projects tab of the work page as its rows (null while another tab or no page shows): id, shown label, pin, the status line. */
+  const projectList = (app: App) => {
+    const state = app.work.kind === "projects" ? app.work.state : null;
+    return state && { items: state.items.map(item => ({ name: item.id, label: item.name, pinned: item.lead === "★ " })), index: state.index, status: state.notice ?? "", confirm: state.confirm ?? null };
+  };
+
+  return { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList };
 }

@@ -4,18 +4,12 @@
 // The legacy inline helpers remain useful for isolated renderer tests; they do
 // not drive the application's terminal lifecycle or conversation viewport.
 
-import { bold, dim, fit, plainText, sanitize, visibleLength, wordWrap, wrap } from "../components";
+import { bold, dim, fit, sanitize, visibleLength, wrap } from "../components";
 import { fillRow, userFill } from "../components";
 import { layout, scrollWindow } from "./editor";
 
 /** Scrollable footer content is already wrapped to the current width; its viewport is transient. */
 export interface Help { lines: string[]; top: number; heading?: string }
-export interface TaskInboxView extends Help {
-  state: "loading" | "error" | "ready";
-  section?: "questions";
-  question?: QuestionView | null;
-  notice?: string;
-}
 /** `footer`: rows under the items (a status, a count, a key hint) that win over the list on short terminals. */
 export interface Menu { title: string; items: string[]; index: number; footer?: string[] }
 export interface Input {
@@ -26,25 +20,14 @@ export interface Input {
   /** First input row shown last frame, so the window only scrolls when the cursor leaves it; unset shows the end. */
   top?: number;
 }
-/** One row of the project list: `name` is the id, `label` what it shows. */
-export interface ProjectItem { name: string; label: string; pinned: boolean; open: boolean; active: boolean; busy: boolean }
-/** The project list (Ctrl+B, /projects): drawn like a menu, with a status and key hint under it. */
-export interface ProjectList {
-  hint?: string;
-  items: ProjectItem[];
-  index: number;
-  /** A question or refusal shown under the list, e.g. "delete x? y/n". */
-  status: string;
-}
-
 /** How the input relates to the shown question: choosing a row or typing its answer, with the chat draft saved separately. */
 export type QuestionMode = "pick" | "answer";
 
-/** The oldest open question of the active page, as the live region shows it. */
+/** The question whose answer form is open on the Questions page, as the controller sees it. */
 export interface QuestionView {
   text: string;
   options: string[];
-  /** The selected row: an option, options.length for "type your own answer", options.length + 1 for "skip". */
+  /** The controller's row: an option, options.length for a typed answer, options.length + 1 for skip. */
   index: number;
   default?: string;
   /** Open questions on the page, this one included. */
@@ -74,11 +57,7 @@ export interface Frame {
   menu: Menu | null;
   /** Explicit scrollable help below the composer; never part of the transcript. */
   help?: Help | null;
-  /** User inbox: distinct task registry and question stores, never a message queue. */
-  inbox?: TaskInboxView | null;
-  /** The project list, below the input and status like a menu, when open. */
-  projects?: ProjectList | null;
-  /** The question shown below the input and status when no menu or project list is open. */
+  /** The open answer form's question (work-page.ts draws it); never drawn in the footer. */
   question?: QuestionView | null;
   /** Grouped counts below the composer, or none. */
   status?: string | null;
@@ -139,57 +118,6 @@ export function windowStart(count: number, index: number, rows: number): number 
   return Math.max(0, Math.min(index - rows + 1, count - rows));
 }
 
-function projectRow(it: ProjectItem, selected: boolean): string {
-  const mark = `${selected ? bold("❯") : " "} ${it.pinned ? "*" : " "}${it.active ? "●" : it.open ? "○" : " "} `;
-  return `${mark}${it.label}${it.busy ? dim(" ·") : ""}`;
-}
-
-export const PROJECTS_HINT = "↑↓ enter opens   p pins   d deletes   esc closes";
-
-/**
- * The project list's rows, at most `height`: a title, the items (scrolled to
- * keep the selection in view), then the status and key hint. On short
- * terminals the status and hint win over the list.
- */
-export function projectRows(p: ProjectList, height: number): string[] {
-  const footer = [...(p.status ? p.status.split("\n") : []), dim(p.hint ?? PROJECTS_HINT)].slice(0, Math.max(0, height));
-  const listRows = Math.max(0, height - footer.length - 1);
-  const start = windowStart(p.items.length, p.index, listRows);
-  const items = p.items.slice(start, start + listRows).map((it, i) => projectRow(it, start + i === p.index));
-  const head = [dim("projects"), ...(p.items.length ? items : [dim("  none yet")])].slice(0, Math.max(0, height - footer.length));
-  return [...head, ...footer];
-}
-
-export const QUESTION_HINTS: Record<QuestionMode, string> = {
-  pick: "↑↓/1–9 choose · enter pick · type answer · ctrl+d delete · esc later",
-  answer: "enter send · ctrl+d delete · esc/tab close",
-};
-export const OWN_ANSWER = "type your own answer";
-export const skipRow = () => "skip — remove from inbox";
-
-/** A question's rows: its options numbered (1–9 pick them), then "type your own answer" and "skip". */
-export const questionItems = (q: Pick<QuestionView, "options" | "default">): string[] => [...q.options.map((o, i) => `${i + 1}. ${o}`), OWN_ANSWER, skipRow()];
-
-/**
- * A question's rows, at most `height`, `cols` wide: its text word-wrapped,
- * then its rows (scrolled to keep the selection in view), and the hint for
- * the mode. On short terminals the hint and selected decision win over text.
- */
-export function questionRows(q: QuestionView, cols: number, height: number, showHint = true): string[] {
-  if (height <= 0) return [];
-  const footer = showHint ? [dim(QUESTION_HINTS[q.mode])] : [];
-  const room = height - footer.length;
-  const items = questionItems({ options: q.options.map(plainText), default: q.default && plainText(q.default) });
-  const head = wordWrap(`${bold("?")} ${plainText(q.text)}${q.count > 1 ? ` (${q.position ?? 1} of ${q.count})` : ""}`, cols);
-  const textRows = Math.max(0, Math.min(head.length, room > 1 ? Math.max(1, room - items.length) : 0));
-  const text = head.slice(0, textRows);
-  if (textRows > 0 && textRows < head.length) text[textRows - 1] += "…";
-  const listRows = room - text.length;
-  const start = windowStart(items.length, q.index, listRows);
-  const list = items.slice(start, start + listRows).map((it, i) => `${start + i === q.index ? bold("❯") : " "} ${it}`);
-  return [...text, ...list, ...footer];
-}
-
 /** A menu's rows, at most `height`: its title, then the items scrolled to keep the selection in view, then its footer. */
 export function menuRows(m: Menu, height: number): string[] {
   const footer = (m.footer ?? []).slice(0, Math.max(0, height - 1));
@@ -243,21 +171,6 @@ export function helpPanel(f: Frame): { rows: string[]; top: number; bodyHeight: 
   return scrollPanel(f, f.help, "help · commands & keys", "help");
 }
 
-/** Same bounded footer geometry as help, without displacing the composer. */
-export function taskInboxPanel(f: Frame): ReturnType<typeof helpPanel> {
-  const view = f.inbox;
-  const height = Math.min(18, footerBase(f).free);
-  const panel = { rows: [] as string[], top: 0, bodyHeight: Math.max(0, height - 1), maxTop: 0 };
-  if (!view || height <= 0) return panel;
-  if (height === 1) return { ...panel, rows: [fit(dim("esc closes question"), f.cols)] };
-  const title = view.state === "error" ? "questions · error" : "questions";
-  const room = panel.bodyHeight;
-  const notice = view.notice ? wrap(plainText(view.notice), f.cols).slice(0, Math.max(0, room - (view.question ? 3 : 1))) : [];
-  const content = view.question ? questionRows(view.question, f.cols, room - notice.length)
-    : [...view.lines.slice(0, Math.max(0, room - notice.length - 1)), dim("esc/tab close")];
-  return { ...panel, rows: [bold(title), ...notice.map(dim), ...content].map(row => fit(row, f.cols)) };
-}
-
 function scrollPanel(f: Frame, view: Help | null | undefined, title: string, shortTitle: string): ReturnType<typeof helpPanel> {
   const { free } = footerBase(f);
   // stickyRows already reserves one body row; leave two more for content and its separator.
@@ -279,14 +192,10 @@ function scrollPanel(f: Frame, view: Help | null | undefined, title: string, sho
   return { rows: rows.map(row => fit(row, f.cols)), top, bodyHeight, maxTop };
 }
 
-/** What sits below input/status: a menu, projects, help, task inbox, or question. */
+/** What sits below input/status: a menu or help. Lists and questions have their own full page. */
 function overlayRows(f: Frame, height: number): string[] {
   if (f.menu) return menuRows(f.menu, height);
-  if (f.projects) return projectRows(f.projects, height);
-  if (f.help) return helpPanel(f).rows;
-  // Questions are answered on their full-page view. Never resurrect the old
-  // below-composer panel, including when legacy callers pass its frame fields.
-  return [];
+  return f.help ? helpPanel(f).rows : [];
 }
 
 /** Queued previews immediately ABOVE input; counts/panels below. Input and status win on tiny screens. */

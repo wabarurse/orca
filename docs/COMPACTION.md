@@ -140,7 +140,7 @@ unbounded context is promised; see [IMAGE_ATTACHMENTS.md](IMAGE_ATTACHMENTS.md).
 
 ## Clear the chat display
 
-`/clear` immediately clears only the current TUI's visible chat. It has no confirmation and makes no model request. Model context, saved transcripts, cache, tasks, pending input, agents and other attached TUIs are unchanged. Refreshes and resizing keep earlier entries hidden; new replies still appear. Closing and reopening that conversation restores its saved history. In an agent view, only that view is cleared.
+The visual-only `/clear` command was removed with the command trim; only `/clear-context` remains. What it did: Model context, saved transcripts, cache, tasks, pending input, agents and other attached TUIs are unchanged. Refreshes and resizing keep earlier entries hidden; new replies still appear. Closing and reopening that conversation restores its saved history. In an agent view, only that view is cleared.
 
 ## Clear model context and cache
 
@@ -151,7 +151,7 @@ cancels it and stops the conversation and its subagents; drafts and saved histor
 remain intact. Typing, pastes and question shortcuts cannot
 leak through the modal. Switching/closing pages, opening another menu, or resizing
 invalidates it; even a tiny/hidden modal still owns its keys. `/clear-context` is deliberately
-excluded from input recall. In a worker/reviewer view it refuses: `/back` first.
+excluded from input recall. In a worker/reviewer view it refuses: Esc first.
 With no project open it explains rather than creating one.
 
 This clears the active orchestrator's model context, conversation display, rendered

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App, parseCommand, type AppDeps } from "../app";
-import { taskInboxPanel, statusRows, type Frame } from "./render";
+import { statusRows, type Frame } from "./render";
 import { visibleLength } from "../components/text";
 import { chapterRows, headerHeight } from "../header/chrome";
 import { stickyRows, stickyUpdate } from "../screen/sticky";
@@ -53,7 +53,15 @@ async function setup(extra: Partial<AppDeps> = {}) {
     poll: () => (app as unknown as { watchPages(): void }).watchPages(),
     resize(cols: number, rows: number) { term.cols = cols; term.rows = rows; screen.resize(cols, rows); resize(); } };
 }
-const text = (app: App) => plain(app.frame().inbox?.lines ?? []);
+/** The Questions page's rows while it is open. */
+const panelRows = (app: App) => app.work.open ? app.work.screen().rows : [];
+const formOpen = (app: App) => !!app.page?.questions.expanded;
+/** Ctrl+Q, then Enter on the selected (first open) question: its answer form. */
+async function openForm(app: App) {
+  if (app.work.kind !== "questions") app.work.show("questions");
+  await app.work.refresh("questions");
+  await app.onKey({ name: "enter" });
+}
 
 const syntheticQuestion = (id = "q"): Question => ({ id, text: `Question ${id}?`, status: "open", ts: "2026-01-01T00:00:00Z" });
 const fakeQuestions = (changes: Partial<QuestionStore> = {}): QuestionStore => ({
@@ -64,7 +72,7 @@ const fakeQuestions = (changes: Partial<QuestionStore> = {}): QuestionStore => (
 
 async function toggleAnswer(app: App) {
   if (app.page?.questions.expanded) await app.onKey({ name: "escape" });
-  else await app.questions.command(app.page);
+  else await openForm(app);
 }
 
 test("question load/error states never fabricate zero; retry and external closure preserve chat and report the orphan answer safely", async () => {
@@ -72,20 +80,20 @@ test("question load/error states never fabricate zero; retry and external closur
   const malicious = "bad\x1b]0;owned\x07\x1b[31mred\x1b[0m\u202e";
   const ui = await setup({ questions: fakeQuestions({ list: async () => { if (fail) throw new Error(malicious); return open; } }) }), { app } = ui;
   const chat = { text: "keep chat", cursor: 2 }; app.input = { ...chat }; app.draw();
-  await app.questions.command(app.page);
+  await openForm(app);
   expect(app.status(app.page!)).toContain("? questions |");
-  const panel = plain(taskInboxPanel(app.frame()).rows);
+  const panel = plain(panelRows(app));
   expect(panel).toContain("questions unavailable"); expect(panel).not.toContain("No open questions");
-  expect(taskInboxPanel(app.frame()).rows.join("")).not.toMatch(/\x1b\]|\x1b\[31m|\u202e/);
+  expect(panelRows(app).join("")).not.toMatch(/\x1b\]|\x1b\[31m|\u202e/);
   await app.onKey({ name: "enter" }); expect(app.input).toEqual(chat);
-  fail = false; await app.questions.command(app.page);
+  fail = false; await openForm(app);
   expect(app.status(app.page!)).toContain("1 questions |");
   app.input = { text: "orphan\x1b]0;owned\x07\u202e", cursor: 4 }; app.draw();
   fail = true; app.questions.poll(app.pages); await app.page!.questions.polling;
   expect(app.status(app.page!)).toContain("? questions |");
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("questions unavailable");
+  expect(plain(panelRows(app))).toContain("questions unavailable");
   fail = false; open = []; app.questions.poll(app.pages); await app.page!.questions.polling;
-  expect(app.input).toEqual(chat); expect(app.frame().inbox).toBeNull();
+  expect(app.input).toEqual(chat); expect(formOpen(app)).toBe(false);
   expect(plain(app.frame().inputArea!.lines)).toContain("unsent answer: orphan");
   expect(JSON.stringify(app.page!.lines)).not.toContain("owned");
   expect(app.status(app.page!)).toContain("0 questions |");
@@ -96,20 +104,19 @@ test("in-flight answer stays single-flight across polls/sections; errors retain 
   const ui = await setup({ tasks: async () => [], questions: { ...fileStore, answer: async () => { attempts++; await gate.promise; } } }), { app } = ui;
   await ask("a", [{ text: "Pending?" }]);
   const chat = { text: "chat", cursor: 1 }, answer = { text: "typed answer", cursor: 6 };
-  app.input = { ...chat }; await app.questions.command(app.page);
+  app.input = { ...chat }; await openForm(app);
   app.input = { ...answer }; app.draw(); app.page!.sent.push({ inputId: "exact", text: "pending prompt" });
   const closing = app.onKey({ name: "enter" });
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("sending answer");
+  expect(plain(panelRows(app))).toContain("sending answer");
   await app.onKey({ name: "enter" }); await app.onKey({ name: "char", text: "not inserted" });
   expect(attempts).toBe(1); expect(app.input).toEqual(answer);
   await toggleAnswer(app); expect(app.input).toEqual(chat);
   app.questions.poll(app.pages); await app.page!.questions.polling;
   gate.reject(new Error("write failed\x1b[2J\u202e")); await closing;
-  expect(app.frame().inbox).toBeNull(); expect(app.input).toEqual(chat);
+  expect(formOpen(app)).toBe(false); expect(app.input).toEqual(chat);
   expect(plain(app.frame().inputArea!.lines)).toContain("could not answer: write failed");
   await toggleAnswer(app); expect(app.input).toEqual(answer);
   expect(app.page!.sent).toHaveLength(1); expect(app.page!.questions.closing).toBe(false);
-  expect(plain(app.frame().inputArea!.lines)).toContain("could not answer: write failed");
   expect((await allQuestions("a"))[0]!.status).toBe("open");
 });
 
@@ -119,14 +126,14 @@ for (const transition of ["close", "project", "recreate"] as const) {
     const ui = await setup({ tasks: async () => [], questions: fakeQuestions({ list: async () => delayed ? gate.promise : [] }) }), { app } = ui;
     const a = app.page!, chat = { text: "saved A", cursor: 3 }; app.input = { ...chat }; app.draw();
     const opening = app.questions.command(a);
-    expect(app.frame().inbox?.section).toBe("questions");
+    expect(a.questions.expanded).toBe(true);
     if (transition === "close") await app.onKey({ name: "escape" });
     if (transition === "project") await app.openPage("b");
     if (transition === "recreate") { app.closePage(); delayed = false; rmSync(paths.project("a"), { recursive: true }); await app.openPage("a"); }
     const current = app.page!, draft = { ...app.input };
     delayed = false; gate.resolve([syntheticQuestion("old")]); await opening; await current.questions.polling;
     expect(app.page).toBe(current); expect(app.input).toEqual(draft);
-    expect(app.frame().inbox).toBeNull();
+    expect(formOpen(app)).toBe(false);
     expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
   });
 }
@@ -135,14 +142,14 @@ test("answer feedback stays temporary; settling returns to the question list and
   let open = [syntheticQuestion("q1"), syntheticQuestion("q2")];
   const ui = await setup({ questions: fakeQuestions({ list: async () => open, answer: async (_p, id) => { open = open.filter(q => q.id !== id); } }) }), { app } = ui;
   const page = app.page!;
-  await app.questions.command(page);
+  await openForm(app);
   app.input = { text: "first", cursor: 5 }; app.draw();
   await app.onKey({ name: "enter" });
   await until(() => page.questions.open.length === 1);
-  expect(app.frame().inbox).toBeNull(); // Answer form closes; the Questions list remains open.
+  expect(formOpen(app)).toBe(false); // Answer form closes; the Questions list remains open.
   expect(plain(app.frame().inputArea!.lines)).toContain("? Question q1? → first");
   await app.onKey({ name: "escape" }); // closes the panel and clears the visible status
-  expect(app.frame().inbox).toBeNull();
+  expect(formOpen(app)).toBe(false);
   expect(plain(app.frame().inputArea!.lines)).not.toContain("Question q1?");
   expect(page.lines).toEqual([]);
   await app.onKey({ name: "char", text: "x" });
@@ -153,14 +160,14 @@ for (const transition of ["project", "recreate"] as const) {
   test(`a late question answer remains owned by its captured page after ${transition}`, async () => {
     const gate = deferred<void>(); let open = [syntheticQuestion()];
     const ui = await setup({ questions: fakeQuestions({ list: async () => open, answer: async () => { await gate.promise; } }) }), { app } = ui;
-    const a = app.page!; await app.questions.command(a);
+    const a = app.page!; await openForm(app);
     app.input = { text: "answer A", cursor: 2 }; app.draw();
     const answering = app.onKey({ name: "enter" }); open = [];
     if (transition === "project") await app.openPage("b");
     else { app.closePage(); rmSync(paths.project("a"), { recursive: true }); await app.openPage("a"); }
     const next = app.page!, draft = { text: "new page draft", cursor: 5 }; app.input = { ...draft }; app.draw();
     gate.resolve(); await answering;
-    expect(app.input).toEqual(draft); expect(next.lines).toEqual([]); expect(app.frame().inbox).toBeNull();
+    expect(app.input).toEqual(draft); expect(next.lines).toEqual([]); expect(formOpen(app)).toBe(false);
     expect(a.questions.mine.has("q")).toBe(transition === "project");
     expect(a.lines).toEqual([]); // a settled question is never a conversation line
     // Its "? … → …" is the captured page's transient note: shown once that page is active again, never on the new one.
@@ -175,12 +182,12 @@ test("Questions panel sanitizes fields and stays bounded at narrow/tiny sizes; E
   const chat = { text: "draft 界", cursor: 3 }; app.input = { ...chat }; app.draw();
   for (const [cols, rows] of [[100, 28], [40, 24], [20, 12], [12, 8], [4, 4], [1, 1]]) {
     ui.term.cols = cols!; ui.term.rows = rows!;
-    await app.questions.command(app.page);
+    await openForm(app);
     const f = app.frame(), screen = stickyRows(f, [], chapterRows({ tabs: [], active: 0, model: "fake-model", directory: "/tmp", remote: "" }, f.cols, headerHeight(f.rows)));
     expect(screen.rows).toHaveLength(rows!);
     expect(screen.rows.every(line => visibleLength(line) <= cols!)).toBe(true);
     expect(screen.rows.join("")).not.toMatch(/\x1b\]|\x1b\[2J|\x1b\[31m|\u202e|\x07/);
-    await app.onKey({ name: "escape" }); expect(app.input).toEqual(chat); expect(app.frame().inbox).toBeNull();
+    await app.onKey({ name: "escape" }); expect(app.input).toEqual(chat); expect(formOpen(app)).toBe(false);
   }
   expect(ui.sent).toEqual([]);
 });
@@ -191,7 +198,7 @@ for (const outcome of ["answer", "error", "external"] as const) {
     const ui = await setup({ questions: fakeQuestions({ list: async () => open, answer: async () => { await gate.promise; } }) }), { app } = ui;
     const page = app.page!, chat = { text: "project draft", cursor: 4 }, answer = { text: "answer draft", cursor: 3 };
     app.input = { ...chat }; app.draw();
-    await app.questions.command(page); app.input = { ...answer }; app.draw();
+    await openForm(app); app.input = { ...answer }; app.draw();
     const closing = outcome === "external" ? undefined : app.onKey({ name: "enter" });
     // Attaching to a transcript is independent of an outstanding question write/read.
     page.view = { name: "worker-a", lines: [], leave() {}, live: false, calls: new Calls() }; app.draw();
@@ -215,11 +222,11 @@ for (const outcome of ["answer", "error", "external"] as const) {
 test("even an empty or control-only question read error remains unknown, not inbox 0", async () => {
   let fail = false;
   const { app } = await setup({ questions: fakeQuestions({ list: async () => { if (fail) throw new Error("\x1b[2J"); return []; } }) });
-  await app.questions.command(app.page);
+  await openForm(app);
   expect(app.status(app.page!)).toContain("0 questions |");
   fail = true; app.questions.poll(app.pages); await app.page!.questions.polling;
   expect(app.status(app.page!)).toContain("? questions |");
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("questions unavailable");
+  expect(plain(panelRows(app))).toContain("questions unavailable");
 });
 
 test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejects stale resurrection", async () => {
@@ -230,12 +237,12 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   } }), { app } = ui;
   const qs = await ask("a", [{ text: "Remove?", default: "dangerous suggestion" }, { text: "Remaining?" }, { text: "Last?" }]);
   const chat = { text: "original chat", cursor: 3 }, answer = { text: "unsent custom", cursor: 5 };
-  app.input = { ...chat }; await app.questions.command(app.page);
-  app.input = { ...answer }; app.draw(); await app.onKey({ name: "down" });
+  app.input = { ...chat }; await openForm(app);
+  app.input = { ...answer }; app.draw();
   app.page!.sent.push({ inputId: "untouched", text: "queued before skip" });
-  const closing = app.onKey({ name: "enter" });
-  expect(plain(taskInboxPanel(app.frame()).rows)).toContain("removing from inbox");
-  expect(plain(taskInboxPanel(app.frame()).rows)).not.toContain("Sending");
+  const closing = app.onKey({ name: "d", ctrl: true });
+  expect(plain(panelRows(app))).toContain("deleting from inbox");
+  expect(plain(panelRows(app))).not.toContain("Sending");
   await app.onKey({ name: "enter" }); await app.onKey({ name: "char", text: "1" });
   expect(attempts).toBe(1);
   // A read during persistence must not treat our close as external or lose its draft.
@@ -243,13 +250,13 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.map(q => q.id));
   await toggleAnswer(app); expect(app.input).toEqual(chat);
   gate.reject(new Error("persistence failed")); await closing;
-  expect(app.frame().inbox).toBeNull();
+  expect(formOpen(app)).toBe(false);
   expect(app.page!.questions.answer).toEqual(answer);
   expect(app.status(app.page!)).toContain("3 questions |");
-  expect(plain(app.frame().inputArea!.lines)).toContain("could not skip: persistence failed");
+  expect(plain(app.frame().inputArea!.lines)).toContain("could not delete: persistence failed");
   expect(await allQuestions("a")).toEqual(qs);
   stale = undefined;
-  await toggleAnswer(app); await app.onKey({ name: "enter" });
+  await toggleAnswer(app); await app.onKey({ name: "d", ctrl: true });
   expect(attempts).toBe(2);
   expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
   expect(app.page!.questions.answer.text).toBe(""); // never reassigned to next head
@@ -261,8 +268,8 @@ test("silent skip failure/retry is single-flight, keeps drafts/counts, and rejec
   expect(JSON.stringify(app.page!.lines)).not.toContain("dangerous suggestion");
   await app.onKey({ name: "escape" }); expect(app.input).toEqual(chat);
   stale = qs; app.questions.poll(app.pages); await app.page!.questions.polling;
-  expect(app.frame().inbox).toBeNull(); expect(app.input).toEqual(chat);
-  await app.questions.command(app.page);
+  expect(formOpen(app)).toBe(false); expect(app.input).toEqual(chat);
+  await openForm(app);
   expect(app.page!.questions.open.map(q => q.id)).toEqual(qs.slice(1).map(q => q.id));
   expect(app.input.text).toBe("");
   expect(ui.calls().turns).toBe(0); expect(ui.sent).toEqual([]);
@@ -274,15 +281,15 @@ for (const transition of ["close", "project", "recreate"] as const) {
     const ui = await setup({ tasks: async () => [], questions: { ...fileStore, skip: async (project, id) => { await gate.promise; return fileStore.skip(project, id); } } }), { app } = ui;
     const qs = await ask("a", [{ text: "Dismiss?", default: "yes" }, { text: "Next?" }]);
     const page = app.page!, chat = { text: "saved chat", cursor: 4 };
-    app.input = { ...chat }; await app.questions.command(page);
-    app.input = { text: "old answer", cursor: 3 }; app.draw(); await app.onKey({ name: "down" });
-    const closing = app.onKey({ name: "enter" });
+    app.input = { ...chat }; await openForm(app);
+    app.input = { text: "old answer", cursor: 3 }; app.draw();
+    const closing = app.onKey({ name: "d", ctrl: true });
     if (transition === "close") await app.onKey({ name: "escape" });
     if (transition === "project") { await app.openPage("b"); app.input = { text: "B", cursor: 1 }; }
     if (transition === "recreate") { app.closePage(); await app.openPage("a"); app.input = { text: "new A", cursor: 2 }; }
-    const input = { ...app.input }, section = app.frame().inbox?.section;
+    const input = { ...app.input }, section = formOpen(app);
     gate.resolve(); await closing;
-    expect(app.input).toEqual(input); expect(app.frame().inbox?.section).toBe(section);
+    expect(app.input).toEqual(input); expect(formOpen(app)).toBe(section);
     expect((await allQuestions("a")).map(q => q.status)).toEqual(["skipped", "open"]);
     expect(await pendingInput("a", "orchestrator")).toBe(false);
     expect(ui.sent).toEqual([]); expect(ui.calls().turns).toBe(0);
@@ -297,17 +304,17 @@ test("external silent skip reports an orphan draft as closed, restores chat and 
   const ui = await setup(), { app } = ui;
   const qs = await ask("a", [{ text: "Closed elsewhere?", default: "yes" }, { text: "Next?" }]);
   const chat = { text: "keep chat", cursor: 3 };
-  app.input = { ...chat }; await app.questions.command(app.page);
+  app.input = { ...chat }; await openForm(app);
   app.input = { text: "orphan answer", cursor: 4 }; app.draw();
   await fileStore.skip("a", qs[0]!.id);
   app.questions.poll(app.pages); await app.page!.questions.polling;
-  expect(app.input).toEqual(chat); expect(app.frame().inbox).toBeNull();
+  expect(app.input).toEqual(chat); expect(formOpen(app)).toBe(false);
   expect(plain(app.frame().inputArea!.lines)).toContain("was closed elsewhere");
   expect(plain(app.frame().inputArea!.lines)).toContain("unsent answer: orphan answer");
   expect(JSON.stringify(app.page!.lines)).not.toContain("default");
   expect(app.page!.questions.answer.text).toBe("");
   expect(app.status(app.page!)).toContain("1 questions |");
-  await app.questions.command(app.page);
+  await openForm(app);
   expect(app.input.text).toBe(""); expect(app.questions.view()?.text).toBe("Next?");
   expect(await drain("a", "orchestrator")).toEqual([]);
   expect(ui.calls().turns).toBe(0); expect(ui.sent).toEqual([]);

@@ -119,10 +119,7 @@ test("gap stays above queued previews and all footer panels; tiny resizes preser
   const panels: Partial<Frame>[] = [
     {}, { menu: { title: "choose", items: ["one", "two"], index: 1 } },
     { menu: { title: "full menu", items, index: 20 } },
-    { projects: { items: [], index: 0, status: "no projects" } },
     { help: { lines: items, top: 4 } },
-    { inbox: { state: "ready", lines: items, top: 3 } },
-    { inbox: { state: "ready", section: "questions", lines: [], top: 0, question } },
     { question },
   ];
   for (const panel of panels) for (const queued of [undefined, { project: "alpha", texts: ["pending one", "pending two\nline"] }]) {

@@ -5,6 +5,5 @@ export { fillRow, noColour, userFill } from "./style";
 export { shimmer } from "./shimmer";
 export { realTerminal, repositoryTitle, type Terminal } from "./term";
 
-export { renderTaskTree, type TaskTreeOptions, type TaskTreeRender, type TaskTreeHit } from "./task-tree";
-export { navigateOutline } from './task-tree';
-export { selectTaskNumber, taskStateColor } from "./task-tree";
+export { ARCHIVED_SECTION, findItem, inputLine, renderWorkPage, tableRows, withArchiveSection, type WorkPageRender, type WorkRow, type WorkSection } from "./work-view";
+export { navigateOutline, taskRows, taskSections, type OutlineNode } from "./task-tree";

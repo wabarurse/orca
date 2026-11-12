@@ -1,6 +1,6 @@
 // Shared TUI state and input helpers; rendering and event handling live in app.ts.
-import type { TaskTreeRender, ClipboardImage, Key, Terminal } from "./components";
-import type { ImageRef, AgentInfo, ProjectEntry, Message, ToolCall, ToolOutcome, Role } from "../protocol";
+import type { ClipboardImage, Key, Terminal } from "./components";
+import type { ImageRef, AgentInfo, Message, ToolCall, ToolOutcome, Role } from "../protocol";
 import type { RequestSettings } from "../providers/catalog";
 import type { Orchestrator } from "../core/agent-loop/orc";
 import { archiveAgents, restoreAgents, cancelSession } from "../core/tmux";
@@ -21,8 +21,6 @@ export interface Page {
   lines: Line[];
   /** Last rendered clear boundary; keep refreshes from reviving old conversation state. */
   contextBoundary?: string;
-  /** Local UI-only clear boundary; never written to the shared transcript. */
-  chatClearedThrough?: string;
   /** The streaming reply: markdown blocks leave it as they complete; the rest shows raw in the live region. */
   md: MarkdownStream;
   busy: boolean;
@@ -77,7 +75,7 @@ export interface AppDeps {
   /** Agent activity: the menu and count poll share the verified run/PID/pane snapshot. Tests may inject rows. */
   cancelAgent?: typeof cancelSession;
   agents?: (project: string) => Promise<AgentInfo[]>;
-  /** How /agents d and D remove finished agents' rows (archiveAgents: a marker in project state); tests stub it. */
+  /** How the Agents page's d and D remove finished agents' rows (archiveAgents: a marker in project state); tests stub it. */
   archiveAgents?: typeof archiveAgents;
   restoreAgents?: typeof restoreAgents;
   /** Sign-in; tests replace it. */
@@ -124,24 +122,12 @@ export const SPIN_MS = 100;
 export const TICK_MS = 33;
 /** How often a live agent view checks whether its agent has finished. */
 export const LIVE_CHECK_MS = 1000;
-/** The open /agents menu redraws this often (its clocks tick in seconds) and re-reads the agent list every AGENTS_REFRESH_MS. */
+/** How often the open Agents page ticks its clocks. */
 export const AGENTS_TICK_MS = 1000;
-
-/** The project list (Ctrl+B, /projects): every project on disk, pinned first. Takes the keys while open. */
-export interface ProjectListState { parent?: string; items: ProjectEntry[]; index: number; status: string; confirm: ProjectEntry | null }
 
 export interface ActiveMenu extends Menu {
   pick: (index: number) => Promise<void> | void;
 }
-export interface TaskTreeState {
-  page: Page; tasks: Awaited<ReturnType<typeof allTasks>>; selectedId?: string;
-  graphY: number; detailY: number; loading: boolean; error?: string;
-  collapsed: Set<string>; frame: number; detailsFocused?: boolean;
-  confirmRemoval?: string[]; restoring?: boolean; confirmAbandon?: { id: string; revision: number; text: string }; history?: boolean; notice?: string; removing?: boolean;
-  jumpInput?: string;
-  revealSelected?: boolean; rendered?: TaskTreeRender; reading?: Promise<void>; again?: boolean;
-}
-
 export interface ClearConfirmation {
   page: Page;
   identity: string;
@@ -173,17 +159,6 @@ export function parseCommand(text: string, commands: ReadonlyMap<string, Command
   const command = found && (found.args || text === name) ? found : undefined;
   return { name, args: text.slice(name.length).trim(), command };
 }
-
-/**
- * What a key means in the project list: a plain character's text or a named
- * key ("up", "enter", ...). Ctrl/Alt chords (and other single-letter chords)
- * mean nothing there, so Ctrl+D or Alt+Y never deletes.
- */
-export const listKeyId = (k: Key): string | null => {
-  if (k.ctrl || k.alt) return null;
-  if (k.name === "char") return k.text ?? null;
-  return k.name.length > 1 ? k.name : null;
-};
 
 /** One layer of key handling (App.keyLayers): `takes` only looks, `handle` acts. */
 export interface KeyLayer { name: string; takes(k: Key): boolean; handle(k: Key): Promise<void> | void }

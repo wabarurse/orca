@@ -33,7 +33,7 @@ const ORDER: Order = {
         "agent-loop": { tiers: [["loop"], ["orc"]] },
       },
     },
-    tui: { tiers: [["commands", "history", "components"], ["header", "conversation"], ["footer"], ["screen"], ["app-state"], ["app"]] },
+    tui: { tiers: [["commands", "history", "components"], ["header", "conversation"], ["footer"], ["screen"], ["app-state"], ["work-page"], ["app"]] },
   },
 };
 
@@ -41,7 +41,7 @@ const SIZE = { sourceLines: 800, testLines: 1500, params: 8, barrelExports: 40 }
 // Today's offenders: the number is a ceiling. Growth fails; shrink the ceiling here when the file shrinks; delete the
 // row once the file is within SIZE (the test fails on a stale row).
 const DEBT: Record<string, { lines?: number; exports?: number }> = {
-  "tui/app.ts": { lines: 1990 },
+  "tui/app.ts": { lines: 1800 },
 };
 
 // ---- the files ----

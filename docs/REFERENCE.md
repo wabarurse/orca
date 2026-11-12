@@ -180,7 +180,7 @@ branch/worktree cleanup, including removal of ignored files.
 
 - `/help` shows commands and shortcuts; Esc closes it. `orca --help` shows
   shell commands outside the TUI.
-- `/agents` lists agents to attach to, each with a clock for its latest run:
+- Ctrl+A (the Agents tab of the work page) lists agents to attach to, each with a clock for its latest run:
   `worker-foo  live 3m 12s` (bold, ticking once a second) while its tmux window
   is open, `worker-foo  finished 14m 02s` (dim, final) after. Times read
   `59s`, `3m 12s`, `1h 04m`, `2d 3h`. An agent that reported but whose window is
@@ -196,8 +196,8 @@ branch/worktree cleanup, including removal of ignored files.
   and `u` restores an archived row without starting it. Live agents, queued input
   and active/unresolved commands prevent archival. Archiving records a marker
   in project state (`archived-agents`); transcripts, run files and history stay,
-  and an agent started again on that name shows again. `/back` returns to
-  the orchestrator. `/tasks` shows registered tasks, and `/questions` (or Ctrl+Q) opens questions needing answers.
+  and an agent started again on that name shows again. Esc returns to
+  the orchestrator. Ctrl+T shows registered tasks, and Ctrl+Q opens questions needing answers.
 - Ctrl+C cancels the current turn; `/quit` exits. The orchestrator daemon and
   background workers/reviewers keep running; see [Using the TUI](#using-the-tui)
   for cancellation details.
@@ -352,7 +352,7 @@ last attachment, and Enter sends text plus images (or images alone). Escape
 clears the draft. Normal terminal text paste is unchanged. Native macOS uses
 system AppKit through `osascript`; Linux uses existing `wl-paste`/`xclip`, with
 no helper installation. Draft labels never contain base64. Queued/history
-attachments are durable, and `/retry-images` explicitly retries unconfirmed
+attachments are durable, and `t` on the Images page explicitly retries unconfirmed
 image prompts with their original IDs. Agents can forward selected attachments
 to workers/reviewers; Claude and Codex receive actual pixels.
 
@@ -577,8 +577,8 @@ above any queued previews. It is omitted below eight terminal rows or when it
 would take the last conversation row; input and footer panels keep their space.
 The bottom band puts queued prompt previews immediately above the boxed input,
 then `x agents | y tasks | z questions | n images` for the selected project. Counts
-wrap on narrow screens and use `?` when unavailable. `/agents`, `/tasks`
-and `/questions` open the matching work views.
+wrap on narrow screens and use `?` when unavailable. Ctrl+A, Ctrl+T
+and Ctrl+Q open the work page on the matching tab.
 A running turn's "thinking…/working…" shimmers at the selected conversation's
 current tail, not in the pinned footer. Scrolling back hides that activity with
 the tail; it never enters history. Like Codex, the input and your own messages sit on a
@@ -592,16 +592,15 @@ conversation history with one summary line under it
 `spawned worker-feat`), its marker red when it failed. A call whose run stops
 without a result is red with an `interrupted` summary. Truncated bash output
 shows `N+ lines (truncated)`. Restored pages and the
-`/agents` view show calls the same way. A run of two or more finished calls with
+agent views show calls the same way. A run of two or more finished calls with
 nothing else between them (text, a user message, a report) shows as one dim line,
 `▸ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed` (an interrupted call counts
 as failed; a lone call keeps its two lines); calls still running shimmer below it
 and fold in as they end. Click that line to open it (`▾`, its calls indented under
 the summary); click it again to fold it. Open groups are not saved. The
 conversation left in the shell on quit shows every call. Ctrl+N starts a new conversation named `orch-xxxx` in the
-original checkout. `/rename <name>` renames it; `/new <name> <directory>` selects
-another local checkout (the directory may contain spaces). Ctrl+Z and Ctrl+X move between pages,
-reprinting the page you switch to (`/keys` shows what your terminal sends for any chord). Type
+original checkout. `/rename <name>` renames it; for another local checkout run `orca` there (the `/new` command is gone). Ctrl+Z and Ctrl+X move between pages,
+reprinting the page you switch to (Ctrl+G shows what your terminal sends for any chord). Type
 `/help` for grouped commands and keyboard shortcuts in a panel below the input
 and counts, not in the conversation history. Scroll help with ↑/↓, Page Up/Down
 or the wheel; Home/End jumps to its start/end (including advanced diagnostics).
@@ -633,15 +632,15 @@ attached-images row: the note waits unseen, the key that closes the panel (or
 answers the next question) does not clear it, and it shows once the panel
 closes, until the next key. Each page keeps its own note,
 so a background page's shows when you switch to it (its keys there do not clear it). Notes are never written to
-the conversation, so `/refresh`, a reopen or an exit replay never bring them
+the conversation, so a refresh, a reopen or an exit replay never bring them
 back. Errors, refusals (`usage: /fast [on|off]`, `effort ultra is unsupported`, `orchestrator is not running: …`), the daemon's
 failures and warnings (`orchestrator: turn failed: …`, `compaction failed: …`,
 `background compaction failed; original history kept: …`, `cancel not
 acknowledged: …`, memory-index warnings, `live output truncated …`), command output you need to
-read (`/help`, `/agents`, sign-in progress) and the orchestrator's own
+read (`/help`, sign-in progress) and the orchestrator's own
 messages stay in the conversation.
 
-`/refresh` reloads **shared local persisted state**: project names/pins/list,
+The refresh (there is no `/refresh` command any more) reloads **shared local persisted state**: project names/pins/list,
 saved conversation/model context, tasks/questions, agent status and model/settings.
 It also runs automatically when submitting a prompt, including while busy or
 signing in; publication never waits for refresh. Periodic snapshots pick up
@@ -658,7 +657,7 @@ confirmation. **Cancel is selected by default** (Enter alone cancels); choose
 Saved conversation/UI history, system/tool instructions, settings/accounts, files,
 questions and worker/reviewer sessions stay intact. It refuses while the
 orchestrator is running/compacting or any input is queued (including paused inbox
-messages and sign-in-held prompts). Return from agent views with `/back` first.
+messages and sign-in-held prompts). Return from agent views with Esc first.
 Clearing makes no model request and never retries or restarts work. Page changes
 and resize cancel the confirmation. See [COMPACTION.md](COMPACTION.md) for persistence
 and later-compaction semantics; `/compact` remains the summarizing alternative.
@@ -677,7 +676,7 @@ orchestrator stays paused even if agent reports arrive; your next chat message
 resumes its saved conversation. While viewing a subagent, Ctrl+C instead stops
 only that worker/reviewer, preserving its transcript and worktree; the existing
 `spawn` continuation path can restart it with that conversation. Agent views remain
-read-only (`/back` to talk to the orchestrator). A hint appears on the first press
+read-only (Esc to talk to the orchestrator). A hint appears on the first press
 (the note above the composer; in an agent view, a line in that view);
 a second Ctrl+C within two seconds exits the harness (`/quit` also exits). Exiting
 leaves the orchestrator daemon, its current turn and background agents alone.
@@ -720,10 +719,11 @@ The orchestrator should reserve questions for necessary unresolved decisions, no
 routine approved work. Clear answers and authorization in chat count, but do not
 close existing queued questions.
 
-**`/questions`** opens the list of unanswered questions. Select
-a question and press Enter to open its answer form. Use ↑↓ or 1–9 to choose
-an option, or type an answer. Ctrl+Q opens the Questions page. Esc or Tab closes the form and restores the chat
-draft. Draft answers are retained across project switches. Explicit Skip
+**Ctrl+Q** opens the Questions tab of the work page. Select
+a question and press Enter. With options: `j`/`k` move over the numbered rows (the cursor starts on the default), a digit
+sends that option at once, Enter sends the row under the cursor, and the last row `Other…` types an answer in the
+status line. Without options Enter goes straight to the typed answer. Esc cancels and restores the chat
+draft. Draft answers are retained across project switches. `d` (after y/n) or Ctrl+D in the form
 removes the question from the open list, retains its history and sends no reply.
 New questions update the count and leave the composer in place.
 Ctrl+Q and Ctrl+A open the Questions and Agents pages from menus and project lists. On a one-row terminal the input takes the whole live region: a modal panel
@@ -1138,7 +1138,7 @@ retained in details. Confirmed merges archive rows without deleting history.
 Optional readiness evidence records validation of the current PR head. This is separate from
 message/question/prompt queues.
 
-**`/tasks`** opens the project’s task list and details, including status and PR
-links. Type a task number to jump to it. Use `r` to refresh and Esc to
+**Ctrl+T** opens the project’s task list and details, including status and PR
+links. `f` finds a task by number or name. Use `r` to refresh and Esc to
 return to chat. See [Tasks, Agents and Questions](TASK_INBOX.md) for navigation
 and cleanup controls.

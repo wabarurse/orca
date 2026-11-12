@@ -93,8 +93,6 @@ export interface QuestionHost {
   page(): QuestionPage | undefined;
   /** Captured page ownership; removed/deleting pages cannot publish late results. */
   valid?(page: QuestionPage): boolean;
-  /** Explicit section navigation, never called by polling. */
-  opening?(page: QuestionPage): void;
   input: EditState;
   /** Columns the answer's text gets (the screen less the prompt), for ↑↓ between its lines. */
   width(): number;
@@ -419,7 +417,7 @@ export class Questions {
     } catch (err) {
       return this.host.say(dim(`not sent: ${plainText(message(err))}`), page);
     }
-    if (!answer) return this.host.say(dim("type an answer, or choose skip"), page);
+    if (!answer) return this.host.say(dim("type an answer first; esc cancels"), page);
     await this.close(page, answer);
   }
 
@@ -482,13 +480,12 @@ export class Questions {
     this.sync();
   }
 
-  // --- /questions ---------------------------------------------------------------
+  // --- opening ------------------------------------------------------------------
 
-  /** /questions: read and explicitly open the queue. */
+  /** Enter on the Questions page: read and explicitly open one question's form. */
   async command(page: QuestionPage | undefined, selectedId?: string): Promise<void> {
     if (!page) return;
     if (!this.valid(page) || page !== this.host.page()) return;
-    this.host.opening?.(page);
     const q = page.questions;
     q.hidden = null;
     const before = head(q)?.id;

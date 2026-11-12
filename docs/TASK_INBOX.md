@@ -1,6 +1,6 @@
 # Tasks, Agents, Questions and Images
 
-Use `/tasks`, `/agents`, `/questions` and `/images` to open the project’s work views.
+Ctrl+A, Ctrl+T, Ctrl+Q and Ctrl+B open the one work page on Agents, Tasks, Questions and Projects; Images is its fourth tab (`4`, Tab or `h`/`l`). The slash commands that used to open these views are gone.
 Each shows a list and a details pane, stacked on narrow terminals.
 Use arrow keys to select and focus, Enter to open, `r` to refresh and Esc
 to return to chat. The footer shows this project's agent, task, question and image

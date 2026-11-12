@@ -46,52 +46,6 @@ async function setup(extra: Partial<AppDeps> = {}) {
 }
 const uiText = (app: App) => JSON.stringify(app.page?.lines);
 
-test("/clear immediately clears only visible chat and remains clear across refresh, resize and new entries", async () => {
-  const ui = await setup(), { app } = ui;
-  const before = readFileSync(ui.t.path), context = await ui.context();
-  mkdirSync(paths.cache(ui.project), { recursive: true });
-  const cache = join(paths.cache(ui.project), "keep.txt"); writeFileSync(cache, "cached evidence");
-  app.input = { text: "/clear", cursor: 6 }; await app.onKey({ name: "enter" });
-  expect(app.menu).toBeNull(); expect(app.page!.lines).toEqual([]);
-  expect(await ui.context()).toEqual(context); expect(readFileSync(ui.t.path)).toEqual(before);
-  expect(readFileSync(cache, "utf8")).toBe("cached evidence");
-  expect(app.page!.inputHistory).not.toContain("/clear");
-  await app.commands.get("/refresh")!.run("", app.page);
-  ui.resize(80, 20);
-  expect(app.page!.lines).toEqual([]);
-  await ui.t.append({ type: "message", message: { role: "assistant", content: "new visible reply" } });
-  await app.commands.get("/refresh")!.run("", app.page);
-  expect(uiText(app)).toContain("new visible reply"); expect(uiText(app)).not.toContain("original UI history");
-  expect(await ui.context()).toHaveLength(2); expect(ui.provider.calls).toHaveLength(0);
-  app.quit(); await ui.running;
-  expect(ui.exit()).not.toContain("original UI history"); expect(ui.exit()).toContain("new visible reply");
-});
-
-test("UI-only clear works while busy without touching pending input or the context-reset API", async () => {
-  const ui = await setup(), { app } = ui, page = app.page!;
-  const before = readFileSync(ui.t.path);
-  let resets = 0; page.orch.checkClear = async () => { resets++; }; page.orch.clear = async () => { resets++; };
-  page.busy = true; page.sent.push({ inputId: "pending", text: "keep this prompt" });
-  await app.commands.get("/clear")!.run("", page);
-  expect(page.busy).toBe(true); expect(page.sent).toEqual([{ inputId: "pending", text: "keep this prompt" }]);
-  expect(resets).toBe(0); expect(app.menu).toBeNull(); expect(page.lines).toEqual([]);
-  expect(readFileSync(ui.t.path)).toEqual(before); expect(ui.provider.calls).toHaveLength(0);
-  page.busy = false; page.sent = [];
-});
-
-test("UI clear is local to the open view; saved history returns on reopen", async () => {
-  const ui = await setup(), { app } = ui, page = app.page!;
-  page.view = { name: "worker-a", lines: ["worker history"], leave() {}, live: false, calls: new Calls() };
-  await app.commands.get("/clear")!.run("", page);
-  expect(page.view.lines).toEqual([]); expect(uiText(app)).toContain("original UI history");
-  page.view = null;
-  await app.commands.get("/clear")!.run("", page);
-  expect(page.lines).toEqual([]);
-  app.closePage(); await app.openPage(ui.project);
-  expect(uiText(app)).toContain("original UI history");
-  expect(await ui.context()).toHaveLength(1); expect(ui.provider.calls).toHaveLength(0);
-});
-
 test("bare /clear-context is local, cancel-default and excluded from recall; esc preserves drafts/history; explicit confirmation clears UI and exit replay but keeps saved transcript", async () => {
   const ui = await setup(), { app } = ui;
   const before = await Bun.file(ui.t.path).text();
@@ -141,7 +95,7 @@ test("no arguments, no page creation, and worker/reviewer transcript views refus
     app.page!.view = { name, lines: [], leave() {}, live: false, calls: new Calls() };
     await ui.command();
     expect(app.menu).toBeNull();
-    expect(Bun.stripANSI(app.frame().inputArea!.lines.join("\n"))).toContain("/back first");
+    expect(Bun.stripANSI(app.frame().inputArea!.lines.join("\n"))).toContain("esc first");
     expect(app.page!.view.lines).toEqual([]);
   }
   app.page!.view = null;
@@ -225,18 +179,17 @@ test("tiny hidden confirmation still owns typing and Escape, preserving chat and
   const ui = await setup(), { app } = ui, page = app.page!;
   app.input = { text: "chat draft", cursor: 4 };
   await ask(ui.project, [{ text: "Question?" }]);
-  await app.questions.command(page);
+  app.work.show("questions"); await app.work.refresh("questions"); await app.onKey({ name: "enter" });
   app.input = { text: "answer draft", cursor: 5 };
   ui.resize(8, 3);
-  await ui.command();
+  await ui.command(); // closes the Questions page: the answer stays with its question, the chat draft returns
   expect(app.menu).not.toBeNull();
   await app.onKey({ name: "paste", text: "wrong" });
   await app.onKey({ name: "escape" });
-  expect(app.input).toEqual({ text: "answer draft", cursor: 5 });
-  await ui.command(); await ui.confirm();
-  expect(app.input).toEqual({ text: "answer draft", cursor: 5 });
-  await app.onKey({ name: "escape" });
   expect(app.input).toEqual({ text: "chat draft", cursor: 4 });
+  await ui.command(); await ui.confirm();
+  expect(app.input).toEqual({ text: "chat draft", cursor: 4 });
+  expect(page.questions.answer).toEqual({ text: "answer draft", cursor: 5 });
   expect((await all(ui.project))[0]?.status).toBe("open");
   expect(await ui.context()).toEqual([]);
 });
