@@ -217,8 +217,12 @@ test('conversation drag highlights only history, auto-copies on release; ctrl+o 
     term.type('draft'); await app.onKey({ name: 'escape' });
     expect(app.input.text).toBe('draft');
     await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(2);
-    // Header/footer cannot create a selection, and the removed command stays absent.
-    term.type('\x1b[<0;1;1M\x1b[<32;9;1M\x1b[<0;9;1m');
+    // The header is selectable too (the painted frame), and a key puts that selection away.
+    const header = term.display.screen()[0]!.slice(0, 9).trimEnd();
+    term.type('\x1b[<0;1;1M\x1b[<32;9;1M\x1b[<0;9;1m'); await settle();
+    expect(copied).toEqual(['SELECT-ME', 'SELECT-ME', header]);
+    copied.pop();
+    await app.onKey({ name: 'escape' });
     await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(2);
     expect(app.commands.has('/mouse')).toBe(false);
     term.press({ name: 'pageup' }); await settle();
@@ -234,6 +238,45 @@ test('conversation drag highlights only history, auto-copies on release; ctrl+o 
     await app.openPage('selection-other'); await settle();
     await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(4);
 
+  } finally { app.quit(); await running; }
+});
+
+test('a click on a link opens it, a drag over it selects; the work page is selectable and keeps its keys', async () => {
+  const term = fakeTerm(80, 24), orchs = fakeOrchestrators();
+  const copied: string[] = [], opened: string[] = [];
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, openUrl: async url => { opened.push(url); }, pollMs: 100_000 });
+  const running = app.run('pointer-probe');
+  const find = (text: string) => {
+    const rows = term.display.screen(), y = rows.findIndex(row => row.includes(text));
+    return { y: y + 1, x: rows[y]!.indexOf(text) + 1 };
+  };
+  const drag = (y: number, from: number, to: number) => term.type(`\x1b[<0;${from};${y}M\x1b[<32;${to};${y}M\x1b[<0;${to};${y}m`);
+  try {
+    await until(() => !!app.page);
+    app.page!.lines.push('go \x1b]8;;https://example.com/docs\x1b\\LINKED\x1b]8;;\x1b\\ now');
+    app.reprint();
+    await until(() => term.display.screen().some(row => row.includes('go LINKED now')));
+    const link = find('LINKED');
+    term.type(`\x1b[<0;${link.x + 2};${link.y}M\x1b[<0;${link.x + 2};${link.y}m`); await settle();
+    expect(opened).toEqual(['https://example.com/docs']); expect(copied).toEqual([]);
+    term.type(`\x1b[<0;${link.x - 2};${link.y}M\x1b[<0;${link.x - 2};${link.y}m`); await settle();
+    expect(opened).toHaveLength(1); // beside the link is not the link
+    drag(link.y, link.x, link.x + 5); await settle();
+    expect(copied).toEqual(['LINKED']); expect(opened).toHaveLength(1);
+
+    await app.onKey({ name: 'b', ctrl: true });
+    await until(() => term.display.screen().some(row => row.includes('Projects')));
+    const tab = find('Projects');
+    drag(tab.y, tab.x, tab.x + 7); await settle();
+    expect(copied).toEqual(['LINKED', 'Projects']);
+    expect(term.raw()).toContain('\x1b[7mProjects\x1b[0m');
+    await app.onKey({ name: 'o', ctrl: true });
+    expect(copied).toEqual(['LINKED', 'Projects', 'Projects']);
+    // A key puts the highlight away and still does its own job.
+    await app.onKey({ name: 'escape' });
+    await until(() => term.display.screen().some(row => row.includes('go LINKED now')));
+    await app.onKey({ name: 'o', ctrl: true });
+    expect(copied).toHaveLength(3);
   } finally { app.quit(); await running; }
 });
 

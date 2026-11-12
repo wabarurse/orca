@@ -57,6 +57,8 @@ export interface AppDeps {
   clipboardText?: (text: string) => Promise<void>;
   /** Explicit Ctrl+V only; tests inject fixture bytes, never the live clipboard. */
   clipboardImage?: () => Promise<ClipboardImage>;
+  /** A clicked link; tests inject this instead of launching a browser. */
+  openUrl?: (url: string) => Promise<void>;
   /** Explicit media activation; tests inject this instead of launching desktop apps. */
   openMedia?: typeof import("./commands").openDeliveredMedia;
   /** Cached header model accessor; defaults to effectiveModel(project). */
