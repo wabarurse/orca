@@ -8,4 +8,4 @@ export { sendAgentFeedback } from "./feedback";
 export { recentAgent } from "./agents";
 export { checkContextClear } from "./clear";
 export { deliveredImages, type DeliveredImage } from "./images";
-export { capturedVideos, openDeliveredMedia, type DeliveredMedia } from "./media";
+export { capturedVideos, openDeliveredMedia, openLink, type DeliveredMedia } from "./media";

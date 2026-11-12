@@ -1,9 +1,9 @@
 // The terminal behind the TUI: raw mode, bracketed paste, size and key
 // events. The alternate screen keeps sticky bars separate from the shell's
-// scrollback; mouse reporting supports wheel scrolling and in-app drag selection.
-// DECSET 1000/1002 consumes native drag selection and
-// link gestures, and the portable mouse protocol cannot identify macOS Cmd.
-// Leave those gestures to the terminal/OSC 8 instead of spawning a browser. Tests pass a
+// scrollback; mouse reporting supports wheel scrolling, in-app drag selection and
+// click-to-open links (screen/selection.ts). DECSET 1000/1002 takes native drag
+// selection and link gestures from the terminal, and the portable mouse protocol
+// cannot identify macOS Cmd, so the app does both itself. Tests pass a
 // fake with the same shape. Opening asks the terminal for its background
 // colour (OSC 11) once, without blocking: a reply within BG_REPLY_MS sets the
 // user background's shade (style.ts) and settles `background` (so does the

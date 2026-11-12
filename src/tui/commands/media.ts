@@ -63,6 +63,21 @@ async function recordingFile(project: string, media: Extract<DeliveredMedia, { k
   return file;
 }
 
+/** Open a clicked link in the desktop's browser and say so; a failure is the note instead. Only on
+ * the machine the terminal is on, and never from a test run: tests pass `opener`. */
+export async function openLink(url: string, opener?: (url: string) => Promise<void>): Promise<string> {
+  try {
+    if (opener) await opener(url);
+    else {
+      if (process.env.SSH_CONNECTION || process.env.SSH_TTY || process.env.NODE_ENV === "test") return `link: ${url}`;
+      const command = process.platform === "darwin" ? "/usr/bin/open" : Bun.which("xdg-open");
+      const result = command ? await run([command, url], { cwd: "/", timeoutMs: 10_000 }) : null;
+      if (!result || result.code !== 0) return `could not open ${url}`;
+    }
+    return `opened ${url}`;
+  } catch (error) { return `could not open ${url}: ${error instanceof Error ? error.message : String(error)}`; }
+}
+
 /** Explicit Enter only; never open files as a side effect of navigation. */
 export async function openDeliveredMedia(project: string, media: DeliveredMedia, opener?: (path: string, kind: "image" | "video") => Promise<void>): Promise<string> {
   const path = media.kind === "image" ? await imageFile(project, media.ref) : await recordingFile(project, media);

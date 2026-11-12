@@ -2,8 +2,10 @@
 
 The historical investigations below are retained as evidence, not current UX.
 Fullscreen now always requests 1000 + 1002 (button-drag motion) + SGR 1006.
-Unmodified SGR left drag highlights committed conversation only and auto-copies on
+Unmodified SGR left drag highlights committed conversation rows, or, begun anywhere
+else, the painted screen rows (header, footer, tail, menus, work page), and auto-copies on
 valid release through the local desktop clipboard writer; Ctrl+O explicitly re-copies.
+A click on a link opens it (see the TUI reference).
 A mere click or canceled/invalid release does not copy. No Cmd-C assumption.
 Esc clears selection, and reflow/context replacement cancels it. Soft wraps copy as
 visible newlines; transient streaming/activity rows are excluded. Legacy X10 wheels

@@ -554,12 +554,19 @@ PgUp/PgDn remain available. Native selection and fullscreen mouse reporting do n
 automatically coexist. Terminal-specific mouse overrides can bypass the app but
 are not the selection/copy workflow described here.
 
-OSC 8 web link targets remain in unselected output, including wrapped links.
-Native link gestures depend on the terminal's hyperlink support and mouse override;
-Apple Terminal link opening while reporting is **not guaranteed**. The portable
-mouse protocol does not identify Cmd, and the app does not guess Cmd-click or launch
-a browser. Copied URLs can be opened separately. Protocol/PTY tests do not establish
-physical GUI behavior in Apple Terminal.
+Everything on screen can be selected: the header, the conversation and its
+streaming tail, the footer, menus, Help and the work page. A drag that begins on a
+committed conversation row selects history and scrolls with it; a drag that begins
+anywhere else selects the painted screen rows and ends when those rows change (a
+scroll, a new frame). Releasing copies; Ctrl+O copies again; any key puts a
+screen selection away.
+
+A click on a link opens it in the desktop browser: an OSC 8 target (wrapped links
+included) or a web address written out on the row. A drag over a link selects it
+instead. Mouse reporting keeps clicks from the terminal and no mouse report says
+Cmd is held, so a Cmd+click that reaches Orca is a click; a terminal that keeps
+Cmd+click for itself opens the same OSC 8 target natively. Only `http`, `https`
+and `mailto` targets are opened, and over SSH the address is shown instead.
 
 Only changed screen rows are redrawn. All saved conversation, including original
 history before compaction, is reachable inside the app. Quitting restores your

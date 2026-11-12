@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { workViews } from "../core/data/projects";
-import { ConversationSelection, hitRow } from "./screen";
+import { ConversationSelection, hitRow, Pointer } from "./screen";
 import { writeClipboardText, readClipboardImage } from "./components";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
 import type { ImageRef } from "../protocol";
@@ -38,7 +38,7 @@ import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { pageQuestions, Questions, QUESTION_DELAY_MS } from "./footer";
 import { fromUserLines, replyLines, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
-import { capturedVideos, deliveredImages, type DeliveredMedia } from "./commands";
+import { capturedVideos, deliveredImages, openLink, type DeliveredMedia } from "./commands";
 import { open } from "../core/data/transcripts";
 import { bold, dim, fit, sanitize, repositoryTitle } from "./components";
 import { commit, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type Input, type InputArea } from "./footer";
@@ -637,6 +637,7 @@ export class App {
     try {
       this.questions.sync(); // the input holds the chat draft or the shown question's answer
       const next = this.work.open ? this.work.screen() : this.viewport(this.frame());
+      this.pointer.frame.paint(next.rows, next.cols);
       const output = stickyUpdate(next, this.screen);
       if (!this.work.open) this.needReprint = false;
       // Synchronized output, so the terminal shows the whole update at once.
@@ -1502,16 +1503,20 @@ export class App {
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
 
-  /** Where the mouse last went down: a release on the same cell is a click. */
-  private pressed?: { x?: number; y?: number };
-
-  /** A press and a release on the same cell: the released report, else nothing. */
-  private click(k: Key): Key | undefined {
-    if (k.name === "mousedown") { this.pressed = { x: k.x, y: k.y }; return; }
-    if (k.name !== "mouseup") return;
-    const down = this.pressed;
-    this.pressed = undefined;
-    return down && down.x === k.x && down.y === k.y ? k : undefined;
+  private readonly pointer = new Pointer();
+  /** Every mouse report. A click on a link opens it (mouse reporting keeps the click from the terminal, and no report says Cmd is held).
+   * A drag selects: history rows when it began on one (they scroll with their text), the painted frame anywhere else. */
+  private async mouse(k: Key): Promise<void> {
+    const frame = this.resizeTimer ? undefined : this.screen;
+    const { click, url } = this.pointer.track(k, frame?.rows);
+    if (url) { this.clearSelection(); this.pointer.frame.clear(); return this.note(dim(await openLink(url, this.deps.openUrl))); }
+    if (k.name === "mousedown") this.pointer.inBody = !!frame && this.selectionAllowed() && !this.needReprint && !!hitRow(k, frame, this.screenHistory.length);
+    if (this.pointer.inBody) { this.pointer.frame.clear(); if (click) this.toolClick(k); return this.selectionMouse(k); }
+    this.clearSelection();
+    const done = !!frame && this.pointer.frame.mouse(k); // Before any await: the reports of one drag arrive in one burst.
+    if (this.work.open && !this.clearing && k.name === "mousedown") await this.work.key(k);
+    this.draw();
+    if (done) await this.copySelection();
   }
 
   /** The painted frame is what a click hit: not while a reprint is due, nor when the frame shows another page or view than the current one. */
@@ -1529,7 +1534,7 @@ export class App {
 
   /** A click on a folded group's summary line opens it (its calls under the summary), or closes it again: the only way to see a run's calls. */
   private toolClick(k: Key): void {
-    const screen = this.click(k) && this.clickable(), page = this.page;
+    const screen = this.clickable(), page = this.page;
     const hit = screen && page && hitRow(k, screen, this.screenHistory.length);
     const start = hit ? this.groupAt(page, hit.row, screen.cols) : undefined;
     if (start === undefined || !page) return;
@@ -1543,10 +1548,7 @@ export class App {
 
   private async selectionMouse(k: Key): Promise<void> {
     const screen = this.screen;
-    if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) {
-      this.clearSelection();
-      return;
-    }
+    if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) return this.clearSelection();
     // Hit-test the painted frame, not the pending scroll destination. Only a
     // new selection pins follow mode; motion/release must not undo queued scroll.
     const completed = this.selection.mouse(k, screen, this.screenHistory);
@@ -1560,10 +1562,9 @@ export class App {
   }
 
   private async copySelection(): Promise<void> {
-    if (!this.selectionAllowed() || this.resizeTimer) return;
-    // Validate against the latest layout before copying, even between frames.
-    this.flush();
-    const text = this.selection.text();
+    if (this.resizeTimer) return;
+    this.flush(); // Validate against the latest layout before copying, even between frames.
+    const text = (this.selectionAllowed() ? this.selection.text() : "") || this.pointer.frame.text();
     if (!text) return;
     try { await (this.deps.clipboardText ?? writeClipboardText)(text); }
     catch (error) { this.note(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
@@ -1590,11 +1591,12 @@ export class App {
     }
     // Ctrl+C retains the global cancellation/double-press exit path even when
     // the page is loading, failed, or waiting on an unresponsive registry.
+    if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) return this.mouse(k);
+    if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
+    if (this.pointer.frame.active && !k.name.startsWith("wheel")) { this.pointer.frame.clear(); this.draw(); }
     if (this.work.open && !this.keyEcho && !this.clearing && !(k.ctrl && k.name === "c")) return this.work.key(k);
     if (!this.selectionAllowed()) this.clearSelection();
-    if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) { this.toolClick(k); return this.selectionMouse(k); }
     this.clearNote(k);
-    if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
     if (k.name === "escape" && this.selection.active) { this.clearSelection(); this.draw(); return; }
     // Editing within this draft is fine. Navigation/modal/send/clear/history keys
     // invalidate asynchronous reads, even if the user returns before completion.
