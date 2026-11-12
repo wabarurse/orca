@@ -303,17 +303,34 @@ async function toolBatch(deps: AgentDeps, content: ContentBlock[], timing?: Resp
   await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
   return false;
 }
+/** Consecutive output-limit stops answered before the turn fails as it always did. */
+const LIMIT_RECOVERIES = 2;
+/** A response cut off at the output limit. Its tool calls may carry truncated arguments, so
+ * none runs: each gets an error result asking for a complete call (as pi does); text alone
+ * gets a request to resume in smaller pieces (as Claude Code does). The transcript stays valid. */
+async function resumeAfterLimit(deps: AgentDeps, content: ContentBlock[]): Promise<void> {
+  const cut = "The response reached the output limit and was cut off.";
+  const calls = content.filter((block): block is ToolUse => block.type === "tool_use");
+  deps.write!("output limit reached; asking the model to continue in smaller pieces\n", true);
+  await deps.transcript.append({ type: "message", message: { role: "user", content: calls.length
+    ? calls.map(call => ({ type: "tool_result" as const, tool_use_id: call.id, is_error: true,
+      content: `not run: ${cut} Re-issue this call with complete arguments, in smaller pieces if needed.` }))
+    : `${cut} Resume directly from where it stopped, without apology or recap, and break the remaining work into smaller pieces.` } });
+}
 async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>, timing?: ResponseTiming): Promise<void> {
   deps.signal?.throwIfAborted();
   const consumed = await readInbox(deps);
   if (deps.requireInbox && !consumed) return;
   let pauses = 0;
+  let limits = 0;
   let refusedTaskBatches = 0;
   for (;;) {
     const current = await boundary(deps.compactRequested?.() ?? false);
     deps.signal?.throwIfAborted();
     const message = await ask(current, deps.write!, timing);
+    if (message.stop === "limit" && ++limits <= LIMIT_RECOVERIES) { await resumeAfterLimit(current, message.content); continue; }
     if (message.stop === "tool_use") {
+      limits = 0;
       refusedTaskBatches = await toolBatch(current, message.content, timing) ? refusedTaskBatches + 1 : 0;
       if (refusedTaskBatches >= 3) {
         throw new Error("task creation stopped after three batches of validation errors. Existing tasks were kept. Check the task list before retrying with corrected fields");
