@@ -14,5 +14,6 @@ import { contextTool } from "./context";
 import { skill } from "./skill";
 import { runtime } from "./runtime";
 import type { Tool, ToolResult } from "./registry";
+import { mcp } from "./mcp";
 
-export const registry: Record<string, Tool<ToolResult>> = { sandbox, bash, read, write, edit, process: processTool, remember: rememberTool, context: contextTool, skill, runtime, spawn, inbox, web_search, task, history, memory };
+export const registry: Record<string, Tool<ToolResult>> = { mcp, sandbox, bash, read, write, edit, process: processTool, remember: rememberTool, context: contextTool, skill, runtime, spawn, inbox, web_search, task, history, memory };
