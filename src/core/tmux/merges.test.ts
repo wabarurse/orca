@@ -241,3 +241,43 @@ test("a cancellation during another PR's query removes the staged update from th
   expect(messages()).toHaveLength(1);
   expect(messages()[0].text).not.toContain("PR #7"); expect(messages()[0].text).toContain("PR #8");
 });
+
+test("a blocker that appears on an open PR is named once, and its clearing is reported", async () => {
+  const task = await linked();
+  const thread = { id: "T1", author: "cursor", path: "lib/sync_payload.py", line: 507, url: "https://github.com/o/r/pull/7#discussion_r1" };
+  let current: PRObservation = { ...observation("OPEN"), checks: "passed", reviewDecision: "REVIEW_REQUIRED", reviewActivity: "r0", mergeable: "mergeable", failing: [] };
+  let threads: typeof thread[] | null = [], reads = 0, now = 0;
+  const watch = mergeWatcher({ repo: async () => "o/r", pr: async () => ({ ...current }), threads: async () => { reads++; return threads; }, everyMs: 0, now: () => now });
+  const poll = () => watch(project);
+  await poll(); await poll(); expect(messages()).toEqual([]);
+  expect(reads).toBe(1); // No thread and nothing new on the PR: not asked again.
+  // A bot review opens a thread: the review changes the PR's activity, so threads are read again.
+  current = { ...current, reviewActivity: "r1" }; threads = [thread];
+  await poll(); await poll();
+  expect(messages()).toHaveLength(1);
+  expect(messages()[0].text).toBe(`[pr-blocked] PR #7 (task #${task.number} on feat/work) cannot merge: 1 unresolved review thread (cursor on lib/sync_payload.py:507 https://github.com/o/r/pull/7#discussion_r1). Waiting on: an approving review. Head ${head.slice(0, 12)}. https://github.com/o/r/pull/7. Nothing was started or retried.`);
+  // Conflicts and a failed check join it; an unreadable thread list changes nothing.
+  current = { ...current, mergeable: "conflicting", checks: "failed", failing: ["lint", "unit"] }; threads = null;
+  await poll(); await poll();
+  expect(messages()).toHaveLength(2);
+  expect(messages().some(m => m.text.includes("cannot merge: it conflicts with its base branch; failing checks: lint, unit; 1 unresolved review thread (cursor on"))).toBe(true);
+  // Everything fixed and the thread resolved, with no other change on the PR.
+  current = { ...current, mergeable: "mergeable", checks: "passed", failing: [] }; threads = [thread];
+  await poll(); threads = [];
+  await poll(); await poll();
+  expect(messages().filter(m => m.text.includes("[pr-updated] PR #7 (task #1 on feat/work): nothing fixable blocks the merge. Waiting on: an approving review."))).toHaveLength(1);
+  const count = messages().length;
+  now += 6 * 60_000; await poll(); expect(messages()).toHaveLength(count);
+});
+
+test("a snapshot saved before threads were read stays quiet until a thread exists", async () => {
+  await linked();
+  const current: PRObservation = { ...observation("OPEN"), checks: "passed", reviewDecision: "APPROVED", reviewActivity: "same", mergeable: "mergeable" };
+  await observe(project, "pr:o/r#7", { state: "OPEN", head, checks: "passed", review: "APPROVED", reviewActivity: "same", mergeable: "mergeable" }, "previous snapshot", { initialSilent: true });
+  let threads: any[] = [];
+  const poll = () => mergeWatcher({ repo: async () => "o/r", pr: async () => ({ ...current }), threads: async () => threads, everyMs: 0 })(project);
+  await poll(); await poll(); expect(messages()).toEqual([]);
+  threads = [{ id: "T9", author: "someone", path: "a.ts", url: "https://github.com/o/r/pull/7" }];
+  await poll(); expect(messages()).toHaveLength(1);
+  expect(messages()[0].text).toContain("[pr-blocked]");
+});

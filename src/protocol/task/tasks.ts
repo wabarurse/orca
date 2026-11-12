@@ -60,7 +60,14 @@ export interface PRObservation {
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
   /** Fingerprint of review/comment activity; bodies stay out of runtime events. */
   reviewActivity?: string;
+  /** Names of the checks that failed (at most eight). */
+  failing?: string[];
+  draft?: boolean;
+  /** Unresolved review threads; absent when they could not be read. */
+  threads?: ReviewThread[];
 }
+/** Where an unresolved review thread is. Its text stays on GitHub. */
+export interface ReviewThread { id: string; author: string; path: string; line?: number; url: string }
 
 /** Dormant tree model, separate from the durable Task and existing inbox rows. */
 export type TaskTreeAttention = { kind: "none" } | TaskAttention;
