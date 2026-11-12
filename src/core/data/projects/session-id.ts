@@ -2,10 +2,9 @@
 //
 // The folder id, its inode and its birth time are machine-local and change when a
 // project is moved or recreated. `sessionId` is a random UUID minted lazily the
-// first time something needs a stable identity (the first image save, or the first
-// session export) and never changes afterwards, not even on /rename. Image-ref
-// scope (core/data/images) and session transfer (core/session) derive
-// from it. Other keys in the file (the sync ledger) are preserved by writers.
+// first time something needs a stable identity (the first image save) and never
+// changes afterwards, not even on /rename. Image-ref scope (core/data/images)
+// derives from it. Other keys in the file are preserved by writers.
 
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -57,16 +56,4 @@ export async function ensureSessionId(project: string, id: string = randomUUID()
     }
   } finally { await rm(temp, { force: true }); }
   return readSession(project)!.sessionId;
-}
-
-/** Atomically replace session.json (caller holds the project-state lock); sessionId must not change. */
-export async function writeSession(project: string, next: SessionFile): Promise<void> {
-  const old = readSession(project);
-  if (old && old.sessionId !== next.sessionId) throw new Error("a session id never changes");
-  await mkdir(paths.project(project), { recursive: true });
-  const temp = `${file(project)}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temp, JSON.stringify(next) + "\n", { flag: "wx", mode: 0o600 });
-    await rename(temp, file(project));
-  } finally { await rm(temp, { force: true }); }
 }

@@ -7,13 +7,12 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 // orca stop <project>             stop the project's orchestrator daemon (its tmux window); the TUI restarts it on its next open
 // orca pull                       update the dedicated harness clone from origin/main
 // orca mcp [test|login|logout] [name]                 the MCP servers in ~/.orca/mcp.json (see docs/MCP.md)
-// orca session ls|push|pull|export|import|recover   move a conversation between machines (see docs/SESSION_TRANSFER.md)
 // orca version                    print the package.json version
 // orca agent --project p --role r [--branch b] [--run id]   internal: what spawn (and the TUI, for the orchestrator daemon) runs
 // orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
 import { ghTaskPR } from "../core/data/tasks";
-import { cleanStorage, pull, realEnv, runMcp, runSession } from "./scripts";
+import { cleanStorage, pull, runMcp } from "./scripts";
 import pkg from "../../package.json";
 import { runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
 import { afterExit } from "../exec";
@@ -31,7 +30,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "session", "mcp"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
+if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "mcp"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -51,7 +50,6 @@ function usage(error?: string): never {
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
-  orca session ls [host] | push|pull <project> <host> | export <project> <file> | import <file> | recover   (details: orca session)
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
   orca reload                     apply the installed build to running orchestrators after their current turns
@@ -164,9 +162,6 @@ switch (cmd) {
     await pull();
     break;
   case "mcp": await runMcp(rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }); break;
-  case "session":
-    process.exitCode = await runSession(rest, realEnv());
-    break;
   case "reload":
     if (rest.length) usage("reload takes no arguments; it applies the installed build to all running orchestrators");
     console.log(scheduleReload());
