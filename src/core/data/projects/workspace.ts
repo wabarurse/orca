@@ -1,8 +1,8 @@
 // Bind conversations to a user's checkout; never copy its repository or credentials.
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readdir, rmdir, lstat, unlink } from "node:fs/promises";
-import { join, relative, isAbsolute } from "node:path";
-import { paths, writeProjectState, repositoryBinding, initializeConversationStorage, type RepositoryBinding } from "../../../config";
+import { dirname, join, relative, isAbsolute } from "node:path";
+import { paths, writeProjectState, repositoryBinding, initializeConversationStorage, siblingWorktreeFolder, type RepositoryBinding } from "../../../config";
 import { attachConversation } from "./catalog";
 import { refreshProjectFolders, withFolderLock } from "./folders";
 import { command } from "../../proc";
@@ -107,41 +107,47 @@ export async function assertWorktree(project: string, directory: string, branch?
 
 /** Preflight before stopping a daemon. Finder metadata is not a worktree; all
  * other unexpected entries remain intact and get a path-specific diagnostic. */
-async function checkProjectWorktrees(project: string): Promise<string[]> {
+async function checkProjectWorktrees(project: string): Promise<{ root: string; entries: string[] }[]> {
   if (!repositoryBinding(project)?.branch) return []; // Ordinary directories have no owned worktrees.
-  const root = paths.worktrees(project);
-  const stat = await lstat(root).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return; throw error; });
-  if (!stat) return [];
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`worktree folder is not a regular directory; preserved: ${root}`);
-  const entries = await readdir(root, { withFileTypes: true }), directories: string[] = [];
-  for (const entry of entries) {
-    const dir = join(root, entry.name);
-    if (entry.name === ".DS_Store" && entry.isFile()) continue;
-    if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error(`unexpected file in worktree folder; move it before deleting this conversation: ${dir}`);
-    try { await assertWorktree(project, dir); }
-    catch (error) { throw new Error(`cannot inspect worktree ${dir}: ${error instanceof Error ? error.message : error}; conversation and files preserved`); }
-    const status = await command(["git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching"], dir);
-    if (status.code !== 0 || status.out.trim()) throw new Error(`worktree has local files or changes; keep or remove it before deleting this project: ${dir}`);
-    directories.push(entry.name);
+  const found: { root: string; entries: string[] }[] = [];
+  for (const root of paths.worktreeRoots(project)) {
+    const stat = await lstat(root).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return; throw error; });
+    if (!stat) continue;
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`worktree folder is not a regular directory; preserved: ${root}`);
+    const entries = await readdir(root, { withFileTypes: true }), directories: string[] = [];
+    for (const entry of entries) {
+      const dir = join(root, entry.name);
+      if (entry.name === ".DS_Store" && entry.isFile()) continue;
+      if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error(`unexpected file in worktree folder; move it before deleting this conversation: ${dir}`);
+      try { await assertWorktree(project, dir); }
+      catch (error) { throw new Error(`cannot inspect worktree ${dir}: ${error instanceof Error ? error.message : error}; conversation and files preserved`); }
+      const status = await command(["git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching"], dir);
+      if (status.code !== 0 || status.out.trim()) throw new Error(`worktree has local files or changes; keep or remove it before deleting this project: ${dir}`);
+      directories.push(entry.name);
+    }
+    found.push({ root, entries: directories });
   }
-  return directories;
+  return found;
 }
 
 /** Delete only clean linked worktrees. Retain local branches and never remove the original checkout. */
 export async function removeProjectWorktrees(project: string, options: { dryRun?: boolean } = {}): Promise<void> {
   if (!repositoryBinding(project)?.branch) return;
-  const root = paths.worktrees(project), entries = await checkProjectWorktrees(project);
+  const found = await checkProjectWorktrees(project); // Every folder is checked before anything is removed.
   if (options.dryRun) return;
-  for (const entry of entries) {
-    const result = await command(["git", "worktree", "remove", join(root, entry)], paths.repo(project));
-    if (result.code !== 0) throw new Error(`could not remove worktree: ${result.err.trim()}`);
+  for (const { root, entries } of found) {
+    for (const entry of entries) {
+      const result = await command(["git", "worktree", "remove", join(root, entry)], paths.repo(project));
+      if (result.code !== 0) throw new Error(`could not remove worktree: ${result.err.trim()}`);
+    }
+    const metadata = join(root, ".DS_Store");
+    const st = await lstat(metadata).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return; throw error; });
+    if (st?.isFile()) await unlink(metadata);
+    if (existsSync(root)) await rmdir(root);
+    // The sibling folder older builds made goes with its last namespace; one that still holds anything stays.
+    if (siblingWorktreeFolder(dirname(root))) await rmdir(dirname(root)).catch(() => {});
   }
-  const metadata = join(root, ".DS_Store");
-  const st = await lstat(metadata).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return; throw error; });
-  if (st?.isFile()) await unlink(metadata);
-  if (existsSync(root)) await rmdir(root);
 }
-
 /** Validate a directory before a metadata-only relink, leaving the old binding untouched on failure. */
 export async function validateProjectDirectory(source: string): Promise<{ directory: string; branch: string }> {
   const directory = await originalCheckout(source);

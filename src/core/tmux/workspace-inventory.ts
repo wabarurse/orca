@@ -39,11 +39,11 @@ export async function discoverWorkspaces(project: string, now = Date.now()): Pro
   if (repositoryBinding(project)?.branch !== "") {
     const git = await run(["git", "worktree", "list", "--porcelain", "-z"], { cwd: repo, timeoutMs: 10_000 });
     if (!git || git.code !== 0) throw new Error("cannot discover managed worktrees");
-    const managed = paths.worktrees(project) + sep;
+    const managed = paths.worktreeRoots(project).map(root => root + sep);
     for (const record of git.out.split("\0\0")) {
       const fields = record.split("\0"), path = fields.find(f => f.startsWith("worktree "))?.slice(9);
       const branch = fields.find(f => f.startsWith("branch refs/heads/"))?.slice(18);
-      if (!path?.startsWith(managed) || !branch || !existsSync(path)) continue;
+      if (!path || !managed.some(root => path.startsWith(root)) || !branch || !existsSync(path)) continue;
       const canonical = realpathSync(path);
       if (canonical !== path) continue; // A redirect is not owned scratch.
       const times = [...tasks.filter(t => t.branch === branch).map(t => t.updatedAt),

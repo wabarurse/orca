@@ -27,11 +27,14 @@ export function stateRoot(home: string, env: NodeJS.ProcessEnv): string {
   return !currentState && present(old) ? old : current;
 }
 
-/** Existing worktrees keep their Git-registered location. */
-export function worktreeRoot(checkout: string, id: string): string {
-  const old = join(`${checkout}${legacy.worktreeSuffix}`, id);
-  return present(old) ? old : join(`${checkout}.orca-worktrees`, id);
+/** Where worktrees were created beside the checkout, oldest scheme first. Existing ones keep their
+ * Git-registered location; nothing new is created here. */
+export function siblingWorktreeRoots(checkout: string, id: string): string[] {
+  return [join(`${checkout}${legacy.worktreeSuffix}`, id), join(`${checkout}.orca-worktrees`, id)].filter(present);
 }
+
+/** True for the folder older builds made beside a checkout to hold its worktree namespaces. */
+export const siblingWorktreeFolder = (path: string) => path.endsWith(legacy.worktreeSuffix) || path.endsWith(".orca-worktrees");
 
 /** Updates use an installed checkout, independently of the runtime state root. */
 export function installedApp(home: string): string {

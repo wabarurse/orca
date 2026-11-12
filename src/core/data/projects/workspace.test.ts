@@ -140,7 +140,8 @@ test("original checkout, generic local login settings and untracked files remain
   expect(JSON.stringify(provider.calls[1]!.messages)).toContain("local context");
   expect(JSON.stringify(provider.calls[1]!.messages)).toContain("another-fake-login");
   const worker = await ensureWorktree("p", "task/fix");
-  expect(worker.startsWith(`${repo}.orca-worktrees/`)).toBe(true);
+  expect(worker).toBe(join(realpathSync(paths.root), "worktrees", `original-with-spaces--${repositoryBinding("p")!.worktreeId.slice(0, 8)}`, "task-fix"));
+  expect(existsSync(`${repo}.orca-worktrees`)).toBe(false);
   expect(await git(worker, "config", "--local", "--get", "buildbuddy.api-key")).toBe("fake-local-login");
   await git(repo, "config", "test.login", "refreshed-login");
   expect(await git(worker, "config", "--local", "--get", "test.login")).toBe("refreshed-login");

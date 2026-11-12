@@ -73,7 +73,7 @@ export function mergeWatcher(opts: MergeWatchOptions = {}) {
           await discardObservation(project, `merge:${key}`);
         } else if (task.archive) {
           await stage(project, `merge:${key}`, task.archive.mergedAt,
-            `[pr-merged] PR #${pr.number} merged: ${pr.url}. Workspace and agents are preserved.`, { existingOnly: true });
+            `[pr-merged] PR #${pr.number} merged: ${pr.url}. No agent was stopped; its worktree is removed once idle and clean, the branch is kept.`, { existingOnly: true });
         } else if (activePRTask(task)) group(pr).tasks.push(task);
         else pending.push(`pr:${key}`); // Finish a closure staged before a crash; no more GitHub polls.
       }
@@ -104,7 +104,7 @@ export function mergeWatcher(opts: MergeWatchOptions = {}) {
         // publish a notification or mutate its state. Explicit watches use PR ID.
         if (!matching.length && !entry.watches.length) continue;
         const pr = observation.pr;
-        const mergeText = `[pr-merged] PR #${pr.number} merged: ${pr.url}. Workspace and agents are preserved.`;
+        const mergeText = `[pr-merged] PR #${pr.number} merged: ${pr.url}. No agent was stopped; its worktree is removed once idle and clean, the branch is kept.`;
         if (observation.state === "MERGED") {
           if (!observation.mergedAt) continue;
           await stage(project, `merge:${key}`, observation.mergedAt, mergeText);

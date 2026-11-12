@@ -1,5 +1,5 @@
 import { MERGE_POLL_MS } from "../../tmux/merges";
-import { archiveInactiveWorkspaces } from "../../tmux";
+import { archiveInactiveWorkspaces, removeFinishedWorktrees } from "../../tmux";
 import { pruneSettledProcesses, reconcileProcesses } from "../../data/processes";
 import { pruneAllOutputs } from "../../tools/bash";
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
@@ -205,6 +205,9 @@ function runWatchers(d: Daemon): void {
     d.maintainedAt = now;
     d.maintaining = background(async () => {
       await archiveInactiveWorkspaces(d.o.project).catch(error => d.o.log(`workspace cleanup: ${error}`));
+      // Merged or closed work gives its checkout back at once; one line per worktree removed.
+      await removeFinishedWorktrees(d.o.project).then(rows => { for (const row of rows) if (row.disposition.startsWith("removed")) d.o.log(`workspace cleanup: ${row.path} ${row.disposition}`); },
+        error => d.o.log(`workspace cleanup: ${error}`));
       await pruneSettledProcesses(d.o.project, true).catch(error => d.o.log(`process retention: ${error}`));
       // Once per daemon, after this project's discovery has registered its outputs: every project's
       // unowned saved outputs, since an idle project never prunes its own. One line for what failed.

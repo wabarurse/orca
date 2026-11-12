@@ -45,6 +45,30 @@ workspace, its disposition and estimated allocated bytes for eligible files.
 Shared blocks/hardlinks, concurrent writes and filesystem compression mean this
 is not a promise of free disk space. A retained item includes its reason.
 
+## Finished work
+
+A worker's checkout is the large part of a session (its installed dependencies),
+so it does not wait for the 14 days. Every five minutes the conversation's
+daemon removes the Git worktree of work that is over:
+
+- every task on its branch is merged, closed or removed; or
+- with no PR to observe (a repository without a remote), the branch has moved
+  since it was created and is contained in the default branch. A branch nobody
+  committed to proves nothing and is left alone.
+
+It waits ten minutes after the session's last activity, holds the branch's spawn
+lock, and applies the same checks as explicit cleanup: a live or queued agent,
+an open process, source edits, untracked files or unrecognised ignored files
+(`.env`) keep the checkout, with the reason in the daemon window. Only the
+checkout goes. The local branch and its commits, the agent's transcript and the
+task record stay, so spawning on the branch again recreates it. When every task
+on the branch is settled the session is archived at once, and `orca clean` may
+purge its remaining records. No agent is stopped or started.
+
+Worktrees live in `~/.orca/worktrees/<repo>--<id>/<branch>`. Ones that older
+builds created beside a checkout (`<repo>.orca-worktrees/`) are still found and
+follow the same rules; the sibling folder is removed when its last worktree goes.
+
 ## What cleanup owns
 
 The registry uses small namespaces in the existing `memory.sqlite`; it adds no
