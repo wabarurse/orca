@@ -14,7 +14,7 @@ import { exportSession } from "./export";
 import { chainOf, ledgerDigest, ledgerOf } from "./ledger";
 import { importSession } from "./import";
 import { resolveSelector } from "./local";
-import { SSH_OPTIONS } from "../../cli/session";
+import { SSH_OPTIONS } from "../../cli/scripts/session";
 import { at, cleanup, holdLock, loopback, machine, project, quiet, say, session, type Machine } from "../../test/session-fixture";
 
 afterAll(cleanup);
