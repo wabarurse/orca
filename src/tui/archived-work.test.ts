@@ -20,7 +20,7 @@ async function setup(project: string, extra: Partial<AppDeps> = {}) {
   return { app, term, fake, stop: async () => { app.quit(); await running; } };
 }
 
-test("abandoned tasks archive, expand in place, jump and restore without changing dependencies or execution", async () => {
+test("abandoned tasks archive, expand in place and restore without changing dependencies or execution", async () => {
   const project = "archived-tasks", { app, term, stop } = await setup(project);
   try {
     const parent = await registerTask(project, { name: "Old parent", summary: "Preserved", branch: "feat/old", authorized: true });
@@ -28,18 +28,18 @@ test("abandoned tasks archive, expand in place, jump and restore without changin
     await setTaskDependencies(project, child.id, [parent.id]);
     await abandonTask(project, parent.id, parent.revision);
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    await app.commands.get("/tasks")!.run("", app.page);
+    app.work.show("tasks");
     await until(() => term.screen().includes("Old parent"));
     term.type("d"); await until(() => term.screen().includes("Archive 1 settled"));
     term.type("y"); await until(() => term.screen().includes("Archived (1)"));
     expect(term.screen()).toContain("Active child");
-    expect(term.display.screen().map(line => line.split("│")[0]).join("\n")).not.toContain("#1 Old parent");
+    expect(app.work.state!.items.map(item => item.name)).toEqual(["#2 Active child", "▸ Archived (1)"]);
     term.type("a"); await until(() => term.screen().includes("▾ Archived (1)"));
     expect(term.screen()).toContain("#1 Old parent"); expect(term.screen()).toContain("Active child");
     term.type("h"); await until(() => term.screen().includes("▸ Archived (1)"));
     term.type("l"); await until(() => term.screen().includes("▾ Archived (1)"));
     term.type("h"); await until(() => term.screen().includes("▸ Archived (1)"));
-    term.type("1\r"); await until(() => term.screen().includes("Task #1 · waiting"));
+    term.type("lj"); await until(() => term.screen().includes("Task #1 Old parent"));
     term.type("u"); await until(() => term.screen().includes("Restored to list"));
     expect((await getTask(project, parent.id)).removedAt).toBeUndefined();
     expect((await getTask(project, parent.id)).attention?.kind).toBe("cancelled");
@@ -68,11 +68,11 @@ test("closed questions expand alongside open questions; restoring only changes l
   try {
     const [closed, pending] = await ask(project, [{ text: "Saved question" }, { text: "Still open" }]);
     await answer(project, closed!.id, "Saved answer");
-    await app.commands.get("/questions")!.run("", app.page);
+    app.work.show("questions");
     await until(() => term.screen().includes("Still open") && term.screen().includes("Archived (1)"));
     expect(term.screen()).not.toContain("Saved question");
     term.type("a"); await until(() => term.screen().includes("Saved question"));
-    term.press({ name: "down" }); await until(() => term.screen().includes("Answer: Saved answer"));
+    term.press({ name: "down" }); await until(() => term.screen().includes("  Saved answer"));
     term.type("u"); await until(() => term.screen().includes("Restored to list"));
     term.press({ name: "enter" }); await until(() => term.screen().includes("Closed question"));
     expect((await all(project)).find(q => q.id === closed!.id)?.status).toBe("answered");
@@ -117,7 +117,7 @@ test("old agents expand without hiding live agents; restore only changes the per
   });
   try {
     await archiveAgents(project, ["worker-old", "worker-live"], async () => ["worker-live"]);
-    await app.commands.get("/agents")!.run("", app.page);
+    app.work.show("agents");
     await until(() => term.screen().includes("Archived (1)"));
     term.type("a"); await until(() => term.screen().includes("worker-old"));
     expect(term.screen()).toContain("worker-live");

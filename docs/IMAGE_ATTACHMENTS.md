@@ -15,7 +15,7 @@ and Option-Backspace are unchanged. Ctrl+V with text-only/empty clipboard report
 that there is no image and leaves the draft unchanged; it **does not also paste
 text**, avoiding duplicate terminal paste. Use the terminal's normal text-paste
 shortcut. A terminal or multiplexer that intercepts Ctrl+V must deliver the literal
-control key for this feature to work. `/keys` (or draft-safe Ctrl+G) shows what
+control key for this feature to work. Ctrl+G (draft-safe) shows what
 arrives; orca does not change terminal settings or key bindings for you.
 
 Menus, projects, help, task/question panels and agent views keep ownership of
@@ -83,7 +83,7 @@ inferred from absent files or matching text. The inbox consumer commits **the
 prompt, image references and receipt together** before removing inbox files or
 acknowledging UI previews. Cross-process turn/clear-context ownership is unchanged.
 
-**`/retry-images` explicitly republishes unconfirmed image prompts with their
+**`t` on the Images page explicitly republishes unconfirmed image prompts with their
 original IDs**, never a newly generated retry ID. Reopen/refresh never
 *republishes* them automatically. A previously published ordinary durable inbox
 entry can still be consumed by normal scheduler polling, exactly like text input.
@@ -102,7 +102,7 @@ held by a different window.
 A receipt means **committed context, not provider success**. Model rejection,
 serialization errors or provider failure leave the image-bearing transcript
 intact, never silently retry text-only or change providers. Consumed input is not
-replayed by `/retry-images`; explicitly choose a supported model if needed, then
+replayed by `t` on the Images page; explicitly choose a supported model if needed, then
 send a new message to resume the saved context. Model changes alone do not resume
 failed turns or restart workers.
 
@@ -111,7 +111,7 @@ Validated image bytes and submission journals remain under the project until
 `/clear-context`. This conservative retention avoids releasing bytes still needed by
 queues, histories or workers. `/clear-context` resets only the orchestrator's context;
 old receipts/history remain, old prompts do not reappear as unconsumed, and old
-images are not forwarded implicitly. This is not secure deletion. `/images` lets
+images are not forwarded implicitly. This is not secure deletion. The Images page lets
 the user view images agents previously sent to them, including after a clear;
 it does not insert those images into model context or authorize forwarding.
 Reattach a pre-clear image to include it in a new context. There is no
@@ -148,7 +148,7 @@ Delegation must **explicitly** pass relevant IDs:
 The `inbox` tool accepts the same optional `attachments` list for an agent
 recipient or `to: "user"` (the legacy `message` implementation shares this path).
 Omitted means no images. User-directed images are saved in durable reply entries
-and shown as image labels in chat. `/images` lists delivered images and retained
+and shown as image labels in chat. The Images page (fourth tab of the work page) lists delivered images and retained
 sandbox recordings newest first. Enter opens a validated image in Preview on
 macOS or a video in the default video player; Linux uses `xdg-open`. Moving
 the selection never opens a file. Recordings (MP4/MOV/M4V/WebM) are discovered

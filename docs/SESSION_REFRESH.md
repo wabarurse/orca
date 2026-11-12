@@ -2,7 +2,7 @@
 
 ## User contract
 
-`/refresh` reads the persisted state used by windows sharing the same
+A refresh (prompt submission and the passive poll; the `/refresh` command is gone) reads the persisted state used by windows sharing the same
 `ORCA_HOME` (normally `~/.orca`). It reconciles names, pins and the
 project picker; full saved conversation and next-turn model context; tasks in
 an open Inbox panel; open/closed questions; agent liveness; and applicable

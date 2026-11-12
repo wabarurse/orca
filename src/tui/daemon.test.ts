@@ -142,7 +142,7 @@ test("the daemon's cancel acknowledgement and compaction progress are transient 
     expect(note(app)).toContain(line.slice(0, 70));
     expect(text(app)).toBe("");
   }
-  await app.commands.get("/refresh")!.run("", page);
+  await app.refreshSessions();
   expect(text(app)).toBe("");
   await app.onKey({ name: "char", text: "y" });
   expect(note(app)).not.toContain("daemon gone");

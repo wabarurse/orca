@@ -15,7 +15,7 @@ import { realTerminal } from "./components/term";
 import { dim } from "./components/text";
 import { Calls } from "./conversation/tools";
 
-const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until } = appFixture();
+const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList } = appFixture();
 
 describe("tui app", () => {
   test("orca welcome stays static until submission, then only the header fin animates", async () => {
@@ -121,10 +121,10 @@ describe("tui app", () => {
     term.type("\x1b[1;5C"); // Ctrl+Right does nothing
     expect(app.page!.project).toBe("alpha");
 
-    term.type("/new beta git@example.com:b.git\r");
+    void app.openPage("beta", "git@example.com:b.git");
     await until(() => app.page?.project === "beta");
     expect(orchs.opened[2]).toEqual({ project: "beta", url: "git@example.com:b.git" });
-    term.type("/close\r");
+    app.closePage();
     await until(() => app.pages.length === 2);
     expect(app.pages.map((p) => p.project)).toEqual(["alpha", orchs.opened[1]!.project]);
     term.press({ name: "c", ctrl: true });
@@ -201,7 +201,7 @@ describe("tui app", () => {
     term.type("\x1a"); // Ctrl+Z back to the first page
     expect(app.page).toBe(page);
     expect(above()[0]).toBe(dim("for notes"));
-    await app.commands.get("/refresh")!.run("", page); // a re-sync neither keeps nor clears a note: it is not a page notice
+    await app.refreshSessions(); // a re-sync neither keeps nor clears a note: it is not a page notice
     expect(above()[0]).toBe(dim("for notes"));
     expect(app.pages.flatMap(p => p.lines)).toEqual([]);
     app.quit();
@@ -262,7 +262,6 @@ describe("tui app", () => {
     page.view = view;
     term.type("/help\r");
     await until(() => !!app.frame().help);
-    expect(app.frame().help!.lines.join("\n")).toContain("/back");
     expect(view.lines).toEqual([]);
     term.press({ name: "escape" });
     term.type("hello\r");
@@ -271,20 +270,12 @@ describe("tui app", () => {
     expect(orchs.said.viewer).toEqual([]);
     term.type("/rename viewed\r");
     await until(() => page.name === "viewed");
-    term.type("/new beta\r");
-    await until(() => app.page?.project === "beta");
-    term.type("/help\r");
-    await until(() => !!app.frame().help);
-    expect(app.frame().help!.lines.join("\n")).not.toContain("/back");
-    term.press({ name: "escape" });
-    term.type("/back\r");
-    await until(() => term.screen().includes("not viewing an agent"));
-    expect(app.page!.lines).toEqual([]);
+    await app.openPage("beta");
     term.type("\x1a"); // back to viewer
-    term.type("/back\r");
+    term.press({ name: "escape" }); // esc leaves the agent view
     await until(() => left === 1);
     page.view = null;
-    term.type("/close\r");
+    app.closePage();
     await until(() => app.pages.length === 1);
     app.quit();
     await running;
@@ -314,8 +305,7 @@ describe("tui app", () => {
     expect(orchs.said.signer).toEqual([]); // held back until sign-in succeeds
     await Bun.sleep(30);
     expect(term.screen()).not.toContain("signer says hi"); // the turn waits for sign-in
-    term.type("/new beta2\r");
-    await until(() => app.page?.project === "beta2");
+    await app.openPage("beta2");
     term.type("\x1a");
     expect(app.page!.project).toBe("signer");
     finish(); // no poll runs (pollMs is huge): login() starts the queued turn itself
@@ -351,7 +341,7 @@ describe("tui app", () => {
     await running;
   });
 
-  test("/new and ctrl+n ids never match another project's display name", async () => {
+  test("ctrl+n ids never match another project's display name", async () => {
     mkdirSync(join(home, "projects", "shown-id", "repo"), { recursive: true });
     await setDisplayName("shown-id", "foo");
     const term = fakeTerm(200);
@@ -359,11 +349,7 @@ describe("tui app", () => {
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("clash");
     await until(() => !!app.page);
-    term.type("/new foo\r");
-    await until(() => term.screen().includes("another project is already called foo"));
-    expect(orchs.opened.map((o) => o.project)).toEqual(["clash"]);
-    term.type("/new shown-id\r"); // its own id still opens it
-    await until(() => app.page?.project === "shown-id");
+    await app.openPage("shown-id");
     expect(app.page!.name).toBe("foo");
 
     // Ctrl+N skips an orch-xxxx another project displays as.
@@ -383,13 +369,13 @@ describe("tui app", () => {
     await running;
   });
 
-  test("/keys echoes parsed keys until esc", async () => {
+  test("ctrl+g echoes parsed keys until esc", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
     await until(() => !!app.page);
-    term.type("/keys\r");
+    term.press({ name: "g", ctrl: true });
     await until(() => app.keyEcho && term.screen().includes("press keys; esc ends"));
     term.type("\x1b[44;5u");
     await until(() => term.screen().includes('{"name":",","ctrl":true}'));
@@ -412,7 +398,8 @@ describe("tui app", () => {
     await until(() => !!app.frame().help);
     const help = app.frame().help!.lines.join("\n");
     expect(app.page!.lines).toEqual([]);
-    for (const cmd of ["/keys", "/rename <name>", "/new [name] [directory]", "/close", "/quit", "/agents", "/model", "/accounts", "/login claude|codex"]) expect(help).toContain(cmd);
+    for (const cmd of ["ctrl+g", "/rename <name>", "/quit", "ctrl+a / ctrl+t / ctrl+q / ctrl+b", "/model", "/accounts", "/login claude|codex"]) expect(help).toContain(cmd);
+    for (const gone of ["/keys", "/new", "/close", "/agents"]) expect(help).not.toContain(gone);
     expect(help).not.toContain("/back");
     app.quit();
     await running;
@@ -459,12 +446,6 @@ describe("tui app", () => {
     await until(() => app.page!.project !== first.project);
     expect(orchs.opened.at(-1)!.project).toMatch(/^orch-/);
     expect(orchs.opened.at(-1)!.url).toBe(source);
-    term.type("/new other\r"); // an explicit name still uses the launch checkout
-    await until(() => app.page?.project === "other");
-    expect(orchs.opened.at(-1)).toEqual({ project: "other", url: source });
-    term.type("/new spaces /a/local checkout\r");
-    await until(() => app.page?.project === "spaces");
-    expect(orchs.opened.at(-1)).toEqual({ project: "spaces", url: "/a/local checkout" });
     app.quit();
     await running;
 
@@ -473,7 +454,7 @@ describe("tui app", () => {
     writeProjectState("bound", "repository", { version: 1, directory: source, branch: "main", worktreeId: crypto.randomUUID() });
     const again = new App({ term: fakeTerm(), openOrchestrator: fakeOrchestrators().openOrchestrator, pollMs: 100_000, source });
     const running2 = again.run();
-    await until(() => again.page?.project === "bound");
+    await until(() => again.pages.some(page => page.project === "bound"));
     again.quit();
     await running2;
   });
@@ -588,8 +569,8 @@ describe("tui app", () => {
     await until(() => !term.screen().includes("working…"));
 
     // Viewing a live agent through /agents shows the line until it finishes.
-    term.type("/agents\r");
-    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
+    term.press({ name: "a", ctrl: true });
+    await until(() => app.work.state?.items.some(item => item.name.startsWith("worker-")) === true);
     term.press({ name: "enter" });
     await until(() => app.page!.view?.name === "worker-x" && started === 2 && term.screen().includes("working…"));
     const calls = agentCalls;
@@ -610,8 +591,8 @@ describe("tui app", () => {
     await until(() => !app.page!.view);
     term.type("again\r");
     await until(() => app.page!.busy);
-    term.type("/agents\r");
-    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
+    term.press({ name: "a", ctrl: true });
+    await until(() => app.work.state?.items.some(item => item.name.startsWith("worker-")) === true);
     term.press({ name: "enter" });
     await until(() => app.page!.view?.live === false && !term.screen().includes("thinking… "));
 
@@ -657,7 +638,7 @@ describe("tui app", () => {
     await running;
   });
 
-  test("ctrl+b and /projects open a list of every project: move, open, pin", async () => {
+  test("ctrl+b opens the Projects page listing every project: move, open, pin", async () => {
     for (const n of ["sb-a", "sb-b", "sb-c"]) mkdirSync(join(home, "projects", n, "repo"), { recursive: true });
     const term = fakeTerm(90);
     const orchs = fakeOrchestrators();
@@ -665,34 +646,34 @@ describe("tui app", () => {
     const running = app.run("sb-b");
     await until(() => !!app.page);
     term.type("\x02"); // Ctrl+B
-    await until(() => !!app.projectList?.items.length);
-    const names = () => app.projectList!.items.map((i) => i.name).filter((n) => n.startsWith("sb-"));
+    await until(() => !!projectList(app)?.items.length);
+    const names = () => projectList(app)!.items.map((i) => i.name).filter((n) => n.startsWith("sb-"));
     expect(names()).toEqual(["sb-a", "sb-b", "sb-c"]);
-    expect(app.projectList!.items[app.projectList!.index]!.name).toBe("sb-b"); // starts on the active page
-    await until(() => term.screen().includes("● sb-b"));
+    expect(projectList(app)!.items[projectList(app)!.index]!.name).toBe("sb-b"); // starts on the active page
+    await until(() => /^› sb-b +current/.test(term.display.screen().find(row => row.startsWith("›")) ?? ""));
     term.type("j"); // keys go to the list, not the input
     expect(app.input.text).toBe("");
-    expect(app.projectList!.items[app.projectList!.index]!.name).toBe("sb-c");
+    expect(projectList(app)!.items[projectList(app)!.index]!.name).toBe("sb-c");
     term.type("p");
-    await until(() => app.projectList!.items[0]!.name === "sb-c");
-    expect(app.projectList!.items[0]!.pinned).toBe(true);
-    expect(app.projectList!.index).toBe(0); // the selection follows the pinned project
+    await until(() => projectList(app)!.items[0]!.name === "sb-c");
+    expect(projectList(app)!.items[0]!.pinned).toBe(true);
+    expect(projectList(app)!.index).toBe(0); // the selection follows the pinned project
     term.press({ name: "enter" }); // opens a page for it like start <name>
     await until(() => app.page?.project === "sb-c");
     expect(orchs.opened.at(-1)).toEqual({ project: "sb-c", url: undefined });
-    expect(app.projectList).toBeNull(); // Enter closes the list; keys go back to the input
+    expect(projectList(app)).toBeNull(); // Enter closes the list; keys go back to the input
     term.type("x");
     expect(app.input.text).toBe("x");
     term.press({ name: "b", ctrl: true }); // reopens
-    await until(() => !!app.projectList);
+    await until(() => !!projectList(app));
     term.press({ name: "escape" }); // closes
-    expect(app.projectList).toBeNull();
-    term.type("\x7f/projects\r");
-    await until(() => !!app.projectList);
+    expect(projectList(app)).toBeNull();
+    term.type("\x7f\x02");
+    await until(() => !!projectList(app)?.items.length);
     term.type("p"); // unpin sb-c again for the other tests
-    await until(() => app.projectList!.items[0]!.name !== "sb-c");
+    await until(() => projectList(app)!.items[0]!.name !== "sb-c");
     term.type("\x02");
-    expect(app.projectList).toBeNull();
+    expect(projectList(app)).toBeNull();
     app.quit();
     await running;
   });
@@ -734,39 +715,39 @@ describe("tui app", () => {
     const running = app.run("alpha");
     await until(() => !!app.page);
     await app.openPage("sb-del");
-    term.type("/projects\r");
-    await until(() => app.projectList?.items[app.projectList.index]?.name === "sb-del");
+    term.type("\x02");
+    await until(() => projectList(app)?.items[projectList(app)!.index]?.name === "sb-del");
     term.type("d");
-    await until(() => term.screen().includes("delete sb-del? y/n"));
+    await until(() => term.screen().includes("delete sb-del?  y confirm · n/esc cancel"));
     term.type("n"); // anything but y cancels
-    expect(app.projectList!.confirm).toBeNull();
+    expect(projectList(app)!.confirm).toBeNull();
     expect(checks).toBe(0);
     // Chords are not answers: Ctrl+Y, Alt+Y (legacy and kitty) and a char with alt cancel too.
     for (const answer of [() => term.type("\x19"), () => term.type("\x1by"), () => term.type("\x1b[121;3u"), () => term.press({ name: "char", text: "y", alt: true })]) {
       term.type("d");
-      expect(app.projectList!.confirm?.name).toBe("sb-del");
+      expect(projectList(app)!.confirm).toBe("delete sb-del?");
       answer();
-      expect(app.projectList!.confirm).toBeNull();
+      expect(projectList(app)!.confirm).toBeNull();
       expect(checks).toBe(0);
     }
-    // Ctrl+D / Alt+D do not ask, Ctrl+P does not pin, and batched text like __proto__ does nothing.
-    for (const chord of ["\x04", "\x1bd", "\x10", "__proto__", "constructor"]) {
+    // Alt+D does not ask, Ctrl+P does not pin, and batched text like __proto__ does nothing. (Ctrl+D is half a page down.)
+    for (const chord of ["\x1bd", "\x10", "__proto__", "constructor"]) {
       term.type(chord);
-      expect(app.projectList!.confirm).toBeNull();
-      expect(app.projectList!.status).toBe("");
+      expect(projectList(app)!.confirm).toBeNull();
+      expect(projectList(app)!.status).toBe("");
     }
     // Had Ctrl+P pinned it, this p would unpin it.
     term.type("p");
-    await until(() => app.projectList!.status !== "");
-    expect(strip(app.projectList!.status)).toBe("pinned sb-del");
+    await until(() => projectList(app)!.status !== "");
+    expect(strip(projectList(app)!.status)).toBe("pinned sb-del");
     term.type("p");
-    await until(() => strip(app.projectList!.status) === "unpinned sb-del");
+    await until(() => strip(projectList(app)!.status) === "unpinned sb-del");
     expect(checks).toBe(0);
-    expect(app.projectList!.items[app.projectList!.index]!.name).toBe("sb-del");
+    expect(projectList(app)!.items[projectList(app)!.index]!.name).toBe("sb-del");
     term.type("d");
     term.type("y");
     await until(() => !existsSync(join(home, "projects", "sb-del")));
-    await until(() => !app.projectList!.items.some((i) => i.name === "sb-del"));
+    await until(() => !projectList(app)!.items.some((i) => i.name === "sb-del"));
     expect(app.pages.map((p) => p.project)).toEqual(["alpha"]);
     expect(app.page!.project).toBe("alpha");
     await until(() => term.screen().includes("deleted sb-del"));
@@ -813,33 +794,30 @@ describe("tui app", () => {
     const running = app.run("sb-ren");
     await until(() => !!app.page);
     term.type("\x02");
-    await until(() => !!app.projectList);
-    const at = app.projectList!.items.findIndex((i) => i.name === "sb-orch1");
-    expect(app.projectList!.items[at]!.label).toBe("Shiny app");
-    app.projectList!.index = at; // the fake screen is 8 rows; select it so the list scrolls to it
-    app.draw();
-    await until(() => term.screen().includes("❯    Shiny app"));
-    expect(term.screen()).not.toContain("sb-orch1");
+    await until(() => !!projectList(app));
+    await until(() => !!projectList(app)?.items.length);
+    expect(projectList(app)!.items.find((i) => i.name === "sb-orch1")!.label).toBe("Shiny app");
+    term.type("f"); term.type("Shiny\r"); // find selects it by the name it shows
+    await until(() => term.display.screen().some(row => row.startsWith("› Shiny app")));
 
     term.type("p");
-    await until(() => strip(app.projectList!.status) === "pinned Shiny app");
+    await until(() => strip(projectList(app)!.status) === "pinned Shiny app");
     expect((await loadConfig()).pinned).toContain("sb-orch1");
-    expect(app.projectList!.items[0]!.name).toBe("sb-orch1");
+    expect(projectList(app)!.items[0]!.name).toBe("sb-orch1");
 
     term.type("d");
-    expect(strip(app.projectList!.status)).toBe("delete Shiny app? y/n");
+    expect(projectList(app)!.confirm).toBe("delete Shiny app?");
     term.type("y");
-    await until(() => strip(app.projectList!.status) === "deleted Shiny app");
+    await until(() => strip(projectList(app)!.status) === "deleted Shiny app");
     expect(checked).toEqual(["sb-orch1"]);
     expect(killed).toEqual(["sb-orch1"]);
     expect(existsSync(join(home, "projects", "sb-orch1"))).toBe(false);
     expect((await loadConfig()).pinned).not.toContain("sb-orch1");
-    expect(app.projectList!.items.some((i) => i.name === "sb-orch1")).toBe(false);
+    expect(projectList(app)!.items.some((i) => i.name === "sb-orch1")).toBe(false);
 
     // A /rename while the list is open updates its label.
     await app.renamePage("Ren app");
-    await until(() => app.projectList!.items.find((i) => i.name === "sb-ren")?.label === "Ren app");
-    expect(strip(app.frame().projects!.items.find((i) => i.name === "sb-ren")!.label)).toBe("Ren app");
+    await until(() => projectList(app)!.items.find((i) => i.name === "sb-ren")?.label === "Ren app");
     app.quit();
     await running;
   });
@@ -866,8 +844,8 @@ describe("tui app", () => {
     await until(() => !!app.page);
     const dir = join(home, "projects", "sb-busy");
     const askDelete = async (before = async () => {}) => {
-      term.type("/projects\r");
-      await until(() => app.projectList?.items[app.projectList.index]?.name === "sb-busy");
+      term.type("\x02");
+      await until(() => projectList(app)?.items[projectList(app)!.index]?.name === "sb-busy");
       term.type("d");
       await before();
       term.type("y"); // marks the page as deleting before the next poll tick
@@ -877,7 +855,7 @@ describe("tui app", () => {
     term.type("go\r");
     await until(() => app.page!.busy);
     await askDelete();
-    await until(() => !!app.projectList?.status.includes("mid-turn"));
+    await until(() => !!projectList(app)?.status.includes("mid-turn"));
     expect(existsSync(dir)).toBe(true);
     expect(app.pages.length).toBe(1);
     finish();
@@ -891,7 +869,7 @@ describe("tui app", () => {
     expect(turns).toBe(1);
     live = ["worker-x"];
     checking!();
-    await until(() => !!app.projectList?.status.includes("live agents (worker-x)"));
+    await until(() => !!projectList(app)?.status.includes("live agents (worker-x)"));
     expect(existsSync(dir)).toBe(true);
     expect(app.pages.length).toBe(1);
     expect(app.page!.deleting).toBe(false);
@@ -956,7 +934,7 @@ describe("sticky screen", () => {
     await until(() => term.writes.length > before);
     expect(term.writes.slice(before).join("")).not.toContain(CLEAR);
     await until(() => term.screen().includes("> one\n\nalpha says hi\n"));
-    term.type("/close\r");
+    app.closePage();
     await until(() => term.screen().includes("> two\n\nbeta says hi"));
     app.quit();
     await running;
@@ -987,7 +965,7 @@ describe("sticky screen", () => {
     await running;
   });
 
-  test("/agents clears and shows the transcript live; /back reprints the page", async () => {
+  test("the Agents page opens a transcript live; esc reprints the page", async () => {
     const term = fakeTerm(80);
     const orchs = fakeOrchestrators();
     const transcript = paths.transcript("viewed", "worker-v");
@@ -999,8 +977,8 @@ describe("sticky screen", () => {
     await until(() => !!app.page);
     term.type("hello\r");
     await until(() => term.screen().includes("worker-x done"));
-    term.type("/agents\r");
-    await until(() => term.screen().includes("AGENTS") && term.screen().includes("worker-"));
+    term.press({ name: "a", ctrl: true });
+    await until(() => app.work.state?.items.some(item => item.name.startsWith("worker-")) === true);
     term.press({ name: "enter" });
     await until(() => term.screen().includes("worker line one"));
     expect(term.screen()).not.toContain("viewed says hi");
@@ -1013,7 +991,7 @@ describe("sticky screen", () => {
     appendFileSync(transcript, JSON.stringify({ type: "message", message: { role: "user", content: "**raw** prompt" } }) + "\n");
     await until(() => term.screen().includes("worker line two\n\nbold reply\n\n┌───┬───┐\n│ k │ v │"));
     await until(() => term.screen().includes("> **raw** prompt"));
-    term.type("/back\r");
+    term.press({ name: "escape" });
     await until(() => term.screen().includes("> hello\n\nviewed says hi\n\nworker-x done"));
     expect(term.screen()).not.toContain("worker line");
     app.quit();

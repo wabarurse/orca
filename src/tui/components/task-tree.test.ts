@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { taskTreeView, type Task } from "../../protocol/task/tasks";
-import { navigateOutline, renderTaskTree } from "./task-tree";
-import { plainText, visibleLength } from "./text";
+import { navigateOutline, taskRows, taskSections } from "./task-tree";
+import { ARCHIVED_SECTION } from "./work-view";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const task = (n: number, deps: number[] = [], name = `Task ${n}`): Task => ({
   id: id(n), name, summary: "Durable summary", branch: "feat/tree", status: "queued",
@@ -9,237 +9,59 @@ const task = (n: number, deps: number[] = [], name = `Task ${n}`): Task => ({
 });
 const sample = () => [task(1, [5], "Restore session draft"), task(2, [1], "Export task history"), task(3, [5], "Narrow-terminal keys"), task(4, [5], "Reduce footer redraws"), task(5, [], "Clarify empty inbox"), task(6, [2, 3, 4], "Document task recovery")];
 const pr = { repository: "sample/repo", number: 105, url: "https://github.com/sample/repo/pull/105", head: "a".repeat(40) };
+const label = (row: { lead?: string; name: string }) => (row.lead ?? "") + row.name;
 
-test("a divider separates list and details; wide details use columns and narrow details stack", () => {
-  const t = task(1); t.summary = "A complete description with 界 and 🙂 that wraps independently.";
-  t.attention = { kind: "blocked", reason: "Need approval" }; t.pr = pr;
-  for (const cols of [80, 100, 120]) {
-    const rendered = renderTaskTree([t], { cols, rows: 100 });
-    expect(plainText(rendered.lines[rendered.graph.rows + 1]!)).toBe("─".repeat(cols));
-    const lines = rendered.lines.slice(rendered.graph.rows + 2).map(plainText);
-    expect(lines.some(line => line.includes("Description") && line.includes("│ Details"))).toBe(true);
-    expect(lines.join("\n")).toContain("Need approval");
-    expect(rendered.lines.join("\n")).toContain(`\x1b]8;;${pr.url}\x07`);
-    for (const line of rendered.lines) expect(visibleLength(line)).toBeLessThanOrEqual(cols);
-  }
-  const narrow = renderTaskTree([t], { cols: 40, rows: 100 });
-  expect(narrow.lines.map(plainText).join("\n")).toContain("Overview:");
-  expect(narrow.lines.some(line => line.includes(" │ "))).toBe(false);
-});
-
-
-test("selected details preserve warnings, runs, PR/readiness and missing facts with independent scroll", () => {
-  const t = task(1); t.attention = { kind: "blocked", reason: "Need a decision" }; t.pr = pr;
-  t.status = "ready_to_merge"; t.readiness = { head: pr.head, run: "review", validatedAt: "today", validation: "Evidence checked", checks: "not_configured" };
-  t.runs = [{ id: "review", agent: "reviewer", role: "reviewer", state: "stopped", preparedAt: "yesterday" }];
-  const opts = { cols: 120, rows: 200 }, full = renderTaskTree([t], opts).lines.join("\n");
-  for (const value of ["Need a decision", "Evidence checked", "not_configured", "Prerequisites"]) expect(full).toContain(value);
-  const small = renderTaskTree([t], { cols: 20, rows: 12, detailY: 99999 });
-  expect(small.details.y).toBe(small.details.height - small.details.rows);
-  expect(small.lines.join("\n")).toContain("sample/repo"); expect(small.graph.y).toBe(0);
-  expect(renderTaskTree([task(1)], opts).lines.join("\n")).toContain("PR: not recorded");
-});
-
-test("empty, malformed, cycle, dangling, duplicate identity and graph limits are explicit", () => {
-  expect(renderTaskTree([], { cols: 80, rows: 24 }).lines.join("\n")).toContain("No tasks");
-  for (const input of [[task(1, [2])], [task(1, [2]), task(2, [1])], [task(1), task(1)], [{ ...task(1), dependsOn: "bad" }], Array.from({ length: 257 }, (_, i) => task(i))]) {
-    const out = renderTaskTree(input as Task[], { cols: 80, rows: 24 });
-    expect(out.errors.length).toBeGreaterThan(0); expect(out.hits).toEqual([]); expect(out.lines.join("\n")).toContain("ERROR:");
-  }
-});
-
-test("independent roots, wide Unicode and hostile text are safe at narrow and scrolled bounds", () => {
-  const evil = '\x1b]0;title\x07\x1b[31m界🙂é\u202eevil\x1b[0m';
-  const tasks = [task(1, [], evil), task(2, [], "Second root"), task(3, [1, 2])];
-  tasks[0]!.summary = evil; tasks[0]!.branch = evil;
-  for (const cols of [1, 2, 20, 80, 120]) {
-    const out = renderTaskTree(tasks, { cols, rows: 24, selectedId: id(1) });
-    expect(out.lines.length).toBeLessThanOrEqual(24);
-    for (const line of out.lines) { expect(visibleLength(line)).toBeLessThanOrEqual(cols); expect(plainText(line)).not.toMatch(/[\x1b\x07\u202e]/); expect(line).not.toContain("title"); }
-    for (const h of out.hits) expect(h.col + h.width).toBeLessThanOrEqual(out.graph.cols);
-  }
-  const full = renderTaskTree(tasks, { cols: 120, rows: 35 });
-  expect(full.hits.every(h => h.col === 0 && h.width === 120)).toBe(true); // a whole row selects its task
-  expect(full.lines[1]!.normalize("NFC")).toContain("界🙂é");
-  const scroll = renderTaskTree(Array.from({ length: 100 }, (_, i) => task(i + 1, i ? [i] : [])), { cols: 80, rows: 24, graphY: 99999 });
-  expect(scroll.graph.x).toBe(0);
-  expect(scroll.graph.y).toBe(scroll.graph.height - scroll.graph.rows);
-  expect(scroll.lines.at(-1)).toContain("Outline y=");
-});
-
-test("one-cell metadata viewport stays cell-safe when scrolled into CJK and emoji fields", () => {
-  const t = task(1, [], "界🙂"); t.summary = "🙂界";
-  const options = { cols: 1, rows: 10, selectedId: t.id };
-  const first = renderTaskTree([t], options);
-  let replacements = 0;
-  for (let detailY = 0; detailY < first.details.height; detailY += 3) {
-    const result = renderTaskTree([t], { ...options, detailY });
-    expect(result.errors).toEqual([]);
-    for (const line of result.lines) expect(visibleLength(line)).toBeLessThanOrEqual(1);
-    const metadata = result.lines.slice(result.graph.rows + 1, -1);
-    replacements += metadata.filter(line => line === "…").length;
-  }
-  expect(replacements).toBeGreaterThan(0);
-});
-
-test("malformed identities and durable metadata reject coherently without hits or invented facts", () => {
-  const malformed = [
-    { ...task(1), id: 12 }, { ...task(1), id: "bad" }, { ...task(1), runs: undefined },
-    { ...task(1), name: null }, { ...task(1), runs: [{}] }, { ...task(1), attention: { kind: "blocked" } },
-    { ...task(1), pr: {} }, { ...task(1), readiness: {} }, { ...task(1), archive: {} },
-    { ...task(1), status: "done" }, { ...taskTreeView(task(1)), source: null },
-  ];
-  for (const record of malformed) {
-    const out = renderTaskTree([record] as Task[], { cols: 80, rows: 24 });
-    expect(out.errors.length).toBe(1); expect(out.hits).toEqual([]);
-    expect(out.selectedId).toBeUndefined(); expect(out.lines.join("\n")).toContain("ERROR:");
-  }
-  const projection = taskTreeView(task(1)); projection.name = "Untrusted display override";
-  expect(renderTaskTree([projection], { cols: 120, rows: 35 }).lines.join("\n")).not.toContain(projection.name);
-});
-
-test("metadata budgets reject before expensive processing and history is never read", () => {
-  const history = task(1);
-  Object.defineProperty(history, "history", { get() { throw new Error("History must not be read"); } });
-  expect(renderTaskTree([history], { cols: 120, rows: 35 }).errors).toEqual([]);
-  const hugeField = { ...task(1), summary: "界".repeat(8193) };
-  const tooManyRuns = { ...task(1), runs: Array(129).fill(null) };
-  const registry = Array.from({ length: 40 }, (_, i) => ({ ...task(i + 1), summary: "x".repeat(8192) }));
-  for (const records of [[hugeField], [tooManyRuns], registry]) {
-    const result = renderTaskTree(records, { cols: 80, rows: 24 });
-    expect(result.errors.join(" ")).toContain("Metadata limit:"); expect(result.hits).toEqual([]);
-  }
-});
-
-
-
-
-test("canonical outline references other prerequisites and navigates visible depths", () => {
-  const tasks = sample();
-  const collapsed = new Set<string>();
-  const options = { cols: 120, rows: 35, collapsed };
-  const out = renderTaskTree(tasks, options);
-  expect(out).toEqual(renderTaskTree([...tasks].reverse().map(taskTreeView), options));
-  expect(out.order).toEqual([5, 1, 2, 6, 3, 4].map(id));
-  const rows = out.lines.slice(1, 7).map(plainText);
-  expect(rows[0]).toMatch(/^▶ ▾ ● #5 Clarify empty inbox/);
-  expect(rows[1]).toMatch(/^  ├─ ▾ ● #1 Restore session draft/);
-  expect(rows[2]).toMatch(/^  │  └─ ▾ ● #2 Export task history/);
-  expect(rows[3]).toMatch(/^  │     └─ ● #6 Document task recovery +\+#3 \+#4 queued$/); // other prerequisites stay explicit
-  expect(rows[4]).toMatch(/^  ├─ ● #3 Narrow-terminal keys/);
-  expect(rows[5]).toMatch(/^  └─ ● #4 Reduce footer redraws/);
-  expect(renderTaskTree(tasks, { ...options, selectedId: id(6), rows: 100 }).lines.join("\n")).toContain("#3 Narrow-terminal keys");
-  expect(new Set(out.nodes.map(n => n.id)).size).toBe(tasks.length);
+test("the outline flattens into rows: connectors and fold markers lead the name, other prerequisites and the PR are info", () => {
+  const tasks = sample(), collapsed = new Set<string>();
+  const out = taskRows(tasks, collapsed, false);
+  expect(out.rows).toEqual(taskRows([...tasks].reverse().map(taskTreeView), collapsed, false).rows);
+  expect(out.rows.map(row => row.id)).toEqual([5, 1, 2, 6, 3, 4].map(id));
+  expect(out.rows.map(label)).toEqual(["▾ #5 Clarify empty inbox", "├─ ▾ #1 Restore session draft", "│  └─ ▾ #2 Export task history",
+    "│     └─ #6 Document task recovery", "├─ #3 Narrow-terminal keys", "└─ #4 Reduce footer redraws"]);
+  expect(out.rows[3]).toMatchObject({ status: "queued", info: "+#3 +#4" }); // other prerequisites stay explicit
+  expect(out.rows[0]!.name).toBe("#5 Clarify empty inbox"); // find matches the name, never the connectors
   expect(navigateOutline(out.nodes, id(1), collapsed, "right")).toBe(id(2));
   expect(navigateOutline(out.nodes, id(1), collapsed, "down", true)).toBe(id(3));
-  expect(navigateOutline(out.nodes, id(3), collapsed, "left", true)).toBe(id(1));
-  expect(navigateOutline(out.nodes, id(1), collapsed, "left")).toBe(id(1));
-  const folded = renderTaskTree(tasks, options);
-  expect(folded.order).toEqual([5, 1, 3, 4].map(id));
-  expect(plainText(folded.lines[2]!)).toMatch(/^  ├─ ▸ ● #1 Restore session draft \(1 hidden\)/);
+  expect(navigateOutline(out.nodes, id(1), collapsed, "left")).toBe(id(1)); // folds
+  const folded = taskRows(tasks, collapsed, false);
+  expect(folded.rows.map(row => row.id)).toEqual([5, 1, 3, 4].map(id));
+  expect(label(folded.rows[1]!)).toBe("├─ ▸ #1 Restore session draft");
+  expect(folded.rows[1]!.info).toBe("1 hidden");
   expect(navigateOutline(folded.nodes, id(1), collapsed, "left")).toBe(id(5));
   expect(navigateOutline(folded.nodes, id(1), collapsed, "right")).toBe(id(1));
   expect(collapsed.size).toBe(0);
 });
 
-test("only unended started runs animate; merged checkbox requires archive evidence", () => {
-  const tasks = Array.from({ length: 6 }, (_, i) => task(i + 1));
-  const run = { id: "run", agent: "agent", role: "worker" as const, state: "started" as const, preparedAt: "today" };
-  tasks[1]!.runs = [run];
-  tasks[2]!.runs = [{ ...run, role: "reviewer" }];
-  tasks[3]!.runs = [{ ...run, state: "stopped" }];
-  tasks[4]!.runs = [{ ...run, endedAt: "today" }];
-  tasks[5]!.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
-  const a = renderTaskTree(tasks, { cols: 120, rows: 35 });
-  const b = renderTaskTree(tasks, { cols: 120, rows: 35, frame: 1 });
-  expect(a.animated).toBe(true);
-  expect(a.lines).not.toEqual(b.lines); // the active dots spin with the frame
-  expect(a.lines[2]).toContain("\x1b[36m◐"); expect(b.lines[2]).toContain("\x1b[36m◓");
-  for (const color of [90, 35]) expect(a.lines.join("\n")).toContain(`\x1b[${color}m●`);
-  expect(plainText(a.lines[6]!)).toMatch(/merged$/);
-  expect(renderTaskTree(tasks, { cols: 120, rows: 35, selectedId: id(4) }).lines.join("\n")).toContain("stopped");
-  expect(renderTaskTree(tasks.slice(3), { cols: 120, rows: 35 }).animated).toBe(false);
-  tasks[1]!.attention = { kind: "blocked", reason: "stopped externally" };
-  expect(renderTaskTree([tasks[1]!], { cols: 120, rows: 35 }).animated).toBe(false);
+test("status words carry the state's colour; a PR and running work show as info; archived tasks sit under their section", () => {
+  const tasks = Array.from({ length: 4 }, (_, i) => task(i + 1));
+  tasks[1]!.runs = [{ id: "run", agent: "agent", role: "worker", state: "started", preparedAt: "today" }];
+  tasks[2]!.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
+  tasks[3]!.removedAt = "2026-01-03";
+  const shut = taskRows(tasks, new Set(), false).rows, open = taskRows(tasks, new Set(), true).rows;
+  expect(shut.map(row => [row.status, row.color])).toEqual([["queued", 90], ["working", 36], ["merged", 35], [undefined, undefined]]);
+  expect(shut[1]!.info).toBe("working"); expect(shut[2]!.info).toBe("PR #105");
+  expect(shut[3]).toMatchObject({ id: ARCHIVED_SECTION, name: "▸ Archived (1)", section: true });
+  expect(open.map(row => row.name)).toEqual(["#1 Task 1", "#2 Task 2", "#3 Task 3", "▾ Archived (1)", "#4 Task 4"]);
 });
 
- test("details stay below list with truthful ready and archived native links", () => {
-  const ready = task(1); ready.pr = pr; ready.status = "ready_to_merge";
-  ready.readiness = { head: pr.head, run: "r", validatedAt: "today", validation: "checked", checks: "passed" };
-  const merged = task(2, [1]); merged.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
-  for (const cols of [80, 120]) {
-    const out = renderTaskTree([ready, merged], { cols, rows: 35, selectedId: merged.id });
-    expect(out.lines.slice(0, out.graph.rows + 1).join("\n")).not.toContain("Overview");
-    expect(out.lines[2]).toContain("\x1b[35m●");
-    expect(out.lines.join("\n")).toContain("Task #2 · merged");
-    expect(out.lines.join("\n")).toContain("#1 Task 1");
-    expect(out.lines.join("\n")).toContain(`\x1b]8;;${pr.url}\x07PR: sample/repo #105`);
-  }
-  ready.readiness.head = "b".repeat(40);
-  expect(renderTaskTree([ready], { cols: 80, rows: 24 }).errors.join(" ")).toContain("ready requires matching validation");
+test("details: description, record fields, dependencies both ways and the PR as a link", () => {
+  const tasks = sample(); tasks[0]!.pr = pr; tasks[0]!.attention = { kind: "blocked", reason: "Need approval" };
+  const { tasks: all } = taskRows(tasks, new Set(), false);
+  const sections = taskSections(all, all.find(t => t.id === id(1))!);
+  expect(sections.map(s => s.title)).toEqual(["Task #1 Restore session draft", "Details", "Depends on", "Pull request"]);
+  expect(sections[0]!.text).toBe("Durable summary");
+  expect(sections[1]!.fields).toContainEqual(["uuid", id(1)]);
+  expect(sections[1]!.fields).toContainEqual(["attention", "blocked: Need approval"]);
+  expect(sections[2]!.text).toBe("#5 Clarify empty inbox\nUnblocks: #2 Export task history");
+  expect(sections[3]!.fields![0]).toEqual(["link", "sample/repo #105", pr.url]);
+  expect(taskSections(all, all.find(t => t.id === id(5))!)[3]).toMatchObject({ fields: [], text: "not recorded" });
 });
 
-test("open PR state keeps blocker details and becomes closed when the PR closes", () => {
-  const t = task(1); t.pr = pr;
-  t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
-  t.attention = { kind: "blocked", reason: "conflicting; checks failed" };
-  t.runs = [{ id: "w", agent: "worker", role: "worker", state: "failed", preparedAt: "today" }];
-  const render = () => renderTaskTree([t], { cols: 120, rows: 60 }).lines.join("\n");
-  for (const value of ["pr open", "conflicting; checks failed", "worker: failed", pr.url, "historical"]) expect(render()).toContain(value);
-  expect(renderTaskTree([t], { cols: 120, rows: 60 }).lines[1]).toContain("\x1b[32m●");
-  t.publication.state = "CLOSED";
-  expect(render()).toContain("State: closed");
-  expect(renderTaskTree([t], { cols: 120, rows: 60 }).lines[1]).toContain("\x1b[31m●");
-  delete t.publication;
-  expect(render()).not.toContain("pr open");
-});
-
-test("six visible task states use consistent colours with green reserved for published open PRs", () => {
-  const colours = (t: Task) => { const m = renderTaskTree([t], { cols: 120, rows: 30 }).lines[1]!.match(/\x1b\[(\d+)m[●◐]/); return m && Number(m[1]); };
-  const base = (n: number) => task(n);
-  expect(colours(base(1))).toBe(90);
-  const run = { id: "run", agent: "agent", role: "worker" as const, state: "started" as const, preparedAt: "today", startedAt: "today" };
-  const building = base(2); building.status = "working"; building.runs = [run]; building.checkpoints = { buildingAt: "today" };
-  expect(colours(building)).toBe(36);
-  const reviewing = base(3); reviewing.status = "reviewing"; reviewing.checkpoints = { buildingAt: "today" };
-  expect(colours(reviewing)).toBe(36);
-  reviewing.attention = { kind: "waiting", reason: "awaiting review" };
-  expect(colours(reviewing)).toBe(33); // explicit waiting is a hold, even after work started
-  for (const [kind, colour] of [["blocked", 33], ["cancelled", 31], ["closed", 31], ["unknown", 33]] as const) {
-    const t = base(4); t.status = "working"; t.runs = [run]; t.attention = { kind, reason: "x" };
-    expect(colours(t)).toBe(colour);
-  }
-  const ready = base(5); ready.pr = pr; ready.status = "ready_to_merge";
-  ready.readiness = { head: pr.head, run: "r", validatedAt: "today", validation: "checked", checks: "passed" };
-  expect(colours(ready)).toBe(33); // legacy validation alone cannot prove the PR is still open
-  const open = base(6); open.pr = pr; open.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
-  expect(colours(open)).toBe(32);
-  const merged = base(7); merged.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
-  expect(colours(merged)).toBe(35);
-  const openOut = renderTaskTree([open], { cols: 120, rows: 40 }).lines;
-  expect(openOut.join("\n")).toContain("State: pr open");
-  expect(plainText(openOut[1]!)).toMatch(/pr open$/);
-  expect(plainText(openOut.join("\n"))).toContain("Details");
-  open.iterationStartedAt = "2026-01-02";
-  const iteration = renderTaskTree([open], { cols: 120, rows: 40 });
-  expect(plainText(iteration.lines[1]!)).toMatch(/working$/);
-  expect(plainText(iteration.lines.join("\n"))).toContain("State: working");
-  expect(iteration.lines.join("\n")).toContain(pr.url);
-  expect(colours(open)).toBe(36);
-  open.publication!.state = "CLOSED";
-  expect(plainText(renderTaskTree([open], { cols: 120, rows: 40 }).lines[1]!)).toMatch(/closed$/);
-  expect(colours(open)).toBe(31);
-});
-
-test("open PR rows remain pr open during a hold; panel geometry stays bounded", () => {
-  const t = task(1); t.pr = pr; t.publication = { pr, state: "OPEN", observedAt: "2026-01-01" };
-  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/pr open$/);
-  t.attention = { kind: "blocked", reason: "x" };
-  expect(plainText(renderTaskTree([t], { cols: 100, rows: 30 }).lines[1]!)).toMatch(/pr open$/);
-  const one = renderTaskTree([task(1)], { cols: 100, rows: 30 });
-  expect(one.graph.rows).toBe(1); expect(one.details.rows).toBe(26);
-  const many = renderTaskTree(Array.from({ length: 40 }, (_, i) => task(i + 1)), { cols: 100, rows: 30 });
-  expect(many.graph.rows).toBe(16); expect(many.details.rows).toBe(11);
-  expect(plainText(renderTaskTree([task(1)], { cols: 100, rows: 30 }).lines[0]!)).toContain("├─ first prerequisite");
-  expect(plainText(renderTaskTree([task(1)], { cols: 40, rows: 30 }).lines[0]!)).toBe("TASKS");
+test("invalid registries fail closed", () => {
+  expect(() => taskRows([task(1, [2])], new Set(), false)).toThrow("Dangling prerequisite");
+  expect(() => taskRows([task(1, [2]), task(2, [1])], new Set(), false)).toThrow("Dependency cycle");
+  expect(() => taskRows([task(1), task(1)], new Set(), false)).toThrow("Duplicate task identity");
+  const ready = task(1); ready.status = "ready_to_merge";
+  expect(() => taskRows([ready], new Set(), false)).toThrow("ready requires matching validation");
+  expect(() => taskRows(Array.from({ length: 257 }, (_, i) => task(i + 1)), new Set(), false)).toThrow("Graph limit");
 });

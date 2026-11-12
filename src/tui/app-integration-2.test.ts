@@ -19,7 +19,13 @@ import { FakeScreen } from "./components/testing";
 import { live as renderLive } from "./footer/render";
 import { Calls } from "./conversation/tools";
 
-const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until } = appFixture();
+/** Ctrl+Q, then Enter on the selected (first open) question: its answer form. */
+async function openForm(app: App): Promise<void> {
+  if (app.work.kind !== "questions") app.work.show("questions");
+  await app.work.refresh("questions");
+  await app.onKey({ name: "enter" });
+}
+const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList } = appFixture();
 
 test("saved history beyond the preview budget remains reachable before exit, including before compaction", async () => {
   const project = "full-scroll", t = openTranscript(paths.transcript(project, "orchestrator"));
@@ -131,7 +137,7 @@ test("external question closure preserves both original chat and orphan answer, 
     await until(() => !!app.page);
     term.type("original chat draft");
     const [first, next] = await askQuestions(project, [{ text: "First?" }, { text: "Next?" }]);
-    await app.questions.command(app.page);
+    await openForm(app);
     term.type("orphan answer");
     expect(app.input.text).toBe("orphan answer");
     if (collapsed) term.press({ name: "escape" });
@@ -141,7 +147,7 @@ test("external question closure preserves both original chat and orphan answer, 
     expect(app.page!.lines.map(raw).join(" ")).not.toContain("unsent answer: orphan answer");
     expect(app.frame().inputArea!.lines.join("\n")).toContain("closed elsewhere");
     expect(app.questions.view()).toBeNull();
-    await app.questions.command(app.page);
+    await openForm(app);
     expect(app.input.text).toBe(""); // orphan never becomes the next question's answer
     term.press({ name: "escape" });
     expect(app.input.text).toBe("original chat draft");
@@ -231,8 +237,7 @@ describe("ctrl+c cancellation", () => {
     });
     const running = app.run("cancel-a");
     await until(() => !!app.page);
-    term.type("/new cancel-b\r");
-    await until(() => app.page?.project === "cancel-b");
+    await app.openPage("cancel-b");
     app.input = { text: "unsent draft", cursor: 12 };
     app.keyEcho = true; // diagnostic/menu layers must not swallow the interrupt
     await app.onKey({ name: "c", ctrl: true });
@@ -395,15 +400,13 @@ test("boxed input and question vertical editing share rendered geometry across r
     await app.onKey({ name: "enter" });
     await until(() => app.questions.answering());
     term.type("界".repeat(40) + " answer");
-    const answer = app.input.text;
-    const before = vertical(app.input, width(), -1)!;
-    term.press({ name: "up" });
-    expect(app.input).toEqual(before);
+    const answer = app.input.text, typed = { ...app.input };
+    term.press({ name: "up" }); // the answer is one input line: ↑↓ neither move in it nor leave it
+    expect(app.input).toEqual(typed);
     term.resize(17, 18);
     await Bun.sleep(160);
-    const after = vertical(app.input, width(), -1)!;
-    term.press({ name: "up" });
-    expect(app.input).toEqual(after);
+    term.press({ name: "down" });
+    expect(app.input).toEqual(typed);
     expect(term.display.col).toBeLessThan(term.cols);
     term.press({ name: "escape" });
     expect(app.input.text).toBe(draft);
@@ -566,11 +569,11 @@ test("ctrl+c through pinned question/modal layers preserves owners and drafts wi
     await app.onKey({ name: "enter" });
     await until(() => app.questions.answering());
     expect(app.input).toEqual(answer);
-    // A project modal hides, but must not steal, the question's answer buffer.
+    // Another tab puts the form away, but must not steal the question's answer buffer.
     term.press({ name: "b", ctrl: true });
-    await until(() => !!app.projectList);
-    expect(app.input).toEqual(answer);
-    term.press({ name: "escape" });
+    await until(() => !!projectList(app));
+    expect(app.input).toEqual(chat);
+    term.press({ name: "q", ctrl: true }); await app.onKey({ name: "enter" });
     expect(app.input).toEqual(answer);
     expect(app.questions.answering()).toBe(true);
     expect(app.frame().activity).toBeUndefined();
@@ -593,7 +596,6 @@ describe("explicit footer help", () => {
       page.view = { name: "worker-help", lines: [], leave: () => { left++; }, live: true, calls: new Calls() };
       await app.commands.get("/help")!.run("", page);
       await until(() => term.screen().includes("help"));
-      expect(app.frame().help!.lines.join("\n")).toContain("/back");
       for (const key of [{ name: "enter" }, { name: "char", text: "1" }, { name: "paste", text: "not inserted" }, { name: "backspace" }, { name: "tab" }]) await app.onKey(key);
       expect(app.input).toEqual(draft);
       expect(page.inputHistory).toEqual(history);
@@ -601,7 +603,7 @@ describe("explicit footer help", () => {
       await app.onKey({ name: "pagedown" });
       expect(app.frame().help!.top).toBeGreaterThan(0);
       await app.onKey({ name: "end" });
-      await until(() => term.screen().includes("/keys"));
+      await until(() => term.screen().includes("/compact"));
       await app.onKey({ name: "home" });
       expect(app.frame().help!.top).toBe(0);
       await app.onKey({ name: "wheeldown" });
@@ -684,7 +686,7 @@ describe("explicit footer help", () => {
       await app.onKey({ name: "escape" });
       await help();
       await app.onKey({ name: "b", ctrl: true });
-      expect(app.projectList).not.toBeNull();
+      expect(projectList(app)).not.toBeNull();
       expect(app.frame().help).toBeNull();
       await app.onKey({ name: "escape" });
       await help();
@@ -885,7 +887,7 @@ describe("queued input footer", () => {
       expect(app.questions.answering()).toBe(true);
       expect(app.frame().queued?.texts).toEqual(["pending A"]);
       await app.onKey({ name: "b", ctrl: true });
-      expect(app.projectList).not.toBeNull();
+      expect(projectList(app)).not.toBeNull();
       await app.onKey({ name: "escape" });
       expect(app.input).toEqual(answer);
       await app.openPage("queued-project-b");

@@ -99,7 +99,7 @@ test("manual refresh reconciles projects/pins, settings, tasks and closed questi
   await app.refreshSessions();
   expect(page.questions.open).toHaveLength(2); expect(page.questions.expanded).toBe(false);
   const task = await registerTask("a", { name: "Visible task", summary: "Persisted summary", branch: "feat/task", authorized: true });
-  await app.commands.get("/tasks")!.run("", page);
+  app.work.show("tasks");
   await setTaskAttention("a", task.id, { kind: "cancelled", reason: "must not resume" });
   await skip("a", q1!.id); await answer("a", q2!.id, "answer");
   await setDisplayName("a", "Shared display"); await togglePin("a");
@@ -110,29 +110,29 @@ test("manual refresh reconciles projects/pins, settings, tasks and closed questi
   live = true;
   app.input = { text: "retained task-panel draft", cursor: 4 };
   const epoch = inputEpoch("a");
-  await app.commands.get("/refresh")!.run("", page);
+  await app.refreshSessions();
   expect(app.page).toBe(page); expect(page.name).toBe("Shared display");
   expect(page.model).toBe("gpt-5.5"); expect(page.settings?.effort).toBe("high");
   expect(page.questions.open).toHaveLength(0);
   expect(page.questions.expanded).toBe(false);
-  expect(app.frame().inbox).toBeNull();
+  expect(app.questions.view()).toBeNull();
   expect(app.input).toEqual({ text: "retained task-panel draft", cursor: 4 });
   expect(inputEpoch("a")).toBe(epoch);
   expect(await pending("a", "orchestrator")).toBe(true); // answer remains unconsumed
   expect(provider.calls).toHaveLength(0); expect(watchdogs).toBe(0);
   expect((await all("a")).map(q => q.status)).toEqual(["skipped", "answered"]);
   await app.onKey({ name: "escape" });
-  await app.commands.get("/projects")!.run("", page);
+  app.work.show("projects");
   await app.refreshSessions();
-  expect(app.frame().projects?.items.map(p => p.label)).toContain("Shared display");
-  expect(app.frame().projects?.items[0]?.pinned).toBe(true);
-  expect(app.frame().projects?.items.map(p => p.label)).toContain("Second project");
+  const listed = () => app.work.state!.items;
+  await until(() => listed().some(p => p.name === "Second project"));
+  expect(listed().map(p => p.name)).toContain("Shared display");
+  expect(listed()[0]?.lead).toBe("★ ");
   await until(() => page.agentCount === 1);
   await Bun.sleep(25);
   expect(screen.screen().join("\n")).toContain("Shared display");
-  // Running the literal command consumes only its command buffer, not a new draft typed during refresh.
   await app.onKey({ name: "escape" });
-  await submit("/refresh");
+  await app.refreshSessions();
   expect(provider.calls).toHaveLength(0);
 });
 
@@ -147,7 +147,7 @@ test("refresh while a local tool is active is deferred, queued submissions remai
   } });
   await submit("start"); await started.promise;
   const page = app.page!, calls = page.calls, lines = [...page.lines];
-  await app.commands.get("/refresh")!.run("", page);
+  await app.refreshSessions();
   expect(page.busy).toBe(true); expect(page.calls).toBe(calls); expect(page.lines).toEqual(lines);
   await submit("queued 1"); await submit("queued 2");
   expect(page.sent.map(m => m.text)).toEqual(["queued 1", "queued 2"]);
@@ -266,7 +266,7 @@ test("manual refresh preserves a scrolled history anchor, composer cursor and pi
   expect(first).toBeDefined();
   app.input = { text: "scroll draft\nsecond line", cursor: 7 };
   for (let i = 50; i < 60; i++) await external.append({ type: "message", message: { role: "assistant", content: `external row ${i}` } });
-  await app.commands.get("/refresh")!.run("", app.page); await Bun.sleep(30);
+  await app.refreshSessions(); await Bun.sleep(30);
   expect(screen.screen().find(row => row.includes("external row"))).toBe(first);
   expect(app.input).toEqual({ text: "scroll draft\nsecond line", cursor: 7 });
   expect(screen.screen().slice(0, 3).join("\n")).toContain("fake-model");

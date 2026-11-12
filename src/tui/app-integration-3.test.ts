@@ -17,7 +17,7 @@ import { Calls } from "./conversation/tools";
 
 const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until } = appFixture();
 
-test("ctrl+g enters /keys without replacing chat, answer, or no-page drafts and input history", async () => {
+test("ctrl+g echoes keys without replacing chat, answer, or no-page drafts and input history", async () => {
   const term = fakeTerm(100, 24), orchs = fakeOrchestrators();
   const app = new App({ term, pollMs: 100_000, questionDelayMs: 0, openOrchestrator: orchs.openOrchestrator });
   const running = app.run("keys-drafts");
@@ -36,7 +36,7 @@ test("ctrl+g enters /keys without replacing chat, answer, or no-page drafts and 
     app.input = { text: "chat\n界 draft", cursor: 6 };
     await check();
     await askQuestions("keys-drafts", [{ text: "Answer?" }]);
-    await app.questions.command(app.page);
+    app.work.show("questions"); await app.work.refresh("questions"); await app.onKey({ name: "enter" });
     app.input = { text: "answer 👩‍💻", cursor: 4 };
     await check();
     expect(app.questions.answering()).toBe(true);
@@ -165,7 +165,7 @@ describe("clipboard image drafts and immutable queue ownership (isolated fixture
       expect(f.app.page!.sent[0]!.inputId).toBe(inputId);
       expect(attempts).toHaveLength(1); // reopen NEVER auto-resends
       fails = false;
-      await f.app.onKey({ name: "char", text: "/retry-images" }); await f.app.onKey({ name: "enter" });
+      f.app.work.show("images"); await f.app.onKey({ name: "char", text: "t" }); // the Images page retries unconfirmed prompts
       expect(attempts).toEqual([inputId, inputId]); expect(f.app.page!.sent).toHaveLength(1);
     } finally { await f.stop(); }
   });
@@ -184,8 +184,8 @@ describe("clipboard image drafts and immutable queue ownership (isolated fixture
       f.app.closePage(); await f.app.openPage(f.project);
       expect(f.sent).toHaveLength(0);
       expect(f.app.page!.sent[0]!.inputId).toBe(saved!.inputId);
-      expect(f.app.frame().queued!.texts[0]).toContain("/retry-images");
-      await f.app.onKey({ name: "char", text: "/retry-images" }); await f.app.onKey({ name: "enter" });
+      expect(f.app.frame().queued!.texts[0]).toContain("t on the Images page retries");
+      f.app.work.show("images"); await f.app.onKey({ name: "char", text: "t" }); // the Images page retries unconfirmed prompts
       expect(f.sent).toHaveLength(1); expect(f.sent[0]!.inputId).toBe(saved!.inputId);
       expect(f.sent[0]!.attachments).toEqual(saved!.attachments);
     } finally { await f.stop(); }
@@ -346,7 +346,7 @@ test("header denominator: verified claude window, unlisted model shows the sessi
   } finally { app.quit(); await running; }
 });
 
-test("task tree activation routes terminal keys, preserves drafts, selects renderer hits and refreshes durable UUIDs", async () => {
+test("Tasks page routes terminal keys, preserves drafts, selects a clicked row and follows the durable registry", async () => {
   const term = fakeTerm(120, 28), fake = fakeOrchestrators();
   const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   let tasks: import("../protocol/task/tasks").Task[] = Array.from({ length: 12 }, (_, i) => ({
@@ -367,70 +367,49 @@ test("task tree activation routes terminal keys, preserves drafts, selects rende
   mkdirSync(paths.project("tree-navigation"), { recursive: true });
   await askQuestions("tree-navigation", [{ text: "Keep this pending?" }]);
   const running = app.run("tree-navigation");
-  const screen = () => term.display.screen().join("\n");
+  const screen = () => term.display.screen().join("\n"), selected = () => term.display.screen().find(row => row.startsWith("› ")) ?? "";
   try {
     await until(() => !!app.page);
     term.type("draft survives"); term.press({ name: "left" });
     await app.onKey({ name: "v", ctrl: true });
     expect(app.frame().inputArea!.lines.join("\n")).toContain("[image 1]");
-    const draft = { ...app.input };
-    const questions = app.page!.questions;
-    // Bytes from the terminal's registered callback, not an isolated navigation helper.
-    term.type("\x14");
-    await until(() => screen().includes("Task #1 ·"));
-    expect(screen()).toContain("Long metadata");
-    expect(screen()).toContain("↑↓ select");
-    term.type("\x1b[Z");
-    await until(() => screen().includes("Task #2 ·"));
-    expect(screen()).toContain("Description"); expect(screen()).toContain("Summary 2");
-    const row = term.display.screen().findIndex(line => line.includes("● #1 Node 1"));
-    const col = term.display.screen()[row]!.indexOf("#1");
-    term.press({ name: "mousedown", x: col + 1, y: row + 1 });
-    term.press({ name: "mouseup", x: col + 1, y: row + 1 });
-    await until(() => screen().includes("Task #1 ·"));
-    term.press({ name: "left" });
-    await until(() => !screen().includes("● #2 Node 2"));
-    term.press({ name: "right" });
-    await until(() => screen().includes("● #2 Node 2"));
-    term.press({ name: "down" });
-    await until(() => screen().includes("Task #2 ·"));
-    term.press({ name: "left" }); term.press({ name: "left" });
-    await until(() => screen().includes("Task #1 ·"));
-    term.press({ name: "right" });
-    term.press({ name: "down" });
-    await until(() => !screen().includes("details=0/"));
-    term.press({ name: "up" });
-    await until(() => screen().includes("details=0/"));
-    term.press({ name: "left" });
-    tasks = [...tasks].reverse().map(t => t.id === id(1) ? { ...t, summary: "Updated durable metadata" } : t);
+    const draft = { ...app.input }, questions = app.page!.questions;
+    term.type("\x14"); // bytes from the terminal's registered callback
+    await until(() => screen().includes("Task #1 Node 1"));
+    expect(screen()).toContain("Long metadata"); expect(selected()).toMatch(/^› ▾ #1 Node 1 +merged +PR #1/);
+    term.press({ name: "down" }); await until(() => screen().includes("Task #2 Node 2"));
+    expect(screen()).toContain("Summary 2");
+    const row = term.display.screen().findIndex(line => line.includes("#4 Node 4"));
+    term.press({ name: "mousedown", x: 12, y: row + 1 }); term.press({ name: "mouseup", x: 12, y: row + 1 });
+    await until(() => screen().includes("Task #4 Node 4"));
+    const listed = (name: string) => app.work.state!.items.some(item => item.name === name);
+    term.press({ name: "left" }); await until(() => !listed("#5 Node 5")); // folds
+    term.press({ name: "left" }); await until(() => selected().includes("#3 Node 3")); // then the parent
+    term.press({ name: "right" }); term.press({ name: "right" }); await until(() => listed("#5 Node 5") && selected().includes("#4 Node 4"));
+    term.press({ name: "pagedown" }); // the details scroll; the selection stays
+    expect(selected()).toContain("#4 Node 4");
+    tasks = [...tasks].reverse().map(t => t.id === id(4) ? { ...t, summary: "Updated durable metadata" } : t);
     await app.refreshSessions();
     await until(() => screen().includes("Updated durable metadata"));
-    expect(screen()).toContain("Task #1 · merged");
-    term.resize(52, 18);
-    await until(() => screen().includes("TASKS"));
-    term.type("\x14");
-    await until(() => !screen().includes("TASKS"));
+    term.resize(52, 18); await until(() => term.display.screen()[0]!.includes("Tasks"));
+    term.type("\x14"); await until(() => !app.work.open);
     expect(app.input.text).toBe(draft.text); expect(app.input.cursor).toBe(draft.cursor);
     expect(app.page!.questions).toBe(questions);
     expect((await allQuestions("tree-navigation"))[0]!.status).toBe("open");
     expect(app.frame().inputArea!.lines.join("\n")).toContain("[image 1]");
     term.resize(120, 28); term.type("\x14");
-    await until(() => screen().includes("Task #1 ·"));
-    tasks = tasks.filter(t => t.id !== id(1)).map(t => ({ ...t, dependsOn: [] }));
-    await app.refreshSessions();
-    await until(() => screen().includes("Task #1 · queued: Node 2"));
+    await until(() => screen().includes("#1 Node 1"));
     fail = true; await app.refreshSessions();
     await until(() => screen().includes("Tasks unavailable: registry offline"));
     fail = false; tasks = []; term.type("r");
     await until(() => screen().includes("No tasks"));
-    term.press({ name: "escape" });
-    await until(() => !screen().includes("TASKS"));
+    term.press({ name: "escape" }); await until(() => !app.work.open);
     expect(app.input.text).toBe(draft.text); expect(app.input.cursor).toBe(draft.cursor);
   } finally { app.quit(); await running; }
 });
 
 for (const state of ["ready", "loading", "error"] as const) {
-  test(`task tree Ctrl+C cancels a running turn and repeats to exit while ${state}`, async () => {
+  test(`Tasks page: Ctrl+C cancels a running turn and repeats to exit while ${state}`, async () => {
     const term = fakeTerm(120, 28), fake = fakeOrchestrators();
     let cancelled = 0, finish!: () => void;
     const turn = new Promise<void>(resolve => { finish = resolve; });
@@ -452,7 +431,7 @@ for (const state of ["ready", "loading", "error"] as const) {
       term.type("run a turn\r");
       await until(() => app.page!.busy);
       term.type("\x14");
-      const label = { ready: "No tasks", loading: "Loading tasks", error: "Tasks unavailable: offline" }[state];
+      const label = { ready: "No tasks", loading: "Loading…", error: "Tasks unavailable: offline" }[state];
       await until(() => term.screen().includes(label));
       term.type("\x03");
       await until(() => cancelled === 1 && !app.page!.busy);
@@ -466,7 +445,7 @@ for (const state of ["ready", "loading", "error"] as const) {
   });
 }
 
-test("task tree deferred reads coalesce a trailing pass and ignore a replaced overlay", async () => {
+test("Tasks page reads coalesce a trailing pass and ignore a replaced page", async () => {
   const term = fakeTerm(120, 28), fake = fakeOrchestrators();
   const reads: { resolve: (tasks: import("../protocol/task/tasks").Task[]) => void; reject: (error: Error) => void }[] = [];
   const app = new App({ term, pollMs: 100_000, agents: async () => [],
@@ -497,67 +476,7 @@ test("task tree deferred reads coalesce a trailing pass and ignore a replaced ov
   } finally { app.quit(); await running; }
 });
 
-test("task numbers jump through folded parents and scroll without submitting or changing the chat draft", async () => {
-  const term = fakeTerm(100, 24), fake = fakeOrchestrators();
-  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-  const tasks: Task[] = Array.from({ length: 30 }, (_, i) => ({ id: id(i + 1), number: i + 1, name: `Jump task ${i + 1}`, summary: "", branch: "feat/jump", status: "queued", createdAt: "today", updatedAt: "today", revision: 1, dependsOn: i ? [id(1)] : [], runs: [], history: [] }));
-  const app = new App({ term, pollMs: 100_000, agents: async () => [], openOrchestrator: fake.openOrchestrator, treeTasks: async () => tasks });
-  const running = app.run("task-number-jump");
-  const screen = () => term.display.screen().join("\n");
-  try {
-    await until(() => !!app.page); term.type("keep this draft"); term.type("\x14");
-    await until(() => screen().includes("Task #1 · queued"));
-    term.press({ name: "left" }); await until(() => screen().includes("(29 hidden)"));
-    term.type("15"); await until(() => screen().includes("Jump to #15"));
-    expect(app.input.text).toBe("keep this draft");
-    term.press({ name: "enter" }); await until(() => screen().includes("Task #15 · queued"));
-    expect(screen()).toContain("Jump task 15"); expect(screen()).toContain("Task #15 selected");
-    term.type("999"); term.press({ name: "enter" }); await until(() => screen().includes("No listed task #999"));
-    expect(screen()).toContain("Task #15 · queued");
-    term.type("2"); term.press({ name: "escape" }); await until(() => !screen().includes("Jump to #2"));
-    expect(screen()).toContain("TASKS");
-    term.press({ name: "escape" }); await until(() => !screen().includes("TASKS"));
-    expect(app.input.text).toBe("keep this draft"); expect(Object.values(fake.said).flat()).toEqual([]);
-  } finally { app.quit(); await running; }
-});
-
-test("task tree cycling reveals long independent registries without changing chat input", async () => {
-  const term = fakeTerm(80, 24), fake = fakeOrchestrators();
-  const tasks: import("../protocol/task/tasks").Task[] = Array.from({ length: 24 }, (_, i) => ({
-    id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
-    name: `Independent task ${i + 1}`, summary: "Saved task with a long readable overview. ".repeat(90), branch: "feat/example",
-    status: "queued", createdAt: "2026-01-01", updatedAt: "2026-01-02", revision: 1,
-    dependsOn: [], runs: [], history: [],
-  }));
-  const app = new App({ term, pollMs: 100_000, agents: async () => [],
-    openOrchestrator: fake.openOrchestrator, treeTasks: async () => tasks });
-  const running = app.run("tree-independent");
-  const screen = () => term.display.screen().join("\n");
-  try {
-    await until(() => !!app.page);
-    term.type("keep draft"); term.type("\x14");
-    await until(() => screen().includes("● #1 Independent task"));
-    for (let i = 0; i < 23; i++) term.type("\x1b[Z");
-    await until(() => screen().includes("● #24 Independent task"));
-    expect(screen()).toContain("Outline y=");
-    term.type("\x1b[Z");
-    await until(() => screen().includes("● #1 Independent task"));
-    expect(screen()).toContain("Outline y=0/");
-    term.press({ name: "right" });
-    await until(() => screen().includes("Details: ↑↓ scroll"));
-    term.press({ name: "down" });
-    await until(() => !screen().includes("details=0/"));
-    term.press({ name: "up" });
-    term.press({ name: "mousedown", x: 5, y: 18 });
-    term.press({ name: "left" });
-    await until(() => screen().includes("↑↓ select"));
-    term.press({ name: "escape" });
-    await until(() => !screen().includes("TASKS"));
-    expect(app.input.text).toBe("keep draft");
-  } finally { app.quit(); await running; }
-});
-
-test("task tree r re-reads the real ledger and says when it refreshed; dots follow the new status", async () => {
+test("Tasks page: r re-reads the real ledger and says when it refreshed; the status word follows", async () => {
   const { registerTask, setTaskAttention } = await import("../core/data/tasks/tasks");
   const project = "tree-r-refresh";
   mkdirSync(paths.project(project), { recursive: true });
@@ -567,18 +486,18 @@ test("task tree r re-reads the real ledger and says when it refreshed; dots foll
   const running = app.run(project), screen = () => term.display.screen().join("\n");
   try {
     await until(() => !!app.page); term.type("\x14");
-    await until(() => screen().includes("● #1 First"));
-    expect(term.raw()).toContain("\x1b[90m●");
+    await until(() => screen().includes("#1 First"));
+    expect(term.raw()).toContain("\x1b[90mqueued");
     await registerTask(project, { name: "Second", summary: "s", branch: "feat/b", authorized: true });
     await setTaskAttention(project, first.id, { kind: "blocked", reason: "stopped" }, first.revision);
     term.type("r"); // no poll, no refreshSessions: only the key
-    await until(() => screen().includes("● #2 Second"));
+    await until(() => screen().includes("#2 Second"));
     await until(() => /Refreshed [A-Z][a-z]{2} \d{1,2}, \d{4}/.test(screen()));
-    expect(term.raw()).toContain("\x1b[33m●");
+    expect(term.raw()).toContain("\x1b[33mwaiting");
   } finally { app.quit(); await running; }
 });
 
-for (const width of [80, 120]) test(`persistent task tree real App ${width}: confirmed merged d retains SQL and numbering`, async () => {
+for (const width of [80, 120]) test(`Tasks page real App ${width}: confirmed merged d retains SQL and numbering`, async () => {
   const { registerTask, observeTaskPR, getTask, listTasks, setTaskDependencies } = await import("../core/data/tasks/tasks");
   const { searchLedger } = await import("../core/data/tasks/ledger-store");
   const project = `persistent-tree-${width}`;
@@ -592,23 +511,23 @@ for (const width of [80, 120]) test(`persistent task tree real App ${width}: con
   const running = app.run(project), screen = () => term.display.screen().join("\n");
   try {
     await until(() => !!app.page); term.type("draft"); term.type("\x14");
-    await until(() => screen().includes("Task #1 · merged"));
+    await until(() => screen().includes("Task #1 Merged parent"));
     expect(term.raw()).toContain("https://github.com/o/r/pull/1"); // OSC8 + visible fallback; not a physical Cmd gesture claim
-    term.press({ name: "down" }); await until(() => screen().includes("Task #2 · queued"));
+    term.press({ name: "down" }); await until(() => screen().includes("Task #2 Queued child"));
     term.type("d"); await until(() => screen().includes("Only merged or abandoned/closed"));
-    term.press({ name: "up" }); await until(() => screen().includes("Task #1 · merged"));
-    term.type("d"); await until(() => screen().includes("y confirm / n cancel"));
+    term.press({ name: "up" }); await until(() => screen().includes("Task #1 Merged parent"));
+    term.type("d"); await until(() => screen().includes("y confirm · n/esc cancel"));
     term.type("n"); expect(await listTasks(project)).toHaveLength(2);
     term.type("d"); term.type("y");
-    await until(() => screen().includes("Task #2 · queued") && !screen().includes("● #1 Merged"));
+    await until(() => screen().includes("Task #2 Queued child") && screen().includes("▸ Archived (1)"));
     expect((await listTasks(project)).map(t => t.number)).toEqual([2]);
     expect((await getTask(project, b.id)).dependsOn).toEqual([a.id]);
     expect((searchLedger({ project, taskId: a.id })[0] as { removedAt: string }).removedAt).toBeTruthy();
     expect(screen()).toContain("retained");
-    term.type("r"); await app.refreshSessions(); expect(screen()).toContain("Task #2 · queued");
+    term.type("r"); await app.refreshSessions(); expect(screen()).toContain("Task #2 Queued child");
     term.type("\x14"); expect(app.input.text).toBe("draft"); term.type("\x14");
-    await until(() => screen().includes("Task #2 · queued"));
-    expect(screen()).not.toContain("● #1 Merged");
+    await until(() => app.work.state?.items.length === 2);
+    expect(app.work.state!.items.map(item => item.name)).toEqual(["#2 Queued child", "▸ Archived (1)"]);
   } finally { app.quit(); await running; }
 });
 

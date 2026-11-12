@@ -56,7 +56,7 @@ describe("help appearance fixtures", () => {
     expect(plain(stickyRows(f, history, chrome(f)).rows)).toMatchSnapshot();
     const panel = helpPanel({ ...f, rows: 19 });
     expect(panel.top).toBe(panel.maxTop);
-    expect(plain(panel.rows)).toContain("/keys");
+    expect(plain(panel.rows)).toContain("/compact");
     expect(plain(panel.rows)).toContain("esc close");
   });
 });
@@ -81,17 +81,14 @@ test("help wraps without overflow and sticky geometry/cursor survive tiny termin
   }
 });
 
-test("menu/projects precede help; closing never reveals the removed question footer", () => {
+test("a menu precedes help; closing never reveals the removed question footer", () => {
   const f = frame(80, 24);
   f.question = { text: "Hidden question", options: [], index: 0, count: 1, mode: "answer" };
   expect(plain(liveRows(f).rows)).not.toContain("Hidden question");
-  f.projects = { items: [], index: 0, status: "Project panel" };
-  expect(plain(liveRows(f).rows)).toContain("Project panel");
-  expect(plain(liveRows(f).rows)).not.toContain("help");
   f.menu = { title: "Menu panel", items: ["choice"], index: 0 };
   expect(plain(liveRows(f).rows)).toContain("Menu panel");
-  expect(plain(liveRows(f).rows)).not.toContain("Project panel");
-  f.menu = null; f.projects = null; f.help = null;
+  expect(plain(liveRows(f).rows)).not.toContain("help ·");
+  f.menu = null; f.help = null;
   expect(plain(liveRows(f).rows)).not.toContain("Hidden question");
   f.question = null;
   expect(plain(liveRows(f).rows)).not.toMatch(/help|esc|ctrl|↑↓/);
@@ -99,6 +96,7 @@ test("menu/projects precede help; closing never reveals the removed question foo
 
 test("Vim help lists Shift shortcuts without Space prefixes", () => {
   const text = plain(helpLines(commands, false, 100, true));
-  for (const label of ["Shift+H / Shift+L", "Shift+A/T/Q/P", "Shift+U/M/E/F", "Shift+B/R/S", "Shift+V/X", "Shift+/"]) expect(text).toContain(label);
+  for (const label of ["Shift+H / Shift+L", "Shift+A/T/Q/P/B", "Shift+U/M/E/F", "Shift+S", "Shift+V/X", "Shift+/"]) expect(text).toContain(label);
+  expect(text).not.toContain("Refresh");
   expect(text).not.toContain("Space");
 });

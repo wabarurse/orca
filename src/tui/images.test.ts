@@ -52,8 +52,8 @@ test("Images uses project-local counts and Vim selection; only Enter opens a vie
     expect(app.status(app.page!)).toEndWith("0 images");
     term.type("P"); await until(() => term.screen().includes("No images"));
     term.type("gT"); await until(() => app.page?.project === project);
-    term.type("P"); await until(() => term.screen().includes("IMAGES"));
-    term.resize(32, 14); await until(() => term.screen().includes("IMAGES"));
+    term.type("P"); await until(() => app.work.kind === "images");
+    term.resize(32, 14); await until(() => app.work.kind === "images");
     term.type("G"); await until(() => select("Screenshot 1"));
     term.press({ name: "enter" }); await until(() => opened.length === 2);
     expect(opened[1]).toBe(refs[0]!.id);
@@ -61,7 +61,7 @@ test("Images uses project-local counts and Vim selection; only Enter opens a vie
   } finally { app.quit(); await running; }
 });
 
-test("delivered screenshots restore in chat and survive UI clear without inline transfer or automatic popups", async () => {
+test("delivered screenshots restore in chat and list on the Images page without inline transfer or automatic popups", async () => {
   const project = `media-${crypto.randomUUID()}`;
   mkdirSync(paths.project(project), { recursive: true });
   const ref = await saveImage(project, png(3, 2));
@@ -77,16 +77,15 @@ test("delivered screenshots restore in chat and survive UI clear without inline 
   const running = app.run(project);
   try {
     await until(() => !!app.page);
-    expect(app.page!.lines.map(raw).join("\n")).toContain("/images to open");
-    term.type("/images\r"); await until(() => term.screen().includes("IMAGES") && term.screen().includes("Screenshot after the fix"));
+    expect(app.page!.lines.map(raw).join("\n")).toContain("open on the Images page");
+    app.work.show("images"); await until(() => app.work.kind === "images" && term.screen().includes("Screenshot after the fix"));
     expect(opened).toEqual([]);
     term.press({ name: "enter" }); await until(() => opened.length === 1);
     expect(opened).toEqual([ref.id]);
     expect(term.raw()).not.toContain(png(3, 2).toString("base64"));
     expect(term.raw()).not.toContain("1337;File=");
-    term.press({ name: "escape" }); await until(() => !term.screen().includes("IMAGES"));
-    term.type("/clear\r"); await until(() => app.page!.lines.length === 0);
-    term.type("/images\r"); await until(() => term.screen().includes("IMAGES") && term.screen().includes("Screenshot after the fix"));
+    term.press({ name: "escape" }); await until(() => !app.work.open);
+    app.work.show("images"); await until(() => app.work.kind === "images" && term.screen().includes("Screenshot after the fix"));
     expect(opened).toHaveLength(1);
   } finally { app.quit(); await running; }
 });
@@ -124,13 +123,13 @@ test("viewer errors cannot repaint a closed page, and terminal image capability 
   const running = app.run(project);
   try {
     await until(() => !!app.page);
-    term.type("/images\r"); await until(() => term.screen().includes("desktop viewer"));
+    app.work.show("images"); await until(() => term.screen().includes("desktop viewer"));
     expect(opens).toBe(0);
     term.press({ name: "enter" }); await until(() => opens === 1);
-    term.press({ name: "escape" }); await until(() => !term.screen().includes("IMAGES"));
+    term.press({ name: "escape" }); await until(() => !app.work.open);
     finish(); await Bun.sleep(40);
     expect(term.screen()).not.toContain("viewer failed");
-    term.type("/images\r"); await until(() => term.screen().includes("IMAGES"));
+    app.work.show("images"); await until(() => app.work.kind === "images");
     term.press({ name: "enter" }); await until(() => term.screen().includes("viewer failed"));
     await app.refreshSessions(); app.draw(); await Bun.sleep(40);
     expect(opens).toBe(2);
@@ -159,7 +158,7 @@ test("Images lists retained recordings beside images and opens video only on Ent
   const running = app.run(project);
   try {
     await until(() => !!app.page);
-    term.type("/images\r"); await until(() => term.screen().includes("Video · demo.mp4"));
+    app.work.show("images"); await until(() => term.screen().includes("Video · demo.mp4"));
     expect(term.screen()).toContain("Screenshot");
     expect(app.status(app.page!)).toEndWith("2 media");
     expect(opened).toEqual([]);

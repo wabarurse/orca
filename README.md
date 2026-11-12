@@ -43,7 +43,7 @@ See the [install details](docs/REFERENCE.md#2-install-once) to inspect the scrip
 
 Existing homes are refused without modification. There is no automatic upgrade to layout 3: preserve the stopped old home and initialize a fresh one as described in [home layout and fresh setup](docs/ORCA_HOME.md). The historical migration script only produces layout 2.
 
-Orca uses one adaptive conversation loop: run a small action directly, delegate substantial work with a focused brief, and keep revising the same result. Review and publication remain available when requested. Select a worker in `/agents` and type feedback to it; `/back` returns to the orchestrator. `/runtime` shows loaded build identities and background work; `/usage` shows measured project usage.
+Orca uses one adaptive conversation loop: run a small action directly, delegate substantial work with a focused brief, and keep revising the same result. Review and publication remain available when requested. Ctrl+A opens the page of agents, tasks, questions, images and projects: select a worker there, press Enter and type feedback to it; Esc returns to the orchestrator.
 
 See [adaptive execution, personalization and background tools](docs/ADAPTIVE_RUNTIME.md) for the new capabilities, limits and validation instructions.
 

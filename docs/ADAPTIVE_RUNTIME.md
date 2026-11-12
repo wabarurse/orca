@@ -19,12 +19,12 @@ Publication remains a separately authorized capability. Tasks record evidence an
 | Runtime events | Readiness and terminal events have durable IDs/outboxes; cancellation, timeouts, output caps and lost-supervisor reconciliation are explicit | Processes and inbox observations |
 | Iteration | User corrections remain separate from summaries; direct feedback resumes the same idle worker branch | Knowledge, `src/tui/commands/feedback.ts` |
 | Usable results | Shared brief records paths, revision/evidence references and preview handles, distinguishing reports from timestamped readiness observations | `src/core/tools/context.ts` |
-| Running-build visibility | `/runtime` shows loaded UI/daemon/agent builds and observed context; source files do not imply a running process loaded them | `src/config/build.ts`, runtime observations |
+| Running-build visibility | the `runtime` tool reports loaded daemon/agent builds and observed context; source files do not imply a running process loaded them | `src/config/build.ts`, runtime observations |
 | Personalization | Inspect, save, update and forget user/project facts with source and confidence | `src/core/tools/remember.ts`, knowledge |
 | Instructions and skills | Scoped AGENTS/CLAUDE discovery and a small skill catalog; full skill content loads on demand | `src/core/data/knowledge/instructions.ts`, skill tool |
 | Worker feedback/status | Selected agent view sends input to that agent; reports delivery/resume and waiting activity | TUI app and feedback command |
 | Ownership/execution | One live writer per branch, process ownership checks and optional OS write isolation | Spawn, tmux runner, `src/core/execution.ts` |
-| Accounting | Model, summary, search, retry, tool and supervised-process observations are attributable to projects/agents when known | `src/providers/usage.ts`, `/usage` |
+| Accounting | Model, summary, search, retry, tool and supervised-process observations are attributable to projects/agents when known | `src/providers/usage.ts`, the `runtime` tool |
 | Regression evaluation | Scripted end-to-end runtime cases cover delegation, feedback, files, process lifecycle, providers, memory and accounting | `evals/adaptive/` |
 
 ## Using the capabilities
@@ -86,9 +86,9 @@ Focused agents use the same workspace write boundary, including temporary storag
 
 ## Evidence, builds and measurement
 
-`orca version` includes the loaded build ID. Compiled builds record source commit, dirty status and build time; development entry points identify themselves as development builds. `/runtime` distinguishes this UI, its daemon and recorded agent contexts (model, definition hash, context estimate, timestamp). Historical observations are not liveness checks. Build and install remain separate operations; a successful build does not restart existing processes.
+`orca version` includes the loaded build ID. Compiled builds record source commit, dirty status and build time; development entry points identify themselves as development builds. The `runtime` tool distinguishes the daemon and recorded agent contexts (model, definition hash, context estimate, timestamp). Historical observations are not liveness checks. Build and install remain separate operations; a successful build does not restart existing processes.
 
-`/usage` and the `runtime` tool aggregate `.runtime/usage.jsonl`: input/output/cache/reasoning tokens when available, missing usage, retries, tool durations, supervised-process durations and peak observed context. Model calls used for compaction and search are included when instrumented; requests without an attributable project are exposed separately. Overlapping durations cannot be added to get elapsed wall time. Token counts are not a subscription bill, and failed requests may have unknown provider usage. The file is append-only and contains identifiers/measurements, not prompts or command bodies.
+The `runtime` tool aggregates `.runtime/usage.jsonl`: input/output/cache/reasoning tokens when available, missing usage, retries, tool durations, supervised-process durations and peak observed context. Model calls used for compaction and search are included when instrumented; requests without an attributable project are exposed separately. Overlapping durations cannot be added to get elapsed wall time. Token counts are not a subscription bill, and failed requests may have unknown provider usage. The file is append-only and contains identifiers/measurements, not prompts or command bodies.
 
 The adaptive evaluation uses scripted providers and temporary projects. It establishes runtime behavior, not model judgment, comparison with Claude Code/Codex, or faster/cheaper task completion. Use the separate efficiency evaluation with comparable real tasks and total orchestration/worker overhead before making performance claims.
 

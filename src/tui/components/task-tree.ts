@@ -1,53 +1,13 @@
+// The task registry as rows and details for the shared work page (work-view.ts):
+// a dependency outline, flattened with tree connectors and fold markers. Invalid
+// registries fail closed (the functions throw; the page shows the error).
 import { formatDateTime } from "../../protocol";
-import { ARCHIVED_SECTION, archiveTitle, workColumns, workRows } from "./work-view";
-import { publicTaskStatus, type TaskDisplayStatus } from "../../protocol/task";
-import { taskPublicationMilestone } from "../../protocol/task";
-import { check, type Task, type TaskTreeView } from "../../protocol/task";
-import { cells, fit, plainText, visibleLength, wordWrap, wrap } from "./text";
+import { ARCHIVED_SECTION, archiveTitle, type WorkRow, type WorkSection } from "./work-view";
+import { publicTaskStatus, taskPublicationMilestone, check, type TaskDisplayStatus, type Task, type TaskTreeView } from "../../protocol/task";
+import { plainText } from "./text";
 import { treeTasks, type TreeTask } from "./task-tree-data";
 
-export interface TaskTreeOptions {
-  cols: number; rows: number; selectedId?: string;
-  /** Independent list and details line offsets; caller owns scrolling. */
-  graphY?: number; detailY?: number; revealSelected?: boolean;
-  workView?: boolean; history?: boolean;
-  collapsed?: ReadonlySet<string>; frame?: number;
-}
-export interface TaskTreeHit { id: string; number: number; row: number; col: number; width: number }
-/** Coordinates/offsets are zero-based terminal cells, not JS string indices. */
-export interface TaskTreeRender {
-  nodes: OutlineNode[]; animated: boolean;
-  lines: string[]; hits: TaskTreeHit[]; selectedId?: string; order: string[]; errors: string[];
-  /** `x`/`width` are kept for the caller's bookkeeping; rows are clipped to `cols`, never scrolled sideways. */
-  graph: { width: number; height: number; x: number; y: number; rows: number; cols: number };
-  details: { height: number; y: number; rows: number };
-}
 export interface OutlineNode { id: string; depth: number; parent?: string; children: string[] }
-interface Panels { workView?: boolean; cols: number; rows: number; graphCols: number; graphRows: number; detailCols: number; detailRows: number }
-const size = (n: number, max: number) => Number.isFinite(n) ? Math.max(1, Math.min(max, Math.floor(n))) : 1;
-const offset = (n: number | undefined, max: number) => Number.isFinite(n) ? Math.max(0, Math.min(max, Math.floor(n!))) : 0;
-/** wordWrap alone permits a two-cell grapheme in a one-cell column. */
-function safeLines(value: string, cols: number): string[] {
-  const lines: string[] = [];
-  for (const line of wordWrap(plainText(value), cols)) {
-    for (const fitted of wrap(line, cols)) lines.push(fitted);
-  }
-  return lines;
-}
-
-/** The tree is the main panel: ~60% of the rows, shrunk to its node count; details take the rest (title, blank, footer = 3). */
-function panels(options: TaskTreeOptions, nodeCount = Infinity): Panels {
-  const cols = size(options.cols, 500), rows = size(options.rows, 200);
-  const widths = workColumns(cols);
-  if (options.workView && widths.split) {
-    const bodyRows = Math.max(0, rows - 2);
-    return { cols, rows, graphCols: widths.left, detailCols: widths.right, graphRows: bodyRows, detailRows: bodyRows, workView: true };
-  }
-  const graphCols = cols, detailCols = cols;
-  const graphRows = Math.max(1, Math.min(Math.max(1, nodeCount), Math.floor((rows - 3) * 0.6)));
-  const detailRows = Math.max(0, rows - graphRows - 3);
-  return { cols, rows, graphCols, graphRows, detailCols, detailRows };
-}
 
 function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: number[][] } {
   const index = new Map(tasks.map((t, i) => [t.id.toLowerCase(), i]));
@@ -104,9 +64,6 @@ function status(task: TreeTask): TaskDisplayStatus { return publicTaskStatus(tas
 export function taskStateColor(state: TaskDisplayStatus): number {
   return ({ queued: 90, working: 36, waiting: 33, "pr open": 32, merged: 35, closed: 31 })[state];
 }
-function statusColor(task: TreeTask): number {
-  return taskStateColor(status(task));
-}
 
 function activity(task: TreeTask): string {
   return task.runs.filter(run => run.state === "started" && !run.endedAt)
@@ -132,217 +89,50 @@ export function navigateOutline(nodes: OutlineNode[], selectedId: string | undef
   return node.id;
 }
 
-const paint = (code: number, s: string) => `\x1b[${code}m${s}\x1b[0m`;
-const dim = (s: string) => paint(2, s);
-const SPINNER = ["◐", "◓", "◑", "◒"];
-/** The status dot; an active task's dot spins with the caller's frame. */
-function dot(task: TreeTask, frame: number): string {
-  return paint(statusColor(task), active(task) ? SPINNER[frame % 4]! : "●");
-}
-
-/** One of the five current states; original hold reasons stay in details. */
-function rowLabel(task: TreeTask): string {
-  return status(task);
-}
-/** Reveal only the target's primary ancestor chain, retaining unrelated folds. */
-export function selectTaskNumber(input: readonly (Task | TaskTreeView)[], number: number, collapsed: Set<string>, includeArchived = false): string | undefined {
-  if (!Number.isSafeInteger(number) || number < 1) return;
-  const tasks = treeTasks(input), target = tasks.find((task, i) => (includeArchived || !task.removedAt) && (task.number ?? i + 1) === number);
-  if (!target) return;
-  dependencyLayers(tasks);
-  const nodes = outlineGroup(tasks.filter(t => !!t.removedAt === !!target.removedAt), new Set());
-  let parent = nodes.find(node => node.id === target.id)?.parent;
-  while (parent) { collapsed.delete(parent); parent = nodes.find(node => node.id === parent)?.parent; }
-  return target.id;
-}
-
-/** worker → review → PR → merged: 0 nothing yet, 4 merged. */
-function stage(task: TreeTask): number {
-  if (task.archive) return 4;
-  if (task.iterationStartedAt) return 1;
-  if (task.pr || task.status === "ready_to_merge" || taskPublicationMilestone(task).kind !== "unknown") return 3;
-  if (task.status === "reviewing" || task.runs.some(run => run.role === "reviewer")) return 2;
-  if (task.status === "working" || task.runs.some(run => run.role === "worker")) return 1;
-  return 0;
-}
-
-/** The pipeline as glyphs: ● done, ◉ here in the dot's colour (spinning while active, ✕ when stopped), ○ not yet. */
-function track(task: TreeTask, frame: number): string {
-  const at = stage(task), kind = task.attention?.kind;
-  const stopped = kind === "blocked" || kind === "cancelled" || kind === "closed" || kind === "unknown";
-  const doneColor = at === 4 ? 35 : 36; // progress cyan; green is reserved for a verified open PR
-  const glyphs: string[] = [];
-  for (let step = 1; step <= 4; step++) {
-    const done = step < at || at === 4, here = step === at || (step === 1 && at === 0);
-    const glyph = done ? paint(doneColor, "●") : here ? (stopped ? paint(31, "✕") : at === 0 ? paint(90, "○") : active(task) ? paint(36, SPINNER[frame % 4]!) : paint(statusColor(task), "◉")) : dim("○");
-    glyphs.push((step > 1 ? (step <= Math.max(1, at) || at === 4 ? paint(doneColor, "──") : dim("┄┄")) : "") + glyph);
-  }
-  return glyphs.join("");
-}
-
-/** Clip an untrusted field to `cols` cells, grapheme-safe. */
-function clip(text: string, cols: number): string {
-  if (visibleLength(text) <= cols) return text;
-  if (cols <= 1) return cols === 1 ? "…" : "";
-  let result = "", width = 0;
-  for (const cell of cells(text)) { if (width + cell.width > cols - 1) break; result += cell.text; width += cell.width; }
-  return result + "…";
-}
-
-/** `left` clipped first, `right` kept whole at the row's end; `right` alone is dropped when it cannot fit. */
-function spread(left: string, right: string, cols: number): string {
-  const width = visibleLength(right);
-  if (width + 2 > cols) return fit(left, cols);
-  const head = fit(left, cols - width - 1);
-  return head + " ".repeat(Math.max(0, cols - width - 1 - visibleLength(head))) + " " + right;
-}
-
-/** The dependency tree row: ├─ └─ connectors to the primary prerequisite, ▾/▸ fold marker, the status dot, `#n name`,
- * then `+#n` for the other prerequisites and the status label at the right edge. */
-function treeRow(tasks: TreeTask[], nodes: OutlineNode[], node: OutlineNode, selected: boolean, collapsed: ReadonlySet<string>, frame: number, cols: number): string {
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  const roots = nodes.filter(n => n.depth === 0).map(n => n.id);
-  const last = (n: OutlineNode) => (n.parent ? byId.get(n.parent)!.children : roots).at(-1) === n.id;
-  const i = tasks.findIndex(t => t.id === node.id), task = tasks[i]!, number = task.number ?? i + 1;
-  let prefix = "";
-  for (let a = node.parent ? byId.get(node.parent) : undefined; a && a.depth > 0; a = a.parent ? byId.get(a.parent) : undefined) prefix = (last(a) ? "   " : "│  ") + prefix;
-  const connector = node.depth ? (last(node) ? "└─ " : "├─ ") : "";
-  const fold = node.children.length ? (collapsed.has(node.id) ? paint(1, "▸ ") : "▾ ") : "";
-  const hidden = node.children.length && collapsed.has(node.id) ? dim(` (${node.children.length} hidden)`) : "";
-  const extra = task.dependsOn.filter(id => id.toLowerCase() !== node.parent?.toLowerCase() && byId.has(tasks.find(t => t.id.toLowerCase() === id.toLowerCase())?.id ?? ""))
-    .map(id => `+#${tasks.find(t => t.id.toLowerCase() === id.toLowerCase())!.number ?? tasks.findIndex(t => t.id.toLowerCase() === id.toLowerCase()) + 1}`).join(" ");
-  const title = clip(`#${number} ${plainText(task.name)}`, cols);
-  const left = `${selected ? paint(1, "▶") : " "} ${dim(prefix + connector)}${fold}${dot(task, frame)} ${selected ? paint(1, title) : title}${hidden}`;
-  const right = `${extra ? dim(extra) + " " : ""}${paint(statusColor(task), rowLabel(task))}`;
-  return spread(left, right, cols);
-}
-
-function detailFields(tasks: TreeTask[], selected: TreeTask): [string, string][] {
-  const dependencies = selected.dependsOn.map(id => {
-    const i = tasks.findIndex(t => t.id.toLowerCase() === id.toLowerCase());
-    return `#${tasks[i]!.number ?? i + 1} ${tasks[i]!.name}${tasks[i]!.removedAt ? " (removed from list; retained)" : ""}`;
+/** Every task as a table row, in outline order: connectors to the primary prerequisite, ▾/▸ fold marker, `#n name`,
+ * the status word in its colour, and the PR (plus `+#n` for the other prerequisites) as info. Archived tasks sit under
+ * their own section row. */
+export function taskRows(input: readonly (Task | TaskTreeView)[], collapsed: ReadonlySet<string>, history: boolean): { tasks: TreeTask[]; nodes: OutlineNode[]; rows: (WorkRow & { section?: true })[] } {
+  const tasks = treeTasks(input), nodes = outline(tasks, collapsed, history, true);
+  const byId = new Map(nodes.map(n => [n.id, n])), task = new Map(tasks.map(t => [t.id.toLowerCase(), t]));
+  const number = (t: TreeTask) => t.number ?? tasks.indexOf(t) + 1;
+  const roots = (archived: boolean) => nodes.filter(n => n.depth === 0 && n.id !== ARCHIVED_SECTION && !!task.get(n.id.toLowerCase())?.removedAt === archived).map(n => n.id);
+  const rows = nodes.map((node): WorkRow & { section?: true } => {
+    if (node.id === ARCHIVED_SECTION) return { id: node.id, name: archiveTitle(tasks.filter(t => t.removedAt).length, history), section: true };
+    const t = task.get(node.id.toLowerCase())!;
+    const last = (n: OutlineNode) => (n.parent ? byId.get(n.parent)!.children : roots(!!t.removedAt)).at(-1) === n.id;
+    let prefix = "";
+    for (let a = node.parent ? byId.get(node.parent) : undefined; a && a.depth > 0; a = a.parent ? byId.get(a.parent) : undefined) prefix = (last(a) ? "   " : "│  ") + prefix;
+    const fold = node.children.length ? (collapsed.has(node.id) ? "▸ " : "▾ ") : "";
+    const extra = t.dependsOn.filter(id => id.toLowerCase() !== node.parent?.toLowerCase()).flatMap(id => task.has(id.toLowerCase()) ? [`+#${number(task.get(id.toLowerCase())!)}`] : []);
+    const pr = t.archive?.pr ?? t.pr;
+    return { id: t.id, lead: prefix + (node.depth ? (last(node) ? "└─ " : "├─ ") : "") + fold, name: `#${number(t)} ${plainText(t.name)}`,
+      status: status(t), color: taskStateColor(status(t)),
+      info: [pr && `PR #${pr.number}`, extra.join(" "), fold === "▸ " && `${node.children.length} hidden`, active(t) && activity(t)].filter(Boolean).join(" · ") };
   });
-  const fields: [string, string][] = [
-    [`Task #${selected.number ?? tasks.indexOf(selected) + 1} · ${status(selected)}`, selected.name],
-    ["State", status(selected)],
-    ["UUID", selected.id],
-    ["Created", formatDateTime(selected.createdAt)],
-    ["Overview", selected.summary],
-    ["Dependencies", dependencies.join("; ") || "none"],
-  ];
-  if (active(selected)) fields.push(["Activity", activity(selected)]);
+  return { tasks, nodes, rows };
+}
+
+/** What the details pane says about one task: description, record fields, dependencies both ways and the PR link. */
+export function taskSections(tasks: TreeTask[], selected: TreeTask): WorkSection[] {
+  const label = (t: TreeTask) => `#${t.number ?? tasks.indexOf(t) + 1} ${t.name}`;
+  const fields: [string, string][] = [["state", status(selected)], ["uuid", selected.id], ["created", formatDateTime(selected.createdAt)]];
+  if (active(selected)) fields.push(["activity", activity(selected)]);
   const milestone = taskPublicationMilestone(selected);
-  if ("label" in milestone) fields.push(["Publication", `${milestone.label} (historical)`]);
-  if ("observedAt" in milestone) fields.push(["Observed", `${formatDateTime(milestone.observedAt)} (historical; not merge permission)`]);
-  if (selected.attention) fields.push(["Attention", `${selected.attention.kind}: ${selected.attention.reason}`]);
+  if ("label" in milestone) fields.push(["publication", `${milestone.label} (historical)`]);
+  if ("observedAt" in milestone) fields.push(["observed", `${formatDateTime(milestone.observedAt)} (historical; not merge permission)`]);
+  if (selected.attention) fields.push(["attention", `${selected.attention.kind}: ${selected.attention.reason}`]);
   const latest = selected.runs.at(-1);
-  if (latest) fields.push(["Run", `${latest.role}: ${latest.state}`]);
-  if (selected.readiness) fields.push(["Validation", `${selected.readiness.checks}: ${selected.readiness.validation}`]);
-  return fields;
-}
-
-function detailLines(tasks: TreeTask[], selected: TreeTask | undefined, cols: number, frame: number): string[] {
-  if (!selected) return safeLines("Tasks: No tasks", cols);
-  if (cols >= 80) return detailColumns(tasks, selected, cols);
-  const lines: string[] = [];
-  const fields = detailFields(tasks, selected);
-  const dependents = tasks.filter(t => !t.removedAt && t.dependsOn.some(id => id.toLowerCase() === selected.id.toLowerCase()));
-  for (const [name, value] of fields.slice(0, 1)) lines.push(...safeLines(`${name}: ${value}`, cols));
-  lines.push(fit(`${track(selected, frame)} ${dim("worker → review → PR → merged")}`, cols));
-  if (dependents.length) lines.push(...safeLines(`Unblocks: ${dependents.map(t => `#${t.number ?? tasks.indexOf(t) + 1} ${t.name}`).join("; ")}`, cols));
-  lines.push("");
-  for (const [name, value] of fields.slice(1)) {
-    lines.push(...safeLines(`${name}: ${value}`, cols), "");
-  }
-  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) lines.push(...safeLines(`${checkpoint}: ${formatDateTime(at)}`, cols));
+  if (latest) fields.push(["run", `${latest.role}: ${latest.state}`]);
+  if (selected.readiness) fields.push(["validation", `${selected.readiness.checks}: ${selected.readiness.validation}`]);
+  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) fields.push([checkpoint, formatDateTime(at)]);
+  const needs = selected.dependsOn.flatMap(id => { const t = tasks.find(t => t.id.toLowerCase() === id.toLowerCase()); return t ? [`${label(t)}${t.removedAt ? " (removed from list; retained)" : ""}`] : []; });
+  const unblocks = tasks.filter(t => !t.removedAt && t.dependsOn.some(id => id.toLowerCase() === selected.id.toLowerCase())).map(label);
   const pr = selected.archive?.pr ?? selected.pr;
-  if (pr) {
-    for (const label of safeLines(`PR: ${pr.repository} #${pr.number}`, cols)) {
-      lines.push(`\x1b]8;;${pr.url}\x07${label}\x1b]8;;\x07`);
-    }
-    lines.push(...safeLines(pr.url, cols));
-  } else lines.push(...safeLines("PR: not recorded", cols));
-  return lines;
-}
-
-/** Description and operational metadata wrap independently; scroll retains both. */
-function detailColumns(tasks: TreeTask[], selected: TreeTask, cols: number): string[] {
-  const gap = " │ ", leftWidth = Math.floor((cols - 3) / 2), rightWidth = cols - leftWidth - 3;
-  const fields = detailFields(tasks, selected), title = fields[0]!;
-  const left = ["Description", ...safeLines(selected.summary || "No description recorded.", leftWidth)];
-  const prerequisites = fields.find(([name]) => name === "Dependencies")![1];
-  left.push("", "Prerequisites", ...safeLines(prerequisites, leftWidth));
-  const dependents = tasks.filter(t => !t.removedAt && t.dependsOn.some(id => id.toLowerCase() === selected.id.toLowerCase()));
-  if (dependents.length) left.push("", ...safeLines(`Unblocks: ${dependents.map(t => `#${t.number ?? tasks.indexOf(t) + 1} ${t.name}`).join("; ")}`, leftWidth));
-  const right = ["Details"];
-  for (const [name, value] of fields.slice(1).filter(([name]) => name !== "Overview" && name !== "Dependencies")) right.push(...safeLines(`${name}: ${value}`, rightWidth));
-  for (const [checkpoint, at] of Object.entries(selected.checkpoints ?? {})) right.push(...safeLines(`${checkpoint}: ${formatDateTime(at)}`, rightWidth));
-  const pr = selected.archive?.pr ?? selected.pr;
-  if (pr) {
-    for (const label of safeLines(`PR: ${pr.repository} #${pr.number}`, rightWidth)) right.push(`\x1b]8;;${pr.url}\x07${label}\x1b]8;;\x07`);
-    right.push(...safeLines(pr.url, rightWidth));
-  } else right.push(...safeLines("PR: not recorded", rightWidth));
-  return [...safeLines(`${title[0]}: ${title[1]}`, cols), ...Array.from({ length: Math.max(left.length, right.length) }, (_, i) => {
-    const a = left[i] ?? ""; return a + " ".repeat(Math.max(0, leftWidth - visibleLength(a))) + dim(gap) + (right[i] ?? "");
-  })];
-}
-
-const LEGEND = "├─ first prerequisite · +#n other prerequisites · ▾▸ fold";
-function compose(p: Panels, graph: string[], detail: string[], detailY: number, footer: string): string[] {
-  if (p.workView) {
-    const left = Array.from({ length: p.graphRows }, (_, row) => graph[row] ?? "");
-    return [...workRows("TASKS", p.cols, left, detail.slice(detailY, detailY + p.detailRows)), fit(footer, p.cols)].slice(0, p.rows);
-  }
-  const lines = [p.cols >= 70 ? fit(`TASKS  ${dim(LEGEND)}`, p.cols) : safeLines("TASKS", p.cols)[0]!];
-  for (let row = 0; row < p.graphRows; row++) lines.push(graph[row] ?? "");
-  lines.push(dim("─".repeat(p.cols)));
-  for (let row = 0; row < p.detailRows; row++) lines.push(detail[detailY + row] ?? "");
-  lines.push(safeLines(footer, p.cols)[0]!);
-  return lines.slice(0, p.rows);
-}
-
-function failed(p: Panels, error: unknown): TaskTreeRender {
-  // Only renderer-generated, fixed error messages cross this boundary.
-  const message = error instanceof Error ? error.message : "Invalid task registry";
-  const errors = [plainText(message).slice(0, 256)];
-  const lines = compose(p, safeLines(`ERROR: ${errors[0]}`, p.graphCols), [], 0, "Invalid registry; no outline rendered");
-  return { nodes: [], animated: false, lines, errors, hits: [], order: [], graph: { width: 0, height: 0, x: 0, y: 0, rows: p.graphRows, cols: p.graphCols }, details: { height: 0, y: 0, rows: p.detailRows } };
-}
-
-/** Read-only complete registry, including archived prerequisites. Invalid graphs fail closed. */
-export function renderTaskTree(input: readonly (Task | TaskTreeView)[], options: TaskTreeOptions): TaskTreeRender {
-  let p = panels(options);
-  try {
-    const tasks = treeTasks(input), collapsed = options.collapsed ?? new Set<string>(), frame = options.frame ?? 0;
-    const nodes = outline(tasks, collapsed, options.history, options.workView);
-    p = panels(options, nodes.length);
-    const selectedId = nodes.some(n => n.id === options.selectedId) ? options.selectedId : nodes[0]?.id;
-    const selected = tasks.find(t => t.id === selectedId);
-    const view = { cols: p.graphCols, rows: p.graphRows, x: 0,
-      y: offset(options.graphY, Math.max(0, nodes.length - p.graphRows)) };
-    if (options.revealSelected && selectedId) {
-      const y = nodes.findIndex(n => n.id === selectedId);
-      view.y = Math.max(y - view.rows + 1, Math.min(view.y, y));
-    }
-    const hits: TaskTreeHit[] = [], lines: string[] = [];
-    for (const [row, node] of nodes.slice(view.y, view.y + view.rows).entries()) {
-      if (node.id === ARCHIVED_SECTION) {
-        lines.push(fit(`${selectedId === node.id ? "▶ " : "  "}${archiveTitle(tasks.filter(t => t.removedAt).length, !!options.history)}`, view.cols));
-        hits.push({ id: node.id, number: 0, row: row + 1, col: 0, width: view.cols });
-        continue;
-      }
-      const i = tasks.findIndex(t => t.id === node.id), task = tasks[i]!;
-      lines.push(treeRow(tasks, nodes, node, node.id === selected?.id, collapsed, frame, view.cols));
-      hits.push({ id: task.id, number: task.number ?? i + 1, row: row + 1, col: 0, width: view.cols });
-    }
-    const detail = (selectedId === ARCHIVED_SECTION ? safeLines("Archived tasks retain their history and dependencies. Enter or → expands; ← collapses. u restores a task without resuming work.", p.detailCols)
-      : detailLines(tasks, selected, p.detailCols, frame)).map(line => p.workView ? line.replace(/^Overview:/, "Description:") : line);
-    const dy = offset(options.detailY, Math.max(0, detail.length - p.detailRows));
-    if (!nodes.length) lines[0] = "No tasks";
-    const footer = `Outline y=${view.y}/${Math.max(0, nodes.length - view.rows)}; details=${dy}/${Math.max(0, detail.length - p.detailRows)}`;
-    return { nodes, animated: nodes.slice(view.y, view.y + view.rows).some(n => n.id !== ARCHIVED_SECTION && active(tasks.find(t => t.id === n.id)!)),
-      lines: compose(p, lines, detail, dy, footer), hits, selectedId,
-      order: nodes.map(n => n.id), errors: [], graph: { ...view, width: view.cols, height: nodes.length },
-      details: { height: detail.length, y: dy, rows: p.detailRows } };
-  } catch (error) { return failed(p, error); }
+  return [
+    { title: `Task ${label(selected)}`, text: selected.summary || "No description recorded." },
+    { title: "Details", fields },
+    { title: "Depends on", text: [needs.join("; ") || "none", ...(unblocks.length ? [`Unblocks: ${unblocks.join("; ")}`] : [])].join("\n") },
+    { title: "Pull request", fields: pr ? [["link", `${pr.repository} #${pr.number}`, pr.url], ["url", pr.url]] : [], ...(pr ? {} : { text: "not recorded" }) },
+  ];
 }

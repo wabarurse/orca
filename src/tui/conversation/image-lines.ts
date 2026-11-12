@@ -3,5 +3,5 @@ import { dim } from "../components";
 
 export function imageLines(attachments: readonly ImageRef[] = []): string[] {
   return attachments.filter(ref => /^[a-f0-9-]{36}$/.test(ref?.id ?? "")).map((ref, i) =>
-    dim(`Image ${i + 1} · ${ref.id.slice(0, 8)} · /images to open`));
+    dim(`Image ${i + 1} · ${ref.id.slice(0, 8)} · open on the Images page`));
 }

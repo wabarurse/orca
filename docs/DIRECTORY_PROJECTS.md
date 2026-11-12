@@ -2,7 +2,7 @@
 
 A project is a stable UUID, a display name, a directory reference and default settings. Conversations belong to that project and retain separate UUIDs, histories, tasks, inboxes, working briefs and execution lifetimes. Conversations sharing the same canonical checkout belong to one project; sharing a remote URL does not combine different checkouts.
 
-`/projects` lists directory projects. Enter opens that project's conversations; `n` creates another conversation there, and Esc returns to the project list. Conversation titles may already be duplicated in imported data; the picker includes storage IDs to distinguish them. Project rows reflect activity in their open conversations without reading storage during rendering.
+Ctrl+B (the Projects tab of the work page) lists directory projects. Enter opens that project's conversations; `n` creates another conversation there, and Esc returns to the project list. Conversation titles may already be duplicated in imported data; the picker includes storage IDs to distinguish them. Project rows reflect activity in their open conversations without reading storage during rendering.
 
 The first supported directory source remains an original Git checkout. Worker worktrees belong to conversations and do not become additional projects. This change does not move repositories, transcripts or workspaces.
 
@@ -39,7 +39,7 @@ the recipient's evidence directory for bounded reads; only the summary and path
 enter its context. Recipient identity and checkout membership are checked again
 under the publication lock, rejecting changed/deleted conversations and relinks.
 
-`orca startup <conversation-name>` optionally saves the conversations restored when starting outside a known checkout, without deleting anything. It retains every exact title match, including duplicate titles. A storage ID can select one conversation. `orca startup --all` restores all discoverable conversations again. Directory projects and closed conversations remain available in `/projects`.
+`orca startup <conversation-name>` optionally saves the conversations restored when starting outside a known checkout, without deleting anything. It retains every exact title match, including duplicate titles. A storage ID can select one conversation. `orca startup --all` restores all discoverable conversations again. Directory projects and closed conversations remain available on the Projects page (Ctrl+B).
 
 For the two existing `phoebe-agent-notes` conversations, after merging and updating:
 
@@ -56,11 +56,8 @@ This retains both conversations referencing `~/Documents/phoebe/phoebe`; their t
 Existing conversation-specific account/model/role/effort/fast settings are preserved. The first conversation attached to a directory seeds its defaults; later conversations inherit missing settings. An explicit conversation override wins over directory defaults, which win over global defaults. Working briefs, tasks and inboxes never inherit across conversations.
 
 - `/model`, `/accounts`, `/effort` and `/fast` retain their conversation behavior.
-- `/project-defaults save` promotes the selected conversation's saved preferences to directory defaults.
-- `/project-defaults inherit` clears its local setting overrides so it follows the directory defaults again.
-- `/project` shows the directory project's identity and location.
-- `/project rename <name>` changes the directory project's display name; `/rename` names the conversation.
-- `/project relink <directory>` validates a new original checkout before changing the directory reference. Active conversation turns, agents and commands that may still be running block relinking. Validation failure leaves the old reference unchanged. Relinking changes metadata, not workspace contents.
+- The `/project` and `/project-defaults` commands were removed from the TUI with the command trim; the core functions (`directories.promoteDefaults`, `inheritDefaults`, `renameDirectoryProject`, `relinkDirectoryProject`) remain and currently have no command. `/rename` names the conversation.
+- A relink validates a new original checkout before changing the directory reference. Active conversation turns, agents and commands that may still be running block relinking. Validation failure leaves the old reference unchanged. Relinking changes metadata, not workspace contents.
 
 Conversation deletion and directory relinking inspect recorded command supervisors, command PIDs and process groups. An old `unknown` result does not block them once all three are confirmed gone; the result remains unknown, not successful. Live processes, permission errors and missing process identities still block the action, with the command ID and reason in the error. These checks do not stop commands, retry them or send events to agents.
 
@@ -98,7 +95,7 @@ projects/
     orch-5xab/
 ```
 
-Opening a named conversation link opens its actual tasks, history, outputs and images. The short suffix distinguishes duplicate titles and same-named checkouts. Names are sanitized for filesystem use. `/rename` updates the conversation link; `/project rename` updates the directory group. The actual artifact path stays fixed so open transcripts and running agents remain valid. Generated `project.json` and links are a readable view; catalog/UUID records remain authoritative. An unchanged view requires no rewrite, and user-added regular files in the view are retained.
+Opening a named conversation link opens its actual tasks, history, outputs and images. The short suffix distinguishes duplicate titles and same-named checkouts. Names are sanitized for filesystem use. `/rename` updates the conversation link; a directory project rename updates the directory group. The actual artifact path stays fixed so open transcripts and running agents remain valid. Generated `project.json` and links are a readable view; catalog/UUID records remain authoritative. An unchanged view requires no rewrite, and user-added regular files in the view are retained.
 
 Fresh homes use this structure automatically. Existing flat homes remain supported until a deliberate one-time migration. **Do not run it while your agents are working.** Once they have finished, close all Orca TUIs and stop its tmux sessions, then run:
 
