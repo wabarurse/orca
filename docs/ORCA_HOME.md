@@ -19,6 +19,9 @@ Layout 3 keeps the public home small and separates original evidence from rebuil
       transcript/             # original conversation/agent JSONL and companions
       tool-outputs/           # tool evidence; detailed worker reports in reports/
       images/                 # attachments and input metadata
+  worktrees/
+    phoebe--3f2a9c1e/          # worker checkouts: one folder per repository and conversation
+      fix-login/               # one Git worktree per task branch; removed when its work is merged or closed
   memory.sqlite                # project metadata, facts, working briefs, ledger/index
   .runtime/
     config.toml                # global configuration and pinned projects
@@ -56,7 +59,7 @@ Project metadata is scoped to the conversation's persisted UUID. Deleting and re
 Projects bind existing local directories; Git and GitHub are optional. Ordinary
 directory bindings use an empty branch in their repository metadata. Their agents
 share the directory, and deleting a conversation never removes that directory.
-Original repositories stay where the user put them. Git worktrees stay in the repository's sibling `<repo>.orca-worktrees/<namespace>/` directory. They are never moved into cache. The executable and shared installer lock remain under `~/.local/bin/` so different `ORCA_HOME` values do not split installer exclusion.
+Original repositories stay where the user put them. Worker Git worktrees are created in `worktrees/<repo>--<id>/<branch>` inside the home, so nothing appears beside a repository. Worktrees that older builds created in the sibling `<repo>.orca-worktrees/<namespace>/` directory stay registered there until their work finishes; that folder is removed once it is empty. Worktrees are never moved, and never into cache. The executable and shared installer lock remain under `~/.local/bin/` so different `ORCA_HOME` values do not split installer exclusion.
 
 ## Fresh setup from an older installation
 

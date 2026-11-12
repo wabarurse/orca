@@ -5,8 +5,8 @@
 ### Upgrading to orca
 
 The command, package, compiled executable and visible branding are now `orca`.
-New installations use `~/.orca`, `ORCA_HOME`, and `.orca-worktrees` beside the
-original checkout. The whale in the header uses your terminal's available space:
+New installations use `~/.orca` and `ORCA_HOME`; worker worktrees live in
+`~/.orca/worktrees/`. The whale in the header uses your terminal's available space:
 a detailed silhouette in tall terminals, compact artwork beside metadata in
 ordinary terminals, and metadata alone when space is tight. Only the selected
 working conversation animates; idle headers stay still. Artwork never enters
@@ -265,8 +265,10 @@ remain available. If the checkout is on another branch, switch it yourself
 when safe; the harness never switches or stashes your work. It checks the
 branch again before each main-agent turn.
 
-Workers use task branches in Git worktrees beside the original checkout:
-`<checkout>.orca-worktrees/<worktree-id>/<branch-slug>`. Reviewers reuse
+Workers use task branches in Git worktrees inside the home, never beside your
+repositories: `~/.orca/worktrees/<repo>--<id>/<branch-slug>` (one folder per
+repository and conversation). A worktree an older build created in
+`<checkout>.orca-worktrees/` stays there until its work finishes. Reviewers reuse
 the worker's worktree. These share Git objects and repository-local config with
 the original checkout, including later login updates. Worktrees do not contain
 the original's uncommitted changes or untracked/ignored files such as `.env`;

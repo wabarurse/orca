@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
-import { join, sep } from "node:path";
-import { paths } from "../../config";
+import { rmdir } from "node:fs/promises";
+import { dirname, join, sep } from "node:path";
+import { paths, repositoryBinding, siblingWorktreeFolder } from "../../config";
+import { publicTaskStatus } from "../../protocol/task";
 import { workspaces, projectIdentity, conversationTurnHeld, conversationTurnLock } from "../data/projects";
 import { existingTasks, purgeTasks } from "../data/tasks";
 import { listProcesses, listVerifications, processCleanupBlocker, processInspection, processOwner } from "../data/processes";
@@ -88,11 +90,9 @@ export async function archiveInactiveWorkspaces(project: string, options: Cleanu
     if (!await check(w)) workspaces.archive(w.id, w.lastActivityAt, now);
   }
 }
-async function locks(w: workspaces.Workspace): Promise<() => Promise<void>> {
+async function hold(names: string[]): Promise<() => Promise<void>> {
   const held: (() => Promise<void>)[] = [];
   try {
-    const names = [join(paths.runtime, "workspace-cleanup", w.id), ...w.members.flatMap(m => [conversationTurnLock(m.project),
-      ...(w.disposable && w.branch ? [join(paths.runtimeProject(m.project), "spawn-locks", sessionId("worker", w.branch))] : [])])];
     for (const name of [...new Set(names)].sort()) {
       const release = await tryStorageLock(name, "workspace cleanup");
       if (!release) throw new Error("workspace is being used or cleaned");
@@ -100,6 +100,69 @@ async function locks(w: workspaces.Workspace): Promise<() => Promise<void>> {
     }
     return async () => { for (const release of held.reverse()) await release(); };
   } catch (e) { for (const release of held.reverse()) await release(); throw e; }
+}
+const cleanupLock = (w: workspaces.Workspace) => join(paths.runtime, "workspace-cleanup", w.id);
+const spawnLocks = (w: workspaces.Workspace) => w.disposable && w.branch
+  ? w.members.map(m => join(paths.runtimeProject(m.project), "spawn-locks", sessionId("worker", w.branch!))) : [];
+const locks = (w: workspaces.Workspace) => hold([cleanupLock(w), ...w.members.map(m => conversationTurnLock(m.project)), ...spawnLocks(w)]);
+
+/** Nothing is removed while its work may have just ended: a follow-up spawn reuses the checkout. */
+export const FINISHED_GRACE_MS = 10 * 60_000;
+/** Why a worker checkout's work is over, or undefined. `settled`: every task on the branch is
+ * merged, closed or removed, so its session can be archived too. Without a settled task (a repo
+ * with no remote has no PR to observe), the branch must have moved since it was created and be
+ * contained in the default branch; a branch nobody committed to proves nothing. */
+async function finishedWork(w: workspaces.Workspace): Promise<{ why: string; settled: boolean } | undefined> {
+  if (!w.disposable || !w.branch || !w.repo) return;
+  const tasks = w.members.flatMap(m => existingTasks(m.project).filter(t => t.branch === w.branch));
+  const states = tasks.map(t => t.removedAt ? "removed" : publicTaskStatus(t));
+  const settled = states.every(s => s === "merged" || s === "closed" || s === "removed");
+  if (tasks.length && settled) return { why: states.includes("merged") ? "its PR merged" : "its task is closed", settled };
+  const base = w.members.map(m => repositoryBinding(m.project)?.branch).find(Boolean);
+  if (!base || base === w.branch) return;
+  const git = (...args: string[]) => run(["git", ...args], { cwd: w.repo!, timeoutMs: 10_000 });
+  const contained = await git("merge-base", "--is-ancestor", `refs/heads/${w.branch}`, `refs/heads/${base}`);
+  if (contained?.code !== 0) return;
+  const moves = await git("reflog", "show", "--format=%H", `refs/heads/${w.branch}`);
+  if (moves?.code !== 0 || moves.out.trim().split("\n").filter(Boolean).length < 2) return;
+  return { why: `its branch is merged into ${base}`, settled: !tasks.length };
+}
+
+/** The daemon's maintenance pass: remove the checkout of finished work, and nothing else. The
+ * branch and its commits, the agent's transcript and the task record all stay; a session whose
+ * tasks are settled is archived, so the explicit clean command may purge those records later.
+ * Kept when anything is live, queued or open, when the checkout has source edits, untracked or
+ * unrecognised ignored files, or when it cannot be inspected. Never stops or starts an agent. */
+export async function removeFinishedWorktrees(project: string, options: CleanupOptions = {}): Promise<CleanupResult[]> {
+  const now = options.now ?? Date.now(), result: CleanupResult[] = [];
+  if (!existsSync(paths.project(project)) || workspaces.list().some(w => w.cleaning && w.members.some(m => m.project === project))) return result;
+  await discoverWorkspaces(project, now);
+  const check = guards(options);
+  for (const candidate of workspaces.list().filter(w => w.disposable && !w.cleanedAt && w.members.some(m => m.project === project) && existsSync(w.path))) {
+    if (now - Date.parse(candidate.lastActivityAt) < FINISHED_GRACE_MS) continue;
+    const row = (disposition: string, bytes?: number) => result.push({ path: candidate.path, session: candidate.id, disposition, ...(bytes !== undefined ? { bytes } : {}) });
+    let release: (() => Promise<void>) | undefined;
+    try {
+      if (!await finishedWork(candidate)) continue;
+      // A spawn on this branch holds the same lock, so none can start between the checks and the removal.
+      release = await hold([cleanupLock(candidate), ...spawnLocks(candidate)]);
+      const w = workspaces.get(candidate.id)!;
+      if (w.cleaning || w.cleanedAt || w.lastActivityAt !== candidate.lastActivityAt) continue;
+      const finished = await finishedWork(w);
+      if (!finished) continue;
+      const reason = await check(w) ?? (await checkoutFiles(w)).blocker;
+      if (reason) { row(`kept: ${reason}`); continue; }
+      const bytes = await allocatedBytes(w.path);
+      const removed = await run(["git", "worktree", "remove", "--force", "--", w.path], { cwd: w.repo!, timeoutMs: 60_000 });
+      if (!removed || removed.code !== 0) { row("kept: git could not remove checkout"); continue; }
+      const namespace = dirname(w.path);
+      if (await rmdir(namespace).then(() => true, () => false) && siblingWorktreeFolder(dirname(namespace))) await rmdir(dirname(namespace)).catch(() => {});
+      if (finished.settled) workspaces.archive(w.id, w.lastActivityAt, now, true);
+      row(`removed worktree: ${finished.why}; branch ${w.branch} kept`, bytes);
+    } catch (e) { row(`kept: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { await release?.(); }
+  }
+  return result;
 }
 
 /** Preview by default. Checked worktrees retain their local Git branches,

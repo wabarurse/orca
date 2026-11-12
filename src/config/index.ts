@@ -1,4 +1,4 @@
-export { installedApp, legacy } from "./legacy";
+export { installedApp, legacy, siblingWorktreeFolder } from "./legacy";
 export { BUILD_ID } from "./build";
 export { defaults, loadConfig, saveConfig, type Config } from "./config";
 export { paths, projectStateScope, readProjectState, writeProjectState, repositoryBinding, legacyProjectIdentities, type RepositoryBinding } from "./paths";

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { harnessEngine, installedApp, legacy, stateRoot, worktreeRoot } from "./legacy";
+import { harnessEngine, installedApp, legacy, stateRoot, siblingWorktreeRoots } from "./legacy";
 
 const roots: string[] = [];
 function fixture() { const path = mkdtempSync(join(tmpdir(), "orca-rename-")); roots.push(path); return path; }
@@ -25,12 +25,14 @@ test("new installs use orca; an app-only checkout cannot hide existing logins an
   expect(installedApp(home)).toBe(join(old, ".runtime", "app"));
 });
 
-test("existing worker checkout paths remain registered; new namespaces use orca", () => {
+test("existing worker checkout paths beside the checkout remain known; none is invented", () => {
   const home = fixture(), checkout = join(home, "repo");
-  const id = crypto.randomUUID(), old = join(`${checkout}${legacy.worktreeSuffix}`, id);
-  expect(worktreeRoot(checkout, id)).toBe(join(`${checkout}.orca-worktrees`, id));
+  const id = crypto.randomUUID(), old = join(`${checkout}${legacy.worktreeSuffix}`, id), sibling = join(`${checkout}.orca-worktrees`, id);
+  expect(siblingWorktreeRoots(checkout, id)).toEqual([]);
+  mkdirSync(sibling, { recursive: true });
+  expect(siblingWorktreeRoots(checkout, id)).toEqual([sibling]);
   mkdirSync(old, { recursive: true });
-  expect(worktreeRoot(checkout, id)).toBe(old);
+  expect(siblingWorktreeRoots(checkout, id)).toEqual([old, sibling]);
   expect(harnessEngine(legacy.engine)).toBe(true);
   expect(harnessEngine("orca")).toBe(true);
   expect(harnessEngine("codex")).toBe(false);

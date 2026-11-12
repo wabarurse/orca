@@ -143,10 +143,11 @@ export function archivedResources(project: string, kind: Kind): Record<string, b
 export function restore(project: string, kind: Kind, key: string): void {
   for (const id of resource(project, kind, key)?.owners ?? []) if (!get(id)?.cleanedAt) touch(id);
 }
-export function archive(id: string, observedActivity: string, now = Date.now()): boolean {
+/** `finished` archives at once: work that is merged or closed and whose checkout is already gone. */
+export function archive(id: string, observedActivity: string, now = Date.now(), finished = false): boolean {
   let changed = false;
   write<Workspace>(paths.memory, sessions, id, old => {
-    if (old && !old.cleanedAt && !old.cleaning && !old.archivedAt && old.lastActivityAt === observedActivity && now - Date.parse(old.lastActivityAt) >= INACTIVE_MS) {
+    if (old && !old.cleanedAt && !old.cleaning && !old.archivedAt && old.lastActivityAt === observedActivity && (finished || now - Date.parse(old.lastActivityAt) >= INACTIVE_MS)) {
       old.archivedAt = new Date(now).toISOString(); changed = true;
     }
     return old;

@@ -1,10 +1,11 @@
 // Storage locations and durable project metadata. Configuration parsing stays in config.ts.
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { realpathSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
 import { readState, updateState, recoverStateScope, legacyStateScopes } from "./state-store";
 import { conversationIdentity } from "./conversation-identity";
 import { directoryProject, inheritedSettings, setDirectorySetting } from "./directory-projects";
-import { stateRoot, worktreeRoot } from "./legacy";
+import { stateRoot, siblingWorktreeRoots } from "./legacy";
 import { conversationPath } from "./conversation-storage";
 
 // Read lazily so tests can point ORCA_HOME at a temp dir after import.
@@ -55,9 +56,32 @@ export function repositoryBinding(name: string): RepositoryBinding | undefined {
   return parent ? { ...value, directory: parent.directory, branch: parent.branch } : value;
 }
 
-function worktrees(name: string): string {
+/** Worktrees live in the home, never beside the user's repositories: `worktrees/<repo>--<id>/<branch>`.
+ * The id is the conversation's worktree namespace, so deleting one conversation cannot reach
+ * another's worktrees and two checkouts with one folder name stay apart. Git records real
+ * paths, so the home is resolved once it exists. */
+function worktreeHome(binding: RepositoryBinding): string {
+  let home = root();
+  try { home = realpathSync(home); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const repo = basename(binding.directory).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+/, "") || "repo";
+  return join(home, "worktrees", `${repo}--${binding.worktreeId.slice(0, 8)}`);
+}
+/** Every folder that may hold this conversation's worktrees: the current one first, then the
+ * sibling folders older builds used, while they still exist. */
+function worktreeRoots(name: string): string[] {
   const binding = repositoryBinding(name);
-  return binding ? worktreeRoot(binding.directory, binding.worktreeId) : join(conversationPath(root(), name), "worktrees");
+  if (!binding) return [join(conversationPath(root(), name), "worktrees")];
+  return [worktreeHome(binding), ...siblingWorktreeRoots(binding.directory, binding.worktreeId)];
+}
+const worktrees = (name: string) => worktreeRoots(name)[0]!;
+/** A worktree an older build created beside the checkout stays where Git registered it. */
+function worktree(name: string, slug: string): string {
+  const [current, ...older] = worktreeRoots(name);
+  for (const root of older) {
+    const path = join(root, slug);
+    try { realpathSync(path); return path; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  return join(current!, slug);
 }
 
 export const paths = {
@@ -76,7 +100,8 @@ export const paths = {
   cache: (name: string) => join(conversationPath(root(), name), "cache"),
   repo: (name: string) => repositoryBinding(name)?.directory ?? join(conversationPath(root(), name), "repo"),
   worktrees,
-  worktree: (name: string, slug: string) => repositoryBinding(name)?.branch === "" ? paths.repo(name) : join(worktrees(name), slug),
+  worktreeRoots,
+  worktree: (name: string, slug: string) => repositoryBinding(name)?.branch === "" ? paths.repo(name) : worktree(name, slug),
   inbox: (name: string) => join(root(), ".runtime", "projects", name, "inbox"),
   runs: (name: string) => join(root(), ".runtime", "projects", name, "runs"),
   questions: (name: string) => join(root(), ".runtime", "projects", name, "questions"),
