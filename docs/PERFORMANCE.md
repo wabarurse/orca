@@ -35,6 +35,10 @@ Worker and reviewer foreground compaction has a configurable `workerContextToken
 
 Rolling summaries can generate up to 8192 tokens, subject to a supplied model output ceiling, while accepted memory still must fit the existing 4096 estimated-token budget and item limits. The generation allowance includes syntax and any reasoning. Repairs retain the same system prompt and original source-message prefix and append a repair instruction, enabling provider prefix caching where supported. This does not guarantee a cache hit.
 
+Tool calls in one response run in order, except that consecutive read-only calls overlap up to `toolConcurrency`. `read` always qualifies; a foreground `bash` command qualifies when `src/core/tools/bash/readonly.ts` recognises every command in it as a reader (grep, rg, `sed -n` print ranges, cat, ls, find, read-only git and similar) with no file redirection, substitution, grouping or backgrounding. Anything it does not recognise runs in order as before; `independent: true` remains an explicit override. Results keep call order.
+
+A response that stops at the output limit does not fail the turn at once: none of its tool calls runs (their arguments may be truncated), each gets an error result asking for a complete call, and a text-only response gets a request to resume in smaller pieces. After two consecutive limit stops the turn fails as before.
+
 Completion requests coordinate HTTP 429 recovery by provider/profile through shared SQLite state. `Retry-After` controls scheduling when supplied; otherwise bounded exponential cooldown applies. Recovery probes are paced across processes, healthy accounts remain concurrent, and waiting is cancellable within the existing request deadlines. A provider lockout more than a minute away fails closed rather than holding a stream open. Profiles are independent; no fallback account or model is selected. Web-search calls retain their existing separate handling.
 
 ## Measurement
