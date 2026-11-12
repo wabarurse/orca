@@ -12,7 +12,7 @@ interface Hint {
 /** Heredoc bodies and quoted strings are data, not commands: `grep "sed -i" notes.md` rewrites nothing. */
 const HEREDOC = /(<<-?\s*(['"]?)([A-Za-z_]\w*)\2[^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/g;
 const QUOTED = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"/g;
-const shell = (command: string) => command.replace(HEREDOC, "$1").replace(QUOTED, "''");
+export const shell = (command: string) => command.replace(HEREDOC, "$1").replace(QUOTED, "''");
 
 /** Where a command name starts: the line or a list/pipe/group operator, `xargs`, `-exec`, a shell keyword; then any `VAR=value` prefixes. */
 const AT = String.raw`(?:^|[;&|(\n]|\bxargs\s+(?:-\S+\s+)*|-exec\s+|\b(?:then|do|else)\s)[ \t]*(?:\w+=\S*\s+)*`;

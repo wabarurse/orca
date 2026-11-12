@@ -217,7 +217,7 @@ test("clear resets the working goal and corrections while preserving explicit pe
   expect(await facts("p", "user")).toHaveLength(1); orch.dispose?.();
 });
 
-test.each(["limit", "refusal", "error"] as const)("%s never executes partial tool calls or claims a finished turn", async stop => {
+test.each(["refusal", "error"] as const)("%s never executes partial tool calls or claims a finished turn", async stop => {
   const transcript = open(paths.transcript("p", "worker-check"));
   await transcript.append({ type: "message", message: { role: "user", content: "Perform one check" } });
   const provider = fakeProvider([[toolUse("bad", "danger", {})], [text("resumed")]]), original = provider.complete;
@@ -226,6 +226,24 @@ test.each(["limit", "refusal", "error"] as const)("%s never executes partial too
   const agent = createAgent({ model: "test", provider, transcript, ctx: { ...ctx, role: "worker", branch: "check" }, compaction: { enabled: false }, tools: { danger: { spec: { name: "danger", input_schema: { type: "object", properties: {} } }, run: async () => { executed++; return "bad"; } } }, write() {} });
   await expect(agent.run()).rejects.toThrow("completion is not established"); expect(executed).toBe(0);
   await agent.run(); expect(executed).toBe(0); expect(await transcript.chain()).toHaveLength(4);
+});
+
+test("an output-limit stop never runs its cut-off tool calls: they are refused and the model continues, twice at most", async () => {
+  const run = async (name: string, limited: number) => {
+    const transcript = open(paths.transcript("p", `worker-${name}`));
+    await transcript.append({ type: "message", message: { role: "user", content: "Perform one check" } });
+    const provider = fakeProvider(Array.from({ length: limited + 1 }, (_, i) => i < limited ? [toolUse(`cut${i}`, "danger", {})] : [text("resumed")])), original = provider.complete;
+    let seen = 0, executed = 0;
+    provider.complete = async req => { const result = await original(req); return seen++ < limited ? { ...result, stop: "limit" as const, completion: "max_tokens" } : result; };
+    const agent = createAgent({ model: "test", provider, transcript, ctx: { ...ctx, role: "worker", branch: name }, compaction: { enabled: false }, tools: { danger: { spec: { name: "danger", input_schema: { type: "object", properties: {} } }, run: async () => { executed++; return "bad"; } } }, write() {} });
+    return { agent, transcript, executed: () => executed };
+  };
+  const once = await run("limit-once", 1);
+  await once.agent.run(); expect(once.executed()).toBe(0);
+  const chain = await once.transcript.chain(); expect(chain).toHaveLength(4);
+  expect(JSON.stringify(chain[2]!.content)).toContain("not run: The response reached the output limit");
+  const thrice = await run("limit-thrice", 3);
+  await expect(thrice.agent.run()).rejects.toThrow("completion is not established"); expect(thrice.executed()).toBe(0);
 });
 
 test("changed CI observations deduplicate and expose data without inventing human authorization", async () => {
