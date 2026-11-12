@@ -11,7 +11,7 @@ import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedPro
 import { archiveAgents, cancelSession, launchIdentity, listAgents, restoreAgents } from "../core/tmux";
 import { ARCHIVED_SECTION, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
   type Key, type OutlineNode, type WorkPageRender, type WorkRow, type WorkSection } from "./components";
-import { deleteProject, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
+import { deleteFolder, deleteProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
 import { elapsedMs, formatElapsed } from "./header";
 import { fileStore, QUESTION_PROGRESS, type Questions } from "./footer";
 import type { StickyScreen } from "./screen";
@@ -536,22 +536,37 @@ export class WorkPages {
       this.host.closePage(pages.indexOf(page));
       if (this.view === view) view.notice = `closed ${page.name}; its project and history are kept`;
     } else if (key === "d") {
-      if (entry.directory) { view.notice = "open the project to manage its conversations"; return; }
-      view.confirm = { text: `delete ${entry.label}?`, run: async () => {
-        const page = pages.find(p => p.project === entry.name), midTurn = `${entry.label} is mid-turn; try again when it ends`;
-        if (page?.busy) throw new Error(midTurn);
-        if (page) page.deleting = true;
-        try {
-          await deleteProject(entry.name, { ...this.host.deps.projects, beforeRemove: () => {
-            if (!page) return;
-            if (page.busy) throw new Error(midTurn);
-            const at = this.host.pages().indexOf(page);
-            if (at !== -1) this.host.closePage(at);
-          } });
-        } catch (error) { if (page) page.deleting = false; throw error; }
-        finally { await this.read(view, "projects"); }
+      // A folder row deletes every conversation in it; a conversation row deletes that one. Either
+      // way its worktrees go too, so the question says how many and whether any holds uncommitted files.
+      const members = entry.directory ? entry.conversations ?? [] : [entry.name];
+      const open = () => pages.filter(p => members.includes(p.project));
+      // The question is up at once; what will be lost joins it when read. Until the user has seen
+      // that, uncommitted worktree files still refuse the deletion instead of being discarded.
+      let told = false;
+      const confirm = { text: `delete ${entry.label}?`, run: async () => {
+        const busy = open().find(p => p.busy), midTurn = (name: string) => `${name} is mid-turn; try again when it ends`;
+        if (busy) throw new Error(midTurn(busy.name));
+        const deleting = open();
+        for (const page of deleting) page.deleting = true;
+        const options = { ...this.host.deps.projects, discard: told, beforeRemove: (project: string) => {
+          const page = this.host.pages().find(p => p.project === project);
+          if (!page) return;
+          if (page.busy) throw new Error(midTurn(page.name));
+          this.host.closePage(this.host.pages().indexOf(page));
+        } };
+        try { await (entry.directory ? deleteFolder(entry.name, options) : deleteProject(entry.name, options)); }
+        catch (error) { for (const page of deleting) page.deleting = false; throw error; }
+        finally { if (entry.directory) delete view.parent; await this.read(view, "projects"); }
         view.notice = `deleted ${entry.label}`;
       } };
+      view.confirm = confirm;
+      void deletionSummary(entry).then(losing => {
+        if (view.confirm !== confirm) return;
+        const what = [losing, entry.directory ? `${entry.directory} itself is kept` : ""].filter(Boolean).join("; ");
+        if (what) confirm.text = `delete ${entry.label} (${what})?`;
+        told = true;
+        if (this.view === view) this.host.draw();
+      }, () => { /* the deletion's own checks report what cannot be read */ });
     }
   }
 }
