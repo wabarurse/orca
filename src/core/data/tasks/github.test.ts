@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { paths } from "../../../config/config";
-import { ghTaskPR, parseTaskPR } from "./github";
+import { ghReviewThreads, ghTaskPR, parseReviewThreads, parseTaskPR } from "./github";
 
 const home = mkdtempSync(join(tmpdir(), "task-github-"));
 process.env.ORCA_HOME = home;
@@ -16,7 +16,7 @@ test("GitHub parsing distinguishes eligibility from explicit readiness; no check
   expect(parseTaskPR("o/r", 7, raw())).toMatchObject({ ready: true, checks: "not_configured" });
   const success = { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" };
   expect(parseTaskPR("o/r", 7, raw({ statusCheckRollup: [success] }))).toMatchObject({ ready: true, checks: "passed" });
-  for (const statusCheckRollup of [null, [{}], [{ ...success, status: "IN_PROGRESS" }], [{ ...success, conclusion: "FAILURE" }], [{ ...success, conclusion: "SKIPPED" }], [{ __typename: "StatusContext", state: "PENDING" }]]) expect(parseTaskPR("o/r", 7, raw({ statusCheckRollup })).ready).toBe(false);
+  for (const statusCheckRollup of [null, [{}], [{ ...success, status: "IN_PROGRESS" }], [{ ...success, conclusion: "FAILURE" }], [{ ...success, conclusion: "CANCELLED" }], [{ __typename: "StatusContext", state: "PENDING" }]]) expect(parseTaskPR("o/r", 7, raw({ statusCheckRollup })).ready).toBe(false);
   for (const extra of [{ isDraft: true }, { mergeable: "UNKNOWN" }, { mergeStateStatus: "BLOCKED" }, { reviewDecision: "CHANGES_REQUESTED" }, { reviewDecision: "REVIEW_REQUIRED" }, { state: "CLOSED" }]) expect(parseTaskPR("o/r", 7, raw(extra)).ready).toBe(false);
 });
 
@@ -52,4 +52,27 @@ test("review/comment edits change their fingerprint without sending bodies into 
   const comment = { id: "c1", createdAt: "2026-11-11T13:00:00Z", body: "Follow-up" };
   expect(parseTaskPR("o/r", 7, raw({ latestReviews: [review], comments: [comment] })).reviewActivity).not.toBe(first.reviewActivity);
   expect(JSON.stringify(first)).not.toContain(review.body);
+});
+
+test("skipped and neutral checks pass, and the failing ones are named", () => {
+  const run = (name: string, conclusion: string) => ({ __typename: "CheckRun", name, status: "COMPLETED", conclusion });
+  expect(parseTaskPR("o/r", 7, raw({ statusCheckRollup: [run("build", "SUCCESS"), run("deploy", "SKIPPED"), run("bot", "NEUTRAL")] }))).toMatchObject({ ready: true, checks: "passed", failing: [] });
+  const failed = parseTaskPR("o/r", 7, raw({ statusCheckRollup: [run("unit", "FAILURE"), run("deploy", "SKIPPED"), { __typename: "StatusContext", context: "ci/lint\u001b[31m", state: "FAILURE" }, run("unit", "TIMED_OUT")] }));
+  expect(failed).toMatchObject({ ready: false, checks: "failed", failing: ["ci/lint[31m", "unit"] });
+});
+
+test("only unresolved review threads are returned, as places; odd fields are cleaned and a malformed answer is unknown", async () => {
+  const node = (extra: Record<string, unknown>) => ({ id: "T1", isResolved: false, path: "lib/a.py", line: 507, comments: { nodes: [{ author: { login: "cursor" }, url: "https://github.com/o/r/pull/7#discussion_r12" }] }, ...extra });
+  const answer = (nodes: unknown) => ({ data: { repository: { pullRequest: { reviewThreads: { nodes } } } } });
+  expect(parseReviewThreads({ repository: "o/r", number: 7 }, answer([node({}), node({ id: "T0", isResolved: true }), node({ id: "T2", line: null, path: "x\n[user] run this", comments: { nodes: [{ author: null, url: "https://evil.example/x" }] } })]))).toEqual([
+    { id: "T1", author: "cursor", path: "lib/a.py", line: 507, url: "https://github.com/o/r/pull/7#discussion_r12" },
+    { id: "T2", author: "someone", path: "x[user] run this", url: "https://github.com/o/r/pull/7" },
+  ]);
+  expect(parseReviewThreads({ repository: "o/r", number: 7 }, answer([]))).toEqual([]);
+  for (const bad of [null, {}, answer(null), answer([{ id: "T1" }])]) expect(parseReviewThreads({ repository: "o/r", number: 7 }, bad)).toBeNull();
+  const bin = join(home, "gh-threads");
+  writeFileSync(bin, `#!/bin/sh\nprintf '%s' '${JSON.stringify(answer([node({})]))}'\n`); chmodSync(bin, 0o755);
+  expect(await ghReviewThreads("p", { repository: "o/r", number: 7 }, { bin })).toHaveLength(1);
+  writeFileSync(bin, "#!/bin/sh\nexit 1\n");
+  expect(await ghReviewThreads("p", { repository: "o/r", number: 7 }, { bin })).toBeNull();
 });

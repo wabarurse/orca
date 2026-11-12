@@ -1,25 +1,30 @@
 // One shared, read-only PR observer. Agents register interest; the runtime owns
 // the lifetime and notifications, without keeping workers or shell loops alive.
-import { allTasks, getTask, ghTaskPR, observeTaskPR, originRepo } from "../data/tasks";
+import { allTasks, getTask, ghReviewThreads, ghTaskPR, observeTaskPR, originRepo } from "../data/tasks";
 import { observe, discardObservation, flushObservations } from "../data/inbox";
 import { listProcesses, liveProcess, prWatchEnabled, readProcess, saveProcess, type ProcessRecord } from "../data/processes";
 import { execution } from "../data/projects/lifecycle";
-import type { PRObservation, Task, TaskPR } from "../../protocol/task";
+import type { PRObservation, ReviewThread, Task, TaskPR } from "../../protocol/task";
 import { paths } from "../../config";
 import { join } from "node:path";
 import { tryStorageLock } from "../data";
-import { activePRTask, notificationValue } from "./pr-observations";
+import { activePRTask, mergeBlockers, notificationValue } from "./pr-observations";
 
 export const MERGE_POLL_MS = 30_000;
+/** Threads are re-read when the PR's head or review activity changed, while any
+ * is unresolved, and otherwise this often: resolving one changes nothing else. */
+export const THREADS_REFRESH_MS = 5 * 60_000;
 export interface MergeWatchOptions {
   repo?: typeof originRepo;
   pr?: (project: string, pr: TaskPR) => Promise<PRObservation | null>;
+  threads?: (project: string, pr: TaskPR) => Promise<ReviewThread[] | null>;
   now?: () => number;
   everyMs?: number;
 }
 
 export function mergeWatcher(opts: MergeWatchOptions = {}) {
   const last = new Map<string, number>(), busy = new Set<string>();
+  const seen = new Map<string, { stamp: string; at: number; threads: ReviewThread[] }>();
   const now = opts.now ?? Date.now, every = opts.everyMs ?? MERGE_POLL_MS;
   return async (project: string): Promise<number[]> => {
     if (execution.stopped(project) || busy.has(project) || now() - (last.get(project) ?? -Infinity) < every) return [];
@@ -104,14 +109,30 @@ export function mergeWatcher(opts: MergeWatchOptions = {}) {
         // publish a notification or mutate its state. Explicit watches use PR ID.
         if (!matching.length && !entry.watches.length) continue;
         const pr = observation.pr;
+        if (observation.state === "OPEN" && observation.threads === undefined) {
+          const id = `${project}:${key}`, stamp = `${pr.head}:${observation.reviewActivity}`, cached = seen.get(id);
+          if (cached && cached.stamp === stamp && !cached.threads.length && now() - cached.at < THREADS_REFRESH_MS) observation.threads = cached.threads;
+          else {
+            const threads = await (opts.threads ?? (opts.pr ? async () => null : ghReviewThreads))(project, pr).catch(() => null);
+            guard();
+            if (threads) { seen.set(id, { stamp, at: now(), threads }); observation.threads = threads; }
+            else if (cached) observation.threads = cached.threads; // Unreadable now: the last known answer stands.
+          }
+        } else if (observation.state !== "OPEN") seen.delete(`${project}:${key}`);
         const mergeText = `[pr-merged] PR #${pr.number} merged: ${pr.url}. No agent was stopped; its worktree is removed once idle and clean, the branch is kept.`;
         if (observation.state === "MERGED") {
           if (!observation.mergedAt) continue;
           await stage(project, `merge:${key}`, observation.mergedAt, mergeText);
         } else {
           const value = { state: observation.state, head: pr.head, checks: observation.checks,
-            review: observation.reviewDecision ?? "unknown", reviewActivity: observation.reviewActivity, mergeable: observation.mergeable ?? "unknown" };
-          const text = `[pr-${observation.state === "CLOSED" ? "closed" : "updated"}] PR #${pr.number}: ${observation.state.toLowerCase()}; head ${pr.head}; checks ${value.checks}; review ${value.review || "none"}; mergeable ${value.mergeable}. ${pr.url}. Observation only; no command was started or retried.`;
+            review: observation.reviewDecision ?? "unknown", reviewActivity: observation.reviewActivity, mergeable: observation.mergeable ?? "unknown",
+            threads: observation.threads?.map(t => t.id).join(",") };
+          const { fix, wait } = mergeBlockers(observation), waiting = wait.length ? ` Waiting on: ${wait.join(", ")}.` : "";
+          const names = matching.map(t => `task #${t.number ?? "?"} on ${t.branch}`).join(", ");
+          const where = `PR #${pr.number}${names ? ` (${names})` : ""}`, tail = `Head ${pr.head.slice(0, 12)}. ${pr.url}. Nothing was started or retried.`;
+          const text = observation.state === "CLOSED" ? `[pr-closed] ${where} was closed without merging. ${tail}`
+            : fix.length ? `[pr-blocked] ${where} cannot merge: ${fix.join("; ")}.${waiting} ${tail}`
+            : `[pr-updated] ${where}: nothing fixable blocks the merge.${waiting} ${tail}`;
           await stage(project, `pr:${key}`, value, text, {
             initialSilent: observation.state === "OPEN" && matching.every(t => t.pr?.head === pr.head) && entry.watches.every(w => w.prChecks?.head === pr.head),
             normalize: notificationValue,
