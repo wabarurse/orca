@@ -7,4 +7,4 @@ export { readState, updateState, stateEntries } from "./state-store";
 export { conversationIdentity } from "./conversation-identity";
 export { conversationIds, initializeConversationStorage, organizeConversationStorage } from "./conversation-storage";
 export { syncNamedFolders, type FolderProject } from "./project-folders";
-export { attachDirectory, directoryProject, inheritedSettings, projectCatalog, saveOpenConversations, updateDirectory, type DirectoryProject } from "./directory-projects";
+export { attachDirectory, detachConversation, removeDirectory, directoryProject, inheritedSettings, projectCatalog, saveOpenConversations, updateDirectory, type DirectoryProject } from "./directory-projects";

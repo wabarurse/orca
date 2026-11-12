@@ -1,5 +1,30 @@
 # Workspace sessions and cleanup
 
+## The ownership tree
+
+Everything Orca stores hangs off one chain. Deleting a node deletes everything
+under it and nothing above or beside it:
+
+```text
+home (~/.orca)
+└─ folder     a directory you work in; its repository is yours and is never deleted
+   └─ project    one conversation in that folder: transcripts, tasks, inboxes, settings
+      └─ session    where its work happens: the folder itself, or a worker worktree
+         └─ items     agents, tasks, questions, images (and commands, sandboxes, outputs)
+```
+
+On the Projects page (Ctrl+B), `d` on a conversation deletes that project; `d`
+on a folder row deletes every conversation in it and then the folder's record.
+Either way all of its worktrees are removed, including their installed
+dependencies. The question shows how many worktrees go and how many hold
+uncommitted files, which are lost on `y`. Local branches and their commits
+always stay, as does the directory itself.
+
+Deletion is refused while an agent is live or cannot be checked, a command may
+still be running, or the conversation is mid-turn. A folder is checked whole
+before its first conversation is deleted. `src/core/tmux/ownership.ts` holds the
+tree and the cascade.
+
 Conversation deletion checks owned worktrees before stopping its idle daemon.
 Finder's regular `.DS_Store` file at the worktree root is ignored during Git
 inspection and removed during successful cleanup. Other unexpected files,

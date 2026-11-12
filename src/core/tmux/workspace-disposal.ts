@@ -41,13 +41,18 @@ export async function checkoutFiles(w: workspaces.Workspace): Promise<{ generate
   const member = w.members[0];
   if (!member || !w.branch || !w.repo) throw new Error("worktree ownership is incomplete");
   await assertWorktree(member.project, w.path, w.branch);
-  const ignored = await run(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"], { cwd: w.path, timeoutMs: 15_000 });
-  const status = await run(["git", "status", "--porcelain", "--untracked-files=all"], { cwd: w.path, timeoutMs: 15_000 });
+  return inspectCheckout(w.path);
+}
+/** What a checkout holds beyond its commits: build output that can be regenerated, and (the
+ * blocker) source edits, untracked files or ignored files nobody can regenerate, such as `.env`. */
+export async function inspectCheckout(path: string): Promise<{ generated: string[]; blocker?: string }> {
+  const ignored = await run(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"], { cwd: path, timeoutMs: 15_000 });
+  const status = await run(["git", "status", "--porcelain", "--untracked-files=all"], { cwd: path, timeoutMs: 15_000 });
   if (!ignored || ignored.code !== 0 || !status || status.code !== 0) throw new Error("cannot inspect checkout files");
   const files = ignored.out.split("\0").filter(Boolean);
-  const disposable = files.filter(f => generated(f, w.path)).map(f => join(w.path, f));
+  const disposable = files.filter(f => generated(f, path)).map(f => join(path, f));
   return { generated: disposable, ...(status.out.trim() ? { blocker: "source edits or untracked files" }
-    : files.some(f => !generated(f, w.path)) ? { blocker: "unrecognized ignored files" } : {}) };
+    : files.some(f => !generated(f, path)) ? { blocker: "unrecognized ignored files" } : {}) };
 }
 export async function removeGenerated(w: workspaces.Workspace, files: string[]): Promise<void> {
   if (workspaces.fingerprint(w.path) !== w.fingerprint) throw new Error("workspace directory identity changed");

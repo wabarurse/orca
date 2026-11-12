@@ -3,9 +3,9 @@ export { activeRoles, effortChoices, modelChoices, pageAccount, roleModelsLabel,
 export { chooseScope, type Scope } from "./scope";
 export { switchAllMenu } from "./switch-all";
 export { chooseModel, type ModelHost } from "./model-flow";
-export { deleteProject, restoreConversations, type DeleteOptions } from "./project";
+export { deleteFolder, deleteProject, deletionSummary, restoreConversations, type DeleteOptions } from "./project";
 export { sendAgentFeedback } from "./feedback";
 export { recentAgent } from "./agents";
 export { checkContextClear } from "./clear";
 export { deliveredImages, type DeliveredImage } from "./images";
-export { capturedVideos, openDeliveredMedia, type DeliveredMedia } from "./media";
+export { capturedVideos, openDeliveredMedia, openLink, type DeliveredMedia } from "./media";
