@@ -76,7 +76,7 @@ for (const [name, invalid] of [
   expect(f.calls[1]!.trace?.purpose).toBe("rolling-summary-repair");
   expect(f.calls[1]!.messages.at(-1)!.content).toContain("Target at most 6000 characters");
   expect(JSON.stringify(f.calls)).not.toContain("private malformed response");
-  for (const call of f.calls) { expect(call.model).toBe("gpt-6-astra"); expect(call.tools).toEqual([]); expect(call.maxTokens).toBe(8192); }
+  for (const call of f.calls) { expect(call.model).toBe("gpt-6-astra"); expect(call.tools).toEqual([]); expect(call.maxTokens).toBe(54400); }
 });
 
 test("repeated invalid output stops after one repair and never exposes the rejected response", async () => {
