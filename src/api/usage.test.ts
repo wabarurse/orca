@@ -2,10 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { metered, recordRetry, usageEvent, usageScope } from "./usage";
+import { metered, recordRetry, usageScope } from "./usage";
+import { usageEvent } from "../config";
 import { usageSummary } from "../core/data/knowledge";
 import { fakeProvider, text } from "../test/fake-provider";
-import { ModelRequestError } from "./bounded-request";
+import { ModelRequestError } from "./errors/bounded-request";
 let home: string, prior: string | undefined;
 afterEach(async () => { if (prior === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = prior; if (home) await rm(home, { recursive: true, force: true }); });
 test("accounting includes foreground, summaries, tools, search and retries without recording payloads", async () => {

@@ -24,7 +24,7 @@ type Order = { tiers: string[][]; children?: Record<string, Order> };
 const ORDER: Order = {
   tiers: [["config"], ["api"], ["protocol"], ["core"], ["exec", "tui"], ["cli"]],
   children: {
-    api: { tiers: [["auth"], ["images", "sanitize", "retry"], ["model-diagnostics"], ["catalog"], ["search"], ["provider"], ["anthropic", "openai"], ["account"]] },
+    api: { tiers: [["auth"], ["images", "sanitize"], ["errors"], ["model"], ["search"], ["provider"], ["usage"], ["anthropic", "openai"], ["account"]] },
     core: {
       tiers: [["proc", "execution"], ["data"], ["definitions"], ["install", "tmux", "prompt"], ["mcp"], ["tools"], ["agent-loop"]],
       children: {

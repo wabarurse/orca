@@ -1,21 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { appendFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { BUILD_ID, paths } from "../config";
+import { BUILD_ID, usageEvent } from "../config";
 import type { CompleteRequest, Provider } from "./provider";
-import { diagnoseModelError, ModelRequestError } from "./model-diagnostics";
+import { diagnoseModelError, ModelRequestError } from "./errors";
 
 type Trace = NonNullable<CompleteRequest["trace"]>;
 const scope = new AsyncLocalStorage<{ trace: Trace; id?: string; pending: Promise<void>[] }>();
 export const usageScope = <T>(trace: Trace, action: () => Promise<T>): Promise<T> => scope.run({ trace, pending: [] }, action);
-
-/** Append-only accounting: no prompts, command text, credentials or provider error bodies. */
-export async function usageEvent(event: Record<string, unknown>): Promise<void> {
-  try {
-    await mkdir(paths.runtime, { recursive: true, mode: 0o700 });
-    await appendFile(join(paths.runtime, "usage.jsonl"), JSON.stringify({ at: new Date().toISOString(), ...event }) + "\n", { mode: 0o600 });
-  } catch { console.warn("orca: usage recording unavailable; execution continues"); }
-}
 
 export function recordRetry(provider: string, event: unknown): void {
   // Retry events contain only locally constructed enums/counts/timestamps.

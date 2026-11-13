@@ -3,10 +3,10 @@ import { historicalMessages } from "../images";
 import { afterContextBoundary } from "../transcripts";
 import type { Tool as ApiTool, MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider } from "../../../api";
-import type { RequestSettings } from "../../../api/catalog";
+import type { RequestSettings } from "../../../api/model";
 import type { Transcript } from "../transcripts";
 import { paired } from "../transcripts";
-import { contextWindow } from "../../../api/catalog";
+import { contextWindow } from "../../../api/model";
 
 /**
  * What compaction and the rolling memory read of an agent's deps: the model, its

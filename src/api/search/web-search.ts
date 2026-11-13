@@ -1,4 +1,4 @@
-import type { RequestSettings } from "../catalog";
+import type { RequestSettings } from "../model";
 import { plain } from "../sanitize";
 
 export interface SearchRequest {
