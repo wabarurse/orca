@@ -14,7 +14,7 @@ import { rememberCatalogLimits } from "./catalog";
 import { codexCatalogEfforts, rememberCatalogEfforts } from "./catalog";
 import { exhaustedQuota, type RetryOptions } from "./retry";
 
-const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
+export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 
 // Protocol/catalog compatibility snapshot, matching Codex CLI 0.154.0.
 export const CODEX_CLIENT_VERSION = "0.154.0";

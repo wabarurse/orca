@@ -1,5 +1,6 @@
 /** Explicit live compatibility probe; no refresh, state writes or tool execution. */
-import { readCodexTokens, CODEX_BASE_URL } from '../../src/login/codex';
+import { readCodexTokens } from '../../src/login/codex';
+import { CODEX_BASE_URL } from '../../src/providers/openai';
 const token=await readCodexTokens(process.env.CACHE_PROFILE??'phoebe');
 if(!process.argv.includes('--live')||!token||token.expiresAt<Date.now()+600_000)throw new Error('explicit --live and a valid subscription token are required');
 const stable='These are stable reference identifiers. Answer the user with exactly OK.\n'+Array.from({length:350},(_,i)=>`reference_${i}: immutable configuration value ${i}`).join('\n');
