@@ -8,5 +8,5 @@ export async function requireCurrentDaemon(project: string, options: { build?: s
   const build = options.build ?? BUILD_ID;
   if (build === "development") return;
   const status: DaemonStatus | undefined = await (options.status ?? liveStatus)(project);
-  if (status && status.build !== build) throw new Error(`${project}: session uses a different Orca build; run orca reload, then reopen this TUI with the installed orca. Active turns finish before reload; history is retained.`);
+  if (status && status.build !== build) throw new Error(`${project}: session uses a different Orca build; run orca pull, then reopen this TUI with the installed orca. Active turns finish before reload; history is retained.`);
 }

@@ -124,14 +124,14 @@ test("a concurrent reload queues behind the active handoff and still applies its
 
 test("build mismatch blocks new messages and commands, without stopping the daemon or writing input", async () => {
   const f = fixture(); let sent = 0;
-  await expect(requireCurrentDaemon("a", { build: "new", status: f.options.status })).rejects.toThrow("orca reload");
+  await expect(requireCurrentDaemon("a", { build: "new", status: f.options.status })).rejects.toThrow("orca pull");
   const c = await createClientOrchestrator({ project: "a", build: "new", status: f.options.status,
     alive: async () => true, put: async (_project, _to, message) => { sent++; return { ...message, ts: new Date().toISOString() }; } });
   await expect(c.say("do work")).rejects.toThrow("different Orca build");
   await expect(c.compact!()).rejects.toThrow("different Orca build");
   expect(sent).toBe(0);
   const keeper = daemonKeeper({ build: "new", alive: async () => true, status: f.options.status });
-  await expect(keeper("a")).rejects.toThrow("orca reload");
+  await expect(keeper("a")).rejects.toThrow("orca pull");
   f.states.set("a", { ...f.states.get("a")!, build: "new" });
   await c.say("do work"); expect(sent).toBe(1);
   c.dispose?.();
