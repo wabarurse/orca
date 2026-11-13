@@ -3,18 +3,18 @@
 import { paths, readState, updateState } from "../config";
 import type { RequestScope } from "./bounded-transport";
 
-interface Cooldown { until: number; probeAt: number; failures: number; version: string; checkedAt?: number }
+interface Cooldown { until: number; probeAt: number; failures: number; version: string }
 const key = "cooldown";
-export class AccountCooldownError extends Error {
-  readonly status = 429;
-  constructor(readonly until: number) { super(`account rate limited until ${new Date(until).toISOString()}; explicitly resume afterward`); }
+/** A wait longer than this is a lockout: nothing is saved or waited for, the request fails and the next one asks the provider again. */
+const LOCKOUT_MS = 60_000;
+/** When a 429 (a Response, or the error an SDK made of one) says to come back, if that is a lockout away. */
+export function lockoutUntil(source: unknown, now = Date.now()): number | undefined {
+  const { status, headers } = (source ?? {}) as { status?: unknown; headers?: unknown };
+  if (status !== 429 || !headers || typeof headers !== "object") return;
+  const header = headers instanceof Headers ? headers.get("retry-after") : (headers as Record<string, unknown>)["retry-after"];
+  const until = retryAt(typeof header === "string" ? header : null, now, 1);
+  return until - now > LOCKOUT_MS ? until : undefined;
 }
-/** The cooldown behind a failure. The SDKs wrap what the transport throws, so it is looked for in the causes too. */
-export function accountCooldown(error: unknown): AccountCooldownError | undefined {
-  for (let e = error, depth = 0; e instanceof Error && depth < 5; e = e.cause, depth++) if (e instanceof AccountCooldownError) return e;
-}
-/** A long lockout is asked about again this often: the provider can lift a limit before the time it gave. */
-export const RECHECK_MS = 10 * 60_000;
 function wait(ms: number, signal?: AbortSignal | null): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(signal.reason); return; }
@@ -24,8 +24,7 @@ function wait(ms: number, signal?: AbortSignal | null): Promise<void> {
   });
 }
 /** Retry-After is scheduling evidence, never evidence of remaining account allowance. */
-function retryAt(response: Response, now: number, failures: number): number {
-  const header = response.headers.get("retry-after");
+function retryAt(header: string | null, now: number, failures: number): number {
   const value = header === null ? NaN : /^\d+(\.\d+)?$/.test(header) ? now + Number(header) * 1000 : Date.parse(header);
   return Number.isFinite(value) ? Math.max(now, value) : now + Math.min(60000, 1000 * 2 ** Math.min(failures - 1, 6));
 }
@@ -39,18 +38,8 @@ export function coordinatedTransport(account: string, transport: RequestScope["f
       admitted = readState<Cooldown>(paths.memory, scope, key);
       if (!admitted) break;
       const now = Date.now();
-      if (admitted.until - now > 60000) {
-        // Fail closed, except for one request per RECHECK_MS across all processes.
-        let recheck = false;
-        updateState<Cooldown>(paths.memory, scope, key, old => {
-          admitted = old;
-          if (!old) return;
-          recheck = Date.now() - (old.checkedAt ?? 0) >= RECHECK_MS;
-          return recheck ? { ...old, checkedAt: Date.now() } : old;
-        });
-        if (recheck || !admitted) break;
-        throw new AccountCooldownError(admitted.until);
-      }
+      // A lockout saved by an older build: ask the provider; a success below clears it.
+      if (admitted.until - now > LOCKOUT_MS) break;
       let delay = 0;
       updateState<Cooldown>(paths.memory, scope, key, old => {
         if (!old) { admitted = undefined; return; }
@@ -62,9 +51,10 @@ export function coordinatedTransport(account: string, transport: RequestScope["f
       await wait(Math.min(delay, 1000), signal);
     }
     const response = await transport(input, init);
+    if (lockoutUntil(response)) return response;
     if (response.status === 429) updateState<Cooldown>(paths.memory, scope, key, old => {
-      const failures = (old?.failures ?? 0) + 1, until = retryAt(response, Date.now(), failures);
-      return { until: Math.max(until, old?.until ?? 0), probeAt: Math.max(until, old?.probeAt ?? 0), failures, version: crypto.randomUUID(), checkedAt: Date.now() };
+      const failures = (old?.failures ?? 0) + 1, until = retryAt(response.headers.get("retry-after"), Date.now(), failures);
+      return { until: Math.max(until, old?.until ?? 0), probeAt: Math.max(until, old?.probeAt ?? 0), failures, version: crypto.randomUUID() };
     });
     else if (response.ok && admitted) updateState<Cooldown>(paths.memory, scope, key, old => old?.version === admitted?.version ? undefined : old);
     return response;
