@@ -256,6 +256,20 @@ calibrates estimates upward with estimated subsequent growth; other providers
 currently use estimates. Measurements are invalidated after compaction and ignored
 across model changes.
 
+Which model writes a summary depends on who waits for it:
+
+| Summary | Trigger | Model | Effort |
+| --- | --- | --- | --- |
+| Orchestrator background memory | 25% of the window | the account's small model (Haiku, Luna) | highest up to xhigh |
+| Foreground compaction (workers, reviewers) | 90% of the window | the agent's own model | lowest |
+
+Background memory blocks nobody, so it can think longer on a cheaper model; if
+the account refuses the small model, the part is retried on the conversation's
+model at low effort. `smallSummaries = false` in config.toml keeps it there
+always. Foreground compaction blocks the agent and its summary is all the agent
+keeps, so it stays on the agent's model and asks for the least thinking. When a
+model's effort levels are unknown, the agent's own setting is sent unchanged.
+
 The foreground trigger (workers, reviewers, and the orchestrator's own safety
 net) is **input >= 90% of the model's window**, the share Codex uses, on every
 model. The reply's full reserve is not held back from the input: a request's

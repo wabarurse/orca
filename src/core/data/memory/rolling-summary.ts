@@ -2,13 +2,15 @@ import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { ContextBlocked, estimate, requireFits, type CompactOptions } from "./compaction";
 import { historicalMessages } from "../images";
 import type { CompleteRequest, Provider, Turn } from "../../../api";
-import { modelCapabilities, type RequestSettings } from "../../../api/model";
+import { effortUpTo, type RequestSettings } from "../../../api/model";
 import { publicTaskStatus, type Task } from "../../../protocol/task";
 import type { RollingMemory } from "../../../protocol";
 
 const LIMITS = { summary: 32, pending: 16, item: 1000, targetChars: 8000, tokens: 4096, responseChars: 65536 } as const;
 interface SummaryTarget {
   model: string;
+  /** The provider's small model, when background summaries should use it; a refusal falls back to `model`. */
+  small?: string;
   loadProvider: () => Promise<Provider>;
   compaction?: CompactOptions;
 }
@@ -124,8 +126,13 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
   // Reuse the resolved foreground account/model: Claude-only installations must
   // not need a second provider login just to keep their conversation bounded.
   const provider = await target.loadProvider();
-  const settings: RequestSettings = { fast: false };
-  if (modelCapabilities(target.model).effort.includes("low")) settings.effort = "low";
+  // Nobody waits on this summary, so it may think as long as it likes: the small model at its highest
+  // effort up to xhigh. The conversation's own model, when it has to stand in, stays at low.
+  let model = target.small ?? target.model;
+  const settingsFor = (name: string): RequestSettings => {
+    const effort = effortUpTo(name, name === target.model ? "low" : "xhigh");
+    return effort ? { fast: false, effort } : { fast: false };
+  };
   let memory = options.previous ?? empty();
   // Neither reasoning nor image bytes/URLs go to the text-only summary model.
   // Original scoped references stay in SQLite/JSONL; only recent images stay in active context.
@@ -137,7 +144,7 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
     const input: MessageParam[] = [{ role: "user", content: JSON.stringify({ sourceScope: "older conversation prefix only; recent verbatim tail withheld", sourceEncoding: "JSON messages in chronological order; roles and content block types preserved; sourcePart may split a message", previousMemory: memory, sourcePart: part }) }];
     try {
       // Reserve the longer repair instructions too, before any request starts.
-      requireFits({ model: target.model, tools: {}, system: instruction, compaction: { ...target.compaction, measured: undefined }, transcript: null! }, [...input, { role: "user", content: repairInstruction }], GENERATION_TOKENS, "rolling summary source");
+      requireFits({ model, tools: {}, system: instruction, compaction: { ...target.compaction, measured: undefined }, transcript: null! }, [...input, { role: "user", content: repairInstruction }], GENERATION_TOKENS, "rolling summary source");
     } catch (error) {
       if (!(error instanceof ContextBlocked) || part.length < 2) throw error;
       // Account for JSON escaping, previous memory and the selected model's
@@ -148,8 +155,16 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
       parts.push(part.slice(middle), part.slice(0, middle));
       continue;
     }
-    memory = await summarizePart(provider, { trace: { project: options.project, agent: "orchestrator" }, signal, model: target.model,
-      settings, messages: input, tools: [], maxTokens: Math.min(GENERATION_TOKENS, target.compaction?.maxOutputTokens ?? GENERATION_TOKENS), onText() {} }, options);
+    try {
+      memory = await summarizePart(provider, { trace: { project: options.project, agent: "orchestrator" }, signal, model,
+      settings: settingsFor(model), messages: input, tools: [], maxTokens: Math.min(GENERATION_TOKENS, target.compaction?.maxOutputTokens ?? GENERATION_TOKENS), onText() {} }, options);
+    } catch (error) {
+      // The account may not offer the small model, or not at this effort: finish on the conversation's own model.
+      const refused = ["model-unavailable", "permission", "invalid-request"].includes((error as { reason?: string })?.reason ?? "");
+      if (model === target.model || !refused || signal.aborted) throw error;
+      model = target.model; parts.push(part);
+      continue;
+    }
     options.onPart?.();
   }
   return memory;

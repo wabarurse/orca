@@ -6,7 +6,7 @@ import type { Provider } from "../../../api";
 import type { RequestSettings } from "../../../api/model";
 import type { Transcript } from "../transcripts";
 import { paired } from "../transcripts";
-import { contextWindow } from "../../../api/model";
+import { contextWindow, effortUpTo } from "../../../api/model";
 
 /**
  * What compaction and the rolling memory read of an agent's deps: the model, its
@@ -160,10 +160,15 @@ async function prepare(deps: ContextDeps, messages: MessageParam[], cut: number)
   return `Conversation checkpoint (historical data, not a new user request):\n${text}`;
 }
 
+/** The agent waits for this summary, so it runs on the agent's own model at that model's lowest effort; fast mode stays as set. */
+function summarySettings(deps: ContextDeps): RequestSettings {
+  const { effort: _own, ...rest } = deps.settings ?? {}, lowest = effortUpTo(deps.model, "low");
+  return lowest ? { ...rest, effort: lowest } : deps.settings ?? {}; // unknown levels: leave the agent's own setting
+}
 async function summarize(deps: ContextDeps, source: MessageParam[], maxTokens: number): Promise<string> {
   requireFits(deps, source, maxTokens, "summarization source");
   if (!deps.provider) throw new Error("no resolved provider");
-  const result = await deps.provider.complete({ trace: { project: deps.ctx?.project, agent: deps.ctx?.role, run: deps.ctx?.run, purpose: "compaction" }, signal: deps.signal, model: deps.model, settings: deps.settings, system: deps.system, tools: [], maxTokens, onText: () => {}, messages: source });
+  const result = await deps.provider.complete({ trace: { project: deps.ctx?.project, agent: deps.ctx?.role, run: deps.ctx?.run, purpose: "compaction" }, signal: deps.signal, model: deps.model, settings: summarySettings(deps), system: deps.system, tools: [], maxTokens, onText: () => {}, messages: source });
   deps.signal?.throwIfAborted();
   if (result.stop !== "end" || !["end_turn", "completed"].includes(result.completion ?? "")) throw new Error(`summary did not complete (${result.completion ?? "unknown"})`);
   // Reasoning is normal provider metadata, not part of the saved summary.
