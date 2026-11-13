@@ -19,7 +19,7 @@ import { put } from "../core/data/inbox";
 import { directories, repoHere, validProjectName } from "../core/data/projects";
 import { execution } from "../core/data/projects/lifecycle";
 import { existsSync } from "node:fs";
-import { paths, BUILD_ID } from "../config";
+import { paths, BUILD_ID, loadConfig, saveConfig } from "../config";
 import { daemonPid, reloadRunningDaemons, requireCurrentDaemon } from "../core/agent-loop/orc";
 import { cliCommand, sessionId } from "../core/tmux";
 import { ensureProject } from "../core/agent-loop/orc";
@@ -94,6 +94,8 @@ switch (cmd) {
     const app = new App({
       term: realTerminal(),
       source: await repoHere(),
+      vim: (await loadConfig()).vim,
+      saveVim: async on => { await saveConfig({ vim: on }); },
       ensureDaemon: daemonKeeper({ signal: closing.signal }),
       async openOrchestrator(project, url, write, _onInbox, tools) {
         await ensureProject(project, url);

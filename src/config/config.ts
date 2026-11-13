@@ -14,6 +14,8 @@ export interface Config {
   openaiAccount: string;
   /** Reuse Claude request prefixes; cache reads still count toward context. */
   anthropicPromptCache: boolean;
+  /** Whether the TUI starts in Vim mode (on unless turned off); /vim toggles and saves it. */
+  vim: boolean;
   /** Maximum overlap for calls explicitly marked independent; 1 is sequential. */
   toolConcurrency: number;
   /** Maximum bytes saved per shell command before terminating its process group. */
@@ -32,6 +34,7 @@ export const defaults: Config = {
   account: "",
   openaiAccount: "",
   anthropicPromptCache: true,
+  vim: true,
   toolConcurrency: 4,
   maxToolOutputBytes: 64 * 1024 * 1024,
   maxToolResultBytes: 16 * 1024,
@@ -66,6 +69,7 @@ export async function loadConfig(options: { strict?: boolean } = {}): Promise<Co
 function withFallbacks(config: Config): Config {
   if (config.sandbox !== "off" && config.sandbox !== "workspace") throw new Error("sandbox must be off or workspace; no execution fallback is permitted");
   if (typeof config.anthropicPromptCache !== "boolean") config.anthropicPromptCache = defaults.anthropicPromptCache;
+  if (typeof config.vim !== "boolean") config.vim = defaults.vim;
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;
   if (!integerWithin(config.maxToolOutputBytes, 1024, 256 * 1024 * 1024)) config.maxToolOutputBytes = defaults.maxToolOutputBytes;

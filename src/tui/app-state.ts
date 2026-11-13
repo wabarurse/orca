@@ -52,6 +52,10 @@ export interface Page {
 }
 
 export interface AppDeps {
+  /** Start in Vim mode (the saved `vim` setting). */
+  vim?: boolean;
+  /** Remember a /vim toggle for the next start; the CLI saves it to config.toml. */
+  saveVim?: (on: boolean) => Promise<void>;
   feedback?: typeof sendAgentFeedback;
   /** Completed drag or explicit Ctrl+O; tests inject a writer, never the live clipboard. */
   clipboardText?: (text: string) => Promise<void>;
