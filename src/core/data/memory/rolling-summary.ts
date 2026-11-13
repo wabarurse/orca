@@ -1,5 +1,5 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { ContextBlocked, estimate, requireFits, type CompactOptions } from "./compaction";
+import { ContextBlocked, estimate, replyCap, requireFits, type CompactOptions, type ContextDeps } from "./compaction";
 import { historicalMessages } from "../images";
 import type { CompleteRequest, Provider, Turn } from "../../../api";
 import { effortUpTo, type RequestSettings } from "../../../api/model";
@@ -38,6 +38,9 @@ const repairInstruction = `The previous attempt failed local output validation. 
 // own stricter budget. A larger generation allowance never relaxes validation.
 // Pi likewise separates summary generation from its retained-context reserve:
 // https://github.com/earendil-works/pi/blob/a14cdf90f0a76532f3e20bc3c01872837cef24ba/packages/coding-agent/src/core/compaction/compaction.ts
+// This is the room kept free for the written summary when a part is sized, never the request's reply
+// cap: providers count thinking against that cap, so the request asks for all the room the window has
+// left (`replyCap`) and parseMemory alone bounds what is accepted.
 const GENERATION_TOKENS = 8192;
 class MemoryOutputError extends Error {}
 
@@ -93,7 +96,7 @@ async function summarizePart(provider: Provider, request: CompleteRequest, optio
     try { return resultMemory(result); }
     catch (error) {
       if (!(error instanceof MemoryOutputError)) throw error;
-      if (attempt) throw new Error(`summary validation failed after 2 attempts: ${error.message}`);
+      if (attempt) throw new MemoryOutputError(`summary validation failed after 2 attempts: ${error.message}`);
       options.onRepair?.(error.message);
     }
   }
@@ -142,9 +145,11 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
     signal.throwIfAborted();
     const part = parts.pop()!;
     const input: MessageParam[] = [{ role: "user", content: JSON.stringify({ sourceScope: "older conversation prefix only; recent verbatim tail withheld", sourceEncoding: "JSON messages in chronological order; roles and content block types preserved; sourcePart may split a message", previousMemory: memory, sourcePart: part }) }];
+    const deps: ContextDeps = { model, tools: {}, system: instruction, compaction: { ...target.compaction, measured: undefined }, transcript: null! };
+    const repair: MessageParam[] = [...input, { role: "user", content: repairInstruction }];
     try {
       // Reserve the longer repair instructions too, before any request starts.
-      requireFits({ model, tools: {}, system: instruction, compaction: { ...target.compaction, measured: undefined }, transcript: null! }, [...input, { role: "user", content: repairInstruction }], GENERATION_TOKENS, "rolling summary source");
+      requireFits(deps, repair, GENERATION_TOKENS, "rolling summary source");
     } catch (error) {
       if (!(error instanceof ContextBlocked) || part.length < 2) throw error;
       // Account for JSON escaping, previous memory and the selected model's
@@ -157,10 +162,11 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
     }
     try {
       memory = await summarizePart(provider, { trace: { project: options.project, agent: "orchestrator" }, signal, model,
-      settings: settingsFor(model), messages: input, tools: [], maxTokens: Math.min(GENERATION_TOKENS, target.compaction?.maxOutputTokens ?? GENERATION_TOKENS), onText() {} }, options);
+      settings: settingsFor(model), messages: input, tools: [], maxTokens: replyCap(deps, repair), onText() {} }, options);
     } catch (error) {
-      // The account may not offer the small model, or not at this effort: finish on the conversation's own model.
-      const refused = ["model-unavailable", "permission", "invalid-request"].includes((error as { reason?: string })?.reason ?? "");
+      // The account may not offer the small model, or not at this effort, or the small model cannot
+      // write a valid summary of this part: finish on the conversation's own model.
+      const refused = error instanceof MemoryOutputError || ["model-unavailable", "permission", "invalid-request"].includes((error as { reason?: string })?.reason ?? "");
       if (model === target.model || !refused || signal.aborted) throw error;
       model = target.model; parts.push(part);
       continue;

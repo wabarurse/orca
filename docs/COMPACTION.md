@@ -97,8 +97,12 @@ truncated summary gets one repair request for the same source part and previous
 memory, using the same account/model with no tools. The repair is separately
 metered as `rolling-summary-repair` and gets its own request deadline. The source
 and system-message prefix stay identical; the repair instruction follows the source
-to enable prefix-cache reuse. Summary generation allows up to 8192 tokens (subject
-to an explicit output ceiling); accepted memory still has the 4096-token limit.
+to enable prefix-cache reuse. A part is sized to leave 8192 tokens for the written summary, but the request's
+reply cap is all the room the window has left (`replyCap`): providers count
+thinking against that cap, so a fixed small cap cuts a thinking summary off.
+Accepted memory still has the 4096-token limit, checked locally. A small model
+that cannot produce a valid summary of a part after its repair hands that part
+to the conversation's model.
 The generation allowance covers syntax and possible reasoning without relaxing
 stored-memory validation. The source
 and memory are never cut locally to satisfy validation. Provider/authentication
@@ -285,7 +289,8 @@ capped at the harness's 64000, context-1, and any supplied verified output ceili
 Invalid overrides fall back to the default. With `compact=false`, the old 64000
 normal output cap is preserved unless explicitly overridden or capped by known
 context/output metadata. Disabling auto does not disable safety budget checks.
-Worker/reviewer summary requests use min(4096, normalized output cap) and ask for at most 600 words;
+Worker/reviewer summary requests are sized to leave min(4096, normalized output cap) for the summary, ask for at most 600 words
+and cap the reply at the room the window has left (thinking counts against the cap);
 returned summaries over
 4096 estimated tokens are rejected in addition to checking provider completion.
 
