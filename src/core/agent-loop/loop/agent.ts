@@ -10,7 +10,7 @@ import type { RequestSettings } from "../../../api/model";
 import type { ContentBlock, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { projectModelResolver } from "../../data/projects";
 import { workspaces } from "../../data/projects";
-import { budget, compact, outputCap, requireFits, type CompactOptions, type ContextDeps } from "../../data/memory";
+import { budget, compact, outputCap, replyCap, requireFits, type CompactOptions, type ContextDeps } from "../../data/memory";
 import type { Tracker } from "../../tmux";
 import type { ModelRequestState } from "../../tmux";
 import { consume, content } from "../../data/inbox";
@@ -218,7 +218,7 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void,
       model: deps.model,
       settings: deps.settings,
       system: deps.system,
-      maxTokens: outputCap(deps),
+      maxTokens: replyCap(deps, messages), // the cap, or less when the window is nearly full
       messages: delivered,
       tools: Object.values(deps.tools).map((t) => t.spec),
       onText: (t: string) => { write(t); if (t.trim()) timing?.record("text"); },
