@@ -1,4 +1,4 @@
-import type { Role } from "../../protocol";
+import type { Role } from "../../types";
 import { definition } from "./files";
 
 /** Visible role/shared templates are loaded on each prompt construction. The

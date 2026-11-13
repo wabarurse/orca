@@ -1,6 +1,6 @@
+import type { ImageRef } from "../../types";
 import { paths } from "../../config";
 import { blockRef, validateRefs } from "../data/images";
-import type { ImageRef } from "../../protocol";
 import { sessionId } from "../tmux";
 import { afterContextBoundary, open } from "../data/transcripts";
 import type { ToolContext } from "./registry";

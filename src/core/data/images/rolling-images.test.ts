@@ -1,3 +1,4 @@
+import type { ImageRef } from "../../../types";
 import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -10,7 +11,6 @@ import { estimate } from "../memory/compaction";
 import { forwardImages } from "../../tools/attachments";
 import { historicalMessages } from "./history";
 import { blockRef, imageBlock, imageContent, loadImage, materializeImages, pendingImageInputs, saveImage, saveImageInput } from "./images";
-import type { ImageRef } from "../../../protocol/images";
 import { content, consume, pending, put } from "../inbox/inbox";
 import { archivePath, archiveTranscript, entryText, queryHistory } from "../memory/archive";
 import { createOrchestrator, type Orchestrator } from "../../agent-loop/orc/orchestrator";

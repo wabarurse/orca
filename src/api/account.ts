@@ -1,9 +1,10 @@
 // The Provider for a provider name and profile (the project's selected account): Claude Code tokens
 // behind the Anthropic SDK, or Codex tokens behind the OpenAI client.
 
+import type { ProviderName } from "../types";
 import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "../config";
-import { activeProfile, type ProviderName } from "./auth";
+import { activeProfile } from "./auth";
 import { claudeCredentials, readClaudeTokens } from "./auth";
 import { codexCredentials, readCodexTokens } from "./auth";
 import { anthropic, CLAUDE_BETAS } from "./anthropic";

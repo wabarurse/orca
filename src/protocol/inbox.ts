@@ -1,8 +1,8 @@
+import type { ImageRef } from "../types";
 // The inbox message record (core/data/inbox/inbox.ts queues and consumes them)
 // and its pure text form: `format` tags messages as one user turn, `parseFormatted`
 // reads a formatted turn back (the TUI's restore).
 
-import type { ImageRef } from "./images";
 
 export interface Message {
   /** Runtime observation, never user authority. Stable identity survives replay. */

@@ -1,8 +1,9 @@
+import type { ImageMime } from "../../../types";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
-import { validateImage, type ImageMime } from "../../../api";
+import { validateImage } from "../../../api";
 import { run } from "../../proc";
 
 // Pi separates source images from model payload preparation. Orca keeps scoped

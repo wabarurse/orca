@@ -1,3 +1,4 @@
+import type { ImageRef } from "../../types";
 import { put } from "../../core/data/inbox";
 import { recordCorrection } from "../../core/data/knowledge";
 import { readRun, local } from "../../core/tmux";
@@ -6,7 +7,6 @@ import { registry } from "../../core/tools";
 import type { Runner } from "../../core/tmux";
 import type { Tool } from "../../core/tools";
 import { paths } from "../../config";
-import type { ImageRef } from "../../protocol";
 
 /** Selecting an agent makes the recipient explicit. Preserve the original
  * human correction and let the normal spawn ownership gates handle idle resume. */

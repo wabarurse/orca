@@ -1,5 +1,5 @@
+import type { Role } from "../../types";
 import { promptDefinitions } from "../definitions";
-import type { Role } from "../../protocol";
 import { ORCHESTRATOR } from "./orchestrator";
 import { REVIEWER } from "./reviewer";
 import { WORKER } from "./worker";

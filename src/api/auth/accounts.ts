@@ -4,21 +4,9 @@ import { codexProfiles, readCodexTokens } from "./codex";
 import { validateProfile } from "./oauth";
 import { loadConfig } from "../../config";
 
-export type ProviderName = "anthropic" | "openai";
+import type { Account, AccountRef, ProviderName } from "../../types";
 
-/** One subscription login: a provider and one of its profiles. A project selects exactly one. */
-export interface AccountRef { provider: ProviderName; profile: string }
 export const accountId = (ref: AccountRef) => `${ref.provider}:${ref.profile}`;
-
-export interface Account {
-  /** "anthropic:<profile>" or "openai:<profile>". */
-  id: string;
-  provider: ProviderName;
-  profile: string;
-  ok: boolean;
-  active: boolean;
-  source: string;
-}
 
 export const activeProfile = (configured: string) => validateProfile(configured || "default");
 

@@ -1,3 +1,4 @@
+import type { ProviderName } from "../../../types";
 import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +10,6 @@ import { saveProjectSettings } from "../../data/projects/project-settings";
 import { saveProjectModel } from "../../data/projects/project-model";
 import { open } from "../../data/transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import type { ProviderName } from "../../../api/auth/accounts";
 import type { CompleteRequest } from "../../../api/provider";
 
 const home = mkdtempSync(join(tmpdir(), "model-startup-"));

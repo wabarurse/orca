@@ -1,10 +1,10 @@
+import type { ImageRef } from "../../../types";
 import { afterAll, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import type { ImageRef } from "../../../protocol/images";
 import { paths } from "../../../config/config";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { content, consume, pending, put } from "../inbox/inbox";

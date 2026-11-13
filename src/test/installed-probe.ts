@@ -1,5 +1,6 @@
 // Compiled test entrypoint only: same runner/agent/exit code as the CLI, with a
 // fake provider and fake tmux boundary. No production flags or provider overrides.
+import type { Role } from "../types";
 import { installedImages } from "./installed-images";
 import { appendFileSync, readFileSync } from "node:fs";
 import { local } from "../core/tmux/runner";
@@ -7,7 +8,6 @@ import { runAgent } from "../exec/run";
 import { afterExit } from "../exec/after-exit";
 import { sessionId } from "../core/tmux/runner";
 import { fakeProvider, text } from "./fake-provider";
-import type { Role } from "../protocol/transcript";
 
 const [cmd, ...args] = process.argv.slice(2);
 const record = (entry: object) => appendFileSync(process.env.PROBE_LOG!, JSON.stringify(entry) + "\n");
