@@ -4,10 +4,9 @@ import { join } from "node:path";
 import { present as existsSync, safeDirectory, safeFile, safeProjectDirectories } from "./layout-safety";
 import { assertStorageAvailable } from "./conversation-storage";
 
-export const movedRoot = ["app", "checkout-locks", "turn-locks", "project-locks", "daemon-locks"];
-export const movedProject = ["orchestrator", "inbox", "runs", "questions", "merged"];
-export const runtimeRoot = (root: string) => join(root, ".runtime");
-export function legacyEntries(root: string): string[] {
+const movedRoot = ["app", "checkout-locks", "turn-locks", "project-locks", "daemon-locks"];
+const movedProject = ["orchestrator", "inbox", "runs", "questions", "merged"];
+function legacyEntries(root: string): string[] {
   const entries = [...movedRoot, "tmux.sock"].filter(n => existsSync(join(root, n)));
   const projects = join(root, "projects");
   for (const p of safeProjectDirectories(root)) {
@@ -18,7 +17,7 @@ export function legacyEntries(root: string): string[] {
 /** CLI entry gate, before launching agents or mutating any project. No migration here. */
 export function assertLayout(root: string, organizing = false): void {
   if (!organizing) assertStorageAvailable(root);
-  const runtime = runtimeRoot(root), journal = join(runtime, "migration.json");
+  const runtime = join(root, ".runtime"), journal = join(runtime, "migration.json");
   validateLayoutPaths(root, runtime, journal);
   if (existsSync(journal)) requireMarker(journal, "phase", "complete");
   if (legacyEntries(root).length) fail();

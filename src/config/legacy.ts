@@ -1,50 +1,16 @@
-// Read compatibility only. New names and records use orca; do not rewrite saved data.
+// Worktrees an older build created beside the checkout keep their Git-registered location.
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
-
-export const legacy = {
-  stateDirectory: ".parallels",
-  homeVariable: "PARALLELS_HOME",
-  worktreeSuffix: ".parallels-worktrees",
-  imagePrefix: "parallels-image:",
-  executable: "parallels",
-  engine: "parallels",
-} as const;
 
 function present(path: string): boolean {
   try { lstatSync(path); return true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
 }
 
-/** Never migrate live storage. An explicit override wins, then existing state. */
-export function stateRoot(home: string, env: NodeJS.ProcessEnv): string {
-  if (env.ORCA_HOME !== undefined) return env.ORCA_HOME;
-  if (env[legacy.homeVariable] !== undefined) return env[legacy.homeVariable]!;
-  const old = join(home, legacy.stateDirectory), current = join(home, ".orca");
-  // The new installer can create .orca/app before the old state is migrated.
-  // A new app checkout alone must not hide existing accounts or conversations.
-  const currentState = [".runtime/layout.json", ".runtime/config.toml", ".runtime/auth", "config.toml", "auth", "projects"].some(name => present(join(current, name)));
-  return !currentState && present(old) ? old : current;
-}
-
-/** Where worktrees were created beside the checkout, oldest scheme first. Existing ones keep their
- * Git-registered location; nothing new is created here. */
+/** Where worktrees were created beside the checkout. Existing ones stay; nothing new is created here. */
 export function siblingWorktreeRoots(checkout: string, id: string): string[] {
-  return [join(`${checkout}${legacy.worktreeSuffix}`, id), join(`${checkout}.orca-worktrees`, id)].filter(present);
+  return [join(`${checkout}.orca-worktrees`, id)].filter(present);
 }
 
 /** True for the folder older builds made beside a checkout to hold its worktree namespaces. */
-export const siblingWorktreeFolder = (path: string) => path.endsWith(legacy.worktreeSuffix) || path.endsWith(".orca-worktrees");
-
-/** Updates use an installed checkout, independently of the runtime state root. */
-export function installedApp(home: string): string {
-  const current = join(home, ".orca");
-  if (present(join(current, "app")) || present(join(home, legacy.stateDirectory, "app"))) {
-    throw new Error("legacy installed app: run the documented offline layout migration before pull");
-  }
-  const migrated = join(current, ".runtime", "app");
-  const oldMigrated = join(home, legacy.stateDirectory, ".runtime", "app");
-  return present(migrated) || !present(oldMigrated) ? migrated : oldMigrated;
-}
-
-export const harnessEngine = (engine: unknown) => engine === "orca" || engine === legacy.engine;
+export const siblingWorktreeFolder = (path: string) => path.endsWith(".orca-worktrees");

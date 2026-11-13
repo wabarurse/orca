@@ -7,8 +7,8 @@ import { open } from '../../data/transcripts';
 import { createAgent } from './agent';
 import type { CompleteRequest, Provider } from '../../../providers';
 const root=await mkdtemp(join(tmpdir(),'orca-append-agent-'));
-const saved={ORCA_HOME:process.env.ORCA_HOME,PARALLELS_HOME:process.env.PARALLELS_HOME};
-process.env.ORCA_HOME=root;process.env.PARALLELS_HOME=root;
+const saved={ORCA_HOME:process.env.ORCA_HOME};
+process.env.ORCA_HOME=root;
 afterAll(async()=>{await rm(root,{recursive:true,force:true});for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
 const base=(project:string)=>({project,role:'worker' as const,cwd:root});
 test('real loop keeps system and earlier messages stable while knowledge changes after a tool',async()=>{

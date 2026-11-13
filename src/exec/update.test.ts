@@ -2,17 +2,17 @@ import { expect, test } from "bun:test";
 import { activateInstalled } from "./update";
 
 test("activation invokes the installed binary with the global state root, independent of cwd and overrides", async () => {
-  const before = process.env.ORCA_HOME, legacy = process.env.PARALLELS_HOME;
-  process.env.ORCA_HOME = "/unrelated/state"; process.env.PARALLELS_HOME = "/another/state";
+  const before = process.env.ORCA_HOME;
+  process.env.ORCA_HOME = "/unrelated/state";
   try {
     let calls = 0;
     await activateInstalled("/fixture/.local/bin/orca", { home: "/fixture", run: async (argv, env) => {
       calls++;
       expect(argv).toEqual(["/fixture/.local/bin/orca", "reload"]);
-      expect(env.ORCA_HOME).toBe("/fixture/.orca"); expect(env.PARALLELS_HOME).toBeUndefined(); return 0;
+      expect(env.ORCA_HOME).toBe("/fixture/.orca"); return 0;
     } });
     expect(calls).toBe(1); expect(process.env.ORCA_HOME).toBe("/unrelated/state");
-  } finally { process.env.ORCA_HOME = before; process.env.PARALLELS_HOME = legacy; }
+  } finally { process.env.ORCA_HOME = before; }
 });
 
 test("activation failure reports that installation succeeded, without repeating or rolling back installation", async () => {

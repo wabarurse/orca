@@ -19,16 +19,11 @@ it keeps running after the TUI closes): new tmux sessions use the `orca-` prefix
 The installer leaves the old executable and its receipt in place, rather than
 overwriting an unrelated command or changing a running process.
 
-`ORCA_HOME` takes precedence; the old `PARALLELS_HOME` override is still recognized.
-Without an override, established state in `~/.orca` wins; otherwise an existing
-`~/.parallels` is selected. Selection does not bypass the version gate: old state
-requires its matching old version. Creating only `.runtime/app` does not hide an
-old home. Initialize a fresh home explicitly when switching to layout 3.
+State lives in `~/.orca`, or wherever `ORCA_HOME` points. Old state
+requires its matching old version; initialize a fresh home explicitly when
+switching to layout 3.
 
-`orca pull` also supports an existing dedicated `~/.parallels/app` checkout when
-`~/.orca/.runtime/app` is absent. Builds include a compatibility output for an already
-running old updater, so it receives the new binary instead of a stale build;
-the one-time install above supplies the new `orca` command. The verified GitHub
+`orca pull` updates the dedicated `~/.orca/.runtime/app` checkout. The verified GitHub
 origin is still `https://github.com/wabarurse/parallels.git`; renaming the product
 does not rename the hosted repository. Historical evaluation evidence retains
 its original names and paths.
@@ -83,9 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/wabarurse/parallels/main/install.sh
 sh install.sh
 ```
 
-Existing config, auth, projects and repositories stay in place. Creating the
-app directory alone does not hide existing `.parallels` state. `ORCA_HOME` and
-the legacy override continue to select runtime state independently of the app.
+Existing config, auth, projects and repositories stay in place. `ORCA_HOME` selects runtime state independently of the app.
 Future updates use `orca pull`. An existing app is never overwritten by the
 bootstrap; for failed or partial installs, see
 [ownership and recovery](#installer-ownership-and-recovery).
@@ -957,8 +950,7 @@ Accumulated image limits fail explicitly, never evict images silently. See
 [image context/history behavior](IMAGE_ATTACHMENTS.md#context-budgeting-and-integration-contract).
 
 **Migration from per-project files.** Earlier versions kept
-`projects/<project>/memory.sqlite` in the state directory (see above: `~/.orca`, or an
-existing `~/.parallels` that is reused; the global file lives in the same directory). When the global file is first
+`projects/<project>/memory.sqlite` in the state directory (`~/.orca`; the global file lives in the same directory). When the global file is first
 created, or lacks `meta.backfill_version`, the orchestrator starts a resumable
 background backfill that never blocks startup (failures are reported and
 retried on a later start). Per project, under its state lock, it re-indexes the

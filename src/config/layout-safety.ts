@@ -53,11 +53,3 @@ export function safeProjectDirectories(base: string): string[] {
   if (new Set(ids).size !== ids.length) throw new Error("duplicate conversation storage");
   return out;
 }
-/** Validate from the trusted root down before probing any descendant. */
-export function safeAncestors(root: string, relative: string, device: number) {
-  let path = root;
-  for (const part of ["", ...relative.split("/").slice(0, -1)]) {
-    path = join(path, part);
-    if (present(path) && safeDirectory(path).dev !== device) throw new Error(`cross-device ancestor refused: ${path}`);
-  }
-}

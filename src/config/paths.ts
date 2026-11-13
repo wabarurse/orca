@@ -5,11 +5,13 @@ import { basename, isAbsolute, join } from "node:path";
 import { readState, updateState, recoverStateScope, legacyStateScopes } from "./state-store";
 import { conversationIdentity } from "./conversation-identity";
 import { directoryProject, inheritedSettings, setDirectorySetting } from "./directory-projects";
-import { stateRoot, siblingWorktreeRoots } from "./legacy";
+import { siblingWorktreeRoots } from "./legacy";
 import { conversationPath } from "./conversation-storage";
 
 // Read lazily so tests can point ORCA_HOME at a temp dir after import.
-const root = () => stateRoot(homedir(), process.env);
+const root = () => process.env.ORCA_HOME ?? join(homedir(), ".orca");
+/** The installed checkout that `orca pull` updates, whatever ORCA_HOME says. */
+export const installedApp = (home: string) => join(home, ".orca", ".runtime", "app");
 
 // An empty branch explicitly binds an ordinary directory, without Git/worktree semantics.
 export interface RepositoryBinding { version: 1; directory: string; branch: string; worktreeId: string }

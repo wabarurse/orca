@@ -29,7 +29,6 @@ import { openDeliveredMedia } from "../../../tui/commands/media";
 import { png } from "../../../test/image-fixture";
 import { render } from "../../../tui/conversation/view";
 import { restore } from "../../../tui/conversation/restore";
-import { legacy } from "../../../config/legacy";
 
 const home = mkdtempSync(join(tmpdir(), "orca-images-"));
 process.env.ORCA_HOME = home;
@@ -37,18 +36,6 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 function project() { const id = `p-${crypto.randomUUID()}`; mkdirSync(paths.project(id), { recursive: true }); return id; }
 const ctx = (project: string) => ({ project, role: "orchestrator" as const, cwd: home });
 function imageCount(messages: MessageParam[]) { return messages.flatMap(m => typeof m.content === "string" ? [] : m.content).filter(b => b.type === "image").length; }
-
-test("saved pre-rename image references still materialize, while new references use orca", async () => {
-  const p = project(), ref = await saveImage(p, png());
-  const block = imageBlock(ref);
-  expect(block.source.type).toBe("url");
-  if (block.source.type !== "url") throw new Error("expected local image reference");
-  expect(block.source.url.startsWith("orca-image:")).toBe(true);
-  block.source.url = block.source.url.replace("orca-image:", legacy.imagePrefix);
-  const messages = await materializeImages(p, [{ role: "user", content: [block] }]);
-  expect(JSON.stringify(messages)).toContain('"type":"base64"');
-  await expect(materializeImages(project(), [{ role: "user", content: [block] }])).rejects.toThrow("another/deleted");
-});
 
 test("PNG validation rejects invalid MIME, empty/truncated, wrong CRC, excessive bytes/dimensions, and compressed bombs", () => {
   expect(validateImage(png())).toEqual({ width: 1, height: 1 });

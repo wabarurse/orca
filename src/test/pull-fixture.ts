@@ -5,11 +5,10 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { installBinary } from "../core/install/installation";
 import { HARNESS_ORIGIN, updateCommand, type UpdateCommand } from "../core/install/pull";
-import { legacy } from "../config/legacy";
 
-export async function pullFixture(options: { legacyApp?: boolean } = {}) {
+export async function pullFixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "orca-pull-")));
-  const home = join(root, "home ' $space"), stateDirectory = options.legacyApp ? legacy.stateDirectory : ".orca";
+  const home = join(root, "home ' $space"), stateDirectory = ".orca";
   const app = join(home, stateDirectory, ".runtime", "app"), remote = join(root, "remote ' repo");
   const caller = join(root, "unrelated ' repo"), state = join(root, "relocated state");
   const env = { ...process.env, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null" };

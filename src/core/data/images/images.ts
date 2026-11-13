@@ -8,7 +8,6 @@ import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { paths, legacyProjectIdentities } from "../../../config";
-import { legacy } from "../../../config";
 import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../providers";
 import { assertProjectIdentity, projectIdentity, session, withProjectStateLock, workspaces } from "../projects";
 import type { ImageInput, ImageRef } from "../../../protocol";
@@ -124,7 +123,7 @@ export function imageBlock(ref: ImageRef): ImageBlockParam {
   return { type: "image", source: { type: "url", url: `orca-image:${ref.scope}:${ref.id}:${ref.sha256}` } };
 }
 export function blockRef(block: ImageBlockParam): ImageRef | undefined {
-  if (block.source.type !== "url" || !(block.source.url.startsWith("orca-image:") || block.source.url.startsWith(legacy.imagePrefix))) return;
+  if (block.source.type !== "url" || !block.source.url.startsWith("orca-image:")) return;
   const [, scope, id, sha256, extra] = block.source.url.split(":");
   const ref = { scope: scope!, id: id!, sha256: sha256! };
   if (extra !== undefined) throw new Error("invalid image reference");
