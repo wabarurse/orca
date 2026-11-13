@@ -189,7 +189,7 @@ export class App {
 
   constructor(private readonly deps: AppDeps) {
     this.finished = new Promise<void>((r) => (this.done = r));
-    const app = this;
+    const app = this; if (deps.vim) app.vimMode = "normal"; // the saved vim setting
     this.questions = new Questions({
       page: () => app.page,
       valid: page => !app.closed && app.pages.includes(page as Page) && !(page as Page).deleting,
@@ -1151,6 +1151,7 @@ export class App {
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
     ["/vim", { run: () => {
       this.vimMode = this.vimMode ? undefined : "normal"; this.vimPrefix = undefined; this.draw();
+      void this.deps.saveVim?.(this.vimMode !== undefined).catch(error => this.note(`vim setting was not saved: ${error instanceof Error ? error.message : String(error)}`));
     }, help: { group: "conversation", label: "/vim", description: "toggle Vim navigation and editing modes" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "rename conversation and its folder link; keep its identity" } }],
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
