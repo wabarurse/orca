@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { owned, prepareArtifact, withInstallation } from "./installation";
 import { withGitCredentials } from "./git-credentials";
-import { installedApp, legacy } from "../../config";
+import { installedApp } from "../../config";
 
 export const HARNESS_ORIGIN = "https://github.com/wabarurse/parallels.git";
 export interface CommandResult { code: number; out: string; err: string }
@@ -66,7 +66,6 @@ async function safeBuildPaths(app: string): Promise<void> {
   for (const name of ["package.json", "bun.lock", "bun.lockb", "bunfig.toml"]) await owned(join(app, name));
   await owned(join(app, "dist"), true);
   await owned(join(app, "dist", "orca"));
-  await owned(join(app, "dist", legacy.executable));
 }
 
 async function noOperationInProgress(app: string) {

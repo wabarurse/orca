@@ -4,31 +4,11 @@ import { join } from "node:path";
 import { installBinary } from "./installation";
 import { HARNESS_ORIGIN, pullHarness } from "./pull";
 import { pullFixture } from "../../test/pull-fixture";
-import { legacy } from "../../config/legacy";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture() { const f = await pullFixture(); roots.push(f.root); return f; }
 const fetched = (calls: string[][]) => calls.some(a => a.includes("fetch"));
-
-test("orca updates a migrated legacy dedicated checkout without changing origin trust", async () => {
-  const f = await pullFixture({ legacyApp: true }); roots.push(f.root);
-  await pullHarness(f.options);
-  expect(await f.binary()).toBe("new executable");
-  expect(await f.g(f.app, "rev-parse", "HEAD")).toBe(f.after);
-  expect(f.output.join("\n")).toContain(f.app);
-  expect(await f.g(f.app, "remote", "get-url", "origin")).toBe(HARNESS_ORIGIN);
-});
-
-test("legacy build compatibility output cannot follow a symlink outside the checkout", async () => {
-  const f = await fixture(), outside = join(f.root, "preserve");
-  await writeFile(outside, "keep");
-  await mkdir(join(f.app, "dist"));
-  await symlink(outside, join(f.app, "dist", legacy.executable));
-  await expect(pullHarness(f.options)).rejects.toThrow("unsafe file");
-  expect(await readFile(outside, "utf8")).toBe("keep");
-  expect(fetched(f.calls)).toBe(false);
-});
 
 test("pull fast-forwards only the dedicated main clone, freezes deps and reinstalls on no-op", async () => {
   const f = await fixture(), cwd = process.cwd();

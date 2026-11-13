@@ -1,7 +1,7 @@
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { paths, installedApp, legacy } from "../config";
+import { paths, installedApp } from "../config";
 import { cliCommand } from "../core/tmux";
 
 /** The updater must outlive the invoking terminal. Output is append-only and
@@ -25,7 +25,6 @@ export async function activateInstalled(binary: string, options: {
 } = {}): Promise<void> {
   try {
     const env: NodeJS.ProcessEnv = { ...process.env, ORCA_HOME: dirname(dirname(installedApp(options.home ?? homedir()))) };
-    delete env[legacy.homeVariable];
     const run = options.run ?? (async (argv, env) => Bun.spawn(argv, { env, stdin: "ignore", stdout: "inherit", stderr: "inherit" }).exited);
     if (await run([binary, "reload"], env) !== 0) throw new Error("activation command failed");
   } catch (error) { (options.write ?? console.error)(`installation succeeded, but session activation failed: ${error instanceof Error ? error.message : error}; run orca reload to retry`); }

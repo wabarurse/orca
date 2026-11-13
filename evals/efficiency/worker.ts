@@ -5,13 +5,12 @@ import { provider as accountProvider } from "../../src/providers/account";
 import { providerFor, type Provider, type Turn } from "../../src/providers";
 import type { Tool } from "../../src/core/tools/registry";
 import { paths } from "../../src/config/config";
-import { legacy } from "../../src/config/legacy";
 const spec = await Bun.file(process.argv[2]!).json();
 // Resolve the configured subscription before switching to a disposable project store.
 // Both arms share the instrumented adapter. Cache off reproduces the baseline request payload.
 const authHome = paths.root;
 // Frozen baseline checkouts still read the old variable. Isolate both versions.
-const useState = (root: string) => { process.env.ORCA_HOME = root; process.env[legacy.homeVariable] = root; };
+const useState = (root: string) => { process.env.ORCA_HOME = root; };
 const source = await accountProvider(providerFor(spec.model), { promptCache: spec.after === true });
 useState(spec.state);
 await mkdir(spec.state, { recursive: true });

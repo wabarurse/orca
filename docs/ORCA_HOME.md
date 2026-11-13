@@ -72,7 +72,7 @@ Original repositories stay where the user put them. Worker Git worktrees are cre
 
 The bootstrap installer is for fresh destinations and downloads `main`; it does not install an unmerged PR or migrate a live installation. A fresh home intentionally starts with fresh conversation/settings state. There is no automated preservation upgrade to layout 3 in this revision.
 
-`migrateLayout` (`src/config/migrate-layout.ts`) and its tests remain for historical **v1→v2** offline recovery; its command-line script was removed, so call the function from a one-off script if it is ever needed. They move selected runtime entries and preserve their own journal/backups; their output is still rejected by layout 3. Do not treat it as a current upgrade path or change a version marker to bypass the gate. Recover an old installation with its matching old version and recovery procedure.
+The v1→v2 migration utility is removed. Do not change a version marker to bypass the gate. Recover an old installation with its matching old version and recovery procedure.
 
 ## Editable definitions
 
