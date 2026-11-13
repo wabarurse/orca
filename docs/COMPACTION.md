@@ -256,10 +256,15 @@ calibrates estimates upward with estimated subsequent growth; other providers
 currently use estimates. Measurements are invalidated after compaction and ignored
 across model changes.
 
-The worker/reviewer trigger is the earlier of the configured **working-context
-target (`workerContextTokens`, default 128000)** and **input + output reserve >=
-80% of the window**. The orchestrator keeps its separate rolling policy described above.
-The remaining 20% is safety headroom. With auto enabled, the default output cap /
+The foreground trigger (workers, reviewers, and the orchestrator's own safety
+net) is **input >= 90% of the model's window**, the share Codex uses, on every
+model. The reply's full reserve is not held back from the input: a request's
+reply cap (`replyCap`) is the configured cap or, when the window is nearly
+full, the room that is left. A request is sent only while a minimal reply
+(8,192 tokens) and a margin for token-estimate error (3% of the window, at most
+13,000 tokens) still fit; that bound only bites below 90% on windows far
+smaller than any real model's. The orchestrator keeps its separate rolling policy described above.
+With auto enabled, the default output cap /
 accounting reserve is min(64000, 20% of window). The embedder's `outputReserve`
 overrides that cap. It is normalized once per boundary: positive finite integer,
 capped at the harness's 64000, context-1, and any supplied verified output ceiling.

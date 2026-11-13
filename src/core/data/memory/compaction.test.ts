@@ -17,7 +17,7 @@ afterEach(() => { process.env.ORCA_HOME = oldHome; for (const dir of dirs.splice
 async function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "compact-")); dirs.push(dir);
   const transcript = open(join(dir, "t.jsonl"));
-  for (const content of ["original requirements " + "a".repeat(3000), "old answer" + "z".repeat(33000), "recent task", "recent answer"]) {
+  for (const content of ["original requirements " + "a".repeat(3000), "old answer" + "z".repeat(44000), "recent task", "recent answer"]) {
     await transcript.append({ type: "message", message: { role: content.includes("answer") ? "assistant" : "user", content } });
   }
   const provider = fakeProvider([[text("Goal: original requirements. Progress: old answer. Next: recent task.")]]);

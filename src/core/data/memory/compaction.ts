@@ -83,8 +83,24 @@ export function requireFits(deps: ContextDeps, messages: MessageParam[], reserve
     throw new ContextBlocked(`context blocked: ${label} exceeds input + output reserve + safety headroom. select a larger model/context budget or reduce fixed instructions/tools; original transcript is preserved.`);
   }
 }
+/** Foreground compaction starts when the input reaches this share of the model's window, on every model (Codex uses 90% too). */
+export const COMPACT_AT = .9;
+/** A request is sent only while at least this much room is left for its reply (or its whole reserve, when that is smaller). */
+const MIN_REPLY = 8192;
+/** Room kept free for token-estimate error: 3% of the window, at most the 13,000 tokens Claude Code keeps. */
+const margin = (limit: number) => Math.min(13_000, limit * .03);
+/** The most input a request may carry. The reply's full reserve is not held back, or a small window could
+ * never fill past 75%: the reply cap shrinks to the room that is left instead (`replyCap`). */
+export function inputRoom(limit: number, reserve: number): number {
+  return limit - Math.min(reserve, MIN_REPLY) - margin(limit);
+}
+/** What a request may ask for as its reply: the configured cap, or what the window still has room for. */
+export function replyCap(deps: ContextDeps, messages: MessageParam[]): number {
+  const limit = contextLimit(deps.compaction ?? {}, deps.model);
+  return Math.max(1, Math.min(outputCap(deps), Math.floor(limit - budget(deps, messages) - margin(limit))));
+}
 function fits(deps: ContextDeps, messages: MessageParam[], reserve: number): boolean {
-  return budget(deps, messages) + reserve <= contextLimit(deps.compaction ?? {}, deps.model) * .8;
+  return budget(deps, messages) <= inputRoom(contextLimit(deps.compaction ?? {}, deps.model), reserve);
 }
 function fresh(message: MessageParam): boolean {
   return message.role === "user" && (typeof message.content === "string" || !message.content.some(b => b.type === "tool_result"));
@@ -173,7 +189,8 @@ export async function compact(deps: ContextDeps, manual = false): Promise<boolea
   const messages = await deps.transcript.chain();
   const limit = contextLimit(options, deps.model);
   const reserve = outputCap(deps);
-  const trigger = Math.min(options.triggerTokens ?? Infinity, limit * .8 - reserve);
+  // 90% of the window. inputRoom only binds on windows too small to hold a minimal reply above that.
+  const trigger = Math.min(options.triggerTokens ?? Infinity, limit * COMPACT_AT, inputRoom(limit, reserve));
   if (!manual && budget(deps, messages) < trigger) return null;
   status(deps, COMPACTION_STATUS.started);
   try {

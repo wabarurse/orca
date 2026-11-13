@@ -19,7 +19,7 @@ async function fixture(fn: (r: CompleteRequest) => Promise<Turn> = async () => e
   const dir = mkdtempSync(join(tmpdir(), "review-compact-")); dirs.push(dir); process.env.ORCA_HOME = dir; mkdirSync(join(dir, "projects/p"), { recursive: true });
   const transcript = open(join(dir, "transcript.jsonl"));
   const original = "requirements " + "x".repeat(3000) + " DO NOT DROP FINAL REQUIREMENT";
-  for (const [role, content] of [["user", original], ["assistant", "old progress " + "z".repeat(33000)], ["user", "Later amendment: use green"], ["assistant", "done"], ["user", "next task"]] as const) await transcript.append({ type: "message", message: { role, content } });
+  for (const [role, content] of [["user", original], ["assistant", "old progress " + "z".repeat(44000)], ["user", "Later amendment: use green"], ["assistant", "done"], ["user", "next task"]] as const) await transcript.append({ type: "message", message: { role, content } });
   const deps: AgentDeps = { transcript, provider: provider(fn), model: "unknown", tools: {}, ctx: { project: "p", role: "worker", cwd: dir }, write: () => {}, compaction: { fallback: 20000 } };
   return { deps, transcript, original, dir };
 }
@@ -62,7 +62,7 @@ for (const kind of ["original", "system", "tools"]) test(`blocked ${kind} makes 
 });
 test("reducing but still over-budget proposal does not commit or send normal request", async () => {
   let calls = 0; const { deps } = await fixture(async () => { calls++; return end("s".repeat(12000)); });
-  deps.compaction!.contextLimit = 12000; deps.system = "f".repeat(7000);
+  deps.compaction!.contextLimit = 9600; deps.system = "f".repeat(7000);
   // Smaller older source fits summary request, but fixed instructions + proposed output do not.
   deps.transcript = open(join(deps.ctx.cwd, "proposal.jsonl"));
   for (const [role, content] of [["user", "original"], ["assistant", "a".repeat(18000)], ["user", "next"]] as const) await deps.transcript.append({ type: "message", message: { role, content } });
@@ -144,12 +144,12 @@ test("failed manual suppresses auto for this agent; successful manual and model 
   await expect(agent.compact()).rejects.toThrow("context blocked"); expect(summaries).toBe(1);
   await expect(agent.run()).rejects.toThrow("context blocked"); expect(summaries).toBe(1);
   failed = false; await agent.compact(); expect(summaries).toBe(2);
-  await transcript.append({ type: "message", message: { role: "assistant", content: "p".repeat(33000) } });
+  await transcript.append({ type: "message", message: { role: "assistant", content: "p".repeat(44000) } });
   await transcript.append({ type: "message", message: { role: "user", content: "new task" } });
   await agent.run(); expect(summaries).toBe(3);
   // A separate agent starts a fresh suppression lifetime; a changed model resets within it.
   let model = "first"; failed = true;
-  await transcript.append({ type: "message", message: { role: "assistant", content: "p".repeat(33000) } });
+  await transcript.append({ type: "message", message: { role: "assistant", content: "p".repeat(44000) } });
   await transcript.append({ type: "message", message: { role: "user", content: "newer task" } });
   deps.resolveModel = async () => ({ model, provider: deps.provider! }); const switching = createAgent(deps);
   await expect(switching.run()).rejects.toThrow("context blocked"); const count = summaries;

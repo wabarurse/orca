@@ -31,7 +31,7 @@ State reads reuse a bounded pool of SQLite connections and prepared statements. 
 
 ## Context and requests
 
-Worker and reviewer foreground compaction has a configurable `workerContextTokens` target, default 128000. The model's actual input capacity and output reserve can trigger compaction sooner. This is a working-context target, not a claim about model capacity or a lossy truncation limit. Complete tool batches, original history and existing checkpoint validation are preserved. Orchestrator rolling compaction retains its independent 25% trigger and 50k recent-tail target.
+Worker and reviewer foreground compaction starts when input reaches 90% of the model's window, on every model; near the limit a request's reply cap shrinks to the room left. There is no fixed working-context target: a 128,000-token one made a worker on a 1M-token model compact every ~19 tool calls and re-read the same files after each summary. Complete tool batches, original history and existing checkpoint validation are preserved. Orchestrator rolling compaction retains its independent 25% trigger and 50k recent-tail target.
 
 Rolling summaries can generate up to 8192 tokens, subject to a supplied model output ceiling, while accepted memory still must fit the existing 4096 estimated-token budget and item limits. The generation allowance includes syntax and any reasoning. Repairs retain the same system prompt and original source-message prefix and append a repair instruction, enabling provider prefix caching where supported. This does not guarantee a cache hit.
 

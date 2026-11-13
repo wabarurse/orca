@@ -7,8 +7,6 @@ export interface Config {
   sandbox: "off" | "workspace";
   model: string;
   compact: boolean;
-  /** Upper working-context target for workers/reviewers; original history stays on disk. */
-  workerContextTokens: number;
   contextLimitFallback: number;
   /** Claude subscription profile saved by /login anthropic. Empty = default. */
   account: string;
@@ -30,7 +28,6 @@ export const defaults: Config = {
   sandbox: "off",
   model: "claude-sonnet-5-5",
   compact: true,
-  workerContextTokens: 128000,
   contextLimitFallback: 128000,
   account: "",
   openaiAccount: "",
@@ -61,7 +58,7 @@ export async function loadConfig(options: { strict?: boolean } = {}): Promise<Co
   }
   // The orchestrator now compacts at a fraction of the selected model's window (rolling-memory.ts).
   // Do not let a saved absolute target restore the old 32k policy or persist it on save.
-  for (const key of ["orchestratorContextTokens", "maxReviewRounds", "dynamicDispatch", "cyclomatic", "cognitive"]) delete (parsed as Record<string, unknown>)[key];
+  for (const key of ["orchestratorContextTokens", "workerContextTokens", "maxReviewRounds", "dynamicDispatch", "cyclomatic", "cognitive"]) delete (parsed as Record<string, unknown>)[key];
   return withFallbacks({ ...defaults, ...parsed });
 }
 
@@ -72,7 +69,6 @@ function withFallbacks(config: Config): Config {
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;
   if (!integerWithin(config.maxToolOutputBytes, 1024, 256 * 1024 * 1024)) config.maxToolOutputBytes = defaults.maxToolOutputBytes;
-  if (!integerWithin(config.workerContextTokens, 16000, 1000000)) config.workerContextTokens = defaults.workerContextTokens;
   return config;
 }
 
