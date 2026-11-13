@@ -1,7 +1,7 @@
 // Shared TUI state and input helpers; rendering and event handling live in app.ts.
 import type { ClipboardImage, Key, Terminal } from "./components";
 import type { ImageRef, AgentInfo, Message, ToolCall, ToolOutcome, Role } from "../protocol";
-import type { RequestSettings } from "../providers/catalog";
+import type { RequestSettings } from "../api/model";
 import type { Orchestrator } from "../core/agent-loop/orc";
 import { archiveAgents, restoreAgents, cancelSession } from "../core/tmux";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";

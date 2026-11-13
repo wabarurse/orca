@@ -1,6 +1,6 @@
 // The layout, enforced: CLAUDE.md "Layout" is the prose, this file is the check. It reads every src/**/*.ts
 // import (static, export-from, side-effect, dynamic, `import("x").T` types, directory specifiers) and asserts
-//   (a) packages point down: config < login < providers < protocol < core < exec · tui < cli, type-only included;
+//   (a) packages point down: config < api < protocol < core < exec · tui < cli, type-only included;
 //   (b) inside a package, folders/files point down in the documented order (ORDER below);
 //   (c) code crossing a folder boundary imports that folder's barrel (`../../core/data/tasks`), never a deep module,
 //       except that a file of an ancestor folder may be imported directly (`../sanitize`, `../../proc`); intra-folder
@@ -15,16 +15,16 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, normalize } from "node:path";
 
 const ROOT = import.meta.dir;
-const PACKAGES = ["config", "login", "providers", "protocol", "core", "exec", "tui", "cli"];
+const PACKAGES = ["config", "api", "protocol", "core", "exec", "tui", "cli"];
 
 type Order = { tiers: string[][]; children?: Record<string, Order> };
 // Bottom first. A name is a file (without .ts) or a folder directly inside the folder the order describes; "*" is
 // every name not listed. Files directly inside one folder are one unit (no order between them). A folder without an
 // order is one unit too. index.ts is a folder's barrel and sits above everything in it.
 const ORDER: Order = {
-  tiers: [["config"], ["login"], ["providers"], ["protocol"], ["core"], ["exec", "tui"], ["cli"]],
+  tiers: [["config"], ["api"], ["protocol"], ["core"], ["exec", "tui"], ["cli"]],
   children: {
-    providers: { tiers: [["images", "sanitize", "retry"], ["catalog"], ["search"], ["provider"], ["anthropic", "openai"], ["account"]] },
+    api: { tiers: [["auth"], ["images", "sanitize"], ["errors"], ["model"], ["search"], ["provider"], ["usage"], ["anthropic", "openai"], ["account"]] },
     core: {
       tiers: [["proc", "execution"], ["data"], ["definitions"], ["install", "tmux", "prompt"], ["mcp"], ["tools"], ["agent-loop"]],
       children: {

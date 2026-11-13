@@ -3,7 +3,7 @@ import { archivedImageReferences, budget, ContextBlocked, contextLimit, estimate
 import { archiveTranscript, contextEpoch, scopedTasks, transcriptEntries } from "./archive";
 import { existingTasks } from "../tasks";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
-import type { Provider } from "../../../providers";
+import type { Provider } from "../../../api";
 import { previousMemory, summarizeOlder, taskSnapshot } from "./rolling-summary";
 import type { Task } from "../../../protocol/task";
 import { paired } from "../transcripts";

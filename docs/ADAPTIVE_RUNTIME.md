@@ -9,7 +9,7 @@ Publication remains a separately authorized capability. Tasks record evidence an
 | Area | Behavior | Main implementation |
 | --- | --- | --- |
 | Consolidation | Integrates the intent and source-attributed memory changes with the runtime work | Role prompts, memory archive and this document |
-| Provider reliability | Preserves streamed Codex output when the completion envelope is empty; handles limit/refusal/error separately; bounds pauses and recovery without replaying delivered stream content | `src/providers/{openai,anthropic,account,bounded-request}.ts`, `src/core/agent-loop/loop/agent.ts` |
+| Provider reliability | Preserves streamed Codex output when the completion envelope is empty; handles limit/refusal/error separately; bounds pauses and recovery without replaying delivered stream content | `src/api/{openai,anthropic,account,bounded-request}.ts`, `src/core/agent-loop/loop/agent.ts` |
 | Optional delegation | `spawn` only requires a brief. Task registration and explicit review are independent | `src/core/tools/spawn.ts` |
 | Small coordinator context | Delegate by expected intermediate context, retain concise outcomes and selected knowledge, compact in the background at 25% of the orchestrator model’s context window, keeping ~50k tokens verbatim | `src/core/prompt/orchestrator.ts`, orchestrator session |
 | Fresh context | A new worker starts from its brief; `fresh: true` resets an idle worker's active context on its existing branch, retaining original history | Spawn and transcripts |
@@ -24,7 +24,7 @@ Publication remains a separately authorized capability. Tasks record evidence an
 | Instructions and skills | Scoped AGENTS/CLAUDE discovery and a small skill catalog; full skill content loads on demand | `src/core/data/knowledge/instructions.ts`, skill tool |
 | Worker feedback/status | Selected agent view sends input to that agent; reports delivery/resume and waiting activity | TUI app and feedback command |
 | Ownership/execution | One live writer per branch, process ownership checks and optional OS write isolation | Spawn, tmux runner, `src/core/execution.ts` |
-| Accounting | Model, summary, search, retry, tool and supervised-process observations are attributable to projects/agents when known | `src/providers/usage.ts`, the `runtime` tool |
+| Accounting | Model, summary, search, retry, tool and supervised-process observations are attributable to projects/agents when known | `src/api/usage.ts`, the `runtime` tool |
 | Regression evaluation | Scripted end-to-end runtime cases cover delegation, feedback, files, process lifecycle, providers, memory and accounting | `evals/adaptive/` |
 
 ## Using the capabilities

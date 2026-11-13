@@ -1,4 +1,4 @@
-import { plain } from "./sanitize";
+import { plain } from "../sanitize";
 import { lockoutUntil } from "./rate-limit";
 
 // One retry policy for both SDK clients: a transient failure of the initial

@@ -184,7 +184,7 @@ generic paid-API SDK examples:
   and `pause_turn`. It establishes response semantics, not OAuth entitlement.
 
 Tests in `src/core/tools/web-search*.test.ts` and
-`src/providers/search/web-search.test.ts` cover role counts, real SDK request construction
+`src/api/search/web-search.test.ts` cover role counts, real SDK request construction
 against intercepted transports, source extraction, validation, limits,
 cancellation/deadlines, errors, persistence, provider switching and compaction.
 These include empty-terminal-output reconstruction and failures, malformed

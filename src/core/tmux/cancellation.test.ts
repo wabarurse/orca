@@ -104,7 +104,7 @@ test("cancelled notice reaches orchestrator with non-recovery policy; only user 
   const { registerTask } = await import("../data/tasks/tasks");
   const taskId = (await registerTask(project, { name: "Resume x", summary: "Authorized original task", branch: "x", authorized: true })).id;
   let calls = 0, starts = 0;
-  const provider: import("../../providers").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
+  const provider: import("../../api").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
     calls++;
     const messages = JSON.stringify(req.messages);
     expect(messages).toContain("[agent-cancelled]");

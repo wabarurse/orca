@@ -1,9 +1,10 @@
 // /accounts and /login: listing, switching and signing in to subscription accounts.
 
-import { accountId, accounts, type Account, type AccountRef } from "../../login";
-import { importClaudeCode, loginClaude } from "../../login";
-import { importCodex, loginCodex } from "../../login";
-import { provider, providerFor } from "../../providers";
+import { accountId, accounts, type Account, type AccountRef } from "../../api/auth";
+import { importClaudeCode, loginClaude } from "../../api/auth";
+import { importCodex, loginCodex } from "../../api/auth";
+import { provider } from "../../api";
+import { providerFor } from "../../api/model";
 import { effectiveAccount, effectiveModel, lastProviderModel, saveProjectAccount, seedProjectAccount } from "../../core/data/projects";
 import { recentModels, type Choice } from "./model";
 

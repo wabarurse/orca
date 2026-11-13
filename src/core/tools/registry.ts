@@ -2,8 +2,8 @@
 // mounted in mount.ts; every tool file imports its types from here.
 
 import type { ImageBlockParam, TextBlockParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
-import type { Provider } from "../../providers";
-import type { RequestSettings } from "../../providers/catalog";
+import type { Provider } from "../../api";
+import type { RequestSettings } from "../../api/model";
 import type { Role, ImageRef } from "../../protocol";
 
 export interface ToolContext {

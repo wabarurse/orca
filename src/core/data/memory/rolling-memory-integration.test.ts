@@ -10,7 +10,7 @@ import { queryHistory } from "./archive";
 import { createOrchestrator, type Orchestrator } from "../../agent-loop/orc/orchestrator";
 import { RollingCompactor, rollingCut } from "./rolling-memory";
 import { estimate } from "./compaction";
-import type { CompleteRequest, Provider } from "../../../providers/provider";
+import type { CompleteRequest, Provider } from "../../../api/provider";
 import { fakeProvider, text } from "../../../test/fake-provider";
 import { open, type Transcript } from "../transcripts/transcript";
 import { APPEND, disk } from "../transcripts/transcript-storage";

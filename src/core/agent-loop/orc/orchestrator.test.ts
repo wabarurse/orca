@@ -154,9 +154,9 @@ test("cancelling a turn aborts the provider, pauses inbox polling, and next mess
   const project = "cancel-orch";
   let started!: () => void;
   const ready = new Promise<void>(resolve => { started = resolve; });
-  const seen: import("../../../providers").CompleteRequest[] = [];
+  const seen: import("../../../api").CompleteRequest[] = [];
   let aborted = false;
-  const provider: import("../../../providers").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
+  const provider: import("../../../api").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
     seen.push(req);
     if (seen.length > 1) return { stop: "end", content: [text("resumed")] };
     started();

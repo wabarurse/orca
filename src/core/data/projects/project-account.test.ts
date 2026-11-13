@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, readProjectState, saveConfig } from "../../../config";
-import { accounts } from "../../../login";
+import { accounts } from "../../../api/auth";
 import { fakeProvider } from "../../../test/fake-provider";
 import { accountChoices, login, useAccount } from "../../../tui/commands";
 import { accountForModel, effectiveAccount, saveProjectAccount, seedProjectAccount } from "./project-account";

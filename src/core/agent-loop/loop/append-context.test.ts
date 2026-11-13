@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { paths } from '../../../config';
 import { open } from '../../data/transcripts';
 import { createAgent } from './agent';
-import type { CompleteRequest, Provider } from '../../../providers';
+import type { CompleteRequest, Provider } from '../../../api';
 const root=await mkdtemp(join(tmpdir(),'orca-append-agent-'));
 const saved={ORCA_HOME:process.env.ORCA_HOME};
 process.env.ORCA_HOME=root;

@@ -1,7 +1,8 @@
-import { usageScope, usageEvent } from "../../../providers";
+import { usageScope } from "../../../api";
+import { usageEvent } from "../../../config";
 import { completeInterruptedTools } from "../../data/transcripts";
 import { materializeImages } from "../../data/images";
-import type { RequestSettings } from "../../../providers/catalog";
+import type { RequestSettings } from "../../../api/model";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/core/prompt/shared.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).
@@ -14,7 +15,7 @@ import type { Tracker } from "../../tmux";
 import type { ModelRequestState } from "../../tmux";
 import { consume, content } from "../../data/inbox";
 import type { Message } from "../../../protocol";
-import type { Provider } from "../../../providers";
+import type { Provider } from "../../../api";
 import { sessionId } from "../../tmux";
 import type { Transcript } from "../../data/transcripts";
 import type { Role } from "../../../protocol";

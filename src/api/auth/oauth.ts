@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { paths } from "../config";
+import { paths } from "../../config";
 
 export class CredentialError extends Error {
   constructor(readonly reason: "credentials-invalid" | "credential-lock" | "oauth-connection" | "oauth-http" | "oauth-response",

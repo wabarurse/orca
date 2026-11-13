@@ -7,7 +7,7 @@ import { FakeScreen } from "./components/testing";
 import type { Terminal } from "./components/term";
 import { createOrchestrator, type Orchestrator } from "../core/agent-loop/orc/orchestrator";
 import { paths, saveConfig } from "../config/config";
-import type { CompleteRequest } from "../providers/provider";
+import type { CompleteRequest } from "../api/provider";
 import { publishLaunch } from "../core/tmux/cancellation";
 import { createClientOrchestrator } from "../core/agent-loop/orc/client";
 import { readStatus, request } from "../core/agent-loop/orc/channel";

@@ -3,11 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accounts } from "./accounts";
-import { provider } from "../providers/account";
-import { CLAUDE_BETAS, CLAUDE_TOKEN_URL, saveClaudeTokens } from "./claude";
-import { clearCatalogEfforts, modelCapabilities } from "../providers/catalog/capabilities";
+import { provider } from "../account";
+import { CLAUDE_TOKEN_URL, saveClaudeTokens } from "./claude";
+import { CLAUDE_BETAS } from "../anthropic";
+import { clearCatalogEfforts, modelCapabilities } from "../model/capabilities";
 import { saveCodexTokens } from "./codex";
-import { fakeCodexTokens } from "../test/codex";
+import { fakeCodexTokens } from "../../test/codex";
 
 const keys = ["ORCA_HOME", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_CUSTOM_HEADERS", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
 let original: Record<string, string | undefined>;

@@ -2,12 +2,11 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { paths } from "../config";
+import { paths } from "../../config";
 import { CredentialError, loginOAuth, validateProfile, type OAuthTokens, withCredentialLock, writeTokens, type Fetch, type LoginOptions } from "./oauth";
 
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
-export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 export interface CodexTokens extends OAuthTokens { accountId: string }
 
 const authDir = () => join(paths.runtime, "auth", "openai");
