@@ -1,10 +1,10 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
-import { anthropic } from "./anthropic";
-import { openai } from "./openai";
+import { anthropic } from "../anthropic";
+import { openai } from "../openai";
 import { exhaustedQuota, retryNotice, transientFailure, withTransientRetries } from "./retry";
-import type { CompleteRequest } from "./provider";
-import { codexSSE, fakeCodexTokens } from "../test/codex";
+import type { CompleteRequest } from "../provider";
+import { codexSSE, fakeCodexTokens } from "../../test/codex";
 
 // ---- the helper ----
 

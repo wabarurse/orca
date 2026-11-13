@@ -3,7 +3,8 @@
 import { accountId, accounts, type Account, type AccountRef } from "../../api/auth";
 import { importClaudeCode, loginClaude } from "../../api/auth";
 import { importCodex, loginCodex } from "../../api/auth";
-import { provider, providerFor } from "../../api";
+import { provider } from "../../api";
+import { providerFor } from "../../api/model";
 import { effectiveAccount, effectiveModel, lastProviderModel, saveProjectAccount, seedProjectAccount } from "../../core/data/projects";
 import { recentModels, type Choice } from "./model";
 

@@ -1,18 +1,16 @@
-import { diagnoseModelError } from "./model-diagnostics";
-import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
+import { diagnoseModelError, exhaustedQuota, providerRequest, type RecoveryPolicy, type RetryOptions } from "./errors";
 import { createHash } from "node:crypto";
 import { validatedBase64 } from "./images";
 import { boundedSearchResponse, SearchError, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { codexSearchItemSources, codexSearchResults } from "./search";
-import { validateSettings, type RequestSettings } from "./catalog";
+import { validateSettings, type RequestSettings } from "./model";
 import OpenAI from "openai";
 import type { FunctionTool, ResponseFunctionCallOutputItem, ResponseOutputItemDoneEvent, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { codexCredentials, CodexTokens } from "./auth";
 import type { Provider, Turn } from "./provider";
-import { rememberCatalogLimits } from "./catalog";
-import { codexCatalogEfforts, rememberCatalogEfforts } from "./catalog";
-import { exhaustedQuota, type RetryOptions } from "./retry";
+import { rememberCatalogLimits } from "./model";
+import { codexCatalogEfforts, rememberCatalogEfforts } from "./model";
 
 export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 

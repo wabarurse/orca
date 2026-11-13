@@ -1,7 +1,8 @@
-import { usageScope, usageEvent } from "../../../api";
+import { usageScope } from "../../../api";
+import { usageEvent } from "../../../config";
 import { completeInterruptedTools } from "../../data/transcripts";
 import { materializeImages } from "../../data/images";
-import type { RequestSettings } from "../../../api/catalog";
+import type { RequestSettings } from "../../../api/model";
 // The agent loop. Orchestrator, worker and reviewer are all this function with
 // a different tool set and a short role prompt (src/core/prompt/shared.ts). The task
 // itself comes through the first user message (spawn's brief, or the inbox).

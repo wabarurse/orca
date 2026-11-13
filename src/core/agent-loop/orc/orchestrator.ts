@@ -3,7 +3,7 @@ import { agentContext, clearWorkingContext } from "../../data/knowledge";
 import { processOwner, unresolvedProcess, listProcesses, liveProcess, controlProcess } from "../../data/processes";
 import { editableTool } from "../../definitions";
 import { budget, type CompactOptions } from "../../data/memory";
-import { contextWindow, type ContextWindow } from "../../../api/catalog";
+import { contextWindow, type ContextWindow } from "../../../api/model";
 import { contextMessages } from "../../data/transcripts";
 import { pendingImageInputs } from "../../data/images";
 import type { ImageRef, OrchestratorActivity } from "../../../protocol";

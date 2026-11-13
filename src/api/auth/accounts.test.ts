@@ -6,7 +6,7 @@ import { accounts } from "./accounts";
 import { provider } from "../account";
 import { CLAUDE_TOKEN_URL, saveClaudeTokens } from "./claude";
 import { CLAUDE_BETAS } from "../anthropic";
-import { clearCatalogEfforts, modelCapabilities } from "../catalog/capabilities";
+import { clearCatalogEfforts, modelCapabilities } from "../model/capabilities";
 import { saveCodexTokens } from "./codex";
 import { fakeCodexTokens } from "../../test/codex";
 

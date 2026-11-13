@@ -4,7 +4,7 @@
 
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { ProviderName } from "./auth";
-import type { RequestSettings } from "./catalog";
+import type { RequestSettings } from "./model";
 import type { SearchRequest, SearchResult } from "./search";
 
 export interface Turn {
@@ -46,9 +46,4 @@ export interface Provider {
   search?(req: SearchRequest): Promise<SearchResult>;
   /** Model ids this account can use, most useful first. */
   models(): Promise<string[]>;
-}
-
-/** Which provider serves a model id. Claude models go to Anthropic; anything else to OpenAI. */
-export function providerFor(model: string): ProviderName {
-  return model.startsWith("claude") ? "anthropic" : "openai";
 }

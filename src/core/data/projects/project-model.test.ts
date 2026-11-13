@@ -8,7 +8,7 @@ import { saveProjectSettings } from "./project-settings";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import { clearCatalogLimits } from "../../../api/catalog/context-window";
+import { clearCatalogLimits } from "../../../api/model/context-window";
 import type { Provider } from "../../../api/provider";
 
 const home = mkdtempSync(join(tmpdir(), "project-model-"));

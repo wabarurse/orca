@@ -173,7 +173,7 @@ plus the following official sources (no live inference/paid request was made):
   Our existing adapter calls `https://chatgpt.com/backend-api/codex/responses`;
   selected fast mode sends `service_tier: "priority"` independently of effort.
 
-`src/api/catalog/capabilities.ts` deliberately supports a **subset**, by exact id,
+`src/api/model/capabilities.ts` deliberately supports a **subset**, by exact id,
 when the catalog reports nothing for the model:
 
 | Models | Explicit effort | Fast |

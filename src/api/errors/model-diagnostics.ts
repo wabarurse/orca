@@ -1,4 +1,4 @@
-import { CredentialError } from "./auth";
+import { CredentialError } from "../auth";
 import { lockoutUntil } from "./rate-limit";
 import { exhaustedQuota, httpStatus, providerErrorEvidence, QuotaError, transientFailure } from "./retry";
 

@@ -1,6 +1,6 @@
 // Account-wide retry admission shared by all Orca processes. Healthy requests
 // stay concurrent; only rate-limited accounts coordinate their recovery probes.
-import { paths, readState, updateState } from "../config";
+import { paths, readState, updateState } from "../../config";
 import type { RequestScope } from "./bounded-transport";
 
 interface Cooldown { until: number; probeAt: number; failures: number; version: string }

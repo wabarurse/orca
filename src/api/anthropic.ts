@@ -1,15 +1,13 @@
-import type { RequestScope } from "./bounded-transport";
-import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
+import { exhaustedQuota, providerRequest, type RecoveryPolicy, type RequestScope, type RetryOptions } from "./errors";
 import { validatedBase64 } from "./images";
 import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { claudeSearchResults } from "./search";
-import { validateSettings, type RequestSettings } from "./catalog";
+import { validateSettings, type RequestSettings } from "./model";
 import Anthropic, { type Middleware, type MiddlewareNext } from "@anthropic-ai/sdk";
 import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider, Turn } from "./provider";
-import { rememberCatalogLimits } from "./catalog";
-import { claudeCatalogEfforts, rememberCatalogEfforts } from "./catalog";
-import { exhaustedQuota, type RetryOptions } from "./retry";
+import { rememberCatalogLimits } from "./model";
+import { claudeCatalogEfforts, rememberCatalogEfforts } from "./model";
 
 /** The beta headers the Claude Code subscription path requires on every request. */
 export const CLAUDE_BETAS = "claude-code-20250219,oauth-2025-04-20";

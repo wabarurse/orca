@@ -3,7 +3,7 @@
 
 import type { ImageBlockParam, TextBlockParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider } from "../../api";
-import type { RequestSettings } from "../../api/catalog";
+import type { RequestSettings } from "../../api/model";
 import type { Role, ImageRef } from "../../protocol";
 
 export interface ToolContext {

@@ -4,6 +4,7 @@ export { defaults, loadConfig, saveConfig, type Config } from "./config";
 export { paths, installedApp, projectStateScope, readProjectState, writeProjectState, repositoryBinding, legacyProjectIdentities, type RepositoryBinding } from "./paths";
 export { assertLayout } from './layout';
 export { readState, updateState, stateEntries } from "./state-store";
+export { usageEvent } from "./usage-log";
 export { conversationIdentity } from "./conversation-identity";
 export { conversationIds } from "./conversation-storage";
 export { attachDirectory, detachConversation, removeDirectory, directoryProject, inheritedSettings, projectCatalog, saveOpenConversations, updateDirectory, type DirectoryProject } from "./directory-projects";

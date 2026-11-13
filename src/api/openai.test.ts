@@ -2,9 +2,9 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { ResponseOutputItem } from "openai/resources/responses/responses";
 import { fromResponses, openai, toResponses, toResponseTools } from "./openai";
-import { providerFor } from "./provider";
-import { clearCatalogLimits, contextWindow } from "./catalog/context-window";
-import { modelCapabilities } from "./catalog/capabilities";
+import { providerFor } from "./model/provider-for";
+import { clearCatalogLimits, contextWindow } from "./model/context-window";
+import { modelCapabilities } from "./model/capabilities";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
 import { png } from "../test/image-fixture";
 
