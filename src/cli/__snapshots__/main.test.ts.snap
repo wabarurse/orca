@@ -6,7 +6,6 @@ exports[`offline CLI usage and owned errors are lowercase without changing suppl
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
   orca clean [--preview]          delete eligible archived storage; --preview lists without deleting
-  orca organize                   group saved folders by directory (requires orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
@@ -26,7 +25,6 @@ usage:
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
   orca clean [--preview]          delete eligible archived storage; --preview lists without deleting
-  orca organize                   group saved folders by directory (requires orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json

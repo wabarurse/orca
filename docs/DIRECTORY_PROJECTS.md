@@ -67,7 +67,7 @@ Missing directories remain listed and conversations remain readable. Relink expl
 
 `memory.sqlite` stores the directory catalog, defaults and open-view preference. Each conversation stores a small `.identity.json` beside its artifacts. That UUID travels with a complete folder restore; deleting and recreating a folder without its identity creates a new conversation. Include hidden metadata files in backups.
 
-Existing flat `projects/<orch-id>/` paths remain readable until the explicit offline organization described below. Conversation IDs, task ledger associations, transcripts and runtime routes are retained. A reinstall is not required.
+Artifacts live in flat `projects/<orch-id>/` folders. Conversation IDs, task ledger associations, transcripts and runtime routes are retained. A reinstall is not required.
 
 Older layout-3 state used `device:inode:birth-time` in settings keys. Device numbers can change across macOS restarts. A UUID's compatibility lookup uses the original inode/birth fingerprint, ignores the volatile device number and rejects conflicting legacy values. Per-key overrides use the UUID namespace; legacy values stay readable for keys not yet overridden, including late writes from old agents finishing an update. Explicit clears cannot resurrect legacy settings. Older layout versions retain their existing offline recovery requirements.
 
@@ -79,28 +79,3 @@ Task-ledger bindings remain immutable. Readers and writers recognize the origina
 
 Retained image references also keep their original scope hashes. Before loading a pre-UUID image, Orca checks historical state namespaces for the conversation's original fingerprint and reconstructs only those proven identity hashes. Images are still checked against their saved byte hash and format. A copied image file alone grants no access; other conversations and deleted/recreated aliases remain rejected. New images use UUID scopes. This compatibility lookup does not rewrite transcripts, input journals, image bytes or state rows, and does not require re-uploading retained attachments.
 
-## Named project folders
-
-The public folder view follows directory projects and conversation titles:
-
-```text
-projects/
-  phoebe--a1b2c3d4/
-    project.json
-    conversations/
-      phoebe-agent-notes--369l -> ../../.conversations/orch-369l
-      phoebe-agent-notes--5xab -> ../../.conversations/orch-5xab
-  .conversations/                # hidden stable storage; retain in backups
-    orch-369l/
-    orch-5xab/
-```
-
-Opening a named conversation link opens its actual tasks, history, outputs and images. The short suffix distinguishes duplicate titles and same-named checkouts. Names are sanitized for filesystem use. `/rename` updates the conversation link; a directory project rename updates the directory group. The actual artifact path stays fixed so open transcripts and running agents remain valid. Generated `project.json` and links are a readable view; catalog/UUID records remain authoritative. An unchanged view requires no rewrite, and user-added regular files in the view are retained.
-
-Fresh homes use this structure automatically. Existing flat homes remain supported until a deliberate one-time migration. **Do not run it while your agents are working.** Once they have finished, close all Orca TUIs and stop its tmux sessions, then run:
-
-```sh
-orca organize
-```
-
-The command checks host participants, tmux panes, durable ownership locks and supervised commands before moving anything; unknown state refuses too. It never signals, stops, restarts or resumes an agent. It excludes new launches while organizing and can resume after interruption. A same-filesystem rename retains the directory fingerprint, and task SQL bindings, transcript bytes and image references are preserved. In-folder legacy Git clones/worktrees are refused because moving them could break Git's absolute paths. `orca pull` updates code and does **not** run this migration. After migration, older binaries/TUIs must stay closed; use the updated Orca to reopen conversations.

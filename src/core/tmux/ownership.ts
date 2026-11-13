@@ -181,7 +181,6 @@ export async function deleteProject(name: string, options: DeleteOptions): Promi
       await rm(paths.runtimeProject(name), { recursive: true, force: true });
       await rm(paths.project(name), { recursive: true, force: true });
       for (const key of settings) updateState(paths.memory, scope, key, () => undefined); // Unreachable once its identity is gone.
-      await directories.refreshFolders();
       // Best effort: the project is already gone, and the backfill's orphan cleanup removes leftovers.
       try { purgeProject(name); } catch { /* rebuildable index */ }
     });
@@ -203,7 +202,6 @@ export async function deleteFolder(id: string, options: DeleteOptions): Promise<
   }
   for (const project of folder.projects) await deleteProject(project.id, options);
   directories.removeFolder(id);
-  await directories.refreshFolders();
   const { pinned } = await loadConfig();
   if (pinned.includes(id)) await saveConfig({ pinned: pinned.filter(n => n !== id) });
 }

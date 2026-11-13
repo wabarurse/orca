@@ -12,10 +12,9 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 // orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
 import { ghTaskPR } from "../core/data/tasks";
-import { cleanStorage, pull, runMcp } from "./scripts";
+import { cleanStorage, pull, runMcp, scheduleReload } from "./scripts";
 import pkg from "../../package.json";
-import { runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
-import { afterExit } from "../exec";
+import { afterExit, runAgent } from "../exec";
 import { put } from "../core/data/inbox";
 import { directories, repoHere, validProjectName } from "../core/data/projects";
 import { execution } from "../core/data/projects/lifecycle";
@@ -30,7 +29,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "mcp"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
+if (["", "start", "startup", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "mcp"].includes(cmd ?? "")) assertLayout(paths.root);
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -46,7 +45,6 @@ function usage(error?: string): never {
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
   orca clean [--preview]          delete eligible archived storage; --preview lists without deleting
-  orca organize                   group saved folders by directory (requires orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
@@ -66,12 +64,6 @@ switch (cmd) {
     // Keep old explicit flags as aliases, particularly --dry-run's non-destructive meaning.
     if (rest.length > 1 || rest.some(arg => !["--preview", "--apply", "--dry-run"].includes(arg))) usage("clean accepts --preview (or legacy --dry-run / --apply)");
     console.log(JSON.stringify(await cleanStorage(!rest.includes("--preview") && !rest.includes("--dry-run")), null, 2));
-    break;
-  }
-  case "organize": {
-    if (rest.length) usage("organize takes no arguments");
-    const moved = await organizeProjects();
-    console.log(`organized ${moved} conversation folder(s); named directory/conversation links are ready in ${paths.projects}`);
     break;
   }
   case "startup": {

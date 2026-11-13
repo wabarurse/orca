@@ -59,7 +59,7 @@ malicious local software.
 
 Image bytes are saved atomically **before** references are published. A reference
 contains a random image UUID, SHA-256, and a scope derived from the project's
-stable `sessionId` (`projects/.conversations/<id>/session.json`, minted at the first image save
+stable `sessionId` (`projects/<id>/session.json`, minted at the first image save
 never changed by `/rename`). Refs written before
 this change carry the older scope derived from the folder id and its conversation identity;
 they are still accepted for reading in their own project. Only that project's validated local image can be

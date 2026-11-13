@@ -2,9 +2,8 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { relative, isAbsolute } from "node:path";
-import { paths, writeProjectState, repositoryBinding, initializeConversationStorage, type RepositoryBinding } from "../../../config";
+import { paths, writeProjectState, repositoryBinding, type RepositoryBinding } from "../../../config";
 import { attachConversation } from "./catalog";
-import { refreshProjectFolders, withFolderLock } from "./folders";
 import { command } from "../../proc";
 
 /** Canonical checkout root, retaining local config and files even when origin exists. */
@@ -63,12 +62,10 @@ export async function initializeWorkspace(project: string, source?: string): Pro
   const branch = await checkoutHere(directory) ? await defaultBranch(directory) : "";
   if (branch) await requireBranch(directory, branch);
   const binding: RepositoryBinding = { version: 1, directory, branch, worktreeId: crypto.randomUUID() };
-  initializeConversationStorage(paths.root);
   await mkdir(paths.project(project), { recursive: true });
   await mkdir(paths.cache(project), { recursive: true });
   writeProjectState(project, "repository", binding);
   attachConversation(project);
-  await withFolderLock(async () => refreshProjectFolders());
 }
 
 async function originalCheckout(source: string): Promise<string> {

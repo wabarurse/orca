@@ -1,5 +1,5 @@
 import { pullHarness } from "../../core/install";
-import { activateInstalled } from "../../exec";
+import { activateInstalled } from "./reload";
 
 /** `orca pull`: update the installed checkout and binary, then hand running daemons over to the new build. */
 export async function pull(): Promise<void> {

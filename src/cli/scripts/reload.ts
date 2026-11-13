@@ -1,10 +1,10 @@
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { paths, installedApp } from "../config";
-import { cliCommand } from "../core/tmux";
+import { paths, installedApp } from "../../config";
+import { cliCommand } from "../../core/tmux";
 
-/** The updater must outlive the invoking terminal. Output is append-only and
+/** `orca reload`, which `orca pull` runs through the new binary. The updater must outlive the invoking terminal. Output is append-only and
  * inspectable; it contains build/project identities, never credentials. */
 export function scheduleReload(): string {
   mkdirSync(paths.runtime, { recursive: true, mode: 0o700 });
