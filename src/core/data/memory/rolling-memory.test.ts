@@ -166,14 +166,14 @@ test("orchestrator trigger is 25% of the model window, capped by safe input; exp
   expect(await probe("claude-opus-5-5", {}, 150000)).toBe(false);
   expect(await probe("claude-opus-5-5", {}, 249999)).toBe(false);
   expect(await probe("claude-opus-5-5", {}, 250000)).toBe(true);
-  // The 25k trigger yields to the 20k safe input ceiling when output reserves require it.
-  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 60000 }, 19999)).toBe(false);
-  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 60000 }, 20000)).toBe(true);
+  // The 22.5k trigger yields to the 21.5k input room (90k window less the 64k reply reserve and the 4.5k margin).
+  expect(await probe("gpt-6-sol", { contextLimit: 90000, outputReserve: 64000 }, 21499)).toBe(false);
+  expect(await probe("gpt-6-sol", { contextLimit: 90000, outputReserve: 64000 }, 21500)).toBe(true);
   // An explicit absolute trigger replaces the percentage in both directions, but still respects safe input.
   expect(await probe("claude-opus-5-5", {}, 150000, { triggerTokens: 100000 })).toBe(true);
   expect(await probe("claude-opus-5-5", {}, 450000, { triggerTokens: 600000 })).toBe(false);
-  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 39999, { triggerTokens: 90000 })).toBe(false);
-  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 40000, { triggerTokens: 90000 })).toBe(true);
+  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 54999, { triggerTokens: 90000 })).toBe(false);
+  expect(await probe("gpt-6-sol", { contextLimit: 100000, outputReserve: 40000 }, 55000, { triggerTokens: 90000 })).toBe(true);
 });
 
 test("default trigger retains about 50k verbatim through repeated cycles and restart", async () => {
@@ -202,7 +202,7 @@ test("default trigger retains about 50k verbatim through repeated cycles and res
 for (const sample of [
   { label: "200k window: tail equals trigger", limit: 200000, trigger: 50000, tail: 25000, options: {} },
   { label: "128k window: tail exceeds trigger", limit: 128000, trigger: 32000, tail: 16000, options: {} },
-  { label: "safe-input cap below percentage", limit: 100000, reserve: 60000, trigger: 20000, tail: 10000, options: {} },
+  { label: "safe-input cap below percentage", limit: 80000, reserve: 60000, trigger: 16000, tail: 8000, options: {} },
   { label: "explicit trigger below default tail", limit: 240000, trigger: 40000, tail: 20000, options: { triggerTokens: 40000 } },
   { label: "explicit tail below trigger stays unchanged", limit: 240000, trigger: 60000, tail: 40000, options: { tailTokens: 40000 } },
   { label: "explicit tail above trigger is guarded", limit: 240000, trigger: 60000, tail: 30000, options: { tailTokens: 80000 } },
@@ -415,7 +415,7 @@ test("summary chunks fit smaller selected windows without losing Unicode or esca
   expect(calls.map(c => JSON.parse(c.messages[0]!.content as string).sourcePart).join("")).toBe(JSON.stringify(source));
   for (const call of calls) {
     expect(call.settings).toEqual({ fast: false }); // Unknown models get their backend's default effort.
-    expect(budget({ model: call.model, tools: {}, system: call.system, transcript: null! }, call.messages) + call.maxTokens).toBeLessThanOrEqual(16000);
+    expect(budget({ model: call.model, tools: {}, system: call.system, transcript: null! }, call.messages) + call.maxTokens).toBeLessThanOrEqual(19000); // the 20k window less its 5% margin
   }
 });
 

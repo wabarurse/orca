@@ -83,8 +83,15 @@ export function requireFits(deps: ContextDeps, messages: MessageParam[], reserve
     throw new ContextBlocked(`context blocked: ${label} exceeds input + output reserve + safety headroom. select a larger model/context budget or reduce fixed instructions/tools; original transcript is preserved.`);
   }
 }
+/** Foreground compaction starts when the input reaches this share of the model's window (Codex uses 90% too). */
+export const COMPACT_AT = .9;
+/** The most input a request may carry: the window less the reply reserve and a margin for token-estimate
+ * error (5% of the window, at most the 13,000 tokens Claude Code keeps). */
+export function inputRoom(limit: number, reserve: number): number {
+  return limit - reserve - Math.min(13_000, limit * .05);
+}
 function fits(deps: ContextDeps, messages: MessageParam[], reserve: number): boolean {
-  return budget(deps, messages) + reserve <= contextLimit(deps.compaction ?? {}, deps.model) * .8;
+  return budget(deps, messages) <= inputRoom(contextLimit(deps.compaction ?? {}, deps.model), reserve);
 }
 function fresh(message: MessageParam): boolean {
   return message.role === "user" && (typeof message.content === "string" || !message.content.some(b => b.type === "tool_result"));
@@ -173,7 +180,8 @@ export async function compact(deps: ContextDeps, manual = false): Promise<boolea
   const messages = await deps.transcript.chain();
   const limit = contextLimit(options, deps.model);
   const reserve = outputCap(deps);
-  const trigger = Math.min(options.triggerTokens ?? Infinity, limit * .8 - reserve);
+  // 90% of the window, or sooner when the reply would no longer fit (a small window's reserve is more than 10% of it).
+  const trigger = Math.min(options.triggerTokens ?? Infinity, limit * COMPACT_AT, inputRoom(limit, reserve));
   if (!manual && budget(deps, messages) < trigger) return null;
   status(deps, COMPACTION_STATUS.started);
   try {

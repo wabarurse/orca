@@ -1,5 +1,5 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { archivedImageReferences, budget, ContextBlocked, contextLimit, estimate, outputCap, type ContextDeps } from "./compaction";
+import { archivedImageReferences, budget, ContextBlocked, contextLimit, estimate, inputRoom, outputCap, type ContextDeps } from "./compaction";
 import { archiveTranscript, contextEpoch, scopedTasks, transcriptEntries } from "./archive";
 import { existingTasks } from "../tasks";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
@@ -50,7 +50,7 @@ const DEFAULT_TRIGGER_FRACTION = .25, DEFAULT_TAIL_TOKENS = 50000;
  * never above the safe input capacity the output reserve leaves. */
 function triggerFor(deps: ContextDeps, options: RollingOptions): number {
   const limit = contextLimit(deps.compaction ?? {}, deps.model);
-  const safeInput = .8 * limit - outputCap(deps);
+  const safeInput = inputRoom(limit, outputCap(deps));
   return Math.min(options.triggerTokens ?? limit * DEFAULT_TRIGGER_FRACTION, safeInput);
 }
 /** Keep the requested tail unless it reaches the effective trigger; then target half
@@ -88,7 +88,7 @@ function status(deps: ContextDeps, text: string): void {
   try { deps.write?.(`${text}\n`, true); } catch { /* Reporting cannot undo a committed checkpoint. */ }
 }
 function fits(deps: ContextDeps, messages: MessageParam[]): boolean {
-  return budget(deps, messages) + outputCap(deps) <= .8 * contextLimit(deps.compaction ?? {}, deps.model);
+  return budget(deps, messages) <= inputRoom(contextLimit(deps.compaction ?? {}, deps.model), outputCap(deps));
 }
 /** Saved preferences, as saved (never summarized): every explicit fact in full; tentative
  * facts, newest first, only while the section stays within PREFERENCE_CHARS. Omissions are counted
