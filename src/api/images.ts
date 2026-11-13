@@ -2,6 +2,7 @@
 // scanlines, JPEG/GIF/WebP headers and request-block base64. Provider acceptance
 // is determined by the provider.
 
+import type { ImageMime } from "../types";
 import { inflateSync } from "node:zlib";
 import type { ImageBlockParam } from "@anthropic-ai/sdk/resources/messages";
 
@@ -14,8 +15,7 @@ function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 /** The image formats both providers accept as input. */
-export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
-export type ImageMime = typeof IMAGE_MIMES[number];
+export const IMAGE_MIMES: readonly ImageMime[] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 /** The image format by magic bytes (never by name), or undefined for anything else. */
 export function sniffImage(input: Uint8Array): ImageMime | undefined {

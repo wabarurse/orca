@@ -1,4 +1,4 @@
-import type { ImageRef } from "../../protocol";
+import type { ImageRef } from "../../types";
 import { dim } from "../components";
 
 export function imageLines(attachments: readonly ImageRef[] = []): string[] {

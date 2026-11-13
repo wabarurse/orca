@@ -1,8 +1,8 @@
 // /model [orch|worker|reviewer]: the scope step (all agents or one role), then the picker of the project's account's models for
 // that scope, the scoped confirmation, and the save. The App supplies the UI through ModelHost; the logic stays here.
 
+import type { Role } from "../../types";
 import { saveRoleModel, validateModel } from "../../core/data/projects";
-import type { Role } from "../../protocol";
 import { activeRoles, NEXT_REQUEST, type Choice, type RoleModels } from "./model";
 import { chooseScope, scopeNames, type Scope } from "./scope";
 

@@ -1,6 +1,7 @@
 /** Validated, project-scoped image references. Disk/transcripts never contain data URIs.
  * Bytes are immutable and retained until project deletion (including after /clear).
  */
+import type { ImageMime, ImageRef } from "../../../types";
 import { prepareImage } from "./prepare";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -8,9 +9,9 @@ import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { paths, legacyProjectIdentities } from "../../../config";
-import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../api";
+import { MAX_IMAGE_BYTES, validateImage } from "../../../api";
 import { assertProjectIdentity, projectIdentity, session, withProjectStateLock, workspaces } from "../projects";
-import type { ImageInput, ImageRef } from "../../../protocol";
+import type { ImageInput } from "../../../protocol";
 
 export const MAX_IMAGES = 4;
 /** Encoded image bytes one model request may carry. */

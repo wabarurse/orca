@@ -11,6 +11,7 @@
  * Opus 4.6 and Sonnet 4.6 reach 1M on subscriptions only through their opt-in [1m] variant, so
  * their standard window is 200k: https://code.claude.com/docs/en/model-config#extended-context
  */
+import type { ContextWindow } from "../../types";
 import { clearCatalogEfforts } from "./capabilities";
 
 const standardWindows: Readonly<Record<string, number>> = {
@@ -75,7 +76,6 @@ export function modelContextLimit(model: string): number | undefined {
   return standard === undefined ? catalog : Math.min(standard, catalog);
 }
 
-export interface ContextWindow { limit: number; estimated: boolean }
 const DEFAULT_LIMIT = 128000;
 /** The one limit resolution shared by compaction and the header. estimated: no explicit
  * budget and no verified or catalog model window, so the configured/default fallback applies. */

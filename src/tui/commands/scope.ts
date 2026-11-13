@@ -1,7 +1,7 @@
 // The scope step: which agents a change applies to. /model opens it first; /effort and /fast can adopt it the same way
 // (their own `describe` and `then`), without changing this file.
 
-import type { Role } from "../../protocol";
+import type { Role } from "../../types";
 import type { Choice } from "./model";
 
 /** "all": every agent of the project (the project-wide value); a role: only that role's agents. */

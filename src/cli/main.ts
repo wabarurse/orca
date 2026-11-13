@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import type { Role } from "../types";
 import { assertLayout } from "../config";
 import { readProcess, superviseProcess, watchPRChecks } from "../core/data/processes";
 // orca / orca start [project] [directory]   open the TUI: one page per orchestrator (binds the original checkout;
@@ -24,7 +25,6 @@ import { daemonPid, reloadRunningDaemons, requireCurrentDaemon } from "../core/a
 import { cliCommand, sessionId } from "../core/tmux";
 import { ensureProject } from "../core/agent-loop/orc";
 import { createClientOrchestrator, daemonKeeper, ensureDaemon, stopDaemon } from "../core/agent-loop/orc";
-import type { Role } from "../protocol";
 import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 

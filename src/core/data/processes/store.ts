@@ -1,9 +1,10 @@
+import type { Role } from "../../../types";
 import { usageEvent } from "../../../config";
 import { assertProjectIdentity, workspaces } from "../projects";
 import { mkdir, readdir, rename, writeFile, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
-import type { Role, Message } from "../../../protocol";
+import type { Message } from "../../../protocol";
 import { pidAlive, withStorageLock } from "../storage-lock";
 import { put, transferProcessEvents } from "../inbox";
 import { processInspection } from "./inspection";

@@ -2,11 +2,10 @@
 // walks them; the TUI's restore, app and view read them). Entries form a tree via
 // parentUuid: see transcript.ts for how the conversation is walked.
 
+import type { ImageRef, Role } from "../types";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Message } from "./inbox";
-import type { ImageRef } from "./images";
 
-export type Role = "orchestrator" | "worker" | "reviewer";
 
 export interface BaseEntry {
   uuid: string;

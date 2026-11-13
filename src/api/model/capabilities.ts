@@ -1,6 +1,6 @@
 // Conservative protocol snapshot, not a claim of account entitlement. See
 // docs/MODEL_SETTINGS.md for official sources and intentionally unsupported values.
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+import type { Effort } from "../../types";
 const full: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 const claudeFull = new Set([
   "claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-opus-5",

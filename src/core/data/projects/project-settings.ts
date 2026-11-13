@@ -1,5 +1,6 @@
+import type { Effort } from "../../../types";
 import { readProjectState, writeProjectState } from "../../../config";
-import { modelCapabilities, type Effort } from "../../../api/model";
+import { modelCapabilities } from "../../../api/model";
 import { assertSettingsShape, validateSettings, type RequestSettings } from "../../../api/model";
 import { effectiveModel } from "./project-model";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";

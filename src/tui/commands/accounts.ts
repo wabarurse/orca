@@ -1,6 +1,7 @@
 // /accounts and /login: listing, switching and signing in to subscription accounts.
 
-import { accountId, accounts, type Account, type AccountRef } from "../../api/auth";
+import type { Account, AccountRef } from "../../types";
+import { accountId, accounts } from "../../api/auth";
 import { importClaudeCode, loginClaude } from "../../api/auth";
 import { importCodex, loginCodex } from "../../api/auth";
 import { provider } from "../../api";
