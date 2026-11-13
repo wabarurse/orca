@@ -171,7 +171,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
   const configured = compactionOptions(config);
   const state = new TurnControl(deps.project, transcript);
   // The trigger/tail defaults live in rolling-memory.ts (25% of the window, ~50k verbatim); `deps.rolling` overrides them.
-  const rolling = new RollingCompactor(deps.project, transcript, deps.rolling ?? {});
+  const rolling = new RollingCompactor(deps.project, transcript, { ...deps.rolling, small: deps.rolling?.small ?? config.smallSummaries });
   // A Page/session cannot acquire ownership of a deleted/recreated project.
   const identity = existsSync(paths.project(deps.project)) ? projectIdentity(deps.project) : undefined;
   const checkIdentity = () => {

@@ -4,6 +4,7 @@ import { archiveTranscript, contextEpoch, scopedTasks, transcriptEntries } from 
 import { existingTasks } from "../tasks";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "../projects";
 import type { Provider } from "../../../api";
+import { providerFor, smallModel } from "../../../api/model";
 import { previousMemory, summarizeOlder, taskSnapshot } from "./rolling-summary";
 import type { Task } from "../../../protocol/task";
 import { paired } from "../transcripts";
@@ -13,6 +14,8 @@ import { inputEpoch } from "../inbox";
 import { facts, type Fact } from "../knowledge";
 
 export interface RollingOptions {
+  /** Summarize with the provider's small model (Haiku, Luna) at high effort. Off unless the daemon turns it on from config. */
+  small?: boolean;
   loadProvider?: () => Promise<Provider>;
   triggerTokens?: number;
   tailTokens?: number;
@@ -236,7 +239,7 @@ export class RollingCompactor {
     arm();
     // Race even custom providers that ignore AbortSignal; late answers cannot publish.
     const cancelled = new Promise<never>((_resolve, reject) => abort.signal.addEventListener("abort", () => reject(abort.signal.reason), { once: true }));
-    const target = { model: deps.model, compaction: deps.compaction, loadProvider: this.options.loadProvider ?? (async () => {
+    const target = { model: deps.model, small: this.options.small ? smallModel(providerFor(deps.model)) : undefined, compaction: deps.compaction, loadProvider: this.options.loadProvider ?? (async () => {
       if (!deps.provider) throw new Error("no resolved provider for orchestrator compaction");
       return deps.provider;
     }) };

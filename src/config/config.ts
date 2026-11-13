@@ -14,6 +14,8 @@ export interface Config {
   openaiAccount: string;
   /** Reuse Claude request prefixes; cache reads still count toward context. */
   anthropicPromptCache: boolean;
+  /** Summarize the orchestrator's background memory with the provider's small model (Haiku, Luna); false keeps it on the conversation's model. */
+  smallSummaries: boolean;
   /** Whether the TUI starts in Vim mode (on unless turned off); /vim toggles and saves it. */
   vim: boolean;
   /** Maximum overlap for calls explicitly marked independent; 1 is sequential. */
@@ -34,6 +36,7 @@ export const defaults: Config = {
   account: "",
   openaiAccount: "",
   anthropicPromptCache: true,
+  smallSummaries: true,
   vim: true,
   toolConcurrency: 4,
   maxToolOutputBytes: 64 * 1024 * 1024,
@@ -70,6 +73,7 @@ function withFallbacks(config: Config): Config {
   if (config.sandbox !== "off" && config.sandbox !== "workspace") throw new Error("sandbox must be off or workspace; no execution fallback is permitted");
   if (typeof config.anthropicPromptCache !== "boolean") config.anthropicPromptCache = defaults.anthropicPromptCache;
   if (typeof config.vim !== "boolean") config.vim = defaults.vim;
+  if (typeof config.smallSummaries !== "boolean") config.smallSummaries = defaults.smallSummaries;
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;
   if (!integerWithin(config.maxToolOutputBytes, 1024, 256 * 1024 * 1024)) config.maxToolOutputBytes = defaults.maxToolOutputBytes;

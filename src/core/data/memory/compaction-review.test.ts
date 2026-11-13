@@ -195,7 +195,7 @@ test("actual project config changes during gated summary are deferred until the 
   await saveProjectModel("p", "gpt-6-astra"); await saveProjectSettings("p", "gpt-6-astra", { effort: "low", fast: false });
   resume.release(); await run;
   expect(resolutions).toBe(2); expect(calls.map(c => c.model)).toEqual(["claude-opus-5", "claude-opus-5", "gpt-6-astra"]);
-  expect(calls[0]?.settings).toEqual({ effort: "high", fast: true }); expect(calls[1]?.settings).toEqual(calls[0]?.settings); expect(calls[2]?.settings).toEqual({ effort: "low", fast: false });
+  expect(calls[0]?.settings).toEqual({ effort: "low", fast: true }); expect(calls[1]?.settings).toEqual({ effort: "high", fast: true }); // the summary at the lowest effort, then the turn as set expect(calls[2]?.settings).toEqual({ effort: "low", fast: false });
 });
 test("actual usage from a normal request triggers the next boundary compaction with conservative growth", async () => {
   const calls: string[] = [];

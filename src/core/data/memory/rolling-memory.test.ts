@@ -82,7 +82,8 @@ test("foreground proceeds while the summarizer works; idle publication preserves
   await orch.turn(); await worker.entered;
   expect(orch.activity!()).toMatchObject({ working: false, compacting: true });
   expect(foreground.calls).toHaveLength(2); expect(worker.calls).toHaveLength(1);
-  expect(worker.calls[0]).toMatchObject({ model: "gpt-6-sol", tools: [], settings: { effort: "low", fast: false }, maxTokens: 8192 });
+  // Background memory runs on the provider's small model at high effort: nobody waits on it.
+  expect(worker.calls[0]).toMatchObject({ model: "gpt-6-luna", tools: [], settings: { effort: "xhigh", fast: false }, maxTokens: 8192 });
   expect(transcript.branch()[0]?.type).toBe("message");
   // Reference updates are now actual model input, counted by the same tail budget.
   const cut = rollingCut(foreground.calls[0]!.messages, 200);
@@ -355,7 +356,7 @@ test("the one-shot orchestrator CLI uses the selected model and joins its summar
   expect(foreground.calls).toHaveLength(1); expect(ended).toBe(false);
   worker.release(); expect(await run).toBe(0);
   expect(open(transcript.path).branch()[0]?.type).toBe("summary");
-  expect(worker.calls[0]!.model).toBe("gpt-6-sol");
+  expect(worker.calls[0]!.model).toBe("gpt-6-luna"); // the summarizer: the selected model's small sibling
 });
 
 test("a late worker cannot publish into a deleted/recreated project, add archive rows, or leave rows behind", async () => {
@@ -705,4 +706,16 @@ test("manual compaction reports maintenance without foreground work, then the co
     expect(activity.compacted!.id).toBe(transcript.branch()[0]!.uuid);
     expect(provider.calls).toHaveLength(0);
   } finally { worker.release(); orch.dispose?.(); }
+});
+
+test("a refused small model falls back to the conversation's own model at low effort", async () => {
+  const calls: CompleteRequest[] = [];
+  const memory = await summarizeOlder([{ role: "user", content: "older history" }], new AbortController().signal, { model: "claude-opus-5-5", small: "claude-haiku-5-5",
+    loadProvider: async () => ({ name: "anthropic", models: async () => [], complete: async req => {
+      calls.push(req);
+      if (req.model === "claude-haiku-5-5") throw Object.assign(new Error("not offered"), { reason: "model-unavailable" });
+      return answer();
+    } }) });
+  expect(calls.map(c => [c.model, c.settings])).toEqual([["claude-haiku-5-5", { fast: false, effort: "xhigh" }], ["claude-opus-5-5", { fast: false, effort: "low" }]]);
+  expect(memory.summary.length + memory.pending.length).toBeGreaterThan(0);
 });
