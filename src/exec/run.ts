@@ -89,7 +89,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker: Tr
     transcript,
     tools,
     model,
-    compaction: { enabled: config.compact, fallback: config.contextLimitFallback, triggerTokens: config.workerContextTokens },
+    compaction: { enabled: config.compact, fallback: config.contextLimitFallback }, // compacts near the model's capacity, like the orchestrator's foreground path
     system: rolePrompt(opts.role),
     ctx: { run: opts.run, project: opts.project, role: opts.role, branch: opts.branch, cwd: process.cwd(), executionEpoch: epoch },
     tracker,

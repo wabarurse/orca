@@ -256,9 +256,8 @@ calibrates estimates upward with estimated subsequent growth; other providers
 currently use estimates. Measurements are invalidated after compaction and ignored
 across model changes.
 
-The worker/reviewer trigger is the earlier of the configured **working-context
-target (`workerContextTokens`, default 128000)** and **input + output reserve >=
-80% of the window**. The orchestrator keeps its separate rolling policy described above.
+The worker/reviewer trigger is **input + output reserve >= 80% of the model's
+window**: they compact near capacity, not at a fixed token count. The orchestrator keeps its separate rolling policy described above.
 The remaining 20% is safety headroom. With auto enabled, the default output cap /
 accounting reserve is min(64000, 20% of window). The embedder's `outputReserve`
 overrides that cap. It is normalized once per boundary: positive finite integer,
