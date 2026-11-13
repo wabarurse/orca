@@ -16,7 +16,7 @@ export interface Config {
   openaiAccount: string;
   /** Reuse Claude request prefixes; cache reads still count toward context. */
   anthropicPromptCache: boolean;
-  /** Whether the TUI starts in Vim mode; /vim toggles and saves it. */
+  /** Whether the TUI starts in Vim mode (on unless turned off); /vim toggles and saves it. */
   vim: boolean;
   /** Maximum overlap for calls explicitly marked independent; 1 is sequential. */
   toolConcurrency: number;
@@ -37,7 +37,7 @@ export const defaults: Config = {
   account: "",
   openaiAccount: "",
   anthropicPromptCache: true,
-  vim: false,
+  vim: true,
   toolConcurrency: 4,
   maxToolOutputBytes: 64 * 1024 * 1024,
   maxToolResultBytes: 16 * 1024,
