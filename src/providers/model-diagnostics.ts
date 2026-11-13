@@ -1,5 +1,5 @@
 import { CredentialError } from "../login/oauth";
-import { AccountCooldownError } from "./rate-limit";
+import { lockoutUntil } from "./rate-limit";
 import { exhaustedQuota, httpStatus, providerErrorEvidence, QuotaError, transientFailure } from "./retry";
 
 const guidance = {
@@ -68,12 +68,14 @@ function reasonFor(error: unknown, status: number | undefined, stage: RequestSta
 
 export function diagnoseModelError(error: unknown, consumed = false, stage: RequestStage = "setup"): ModelRequestError {
   if (error instanceof ModelRequestError) return error;
-  if (error instanceof AccountCooldownError) {
-    return new ModelRequestError("exhausted", 429, "rate-limit", `${guidance["rate-limit"]} Retry after ${new Date(error.until).toISOString()}.`);
-  }
   const quota = error instanceof QuotaError ? error.explanation : exhaustedQuota(error);
   const status = httpStatus(error);
   if (quota) return new ModelRequestError("quota", status, "quota", quota + " Check usage or switch accounts.");
+  const lockout = lockoutUntil(error);
+  if (lockout) {
+    const until = new Date(lockout).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return new ModelRequestError("exhausted", 429, "rate-limit", `The provider rate limited this account until ${until}. Switch accounts or resume after that.`);
+  }
 
   // SDK wrappers can preserve the locally typed credential failure in their cause.
   for (let cause = error, depth = 0; cause instanceof Error && depth < 5; cause = cause.cause, depth++) {
