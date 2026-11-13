@@ -396,6 +396,16 @@ describe("case 4: the watchdog", () => {
     expect(msgs.map((m) => m.text)).toEqual([`[agent-exit] worker-dead stopped while the tui was not watching (role worker; branch feat; last step: starting; uncommitted changes: unknown)`]);
   });
 
+  test("startup sweep: a dead run older than its claim's lifetime is not announced again", async () => {
+    await run("worker-old", DEAD_PID);
+    const file = join(paths.runs(project), "worker-old.json"), state = await Bun.file(file).json();
+    await Bun.write(file, JSON.stringify({ ...state, ts: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString() }));
+    await run("worker-fresh", DEAD_PID);
+    const check = watchdog({ live: async () => [], alive, dirty: async () => null });
+    expect(await check(project)).toEqual(["worker-fresh"]);
+    expect((await inbox()).map((m) => m.from)).toEqual(["worker-fresh"]);
+  });
+
   test("a task run that never started (no run record after the grace period) gets one notice naming the task; a run with its record is left to the sweep", async () => {
     mkdirSync(paths.project(project), { recursive: true });
     const t = await registerTask(project, { name: "Login page", summary: "Add it", branch: "feat/login", authorized: true });

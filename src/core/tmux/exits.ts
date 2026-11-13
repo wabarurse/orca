@@ -364,11 +364,14 @@ async function runIds(project: string): Promise<string[]> {
 
 type Probe = Required<Omit<WatchdogOptions, "live">>;
 
-/** The open, silent, dead run for `id`; "alive" while its process still runs; null when there is nothing to send. */
+/** The open, silent, dead run for `id`; "alive" while its process still runs; null when there is nothing to send.
+ * A run record outlives its claim: claims are pruned after CLAIM_TTL_MS, records never. So a dead run last
+ * updated longer ago than that was already announced, and is not announced again on every later start. */
 async function staleRun(project: string, id: string, probe: Probe): Promise<RunState | "alive" | null> {
   const s = await readRun(project, id);
   if (!s || s.state === "reported" || claimed(project, id, s.run)) return null;
-  return probe.alive(s.pid) ? "alive" : s;
+  if (probe.alive(s.pid)) return "alive";
+  return Date.now() - Date.parse(s.ts) > CLAIM_TTL_MS ? null : s;
 }
 
 /** Send `what` for one agent not in `live`; "alive" means check it again next time. */
