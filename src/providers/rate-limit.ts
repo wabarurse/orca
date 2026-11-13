@@ -3,12 +3,18 @@
 import { paths, readState, updateState } from "../config";
 import type { RequestScope } from "./bounded-transport";
 
-interface Cooldown { until: number; probeAt: number; failures: number; version: string }
+interface Cooldown { until: number; probeAt: number; failures: number; version: string; checkedAt?: number }
 const key = "cooldown";
 export class AccountCooldownError extends Error {
   readonly status = 429;
   constructor(readonly until: number) { super(`account rate limited until ${new Date(until).toISOString()}; explicitly resume afterward`); }
 }
+/** The cooldown behind a failure. The SDKs wrap what the transport throws, so it is looked for in the causes too. */
+export function accountCooldown(error: unknown): AccountCooldownError | undefined {
+  for (let e = error, depth = 0; e instanceof Error && depth < 5; e = e.cause, depth++) if (e instanceof AccountCooldownError) return e;
+}
+/** A long lockout is asked about again this often: the provider can lift a limit before the time it gave. */
+export const RECHECK_MS = 10 * 60_000;
 function wait(ms: number, signal?: AbortSignal | null): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(signal.reason); return; }
@@ -33,7 +39,18 @@ export function coordinatedTransport(account: string, transport: RequestScope["f
       admitted = readState<Cooldown>(paths.memory, scope, key);
       if (!admitted) break;
       const now = Date.now();
-      if (admitted.until - now > 60000) throw new AccountCooldownError(admitted.until);
+      if (admitted.until - now > 60000) {
+        // Fail closed, except for one request per RECHECK_MS across all processes.
+        let recheck = false;
+        updateState<Cooldown>(paths.memory, scope, key, old => {
+          admitted = old;
+          if (!old) return;
+          recheck = Date.now() - (old.checkedAt ?? 0) >= RECHECK_MS;
+          return recheck ? { ...old, checkedAt: Date.now() } : old;
+        });
+        if (recheck || !admitted) break;
+        throw new AccountCooldownError(admitted.until);
+      }
       let delay = 0;
       updateState<Cooldown>(paths.memory, scope, key, old => {
         if (!old) { admitted = undefined; return; }
@@ -47,7 +64,7 @@ export function coordinatedTransport(account: string, transport: RequestScope["f
     const response = await transport(input, init);
     if (response.status === 429) updateState<Cooldown>(paths.memory, scope, key, old => {
       const failures = (old?.failures ?? 0) + 1, until = retryAt(response, Date.now(), failures);
-      return { until: Math.max(until, old?.until ?? 0), probeAt: Math.max(until, old?.probeAt ?? 0), failures, version: crypto.randomUUID() };
+      return { until: Math.max(until, old?.until ?? 0), probeAt: Math.max(until, old?.probeAt ?? 0), failures, version: crypto.randomUUID(), checkedAt: Date.now() };
     });
     else if (response.ok && admitted) updateState<Cooldown>(paths.memory, scope, key, old => old?.version === admitted?.version ? undefined : old);
     return response;

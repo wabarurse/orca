@@ -1,5 +1,5 @@
 import { plain } from "./sanitize";
-import { AccountCooldownError } from "./rate-limit";
+import { accountCooldown } from "./rate-limit";
 
 // One retry policy for both SDK clients: a transient failure of the initial
 // request (the connection, or a 408/409/429/5xx answer) is tried again a bounded
@@ -32,7 +32,7 @@ export interface RetryOptions {
  * context size) is final.
  */
 export function transientFailure(error: unknown): string | undefined {
-  if (error instanceof AccountCooldownError) return undefined;
+  if (accountCooldown(error)) return undefined;
   if (exhaustedQuota(error)) return undefined;
   const status = (error as { status?: unknown })?.status;
   if (typeof status === "number") return TRANSIENT_STATUSES.has(status) || status >= 500 ? `HTTP ${status}` : undefined;
