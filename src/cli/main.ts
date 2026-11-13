@@ -14,8 +14,7 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 import { ghTaskPR } from "../core/data/tasks";
 import { cleanStorage, pull, runMcp } from "./scripts";
 import pkg from "../../package.json";
-import { runAgent, scheduleReload, activateInstalled, organizeProjects } from "../exec";
-import { afterExit } from "../exec";
+import { afterExit, runAgent } from "../exec";
 import { put } from "../core/data/inbox";
 import { directories, repoHere, validProjectName } from "../core/data/projects";
 import { execution } from "../core/data/projects/lifecycle";
@@ -30,7 +29,7 @@ import { App } from "../tui";
 import { realTerminal } from "../tui/components";
 
 const [cmd, ...rest] = process.argv.slice(2);
-if (["", "start", "startup", "organize", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "apply-update", "mcp"].includes(cmd ?? "")) assertLayout(paths.root, cmd === "organize");
+if (["", "start", "startup", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "mcp"].includes(cmd ?? "")) assertLayout(paths.root);
 
 function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
@@ -46,13 +45,11 @@ function usage(error?: string): never {
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
   orca clean [--preview]          delete eligible archived storage; --preview lists without deleting
-  orca organize                   group saved folders by directory (requires orca stopped)
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
   orca version
   orca pull                       update ~/.orca/.runtime/app from origin/main
-  orca reload                     apply the installed build to running orchestrators after their current turns
   orca help | --help
   orca agent --project <name> --role <orchestrator|worker|reviewer> [--branch <name>] [--run <id>]
   orca agent-exit --project <name> --role <worker|reviewer> --branch <name> --run <id> --code <n>`);
@@ -66,12 +63,6 @@ switch (cmd) {
     // Keep old explicit flags as aliases, particularly --dry-run's non-destructive meaning.
     if (rest.length > 1 || rest.some(arg => !["--preview", "--apply", "--dry-run"].includes(arg))) usage("clean accepts --preview (or legacy --dry-run / --apply)");
     console.log(JSON.stringify(await cleanStorage(!rest.includes("--preview") && !rest.includes("--dry-run")), null, 2));
-    break;
-  }
-  case "organize": {
-    if (rest.length) usage("organize takes no arguments");
-    const moved = await organizeProjects();
-    console.log(`organized ${moved} conversation folder(s); named directory/conversation links are ready in ${paths.projects}`);
     break;
   }
   case "startup": {
@@ -162,12 +153,8 @@ switch (cmd) {
     await pull();
     break;
   case "mcp": await runMcp(rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }); break;
-  case "reload":
-    if (rest.length) usage("reload takes no arguments; it applies the installed build to all running orchestrators");
-    console.log(scheduleReload());
-    break;
-  case "apply-update":
-    if (rest.length) usage("apply-update takes no arguments");
+  case "reload": // internal: orca pull starts it, detached, in the build it just installed
+    if (rest.length) usage("reload takes no arguments");
     await reloadRunningDaemons();
     break;
   case "version":

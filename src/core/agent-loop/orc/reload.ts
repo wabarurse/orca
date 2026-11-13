@@ -71,12 +71,12 @@ async function reloadOne(project: string, old: DaemonStatus, identity: string, o
   const deadline = o.now() + o.waitMs;
   // Recheck after discovery; a replacement daemon must not inherit the old stop.
   const current = await o.status(project);
-  if (current && (current.run !== old.run || current.pid !== old.pid)) throw new Error("daemon changed during update; run orca reload again");
+  if (current && (current.run !== old.run || current.pid !== old.pid)) throw new Error("daemon changed during update; run orca pull again");
   o.write(`${project}: ${old.build ?? "unknown build"} → ${o.build}; waiting for the current turn to finish`);
   if (current && current.state !== "stopped") await o.stop(project, old.run);
   while (o.alive(old.pid)) {
     if (o.identity(project) !== identity) throw new Error("project replaced during update; reopen it manually");
-    if (o.now() >= deadline) throw new Error("still running after the update wait; no process was killed. Run orca reload again after it finishes");
+    if (o.now() >= deadline) throw new Error("still running after the update wait; no process was killed. Run orca pull again after it finishes");
     await o.sleep(250);
   }
   if (o.identity(project) !== identity) throw new Error("project replaced during update; not restarted");
@@ -90,7 +90,7 @@ async function reloadOne(project: string, old: DaemonStatus, identity: string, o
   while ((!running || running.state === "stopped" || running.run === old.run) && o.now() < startedBy) {
     await o.sleep(100); running = await o.status(project);
   }
-  if (!running || running.state === "stopped" || running.build !== expected) throw new Error(`replacement build not confirmed (${running?.build ?? "not running"}); run orca reload to retry`);
+  if (!running || running.state === "stopped" || running.build !== expected) throw new Error(`replacement build not confirmed (${running?.build ?? "not running"}); run orca pull again to retry`);
   o.write(`${project}: running ${running.build}; conversation and queued input retained`);
 }
 
@@ -98,7 +98,7 @@ async function installedBuild(): Promise<string> {
   if (!Bun.isStandaloneExecutable) return BUILD_ID;
   const result = await command([...cliCommand(), "version"], paths.root);
   const build = /\(([^\n()]+)\)\s*$/.exec(result.out)?.[1];
-  if (result.code !== 0 || !build) throw new Error("cannot identify the installed executable; run orca reload again after installation finishes");
+  if (result.code !== 0 || !build) throw new Error("cannot identify the installed executable; run orca pull again after installation finishes");
   return build;
 }
 

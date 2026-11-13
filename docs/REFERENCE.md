@@ -197,7 +197,7 @@ branch/worktree cleanup, including removal of ignored files.
 - Run `orca pull` from any directory to update the global app installation and
   reload running orchestrators once their current turns finish. Git and Bun 1.4.2+
   are required. Reopen TUIs for interface changes; workers/reviewers finish on
-  their loaded builds. `orca reload` retries activation without rebuilding.
+  their loaded builds. Running `orca pull` again retries a failed reload.
   Read [update safety and recovery](#explicit-updates-orca-pull) before updating.
 
 ## Install once, run from any repository
@@ -368,8 +368,7 @@ This command accepts no arguments. It updates the dedicated harness installation
 at `$HOME/.orca/.runtime/app` and schedules reloads for its running orchestrators.
 It never updates the invoking repository or a managed project's source code.
 `ORCA_HOME` still relocates runtime state, not the updater's checkout, executable,
-or global activation target. To activate an explicitly relocated home, use
-`ORCA_HOME=/path/to/home orca reload`. Git and **Bun >= 1.4.2 on PATH** are required for updates;
+or global activation target. Git and **Bun >= 1.4.2 on PATH** are required for updates;
 Bun is not required for normal compiled runtime. An initial clone and successful
 `bun run install:local` are required first; `pull` does not create or guess a
 missing installation.
@@ -431,7 +430,7 @@ input, project settings and running worker/reviewer processes remain intact.
 
 The helper logs progress and failures to `~/.orca/.runtime/updates.log`. Closing
 the updater or TUI does not interrupt it. Durable per-project update records
-allow `orca reload` to resume a failed handoff, including after an orchestrator
+allow the next `orca pull` to resume a failed handoff, including after an orchestrator
 stopped but before its replacement started. It does not start unrelated closed
 sessions. A recreated project cannot inherit the previous project's reload.
 Concurrent reload helpers serialize; later updates recheck the installed build.
@@ -443,10 +442,9 @@ instead of silently feeding an outdated daemon. A source-development process
 is not upgraded in place. For an incompatible protocol/storage upgrade, follow
 that release's offline upgrade instructions and stop all participants first.
 
-**First upgrade from an older updater:** after `orca pull` installs this version,
-run `orca reload` once. The old updater did not contain the automatic activation
-step. Subsequent pulls schedule activation themselves. A failed activation
-does not undo a successful installation; inspect the log and retry `orca reload`.
+A failed reload does not undo a successful installation; inspect the log and run
+`orca pull` again. There is no separate reload command to type: `pull` starts the
+internal `reload` in the build it installed.
 
 ### Installer ownership and recovery
 

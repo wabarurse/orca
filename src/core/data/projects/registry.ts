@@ -3,10 +3,11 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { $ } from "bun";
 import { conversationIds, loadConfig, paths, readProjectState, writeProjectState, repositoryBinding, saveConfig } from "../../../config";
 import { directoryHere } from "./workspace";
-import { refreshProjectFolders, withFolderLock } from "./folders";
+import { withStorageLock } from "../storage-lock";
 import type { ProjectEntry } from "../../../protocol";
 
 /** A fresh orchestrator name, orch-xxxx, that no project uses yet. */
@@ -35,17 +36,15 @@ export function validDisplayName(name: string): string {
 }
 
 /**
- * Update the display name and readable folder link; stable artifacts, identities,
- * tmux routes and open transcripts keep their paths while agents are running.
+ * Update the display name; artifacts, identities, tmux routes and open transcripts keep their paths.
  */
 export async function setDisplayName(project: string, name: string): Promise<string> {
   name = validDisplayName(name);
-  return withFolderLock(async () => {
+  return withStorageLock(join(paths.runtime, "display-names.lock"), async () => {
     for (const other of await listProjects()) {
       if (other !== project && (other === name || (await displayName(other)) === name)) throw new Error(`another project is already called ${name}`);
     }
     writeProjectState(project, "name", name);
-    refreshProjectFolders();
     return name;
   });
 }

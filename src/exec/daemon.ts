@@ -4,14 +4,10 @@
 
 import { paths } from "../config";
 import type { AgentOptions } from "../core/agent-loop/loop";
-import { runDaemon, windowHooks, type DaemonOutcome } from "../core/agent-loop/orc";
-import { liveWriter } from "../core/agent-loop/orc";
-import { createOrchestrator } from "../core/agent-loop/orc";
+import { createOrchestrator, liveWriter, runDaemon, windowHooks, type DaemonOutcome } from "../core/agent-loop/orc";
 import { tryStorageLock } from "../core/data";
 import { open } from "../core/data/transcripts";
-import { publishLaunch } from "../core/tmux";
-import { ABANDONED, claim, supervise, type Tracker } from "../core/tmux";
-import { SETTLED_EXIT } from "../core/tmux";
+import { ABANDONED, claim, publishLaunch, SETTLED_EXIT, supervise, type Tracker } from "../core/tmux";
 
 /**
  * `orca agent --role orchestrator`: one daemon per project, supervised like a

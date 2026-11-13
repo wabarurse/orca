@@ -32,7 +32,6 @@ export async function resetProject(name: string, options: DeleteOptions = {}): P
   await ensureProject(name, binding.directory);
   for (const [key, value] of kept) writeProjectState(name, key, value);
   if (pinned) await saveConfig({ pinned: [...new Set([...(await loadConfig()).pinned, name])] });
-  await directories.refreshFolders();
 }
 /** What a deletion will remove, read before asking the user. */
 export async function deletionSummary(entry: { name: string; directory?: string }): Promise<string> {

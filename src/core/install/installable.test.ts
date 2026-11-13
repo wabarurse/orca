@@ -82,11 +82,10 @@ test("relocated compiled image pipeline embeds native fixture script, storage an
   expect(result.out).not.toContain("base64");
 });
 
-test("compiled reload detaches its helper and records completion in the selected state home", async () => {
+test("compiled reload records completion in the selected state home", async () => {
   const isolated = join(root, "reload-state"), progress = join(isolated, ".runtime", "updates.log");
   const result = await exec([installed, "reload"], root, { ORCA_HOME: isolated });
   expect(result.code).toBe(0); expect(result.err).toBe("");
-  expect(result.out).toContain("global session update scheduled");
   await until(() => existsSync(progress) && readFileSync(progress, "utf8").includes("update handoffs finished"));
   expect(existsSync(join(isolated, ".runtime", "update-lock"))).toBe(false);
   expect(existsSync(join(home, ".orca"))).toBe(false);

@@ -1,23 +1,19 @@
-import { editableTool } from "../core/definitions";
 // The `orca agent` process: runAgent publishes the launch, supervises a worker or
 // reviewer (run record, exit notice on a crash) and runs one agent session over
 // the loop in core/agent-loop/loop/agent.ts. The orchestrator role hands over to
 // the daemon entry (./daemon).
 
-import { reconcileVerifications } from "../core/data/processes";
 import { loadConfig, paths } from "../config";
+import { editableTool } from "../core/definitions";
 import { createAgent, type AgentOptions } from "../core/agent-loop/loop";
 import { execution } from "../core/data/projects/lifecycle";
 import { effectiveModel, projectModelResolver } from "../core/data/projects";
 import { open } from "../core/data/transcripts";
 import { rolePrompt } from "../core/prompt";
-import { launchEpoch, launchIdentity, SETTLED_EXIT, publishLaunch, watchCancellation } from "../core/tmux";
-import { supervise, type Tracker } from "../core/tmux";
-import { sessionId } from "../core/tmux";
-import { registry } from "../core/tools";
-import { toolsFor, type Tool, type ToolResult } from "../core/tools";
+import { launchEpoch, launchIdentity, SETTLED_EXIT, publishLaunch, sessionId, supervise, watchCancellation, type Tracker } from "../core/tmux";
+import { registry, toolsFor, type Tool, type ToolResult } from "../core/tools";
 import { pending } from "../core/data/inbox";
-import { recoverableProcesses, processOwner, listProcesses, liveProcess, controlProcess, reconcileProcesses } from "../core/data/processes";
+import { recoverableProcesses, processOwner, listProcesses, liveProcess, controlProcess, reconcileProcesses, reconcileVerifications } from "../core/data/processes";
 import { agentContext } from "../core/data/knowledge";
 
 /**
@@ -46,7 +42,7 @@ export async function runAgent(opts: AgentOptions, exit?: (code: number) => void
   const info = {
     project: opts.project,
     id: sessionId(opts.role, opts.branch),
-    run: opts.run || crypto.randomUUID().slice(0, 8),
+    run,
     role: opts.role,
     branch: opts.branch,
     cwd: process.cwd(),
