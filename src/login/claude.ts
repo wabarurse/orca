@@ -4,11 +4,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../config";
 import { CredentialError, loginOAuth, validateProfile, withCredentialLock, writeTokens, type Fetch, type LoginOptions, type OAuthTokens as ClaudeTokens } from "./oauth";
-export { validateProfile } from "./oauth";
 
 export const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 export const CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
-export const CLAUDE_BETAS = "claude-code-20250219,oauth-2025-04-20";
 const SCOPES = "user:profile user:inference user:sessions:claude_code";
 const REFRESH_MARGIN_MS = 120_000;
 

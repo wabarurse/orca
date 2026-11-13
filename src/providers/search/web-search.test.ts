@@ -8,7 +8,7 @@ import { web_search } from "../../core/tools/web-search";
 import { codexSSE, fakeCodexTokens } from "../../test/codex";
 import { claudeSearchFixture, codexSearchFixture, codexStreamSearchFixture } from "../../test/web-search";
 import type { Provider } from "../provider";
-import { CLAUDE_BETAS } from "../../login/claude";
+import { CLAUDE_BETAS } from "../anthropic";
 
 let mockFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
 afterEach(() => { mockFetch?.mockRestore(); mockFetch = undefined; });

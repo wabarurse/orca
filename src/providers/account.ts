@@ -4,9 +4,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "../config";
 import { activeProfile, type ProviderName } from "../login";
-import { CLAUDE_BETAS, claudeCredentials, readClaudeTokens } from "../login";
+import { claudeCredentials, readClaudeTokens } from "../login";
 import { codexCredentials, readCodexTokens } from "../login";
-import { anthropic } from "./anthropic";
+import { anthropic, CLAUDE_BETAS } from "./anthropic";
 import { openai } from "./openai";
 import type { Provider } from "./provider";
 import { metered, recordRetry } from "./usage";

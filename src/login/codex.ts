@@ -7,7 +7,6 @@ import { CredentialError, loginOAuth, validateProfile, type OAuthTokens, withCre
 
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
-export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 export interface CodexTokens extends OAuthTokens { accountId: string }
 
 const authDir = () => join(paths.runtime, "auth", "openai");

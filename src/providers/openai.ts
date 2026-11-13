@@ -8,11 +8,13 @@ import { validateSettings, type RequestSettings } from "./catalog";
 import OpenAI from "openai";
 import type { FunctionTool, ResponseFunctionCallOutputItem, ResponseOutputItemDoneEvent, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
-import { CODEX_BASE_URL, type codexCredentials, type CodexTokens } from "../login";
+import type { codexCredentials, CodexTokens } from "../login";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { codexCatalogEfforts, rememberCatalogEfforts } from "./catalog";
 import { exhaustedQuota, type RetryOptions } from "./retry";
+
+const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 
 // Protocol/catalog compatibility snapshot, matching Codex CLI 0.154.0.
 export const CODEX_CLIENT_VERSION = "0.154.0";
