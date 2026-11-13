@@ -83,7 +83,7 @@ test("foreground proceeds while the summarizer works; idle publication preserves
   expect(orch.activity!()).toMatchObject({ working: false, compacting: true });
   expect(foreground.calls).toHaveLength(2); expect(worker.calls).toHaveLength(1);
   // Background memory runs on the provider's small model at high effort: nobody waits on it.
-  expect(worker.calls[0]).toMatchObject({ model: "gpt-6-luna", tools: [], settings: { effort: "xhigh", fast: false }, maxTokens: 8192 });
+  expect(worker.calls[0]).toMatchObject({ model: "gpt-6-luna", tools: [], settings: { effort: "xhigh", fast: false }, maxTokens: 32192 }); // 8192 for the summary plus room to think
   expect(transcript.branch()[0]?.type).toBe("message");
   // Reference updates are now actual model input, counted by the same tail budget.
   const cut = rollingCut(foreground.calls[0]!.messages, 200);
@@ -717,5 +717,16 @@ test("a refused small model falls back to the conversation's own model at low ef
       return answer();
     } }) });
   expect(calls.map(c => [c.model, c.settings])).toEqual([["claude-haiku-5-5", { fast: false, effort: "xhigh" }], ["claude-opus-5-5", { fast: false, effort: "low" }]]);
+  expect(memory.summary.length + memory.pending.length).toBeGreaterThan(0);
+});
+
+test("a small model whose summary is cut off twice hands the part to the conversation's model", async () => {
+  const calls: CompleteRequest[] = [];
+  const memory = await summarizeOlder([{ role: "user", content: "older history" }], new AbortController().signal, { model: "claude-opus-5-5", small: "claude-haiku-5-5",
+    loadProvider: async () => ({ name: "anthropic", models: async () => [], complete: async req => {
+      calls.push(req);
+      return req.model === "claude-haiku-5-5" ? { ...answer(), stop: "limit" as const } : answer();
+    } }) });
+  expect(calls.map(c => [c.model, c.maxTokens])).toEqual([["claude-haiku-5-5", 32192], ["claude-haiku-5-5", 32192], ["claude-opus-5-5", 8192]]);
   expect(memory.summary.length + memory.pending.length).toBeGreaterThan(0);
 });

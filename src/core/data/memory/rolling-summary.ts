@@ -39,6 +39,9 @@ const repairInstruction = `The previous attempt failed local output validation. 
 // Pi likewise separates summary generation from its retained-context reserve:
 // https://github.com/earendil-works/pi/blob/a14cdf90f0a76532f3e20bc3c01872837cef24ba/packages/coding-agent/src/core/compaction/compaction.ts
 const GENERATION_TOKENS = 8192;
+// Thinking counts against a request's reply cap: a summary that thinks needs this much more, or the
+// thinking alone uses the cap and the summary is cut off.
+const THINKING_TOKENS = 24_000;
 class MemoryOutputError extends Error {}
 
 function memoryStrings(value: unknown, max: number): string[] {
@@ -93,7 +96,7 @@ async function summarizePart(provider: Provider, request: CompleteRequest, optio
     try { return resultMemory(result); }
     catch (error) {
       if (!(error instanceof MemoryOutputError)) throw error;
-      if (attempt) throw new Error(`summary validation failed after 2 attempts: ${error.message}`);
+      if (attempt) throw new MemoryOutputError(`summary validation failed after 2 attempts: ${error.message}`);
       options.onRepair?.(error.message);
     }
   }
@@ -155,12 +158,14 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
       parts.push(part.slice(middle), part.slice(0, middle));
       continue;
     }
+    const settings = settingsFor(model), cap = GENERATION_TOKENS + ((settings.effort ?? "low") === "low" ? 0 : THINKING_TOKENS);
     try {
       memory = await summarizePart(provider, { trace: { project: options.project, agent: "orchestrator" }, signal, model,
-      settings: settingsFor(model), messages: input, tools: [], maxTokens: Math.min(GENERATION_TOKENS, target.compaction?.maxOutputTokens ?? GENERATION_TOKENS), onText() {} }, options);
+      settings, messages: input, tools: [], maxTokens: Math.min(cap, target.compaction?.maxOutputTokens ?? cap), onText() {} }, options);
     } catch (error) {
-      // The account may not offer the small model, or not at this effort: finish on the conversation's own model.
-      const refused = ["model-unavailable", "permission", "invalid-request"].includes((error as { reason?: string })?.reason ?? "");
+      // The account may not offer the small model, or not at this effort, or the small model cannot
+      // write a valid summary of this part: finish on the conversation's own model.
+      const refused = error instanceof MemoryOutputError || ["model-unavailable", "permission", "invalid-request"].includes((error as { reason?: string })?.reason ?? "");
       if (model === target.model || !refused || signal.aborted) throw error;
       model = target.model; parts.push(part);
       continue;
