@@ -14,7 +14,7 @@ import { createAgent } from "./agent";
 import { task } from "../../tools/task";
 import { listTasks } from "../../data/tasks/tasks";
 import { put } from "../../data/inbox/inbox";
-import type { Provider } from "../../../providers/provider";
+import type { Provider } from "../../../api/provider";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
 import type { Transcript } from "../../data/transcripts/transcript";
 import type { Entry, NewEntry } from "../../../protocol/transcript";

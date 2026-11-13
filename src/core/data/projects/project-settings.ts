@@ -1,6 +1,6 @@
 import { readProjectState, writeProjectState } from "../../../config";
-import { modelCapabilities, type Effort } from "../../../providers/catalog";
-import { assertSettingsShape, validateSettings, type RequestSettings } from "../../../providers/catalog";
+import { modelCapabilities, type Effort } from "../../../api/catalog";
+import { assertSettingsShape, validateSettings, type RequestSettings } from "../../../api/catalog";
 import { effectiveModel } from "./project-model";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";
 

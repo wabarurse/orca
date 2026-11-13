@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
 import { openai } from "./openai";
 import { codexSSE, fakeCodexTokens } from "../test/codex";
-import { CredentialError } from "../login/oauth";
+import { CredentialError } from "./auth/oauth";
 import type { RecoveryPolicy } from "./provider-recovery";
 
 let mock: ReturnType<typeof spyOn> | undefined;

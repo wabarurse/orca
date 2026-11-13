@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { cancelSession, delay, launchIdentity, publishLaunch, takeCancellation } from "../../tmux";
 import { exitWatchdog, mergeWatch } from "../../tmux";
 import { paths, repositoryBinding, BUILD_ID } from "../../../config";
-import { contextWindow } from "../../../providers/catalog";
+import { contextWindow } from "../../../api/catalog";
 import { effectiveModel } from "../../data/projects";
 import { execution } from "../../data/projects/lifecycle";
 import type { Orchestrator, OrchestratorDeps } from "./orchestrator";

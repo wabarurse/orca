@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgent, type AgentDeps } from "../../agent-loop/loop/agent";
 import { budget, compact } from "./compaction";
-import type { CompleteRequest, Provider, Turn } from "../../../providers/provider";
+import type { CompleteRequest, Provider, Turn } from "../../../api/provider";
 import { open } from "../transcripts/transcript";
 import { text, toolUse } from "../../../test/fake-provider";
-import { openai } from "../../../providers/openai";
+import { openai } from "../../../api/openai";
 import { codexSSE, fakeCodexTokens } from "../../../test/codex";
 
 const dirs: string[] = [];

@@ -1,5 +1,5 @@
 import { BUILD_ID } from "../../../config";
-import { usageEvent } from "../../../providers";
+import { usageEvent } from "../../../api";
 import type { Message } from "../../../protocol";
 
 type Outcome = "text" | "tool" | "settled" | "failed" | "cancelled";

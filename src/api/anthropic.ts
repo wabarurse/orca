@@ -3,7 +3,6 @@ import { providerRequest, type RecoveryPolicy } from "./provider-recovery";
 import { validatedBase64 } from "./images";
 import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./search";
 import { claudeSearchResults } from "./search";
-import { CLAUDE_BETAS } from "../login";
 import { validateSettings, type RequestSettings } from "./catalog";
 import Anthropic, { type Middleware, type MiddlewareNext } from "@anthropic-ai/sdk";
 import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
@@ -11,6 +10,9 @@ import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./catalog";
 import { claudeCatalogEfforts, rememberCatalogEfforts } from "./catalog";
 import { exhaustedQuota, type RetryOptions } from "./retry";
+
+/** The beta headers the Claude Code subscription path requires on every request. */
+export const CLAUDE_BETAS = "claude-code-20250219,oauth-2025-04-20";
 
 // account.ts supplies Claude Code subscription credentials. There is no API-key mode.
 export function anthropic(client: Anthropic, options: { recovery?: RecoveryPolicy; promptCache?: boolean; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {

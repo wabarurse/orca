@@ -4,8 +4,8 @@ import { appendFile, chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { readClaudeTokens } from '../../src/login/claude';
-import { readCodexTokens } from '../../src/login/codex';
+import { readClaudeTokens } from '../../src/api/auth/claude';
+import { readCodexTokens } from '../../src/api/auth/codex';
 import { fixture, grade, type Task } from '../efficiency/fixtures';
 import { jsonLines } from '../efficiency/metrics';
 if(!process.argv.includes('--live'))throw new Error('Explicit --live is required');

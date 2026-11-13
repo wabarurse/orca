@@ -63,7 +63,7 @@ test("dismissing after an in-progress turn is cancelled does not restart the pro
   const project = "aborted-turn";
   let began!: () => void, calls = 0, aborted = false;
   const started = new Promise<void>(resolve => { began = resolve; });
-  const provider: import("../../../providers").Provider = {
+  const provider: import("../../../api").Provider = {
     name: "anthropic", async models() { return []; },
     async complete(request) {
       calls++; began();

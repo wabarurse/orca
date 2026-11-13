@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pkg from "../../package.json";
-import { accounts } from "../login/accounts";
+import { accounts } from "../api/auth/accounts";
 import { login } from "../tui/commands/accounts";
 
 test("`orca version` prints the package.json version and loaded build", async () => {

@@ -3,10 +3,10 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "../config";
-import { activeProfile, type ProviderName } from "../login";
-import { CLAUDE_BETAS, claudeCredentials, readClaudeTokens } from "../login";
-import { codexCredentials, readCodexTokens } from "../login";
-import { anthropic } from "./anthropic";
+import { activeProfile, type ProviderName } from "./auth";
+import { claudeCredentials, readClaudeTokens } from "./auth";
+import { codexCredentials, readCodexTokens } from "./auth";
+import { anthropic, CLAUDE_BETAS } from "./anthropic";
 import { openai } from "./openai";
 import type { Provider } from "./provider";
 import { metered, recordRetry } from "./usage";

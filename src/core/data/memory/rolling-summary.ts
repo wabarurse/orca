@@ -1,8 +1,8 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { ContextBlocked, estimate, requireFits, type CompactOptions } from "./compaction";
 import { historicalMessages } from "../images";
-import type { CompleteRequest, Provider, Turn } from "../../../providers";
-import { modelCapabilities, type RequestSettings } from "../../../providers/catalog";
+import type { CompleteRequest, Provider, Turn } from "../../../api";
+import { modelCapabilities, type RequestSettings } from "../../../api/catalog";
 import { publicTaskStatus, type Task } from "../../../protocol/task";
 import type { RollingMemory } from "../../../protocol";
 

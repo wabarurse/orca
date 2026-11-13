@@ -9,7 +9,7 @@ import { loadConfig, paths } from "../../../config";
 import { pendingImageInputs } from "../../data/images";
 import type { ImageRef } from "../../../protocol";
 import { pendingInput, put } from "../../data/inbox";
-import { contextWindow } from "../../../providers/catalog";
+import { contextWindow } from "../../../api/catalog";
 import type { Orchestrator } from "./orchestrator";
 import { awaitAck, daemonPid, liveStatus, readStatus, request } from "./channel";
 import type { DaemonStatus } from "../../../protocol";

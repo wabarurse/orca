@@ -4,8 +4,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CodexTokens } from '../../src/login/codex';
-import type { Provider } from '../../src/providers';
+import type { CodexTokens } from '../../src/api/auth/codex';
+import type { Provider } from '../../src/api';
 import type { Tool, ToolResult } from '../../src/core/tools';
 const spec=await Bun.file(process.argv[2]!).json();
 process.env.ORCA_HOME=spec.state;process.env.PARALLELS_HOME=spec.state;

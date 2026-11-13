@@ -1,12 +1,12 @@
 import { effectiveSettings } from "./project-settings";
-import type { RequestSettings } from "../../../providers/catalog";
+import type { RequestSettings } from "../../../api/catalog";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";
 // A project override never changes the default used by other projects.
 import { loadConfig, readProjectState, writeProjectState } from "../../../config";
-import { provider, providerFor, type Provider } from "../../../providers";
-import type { ProviderName } from "../../../login";
+import { provider, providerFor, type Provider } from "../../../api";
+import type { ProviderName } from "../../../api/auth";
 import type { Role } from "../../../protocol";
-import { prefetchContextLimits } from "../../../providers/catalog";
+import { prefetchContextLimits } from "../../../api/catalog";
 import { accountForModel } from "./project-account";
 
 function validateProject(project: string): void {

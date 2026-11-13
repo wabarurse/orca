@@ -1,12 +1,12 @@
 // /model and /effort: the choices they offer and what picking one saves.
 
-import { provider } from "../../providers";
-import { modelCapabilities } from "../../providers/catalog";
-import { prefetchContextLimits } from "../../providers/catalog";
+import { provider } from "../../api";
+import { modelCapabilities } from "../../api/catalog";
+import { prefetchContextLimits } from "../../api/catalog";
 import { loadConfig, saveConfig } from "../../config";
 import { accountForModel, effectiveAccount, effectiveModel, roleOverrides, saveProjectModel, validateModel } from "../../core/data/projects";
 import type { Role } from "../../protocol";
-import { accountId } from "../../login";
+import { accountId } from "../../api/auth";
 import { effectiveSettingsReport } from "../../core/data/projects";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }

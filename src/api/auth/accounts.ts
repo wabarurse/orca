@@ -1,7 +1,8 @@
 // Every account is a Claude Code or Codex subscription login.
-import { claudeProfiles, readClaudeTokens, validateProfile } from "./claude";
+import { claudeProfiles, readClaudeTokens } from "./claude";
 import { codexProfiles, readCodexTokens } from "./codex";
-import { loadConfig } from "../config";
+import { validateProfile } from "./oauth";
+import { loadConfig } from "../../config";
 
 export type ProviderName = "anthropic" | "openai";
 
@@ -19,7 +20,6 @@ export interface Account {
   source: string;
 }
 
-export const anthropicProfiles = claudeProfiles;
 export const activeProfile = (configured: string) => validateProfile(configured || "default");
 
 /** The pre-per-project global profile for a provider (config `account` / `openaiAccount`): read only, as the fallback of

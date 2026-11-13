@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CODEX_CLIENT_ID, CODEX_TOKEN_URL, codexCredentials, codexCredentialsPath, importCodex, loginCodex, readCodexTokens, saveCodexTokens } from "./codex";
-import { fakeCodexTokens } from "../test/codex";
+import { fakeCodexTokens } from "../../test/codex";
 
 let home: string;
 let originalHome: string | undefined;

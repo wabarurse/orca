@@ -8,7 +8,7 @@ import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { paths, legacyProjectIdentities } from "../../../config";
-import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../providers";
+import { MAX_IMAGE_BYTES, validateImage, type ImageMime } from "../../../api";
 import { assertProjectIdentity, projectIdentity, session, withProjectStateLock, workspaces } from "../projects";
 import type { ImageInput, ImageRef } from "../../../protocol";
 

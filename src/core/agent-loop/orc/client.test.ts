@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CompleteRequest } from "../../../providers/provider";
+import type { CompleteRequest } from "../../../api/provider";
 import { publishLaunch } from "../../tmux/cancellation";
 import { paths, saveConfig } from "../../../config/config";
 import { createOrchestrator } from "./orchestrator";

@@ -11,7 +11,7 @@ import { paths, saveConfig } from "../../../config/config";
 import { put } from "../inbox/inbox";
 import { archivePath, archiveTranscript, purgeProject, queryHistory } from "./archive";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
-import type { CompleteRequest, Provider } from "../../../providers/provider";
+import type { CompleteRequest, Provider } from "../../../api/provider";
 import { preferenceLines, ROLLING_STATUS, RollingCompactor, rollingCut, type RollingOptions } from "./rolling-memory";
 import { parseMemory, previousMemory, summarizeOlder } from "./rolling-summary";
 import { remember, type Fact } from "../knowledge/knowledge";

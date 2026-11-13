@@ -8,8 +8,8 @@ import { saveProjectSettings } from "./project-settings";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import { clearCatalogLimits } from "../../../providers/catalog/context-window";
-import type { Provider } from "../../../providers/provider";
+import { clearCatalogLimits } from "../../../api/catalog/context-window";
+import type { Provider } from "../../../api/provider";
 
 const home = mkdtempSync(join(tmpdir(), "project-model-"));
 process.env.ORCA_HOME = home;

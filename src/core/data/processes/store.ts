@@ -1,4 +1,4 @@
-import { usageEvent } from "../../../providers";
+import { usageEvent } from "../../../api";
 import { assertProjectIdentity, workspaces } from "../projects";
 import { mkdir, readdir, rename, writeFile, open, unlink } from "node:fs/promises";
 import { join } from "node:path";

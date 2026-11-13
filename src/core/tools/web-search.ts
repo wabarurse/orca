@@ -1,4 +1,4 @@
-import { searchInput, searchOperation, searchText, SearchError } from "../../providers/search";
+import { searchInput, searchOperation, searchText, SearchError } from "../../api/search";
 import type { Tool } from "./registry";
 
 export const web_search: Tool = {

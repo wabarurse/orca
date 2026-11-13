@@ -8,7 +8,7 @@ import { createAgent, type AgentDeps } from "../../agent-loop/loop/agent";
 import { budget, estimate } from "./compaction";
 import { open } from "../transcripts/transcript";
 import { paths } from "../../../config";
-import type { CompleteRequest, Provider, Turn } from "../../../providers/provider";
+import type { CompleteRequest, Provider, Turn } from "../../../api/provider";
 import { text } from "../../../test/fake-provider";
 
 const valid = { summary: ["User requires preserving history."], pending: ["Finish the requested change."] };

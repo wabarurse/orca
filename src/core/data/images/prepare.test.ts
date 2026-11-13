@@ -8,7 +8,7 @@ import { prepareImage } from "./prepare";
 import { saveImage, imageBlock, loadImage, materializeImages } from "./images";
 import { read } from "../../tools/files";
 import { readClipboardImage } from "../../../tui/components/clipboard";
-import { validatedBase64, validateImage } from "../../../providers/images";
+import { validatedBase64, validateImage } from "../../../api/images";
 import { png } from "../../../test/image-fixture";
 const previous = process.env.ORCA_HOME;
 const root = await mkdtemp(join(tmpdir(), "orca-large-image-"));

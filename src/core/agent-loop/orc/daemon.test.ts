@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CompleteRequest } from "../../../providers/provider";
+import type { CompleteRequest } from "../../../api/provider";
 import { Cancelled, cancelSession, launchIdentity, publishLaunch } from "../../tmux/cancellation";
 import { conversationTurnLock, conversationTurnHeld } from "../../data/projects/state";
 import { paths, saveConfig } from "../../../config/config";

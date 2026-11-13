@@ -7,7 +7,7 @@ import { compact, budget, outputCap } from "./compaction";
 import { paired } from "../transcripts/tool-pairs";
 import { open, type Transcript } from "../transcripts/transcript";
 import { text, toolUse } from "../../../test/fake-provider";
-import type { CompleteRequest, Provider, Turn } from "../../../providers/provider";
+import type { CompleteRequest, Provider, Turn } from "../../../api/provider";
 import { createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { put } from "../inbox/inbox";
 const dirs: string[] = [];
@@ -170,7 +170,7 @@ test("normal output cap uses default/override/disabled policy and statuses use f
   expect(output.join("")).toContain("compacting…"); expect(output.join("")).toContain("compaction complete"); expect(JSON.stringify(await f.transcript.chain())).not.toContain("compacting…");
 });
 test("Anthropic carries terminal reason and cache-inclusive usage while retaining sanitizer/settings/headers", async () => {
-  const { anthropic } = await import("../../../providers/anthropic"); let reason = "max_tokens"; let sent: any, options: any;
+  const { anthropic } = await import("../../../api/anthropic"); let reason = "max_tokens"; let sent: any, options: any;
   const client = { messages: { stream: (request: any, opts: any) => { sent = request; options = opts; return { on() {}, finalMessage: async () => ({ content: [text("partial")], stop_reason: reason, usage: { input_tokens: 100, cache_read_input_tokens: 200, cache_creation_input_tokens: 300 } }) }; } } };
   const p = anthropic(client as any);
   const request: CompleteRequest = { model: "claude-opus-5", settings: { effort: "high", fast: true }, system: "role", messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "foreign", signature: JSON.stringify({ provider: "codex" }) }, text("ok")] }], tools: [], maxTokens: 2048, onText() {} };

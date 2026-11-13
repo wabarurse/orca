@@ -533,7 +533,7 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
 test("ctrl+c through pinned question/modal layers preserves owners and drafts without resuming the cancelled request", async () => {
   const project = "cancel-question-e";
   let requested = false, aborted = false;
-  const provider: import("../providers").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
+  const provider: import("../api").Provider = { name: "anthropic", async models() { return []; }, async complete(req) {
     requested = true;
     return new Promise((_resolve, reject) => req.signal!.addEventListener("abort", () => { aborted = true; reject(req.signal!.reason); }, { once: true }));
   } };

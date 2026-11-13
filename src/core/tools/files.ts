@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { paths } from "../../config";
-import { MAX_IMAGE_BYTES, sniffImage, validateImage, type ImageMime } from "../../providers";
+import { MAX_IMAGE_BYTES, sniffImage, validateImage, type ImageMime } from "../../api";
 import { withStorageLock } from "../data";
 import { imageBlock, saveImage } from "../data/images";
 import { forwardImages } from "./attachments";

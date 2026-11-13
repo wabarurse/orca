@@ -2,11 +2,11 @@ import { blockRef } from "../images";
 import { historicalMessages } from "../images";
 import { afterContextBoundary } from "../transcripts";
 import type { Tool as ApiTool, MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import type { Provider } from "../../../providers";
-import type { RequestSettings } from "../../../providers/catalog";
+import type { Provider } from "../../../api";
+import type { RequestSettings } from "../../../api/catalog";
 import type { Transcript } from "../transcripts";
 import { paired } from "../transcripts";
-import { contextWindow } from "../../../providers/catalog";
+import { contextWindow } from "../../../api/catalog";
 
 /**
  * What compaction and the rolling memory read of an agent's deps: the model, its

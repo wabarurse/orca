@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registry, toolsFor } from "../tools";
 import { orchestratorTask } from "../tools/task";
-import { toResponseTools } from "../../providers/openai";
+import { toResponseTools } from "../../api/openai";
 import { editableTool } from "./tools";
 
 const previous = process.env.ORCA_HOME;
