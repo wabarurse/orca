@@ -24,7 +24,7 @@ const HINTS: Record<WorkKind, string> = {
   agents: "j/k move · enter view transcript · s stop · d archive · u restore · a archived · f find · esc close",
   tasks: "j/k move · ←/→ fold · d archive · c abandon · u restore · a archived · r refresh · f find · esc close",
   questions: "j/k move · enter answer · d delete · u restore · a archived · f find · esc close",
-  images: "j/k move · enter open in viewer · t retry unsent · d archive · a archived · f find · esc close",
+  images: "j/k move · enter view · t retry unsent · d archive · a archived · f find · esc close",
   projects: "j/k move · enter open · p pin · c close page · d delete · f find · esc close",
 };
 const SECTION_HELP = "Archived items are retained. Enter or → expands; ← collapses. u restores an item to the list without resuming work.";
@@ -177,7 +177,7 @@ export class WorkPages {
       return section((list?.rows ?? []).map((media): Item => ({
         id: media.id, name: media.text.split("\n")[0] || media.id.slice(0, 8), status: media.kind, info: `${media.from} · ${formatDateTime(media.at)}`,
         sections: [{ title: "File", fields: [["kind", media.kind], ["from", media.from], ["at", formatDateTime(media.at)], ["id", media.id]] },
-          { title: "Caption", text: media.text }, { title: "Open", text: "Enter opens it in the desktop viewer. Nothing is drawn in the terminal." }],
+          { title: "Caption", text: media.text }, { title: "Open", text: "Enter draws it in the terminal when it can (Ghostty, Kitty, WezTerm; any key closes it), else opens the desktop viewer." }],
         media, archived: list?.archived[media.id] ?? media.archived,
       })));
     }

@@ -147,14 +147,18 @@ The `inbox` tool accepts the same optional `attachments` list for an agent
 recipient or `to: "user"` (the legacy `message` implementation shares this path).
 Omitted means no images. User-directed images are saved in durable reply entries
 and shown as image labels in chat. The Images page (fourth tab of the work page) lists delivered images and retained
-sandbox recordings newest first. Enter opens a validated image in Preview on
-macOS or a video in the default video player; Linux uses `xdg-open`. Moving
-the selection never opens a file. Recordings (MP4/MOV/M4V/WebM) are discovered
+sandbox recordings newest first. Enter on an image draws it in the terminal when
+the terminal speaks the Kitty graphics protocol (Ghostty, Kitty, WezTerm, decided
+from `TERM`/`TERM_PROGRAM`); the image scales to fit and any key closes it, the
+frame differ pausing meanwhile so it is not painted over (`tui/components/image-overlay.ts`,
+`images.ts`). Otherwise, and for a video or a non-PNG, Enter opens it in Preview on
+macOS or the default player; Linux uses `xdg-open`. Moving the selection never opens a file. Recordings (MP4/MOV/M4V/WebM) are discovered
 only in this conversation's registered evidence when the page opens or refreshes,
 including closed sandboxes while their evidence is retained. Files are opened
 in place without new copies or a preview cache.
-There are no automatic popups or inline terminal previews. SSH sessions report
-the remote file location instead of launching a viewer. A worker can read a
+There are no automatic popups; an inline terminal image appears only on explicit
+Enter, on a terminal that supports it. SSH sessions report the remote file
+location instead of launching a viewer or drawing it. A worker can read a
 sandbox screenshot, send its ID to the orchestrator, and the orchestrator can
 send that received ID to the user. The image store retains a copy after sandbox
 cleanup; stale, corrupted, or cross-project references cannot be opened.

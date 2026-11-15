@@ -38,9 +38,9 @@ import { MarkdownStream } from "./conversation";
 import { helpLines, type CommandHelp } from "./footer";
 import { pageQuestions, Questions, QUESTION_DELAY_MS } from "./footer";
 import { fromUserLines, replyLines, reportLine, restore, plainToolLine, unresolvedCalls, userLines } from "./conversation";
-import { capturedVideos, deliveredImages, openLink, type DeliveredMedia } from "./commands";
+import { deliveredImageBytes, ImageLists, openDeliveredMedia, openLink, type DeliveredMedia } from "./commands";
 import { open } from "../core/data/transcripts";
-import { bold, dim, fit, sanitize, repositoryTitle } from "./components";
+import { bold, dim, fit, ImageOverlay, sanitize, repositoryTitle } from "./components";
 import { commit, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type Input, type InputArea } from "./footer";
 import type { Terminal } from "./components";
 import { shimmer } from "./components";
@@ -161,6 +161,7 @@ export class App {
   /** The animation timer's current period. */
   private tickMs = 0;
   private screen: StickyScreen | undefined;
+  private readonly imageView = new ImageOverlay(); // an image over the screen (Images page, Kitty graphics); next key closes it
   private screenHistory: string[] = [];
   private screenOwner: Page | Page["view"] | undefined;
   private scrollTop: number | null = null;
@@ -206,6 +207,9 @@ export class App {
       run: (text) => { app.remember(text); return app.submit(text); },
       draw: () => app.draw(),
     }, deps.questions, deps.questionDelayMs ?? QUESTION_DELAY_MS);
+    deps.openMedia ??= async (project, media) =>
+      media.kind === "image" && await app.imageView.show(app.deps.term, () => deliveredImageBytes(project, media))
+        ? "" : openDeliveredMedia(project, media);
     this.work = new WorkPages({
       deps, questions: this.questions, get clock() { return app.clock; },
       page: () => app.page, pages: () => app.pages, valid: page => app.validPage(page),
@@ -214,7 +218,7 @@ export class App {
       input: () => app.input, edit: k => app.edit(k),
       noteRow: page => app.noteRow(page),
       commandLine: () => app.vimCommand, modeTag: () => app.vimMode ? `[${app.vimMode.toUpperCase()}] ` : "",
-      images: page => app.imageLists.get(page), readImages: page => app.readImages(page, true), retryImages: page => app.retryImages(page),
+      images: page => app.imageLists.get(page), readImages: page => app.imageLists.read(page, true), retryImages: page => app.retryImages(page),
       taskCountChanged: page => app.taskCounts.refresh(page),
       attach: (page, name, live) => app.attach(page, name, live),
       openPage: project => app.openPage(project), closePage: index => app.closePage(index), newPage: directory => app.newPage(directory),
@@ -634,6 +638,7 @@ export class App {
 
   private flush(): void {
     this.lastFrame = Date.now();
+    if (this.imageView.active) return; // an image is on the screen; a frame now would paint over it.
     try {
       this.questions.sync(); // the input holds the chat draft or the shown question's answer
       const next = this.work.open ? this.work.screen() : this.viewport(this.frame());
@@ -803,7 +808,7 @@ export class App {
       if (at !== -1) this.followIncoming(page, entries.slice(at + 1).flatMap(entry => entry.type === "message" && !entry.contextSnapshot ? entry.inbox ?? [] : []));
     }
     if (consumed) page.sent = page.sent.filter(m => !consumed.has(m.inputId));
-    this.updateImages(page, entries);
+    this.imageLists.update(page, entries);
     if (this.renderedHeads.get(page) === head) return;
     const boundary = entries.findLast(entry => entry.type === "context-boundary")?.uuid, cleared = boundary !== page.contextBoundary;
     page.contextBoundary = boundary;
@@ -874,7 +879,7 @@ export class App {
     this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
     const saved = await loadHistory(project);
     if (!this.imageLists.has(page)) {
-      try { await this.readImages(page); }
+      try { await this.imageLists.read(page); }
       catch { /* The footer shows an unknown count. Opening Images reports the read error. */ }
     }
     page.inputHistory = saved.entries;
@@ -985,7 +990,7 @@ export class App {
     this.endPartial(page);
     page.busy = false;
     const entries = page.orch.entries?.();
-    if (entries) this.updateImages(page, entries);
+    if (entries) this.imageLists.update(page, entries);
     // Only a turn that rendered its initial shared snapshot can claim its
     // subsequent streamed head. Losing turn ownership renders nothing.
     if (this.refreshedTurns.delete(page)) this.renderedHeads.set(page, page.orch.entries?.().at(-1)?.uuid);
@@ -999,29 +1004,8 @@ export class App {
 
   // --- menus ------------------------------------------------------------------
 
-  private readonly imageLists = new WeakMap<Page, { head?: string; rows: DeliveredMedia[]; archived: Record<string, boolean>; count: number }>();
+  private readonly imageLists = new ImageLists<Page>();
 
-  private async readImages(page: Page, includeVideos = false): Promise<void> {
-    const path = paths.transcript(page.project, "orchestrator");
-    const transcript = await Bun.file(path).exists() ? open(path) : undefined;
-    this.updateImages(page, transcript ? transcript.history?.() ?? transcript.branch() : []);
-    const videos = includeVideos ? await capturedVideos(page.project) : undefined;
-    const list = this.imageLists.get(page)!;
-    if (videos) list.rows = [...list.rows.filter(row => row.kind === "image"), ...videos].sort((a, b) => b.at.localeCompare(a.at));
-    list.archived = workViews.workArchive(page.project, "images");
-    list.count = list.rows.filter(media => !(list.archived[media.id] ?? media.archived)).length;
-  }
-
-  private updateImages(page: Page, entries: readonly Entry[]): void {
-    const head = entries.at(-1)?.uuid;
-    const previous = this.imageLists.get(page);
-    if (previous && previous.head === head) return;
-    const rows: DeliveredMedia[] = [...deliveredImages(entries).map(image => ({ ...image, kind: "image" as const, id: image.ref.id })),
-      ...(previous?.rows.filter(row => row.kind === "video") ?? [])];
-    rows.sort((a, b) => b.at.localeCompare(a.at));
-    const archived = workViews.workArchive(page.project, "images");
-    this.imageLists.set(page, { head, rows, archived, count: rows.filter(media => !(archived[media.id] ?? media.archived)).length });
-  }
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
     this.beginMenu(modelOperation);
@@ -1572,6 +1556,8 @@ export class App {
   }
 
   async onKey(k: Key): Promise<void> {
+    // An image overlay owns the next key: close it, and an undefined screen forces a full repaint.
+    if (this.imageView.active) { this.imageView.close(this.deps.term); this.screen = undefined; this.reprint(); return; }
     // Kitty/modifyOtherKeys may report Shift+letter separately; legacy terminals
     // send the uppercase character. Normalize both without changing Ctrl/Alt.
     if (k.shift && !k.ctrl && !k.alt && /^[a-z?/]$/.test(k.name)) k = { name: "char", text: k.name === "/" ? "?" : k.name.toUpperCase() };

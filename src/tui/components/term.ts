@@ -11,6 +11,7 @@
 // other OSC replies are dropped, none of them ever reaches the app as keys,
 // and a close inside the window keeps reading stdin until it ends.
 
+import { imageProtocol as detectImageProtocol } from "./images";
 import { keyReader, type Key, type SetTimer } from "./keys";
 import { BG_QUERY, BG_REPLY_MS, parseBgReply, useTerminalBackground } from "./style";
 import { basename } from "node:path";
@@ -24,6 +25,8 @@ export interface Terminal {
   /** Confirmed by the terminal's inline-image cell-size reply, never TERM alone. */
   inlineImages?: boolean;
   imageCell?: { width: number; height: number };
+  /** The image protocol this terminal speaks (from its environment), or null when it speaks none. */
+  imageProtocol?: "kitty" | null;
   write(s: string): void;
   /** Terminal window/tab title; optional on test and embedded terminals. */
   setTitle?(title: string): void;
@@ -84,6 +87,7 @@ export function realTerminal(stdin = process.stdin, stdout = process.stdout, pro
 class RealTerminal implements Terminal {
   inlineImages = false;
   imageCell?: { width: number; height: number };
+  imageProtocol: "kitty" | null = detectImageProtocol(process.env);
   private opened = false;
   private title = "";
   /** Closed, but waiting out the reply window with stdin still read (and dropped) in raw mode. */

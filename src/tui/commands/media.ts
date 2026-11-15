@@ -78,6 +78,14 @@ export async function openLink(url: string, opener?: (url: string) => Promise<vo
   } catch (error) { return `could not open ${url}: ${error instanceof Error ? error.message : String(error)}`; }
 }
 
+/** The PNG bytes of a delivered image, for drawing it in the terminal. Images only; the path is
+ * validated by the same resolver the desktop viewer uses. Over SSH the bytes are on the remote machine. */
+export async function deliveredImageBytes(project: string, media: Extract<DeliveredMedia, { kind: "image" }>): Promise<{ name: string; bytes: Uint8Array }> {
+  if (process.env.SSH_CONNECTION || process.env.SSH_TTY) throw new Error("Image is on the remote machine; it cannot be drawn in this terminal.");
+  const path = await imageFile(project, media.ref);
+  return { name: basename(path), bytes: new Uint8Array(await Bun.file(path).arrayBuffer()) };
+}
+
 /** Explicit Enter only; never open files as a side effect of navigation. */
 export async function openDeliveredMedia(project: string, media: DeliveredMedia, opener?: (path: string, kind: "image" | "video") => Promise<void>): Promise<string> {
   const path = media.kind === "image" ? await imageFile(project, media.ref) : await recordingFile(project, media);
