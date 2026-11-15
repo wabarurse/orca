@@ -129,11 +129,12 @@ export async function summarizeOlder(messages: MessageParam[], signal: AbortSign
   // Reuse the resolved foreground account/model: Claude-only installations must
   // not need a second provider login just to keep their conversation bounded.
   const provider = await target.loadProvider();
-  // Nobody waits on this summary, so it may think as long as it likes: the small model at its highest
-  // effort up to xhigh. The conversation's own model, when it has to stand in, stays at low.
+  // No agent waits on this summary, so it runs on the small model and may think: up to high effort. Not
+  // xhigh — each request has a 300s deadline (rolling-memory.ts), and a small model at xhigh on a large
+  // part runs right up against it. The conversation's own model, when it has to stand in, stays at low.
   let model = target.small ?? target.model;
   const settingsFor = (name: string): RequestSettings => {
-    const effort = effortUpTo(name, name === target.model ? "low" : "xhigh");
+    const effort = effortUpTo(name, name === target.model ? "low" : "high");
     return effort ? { fast: false, effort } : { fast: false };
   };
   let memory = options.previous ?? empty();

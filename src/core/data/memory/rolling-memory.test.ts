@@ -82,8 +82,9 @@ test("foreground proceeds while the summarizer works; idle publication preserves
   await orch.turn(); await worker.entered;
   expect(orch.activity!()).toMatchObject({ working: false, compacting: true });
   expect(foreground.calls).toHaveLength(2); expect(worker.calls).toHaveLength(1);
-  // Background memory runs on the provider's small model at high effort: nobody waits on it.
-  expect(worker.calls[0]).toMatchObject({ model: "gpt-6-luna", tools: [], settings: { effort: "xhigh", fast: false }, maxTokens: 54400 }); // the model's whole reply room: thinking counts against the cap
+  // Background memory runs on the provider's small model at high effort: nobody waits on it, but a 300s
+  // deadline does, so it is high, not xhigh.
+  expect(worker.calls[0]).toMatchObject({ model: "gpt-6-luna", tools: [], settings: { effort: "high", fast: false }, maxTokens: 54400 }); // the model's whole reply room: thinking counts against the cap
   expect(transcript.branch()[0]?.type).toBe("message");
   // Reference updates are now actual model input, counted by the same tail budget.
   const cut = rollingCut(foreground.calls[0]!.messages, 200);
@@ -716,7 +717,7 @@ test("a refused small model falls back to the conversation's own model at low ef
       if (req.model === "claude-haiku-5-5") throw Object.assign(new Error("not offered"), { reason: "model-unavailable" });
       return answer();
     } }) });
-  expect(calls.map(c => [c.model, c.settings])).toEqual([["claude-haiku-5-5", { fast: false, effort: "xhigh" }], ["claude-opus-5-5", { fast: false, effort: "low" }]]);
+  expect(calls.map(c => [c.model, c.settings])).toEqual([["claude-haiku-5-5", { fast: false, effort: "high" }], ["claude-opus-5-5", { fast: false, effort: "low" }]]);
   expect(memory.summary.length + memory.pending.length).toBeGreaterThan(0);
 });
 

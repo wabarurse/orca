@@ -233,7 +233,7 @@ export class RollingCompactor {
     const arm = () => {
       clearTimeout(timer);
       if (job.settled || abort.signal.aborted) return;
-      timer = setTimeout(() => abort.abort(new Error("rolling summary timed out")), this.options.timeoutMs ?? 120000);
+      timer = setTimeout(() => abort.abort(new Error("rolling summary timed out")), this.options.timeoutMs ?? 300000);
       timer.unref();
     };
     arm();

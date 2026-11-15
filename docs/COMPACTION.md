@@ -264,10 +264,12 @@ Which model writes a summary depends on who waits for it:
 
 | Summary | Trigger | Model | Effort |
 | --- | --- | --- | --- |
-| Orchestrator background memory | 25% of the window | the account's small model (Haiku, Luna) | highest up to xhigh |
+| Orchestrator background memory | 25% of the window | the account's small model (Haiku, Luna) | high |
 | Foreground compaction (workers, reviewers) | 90% of the window | the agent's own model | lowest |
 
-Background memory blocks nobody, so it can think longer on a cheaper model; if
+Background memory blocks nobody, so it thinks longer on a cheaper model: high
+effort, not xhigh, because each summary request still has a 300s deadline
+(`rolling-memory.ts`) and a small model at xhigh runs right up against it. If
 the account refuses the small model, the part is retried on the conversation's
 model at low effort. `smallSummaries = false` in config.toml keeps it there
 always. Foreground compaction blocks the agent and its summary is all the agent
