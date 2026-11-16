@@ -109,7 +109,9 @@ test("production runtime tool and /agents agree, retaining history separately wi
   writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec\\t0\\n'\n`); chmodSync(executable, 0o755); process.env.PATH = bin;
   await recordRuntime(project, "worker-old", { model: "old", system: "", tools: [], contextTokens: 500 });
   const runFile = join(paths.runs(project), `${agent}.json`), before = readFileSync(runFile);
+  await registerTask(project, { name: "Planned", summary: "Not started", branch: "feat/planned", authorized: true });
   const result = JSON.parse(await runtime.run({ action: "status" }, { project, role: "orchestrator", cwd: home }));
+  expect(result.tasks).toEqual([{ number: 1, title: "Planned", status: "queued", branch: "feat/planned", pr: null }]);
   expect(result.runningCount).toBe(1); expect(result.agents).toHaveLength(1);
   expect(result.agents[0]).toMatchObject({ agent, status: "running", queuedMessages: 0 });
   expect(result.agents[0].record).toBeUndefined(); expect(result.contextObservations[0].agent).toBe("worker-old");
