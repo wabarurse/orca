@@ -45,6 +45,28 @@ export async function writeTokens(path: string, tokens: unknown, signal?: AbortS
   }
 }
 
+/** True when a process with this pid exists (EPERM means it exists but is not ours). */
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (err) { return (err as NodeJS.ErrnoException).code === "EPERM"; }
+}
+
+/** A held lock whose owner pid is dead is stale: break it, so a crashed or killed process never blocks
+ * login forever. The break is claimed by an atomic rename, so two reapers cannot both proceed and one
+ * cannot delete a lock the other just re-acquired. A lock with no pid yet (its owner is between mkdir and
+ * the pid write) or a live owner is left alone. Returns true when this call broke the lock. */
+export async function breakStaleLock(lock: string): Promise<boolean> {
+  let pid: number;
+  try { pid = Number((await Bun.file(join(lock, "pid")).text()).trim()); }
+  catch { return false; } // no pid file (mid-acquisition) or the lock vanished: treat as held
+  if (!Number.isInteger(pid) || pid <= 0 || pidAlive(pid)) return false;
+  const staging = `${lock}.stale-${process.pid}-${Date.now()}`;
+  try { await rename(lock, staging); } // atomic: only one reaper wins, and only for this exact dir
+  catch { return false; } // another reaper won, or the owner cleared it first
+  await rm(staging, { recursive: true, force: true });
+  return true;
+}
+
 /** Serialize login/refresh across the orchestrator and its tmux processes. */
 export async function withCredentialLock<T>(path: string, action: () => Promise<T>): Promise<T> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -56,7 +78,9 @@ export async function withCredentialLock<T>(path: string, action: () => Promise<
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      // Never steal a lock on a timer: a paused worker can still own it.
+      // Never steal a live lock on a timer: a paused worker can still own it. But a lock whose owner
+      // pid is dead is stale — break it and retry at once rather than waiting out the deadline.
+      if (await breakStaleLock(lock)) continue;
       if (Date.now() >= deadline) throw new CredentialError("credential-lock", `subscription credential lock timed out: ${lock}. if a process was killed, stop the agents and remove this lock directory before retrying.`);
       await Bun.sleep(50);
     }
