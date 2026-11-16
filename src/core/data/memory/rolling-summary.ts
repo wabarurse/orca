@@ -44,37 +44,26 @@ const repairInstruction = `The previous attempt failed local output validation. 
 const GENERATION_TOKENS = 8192;
 class MemoryOutputError extends Error {}
 
-/** A memory array, clamped to fit rather than rejected. A wrong type or a non-string item is
- * unrecoverable (null → repair), but too many items (keep the highest-priority first) and an over-long
- * item (clip it) are the model overshooting its targets, not a failure: trim them in place. */
-function clampStrings(value: unknown, max: number): string[] | null {
-  if (!Array.isArray(value) || value.some(v => typeof v !== "string")) return null;
-  return (value as string[]).slice(0, max).map(s => s.length > LIMITS.item ? s.slice(0, LIMITS.item) : s);
-}
-
-/** Drop lowest-priority trailing items until the memory fits the token budget. Items are written in
- * priority order (summary is the recap, pending is open work kept last), so the tail costs least; a
- * small overshoot is trimmed here rather than spending a second model call to regenerate it. */
-function fitBudget(memory: RollingMemory): RollingMemory {
-  const m: RollingMemory = { summary: [...memory.summary], pending: [...memory.pending] };
-  while (estimate(m) > LIMITS.tokens && (m.summary.length || m.pending.length)) {
-    (m.summary.length ? m.summary : m.pending).pop();
-  }
-  return m;
+function memoryStrings(value: unknown, max: number): string[] {
+  if (!Array.isArray(value) || value.length > max || value.some(v => typeof v !== "string" || v.length > LIMITS.item)) throw new MemoryOutputError("invalid memory items");
+  return value;
 }
 
 export function parseMemory(text: string): RollingMemory {
-  // Bound decoding, then clamp the representation to the stored budget. Pretty JSON and escaped
-  // spellings must not consume memory just because of formatting. A summary a little over its targets
-  // is trimmed, not rejected: regenerating it would cost a second model call and loses the same tail.
+  // Bound decoding, then budget the representation actually stored. Pretty JSON
+  // and escaped spellings must not consume memory just because of formatting.
   if (text.length > LIMITS.responseChars) throw new MemoryOutputError("memory response exceeds decoding budget");
   let raw: unknown;
   try { raw = JSON.parse(text); } catch { throw new MemoryOutputError("summary is not valid JSON"); }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new MemoryOutputError("invalid memory object");
   const value = raw as Record<string, unknown>;
-  const summary = clampStrings(value.summary, LIMITS.summary), pending = clampStrings(value.pending, LIMITS.pending);
-  if (!summary || !pending) throw new MemoryOutputError("invalid memory items"); // wrong shape; a repair may fix it
-  return fitBudget({ summary, pending });
+  const memory = { summary: memoryStrings(value.summary, LIMITS.summary), pending: memoryStrings(value.pending, LIMITS.pending) };
+  // Character length is a writing target, not a second admission budget. A
+  // complete 8–12k-character summary can fit comfortably in the token budget;
+  // rejecting it can discard minutes of work while blocking an oversized history.
+  const tokens = estimate(memory);
+  if (tokens > LIMITS.tokens) throw new MemoryOutputError(`memory exceeds output budget (${tokens} estimated tokens > ${LIMITS.tokens}; ${JSON.stringify(memory).length} serialized characters)`);
+  return memory;
 }
 
 function resultMemory(result: Turn): RollingMemory {
