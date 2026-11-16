@@ -87,8 +87,12 @@ capability is implied by local tests.
 
 Generated memory is validated after JSON parsing, against its compact stored
 representation: at most 32 summary items, 16 pending items, 1000 characters per
-item and 4096 conservatively estimated tokens. The prompt's 8000-character target
-encourages brevity; it is not a second hard budget. A complete summary above that
+item and 4096 conservatively estimated tokens. The prompt names one size to aim
+for, 8000 characters, well under that budget (it used to name the budget's own
+byte size as well, and the model wrote up to it and was rejected); it is not a
+second hard budget. The prompt also sets a recency gradient: the newest material
+keeps the most detail, and room is made by condensing the oldest first, while
+standing limits and permissions keep their wording at any age. A complete summary above that
 target is accepted unchanged when it fits the token budget. Budget rejections
 report both estimated tokens and serialized character count.
 Formatting and JSON escape spellings do not inflate the stored budget; raw
