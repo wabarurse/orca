@@ -17,6 +17,8 @@ const tooLong = { summary: Array(16).fill("x".repeat(900)), pending: [] };
 // #179 incorrectly rejected it despite enough room to carry every pending item.
 const aboveTarget = { summary: Array.from({ length: 10 }, (_, i) => `Verified outcome ${i}: ` + "x".repeat(830)), pending: ["User still requires review and validation before publication."] };
 const answer = (value: unknown): Turn => ({ content: [text(JSON.stringify(value))], stop: "end", completion: "completed" });
+// A completed response whose body is not valid JSON: unrecoverable by clamping, so it still triggers a repair.
+const malformed: Turn = { content: [text("```json\nnot valid memory json")], stop: "end", completion: "completed" };
 const source = [{ role: "user" as const, content: "Preserve history. Implement the requested change." }];
 function scripted(turns: (Turn | Error)[]) {
   const calls: CompleteRequest[] = [];
@@ -33,8 +35,11 @@ test("formatting and escaped spellings do not inflate the stored memory budget",
   const escaped = JSON.stringify({ summary: ["a".repeat(900), "b".repeat(900)], pending: [] }).replace(/[ab]/g, c => c === "a" ? "\\u0061" : "\\u0062");
   expect(escaped.length).toBeGreaterThan(10000);
   expect(parseMemory(escaped).summary[0]).toBe("a".repeat(900));
-  expect(() => parseMemory(JSON.stringify(tooLong))).toThrow("memory exceeds output budget");
-  expect(() => parseMemory(JSON.stringify({ summary: Array(5).fill("漢".repeat(900)), pending: [] }))).toThrow("memory exceeds output budget");
+  // Over-budget output is trimmed to fit, not rejected: no second model call for a near-miss.
+  const trimmed = parseMemory(JSON.stringify(tooLong));
+  expect(estimate(trimmed)).toBeLessThanOrEqual(4096);
+  expect(trimmed.summary.length).toBeLessThan(tooLong.summary.length);
+  expect(estimate(parseMemory(JSON.stringify({ summary: Array(5).fill("漢".repeat(900)), pending: [] })))).toBeLessThanOrEqual(4096);
 });
 
 test("the character target never rejects or trims memory within the token budget", async () => {
@@ -49,20 +54,39 @@ test("the character target never rejects or trims memory within the token budget
 test("memory admission has one token boundary, including UTF-8 and JSON overhead", () => {
   const atLimit = { summary: Array(12).fill("x".repeat(1000)), pending: ["y".repeat(128)] };
   expect(estimate(atLimit)).toBe(4096);
-  expect(parseMemory(JSON.stringify(atLimit))).toEqual(atLimit);
-  atLimit.pending[0] += "yyy";
-  expect(estimate(atLimit)).toBe(4097);
-  expect(() => parseMemory(JSON.stringify(atLimit))).toThrow("4097 estimated tokens > 4096");
-  // Fewer characters do not imply less model input when they occupy more bytes.
+  expect(parseMemory(JSON.stringify(atLimit))).toEqual(atLimit); // exactly at the budget: kept whole
+  const over = { summary: Array(12).fill("x".repeat(1000)), pending: ["y".repeat(131)] };
+  expect(estimate(over)).toBe(4097);
+  const clamped = parseMemory(JSON.stringify(over)); // one token over: trimmed to fit, not rejected
+  expect(estimate(clamped)).toBeLessThanOrEqual(4096);
+  expect(clamped.summary.length).toBe(11); // the lowest-priority trailing summary item is dropped
+  expect(clamped.pending).toEqual(over.pending); // open work is kept
+  // Bytes, not characters, drive the budget; over-budget unicode is trimmed down the same way.
   const unicode = { summary: Array(5).fill("漢".repeat(900)), pending: [] };
   expect(JSON.stringify(unicode).length).toBeLessThan(8000);
-  expect(() => parseMemory(JSON.stringify(unicode))).toThrow("estimated tokens > 4096");
+  expect(estimate(parseMemory(JSON.stringify(unicode)))).toBeLessThanOrEqual(4096);
+});
+
+test("too many items and an over-long item are clamped, not rejected", () => {
+  const big = { summary: Array.from({ length: 40 }, (_, i) => `item ${i}`), pending: ["z".repeat(1500)] };
+  const m = parseMemory(JSON.stringify(big));
+  expect(m.summary).toHaveLength(32); // the 32 highest-priority items are kept
+  expect(m.summary[0]).toBe("item 0");
+  expect(m.pending[0]!.length).toBe(1000); // the over-long item is clipped
+  // A wrong shape is a model error a repair should fix, so it still raises.
+  expect(() => parseMemory(JSON.stringify({ summary: [1, 2], pending: [] }))).toThrow("invalid memory items");
+  expect(() => parseMemory(JSON.stringify({ summary: "nope", pending: [] }))).toThrow("invalid memory items");
+});
+
+test("an over-target summary is clamped in place without a repair call", async () => {
+  const f = scripted([answer(tooLong)]);
+  const m = await summarizeOlder(source, new AbortController().signal, f.target);
+  expect(estimate(m)).toBeLessThanOrEqual(4096);
+  expect(f.calls).toHaveLength(1); // trimmed locally, no repair round-trip
 });
 
 for (const [name, invalid] of [
-  ["oversized", answer(tooLong)],
   ["malformed", { ...answer(valid), content: [text("```json\nprivate malformed response")] }],
-  ["invalid item", answer({ summary: ["x".repeat(1001)], pending: [] })],
   ["truncated", { ...answer(valid), stop: "limit", completion: "length" }],
 ] satisfies [string, Turn][]) test(`${name} generated memory gets one bounded repair using the same source and account`, async () => {
   const f = scripted([invalid, answer(valid)]), reasons: string[] = [];
@@ -80,9 +104,11 @@ for (const [name, invalid] of [
 });
 
 test("repeated invalid output stops after one repair and never exposes the rejected response", async () => {
-  const f = scripted([answer(tooLong), answer(tooLong), answer(valid)]);
-  await expect(summarizeOlder(source, new AbortController().signal, f.target)).rejects.toThrow("summary validation failed after 2 attempts: memory exceeds output budget");
+  const bad: Turn = { content: [text("```json\nprivate malformed response")], stop: "end", completion: "completed" };
+  const f = scripted([bad, bad, answer(valid)]);
+  await expect(summarizeOlder(source, new AbortController().signal, f.target)).rejects.toThrow("summary validation failed after 2 attempts: summary is not valid JSON");
   expect(f.calls).toHaveLength(2);
+  expect(JSON.stringify(f.calls)).not.toContain("private malformed response");
 });
 
 for (const [name, failed] of [
@@ -95,7 +121,7 @@ for (const [name, failed] of [
 });
 
 test("cancellation before the repair prevents another request", async () => {
-  const f = scripted([answer(tooLong), answer(valid)]), abort = new AbortController();
+  const f = scripted([malformed, answer(valid)]), abort = new AbortController();
   await expect(summarizeOlder(source, abort.signal, f.target, { onRepair: () => abort.abort(new Error("cancelled")) })).rejects.toThrow("cancelled");
   expect(f.calls).toHaveLength(1);
 });
@@ -116,11 +142,11 @@ async function history() {
   return transcript;
 }
 
-test("oversized memory is repaired before a smaller model's foreground request, preserving history and latest correction", async () => {
+test("malformed memory is repaired before a smaller model's foreground request, preserving history and latest correction", async () => {
   const transcript = await history(), original = transcript.history!(), calls: CompleteRequest[] = [];
   const provider: Provider = { name: "openai", account: "openai:phoebe", models: async () => [], complete: async request => {
     calls.push(request);
-    if (calls.length === 1) return answer(tooLong);
+    if (calls.length === 1) return malformed;
     return request.trace?.purpose === "agent" ? { ...answer(valid), content: [text("continued")] } : answer(valid);
   } };
   const rolling = new RollingCompactor("p", transcript); controllers.push(rolling);
@@ -157,19 +183,19 @@ test("history over the model window recovers with summaries above the character 
   expect(transcript.history!().slice(0, original.length)).toEqual(original);
 });
 
-test("a hard-limit validation failure and its cooldown retain the cause without foreground requests or transcript writes", async () => {
-  const transcript = await history(), bytes = await Bun.file(transcript.path).text(), f = scripted([answer(tooLong), answer(tooLong)]);
+test("a repeated validation failure and its cooldown retain the cause without foreground requests or transcript writes", async () => {
+  const transcript = await history(), bytes = await Bun.file(transcript.path).text(), f = scripted([malformed, malformed]);
   const rolling = new RollingCompactor("p", transcript); controllers.push(rolling);
   const deps: AgentDeps = { transcript, model: "gpt-6-astra", provider: f.provider, tools: {}, ctx: { project: "p", role: "orchestrator", cwd: paths.project("p") },
     compaction: { contextLimit: 200000 }, compactBoundary: (d, m, idle) => rolling.boundary(d, m, idle), write() {} };
-  for (let i = 0; i < 2; i++) await expect(createAgent(deps).run()).rejects.toThrow("compaction failed: summary validation failed after 2 attempts: memory exceeds output budget");
+  for (let i = 0; i < 2; i++) await expect(createAgent(deps).run()).rejects.toThrow("compaction failed: summary validation failed after 2 attempts: summary is not valid JSON");
   expect(f.calls).toHaveLength(2); expect(await Bun.file(transcript.path).text()).toBe(bytes);
 });
 
 test("the repair gets a fresh per-request deadline rather than the remainder of the failed attempt", async () => {
   const transcript = await history(); let calls = 0;
   const provider: Provider = { name: "openai", models: async () => [], complete: async () => {
-    calls++; if (calls <= 2) await Bun.sleep(130); return answer(calls === 1 ? tooLong : valid);
+    calls++; if (calls <= 2) await Bun.sleep(130); return calls === 1 ? malformed : answer(valid);
   } };
   const rolling = new RollingCompactor("p", transcript, { timeoutMs: 200 }); controllers.push(rolling);
   const started = Date.now();

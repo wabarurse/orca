@@ -518,13 +518,14 @@ test("a finished summary that was not published is reused for its unchanged pref
   expect(small.history!()).toEqual(originals);
 });
 
-test("structured summaries accept only {summary, pending} within bounds", () => {
+test("structured summaries accept or clamp {summary, pending}; other shapes are rejected", () => {
   expect(parseMemory(JSON.stringify(memory({ pending: ["As of this prefix, review pending"] })))).toEqual(memory({ pending: ["As of this prefix, review pending"] }));
-  expect(() => parseMemory(JSON.stringify({ summary: "invalid", pending: [] }))).toThrow();
+  expect(() => parseMemory(JSON.stringify({ summary: "invalid", pending: [] }))).toThrow(); // wrong type
   expect(() => parseMemory(JSON.stringify({ user: [], project: [], pending: [], tasks: [] }))).toThrow("invalid memory"); // the old output shape
-  expect(() => parseMemory(JSON.stringify(memory({ summary: ["x".repeat(1100)] })))).toThrow("invalid memory");
-  expect(() => parseMemory(JSON.stringify(memory({ summary: Array(33).fill("x") })))).toThrow("invalid memory");
-  expect(() => parseMemory(JSON.stringify(memory({ pending: Array(17).fill("x") })))).toThrow("invalid memory");
+  // An over-long item and too many items are clamped in place, not rejected: no second model call.
+  expect(parseMemory(JSON.stringify(memory({ summary: ["x".repeat(1100)] }))).summary[0]!.length).toBe(1000);
+  expect(parseMemory(JSON.stringify(memory({ summary: Array(33).fill("x") }))).summary).toHaveLength(32);
+  expect(parseMemory(JSON.stringify(memory({ pending: Array(17).fill("x") }))).pending).toHaveLength(16);
   expect(() => parseMemory("x".repeat(70000))).toThrow("budget");
 });
 
