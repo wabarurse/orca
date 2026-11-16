@@ -1501,7 +1501,7 @@ export class App {
     const done = !!frame && this.pointer.frame.mouse(k); // Before any await: the reports of one drag arrive in one burst.
     if (this.work.open && !this.clearing && k.name === "mousedown") await this.work.key(k);
     this.draw();
-    if (done) await this.copySelection();
+    if (done) this.copySelection();
   }
 
   /** The painted frame is what a click hit: not while a reprint is due, nor when the frame shows another page or view than the current one. */
@@ -1543,16 +1543,18 @@ export class App {
     }
     if (!this.selection.active) this.clearSelection();
     this.draw();
-    if (completed) await this.copySelection();
+    if (completed) this.copySelection();
   }
 
-  private async copySelection(): Promise<void> {
+  private copySelection(): void {
     if (this.resizeTimer) return;
     this.flush(); // Validate against the latest layout before copying, even between frames.
     const text = (this.selectionAllowed() ? this.selection.text() : "") || this.pointer.frame.text();
     if (!text) return;
-    try { await (this.deps.clipboardText ?? writeClipboardText)(text); }
-    catch (error) { this.note(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)); }
+    // Never await the clipboard write in the input path: a stalled pasteboard service (pbcopy can hang
+    // for the whole timeout) must not freeze input or rendering. The text is already captured, so the
+    // write runs detached and only its failure surfaces, as a note.
+    void (this.deps.clipboardText ?? writeClipboardText)(text).catch(error => this.note(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)));
   }
 
   async onKey(k: Key): Promise<void> {
