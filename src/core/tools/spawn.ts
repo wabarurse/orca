@@ -50,7 +50,7 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
   return {
     spec: {
       name: "spawn",
-      description: "Delegate an outcome whose intermediate work would grow coordinator context: many reads, long outputs or repeated trials/checks, regardless of task type. Keep bounded actions with short results direct when delegation adds overhead. This does not authorize commit, review, publication or CI. New work starts with a fresh brief, not the orchestrator transcript. Branch is optional: a new work branch is allocated if omitted. Reuse an existing branch for feedback on the same unmerged result. If that branch's agent of the same role is still live (even after reporting, e.g. supervising a dev server), the prompt is delivered to its inbox and it continues in its current run; no new agent starts. Set fresh=true to reset only the idle worker's model context while retaining workspace and full history. Every assignment is a task on the Tasks page: without taskId the branch's open task is reused, or one is created from title. Reviewer role is an explicit independent assessment, not an automatic next stage. Never reuse a merged branch.",
+      description: "Delegate an outcome whose intermediate work would grow coordinator context: many reads, long outputs or repeated trials/checks, regardless of task type. Keep bounded actions with short results direct when delegation adds overhead. This does not authorize commit, review, publication or CI. New work starts with a fresh brief, not the orchestrator transcript. Branch is optional: a new work branch is allocated if omitted. Reuse an existing branch for feedback on the same unmerged result. If that branch's agent of the same role is still live (even after reporting, e.g. supervising a dev server), the prompt is delivered to its inbox and it continues in its current run; no new agent starts. Set fresh=true to reset only the idle worker's model context while retaining workspace and full history. Every assignment is a task on the Tasks page: without taskId the branch's open task is reused, or one is created from title; the result names it, so do not create it again with task. Reviewer role is an explicit independent assessment, not an automatic next stage. Never reuse a merged branch.",
       input_schema: {
         type: "object",
         properties: {
@@ -106,12 +106,19 @@ export function makeSpawn(runner: Runner, wait: SpawnWait = WAIT): Tool {
 
       // No work runs untracked: without a taskId the branch's open task is used, or one is registered from the brief.
       let taskId = input.taskId as string | undefined;
+      let tracked = "";
       if (!taskId) {
         const line = (typeof input.title === "string" && input.title.trim() || prompt.split("\n").find(l => l.trim()) || branch).replace(/\s+/g, " ").trim();
-        try { taskId = (await taskForBranch(ctx.project, { name: line.slice(0, 100), summary: prompt.replace(/\s+/g, " ").slice(0, 400), branch })).id; }
+        try {
+          const { task, created } = await taskForBranch(ctx.project, { name: line.slice(0, 100), summary: prompt.replace(/\s+/g, " ").slice(0, 400), branch });
+          taskId = task.id;
+          tracked = `${created ? "created" : "continues"} task ${task.number ? `#${task.number} ` : ""}"${task.name}"`;
+        }
         catch (error) { return `refused: no task could be created for ${branch}: ${error instanceof Error ? error.message : String(error)}`; }
       }
-      return launch(runner, prompt, branch, role, taskId, { ...ctx, executionEpoch: epoch, fresh: input.fresh === true }, attachments, reviewMode);
+      const started = await launch(runner, prompt, branch, role, taskId, { ...ctx, executionEpoch: epoch, fresh: input.fresh === true }, attachments, reviewMode);
+      // The result names the task, so neither the orchestrator nor the user registers it a second time.
+      return tracked ? `${started}, ${tracked}` : started;
       });
     },
   };

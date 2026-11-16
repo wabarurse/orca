@@ -365,9 +365,9 @@ test("a spawn without a taskId registers a task for the branch, and the next one
     async stop() {}, async running() { return []; },
   };
   const tool = realSpawn(runner), octx: ToolContext = { project: "auto", role: "orchestrator", cwd: "/" };
-  expect(await tool.run({ prompt: "Fix the trace page\n\nDetails follow.", branch: "fix/trace" }, octx)).toBe("worker-fix-trace");
-  expect(await tool.run({ prompt: "Address the review", branch: "fix/trace" }, octx)).toBe("worker-fix-trace");
-  expect(await tool.run({ prompt: "Long brief", branch: "feat/named", title: "Minter traces" }, octx)).toBe("worker-feat-named");
+  expect(await tool.run({ prompt: "Fix the trace page\n\nDetails follow.", branch: "fix/trace" }, octx)).toBe('worker-fix-trace, created task #1 "Fix the trace page"');
+  expect(await tool.run({ prompt: "Address the review", branch: "fix/trace" }, octx)).toBe('worker-fix-trace, continues task #1 "Fix the trace page"');
+  expect(await tool.run({ prompt: "Long brief", branch: "feat/named", title: "Minter traces" }, octx)).toBe('worker-feat-named, created task #2 "Minter traces"');
   const tasks = await allTasks("auto");
   expect(tasks.map(t => [t.name, t.branch, t.runs.length])).toEqual([["Fix the trace page", "fix/trace", 2], ["Minter traces", "feat/named", 1]]);
 });
