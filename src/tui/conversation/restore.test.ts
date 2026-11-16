@@ -311,3 +311,19 @@ test("live and replay keep mixed-case user, assistant/code, paths, URLs, tool ar
   const rendered = lines.flatMap(line => lineRows(line, 120)).map(Bun.stripANSI).join("\n");
   for (const text of [userText, "LLM Reply", "const APIKey = 'MiXeD';", command, result]) expect(rendered).toContain(text);
 });
+
+test("unchanged history is laid out once: settled entries keep their lines and equal lines their rows", () => {
+  const entry = (uuid: string, role: "user" | "assistant", content: unknown): Entry => ({ type: "message", uuid, parentUuid: null, ts: "", message: { role, content } } as Entry);
+  const call = entry("a", "assistant", [{ type: "text", text: "Looking **now**" }, { type: "tool_use", id: "c1", name: "bash", input: { command: "ls" } }]);
+  const running = restore([entry("u", "user", "go"), call], 80, Infinity);
+  const result = entry("r", "user", [{ type: "tool_result", tool_use_id: "c1", content: "a\nb" }]);
+  const done = restore([entry("u", "user", "go"), call, result], 80, Infinity);
+  expect(done.at(-1)).toEqual(toolView("bash", { command: "ls" }, { ok: true, text: "a\nb" })); // the unsettled rendering was not kept
+  expect(running.at(-1)).not.toEqual(done.at(-1));
+  const again = restore([entry("u", "user", "go"), call, result, entry("n", "assistant", [{ type: "text", text: "Done" }])], 80, Infinity);
+  expect(again[1]).toBe(done[1]); // same line object: the settled entry was not laid out again
+  const md: Line = { md: "Some *text* to wrap", block: true };
+  expect(lineRows({ ...md }, 80)).toBe(lineRows({ ...md }, 80));
+  expect(lineRows(md, 12)).not.toBe(lineRows(md, 80));
+  expect(lineRows(md, 12).length).toBeGreaterThan(lineRows(md, 80).length);
+});

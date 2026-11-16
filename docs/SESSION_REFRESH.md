@@ -89,7 +89,7 @@ preview is local to the submitting window; it is not a global inbox inventory.
   takeover is only safe when every orca process shares the host's PID namespace.
 - Transcript reload, parent selection and append/fsync publication share
   a per-file lock (`transcript/<session>.jsonl.lock`). Publication appends in place and
-  never rewrites the old bytes; an append reloads only when the file's version changed. Refresh replaces its snapshot only after successful
+  never rewrites the old bytes; an append reloads only when the file's version changed. A reload reads only the bytes appended since the last one (the file's identity, a shorter length or changed bytes before that point mean a full read), so its cost is the new records, not the file, and entries already read keep their objects. A full read replaces its snapshot only after successful
   reading/parsing; damaged legacy lines are preserved on disk, not replayed.
 - The orchestrator daemon holds `turn-locks/<project>` for the entire model and
   tool turn. The lock serializes writers of a conversation's transcript.

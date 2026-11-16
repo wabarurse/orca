@@ -213,3 +213,5 @@ and the client's polling/render delay. Use the build ID to compare similar
 tasks before and after batching and event-driven validation.
 
 Verification environments use the existing process supervisor and runtime maintenance tick. Workspace discovery and inactivity archiving run at most once per five minutes in a live daemon, without recursive size scans or model calls. Permanent workspace cleanup and size inspection run only through explicit `orca clean`. See [workspace cleanup](WORKSPACE_CLEANUP.md) and [verification sessions](VERIFICATION.md) for ownership and retention.
+
+Long conversations: a transcript change costs what changed, not the conversation. Three things make that true: the transcript refresh reads only appended bytes (`transcript.ts` `appended`/`take`), `restore` keeps the lines of assistant entries whose calls all have results (`settledLines`, by entry), and `lineRows` keeps laid-out rows by content and width (`lines.ts` `kept`). On a 72 MB, 22,000-entry transcript at 160 columns one appended entry went from about 90 ms refresh + 45 ms lines + 300–550 ms rows to about 1 + 8 + 16 ms. A width change still lays everything out once.

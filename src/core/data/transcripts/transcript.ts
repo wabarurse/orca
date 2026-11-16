@@ -7,7 +7,7 @@
 // history() walks past both for UI replay without duplicating retained turns.
 
 import { paired } from "./tool-pairs";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { withStorageLock } from "../storage-lock";
 import type { AppendGuard, Entry, NewEntry } from "../../../protocol";
 import { publish, disk, type Storage } from "./transcript-storage";
@@ -53,16 +53,37 @@ function walk(byUuid: Map<string, Entry>, head: string | null, context = true): 
   return entries.reverse();
 }
 
-function load(path: string): Map<string, Entry> {
-  const entries = new Map<string, Entry>();
-  if (!existsSync(path)) return entries;
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    try {
-      const entry = JSON.parse(line) as Entry;
-      if (entry.uuid && entry.type) entries.set(entry.uuid, entry);
-    } catch { /* Preserve damaged bytes, but never replay them. */ }
+/** How much of the file is already in memory: records are only ever appended, so a refresh reads from
+ * `offset` (the end of the last complete line). `guard` is the bytes just before it: when they no
+ * longer match, the file was rewritten and everything is read again. */
+interface Parsed { file: string; offset: number; guard: Buffer }
+const GUARD_BYTES = 64;
+const fileKey = (s: { dev: bigint; ino: bigint }) => `${s.dev}:${s.ino}`;
+
+/** The bytes appended since `from`, or null when this is not the same file continued (replaced, cut back, rewritten or unreadable). */
+function appended(path: string, from: Parsed): Buffer | null {
+  let fd: number;
+  try { fd = openSync(path, "r"); } catch { return null; }
+  try {
+    const s = fstatSync(fd, { bigint: true }), size = Number(s.size);
+    if (fileKey(s) !== from.file || size < from.offset) return null;
+    const start = from.offset - from.guard.length, bytes = Buffer.alloc(size - start);
+    let n = 0;
+    while (n < bytes.length) { const read = readSync(fd, bytes, n, bytes.length - n, start + n); if (!read) break; n += read; }
+    if (n < from.guard.length || !bytes.subarray(0, from.guard.length).equals(from.guard)) return null;
+    return bytes.subarray(from.guard.length, n);
+  } catch { return null; } finally { closeSync(fd); }
+}
+
+/** Put the record lines of `bytes` into `entries`; returns the length of its complete (newline-ended) lines.
+ * An unfinished last line is read when it is a whole record but never counted, so it is read again next time. */
+function take(entries: Map<string, Entry>, bytes: Buffer): number {
+  const end = bytes.lastIndexOf(10) + 1;
+  for (const line of [...bytes.subarray(0, end).toString().split("\n"), bytes.subarray(end).toString()]) {
+    if (!line) continue;
+    try { const e = JSON.parse(line) as Entry; if (e.uuid && e.type) entries.set(e.uuid, e); } catch { /* damaged bytes are not replayed */ }
   }
-  return entries;
+  return end;
 }
 export function contextMessages(entries: Entry[]): MessageParam[] {
   return entries.flatMap((e): MessageParam[] => {
@@ -73,8 +94,6 @@ export function contextMessages(entries: Entry[]): MessageParam[] {
 }
 export function open(path: string, io: Storage = disk): Transcript {
   mkdirSync(dirname(path), { recursive: true });
-  let byUuid = load(path);
-  let head = [...byUuid.keys()].at(-1) ?? null;
   const branch = () => walk(byUuid, head);
   const version = () => {
     if (io !== disk) return undefined;
@@ -82,19 +101,38 @@ export function open(path: string, io: Storage = disk): Transcript {
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing"; throw error; }
   };
   let observed: string | undefined;
+  let parsed: Parsed | null = null;
+  const guardOf = (bytes: Buffer) => Buffer.from(bytes.subarray(Math.max(0, bytes.length - GUARD_BYTES)));
+  let byUuid = new Map<string, Entry>();
+  if (existsSync(path)) {
+    // The version is taken before the read: any write during or after it changes the version, so the
+    // first refresh then reads again; otherwise this one read is the snapshot and nothing is read twice.
+    const before = version(), bytes = readFileSync(path), end = take(byUuid, bytes);
+    try { if (before !== undefined) { parsed = { file: fileKey(statSync(path, { bigint: true })), offset: end, guard: guardOf(bytes.subarray(0, end)) }; observed = before; } }
+    catch { parsed = null; }
+  }
+  let head = [...byUuid.keys()].at(-1) ?? null;
   const reload = async () => {
+    // The cost of a refresh is what was appended, not the file: only the new bytes are read and parsed.
+    const more = io === disk && parsed ? appended(path, parsed) : null;
+    if (more && parsed) {
+      const end = take(byUuid, more);
+      parsed = { file: parsed.file, offset: parsed.offset + end, guard: guardOf(Buffer.concat([parsed.guard, more.subarray(0, end)])) };
+      head = [...byUuid.keys()].at(-1) ?? null;
+      observed = version();
+      return;
+    }
     // Read/parse first: a failed refresh leaves the previous snapshot intact.
     const bytes = await io.read(path).catch(error => {
       if (error.code === "ENOENT") return Buffer.alloc(0);
       throw error;
     });
-    const next = new Map<string, Entry>();
-    for (const line of bytes.toString().split("\n")) {
-      try { const e = JSON.parse(line) as Entry; if (e.uuid && e.type) next.set(e.uuid, e); } catch { /* damaged bytes are not replayed */ }
-    }
+    const next = new Map<string, Entry>(), end = take(next, bytes);
     byUuid = next;
     head = [...next.keys()].at(-1) ?? null;
     observed = version();
+    try { parsed = io === disk ? { file: fileKey(statSync(path, { bigint: true })), offset: end, guard: guardOf(bytes.subarray(0, end)) } : null; }
+    catch { parsed = null; }
   };
   const lock = `${path}.lock`;
   const refresh = () => observed !== undefined && version() === observed ? Promise.resolve() : withStorageLock(lock, reload);
