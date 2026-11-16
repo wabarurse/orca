@@ -177,3 +177,14 @@ test("the repair gets a fresh per-request deadline rather than the remainder of 
   expect(Date.now() - started).toBeGreaterThan(200);
   expect(transcript.branch()[0]?.type).toBe("summary");
 });
+
+test("the prompt names one size to aim for and keeps recent material clearest", async () => {
+  const f = scripted([answer(valid), answer(tooLong), answer(valid)]);
+  await summarizeOlder(source, new AbortController().signal, f.target);
+  const system = f.calls[0]!.system as string;
+  expect(system).toContain("write at most 8000 characters");
+  expect(system).not.toContain("12000"); // the budget's own byte size is never offered as a target
+  expect(system).toContain("the newer the material, the more detail it keeps");
+  await summarizeOlder(source, new AbortController().signal, f.target);
+  expect(f.calls.at(-1)!.messages.at(-1)!.content).toContain("condensing the oldest material first");
+});
