@@ -198,13 +198,13 @@ test("appends to a multi-megabyte transcript write record-sized bytes and never 
   expect(fullReads).toBe(0);
   expect(statSync(path).size).toBe(size + expected);
 
-  // Through the transcript: one load when it opens, then no whole-file read per append.
+  // Through the transcript: opening it is the one load; no append reads the whole file again.
   const reads = { n: 0 }, original = disk.read;
   disk.read = p => { reads.n++; return original(p); };
   try {
     const t = open(path);
     for (let i = 0; i < 5; i++) await t.append(message(`m${i}`));
-    expect(reads.n).toBe(1);
+    expect(reads.n).toBe(0);
     expect(open(path).head()).toBe(t.head());
   } finally { disk.read = original; }
 });

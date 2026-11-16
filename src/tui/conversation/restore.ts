@@ -151,6 +151,20 @@ function userEntry(content: MessageEntry["message"]["content"], inbox?: Message[
 
 /** An assistant entry's lines: its text through a fresh stream (every entry ends flushed live), then its tool calls as they ended. */
 function assistantLines(parts: Content, state: Pick<Fold, "results" | "omit">): Line[] {
+  // An entry whose calls all have their results never renders differently again, and a transcript
+  // refresh keeps the entry (and so its content array) as it was: lay it out once per entry.
+  const settled = parts.every((b) => b.type !== "tool_use" || state.results.has(b.id));
+  const known = settled ? settledLines.get(parts) : undefined;
+  if (known) return known;
+  const lines = layOutAssistant(parts, state);
+  if (settled) settledLines.set(parts, lines);
+  return lines;
+}
+
+/** The lines of assistant entries that can no longer change, by the entry's content. Read-only: every restore shares them. */
+const settledLines = new WeakMap<Content, Line[]>();
+
+function layOutAssistant(parts: Content, state: Pick<Fold, "results" | "omit">): Line[] {
   const md = new MarkdownStream();
   const said = parts.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
   const lines: Line[] = said ? [...md.feedLines(`${said}\n`), ...md.flushLines()] : [];
