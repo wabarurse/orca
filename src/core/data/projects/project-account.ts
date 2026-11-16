@@ -1,7 +1,8 @@
 // The one subscription account a project uses: a provider and a profile, saved in the project's own state.
 // Another project, and the global config, are never touched. The provider must serve the project's model.
+import type { AccountRef } from "../../../types";
 import { readProjectState, writeProjectState } from "../../../config";
-import { legacyProfile, type AccountRef } from "../../../api/auth";
+import { legacyProfile } from "../../../api/auth";
 import { providerFor } from "../../../api/model";
 import { effectiveModel, validateModel } from "./project-model";
 import { assertProjectIdentity, projectIdentity, withProjectStateLock } from "./state";

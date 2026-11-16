@@ -1,4 +1,5 @@
-import type { Entry, ImageRef } from "../../protocol";
+import type { ImageRef } from "../../types";
+import type { Entry } from "../../protocol";
 
 export interface DeliveredImage { ref: ImageRef; from: string; text: string; at: string }
 

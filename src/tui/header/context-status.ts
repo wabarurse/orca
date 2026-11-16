@@ -1,4 +1,5 @@
-import { contextWindow, type ContextWindow } from "../../api/model";
+import type { ContextWindow } from "../../types";
+import { contextWindow } from "../../api/model";
 /** One-decimal trimmed k below 1M; M from 1M, including values that would round to 1000k. */
 const k = (n: number) => {
   const thousands = Number((n / 1000).toFixed(1));

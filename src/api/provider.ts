@@ -2,8 +2,8 @@
 // Anthropic-shaped (text / tool_use / tool_result blocks) whatever the
 // provider; OpenAI is translated on the way in and out.
 
+import type { ProviderName } from "../types";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
-import type { ProviderName } from "./auth";
 import type { RequestSettings } from "./model";
 import type { SearchRequest, SearchResult } from "./search";
 

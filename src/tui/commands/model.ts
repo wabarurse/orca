@@ -1,11 +1,11 @@
 // /model and /effort: the choices they offer and what picking one saves.
 
+import type { Role } from "../../types";
 import { provider } from "../../api";
 import { modelCapabilities } from "../../api/model";
 import { prefetchContextLimits } from "../../api/model";
 import { loadConfig, saveConfig } from "../../config";
 import { accountForModel, effectiveAccount, effectiveModel, roleOverrides, saveProjectModel, validateModel } from "../../core/data/projects";
-import type { Role } from "../../protocol";
 import { accountId } from "../../api/auth";
 import { effectiveSettingsReport } from "../../core/data/projects";
 

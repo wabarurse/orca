@@ -1,3 +1,4 @@
+import type { Role } from "../../types";
 import { allTasks, startTaskRun, stopTaskRun, invalidateTaskBranch } from "../data/tasks";
 import type { Task, TaskRun } from "../../protocol/task";
 import { Cancelled } from "./cancellation";
@@ -22,7 +23,6 @@ import { pidAlive } from "../data";
 import { put } from "../data/inbox";
 import { run } from "../proc";
 import { SETTLED_EXIT, slug } from "./runner";
-import type { Role } from "../../protocol";
 
 /** Latest request only: bounded metadata, never payloads or raw errors.
  * provider-wait means complete() is pending (including SDK retries), not HTTP progress.

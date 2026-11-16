@@ -1,7 +1,8 @@
 // What a request may carry per model: effort level and fast mode, validated
 // against the endpoint's capability list before a provider sends them.
 
-import { knownEfforts, modelCapabilities, type Effort } from "./capabilities";
+import type { Effort } from "../../types";
+import { knownEfforts, modelCapabilities } from "./capabilities";
 
 export interface RequestSettings { effort?: Effort; fast?: boolean }
 function isRecord(value: unknown): boolean {

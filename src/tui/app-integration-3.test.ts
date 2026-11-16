@@ -1,7 +1,7 @@
+import type { ImageRef } from "../types";
 import { appFixture } from "../test/app-fixture";
 import { png } from "../test/image-fixture";
 import { pendingImageInputs } from "../core/data/images/images";
-import type { ImageRef } from "../protocol/images";
 import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";

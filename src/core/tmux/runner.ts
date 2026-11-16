@@ -1,3 +1,4 @@
+import type { Role } from "../../types";
 import { taskForRun } from "../data/tasks";
 import { delay, launchIdentity, publishLaunch } from "./cancellation";
 import { classifyAgent } from "./agent-evidence";
@@ -18,7 +19,6 @@ import { assertMainCheckout, assertWorktree, workspaces } from "../data/projects
 import { execution } from "../data/projects/lifecycle";
 import { launchEnvironment } from "./launch-environment";
 import { listProcesses, unresolvedProcess } from "../data/processes";
-import type { Role } from "../../protocol";
 
 export interface StartOptions {
   executionEpoch?: string;

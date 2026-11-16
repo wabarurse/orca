@@ -1,12 +1,13 @@
+import type { ContextWindow, ImageRef } from "../../../types";
 import { reconcileVerifications } from "../../data/processes";
 import { agentContext, clearWorkingContext } from "../../data/knowledge";
 import { processOwner, unresolvedProcess, listProcesses, liveProcess, controlProcess } from "../../data/processes";
 import { editableTool } from "../../definitions";
 import { budget, type CompactOptions } from "../../data/memory";
-import { contextWindow, type ContextWindow } from "../../../api/model";
+import { contextWindow } from "../../../api/model";
 import { contextMessages } from "../../data/transcripts";
 import { pendingImageInputs } from "../../data/images";
-import type { ImageRef, OrchestratorActivity } from "../../../protocol";
+import type { OrchestratorActivity } from "../../../protocol";
 import { tryStorageLock } from "../../data";
 import { inputEpoch, advanceInputEpoch } from "../../data/inbox";
 import { Cancelled } from "../../tmux";

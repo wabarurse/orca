@@ -1,6 +1,7 @@
+import type { ImageRef } from "../../types";
 import { afterContextBoundary } from "../../core/data/transcripts";
 import { imageLabels } from "../../core/data/images";
-import type { ImageRef, Message } from "../../protocol";
+import type { Message } from "../../protocol";
 import { imageLines } from "./image-lines";
 // Rebuild a page's history from its orchestrator's transcript, like
 // `claude --continue` or `codex resume`: what the page showed live, in the

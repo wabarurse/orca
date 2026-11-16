@@ -1,9 +1,9 @@
+import type { ImageRef } from "../types";
 import { stat } from "node:fs/promises";
 import { workViews } from "../core/data/projects";
 import { ConversationSelection, hitRow, Pointer } from "./screen";
 import { writeClipboardText, readClipboardImage } from "./components";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
-import type { ImageRef } from "../protocol";
 import { contextStatus } from "./header";
 import { listTasks } from "../core/data/tasks";
 import { runningAgentCount, TaskCounts } from "./footer";

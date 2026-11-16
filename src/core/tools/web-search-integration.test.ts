@@ -1,3 +1,4 @@
+import type { Role } from "../../types";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +13,6 @@ import { searchText, type SearchRequest } from "../../api/search/web-search";
 import { fakeProvider, text, toolUse } from "../../test/fake-provider";
 import { claudeSearchFixture, codexSearchFixture } from "../../test/web-search";
 import { open } from "../data/transcripts/transcript";
-import type { Role } from "../../protocol/transcript";
 import { restore } from "../../tui/conversation/restore";
 import { registry } from "./index";
 import { toolsFor } from "./registry";

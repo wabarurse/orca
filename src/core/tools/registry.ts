@@ -1,10 +1,10 @@
 // What a tool is and which tools each role gets. The implementations are
 // mounted in mount.ts; every tool file imports its types from here.
 
+import type { ImageRef, Role } from "../../types";
 import type { ImageBlockParam, TextBlockParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider } from "../../api";
 import type { RequestSettings } from "../../api/model";
-import type { Role, ImageRef } from "../../protocol";
 
 export interface ToolContext {
   /** Trusted TUI handoff only; never populated from model tool arguments. */

@@ -3,11 +3,11 @@
 // and the transcript from disk, and stop it for project deletion. Nothing here
 // calls a model or appends to the orchestrator's transcript.
 
+import type { ImageRef } from "../../../types";
 import { existsSync } from "node:fs";
 import { cancelSession, delay, launchEpoch, launchIdentity } from "../../tmux";
 import { loadConfig, paths } from "../../../config";
 import { pendingImageInputs } from "../../data/images";
-import type { ImageRef } from "../../../protocol";
 import { pendingInput, put } from "../../data/inbox";
 import { contextWindow } from "../../../api/model";
 import type { Orchestrator } from "./orchestrator";

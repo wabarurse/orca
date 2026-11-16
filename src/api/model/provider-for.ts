@@ -1,4 +1,4 @@
-import type { ProviderName } from "../auth";
+import type { ProviderName } from "../../types";
 
 /** Which provider serves a model id. Claude models go to Anthropic; anything else to OpenAI. */
 export function providerFor(model: string): ProviderName {

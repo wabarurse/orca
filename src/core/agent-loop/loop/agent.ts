@@ -1,3 +1,4 @@
+import type { Role } from "../../../types";
 import { usageScope } from "../../../api";
 import { usageEvent } from "../../../config";
 import { completeInterruptedTools } from "../../data/transcripts";
@@ -18,7 +19,6 @@ import type { Message } from "../../../protocol";
 import type { Provider } from "../../../api";
 import { sessionId } from "../../tmux";
 import type { Transcript } from "../../data/transcripts";
-import type { Role } from "../../../protocol";
 import type { Tool, ToolContext, ToolResult } from "../../tools";
 import { callText, resultText, type ToolCall, type ToolOutcome } from "../../../protocol";
 import { scheduleTools } from "./tool-scheduler";

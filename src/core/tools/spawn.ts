@@ -1,7 +1,7 @@
+import type { ImageRef } from "../../types";
 import { attachmentSchema, forwardImages } from "./attachments";
 import { consume, content, pending, put } from "../data/inbox";
 import { imageContent, validateRefs } from "../data/images";
-import type { ImageRef } from "../../protocol";
 import { delay, launchIdentity, publishLaunch, readRun } from "../tmux";
 import { getTask, invalidateTaskBranch, prepareTaskRun, stopTaskRun, taskForBranch, taskForRun } from "../data/tasks";
 import { paths, repositoryBinding } from "../../config";
