@@ -4,6 +4,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Orchestrator } from "../core/agent-loop/orc/orchestrator";
+import { ensureBubble, peekBubble } from "../core/data/bubbles";
 import { directories } from "../core/data/projects";
 import { displayName, newProjectName, setDisplayName } from "../core/data/projects/registry";
 import { loadConfig, paths } from "../config/config";
@@ -339,6 +340,29 @@ describe("tui app", () => {
     expect(term.screen()).not.toContain("failer says hi");
     app.quit();
     await running;
+  });
+
+  test("ctrl+n asks which bubble to join once one exists: New bubble is the default, another row attaches", async () => {
+    const term = fakeTerm();
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    const bubble = await ensureBubble("alpha", "agent notes");
+    term.press({ name: "n", ctrl: true });
+    await until(() => term.screen().includes("● New bubble"));
+    expect(term.screen()).toContain("agent notes · 1 conversation");
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("/rename <name> to rename"));
+    expect(peekBubble(app.page!.project)).toBeNull();
+    term.press({ name: "n", ctrl: true });
+    await until(() => app.pages.length === 3 && term.screen().includes("● New bubble"));
+    term.press({ name: "down" });
+    term.press({ name: "enter" });
+    await until(() => term.screen().includes("joined bubble agent notes"));
+    expect(peekBubble(app.page!.project)).toBe(bubble.id);
+    expect(app.page!.lines).toEqual([]);
+    app.quit(); await running;
   });
 
   test("ctrl+n ids never match another project's display name", async () => {
