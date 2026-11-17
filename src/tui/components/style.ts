@@ -84,14 +84,29 @@ export function pickFill(env: Env, terminal: Rgb | null = null): string | null {
   return truecolor(env) ? `\x1b[48;2;${c.r};${c.g};${c.b}m` : `\x1b[48;5;${nearest256(c)}m`;
 }
 
+/** The SGR for ordinary text, or null to leave the terminal's own foreground: pure white on a background known to be
+ * dark, where many themes' default foreground is a grey that reads dim (and faint text, drawn from it, dimmer still).
+ * Light or unknown backgrounds keep the terminal's colour, so text is never white on white. */
+export function pickText(env: Env, terminal: Rgb | null = null): string | null {
+  if (noColour(env)) return null;
+  const bg = terminal ?? fromColorFgBg(env.COLORFGBG);
+  if (!bg || isLight(bg)) return null;
+  return truecolor(env) ? "\x1b[38;2;255;255;255m" : "\x1b[38;5;231m";
+}
+
 let fill: string | null = pickFill(process.env);
+let text: string | null = pickText(process.env);
+/** The SGR ordinary text is drawn in now, or null for the terminal's own. */
+export const baseText = (): string | null => text;
+/** Set it directly (tests, or null to turn it off). */
+export function setBaseText(t: string | null): void { text = t; }
 
 /** The SGR that starts the user background now, or null when there is none. */
 export const userFill = (): string | null => fill;
 /** Set the user background directly (tests, or null to turn it off). */
 export function setUserFill(f: string | null): void { fill = f; }
 /** Use the background the terminal reported (OSC 11). */
-export function useTerminalBackground(c: Rgb, env: Env = process.env): void { fill = pickFill(env, c); terminal = c; }
+export function useTerminalBackground(c: Rgb, env: Env = process.env): void { fill = pickFill(env, c); text = pickText(env, c); terminal = c; }
 
 let terminal: Rgb | null = null;
 /** The background the terminal reported, if it did (the shimmer blends towards its opposite). */
@@ -128,4 +143,10 @@ function resetsFill(params: string): boolean {
 export function fillRow(row: string, cols: number, fill: string): string {
   const body = row.replace(SGR, (m, p: string) => (resetsFill(p) ? m + fill : m));
   return `${fill}${body}${" ".repeat(Math.max(0, cols - Bun.stringWidth(row)))}\x1b[0m`;
+}
+
+/** One screen row with ordinary text in `colour`: set at the start and again after every reset inside, so a styled
+ * span (bold, dim, a status colour) ends back in it rather than in the terminal's own foreground. */
+export function textRow(row: string, colour: string): string {
+  return colour + row.replace(SGR, (m, p: string) => (resetsFill(p) ? m + colour : m));
 }
