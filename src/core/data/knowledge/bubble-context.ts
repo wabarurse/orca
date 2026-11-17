@@ -15,7 +15,7 @@ export function lookup(nodes: Parameters<typeof searchNodes>[0], query: string):
   if (!query.trim()) return "";
   const hits = searchNodes(nodes, [query], HITS, LINES);
   const best = hits[0]?.score ?? 0;
-  return best < 4 ? "" : renderHits(hits.filter(hit => hit.score >= best * 0.45));
+  return best < 4 ? "" : renderHits(hits.filter(hit => hit.score >= best * 0.6));
 }
 
 export async function bubbleContext(project: string, query: string, role: ContextRole): Promise<Record<string, string>> {
