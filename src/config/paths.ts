@@ -99,6 +99,8 @@ export const paths = {
   daemonLock: (name: string) => join(root(), ".runtime", "daemon-locks", name),
   orchestrator: (name: string) => join(root(), ".runtime", "projects", name, "orchestrator"),
   get projects() { return join(root(), "projects"); },
+  /** Shared knowledge of one or more conversations (core/data/bubbles): memory nodes, notebook pages, behavior lines. */
+  get bubbles() { return join(root(), "bubbles"); },
   project: (name: string) => conversationPath(root(), name),
   inputHistory: (name: string) => join(root(), ".runtime", "projects", name, "input-history"),
   cache: (name: string) => join(conversationPath(root(), name), "cache"),

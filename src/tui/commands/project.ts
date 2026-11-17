@@ -15,7 +15,8 @@ export const deleteProject = (name: string, options: DeleteOptions = {}) => owne
 /** Delete a folder's conversations, then its record. The directory on disk is kept. */
 export const deleteFolder = (id: string, options: DeleteOptions = {}) => ownership.deleteFolder(id, withStop(options));
 /** What survives a reset: what the user chose for the project, never what happened in it. */
-const KEPT = ["name", ...inheritedSettings];
+// The bubble is what the project knows beyond one conversation: a reset keeps it, like saved facts.
+const KEPT = ["name", "bubble", ...inheritedSettings];
 /**
  * /clear-context: the project as if it had just been created. Everything under it goes through
  * the same cascade as a deletion (history, tasks, questions, images, agents, worktrees); then a
@@ -28,7 +29,7 @@ export async function resetProject(name: string, options: DeleteOptions = {}): P
   const scope = projectStateScope(name);
   const kept = KEPT.map(key => [key, readState<unknown>(paths.memory, scope, key)] as const).filter(([, value]) => value !== undefined);
   const pinned = (await loadConfig()).pinned.includes(name);
-  await ownership.deleteProject(name, withStop(options));
+  await ownership.deleteProject(name, { ...withStop(options), keepBubble: true });
   await ensureProject(name, binding.directory);
   for (const [key, value] of kept) writeProjectState(name, key, value);
   if (pinned) await saveConfig({ pinned: [...new Set([...(await loadConfig()).pinned, name])] });

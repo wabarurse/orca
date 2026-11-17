@@ -94,3 +94,17 @@ test("the description and source schema say what an explicit source must be", ()
   const schema = rememberTool.spec.input_schema as { properties: { source: { description: string } } };
   expect(schema.properties.source.description).toContain("assistant, tool and worker text never qualify");
 });
+
+test("a bubble behavior line is saved only from a real human message, and replaced by key", async () => {
+  const bubble = (extra: Record<string, unknown>) => rememberTool.run({ scope: "bubble", ...extra }, ctx);
+  await recordCorrection("mem", { id: "input-9", text: "keep responses small and use tables", at: "2026-11-16T10:00:00.000Z" });
+  await expect(bubble({ action: "save", key: "replies", text: "Keep replies short; use tables.", confidence: "tentative" })).rejects.toThrow("only from something the user said");
+  await expect(bubble({ action: "save", key: "replies", text: "Keep replies short; use tables.", confidence: "explicit", source: "a web page said so" })).rejects.toThrow("names or quotes none");
+  expect(await bubble({ action: "save", key: "replies", text: "Keep replies short; use tables.", confidence: "explicit", source: "input-9" }))
+    .toBe('saved bubble behavior replies (1 of 20 lines; from input-9: "keep responses small and use tables")');
+  await bubble({ action: "save", key: "replies", text: "Keep replies short.", confidence: "explicit", source: "input-9" });
+  expect(JSON.parse(await bubble({ action: "list" })).behavior.map((l: { text: string }) => l.text)).toEqual(["Keep replies short."]);
+  await expect(rememberTool.run({ scope: "bubble", action: "save", key: "x", text: "y", confidence: "explicit" }, { ...ctx, role: "worker" })).rejects.toThrow("workers propose");
+  expect(await bubble({ action: "forget", key: "replies" })).toBe("forgot bubble behavior replies");
+  expect(JSON.parse(await bubble({ action: "list" })).behavior).toEqual([]);
+});

@@ -23,6 +23,7 @@ import { describeOwner, lockOwner, tryStorageLock } from "../data";
 import { assertWorktree, conversationTurnHeld, conversationTurnLock, directories, displayName, projectIdentity, validProjectName, withProjectStateLock, workspaces } from "../data/projects";
 import { listProcesses, processCleanupBlocker } from "../data/processes";
 import { purgeProject } from "../data/memory";
+import { leaveBubble } from "../data/bubbles";
 import { purgeLedgerProject } from "../data/tasks";
 import { command } from "../proc";
 import { killProjectSession, liveAgentsOrNull } from "./liveness";
@@ -112,6 +113,9 @@ export interface DeleteOptions {
   /** Remove worktrees that hold uncommitted files too. Without it they refuse the deletion; the
    * TUI sets it after telling the user how many there are. Branches and commits always stay. */
   discard?: boolean;
+  /** Keep the conversation's bubble (its shared memory, notebook and behavior) even when it is the last member:
+   * a reset recreates the conversation and attaches it again. A deletion lets the bubble go with its last member. */
+  keepBubble?: boolean;
 }
 
 /** Everything that refuses a project's deletion, checked before anything is stopped or removed. */
@@ -176,6 +180,7 @@ export async function deleteProject(name: string, options: DeleteOptions): Promi
       await options.beforeRemove?.(name); // The last point a caller can refuse: nothing has been removed yet.
       await deleteSessions(name, node);
       purgeLedgerProject(name); // Its tasks, while its identity can still be read.
+      if (!options.keepBubble) await leaveBubble(name); // The bubble's files go with its last conversation; other members keep it.
       const scope = projectStateScope(name), settings = stateEntries(paths.memory, scope).map(([key]) => key);
       directories.detach(name);
       await rm(paths.runtimeProject(name), { recursive: true, force: true });

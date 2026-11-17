@@ -7,6 +7,7 @@ import { formatDateTime, type AgentInfo, type ProjectEntry, type Question } from
 import { canArchiveTask } from "../protocol/task";
 import { abandonTask, allTasks, removeTask, restoreTask } from "../core/data/tasks";
 import { directories, togglePin, workViews } from "../core/data/projects";
+import { bubbleMembers, ensureBubble, joinBubble, peekBubble, readBubble } from "../core/data/bubbles";
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
 import { archiveAgents, cancelSession, launchIdentity, listAgents, restoreAgents } from "../core/tmux";
 import { ARCHIVED_SECTION, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
@@ -19,7 +20,7 @@ import { typedText, type AppDeps, type Clock, type Page } from "./app-state";
 
 export const WORK_KINDS = ["agents", "tasks", "questions", "images", "projects"] as const;
 export type WorkKind = typeof WORK_KINDS[number];
-const TITLES: Record<WorkKind, string> = { agents: "Agents", tasks: "Tasks", questions: "Questions", images: "Images", projects: "Projects" };
+const TITLES: Record<WorkKind, string> = { agents: "Agents", tasks: "Tasks", questions: "Questions", images: "Images", projects: "Bubbles" };
 const HINTS: Record<WorkKind, string> = {
   agents: "j/k move · enter view transcript · s stop · d archive · u restore · a archived · f find · esc close",
   tasks: "j/k move · ←/→ fold · d archive · c abandon · u restore · a archived · r refresh · f find · esc close",
@@ -61,6 +62,8 @@ interface View {
   /** Why the task registry cannot be drawn as an outline (it is valid again once this is unset). */
   invalid?: string;
   hiddenQuestions: Record<string, boolean>; projects: ProjectEntry[]; parent?: string;
+  /** Per listed conversation: the bubble it shares with others (what its orchestrators know in common). */
+  bubbles: Record<string, { id: string; name: string; size: number }>;
   loaded: Set<WorkKind>; reads: Map<WorkKind, Promise<void>>; again: Set<WorkKind>; errors: Partial<Record<WorkKind, string>>;
   notice?: string; confirm?: { text: string; run: () => Promise<void> }; busy?: boolean;
   /** The find being typed (`from`: the selection Esc restores), and the last kept text for n/N. */
@@ -102,7 +105,7 @@ export class WorkPages {
     if (this.view) return this.tab(this.view, kind);
     this.host.opening();
     const view: View = this.view = { kind, page, selected: {}, history: {}, detailTop: 0, agents: [], tasks: [], collapsed: new Set(), nodes: [],
-      hiddenQuestions: {}, projects: [], loaded: new Set(), reads: new Map(), again: new Set(), errors: {}, query: "", option: 0, g: -Infinity };
+      hiddenQuestions: {}, projects: [], bubbles: {}, loaded: new Set(), reads: new Map(), again: new Set(), errors: {}, query: "", option: 0, g: -Infinity };
     for (const each of WORK_KINDS) void this.read(view, each);
     this.host.draw();
   }
@@ -154,8 +157,8 @@ export class WorkPages {
     const page = view.page, { deps } = this.host;
     try {
       if (kind === "projects") {
-        const rows = await directories.projectRows(view.parent);
-        if (this.view === view) view.projects = rows;
+        const rows = await directories.projectRows(view.parent), bubbles = await conversationBubbles(rows);
+        if (this.view === view) Object.assign(view, { projects: rows, bubbles });
       } else if (!page) return;
       else if (kind === "agents") { const rows = await (deps.agents ?? listAgents)(page.project); if (view.page === page) view.agents = rows; }
       else if (kind === "tasks") { const rows = await (deps.treeTasks ?? allTasks)(page.project); if (view.page === page) view.tasks = rows; }
@@ -229,9 +232,11 @@ export class WorkPages {
     return view.projects.map((entry): Item => {
       const members = new Set([entry.name, ...(entry.conversations ?? [])]), open = pages.filter(page => members.has(page.project));
       const status = open.some(page => page.busy) ? "turn" : current && members.has(current) ? "current" : open.length ? "open" : "";
-      return { id: entry.name, lead: entry.pinned ? "★ " : "", name: entry.label, status, color: status === "turn" ? 33 : status === "current" ? 32 : 90,
-        info: entry.directory ?? entry.name,
+      const bubble = view.bubbles[entry.name], shared = bubble && bubble.size > 1;
+      return { id: entry.name, lead: entry.pinned ? "★ " : "", name: shared ? `${bubble.name} ▸ ${entry.label}` : entry.label, status, color: status === "turn" ? 33 : status === "current" ? 32 : 90,
+        info: shared ? `bubble · ${bubble.size} orcs` : entry.directory ?? entry.name,
         sections: [{ title: entry.directory ? "Project" : "Conversation", fields: [["id", entry.name], ...(entry.directory ? [["folder", entry.directory] as [string, string]] : []),
+          ...(bubble ? [["bubble", `${bubble.name} · shared by ${bubble.size} orchestrator${bubble.size === 1 ? "" : "s"}`] as [string, string]] : []),
           ...(entry.conversations ? [["chats", `${entry.conversations.length} conversations, ${open.length} open here`] as [string, string]] : []), ["pinned", entry.pinned ? "yes" : "no"]] }],
         project: entry };
     });
@@ -282,7 +287,7 @@ export class WorkPages {
       return this.host.questions.answering() ? inputLine("answer › ", input.text, input.cursor, "enter send · esc cancel", cols)
         : { line: `answer › ${dim(`j/k choose · 1–${count + 1} pick · enter send · esc cancel`)}`, col: 0 };
     }
-    const hint = view.kind === "projects" && view.parent ? "j/k move · enter open · n new conversation · c close page · d delete · esc projects" : HINTS[view.kind];
+    const hint = view.kind === "projects" && view.parent ? "j/k move · enter open · n new bubble · b new orc in this bubble · c close page · d delete · esc back" : HINTS[view.kind];
     const notice = this.host.noteRow(view.page) ?? view.notice ?? (view.kind === "questions" && questions?.error ? `questions unavailable: ${questions.error}` : view.errors[view.kind] ?? (view.kind === "tasks" ? view.invalid : undefined));
     return { line: this.host.modeTag() + (notice ? sanitize(notice) : dim(hint)), col: 0 };
   }
@@ -525,6 +530,15 @@ export class WorkPages {
       const parent = (await directories.directoryProjects()).find(p => p.id === view.parent);
       this.close();
       if (parent) await this.host.newPage(parent.directory);
+    } else if (key === "b" && view.parent && !entry.directory) {
+      // Another orchestrator for the same bubble: a new conversation in this folder that shares this one's memory, notebook and behavior.
+      const parent = (await directories.directoryProjects()).find(p => p.id === view.parent);
+      if (!parent) return;
+      const bubble = await ensureBubble(entry.name, entry.label), before = new Set(this.host.pages().map(page => page.project));
+      this.close();
+      await this.host.newPage(parent.directory);
+      const created = this.host.pages().find(page => !before.has(page.project));
+      if (created) await joinBubble(created.project, bubble.id);
     } else if (key === "p") {
       const on = await togglePin(entry.name);
       await this.read(view, "projects");
@@ -569,4 +583,17 @@ export class WorkPages {
       }, () => { /* the deletion's own checks report what cannot be read */ });
     }
   }
+}
+
+/** The bubble of each listed conversation that has one, with how many conversations share it. */
+async function conversationBubbles(rows: ProjectEntry[]): Promise<Record<string, { id: string; name: string; size: number }>> {
+  const out: Record<string, { id: string; name: string; size: number }> = {};
+  for (const row of rows) {
+    if (row.directory) continue;
+    let id: string | null = null;
+    try { id = peekBubble(row.name); } catch { /* an unreadable conversation is listed without its bubble */ }
+    const bubble = id ? await readBubble(id) : null;
+    if (bubble) out[row.name] = { id: bubble.id, name: bubble.name, size: bubbleMembers(bubble.id).length };
+  }
+  return out;
 }

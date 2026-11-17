@@ -3,6 +3,7 @@ import { access, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { paths } from "../../../config";
 import { selectedKnowledge, workingContext } from "./knowledge";
+import { bubbleContext, type ContextRole } from "./bubble-context";
 
 async function repositoryRoot(base: string): Promise<string> {
   for (let dir = base; ; dir = dirname(dir)) {
@@ -70,11 +71,11 @@ export async function discoverSkills(cwd: string): Promise<SkillEntry[]> {
   return [...found.values()];
 }
 
-export async function agentContext(project: string, cwd: string, query: string): Promise<Record<string, string>> {
-  const [instructions, skills, context, remembered] = await Promise.all([
-    repositoryInstructions(cwd), discoverSkills(cwd), workingContext(project), selectedKnowledge(project, query),
+export async function agentContext(project: string, cwd: string, query: string, role: ContextRole = "orchestrator"): Promise<Record<string, string>> {
+  const [instructions, skills, context, remembered, bubble] = await Promise.all([
+    repositoryInstructions(cwd), discoverSkills(cwd), workingContext(project), selectedKnowledge(project, query), bubbleContext(project, query, role),
   ]);
-  return { instructions, skills: skills.length ? `Repository and personal skills (${skills.length}). Before inventing a workflow, use skill({search: "workflow keywords"}) for relevant skills or skill({name: "exact-name"}) to load one. Preview (${Math.min(skills.length, SKILL_RESULT_LIMIT)} of ${skills.length}): ${JSON.stringify(skills.slice(0, SKILL_RESULT_LIMIT).map(({ name, description }) => ({ name, description })))}` : "",
+  return { ...bubble, instructions, skills: skills.length ? `Repository and personal skills (${skills.length}). Before inventing a workflow, use skill({search: "workflow keywords"}) for relevant skills or skill({name: "exact-name"}) to load one. Preview (${Math.min(skills.length, SKILL_RESULT_LIMIT)} of ${skills.length}): ${JSON.stringify(skills.slice(0, SKILL_RESULT_LIMIT).map(({ name, description }) => ({ name, description })))}` : "",
     knowledge: `Relevant knowledge (source-attributed context; current user instructions override): ${remembered}`,
     brief: `Shared working brief (reported facts require evidence; latest human corrections take precedence): ${JSON.stringify(context)}` };
 }

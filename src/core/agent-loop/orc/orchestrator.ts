@@ -2,7 +2,7 @@ import { reconcileVerifications } from "../../data/processes";
 import { agentContext, clearWorkingContext } from "../../data/knowledge";
 import { processOwner, unresolvedProcess, listProcesses, liveProcess, controlProcess } from "../../data/processes";
 import { editableTool } from "../../definitions";
-import { budget, type CompactOptions } from "../../data/memory";
+import { budget, BubbleWriter, type CompactOptions } from "../../data/memory";
 import { contextWindow, type ContextWindow } from "../../../api/model";
 import { contextMessages } from "../../data/transcripts";
 import { pendingImageInputs } from "../../data/images";
@@ -172,6 +172,8 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
   const state = new TurnControl(deps.project, transcript);
   // The trigger/tail defaults live in rolling-memory.ts (25% of the window, ~50k verbatim); `deps.rolling` overrides them.
   const rolling = new RollingCompactor(deps.project, transcript, { ...deps.rolling, small: deps.rolling?.small ?? config.smallSummaries });
+  // The bubble's memory is kept current in the background after turns and at compaction boundaries; nothing waits on it.
+  const writer = new BubbleWriter(deps.project, transcript, deps.rolling?.small ?? config.smallSummaries, line => console.warn(line));
   // A Page/session cannot acquire ownership of a deleted/recreated project.
   const identity = existsSync(paths.project(deps.project)) ? projectIdentity(deps.project) : undefined;
   const checkIdentity = () => {
@@ -242,7 +244,7 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
       void listProcesses(deps.project).then(ps => Promise.all(ps.filter(p => processOwner(p) === "orchestrator" && liveProcess(p))
         .map(p => controlProcess(deps.project, p.id, "stop")))).catch(error => deps.write?.(`command cancellation failed: ${String(error)}\n`, true));
     },
-    dispose: () => rolling.dispose(),
+    dispose: () => { rolling.dispose(); writer.dispose(); },
     compact: async () => state.compact(),
     submission: () => inputEpoch(deps.project),
     say: async (text, submission = inputEpoch(deps.project), inputId, attachments) => {
@@ -258,14 +260,14 @@ function orchestratorSession(deps: OrchestratorDeps, transcript: Transcript, con
     entries: () => transcript.history?.() ?? transcript.branch(),
     consumed: () => transcript.consumed?.().inputs ?? new Set(),
     refresh,
-    turn: () => orchestratorTurn(deps, transcript, state, checkIdentity, rolling),
+    turn: () => orchestratorTurn(deps, transcript, state, checkIdentity, rolling, writer),
   };
 }
 /** Serialize turns within one conversation. */
 function ownTurn(project: string): Promise<(() => Promise<void>) | undefined> {
   return tryStorageLock(conversationTurnLock(project), project);
 }
-async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, state: TurnControl, checkIdentity: () => void, rolling: RollingCompactor): Promise<Message[]> {
+async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, state: TurnControl, checkIdentity: () => void, rolling: RollingCompactor, writer: BubbleWriter): Promise<Message[]> {
   if (state.running || state.clearing) return [];
   const epoch = inputEpoch(deps.project);
   state.running = true;
@@ -288,10 +290,16 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     try { await assertMainCheckout(deps.project); }
     catch (error) { state.pause(); throw error; } // Retain input without a failing poll/retry loop.
     const agent = await turnAgent(deps, transcript, state.takeRequest, signal, rolling, current => { state.context = current; }, epoch);
-    if (hasInbox) await agent.run();
+    if (hasInbox) {
+      await agent.run();
+      // What the turn added goes to the bubble's memory in the background. The pass reads original entries from its
+      // watermark, so a compaction during a later turn cannot outrun it: the entries stay in the transcript.
+      if (state.context) writer.schedule({ model: state.context.model, provider: state.context.provider ?? null, signal: deps.signal ?? null });
+    }
     else if (state.takeRequest()) await agent.compact();
     else await agent.maintain();
     if (deps.joinRolling && await rolling.finish(signal)) await agent.maintain();
+    if (deps.joinRolling) await writer.settled();
     // No indexing here: the searchable archive is written only where context is replaced (compaction, /clear).
     return await replies(deps.project, transcript);
   } catch (error) {
