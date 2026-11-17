@@ -16,7 +16,7 @@ const inside = (root: string, file: string) => { const r = relative(root, file);
 /** Claude Code's separate Read/Write/Edit capabilities inspired this interface;
  * freshness checks and atomic per-file publication are Orca's implementation.
  * https://code.claude.com/docs/en/how-claude-code-works */
-async function filePath(input: unknown, ctx: ToolContext, writing = false): Promise<string> {
+export async function filePath(input: unknown, ctx: ToolContext, writing = false): Promise<string> {
   if (typeof input !== "string" || !input.trim() || input.includes("\0")) throw new Error("path must be a non-empty file path");
   const path = resolve(ctx.cwd, input);
   const stat = await lstat(path).catch(error => { if (error.code !== "ENOENT") throw error; });

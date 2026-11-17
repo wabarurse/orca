@@ -37,4 +37,3 @@ export const history: Tool = {
   },
 };
 
-export const memory: Tool = { ...history, spec: { ...history.spec, name: "memory" } };
