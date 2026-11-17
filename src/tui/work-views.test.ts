@@ -28,7 +28,7 @@ test("one page, five tabs: digits, Tab, Shift+Tab and h/l switch; chords open th
     app.input = { text: "keep this draft", cursor: 4 };
     term.press({ name: "a", ctrl: true });
     await until(() => term.screen().includes("worker-alpha"));
-    await until(() => /^Agents 6 {3}Tasks 0 {3}Questions 0 {3}Images 0 {3}Projects \d+ +1 of 6$/.test(term.display.screen()[0]!));
+    await until(() => /^Agents 6 {3}Tasks 0 {3}Questions 0 {3}Images 0 {3}Bubbles \d+ +1 of 6$/.test(term.display.screen()[0]!));
     expect(term.display.screen()[2]).toMatch(/^ {2}NAME +STATUS +INFO$/);
     expect(term.display.screen().at(-1)).toContain("j/k move");
     for (const [typed, kind] of [["2", "tasks"], ["3", "questions"], ["4", "images"], ["5", "projects"], ["1", "agents"]] as const) { await key(app, typed); expect(app.work.kind).toBe(kind); }

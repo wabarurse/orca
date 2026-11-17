@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../../config";
 import { behavior, BEHAVIOR, bubbleDir, bubbleMembers, ensureBubble, joinBubble, leaveBubble, listBubbles, listPages, memoryNodes, NOTEBOOK, peekBubble, purgeNotebook,
-  putPage, queryPage, readNode, readPage, renderIndex, searchNodes, setBehavior, tokens, writeNode, type NodeWrite } from ".";
+  putPage, queryPage, readNode, readPage, renderIndex, searchNodes, setBehavior, writeNode, type NodeWrite } from ".";
+import { tokens } from "./search";
 
 // Isolated ORCA_HOME per test: never the real home.
 let home: string, previous: string | undefined;

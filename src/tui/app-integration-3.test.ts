@@ -267,14 +267,14 @@ test('a click on a link opens it, a drag over it selects; the work page is selec
     await app.onKey({ name: 'b', ctrl: true });
     // The tab line moves while the page's lists load; locate the word once two looks agree.
     let seen = '';
-    await until(() => { const now = term.display.screen().join('\n'), settled = now === seen && now.includes('Projects'); seen = now; return settled; });
+    await until(() => { const now = term.display.screen().join('\n'), settled = now === seen && now.includes('Bubbles'); seen = now; return settled; });
     await settle();
-    const tab = find('Projects');
-    drag(tab.y, tab.x, tab.x + 7); await settle();
-    expect(copied).toEqual(['LINKED', 'Projects']);
-    expect(term.raw()).toContain('\x1b[7mProjects\x1b[0m');
+    const tab = find('Bubbles');
+    drag(tab.y, tab.x, tab.x + 6); await settle();
+    expect(copied).toEqual(['LINKED', 'Bubbles']);
+    expect(term.raw()).toContain('\x1b[7mBubbles\x1b[0m');
     await app.onKey({ name: 'o', ctrl: true });
-    expect(copied).toEqual(['LINKED', 'Projects', 'Projects']);
+    expect(copied).toEqual(['LINKED', 'Bubbles', 'Bubbles']);
     // A key puts the highlight away and still does its own job.
     await app.onKey({ name: 'escape' });
     await until(() => term.display.screen().some(row => row.includes('go LINKED now')));
