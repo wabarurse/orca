@@ -2,3 +2,4 @@ export { archiveBestEffort, purgeProject, purgeAgent, queryGlobalHistory, queryH
 export { startMemoryBackfill } from "./backfill";
 export { budget, compact, COMPACTION_STATUS, outputCap, replyCap, requireFits, type CompactOptions, type ContextDeps } from "./compaction";
 export { RollingCompactor, ROLLING_STATUS, type RollingOptions } from "./rolling-memory";
+export { BubbleWriter, distill, sliceText, type PassResult, type WriterTarget } from "./bubble-writer";
