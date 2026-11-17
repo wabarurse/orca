@@ -50,10 +50,10 @@ function checks(raw: unknown): PRObservation["checks"] {
   return states.includes("pending") ? "pending" : "passed";
 }
 const label = (raw: unknown, max: number) => String(raw ?? "").replace(/[^\w .:/@()\[\]+-]/g, "").trim().slice(0, max);
-function failing(raw: unknown): string[] {
+function named(raw: unknown, state: "failed" | "pending", max: number): string[] {
   if (!Array.isArray(raw)) return [];
-  const names = raw.filter(c => checkState(c) === "failed").map(c => label((c as Record<string, unknown>).name ?? (c as Record<string, unknown>).context, 60) || "unnamed check");
-  return [...new Set(names)].sort().slice(0, 8);
+  const names = raw.filter(c => checkState(c) === state).map(c => label((c as Record<string, unknown>).name ?? (c as Record<string, unknown>).context, 60) || "unnamed check");
+  return [...new Set(names)].sort().slice(0, max);
 }
 export function parseTaskPR(repository: string, number: number, raw: unknown): PRObservation {
   if (!obj(raw) || raw.number !== number || !["OPEN", "CLOSED", "MERGED"].includes(String(raw.state)) || typeof raw.headRefName !== "string" || !raw.headRefName || raw.isCrossRepository !== false) throw new Error("invalid or foreign pr observation");
@@ -66,7 +66,7 @@ export function parseTaskPR(repository: string, number: number, raw: unknown): P
   return {
     pr, branch: raw.headRefName, state, ...(state === "MERGED" ? { mergedAt: raw.mergedAt as string } : {}), checks: result, mergeable,
     ...(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""].includes(String(raw.reviewDecision)) ? { reviewDecision: raw.reviewDecision as PRObservation["reviewDecision"] } : {}),
-    reviewActivity: reviewActivity(raw), failing: failing(raw.statusCheckRollup), ...(typeof raw.isDraft === "boolean" ? { draft: raw.isDraft } : {}),
+    reviewActivity: reviewActivity(raw), failing: named(raw.statusCheckRollup, "failed", 8), running: named(raw.statusCheckRollup, "pending", 100), ...(typeof raw.isDraft === "boolean" ? { draft: raw.isDraft } : {}),
     ready: state === "OPEN" && raw.isDraft === false && raw.mergeable === "MERGEABLE" && raw.mergeStateStatus === "CLEAN"
       && (raw.reviewDecision === "APPROVED" || raw.reviewDecision === "") && ["passed", "not_configured"].includes(result),
   };

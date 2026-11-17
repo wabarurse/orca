@@ -281,3 +281,38 @@ test("a snapshot saved before threads were read stays quiet until a thread exist
   await poll(); expect(messages()).toHaveLength(1);
   expect(messages()[0].text).toContain("[pr-blocked]");
 });
+
+test("a check that is re-run and fails again sends nothing; a new result or another failing check sends one notice", async () => {
+  await linked();
+  const failed: PRObservation = { ...observation("OPEN"), checks: "failed", failing: ["policy"], running: [], reviewDecision: "APPROVED", mergeable: "mergeable" };
+  const rerun: PRObservation = { ...failed, checks: "pending", failing: [], running: ["policy"] };
+  let current = failed;
+  const poll = () => mergeWatcher({ repo: async () => "o/r", pr: async () => current, everyMs: 0 })(project);
+  await poll(); expect(messages()).toEqual([]);
+  for (const next of [rerun, failed, rerun, failed, rerun]) { current = next; await poll(); }
+  expect(messages()).toEqual([]);
+  // Another check fails while the first runs again: the first is still named as not fixed.
+  current = { ...failed, failing: ["unit"], running: ["policy"] };
+  await poll(); expect(messages()).toHaveLength(1);
+  current = { ...failed, failing: ["policy", "unit"] };
+  await poll(); expect(messages()).toHaveLength(1);
+  current = { ...failed, checks: "pending", failing: [], running: ["policy", "unit"] };
+  await poll(); expect(messages()).toHaveLength(1);
+  current = { ...failed, checks: "passed", failing: [] };
+  await poll(); await poll(); expect(messages()).toHaveLength(2);
+  expect(messages().filter(m => m.text.includes("[pr-updated] PR #7"))).toHaveLength(1);
+  // Passed, running, failed is a new result.
+  current = rerun; await poll(); expect(messages()).toHaveLength(2);
+  current = failed; await poll(); expect(messages()).toHaveLength(3);
+});
+
+test("a snapshot saved before check names were kept sends nothing for the failure it already reported", async () => {
+  await linked();
+  await observe(project, "pr:o/r#7", { state: "OPEN", head, checks: "failed", review: "APPROVED", reviewActivity: "r", mergeable: "mergeable", threads: "" }, "previous snapshot", { initialSilent: true });
+  let current: PRObservation = { ...observation("OPEN"), checks: "failed", failing: ["policy"], running: [], reviewDecision: "APPROVED", reviewActivity: "r", mergeable: "mergeable", threads: [] };
+  const poll = () => mergeWatcher({ repo: async () => "o/r", pr: async () => current, everyMs: 0 })(project);
+  await poll(); current = { ...current, checks: "pending", failing: [], running: ["policy"] }; await poll();
+  expect(messages()).toEqual([]);
+  current = { ...current, checks: "passed", running: [] };
+  await poll(); expect(messages()).toHaveLength(1);
+});

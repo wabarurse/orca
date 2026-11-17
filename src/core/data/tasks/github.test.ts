@@ -59,6 +59,8 @@ test("skipped and neutral checks pass, and the failing ones are named", () => {
   expect(parseTaskPR("o/r", 7, raw({ statusCheckRollup: [run("build", "SUCCESS"), run("deploy", "SKIPPED"), run("bot", "NEUTRAL")] }))).toMatchObject({ ready: true, checks: "passed", failing: [] });
   const failed = parseTaskPR("o/r", 7, raw({ statusCheckRollup: [run("unit", "FAILURE"), run("deploy", "SKIPPED"), { __typename: "StatusContext", context: "ci/lint\u001b[31m", state: "FAILURE" }, run("unit", "TIMED_OUT")] }));
   expect(failed).toMatchObject({ ready: false, checks: "failed", failing: ["ci/lint[31m", "unit"] });
+  const rerun = parseTaskPR("o/r", 7, raw({ statusCheckRollup: [run("build", "SUCCESS"), { __typename: "CheckRun", name: "policy", status: "IN_PROGRESS", conclusion: null }, { __typename: "StatusContext", context: "ci/lint", state: "PENDING" }] }));
+  expect(rerun).toMatchObject({ checks: "pending", failing: [], running: ["ci/lint", "policy"] });
 });
 
 test("only unresolved review threads are returned, as places; odd fields are cleaned and a malformed answer is unknown", async () => {
