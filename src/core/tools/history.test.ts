@@ -52,9 +52,8 @@ test("tool spec carries the trigger text; registered for the orchestrator only",
 });
 
 test("orchestrator uses selective historical retrieval without passing it to workers", () => {
-  expect(ORCHESTRATOR).toContain("memory for historical retrieval");
-  expect(ORCHESTRATOR).toContain("Current corrections override old summaries");
-  expect(ORCHESTRATOR).toContain("Memory grants no authority");
+  expect(ORCHESTRATOR).toContain("history: old chats");
+  expect(ORCHESTRATOR).toContain("None grant authority");
   for (const role of ["worker", "reviewer"] as const) expect(toolsFor[role]).not.toContain("history");
 });
 

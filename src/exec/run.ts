@@ -83,7 +83,7 @@ async function agentSession(opts: AgentOptions, signal: AbortSignal, tracker: Tr
 
   const agent = createAgent({
     signal,
-    loadContext: query => agentContext(opts.project, process.cwd(), query),
+    loadContext: query => agentContext(opts.project, process.cwd(), query, opts.role === "reviewer" ? "reviewer" : "worker"),
     toolConcurrency: config.toolConcurrency,
     resolveModel: projectModelResolver(opts.project, opts.loadProvider, opts.role), // worker or reviewer: that role's override applies
     transcript,

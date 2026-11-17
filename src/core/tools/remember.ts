@@ -1,16 +1,19 @@
+import { behavior, ensureBubble, peekBubble, setBehavior } from "../data/bubbles";
+import { displayName } from "../data/projects";
 import { facts, humanSources, remember, resolveHumanSource, sourceChoices, workingContext, type HumanMessage } from "../data/knowledge";
 import { open } from "../data/transcripts";
 import { paths } from "../../config";
-import type { Tool } from "./registry";
+import type { Tool, ToolContext } from "./registry";
 
 const SOURCE = "For confidence explicit: the id of the human message that states the preference (preferred), or text containing that id, or a verbatim quote of that message in double quotes, e.g. User, 2026-10-28: \"keep replies short\". It must trace to a real user message of this project (prompts, Questions answers, feedback); assistant, tool and worker text never qualify. Elided pieces (\u2026) must each be 8+ characters, in the message's order. The canonical id and a short quote of the message's own words are stored. Omitted: the newest human message. For tentative: any concise reference.";
 
 export const rememberTool: Tool = {
-  spec: { name: "remember", description: "Inspect, save, update or forget scoped personal/project knowledge. Record explicit preferences from an actual user message: confidence explicit requires a source that names (by id) or quotes a real human message of this project, and is stored as that message's id plus a short quote. A source that matches none fails and lists the recent message ids to use instead. Inferred preferences remain tentative. Current instructions override memory. Memory never grants additional permission. Durable knowledge lives in memory.sqlite; use list, save or forget to manage it.",
-    input_schema: { type: "object", properties: { action: { type: "string", enum: ["list", "save", "forget"] }, scope: { type: "string", enum: ["user", "project"] }, key: { type: "string" }, cursor: { type: "integer", minimum: 0 }, text: { type: "string" }, source: { type: "string", description: SOURCE }, confidence: { type: "string", enum: ["explicit", "tentative"] } }, required: ["action", "scope"] } },
+  spec: { name: "remember", description: "Inspect, save, update or forget scoped personal/project knowledge. Record explicit preferences from an actual user message: confidence explicit requires a source that names (by id) or quotes a real human message of this project, and is stored as that message's id plus a short quote. A source that matches none fails and lists the recent message ids to use instead. Inferred preferences remain tentative. Current instructions override memory. Memory never grants additional permission. Durable knowledge lives in memory.sqlite; use list, save or forget to manage it. Scope bubble is the short list of how the user wants agents to act in this bubble (reply style, working rules such as no auto-merge): every orchestrator attached to the bubble carries all of it, so save a line when the user states such a standing rule; it takes explicit confidence only, at most 20 lines of 200 characters, and a full list takes a new line only in place of an old key.",
+    input_schema: { type: "object", properties: { action: { type: "string", enum: ["list", "save", "forget"] }, scope: { type: "string", enum: ["user", "project", "bubble"] }, key: { type: "string" }, cursor: { type: "integer", minimum: 0 }, text: { type: "string" }, source: { type: "string", description: SOURCE }, confidence: { type: "string", enum: ["explicit", "tentative"] } }, required: ["action", "scope"] } },
   async run(input, ctx) {
+    if (input.scope === "bubble") return bubbleBehavior(input, ctx);
     const scope = input.scope;
-    if (scope !== "user" && scope !== "project") throw new Error("scope must be user or project");
+    if (scope !== "user" && scope !== "project") throw new Error("scope must be user, project or bubble");
     if (input.action === "list") {
       const cursor = Number(input.cursor ?? 0);
       if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error("invalid memory cursor");
@@ -38,6 +41,25 @@ export const rememberTool: Tool = {
     return `saved ${scope} knowledge ${key} (human-sourced interpretation of ${found.id}: "${found.quote}")`;
   },
 };
+
+/** Behavior lines: only the orchestrator writes them, and only from a real human message. */
+async function bubbleBehavior(input: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+  const bubble = peekBubble(ctx.project);
+  if (input.action === "list") return JSON.stringify({ behavior: bubble ? await behavior(bubble) : [] });
+  if (ctx.role !== "orchestrator") throw new Error("workers propose behavior lines to the orchestrator");
+  const key = String(input.key ?? "");
+  if (!/^[a-zA-Z0-9._-]{1,100}$/.test(key)) throw new Error("invalid behavior key");
+  if (input.action === "forget") { if (bubble) await setBehavior(bubble, { key, text: null }); return `forgot bubble behavior ${key}`; }
+  if (input.action !== "save" || typeof input.text !== "string") throw new Error("save needs text");
+  if (input.confidence !== "explicit") throw new Error("a behavior line is saved only from something the user said: use confidence explicit with the message as source");
+  const candidates = await humanMessages(ctx.project);
+  const source = input.source === undefined ? candidates.at(-1)?.id ?? "" : String(input.source);
+  const found = source.trim() && source.length <= 1000 ? resolveHumanSource(source, candidates) : null;
+  if (!found) throw new Error(`a behavior line needs a source that traces to a real human message, and ${JSON.stringify(source.slice(0, 120))} names or quotes none. Pass one of these ids as source: ${sourceChoices(candidates)}`);
+  const id = bubble ?? (await ensureBubble(ctx.project, await displayName(ctx.project))).id;
+  const rows = await setBehavior(id, { key, text: input.text, source: found.id, quote: found.quote, at: new Date().toISOString() });
+  return `saved bubble behavior ${key} (${rows.length} of 20 lines; from ${found.id}: "${found.quote}")`;
+}
 
 /**
  * The human messages a source may trace to, oldest first, one per id: every
