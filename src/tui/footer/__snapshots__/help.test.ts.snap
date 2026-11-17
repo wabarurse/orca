@@ -66,7 +66,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   j/k ↑/↓ · gg/G             move · first / last row
   ctrl+d / ctrl+u            half a table page down / up; pgup/pgdn scroll the
                              details
-  1–5 · tab/shift+tab · h/l  jump to a tab · next / previous tab (on Tasks h/l
+  1–6 · tab/shift+tab · h/l  jump to a tab · next / previous tab (on Tasks h/l
                              ←/→ fold)
   f or / · n/N               find by name as you type (enter keeps, esc
                              restores) · next / previous match
@@ -197,7 +197,7 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   ctrl+d / ctrl+u
     half a table page down / up;
     pgup/pgdn scroll the details
-  1–5 · tab/shift+tab · h/l
+  1–6 · tab/shift+tab · h/l
     jump to a tab · next / previous
     tab (on Tasks h/l ←/→ fold)
   f or / · n/N

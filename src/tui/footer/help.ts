@@ -20,7 +20,7 @@ const NAVIGATION: HelpEntry[] = [
 const PAGE: HelpEntry[] = [
   { label: "j/k ↑/↓ · gg/G", description: "move · first / last row" },
   { label: "ctrl+d / ctrl+u", description: "half a table page down / up; pgup/pgdn scroll the details" },
-  { label: "1–5 · tab/shift+tab · h/l", description: "jump to a tab · next / previous tab (on Tasks h/l ←/→ fold)" },
+  { label: "1–6 · tab/shift+tab · h/l", description: "jump to a tab · next / previous tab (on Tasks h/l ←/→ fold)" },
   { label: "f or / · n/N", description: "find by name as you type (enter keeps, esc restores) · next / previous match" },
   { label: "a · d/D · u · r", description: "show archived · archive one / all (y confirms) · restore · refresh" },
   { label: "enter", description: "agent: view transcript · question: choose or type an answer · image: desktop viewer · project: open" },

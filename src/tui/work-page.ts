@@ -9,7 +9,7 @@ import { abandonTask, allTasks, removeTask, restoreTask } from "../core/data/tas
 import { directories, togglePin, workViews } from "../core/data/projects";
 import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/data/bubbles";
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
-import { archiveAgents, cancelSession, launchIdentity, listAgents, restoreAgents } from "../core/tmux";
+import { archiveAgents, cancelSession, launchIdentity, listAgents, processes, restoreAgents } from "../core/tmux";
 import { ARCHIVED_SECTION, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
   type Key, type OutlineNode, type WorkPageRender, type WorkRow, type WorkSection } from "./components";
 import { deleteFolder, deleteProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
@@ -18,14 +18,15 @@ import { fileStore, QUESTION_PROGRESS, type Questions } from "./footer";
 import type { StickyScreen } from "./screen";
 import { typedText, type AppDeps, type Clock, type Page } from "./app-state";
 
-export const WORK_KINDS = ["agents", "tasks", "questions", "images", "projects"] as const;
+export const WORK_KINDS = ["agents", "tasks", "questions", "images", "processes", "projects"] as const;
 export type WorkKind = typeof WORK_KINDS[number];
-const TITLES: Record<WorkKind, string> = { agents: "Agents", tasks: "Tasks", questions: "Questions", images: "Images", projects: "Bubbles" };
+const TITLES: Record<WorkKind, string> = { agents: "Agents", tasks: "Tasks", questions: "Questions", images: "Images", processes: "Processes", projects: "Bubbles" };
 const HINTS: Record<WorkKind, string> = {
   agents: "j/k move · enter view transcript · s stop · d archive · u restore · a archived · f find · esc close",
   tasks: "j/k move · ←/→ fold · d archive · c abandon · u restore · a archived · r refresh · f find · esc close",
   questions: "j/k move · enter answer · d delete · u restore · a archived · f find · esc close",
   images: "j/k move · enter view · t retry unsent · d archive · a archived · f find · esc close",
+  processes: "j/k move · s stop · r refresh · f find · esc close",
   projects: "j/k move · enter open · p pin · c close page · d delete · f find · esc close",
 };
 const SECTION_HELP = "Archived items are retained. Enter or → expands; ← collapses. u restores an item to the list without resuming work.";
@@ -53,7 +54,7 @@ export interface WorkHost {
 
 interface Item extends WorkRow {
   sections: WorkSection[]; archived?: boolean; section?: true; heading?: true;
-  agent?: AgentInfo; media?: DeliveredMedia; question?: Question; project?: ProjectEntry;
+  agent?: AgentInfo; media?: DeliveredMedia; question?: Question; project?: ProjectEntry; watch?: processes.WatchRow; command?: processes.CommandRow;
 }
 interface View {
   kind: WorkKind; page?: Page;
@@ -62,6 +63,8 @@ interface View {
   /** Why the task registry cannot be drawn as an outline (it is valid again once this is unset). */
   invalid?: string;
   hiddenQuestions: Record<string, boolean>; projects: ProjectEntry[]; parent?: string;
+  /** What runs in the background for this conversation: watched pull requests and commands. */
+  background: processes.ProcessView;
   /** Per listed conversation: the bubble it shares with others (what its orchestrators know in common). */
   bubbles: Record<string, { id: string; name: string; size: number }>;
   loaded: Set<WorkKind>; reads: Map<WorkKind, Promise<void>>; again: Set<WorkKind>; errors: Partial<Record<WorkKind, string>>;
@@ -74,6 +77,38 @@ interface View {
 }
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/** What the watcher last saw of a PR, as one word or two and its colour. */
+function watchStatus(state: Record<string, string> | null): { status: string; color: number } {
+  if (!state) return { status: "watching", color: 90 };
+  if (state.mergeable === "conflicting") return { status: "conflicts", color: 31 };
+  if (state.checks === "failed") return { status: "checks failed", color: 31 };
+  if (state.review === "CHANGES_REQUESTED") return { status: "changes asked", color: 33 };
+  return state.checks === "passed" ? { status: "checks passed", color: 32 } : { status: "open", color: 33 };
+}
+/** The Processes tab's rows: the watched pull requests, then the background commands, each group under a heading. */
+function processItems(view: processes.ProcessView, now: number): Item[] {
+  const heading = (id: string, name: string, text: string): Item => ({ id, name, heading: true, sections: [{ title: name, text }] });
+  const watches = view.watches.map((watch): Item => {
+    const state = watch.state ?? {};
+    return { id: `watch:${watch.repository}#${watch.number}`, name: `PR #${watch.number} ${watch.tasks.map(t => t.name).join(", ") || watch.repository}`, ...watchStatus(watch.state),
+      info: watch.tasks.map(t => t.branch).join(", "), watch,
+      sections: [{ title: `PR #${watch.number}`, fields: [["link", `${watch.repository} #${watch.number}`, watch.url], ["url", watch.url]] },
+        { title: "Watched for", text: watch.tasks.map(t => `#${t.number ?? "?"} ${t.name} (${t.branch})`).join("\n") || "no task: watched on request" },
+        { title: "Last seen", fields: watch.state ? (["checks", "failing", "review", "mergeable", "head"] as const).flatMap((key): [string, string][] => state[key] ? [[key, key === "head" ? state[key]!.slice(0, 12) : state[key]!]] : []) : [], ...(watch.state ? {} : { text: "not looked at yet" }) }] };
+  });
+  const commands = view.commands.map((command): Item => {
+    const p = command.record, started = Date.parse(p.createdAt), end = command.live ? now : Date.parse(p.updatedAt);
+    const fields: [string, string, string?][] = [["id", p.id], ["owner", p.custody?.owner ?? p.owner], ...(p.custody ? [["started by", p.owner] as [string, string]] : []),
+      ["folder", p.cwd], ["started", formatDateTime(p.createdAt)], ["state", p.state], ...(p.exitCode === undefined ? [] : [["exit code", String(p.exitCode)] as [string, string]]),
+      ...(p.reason ? [["reason", p.reason] as [string, string]] : []), ...(p.readyUrl ? [["url", p.readyAt ? p.readyUrl : `${p.readyUrl} (not ready yet)`, p.readyUrl] as [string, string, string]] : [])];
+    return { id: p.id, name: p.command.replace(/\s+/g, " ").trim(), status: p.state, color: command.live ? 36 : p.state === "exited" ? 90 : 31,
+      info: [p.custody?.owner ?? p.owner, Number.isFinite(end - started) ? formatElapsed(end - started) : "", p.readyAt ? p.readyUrl : ""].filter(Boolean).join(" · "), command,
+      sections: [{ title: "Command", text: p.command }, { title: "Run", fields }, { title: "Output (last lines)", text: command.tail || "no output yet" }] };
+  });
+  return [...(watches.length ? [heading(":watches", "PR watches", "Pull requests the orchestrator is told about when they change: checks, reviews, conflicts, a merge. s stops listening to the selected one."), ...watches] : []),
+    ...(commands.length ? [heading(":commands", "Commands", "Background commands agents started, such as a local stack or a long check, running first. s stops the selected one, like Ctrl+C."), ...commands] : [])];
+}
 
 export class WorkPages {
   private view: View | null = null;
@@ -105,7 +140,7 @@ export class WorkPages {
     if (this.view) return this.tab(this.view, kind);
     this.host.opening();
     const view: View = this.view = { kind, page, selected: {}, history: {}, detailTop: 0, agents: [], tasks: [], collapsed: new Set(), nodes: [],
-      hiddenQuestions: {}, projects: [], bubbles: {}, loaded: new Set(), reads: new Map(), again: new Set(), errors: {}, query: "", option: 0, g: -Infinity };
+      hiddenQuestions: {}, projects: [], background: { watches: [], commands: [] }, bubbles: {}, loaded: new Set(), reads: new Map(), again: new Set(), errors: {}, query: "", option: 0, g: -Infinity };
     for (const each of WORK_KINDS) void this.read(view, each);
     this.host.draw();
   }
@@ -123,15 +158,15 @@ export class WorkPages {
     const view = this.view;
     if (!view || view.page === this.host.page()) return;
     if (view.kind !== "projects") return this.close();
-    Object.assign(view, { page: this.host.page(), agents: [], tasks: [], hiddenQuestions: {}, selected: { projects: view.selected.projects }, loaded: new Set(["projects"]) });
+    Object.assign(view, { page: this.host.page(), agents: [], tasks: [], background: { watches: [], commands: [] }, hiddenQuestions: {}, selected: { projects: view.selected.projects }, loaded: new Set(["projects"]) });
     for (const each of WORK_KINDS) if (each !== "projects") void this.read(view, each);
     this.host.draw();
   }
 
-  /** The app's poll: the agent list is re-read while it shows. */
+  /** The app's poll: the agent list, or the background work, is re-read while it shows. */
   poll(): void {
     const view = this.view;
-    if (view?.kind === "agents" && !view.busy && !view.confirm) void this.read(view, "agents");
+    if ((view?.kind === "agents" || view?.kind === "processes") && !view.busy && !view.confirm) void this.read(view, view.kind);
   }
 
   /** Re-read one tab's rows when the page is open (for `page`, when given). */
@@ -162,6 +197,7 @@ export class WorkPages {
       } else if (!page) return;
       else if (kind === "agents") { const rows = await (deps.agents ?? listAgents)(page.project); if (view.page === page) view.agents = rows; }
       else if (kind === "tasks") { const rows = await (deps.treeTasks ?? allTasks)(page.project); if (view.page === page) view.tasks = rows; }
+      else if (kind === "processes") { const rows = await processes.processView(page.project); if (view.page === page) view.background = rows; }
       else if (kind === "questions") { await this.host.questions.refresh(page); view.hiddenQuestions = workViews.workArchive(page.project, "questions"); }
       else await this.host.readImages(page);
       delete view.errors[kind];
@@ -173,6 +209,7 @@ export class WorkPages {
     const page = view.page, history = !!view.history[kind];
     if (kind === "projects") return this.projectItems(view);
     if (!page) return [];
+    if (kind === "processes") return processItems(view.background, this.host.clock.now());
     const section = <T extends Item>(items: T[]) => withArchiveSection(items, history).map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: "Archived", text: SECTION_HELP }] });
     if (kind === "tasks") return this.taskItems(view, history);
     if (kind === "images") {
@@ -319,8 +356,8 @@ export class WorkPages {
     else if (g || key === "home") this.move(view, items, 0);
     else if (key === "G" || key === "end") this.move(view, items, items.length - 1);
     else if (key === "pageup" || key === "pagedown") view.detailTop += (key === "pageup" ? -1 : 1) * Math.max(1, (view.render?.detail.rows ?? 2) - 1);
-    else if (/^[1-5]$/.test(key)) this.tab(view, WORK_KINDS[Number(key) - 1]!);
-    else if (key === "tab") this.tab(view, WORK_KINDS[(WORK_KINDS.indexOf(view.kind) + (k.shift ? 4 : 1)) % 5]!);
+    else if (/^[1-6]$/.test(key)) this.tab(view, WORK_KINDS[Number(key) - 1]!);
+    else if (key === "tab") this.tab(view, WORK_KINDS[(WORK_KINDS.indexOf(view.kind) + (k.shift ? WORK_KINDS.length - 1 : 1)) % WORK_KINDS.length]!);
     else if (["h", "l", "left", "right"].includes(key)) this.sideways(view, items[index], key === "l" || key === "right");
     else if (key === "f" || key === "/") view.find = { text: "", from: items[index]?.id };
     else if ((key === "n" || key === "N") && !(key === "n" && view.kind === "projects" && view.parent)) {
@@ -328,7 +365,7 @@ export class WorkPages {
       if (hit === -1) view.notice = view.query ? `no item matches "${view.query}"` : "f starts a find; then n/N go to the next and previous match";
       else this.move(view, items, hit);
     }
-    else if (key === "a" && view.kind !== "projects") { view.history[view.kind] = !view.history[view.kind]; view.selected[view.kind] = ARCHIVED_SECTION; view.detailTop = 0; }
+    else if (key === "a" && view.kind !== "projects" && view.kind !== "processes") { view.history[view.kind] = !view.history[view.kind]; view.selected[view.kind] = ARCHIVED_SECTION; view.detailTop = 0; }
     else if (key === "r") { view.notice = "Refreshing…"; this.host.draw(); await Promise.all(WORK_KINDS.map(kind => this.read(view, kind))); if (view.notice === "Refreshing…") view.notice = view.errors[view.kind] ? undefined : `Refreshed ${formatDateTime(this.host.clock.now())}`; }
     else if (key === "enter" && items[index]?.section) view.history[view.kind] = !view.history[view.kind];
     else if (key === "t" && view.kind === "images" && view.page) await this.retry(view, view.page);
@@ -360,7 +397,7 @@ export class WorkPages {
   private sideways(view: View, selected: Item | undefined, forward: boolean): void {
     if (selected?.section) view.history[view.kind] = forward;
     else if (view.kind === "tasks") { view.selected.tasks = navigateOutline(view.nodes, selected?.id, view.collapsed, forward ? "right" : "left"); view.detailTop = 0; }
-    else this.tab(view, WORK_KINDS[(WORK_KINDS.indexOf(view.kind) + (forward ? 1 : 4)) % 5]!);
+    else this.tab(view, WORK_KINDS[(WORK_KINDS.indexOf(view.kind) + (forward ? 1 : WORK_KINDS.length - 1)) % WORK_KINDS.length]!);
   }
 
   private async confirmKey(view: View, key: string, plain: boolean): Promise<void> {
@@ -433,6 +470,18 @@ export class WorkPages {
       view.busy = true;
       try { await run(); } catch (error) { view.notice = message(error); } finally { view.busy = false; }
     };
+    if (kind === "processes") {
+      // s is Ctrl+C for that one command, or stops listening to that pull request; the orchestrator is told either way.
+      const { watch, command } = selected, live = command?.live;
+      if (key !== "s" || !watch && !command) return;
+      if (command && !live) { view.notice = "That command has already ended."; return; }
+      view.confirm = { text: watch ? `Stop watching PR #${watch.number}?` : "Stop this command?", run: async () => {
+        if (watch) await processes.stopWatch(page.project, watch); else await processes.stopCommand(page.project, command!.record.id);
+        await this.read(view, "processes");
+        view.notice = watch ? "Watch stopped. The orchestrator was told." : "Stop requested. The orchestrator was told.";
+      } };
+      return;
+    }
     if (key === "u" && selected.archived && !selected.section) return work(async () => {
       if (agent) await (deps.restoreAgents ?? restoreAgents)(page.project, [agent.name]);
       else if (task) { await restoreTask(page.project, task.id); await this.host.taskCountChanged(page); }

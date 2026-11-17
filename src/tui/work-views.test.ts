@@ -5,6 +5,8 @@ import { appFixture } from "../test/app-fixture";
 import { App, type AppDeps } from "./app";
 import { all, ask } from "../core/data/inbox/questions";
 import type { AgentInfo } from "../protocol";
+import { processDirectory, saveProcess } from "../core/data/processes";
+import { existsSync } from "node:fs";
 
 const { home, fakeTerm, fakeOrchestrators, until, projectList } = appFixture();
 
@@ -22,20 +24,20 @@ const selected = (app: App) => { const state = app.work.state!; return state.ite
 const agents = (...list: string[]): AgentInfo[] => list.map(name => ({ name, live: true, status: "running", queuedMessages: 0 }));
 const SIX = agents("worker-alpha", "worker-beta", "reviewer-beta", "worker-gamma", "worker-delta", "reviewer-omega");
 
-test("one page, five tabs: digits, Tab, Shift+Tab and h/l switch; chords open their tab, switch to it and close it", async () => {
+test("one page, six tabs: digits, Tab, Shift+Tab and h/l switch; chords open their tab, switch to it and close it", async () => {
   const { app, term, stop } = await setup("tabs", { agents: async () => SIX });
   try {
     app.input = { text: "keep this draft", cursor: 4 };
     term.press({ name: "a", ctrl: true });
     await until(() => term.screen().includes("worker-alpha"));
-    await until(() => /^Agents 6 {3}Tasks 0 {3}Questions 0 {3}Images 0 {3}Bubbles \d+ +1 of 6$/.test(term.display.screen()[0]!));
+    await until(() => /^Agents 6 {3}Tasks 0 {3}Questions 0 {3}Images 0 {3}Processes 0 {3}Bubbles \d+ +1 of 6$/.test(term.display.screen()[0]!));
     expect(term.display.screen()[2]).toMatch(/^ {2}NAME +STATUS +INFO$/);
     expect(term.display.screen().at(-1)).toContain("j/k move");
-    for (const [typed, kind] of [["2", "tasks"], ["3", "questions"], ["4", "images"], ["5", "projects"], ["1", "agents"]] as const) { await key(app, typed); expect(app.work.kind).toBe(kind); }
+    for (const [typed, kind] of [["2", "tasks"], ["3", "questions"], ["4", "images"], ["5", "processes"], ["6", "projects"], ["1", "agents"]] as const) { await key(app, typed); expect(app.work.kind).toBe(kind); }
     await app.onKey({ name: "tab" }); expect(app.work.kind).toBe("tasks");
     await app.onKey({ name: "tab", shift: true }); await app.onKey({ name: "tab", shift: true }); expect(app.work.kind).toBe("projects");
     await key(app, "l"); expect(app.work.kind).toBe("agents");
-    await key(app, "h"); await key(app, "h"); expect(app.work.kind).toBe("images");
+    await key(app, "h"); await key(app, "h"); expect(app.work.kind).toBe("processes"); await key(app, "h"); expect(app.work.kind).toBe("images");
     await app.onKey({ name: "left" }); expect(app.work.kind).toBe("questions");
     term.press({ name: "t", ctrl: true }); expect(app.work.kind).toBe("tasks");
     term.press({ name: "q", ctrl: true }); expect(app.work.kind).toBe("questions");
@@ -231,7 +233,7 @@ test("Projects works with no conversation open; the other tabs say to open one; 
     await key(app, "1");
     await until(() => term.display.screen()[3]!.includes("open a conversation first"));
     for (const typed of ["j", "d", "s", "a", "r", "f", "x"]) await key(app, typed); await app.onKey({ name: "escape" }); // nothing to act on, nothing throws
-    await key(app, "5"); await app.onKey({ name: "enter" });
+    await key(app, "6"); await app.onKey({ name: "enter" });
     await until(() => app.page?.project === "projects-first");
     expect(app.work.open).toBe(false);
   } finally { await stop(); }
@@ -319,5 +321,28 @@ test("Vim keeps drafts, switches project tabs from chat, pages and menus, and ta
     expect(Object.values(fake.said).flat()).toEqual([]);
     term.type(":vim\r"); await until(() => !term.screen().includes("[NORMAL]"));
     expect(app.input.text).toBe("draft text");
+  } finally { await stop(); }
+});
+
+test("Processes lists background commands under a heading; s asks, then stops the selected one and says the orchestrator was told", async () => {
+  const project = "processes-tab";
+  const { app, term, stop } = await setup(project);
+  try {
+    const at = new Date(Date.now() - 90_000).toISOString(), id = "00000000-0000-4000-8000-000000000001";
+    await saveProcess({ id, project, owner: "worker-feat", role: "worker", cwd: "/repo", command: "bun run stack", createdAt: at, updatedAt: at,
+      state: "running", timeoutMs: 0, maxBytes: 0, notify: false, events: [] });
+    term.press({ name: "a", ctrl: true }); await key(app, "5");
+    await until(() => names(app).length === 2);
+    expect(names(app)).toEqual(["Commands", "bun run stack"]);
+    expect(selected(app)).toBe("bun run stack"); // never starts on the heading
+    await until(() => /Processes 1/.test(term.display.screen()[0]!) && term.screen().includes("no output yet"));
+    expect(term.display.screen().find(row => row.includes("bun run stack") && row.includes("running"))).toContain("worker-feat · 1m 3");
+    expect(term.display.screen().at(-1)).toContain("s stop");
+    await key(app, "s"); expect(app.work.state!.confirm).toBe("Stop this command?");
+    await key(app, "n"); expect(existsSync(join(processDirectory(project, id), "stop"))).toBe(false);
+    await key(app, "s"); await key(app, "y");
+    await until(() => app.work.state?.notice === "Stop requested. The orchestrator was told.");
+    expect(existsSync(join(processDirectory(project, id), "stop"))).toBe(true);
+    await key(app, "k"); await key(app, "s"); expect(app.work.state!.confirm).toBeUndefined(); // a heading has nothing to stop
   } finally { await stop(); }
 });
