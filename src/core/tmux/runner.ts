@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, lstatSync } from "node:fs";
 import { basename, resolve, dirname } from "node:path";
 import { $ } from "bun";
 import { paths, repositoryBinding } from "../../config";
-import { assertMainCheckout, assertWorktree, workspaces } from "../data/projects";
+import { assertWorktree, workspaces } from "../data/projects";
 import { execution } from "../data/projects/lifecycle";
 import { launchEnvironment } from "./launch-environment";
 import { listProcesses, unresolvedProcess } from "../data/processes";
@@ -413,7 +413,6 @@ export const local: Runner = {
     need("tmux");
     if (opts.role !== "orchestrator" && !opts.branch) throw new Error("workers and reviewers require a task branch");
     if (opts.role === "orchestrator" && opts.branch) throw new Error("the orchestrator runs in the original checkout, without a task branch");
-    if (opts.role === "orchestrator") await assertMainCheckout(opts.project);
     let cwd: string;
     if (opts.branch) {
       cwd = await ensureTaskWorktree(opts);

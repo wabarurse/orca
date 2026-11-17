@@ -13,6 +13,7 @@ import { shellCommand } from "../../execution";
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 // A model nudge, not a security boundary. Shell commands retain the user's privileges.
 const SUDO = /\bsudo\b/;
+const WORKTREE_ADD = /(?:^|[\s;&|(`])git\b[^\n;&|]*\bworktree\s+add\b/;
 
 /** Legacy helper retained for callers; the streaming tool below also budgets its footer. */
 export function truncateMiddle(text: string, max: number): string {
@@ -46,6 +47,8 @@ export const bash: Tool = {
     execution.assertActive(ctx.project, epoch);
     const command = String(input.command ?? "");
     if (SUDO.test(command)) return "refused: sudo is not allowed";
+    // Worktrees have one home: orca makes them under ~/.orca when it starts a worker, never beside the user's repositories.
+    if (WORKTREE_ADD.test(command)) return "refused: git worktree add is not allowed; orca creates worktrees under its home when a worker is started with spawn";
     const supervised = input.background === true || input.yield_ms !== undefined;
     const given = input.timeout_ms;
     if (given !== undefined && (typeof given !== "number" || !Number.isFinite(given) || given < 0)) throw new Error("timeout_ms must be a number from 1 to 600000; zero requires a supervised background command");

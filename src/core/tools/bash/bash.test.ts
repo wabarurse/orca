@@ -88,6 +88,15 @@ test("long command output is truncated", async () => {
   expect(out).toContain("[truncated");
 });
 
+test("git worktree add is refused however it is written; other worktree commands and text that only mentions it run", async () => {
+  const refused = "refused: git worktree add is not allowed; orca creates worktrees under its home when a worker is started with spawn";
+  for (const command of ["git worktree add ../copy main", "cd /tmp && git -C repo worktree add -q $WT origin/x --detach", "WT=/tmp/x; [ -d $WT ] || git worktree add -q $WT"]) {
+    expect(await bash.run({ command }, ctx(home))).toBe(refused);
+  }
+  expect(await bash.run({ command: "echo use spawn, not worktree add" }, ctx(home))).toContain("use spawn");
+  expect(await bash.run({ command: "git worktree list; echo listed" }, ctx(home))).toContain("listed");
+});
+
 test("sudo is refused", async () => {
   expect(await bash.run({ command: "sudo ls" }, ctx(home))).toBe("refused: sudo is not allowed");
   expect(await bash.run({ command: "echo pseudo" }, ctx(home))).toBe("pseudo\n");

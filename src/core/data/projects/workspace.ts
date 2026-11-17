@@ -32,16 +32,17 @@ async function defaultBranch(directory: string): Promise<string> {
   throw new Error("cannot determine the default branch; set origin/HEAD or create main before starting orca");
 }
 
-async function requireBranch(directory: string, branch: string): Promise<void> {
-  const head = await command(["git", "symbolic-ref", "--short", "-q", "HEAD"], directory);
-  if (head.code !== 0 || head.out.trim() !== branch) {
-    throw new Error(`main agent requires ${directory} on ${branch}; switch it yourself when safe (checkout was left unchanged)`);
-  }
-}
-
-export async function assertMainCheckout(project: string): Promise<void> {
+/** What the orchestrator is told about the user's checkout, every turn. It may be on any branch: workers start
+ * from the default branch by name whatever is checked out, so the checkout only has to be described, never moved.
+ * Empty for an ordinary directory and for legacy clone-based projects. */
+export async function checkoutNote(project: string): Promise<string> {
   const binding = repositoryBinding(project);
-  if (binding?.branch) await requireBranch(binding.directory, binding.branch);
+  if (!binding?.branch) return "";
+  const head = await command(["git", "symbolic-ref", "--short", "-q", "HEAD"], binding.directory);
+  const current = head.code === 0 ? head.out.trim() : "";
+  const where = current === binding.branch ? `on its default branch ${binding.branch}`
+    : `${current ? `on branch ${current}` : "not on a branch (detached HEAD)"}, not the default branch ${binding.branch}: what is only there is not in a new worker branch`;
+  return `Original checkout ${binding.directory} is ${where}. It is the user's working copy: read it freely, but do not switch its branch, stash or commit in it unless the user asks. Workers start from ${binding.branch} in worktrees orca creates under ${paths.root} through spawn; never create a worktree yourself (git worktree add is refused).`;
 }
 
 function inside(parent: string, child: string): boolean {
@@ -60,7 +61,6 @@ export async function initializeWorkspace(project: string, source?: string): Pro
   }
   const directory = await originalCheckout(source ?? process.cwd());
   const branch = await checkoutHere(directory) ? await defaultBranch(directory) : "";
-  if (branch) await requireBranch(directory, branch);
   const binding: RepositoryBinding = { version: 1, directory, branch, worktreeId: crypto.randomUUID() };
   await mkdir(paths.project(project), { recursive: true });
   await mkdir(paths.cache(project), { recursive: true });
@@ -106,6 +106,5 @@ export async function assertWorktree(project: string, directory: string, branch?
 export async function validateProjectDirectory(source: string): Promise<{ directory: string; branch: string }> {
   const directory = await originalCheckout(source);
   const branch = await checkoutHere(directory) ? await defaultBranch(directory) : "";
-  if (branch) await requireBranch(directory, branch);
   return { directory, branch };
 }

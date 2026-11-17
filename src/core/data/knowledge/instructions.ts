@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { paths } from "../../../config";
+import { checkoutNote } from "../projects";
 import { selectedKnowledge, workingContext } from "./knowledge";
 import { bubbleContext, type ContextRole } from "./bubble-context";
 
@@ -72,10 +73,11 @@ export async function discoverSkills(cwd: string): Promise<SkillEntry[]> {
 }
 
 export async function agentContext(project: string, cwd: string, query: string, role: ContextRole = "orchestrator"): Promise<Record<string, string>> {
-  const [instructions, skills, context, remembered, bubble] = await Promise.all([
+  const [instructions, skills, context, remembered, bubble, checkout] = await Promise.all([
     repositoryInstructions(cwd), discoverSkills(cwd), workingContext(project), selectedKnowledge(project, query), bubbleContext(project, query, role),
+    role === "orchestrator" ? checkoutNote(project).catch(() => "") : "",
   ]);
-  return { ...bubble, instructions, skills: skills.length ? `Repository and personal skills (${skills.length}). Before inventing a workflow, use skill({search: "workflow keywords"}) for relevant skills or skill({name: "exact-name"}) to load one. Preview (${Math.min(skills.length, SKILL_RESULT_LIMIT)} of ${skills.length}): ${JSON.stringify(skills.slice(0, SKILL_RESULT_LIMIT).map(({ name, description }) => ({ name, description })))}` : "",
+  return { ...bubble, ...(checkout ? { checkout } : {}), instructions, skills: skills.length ? `Repository and personal skills (${skills.length}). Before inventing a workflow, use skill({search: "workflow keywords"}) for relevant skills or skill({name: "exact-name"}) to load one. Preview (${Math.min(skills.length, SKILL_RESULT_LIMIT)} of ${skills.length}): ${JSON.stringify(skills.slice(0, SKILL_RESULT_LIMIT).map(({ name, description }) => ({ name, description })))}` : "",
     knowledge: `Relevant knowledge (source-attributed context; current user instructions override): ${remembered}`,
     brief: `Shared working brief (reported facts require evidence; latest human corrections take precedence): ${JSON.stringify(context)}` };
 }
