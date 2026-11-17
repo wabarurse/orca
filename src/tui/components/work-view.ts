@@ -88,9 +88,12 @@ function tabLine(page: WorkPage): string {
   const tab = (t: WorkPage["tabs"][number], i: number, counts: boolean) =>
     (i === page.active ? `\x1b[1;4m${t.name}\x1b[0m` : dim(t.name)) + (counts && t.count !== undefined ? dim(` ${t.count}`) : "");
   const active = page.tabs[page.active];
-  const forms = [page.tabs.map((t, i) => tab(t, i, true)).join("   "), page.tabs.map((t, i) => tab(t, i, false)).join("  "),
+  const forms = [page.tabs.map((t, i) => tab(t, i, true)).join("   "), page.tabs.map((t, i) => tab(t, i, true)).join("  "), page.tabs.map((t, i) => tab(t, i, false)).join("  "),
     active ? `${dim(`${page.active + 1}/${page.tabs.length}`)} ${tab(active, page.active, true)}` : ""];
-  const line = forms.find(form => visibleLength(form) + (at ? at.length + 2 : 0) <= page.cols) ?? forms.find(form => visibleLength(form) <= page.cols) ?? fit(forms[2]!, page.cols);
+  // The counts outlast the `N of M` position: it is dropped before they are.
+  const fits = (form: string, position: boolean) => visibleLength(form) + (position && at ? at.length + 2 : 0) <= page.cols;
+  const line = forms.slice(0, 2).find(form => fits(form, true)) ?? forms.slice(0, 2).find(form => fits(form, false))
+    ?? forms.slice(2).find(form => fits(form, true)) ?? forms.slice(2).find(form => fits(form, false)) ?? fit(forms[3]!, page.cols);
   const gap = page.cols - visibleLength(line) - at.length;
   return gap >= 2 && at ? line + " ".repeat(gap) + dim(at) : line;
 }
