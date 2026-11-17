@@ -151,6 +151,11 @@ A conversation with no bubble, or an empty one of its own, is shown none of them
 
 ## Several orchestrators
 
+A new conversation (Ctrl+N) asks which bubble it joins, in a menu above the composer, as soon as
+at least one bubble exists: "New bubble" is selected, so Enter or Esc keeps the conversation on
+its own, and any other row attaches it to that bubble. With no bubble on the machine nothing is
+asked (`tui/commands/bubble.ts`).
+
 On the work page's Bubbles tab (Ctrl+B), inside a folder, `b` on a conversation starts a new
 conversation in the same folder attached to that conversation's bubble; `n` starts one with
 a bubble of its own. Members of a shared bubble are listed as `<bubble> ▸ <conversation>`.
