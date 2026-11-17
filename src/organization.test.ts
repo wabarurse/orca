@@ -28,7 +28,7 @@ const ORDER: Order = {
     core: {
       tiers: [["proc", "execution"], ["data"], ["definitions"], ["install", "tmux", "prompt"], ["mcp"], ["tools"], ["agent-loop"]],
       children: {
-        data: { tiers: [["storage-lock", "sqlite"], ["projects"], ["run-ownership", "images"], ["inbox"], ["processes", "knowledge", "tasks", "transcripts"], ["memory"]] },
+        data: { tiers: [["storage-lock", "sqlite"], ["projects"], ["run-ownership", "images"], ["inbox"], ["bubbles"], ["processes", "knowledge", "tasks", "transcripts"], ["memory"]] },
         tools: { tiers: [["registry"], ["*"], ["mount"]] },
         "agent-loop": { tiers: [["loop"], ["orc"]] },
       },
