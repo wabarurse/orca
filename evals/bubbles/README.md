@@ -55,6 +55,47 @@ The fresh orca run chose the design the user had rejected (a new stored field, w
 deploy risk it carries) and said so in its report. Both bubble runs avoided it and gave the
 reason from memory.
 
+## Tasks 3 and 4: two more replays of real merged changes (code, local only)
+
+Same rules as Task 2. The checklists were written before any result was read.
+
+**Task 3: make a behaviour always on by removing its feature flag.** Five points: the flag is
+gone, the behaviour is unconditional, the first sync after deploy reprocesses no one, no new
+flag replaces it, tests pass. All four arms met all five.
+
+| Arm | Time | Tool calls | Model calls | Input tokens (cached) | Checklist |
+| --- | --- | --- | --- | --- | --- |
+| Orca, fresh | 1292 s | 169 (orchestrator 48, worker 121) | 147 | 17.1M (16.7M) | 5 of 5 |
+| Orca, with bubble | 644 s | 100 (memory 3) | 79 | 9.5M (9.3M) | 5 of 5 |
+| Claude Code, fresh | 1044 s | 125 | | | 5 of 5 |
+| Claude Code, with bubble | 796 s | 118 | | | 5 of 5 |
+
+**Task 4: name every tag in a sync note the way the source system writes it.** Five points:
+added, removed and withdrawn-No rows each use that name, the step that reads the note still
+matches tags, tests pass.
+
+| Arm | Time | Tool calls | Model calls | Input tokens (cached) | Checklist |
+| --- | --- | --- | --- | --- | --- |
+| Orca, fresh | 1288 s | 177 (orchestrator 60, worker 117) | 159 | 19.8M (19.4M) | 3 of 5: put removed and withdrawn rows behind a new flag, off by default |
+| Orca, with bubble | 918 s | 111 (memory 5) | 106 | 14.4M (14.2M) | 5 of 5, no flag |
+| Claude Code, fresh | 1119 s | 131 | | | 3 of 5: same new flag, off by default |
+| Claude Code, with bubble | 1157 s | 129 | | | 5 of 5, no flag |
+
+Both fresh arms on Task 4 reached for a feature flag to protect a rolling deploy, which is a
+reasonable default and exactly what the user had ruled out ("no feature flags unless I ask").
+Both bubble arms cited that rule and shipped the behaviour as the default, naming the deploy
+risk the user had already accepted for an earlier change.
+
+Across the three coding tasks: with a bubble, orca took 594 to 918 s against 1240 to 1292 s
+fresh, and matched the user's decisions every time (fresh: 3, 5 and 3 of 5). In Claude Code
+the bubble saved time on two tasks of three and matched the decisions every time (fresh: 4, 5
+and 3 of 5).
+
+One confound in the orca timings: every fresh orchestrator handed the coding to a worker,
+and every bubble orchestrator did it itself in a worktree it placed inside the checkout.
+Part of the time gap is that hand-off, not memory. The runs do not show why they chose
+differently.
+
 ## Earlier round: 22 questions about the project
 
 Same memory, read as files; graded against the user's answer key.
