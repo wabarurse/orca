@@ -53,7 +53,7 @@ test("j/k, gg, G and Ctrl+D/Ctrl+U move the selection; the page is the same with
   try {
     for (const vim of [false, true]) {
       if (vim) { term.type("/vim\r"); await until(() => term.screen().includes("[NORMAL]")); }
-      term.press({ name: "a", ctrl: true }); await until(() => app.work.state?.items.length === 6);
+      term.press({ name: "a", ctrl: true }); await until(() => app.work.state?.items.length === 7);
       await key(app, "j"); await key(app, "j"); expect(selected(app)).toBe("reviewer-beta");
       await key(app, "k"); expect(selected(app)).toBe("worker-beta");
       await key(app, "G"); expect(selected(app)).toBe("reviewer-omega");
@@ -68,7 +68,7 @@ test("j/k, gg, G and Ctrl+D/Ctrl+U move the selection; the page is the same with
 test("find jumps as you type and marks the match; Enter keeps, Esc restores; n/N walk the matches and wrap", async () => {
   const { app, term, stop } = await setup("finds", { agents: async () => SIX });
   try {
-    term.press({ name: "a", ctrl: true }); await until(() => app.work.state?.items.length === 6);
+    term.press({ name: "a", ctrl: true }); await until(() => app.work.state?.items.length === 7);
     await key(app, "j");
     await key(app, "f"); expect(app.work.typing).toBe(true);
     term.type("BETA"); expect(selected(app)).toBe("worker-beta"); // from the row the find started on
@@ -95,7 +95,7 @@ test("a question with options: Enter chooses from the default; a digit sends at 
     const [first, second, third, fourth] = await ask(project, [{ text: "Pick a database?", options: ["postgres", "sqlite", "duckdb"], default: "sqlite" },
       { text: "Pick a queue?", options: ["redis", "sqs"] }, { text: "Name the release", options: ["v1", "v2"] }, { text: "What should the note say?" }]);
     term.press({ name: "q", ctrl: true });
-    await until(() => app.work.state?.items.length === 4);
+    await until(() => app.work.state?.items.length === 5);
     await app.onKey({ name: "enter" });
     await until(() => term.screen().includes("› 2  sqlite   default")); // starts on the default
     expect(term.screen()).toContain("  4  Other…");
@@ -148,7 +148,7 @@ test("q backs out of pages and menus; chat and answer drafts stay apart; Vim let
       expect(app.menu).toBeNull(); expect(app.work.open).toBe(false);
       expect(app.input.text).toBe("chat draft");
     }
-    await key(app, "Q"); await until(() => app.work.state?.items.length === 1);
+    await key(app, "Q"); await until(() => app.work.state?.items.length === 2);
     await app.onKey({ name: "enter" });
     term.type("qHL: answer"); await until(() => app.input.text === "qHL: answer");
     expect(app.work.kind).toBe("questions");
@@ -184,8 +184,8 @@ test("Agents hides unverified rows, folds old ones under Archived and archives o
   try {
     term.press({ name: "a", ctrl: true });
     await until(() => term.screen().includes("worker-live"));
-    expect(names(app)).toEqual(["worker-live", "worker-queued", "▸ Archived (1)"]);
-    expect(term.display.screen()[3]).toMatch(/^› worker-live +running/);
+    expect(names(app)).toEqual(["Today", "worker-live", "Earlier", "worker-queued", "▸ Archived (1)"]);
+    expect(term.display.screen()[4]).toMatch(/^› worker-live +running/);
     await key(app, "a"); await until(() => term.screen().includes("worker-old"));
     await key(app, "D"); await until(() => term.screen().includes("Archive 1 finished agents?"));
     await key(app, "y"); await until(() => removed.length === 1);
@@ -333,7 +333,7 @@ test("Processes lists background commands under a heading; s asks, then stops th
       state: "running", timeoutMs: 0, maxBytes: 0, notify: false, events: [] });
     term.press({ name: "a", ctrl: true }); await key(app, "5");
     await until(() => names(app).length === 2);
-    expect(names(app)).toEqual(["Commands", "bun run stack"]);
+    expect(names(app)).toEqual(["Commands · Today", "bun run stack"]);
     expect(selected(app)).toBe("bun run stack"); // never starts on the heading
     await until(() => /Processes 1/.test(term.display.screen()[0]!) && term.screen().includes("no output yet"));
     expect(term.display.screen().find(row => row.includes("bun run stack") && row.includes("running"))).toContain("worker-feat · 1m 3");
@@ -343,6 +343,6 @@ test("Processes lists background commands under a heading; s asks, then stops th
     await key(app, "s"); await key(app, "y");
     await until(() => app.work.state?.notice === "Stop requested. The orchestrator was told.");
     expect(existsSync(join(processDirectory(project, id), "stop"))).toBe(true);
-    await key(app, "k"); await key(app, "s"); expect(app.work.state!.confirm).toBeUndefined(); // a heading has nothing to stop
+    await key(app, "k"); expect(selected(app)).toBe("bun run stack"); // the cursor never rests on a heading
   } finally { await stop(); }
 });
