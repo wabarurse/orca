@@ -51,11 +51,6 @@ export async function joinBubble(project: string, id: string): Promise<Bubble> {
   writeProjectState(project, "bubble", id);
   return bubble;
 }
-export async function renameBubble(id: string, name: string): Promise<void> {
-  const bubble = await readBubble(id);
-  if (!bubble) throw new Error(`no bubble ${id}`);
-  await writeFileAtomic(join(bubbleDir(id), "bubble.json"), JSON.stringify({ ...bubble, name }));
-}
 /** The conversations attached to a bubble, by id. */
 export function bubbleMembers(id: string): string[] {
   return conversationIds(paths.root).filter(project => { try { return peekBubble(project) === id; } catch { return false; } });
@@ -72,4 +67,11 @@ export async function leaveBubble(project: string): Promise<{ bubble: string; re
   const left = bubbleMembers(id).filter(member => member !== project);
   if (left.length === 0) await rm(bubbleDir(id), { recursive: true, force: true });
   return { bubble: id, removed: left.length === 0 };
+}
+/** Bubbles no conversation is attached to any more (their conversations were removed by hand or by an older build). */
+export async function orphanBubbles(): Promise<Bubble[]> {
+  return (await listBubbles()).filter(bubble => bubbleMembers(bubble.id).length === 0);
+}
+export async function removeBubble(id: string): Promise<void> {
+  await rm(bubbleDir(id), { recursive: true, force: true });
 }

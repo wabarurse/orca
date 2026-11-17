@@ -1,6 +1,7 @@
 import { MERGE_POLL_MS } from "../../tmux/merges";
 import { cleanup } from "../../tmux";
 import { pruneSettledProcesses, reconcileProcesses } from "../../data/processes";
+import { peekBubble, purgeNotebook } from "../../data/bubbles";
 import { pruneAllOutputs } from "../../tools/bash";
 // The orchestrator as a long-lived process: `orca agent --role orchestrator`
 // (exec/daemon.ts) runs this loop in the `orchestrator` window of the project's
@@ -209,6 +210,9 @@ function runWatchers(d: Daemon): void {
       await cleanup.removeFinishedWorktrees(d.o.project).then(rows => { for (const row of rows) if (row.disposition.startsWith("removed")) d.o.log(`workspace cleanup: ${row.path} ${row.disposition}`); },
         error => d.o.log(`workspace cleanup: ${error}`));
       await pruneSettledProcesses(d.o.project, true).catch(error => d.o.log(`process retention: ${error}`));
+      // Notebook pages pushed out of the cache more than the retention ago lose their content; one line when any did.
+      const bubble = peekBubble(d.o.project);
+      if (bubble) await purgeNotebook(bubble).then(gone => { if (gone.length) d.o.log(`notebook: removed ${gone.length} page${gone.length === 1 ? "" : "s"} archived over 14 days ago`); }, error => d.o.log(`notebook retention: ${error}`));
       // Once per daemon, after this project's discovery has registered its outputs: every project's
       // unowned saved outputs, since an idle project never prunes its own. One line for what failed.
       if (d.pruned) return;

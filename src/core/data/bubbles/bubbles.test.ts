@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths } from "../../../config";
-import { behavior, BEHAVIOR, bubbleDir, bubbleMembers, ensureBubble, joinBubble, leaveBubble, listBubbles, listPages, memoryNodes, NOTEBOOK, peekBubble, purgeNotebook,
+import { behavior, BEHAVIOR, bubbleDir, bubbleMembers, ensureBubble, joinBubble, leaveBubble, listBubbles, listPages, memoryNodes, NOTEBOOK, orphanBubbles, peekBubble, purgeNotebook, removeBubble,
   putPage, queryPage, readNode, readPage, renderIndex, searchNodes, setBehavior, writeNode, type NodeWrite } from ".";
 import { tokens } from "./search";
 
@@ -137,4 +137,12 @@ test("behavior lines are capped and replaced by key", async () => {
   await expect(setBehavior(id, line("extra", "one more"))).rejects.toThrow("already has 20 behavior lines");
   await setBehavior(id, { key: "k1", text: null });
   expect((await setBehavior(id, line("extra", "one more"))).length).toBe(BEHAVIOR.lines);
+});
+
+test("a bubble with no conversation left is reported as an orphan and can be removed", async () => {
+  const kept = await ensureBubble("one"), lost = await ensureBubble("two", "lost");
+  await rm(paths.project("two"), { recursive: true });
+  expect((await orphanBubbles()).map(b => b.id)).toEqual([lost.id]);
+  await removeBubble(lost.id);
+  expect((await listBubbles()).map(b => b.id)).toEqual([kept.id]);
 });
