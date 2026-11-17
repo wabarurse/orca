@@ -7,7 +7,7 @@ import { formatDateTime, type AgentInfo, type ProjectEntry, type Question } from
 import { canArchiveTask } from "../protocol/task";
 import { abandonTask, allTasks, removeTask, restoreTask } from "../core/data/tasks";
 import { directories, togglePin, workViews } from "../core/data/projects";
-import { bubbleMembers, ensureBubble, joinBubble, peekBubble, readBubble } from "../core/data/bubbles";
+import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/data/bubbles";
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
 import { archiveAgents, cancelSession, launchIdentity, listAgents, restoreAgents } from "../core/tmux";
 import { ARCHIVED_SECTION, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
@@ -48,7 +48,7 @@ export interface WorkHost {
   readImages(page: Page): Promise<void>; retryImages(page: Page): Promise<void>;
   taskCountChanged(page: Page): Promise<void>;
   attach(page: Page, name: string, live: boolean): Promise<void>;
-  openPage(project: string): Promise<unknown>; closePage(index: number): void; newPage(directory: string): Promise<void>;
+  openPage(project: string): Promise<unknown>; closePage(index: number): void; newPage(directory: string, bubble: string | null): Promise<void>;
 }
 
 interface Item extends WorkRow {
@@ -529,16 +529,14 @@ export class WorkPages {
     } else if (key === "n" && view.parent) {
       const parent = (await directories.directoryProjects()).find(p => p.id === view.parent);
       this.close();
-      if (parent) await this.host.newPage(parent.directory);
+      if (parent) await this.host.newPage(parent.directory, null);
     } else if (key === "b" && view.parent && !entry.directory) {
       // Another orchestrator for the same bubble: a new conversation in this folder that shares this one's memory, notebook and behavior.
       const parent = (await directories.directoryProjects()).find(p => p.id === view.parent);
       if (!parent) return;
-      const bubble = await ensureBubble(entry.name, entry.label), before = new Set(this.host.pages().map(page => page.project));
+      const bubble = await ensureBubble(entry.name, entry.label);
       this.close();
-      await this.host.newPage(parent.directory);
-      const created = this.host.pages().find(page => !before.has(page.project));
-      if (created) await joinBubble(created.project, bubble.id);
+      await this.host.newPage(parent.directory, bubble.id);
     } else if (key === "p") {
       const on = await togglePin(entry.name);
       await this.read(view, "projects");

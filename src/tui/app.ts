@@ -21,7 +21,7 @@ import { accountChoices, deletionSummary, login, resetProject, useAccount, sendA
 import { checkContextClear } from "./commands";
 import { activeAgentRows, liveAgentsOrNull } from "../core/tmux";
 import { directories, displayName, listProjects, newProjectName, remoteOf, setDisplayName, shortRemote } from "../core/data/projects";
-import { activeRoles, chooseModel, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
+import { activeRoles, chooseBubble, chooseModel, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
 import { paths } from "../config";
 import { projectIdentity } from "../core/data/projects";
 import { effectiveModel } from "../core/data/projects";
@@ -221,7 +221,7 @@ export class App {
       images: page => app.imageLists.get(page), readImages: page => app.imageLists.read(page, true), retryImages: page => app.retryImages(page),
       taskCountChanged: page => app.taskCounts.refresh(page),
       attach: (page, name, live) => app.attach(page, name, live),
-      openPage: project => app.openPage(project), closePage: index => app.closePage(index), newPage: directory => app.newPage(directory),
+      openPage: project => app.openPage(project), closePage: index => app.closePage(index), newPage: (directory, bubble) => app.newPage(directory, bubble),
     });
   }
 
@@ -936,11 +936,11 @@ export class App {
   }
 
   /** Start a conversation in the given local directory, else the current page's checkout, else the launch checkout. */
-  async newPage(url?: string): Promise<void> {
+  async newPage(url?: string, bubble: string | null = null): Promise<void> {
     const shown = await this.shownNames();
     try {
       const page = await this.openPage(newProjectName([...shown.keys(), ...shown.values()]), url ?? (this.page ? paths.repo(this.page.project) : this.deps.source) ?? undefined);
-      this.note("/rename <name> to rename", page);
+      await chooseBubble(page.project, bubble, { open: (title, choices, pick) => this.openMenu(title, choices, pick), note: text => this.note(text, page) });
     } catch (err) { this.note(`error: ${err instanceof Error ? err.message : String(err)}`); }
   }
 
