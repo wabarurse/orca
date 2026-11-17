@@ -52,7 +52,7 @@ export interface WorkHost {
 }
 
 interface Item extends WorkRow {
-  sections: WorkSection[]; archived?: boolean; section?: true;
+  sections: WorkSection[]; archived?: boolean; section?: true; heading?: true;
   agent?: AgentInfo; media?: DeliveredMedia; question?: Question; project?: ProjectEntry;
 }
 interface View {
@@ -218,6 +218,7 @@ export class WorkPages {
       view.nodes = nodes; view.invalid = undefined;
       return rows.map((row): Item => {
         const task = row.section ? undefined : tasks.find(t => t.id === row.id);
+        if (row.heading) return { ...row, sections: [{ title: row.name, text: "Tasks last touched on this day, newest first. A task moves here when it is worked on, its PR changes or it is edited." }] };
         return { ...row, archived: !!task?.removedAt, sections: task ? taskSections(tasks, task) : [{ title: "Archived", text: SECTION_HELP }] };
       });
     } catch (error) {
@@ -250,7 +251,8 @@ export class WorkPages {
   private index(view: View, items: Item[]): number {
     let id = view.selected[view.kind];
     if (id === undefined && view.kind === "projects") { const current = this.host.page()?.project ?? ""; id = view.projects.find(p => p.name === current || p.conversations?.includes(current))?.name; }
-    return Math.max(0, items.findIndex(item => item.id === id));
+    const at = items.findIndex(item => item.id === id);
+    return at >= 0 ? at : Math.max(0, items.findIndex(item => !item.heading)); // never start on a day heading
   }
 
   // --- drawing ----------------------------------------------------------------
@@ -264,7 +266,7 @@ export class WorkPages {
     const footer = this.footer(view, cols);
     // A failed read is unknown, never a fabricated zero.
     const known = (kind: WorkKind) => view.loaded.has(kind) && (kind === "projects" || !!view.page) && !view.errors[kind] && !(kind === "questions" && (questions?.error || !questions?.loaded));
-    const tabs = WORK_KINDS.map(kind => ({ name: TITLES[kind], count: known(kind) ? (kind === view.kind ? items : this.items(view, kind)).filter(item => !item.section && !item.archived).length : undefined }));
+    const tabs = WORK_KINDS.map(kind => ({ name: TITLES[kind], count: known(kind) ? (kind === view.kind ? items : this.items(view, kind)).filter(item => !item.section && !item.heading && !item.archived).length : undefined }));
     const empty = !view.page && view.kind !== "projects" ? NO_PAGE : !view.loaded.has(view.kind) ? "Loading…" : known(view.kind) ? `No ${view.kind}` : `${TITLES[view.kind]} unavailable`;
     const render = view.render = renderWorkPage({ cols, rows, tabs, active: WORK_KINDS.indexOf(view.kind), items, selected: index, empty,
       query: view.find?.text ?? view.query, sections: selected?.sections ?? [], detailTop: view.detailTop, footer: footer.line });
@@ -330,7 +332,7 @@ export class WorkPages {
     else if (key === "r") { view.notice = "Refreshing…"; this.host.draw(); await Promise.all(WORK_KINDS.map(kind => this.read(view, kind))); if (view.notice === "Refreshing…") view.notice = view.errors[view.kind] ? undefined : `Refreshed ${formatDateTime(this.host.clock.now())}`; }
     else if (key === "enter" && items[index]?.section) view.history[view.kind] = !view.history[view.kind];
     else if (key === "t" && view.kind === "images" && view.page) await this.retry(view, view.page);
-    else if (items[index] && view.page && view.kind !== "projects") await this.itemKey(view, view.page, key, items, items[index]);
+    else if (items[index] && !items[index].heading && view.page && view.kind !== "projects") await this.itemKey(view, view.page, key, items, items[index]);
     else if (items[index]?.project) await this.projectKey(view, key, items[index].project);
     if (this.view === view) this.host.draw();
   }
@@ -444,7 +446,7 @@ export class WorkPages {
     if (kind === "tasks") return this.taskKey(view, page, key, task);
     if (key !== "d" && key !== "D" && !(key === "s" && agent)) return;
     if (kind === "agents") return this.agentKey(view, page, key, agent);
-    const targets = (key === "D" ? items : [selected]).filter(item => !item.section && !item.archived);
+    const targets = (key === "D" ? items : [selected]).filter(item => !item.section && !item.heading && !item.archived);
     if (!targets.length) { view.notice = "No items to archive."; return; }
     view.confirm = { text: `Archive ${targets.length} ${kind}?${kind === "questions" ? " Open questions will be dismissed without an answer." : " Files retained."}`, run: async () => {
       for (const item of targets) {

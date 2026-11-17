@@ -201,10 +201,10 @@ test("Tasks is the outline as rows: h/l and ←/→ fold instead of switching ta
     await setTaskDependencies(project, child.id, [parent.id]);
     term.press({ name: "t", ctrl: true });
     await until(() => term.screen().includes("Task #1 Parent"));
-    expect(term.display.screen().slice(3, 5).map(row => row.trimEnd().replace(/ {2,}/g, " | "))).toEqual(["› ▾ #1 Parent | queued", " | └─ #2 Child | queued"]);
+    expect(term.display.screen().slice(3, 6).map(row => row.trimEnd().replace(/ {2,}/g, " | "))).toEqual([" | Today", "› ▾ #1 Parent | queued", " | └─ #2 Child | queued"]); // the cursor starts on a task, not the day heading
     expect(term.screen()).toContain("Keep the ledger");
-    await key(app, "h"); expect(app.work.kind).toBe("tasks"); expect(names(app)).toEqual(["#1 Parent"]);
-    await app.onKey({ name: "right" }); expect(names(app)).toEqual(["#1 Parent", "#2 Child"]);
+    await key(app, "h"); expect(app.work.kind).toBe("tasks"); expect(names(app)).toEqual(["Today", "#1 Parent"]);
+    await app.onKey({ name: "right" }); expect(names(app)).toEqual(["Today", "#1 Parent", "#2 Child"]);
     await key(app, "l"); expect(selected(app)).toBe("#2 Child"); await key(app, "h"); expect(selected(app)).toBe("#1 Parent");
     await key(app, "c"); await until(() => term.screen().includes("1 dependents retained"));
     await key(app, "n"); expect((await getTask(project, parent.id)).attention).toBeUndefined();

@@ -28,11 +28,11 @@ function dependencyLayers(tasks: TreeTask[]): { layers: number[][]; parents: num
 /** A single canonical identity, placed under its lowest-UUID prerequisite.
  * Other prerequisites remain explicit references, never implied tree edges.
  */
-function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>, history = false, sections = false): OutlineNode[] {
+function outline(tasks: TreeTask[], collapsed: ReadonlySet<string>, history = false, sections = false, now = Date.now()): OutlineNode[] {
   dependencyLayers(tasks); // Validate against retained SQL records before hiding membership.
   if (sections) {
     const archived = tasks.filter(t => t.removedAt);
-    return [...outline(tasks, collapsed), ...(archived.length ? [{ id: ARCHIVED_SECTION, depth: 0, children: [] },
+    return [...byDay(tasks.filter(t => !t.removedAt), collapsed, now), ...(archived.length ? [{ id: ARCHIVED_SECTION, depth: 0, children: [] },
       ...(history ? outlineGroup(archived, collapsed) : [])] : [])];
   }
   const visible = new Set(tasks.filter(t => history ? !!t.archive : !t.removedAt).map(t => t.id.toLowerCase()));
@@ -51,6 +51,37 @@ function outlineGroup(input: TreeTask[], collapsed: ReadonlySet<string>): Outlin
     if (!collapsed.has(task.id)) for (let j = 0; j < tasks.length; j++) if (primary[j] === i) visit(j, depth + 1);
   };
   tasks.forEach((_, i) => { if (primary[i] === undefined) visit(i, 0); });
+  return result;
+}
+
+export const DAY_HEADING = ":day:";
+const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+/** A heading's text: Today, Yesterday, else the date. */
+function dayName(id: string, now: number): string {
+  const day = id.slice(DAY_HEADING.length), today = new Date(now);
+  if (day === localDay(today)) return "Today";
+  return day === localDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)) ? "Yesterday" : formatDateTime(day);
+}
+/** The listed tasks by when they were last touched, newest first, under a heading per local day. A task is touched
+ * by any change to its record (a run starting or ending, its PR, attention, an edit), not only by its creation. A
+ * dependency tree moves as one, at its most recently touched member, so a prerequisite never leaves its dependents. */
+function byDay(tasks: TreeTask[], collapsed: ReadonlySet<string>, now: number): OutlineNode[] {
+  const touched = new Map<string, number>();
+  let root = "";
+  for (const node of outlineGroup(tasks, new Set())) {
+    if (!node.depth) root = node.id;
+    const at = Date.parse(tasks.find(t => t.id === node.id)!.updatedAt);
+    touched.set(root, Math.max(touched.get(root) ?? 0, Number.isFinite(at) ? at : 0));
+  }
+  const trees: OutlineNode[][] = [];
+  for (const node of outlineGroup(tasks, collapsed)) if (node.depth) trees.at(-1)!.push(node); else trees.push([node]);
+  const result: OutlineNode[] = [];
+  let heading = "";
+  for (const tree of trees.map((nodes, order) => ({ nodes, order, at: touched.get(nodes[0]!.id)! })).sort((a, b) => b.at - a.at || a.order - b.order)) {
+    const day = DAY_HEADING + localDay(new Date(tree.at));
+    if (day !== heading) result.push({ id: heading = day, depth: 0, children: [] });
+    result.push(...tree.nodes);
+  }
   return result;
 }
 
@@ -89,16 +120,17 @@ export function navigateOutline(nodes: OutlineNode[], selectedId: string | undef
   return node.id;
 }
 
-/** Every task as a table row, in outline order: connectors to the primary prerequisite, ▾/▸ fold marker, `#n name`,
+/** Every task as a table row, newest activity first under a heading per day, each dependency tree in outline order: connectors to the primary prerequisite, ▾/▸ fold marker, `#n name`,
  * the status word in its colour, and the PR (plus `+#n` for the other prerequisites) as info. Archived tasks sit under
  * their own section row. */
-export function taskRows(input: readonly (Task | TaskTreeView)[], collapsed: ReadonlySet<string>, history: boolean): { tasks: TreeTask[]; nodes: OutlineNode[]; rows: (WorkRow & { section?: true })[] } {
-  const tasks = treeTasks(input), nodes = outline(tasks, collapsed, history, true);
+export function taskRows(input: readonly (Task | TaskTreeView)[], collapsed: ReadonlySet<string>, history: boolean, now = Date.now()): { tasks: TreeTask[]; nodes: OutlineNode[]; rows: (WorkRow & { section?: true; heading?: true })[] } {
+  const tasks = treeTasks(input), nodes = outline(tasks, collapsed, history, true, now);
   const byId = new Map(nodes.map(n => [n.id, n])), task = new Map(tasks.map(t => [t.id.toLowerCase(), t]));
   const number = (t: TreeTask) => t.number ?? tasks.indexOf(t) + 1;
-  const roots = (archived: boolean) => nodes.filter(n => n.depth === 0 && n.id !== ARCHIVED_SECTION && !!task.get(n.id.toLowerCase())?.removedAt === archived).map(n => n.id);
-  const rows = nodes.map((node): WorkRow & { section?: true } => {
+  const roots = (archived: boolean) => nodes.filter(n => n.depth === 0 && task.has(n.id.toLowerCase()) && !!task.get(n.id.toLowerCase())!.removedAt === archived).map(n => n.id);
+  const rows = nodes.map((node): WorkRow & { section?: true; heading?: true } => {
     if (node.id === ARCHIVED_SECTION) return { id: node.id, name: archiveTitle(tasks.filter(t => t.removedAt).length, history), section: true };
+    if (node.id.startsWith(DAY_HEADING)) return { id: node.id, name: dayName(node.id, now), heading: true };
     const t = task.get(node.id.toLowerCase())!;
     const last = (n: OutlineNode) => (n.parent ? byId.get(n.parent)!.children : roots(!!t.removedAt)).at(-1) === n.id;
     let prefix = "";

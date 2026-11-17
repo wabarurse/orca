@@ -13,8 +13,9 @@ const label = (row: { lead?: string; name: string }) => (row.lead ?? "") + row.n
 
 test("the outline flattens into rows: connectors and fold markers lead the name, other prerequisites and the PR are info", () => {
   const tasks = sample(), collapsed = new Set<string>();
-  const out = taskRows(tasks, collapsed, false);
-  expect(out.rows).toEqual(taskRows([...tasks].reverse().map(taskTreeView), collapsed, false).rows);
+  const all = taskRows(tasks, collapsed, false), out = { ...all, rows: all.rows.filter(row => !row.heading) };
+  expect(all.rows[0]).toMatchObject({ heading: true, name: "Jan 2, 2026" }); // one day, one heading
+  expect(all.rows).toEqual(taskRows([...tasks].reverse().map(taskTreeView), collapsed, false).rows);
   expect(out.rows.map(row => row.id)).toEqual([5, 1, 2, 6, 3, 4].map(id));
   expect(out.rows.map(label)).toEqual(["▾ #5 Clarify empty inbox", "├─ ▾ #1 Restore session draft", "│  └─ ▾ #2 Export task history",
     "│     └─ #6 Document task recovery", "├─ #3 Narrow-terminal keys", "└─ #4 Reduce footer redraws"]);
@@ -23,7 +24,7 @@ test("the outline flattens into rows: connectors and fold markers lead the name,
   expect(navigateOutline(out.nodes, id(1), collapsed, "right")).toBe(id(2));
   expect(navigateOutline(out.nodes, id(1), collapsed, "down", true)).toBe(id(3));
   expect(navigateOutline(out.nodes, id(1), collapsed, "left")).toBe(id(1)); // folds
-  const folded = taskRows(tasks, collapsed, false);
+  const folded = { ...taskRows(tasks, collapsed, false), rows: taskRows(tasks, collapsed, false).rows.filter(row => !row.heading) };
   expect(folded.rows.map(row => row.id)).toEqual([5, 1, 3, 4].map(id));
   expect(label(folded.rows[1]!)).toBe("├─ ▸ #1 Restore session draft");
   expect(folded.rows[1]!.info).toBe("1 hidden");
@@ -37,11 +38,24 @@ test("status words carry the state's colour; a PR and running work show as info;
   tasks[1]!.runs = [{ id: "run", agent: "agent", role: "worker", state: "started", preparedAt: "today" }];
   tasks[2]!.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
   tasks[3]!.removedAt = "2026-01-03";
-  const shut = taskRows(tasks, new Set(), false).rows, open = taskRows(tasks, new Set(), true).rows;
+  const shut = taskRows(tasks, new Set(), false).rows.filter(row => !row.heading), open = taskRows(tasks, new Set(), true).rows.filter(row => !row.heading);
   expect(shut.map(row => [row.status, row.color])).toEqual([["queued", 90], ["working", 36], ["merged", 35], [undefined, undefined]]);
   expect(shut[1]!.info).toBe("working"); expect(shut[2]!.info).toBe("PR #105");
   expect(shut[3]).toMatchObject({ id: ARCHIVED_SECTION, name: "▸ Archived (1)", section: true });
   expect(open.map(row => row.name)).toEqual(["#1 Task 1", "#2 Task 2", "#3 Task 3", "▾ Archived (1)", "#4 Task 4"]);
+});
+
+test("tasks are listed by when they were last touched, newest first, under a heading per day; a tree moves as one", () => {
+  const at = (n: number, updatedAt: string, deps: number[] = []) => ({ ...task(n, deps), updatedAt });
+  const now = new Date(2026, 0, 10, 15).getTime(), local = (day: number, hour: number) => new Date(2026, 0, day, hour).toISOString();
+  // #1 was created first and touched today; #3 depends on #2 and was touched yesterday, so both sit under Yesterday.
+  const tasks = [at(1, local(10, 9)), at(2, local(5, 9)), at(3, local(9, 23), [2]), at(4, local(10, 14)), at(5, local(7, 12))];
+  const { rows, nodes } = taskRows(tasks, new Set(), false, now);
+  expect(rows.map(row => row.heading ? row.name : label(row))).toEqual(["Today", "#4 Task 4", "#1 Task 1", "Yesterday", "▾ #2 Task 2", "└─ #3 Task 3", "Jan 7, 2026", "#5 Task 5"]);
+  expect(rows.filter(row => row.heading).every(row => row.status === undefined && row.id.startsWith(":day:"))).toBe(true);
+  // A folded tree still sits at its hidden member's day.
+  expect(taskRows(tasks, new Set([id(2)]), false, now).rows.map(row => row.name).slice(3, 5)).toEqual(["Yesterday", "#2 Task 2"]);
+  expect(navigateOutline(nodes, id(1), new Set(), "down")).toBe(":day:2026-01-09"); // a heading is a row like the Archived one
 });
 
 test("details: description, record fields, dependencies both ways and the PR as a link", () => {
