@@ -19,7 +19,7 @@ import { projectIdentity, conversationTurnLock, conversationTurnHeld, withProjec
 
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import { assertMainCheckout, initializeWorkspace } from "../../data/projects";
+import { initializeWorkspace } from "../../data/projects";
 import { effectiveModel, projectModelResolver } from "../../data/projects";
 import { createAgent, type AgentDeps } from "../loop";
 import type { Tracker } from "../../tmux";
@@ -287,8 +287,6 @@ async function orchestratorTurn(deps: OrchestratorDeps, transcript: Transcript, 
     const hasInbox = await pending(deps.project, "orchestrator");
     state.working = hasInbox;
     if (!state.requested && !hasInbox && !rolling.ready()) return [];
-    try { await assertMainCheckout(deps.project); }
-    catch (error) { state.pause(); throw error; } // Retain input without a failing poll/retry loop.
     const agent = await turnAgent(deps, transcript, state.takeRequest, signal, rolling, current => { state.context = current; }, epoch);
     if (hasInbox) {
       await agent.run();

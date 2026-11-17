@@ -127,9 +127,10 @@ git switch main
 orca
 ```
 
-The terminal UI opens with an orchestrator working in your **original checkout**
-on its default branch, not a new clone. Workers use separate worktrees beside
-that checkout; reviewers reuse the worker's worktree. Uncommitted changes and
+The terminal UI opens with an orchestrator working in your **original checkout**,
+on whatever branch it is on, not a new clone. Workers use separate worktrees
+under `~/.orca`, started from the default branch; reviewers reuse the worker's
+worktree. Uncommitted changes and
 untracked/ignored files such as `.env` are not copied into those worktrees.
 Start from the local checkout, not a remote URL. Saved projects also reopen.
 
@@ -252,11 +253,13 @@ orca --help
 Bare invocation and `start` need an interactive terminal. Launching does **not**
 `cd` into the installation directory: repository detection uses the invoking
 working directory, including repository subdirectories. The main agent works
-in your **original checkout on its default branch** (origin/HEAD, otherwise
-main or master). Local files, Git configuration and repository-local logins
-remain available. If the checkout is on another branch, switch it yourself
-when safe; the harness never switches or stashes your work. It checks the
-branch again before each main-agent turn.
+in your **original checkout**, on any branch. Local files, Git configuration
+and repository-local logins remain available. The harness never switches or
+stashes your work; each turn it tells the main agent which branch the checkout
+is on. Workers always start from the default branch (origin/HEAD, otherwise
+main or master), so what exists only on your current branch is not in a new
+worker branch. Agents cannot run `git worktree add`: worktrees are created
+only under `~/.orca`, when a worker is started.
 
 Workers use task branches in Git worktrees inside the home, never beside your
 repositories: `~/.orca/worktrees/<repo>--<id>/<branch-slug>` (one folder per

@@ -8,7 +8,7 @@ import { ensureProject, createOrchestrator } from "../../agent-loop/orc/orchestr
 import { ensureWorktree, removeWorktree } from "../../tmux/runner";
 import { deleteProject, restoreConversations } from "../../../tui/commands/project";
 import { listProjects, projectFor, repoHere, remoteOf } from "./registry";
-import { assertMainCheckout } from "./workspace";
+import { checkoutNote } from "./workspace";
 import { conversationTurnLock } from "./state";
 import { lockOwner, tryStorageLock } from "../storage-lock";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
@@ -50,7 +50,7 @@ test("ordinary directories work without Git, reopen by exact directory, and neve
     const task = await registerTask("plain", { name: "Organize notes", summary: "Local work", branch: "notes-worker", authorized: true });
     expect(task.status).toBe("queued");
     expect(await remoteOf("plain")).toBe("no remote");
-    await assertMainCheckout("plain");
+    expect(await checkoutNote("plain")).toBe(""); // an ordinary directory has no branch to describe
     expect(await ensureWorktree("plain", "notes-worker")).toBe(folder);
     expect(paths.worktree("plain", "notes-worker")).toBe(folder);
     await removeWorktree("plain", "notes-worker");
@@ -177,25 +177,29 @@ test("discovery reuses exact checkout including symlinks, not another clone or a
   expect(paths.repo("legacy")).toBe(legacy);
 });
 
-test("main branch requirement never switches or stashes user work, including after project creation", async () => {
+test("the orchestrator runs on whatever branch the user is on: nothing is switched or stashed, it is told the branch, and workers still start from main", async () => {
+  const main = await git(repo, "rev-parse", "main");
   await git(repo, "switch", "-c", "feature");
+  await Bun.write(join(repo, "only-on-feature"), "x"); await git(repo, "add", "."); await git(repo, "commit", "-qm", "feature work");
   await Bun.write(join(repo, "draft"), "keep me");
-  await expect(ensureProject("p", repo)).rejects.toThrow("on main");
-  expect(await git(repo, "branch", "--show-current")).toBe("feature");
-  await git(repo, "switch", "main");
-  await ensureProject("p", repo);
-  await git(repo, "switch", "feature");
-  const provider = fakeProvider([]);
+  await ensureProject("p", repo); // created while on another branch
+  expect(repositoryBinding("p")?.branch).toBe("main");
+  expect(await checkoutNote("p")).toContain(`is on branch feature, not the default branch main`);
+  const provider = fakeProvider([[text("done")]]);
   const orch = await createOrchestrator({ project: "p", provider, write: () => {} });
   await orch.say("do work");
-  await expect(orch.turn()).rejects.toThrow("on main");
-  expect(provider.calls).toHaveLength(0);
-  expect(await orch.pending()).toBe(false);
-  await git(repo, "switch", "main");
-  expect(await orch.pending()).toBe(false); // A branch change alone does not retry queued work.
-  await orch.say("resume");
-  expect(await orch.pending()).toBe(true);
+  await orch.turn();
+  expect(provider.calls).toHaveLength(1);
+  expect(JSON.stringify(provider.calls[0]!.messages)).toContain("is on branch feature, not the default branch main");
+  expect(await git(repo, "branch", "--show-current")).toBe("feature");
   expect(await Bun.file(join(repo, "draft")).text()).toBe("keep me");
+  const worktree = await ensureWorktree("p", "task-one");
+  expect(await git(worktree, "rev-parse", "HEAD")).toBe(main); // from main by name, not from what is checked out
+  await git(repo, "switch", "-q", "--detach");
+  expect(await checkoutNote("p")).toContain("not on a branch (detached HEAD)");
+  await git(repo, "switch", "-q", "main");
+  expect(await checkoutNote("p")).toContain("is on its default branch main.");
+  expect(await checkoutNote("p")).toContain("never create a worktree yourself");
   await expect(ensureWorktree("p", "main")).rejects.toThrow("task branch");
   orch.dispose?.();
 });
