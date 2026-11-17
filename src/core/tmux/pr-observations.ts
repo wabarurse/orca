@@ -5,15 +5,31 @@ export const activePRTask = (task: Task): boolean => !task.removedAt && !task.ar
 
 /** Notification history is separate from readiness. An unavailable GitHub field
  * must not erase the last known value and turn its recovery into new activity.
- * A new head starts a new comparison; task validation still gets the raw result. */
+ * A running check is not a result either: a re-run that ends as it did before
+ * (failed, running, failed) is no news, so `checks` keeps the last result at this
+ * head and a failing check stays named while it runs again. A new head starts a
+ * new comparison; task validation still gets the raw result. */
 export function notificationValue(value: unknown, previous?: unknown): unknown {
   const current = value as Record<string, any>, old = previous as Record<string, any> | undefined;
   const head = current.head ?? current.pr?.head;
   const sameHead = old && head === (old.head ?? old.pr?.head);
   const known = (key: string) => current[key] === undefined || current[key] === "unknown"
     ? (sameHead ? old[key] : undefined) ?? "unknown" : current[key];
-  return { state: current.state, head, checks: known("checks"), review: known("review"),
-    reviewActivity: known("reviewActivity"), mergeable: known("mergeable"), threads: threadIds(current.threads, sameHead ? old.threads ?? "unknown" : undefined) };
+  const result = (checks: unknown) => checks === undefined || checks === "unknown" || checks === "pending" ? undefined : checks;
+  return { state: current.state, head, checks: result(current.checks) ?? (sameHead ? result(old.checks) : undefined) ?? "unknown", review: known("review"),
+    reviewActivity: known("reviewActivity"), mergeable: known("mergeable"), threads: threadIds(current.threads, sameHead ? old.threads ?? "unknown" : undefined),
+    failing: failingNames(current, sameHead ? old.failing ?? "unknown" : undefined) };
+}
+/** Failing check names as one sorted string: those failing now plus those that failed
+ * before at this head and are running again. A snapshot from before names were kept
+ * says "unknown" until the next head, so an update sends no notice for an old failure. */
+function failingNames(current: Record<string, any>, old: unknown): string {
+  const names = (list: unknown) => typeof list === "string" && list !== "unknown" ? list.split(",").filter(Boolean) : null;
+  const now = names(current.failing), before = names(old);
+  if (old !== undefined && !before) return "unknown";
+  if (!now) return before ? before.join(",") : "unknown";
+  const running = new Set(names(current.running) ?? []);
+  return [...new Set([...now, ...(before ?? []).filter(name => running.has(name))])].sort().join(",");
 }
 /** Unresolved thread ids as one string. A snapshot from before threads were read
  * says "unknown", and finding none after that is not news. */

@@ -126,7 +126,9 @@ export function mergeWatcher(opts: MergeWatchOptions = {}) {
         } else {
           const value = { state: observation.state, head: pr.head, checks: observation.checks,
             review: observation.reviewDecision ?? "unknown", reviewActivity: observation.reviewActivity, mergeable: observation.mergeable ?? "unknown",
-            threads: observation.threads?.map(t => t.id).join(",") };
+            threads: observation.threads?.map(t => t.id).join(","),
+            // Names mean nothing when the checks could not be read.
+            failing: observation.checks === "unknown" ? undefined : observation.failing?.join(","), running: observation.running?.join(",") };
           const { fix, wait } = mergeBlockers(observation), waiting = wait.length ? ` Waiting on: ${wait.join(", ")}.` : "";
           const names = matching.map(t => `task #${t.number ?? "?"} on ${t.branch}`).join(", ");
           const where = `PR #${pr.number}${names ? ` (${names})` : ""}`, tail = `Head ${pr.head.slice(0, 12)}. ${pr.url}. Nothing was started or retried.`;

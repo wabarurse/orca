@@ -62,6 +62,8 @@ export interface PRObservation {
   reviewActivity?: string;
   /** Names of the checks that failed (at most eight). */
   failing?: string[];
+  /** Names of the checks still running: a failed check that runs again is not yet fixed. */
+  running?: string[];
   draft?: boolean;
   /** Unresolved review threads; absent when they could not be read. */
   threads?: ReviewThread[];
