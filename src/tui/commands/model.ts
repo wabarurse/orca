@@ -4,7 +4,7 @@ import { provider } from "../../api";
 import { modelCapabilities } from "../../api/model";
 import { prefetchContextLimits } from "../../api/model";
 import { loadConfig, saveConfig } from "../../config";
-import { accountForModel, effectiveAccount, effectiveModel, roleOverrides, saveProjectModel, validateModel } from "../../core/data/projects";
+import { accountForModel, effectiveAccount, effectiveModel, roleOverrides, saveModelWindows, saveProjectModel, validateModel } from "../../core/data/projects";
 import type { Role } from "../../protocol";
 import { accountId } from "../../api/auth";
 import { effectiveSettingsReport } from "../../core/data/projects";
@@ -28,6 +28,7 @@ export async function modelChoices(dim: (s: string) => string, project?: string)
   const errors: string[] = [];
   try {
     const ids = await (await provider(account.provider, { profile: account.profile })).models();
+    saveModelWindows(); // the list just reported each model's window: remembered for every later process
     for (const id of recentModels(ids, model)) choices.push({ value: id, current: id === model, label: `${id}  ${dim(account.provider)}` });
   } catch (err) {
     errors.push(`${account.provider}: ${err instanceof Error ? err.message : String(err)}`);

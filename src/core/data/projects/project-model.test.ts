@@ -230,3 +230,31 @@ test("a model whose window nobody has verified waits once for the catalog, so th
   at = Date.now(); await projectModelResolver("unknown-window", async () => silent)(); expect(Date.now() - at).toBeLessThan(30);
     clearCatalogLimits(); clearCatalogWaits();
 });
+
+test("a fetched window is remembered in the home: the next process knows it without a fetch, and the table answers only when nothing was fetched", async () => {
+  const { saveModelWindows } = await import("./project-model");
+  const home = mkdtempSync(join(tmpdir(), "orca-windows-")), before = process.env.ORCA_HOME;
+  process.env.ORCA_HOME = home;
+  try {
+    clearCatalogLimits(); clearCatalogWaits();
+    mkdirSync(paths.project("p"), { recursive: true });
+    await saveProjectModel("p", "claude-next-9");
+    let calls = 0;
+    const listed: Provider = { name: "anthropic", async complete() { throw new Error("unused"); },
+      models: async () => { calls++; rememberCatalogLimits([["claude-next-9", 640_000]]); return ["claude-next-9"]; } };
+    await projectModelResolver("p", async () => listed)(); // the first request fetches, and saves what was reported
+    await Bun.sleep(5);
+    expect(contextWindow({}, "claude-next-9")).toEqual({ limit: 640_000, estimated: false });
+    // A new process: nothing in memory, a provider that never answers. The saved window is there before any request waits.
+    clearCatalogLimits(); clearCatalogWaits(); process.env.ORCA_HOME = join(home, "elsewhere"); saveModelWindows(); process.env.ORCA_HOME = home;
+    const silent: Provider = { ...listed, models: () => new Promise<string[]>(() => {}) };
+    const at = Date.now(); await projectModelResolver("p", async () => silent)();
+    expect(Date.now() - at).toBeLessThan(200); expect(calls).toBe(1);
+    expect(contextWindow({}, "claude-next-9")).toEqual({ limit: 640_000, estimated: false });
+    // A model switch lists the models (the TUI calls saveModelWindows after it): a changed window replaces the saved one.
+    rememberCatalogLimits([["claude-next-9", 1_000_000]]); saveModelWindows();
+    clearCatalogLimits(); process.env.ORCA_HOME = join(home, "elsewhere"); saveModelWindows(); process.env.ORCA_HOME = home; saveModelWindows();
+    expect(contextWindow({}, "claude-next-9").limit).toBe(1_000_000);
+    expect(contextWindow({}, "claude-opus-4-6")).toEqual({ limit: 200000, estimated: false }); // never fetched: the table
+  } finally { clearCatalogLimits(); clearCatalogWaits(); if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before; rmSync(home, { recursive: true, force: true }); }
+});

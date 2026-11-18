@@ -50,6 +50,9 @@ export function rememberCatalogLimits(entries: Iterable<readonly [string, unknow
   for (const [model, limit] of entries) if (validLimit(limit)) catalogLimits.set(model, limit);
 }
 
+/** Every window a catalog has reported to this process (or that was loaded from the saved ones). */
+export const catalogLimitEntries = (): [string, number][] => [...catalogLimits];
+
 /** Fetches a provider's catalog (windows and effort levels) once per process. Turns never await it and
  * failures are silent and retried later; the returned promise never rejects, so a picker may wait on it. */
 export function prefetchContextLimits(provider: { name: string; models(): Promise<unknown> }): Promise<void> {
