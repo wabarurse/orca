@@ -3,12 +3,12 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, saveConfig, loadConfig, readProjectState, writeProjectState } from "../../../config";
-import { effectiveModel, saveProjectModel, projectModelResolver, roleOverrides, saveRoleModel } from "./project-model";
+import { clearCatalogWaits, effectiveModel, saveProjectModel, projectModelResolver, roleOverrides, saveRoleModel } from "./project-model";
 import { saveProjectSettings } from "./project-settings";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import { clearCatalogLimits } from "../../../api/model/context-window";
+import { clearCatalogLimits, contextWindow, rememberCatalogLimits } from "../../../api/model/context-window";
 import type { Provider } from "../../../api/provider";
 
 const home = mkdtempSync(join(tmpdir(), "project-model-"));
@@ -205,4 +205,28 @@ test("a role override switches at that role's next request only", async () => {
     } } },
   }).run();
   expect(requested).toEqual(["claude-opus-5", "claude-haiku-5-5"]);
+});
+
+test("a model whose window nobody has verified waits once for the catalog, so the first request never compacts on the 128k guess", async () => {
+  clearCatalogLimits(); clearCatalogWaits();
+  mkdirSync(paths.project("unknown-window"), { recursive: true });
+  await saveProjectModel("unknown-window", "claude-next-9");
+  let calls = 0;
+  const slow: Provider = { name: "anthropic", async complete() { throw new Error("unused"); },
+    models: async () => { calls++; await Bun.sleep(30); rememberCatalogLimits([["claude-next-9", 1_000_000]]); return ["claude-next-9"]; } };
+  expect(contextWindow({}, "claude-next-9")).toEqual({ limit: 128000, estimated: true });
+  await projectModelResolver("unknown-window", async () => slow)();
+  expect(contextWindow({}, "claude-next-9")).toEqual({ limit: 1_000_000, estimated: false }); // known before the first request is built
+  expect(calls).toBe(1);
+  // A catalog that never answers delays one request by the wait, never the ones after it.
+  clearCatalogLimits(); clearCatalogWaits();
+  const silent: Provider = { ...slow, models: () => new Promise<string[]>(() => {}) };
+  const resolve = projectModelResolver("unknown-window", async () => silent, undefined, 40);
+  let at = Date.now(); await resolve(); expect(Date.now() - at).toBeGreaterThanOrEqual(35);
+  at = Date.now(); await resolve(); expect(Date.now() - at).toBeLessThan(30);
+  // A model with a verified window never waits.
+  clearCatalogWaits();
+  await saveProjectModel("unknown-window", "claude-fable-5-1");
+  at = Date.now(); await projectModelResolver("unknown-window", async () => silent)(); expect(Date.now() - at).toBeLessThan(30);
+    clearCatalogLimits(); clearCatalogWaits();
 });

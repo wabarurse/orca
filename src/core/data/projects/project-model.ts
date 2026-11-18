@@ -7,7 +7,7 @@ import { provider, type Provider } from "../../../api";
 import { providerFor } from "../../../api/model";
 import type { ProviderName } from "../../../api/auth";
 import type { Role } from "../../../protocol";
-import { prefetchContextLimits } from "../../../api/model";
+import { contextWindow, prefetchContextLimits } from "../../../api/model";
 import { accountForModel } from "./project-account";
 
 function validateProject(project: string): void {
@@ -96,15 +96,27 @@ export function saveRoleModel(project: string, role: Role, model: string | undef
   } catch (error) { return Promise.reject(error); }
 }
 
+/** How long a request waits for the model catalog when the model's window is otherwise a guess, and the models
+ * already waited for in this process (a catalog that does not answer delays one request, not every one). */
+const CATALOG_WAIT_MS = 5000, awaited = new Set<string>();
+/** Tests start each case with nothing waited for. */
+export const clearCatalogWaits = () => awaited.clear();
+
 /** Re-read just before each request, never during a tool or an in-flight call. With `role`, that role's override applies when it is
  * set for the project model's provider; otherwise (and without `role`) the project model. Settings are the chosen model's own. */
-export function projectModelResolver(project: string, load: typeof provider = provider, role?: Role): () => Promise<{ model: string; provider: Provider; settings: RequestSettings }> {
+export function projectModelResolver(project: string, load: typeof provider = provider, role?: Role, catalogWaitMs = CATALOG_WAIT_MS): () => Promise<{ model: string; provider: Provider; settings: RequestSettings }> {
   return async () => {
     const model = await effectiveModel(project, role);
     try {
       const account = await accountForModel(model, readProjectState<unknown>(project, "account")); // an override has the project model's provider, so this is the project's account, never a global one
       const selected = await load(account.provider, { profile: account.profile });
-      prefetchContextLimits(selected); // Background only: the turn never waits on the catalog.
+      const catalog = prefetchContextLimits(selected); // In the background: a turn does not wait on the catalog,
+      // except once when nothing says how large this model's window is. The fallback (128k) is a guess: on a 1M
+      // model it makes a fresh process compact at once and hold the turn until the summary lands.
+      if (contextWindow({}, model).estimated && !awaited.has(model)) {
+        awaited.add(model);
+        await Promise.race([catalog, new Promise(done => setTimeout(done, catalogWaitMs).unref())]);
+      }
       return { model, provider: selected, settings: await effectiveSettings(project, model) };
     }
     catch (error) { throw new Error(`cannot load provider for project ${project} model ${model}: ${error instanceof Error ? error.message : error}`); }
