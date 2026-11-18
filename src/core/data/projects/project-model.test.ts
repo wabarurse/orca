@@ -3,12 +3,12 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paths, saveConfig, loadConfig, readProjectState, writeProjectState } from "../../../config";
-import { effectiveModel, saveProjectModel, projectModelResolver, roleOverrides, saveRoleModel } from "./project-model";
+import { clearCatalogWaits, effectiveModel, saveProjectModel, projectModelResolver, roleOverrides, saveRoleModel } from "./project-model";
 import { saveProjectSettings } from "./project-settings";
 import { createAgent } from "../../agent-loop/loop/agent";
 import { open } from "../transcripts/transcript";
 import { fakeProvider, text, toolUse } from "../../../test/fake-provider";
-import { clearCatalogLimits } from "../../../api/model/context-window";
+import { clearCatalogLimits, contextWindow, rememberCatalogLimits } from "../../../api/model/context-window";
 import type { Provider } from "../../../api/provider";
 
 const home = mkdtempSync(join(tmpdir(), "project-model-"));
@@ -205,4 +205,56 @@ test("a role override switches at that role's next request only", async () => {
     } } },
   }).run();
   expect(requested).toEqual(["claude-opus-5", "claude-haiku-5-5"]);
+});
+
+test("a model whose window nobody has verified waits once for the catalog, so the first request never compacts on the 128k guess", async () => {
+  clearCatalogLimits(); clearCatalogWaits();
+  mkdirSync(paths.project("unknown-window"), { recursive: true });
+  await saveProjectModel("unknown-window", "claude-next-9");
+  let calls = 0;
+  const slow: Provider = { name: "anthropic", async complete() { throw new Error("unused"); },
+    models: async () => { calls++; await Bun.sleep(30); rememberCatalogLimits([["claude-next-9", 1_000_000]]); return ["claude-next-9"]; } };
+  expect(contextWindow({}, "claude-next-9")).toEqual({ limit: 128000, estimated: true });
+  await projectModelResolver("unknown-window", async () => slow)();
+  expect(contextWindow({}, "claude-next-9")).toEqual({ limit: 1_000_000, estimated: false }); // known before the first request is built
+  expect(calls).toBe(1);
+  // A catalog that never answers delays one request by the wait, never the ones after it.
+  clearCatalogLimits(); clearCatalogWaits();
+  const silent: Provider = { ...slow, models: () => new Promise<string[]>(() => {}) };
+  const resolve = projectModelResolver("unknown-window", async () => silent, undefined, 40);
+  let at = Date.now(); await resolve(); expect(Date.now() - at).toBeGreaterThanOrEqual(35);
+  at = Date.now(); await resolve(); expect(Date.now() - at).toBeLessThan(30);
+  // A model with a verified window never waits.
+  clearCatalogWaits();
+  await saveProjectModel("unknown-window", "claude-fable-5-1");
+  at = Date.now(); await projectModelResolver("unknown-window", async () => silent)(); expect(Date.now() - at).toBeLessThan(30);
+    clearCatalogLimits(); clearCatalogWaits();
+});
+
+test("a fetched window is remembered in the home: the next process knows it without a fetch, and the table answers only when nothing was fetched", async () => {
+  const { saveModelWindows } = await import("./project-model");
+  const home = mkdtempSync(join(tmpdir(), "orca-windows-")), before = process.env.ORCA_HOME;
+  process.env.ORCA_HOME = home;
+  try {
+    clearCatalogLimits(); clearCatalogWaits();
+    mkdirSync(paths.project("p"), { recursive: true });
+    await saveProjectModel("p", "claude-next-9");
+    let calls = 0;
+    const listed: Provider = { name: "anthropic", async complete() { throw new Error("unused"); },
+      models: async () => { calls++; rememberCatalogLimits([["claude-next-9", 640_000]]); return ["claude-next-9"]; } };
+    await projectModelResolver("p", async () => listed)(); // the first request fetches, and saves what was reported
+    await Bun.sleep(5);
+    expect(contextWindow({}, "claude-next-9")).toEqual({ limit: 640_000, estimated: false });
+    // A new process: nothing in memory, a provider that never answers. The saved window is there before any request waits.
+    clearCatalogLimits(); clearCatalogWaits(); process.env.ORCA_HOME = join(home, "elsewhere"); saveModelWindows(); process.env.ORCA_HOME = home;
+    const silent: Provider = { ...listed, models: () => new Promise<string[]>(() => {}) };
+    const at = Date.now(); await projectModelResolver("p", async () => silent)();
+    expect(Date.now() - at).toBeLessThan(200); expect(calls).toBe(1);
+    expect(contextWindow({}, "claude-next-9")).toEqual({ limit: 640_000, estimated: false });
+    // A model switch lists the models (the TUI calls saveModelWindows after it): a changed window replaces the saved one.
+    rememberCatalogLimits([["claude-next-9", 1_000_000]]); saveModelWindows();
+    clearCatalogLimits(); process.env.ORCA_HOME = join(home, "elsewhere"); saveModelWindows(); process.env.ORCA_HOME = home; saveModelWindows();
+    expect(contextWindow({}, "claude-next-9").limit).toBe(1_000_000);
+    expect(contextWindow({}, "claude-opus-4-6")).toEqual({ limit: 200000, estimated: false }); // never fetched: the table
+  } finally { clearCatalogLimits(); clearCatalogWaits(); if (before === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = before; rmSync(home, { recursive: true, force: true }); }
 });

@@ -5,7 +5,7 @@ import { importClaudeCode, loginClaude } from "../../api/auth";
 import { importCodex, loginCodex } from "../../api/auth";
 import { provider } from "../../api";
 import { providerFor } from "../../api/model";
-import { effectiveAccount, effectiveModel, lastProviderModel, saveProjectAccount, seedProjectAccount } from "../../core/data/projects";
+import { effectiveAccount, effectiveModel, lastProviderModel, saveModelWindows, saveProjectAccount, seedProjectAccount } from "../../core/data/projects";
 import { recentModels, type Choice } from "./model";
 
 /** The account list for a project: exactly its one selected account is marked current. */
@@ -24,6 +24,7 @@ export async function useAccount(account: AccountRef, project: string, identity?
     return `using ${accountId(account)} for this project (applies before each agent's next model request; other projects keep theirs)`;
   }
   const offered = await (await load(account.provider, { profile: account.profile })).models();
+  saveModelWindows();
   const last = lastProviderModel(project, account.provider);
   const next = last && offered.includes(last) ? last : recentModels(offered, "")[0];
   if (!next) throw new Error(`${account.provider} offers no models for ${accountId(account)}; the project keeps ${model} and its account`);

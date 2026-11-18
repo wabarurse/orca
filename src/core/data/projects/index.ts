@@ -2,7 +2,7 @@ export { assertProjectIdentity, conversationTurnLock, projectIdentity, matchesPr
 export * as session from "./session";
 export { effectiveSettings, effectiveSettingsReport, setEffort, settingChange } from "./project-settings";
 export { accountForModel, effectiveAccount, lastProviderModel, saveProjectAccount, seedProjectAccount } from "./project-account";
-export { effectiveModel, projectModelResolver, roleOverrides, saveProjectModel, saveRoleModel, validateModel } from "./project-model";
+export { effectiveModel, projectModelResolver, roleOverrides, saveModelWindows, saveProjectModel, saveRoleModel, validateModel } from "./project-model";
 export { assertWorktree, checkoutNote, initializeWorkspace } from "./workspace";
 export { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "./registry";
 export * as directories from "./catalog";
