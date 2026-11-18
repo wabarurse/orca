@@ -74,10 +74,11 @@ export function foldHeadings<T extends WorkRow & { section?: true }>(items: read
   return result;
 }
 
-/** The header is a selectable row, so arrows, Enter and mouse share navigation. */
-export function withArchiveSection<T extends WorkRow & { archived?: boolean }>(items: T[], expanded: boolean): (T | WorkRow & { section: true })[] {
+/** A tab's rows as shown: archived ones under their own header row (a selectable row, so arrows, Enter and mouse share
+ * navigation), and the headings in `folded` shut. */
+export function withArchiveSection<T extends WorkRow & { archived?: boolean }>(items: T[], expanded: boolean, folded: ReadonlySet<string>): (T | WorkRow & { section: true })[] {
   const archived = items.filter(item => item.archived);
-  return [...items.filter(item => !item.archived), ...(archived.length ? [{ id: ARCHIVED_SECTION, name: archiveTitle(archived.length, expanded), section: true as const }, ...(expanded ? archived : [])] : [])];
+  return foldHeadings<T | WorkRow & { section: true }>([...items.filter(item => !item.archived), ...(archived.length ? [{ id: ARCHIVED_SECTION, name: archiveTitle(archived.length, expanded), section: true as const }, ...(expanded ? archived : [])] : [])], folded);
 }
 
 /** The index of the next item (from `from`, stepping `dir`, wrapping) whose name contains `query`; -1 when none does. */

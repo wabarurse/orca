@@ -81,7 +81,7 @@ test("the input line shows the text around the cursor and where the cursor is", 
 
 test("archived items fold under one selectable row", () => {
   const rows = [{ id: "a", name: "A" }, { id: "b", name: "B", archived: true }];
-  expect(withArchiveSection(rows, false).map(row => row.name)).toEqual(["A", "▸ Archived (1)"]);
-  expect(withArchiveSection(rows, true).map(row => row.name)).toEqual(["A", "▾ Archived (1)", "B"]);
-  expect(withArchiveSection([rows[0]!], true)).toHaveLength(1);
+  expect(withArchiveSection(rows, false, new Set()).map(row => row.name)).toEqual(["A", "▸ Archived (1)"]);
+  expect(withArchiveSection(rows, true, new Set()).map(row => row.name)).toEqual(["A", "▾ Archived (1)", "B"]);
+  expect(withArchiveSection([rows[0]!], true, new Set())).toHaveLength(1);
 });

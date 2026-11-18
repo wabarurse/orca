@@ -10,7 +10,7 @@ import { directories, togglePin, workViews } from "../core/data/projects";
 import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/data/bubbles";
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
 import { archiveAgents, cancelSession, launchIdentity, listAgents, processes, restoreAgents } from "../core/tmux";
-import { ARCHIVED_SECTION, byDay, dim, findItem, foldHeadings, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
+import { ARCHIVED_SECTION, byDay, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
   type Key, type OutlineNode, type WorkPageRender, type WorkRow, type WorkSection } from "./components";
 import { deleteFolder, deleteProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
 import { elapsedMs, formatElapsed } from "./header";
@@ -213,10 +213,10 @@ export class WorkPages {
     const page = view.page, history = !!view.history[kind];
     if (kind === "projects") return this.projectItems(view);
     if (!page) return [];
-    if (kind === "processes") return foldHeadings(processItems(view.background, this.host.clock.now()), this.folds(view, kind));
+    if (kind === "processes") return withArchiveSection(processItems(view.background, this.host.clock.now()), false, this.folds(view, kind)) as Item[]; // nothing here is archived
     const now = this.host.clock.now();
     // Listed rows newest first under a heading per day; archived rows keep their own section below.
-    const section = (items: Item[], at: (item: Item) => number) => foldHeadings(withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history), this.folds(view, kind))
+    const section = (items: Item[], at: (item: Item) => number) => withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history, this.folds(view, kind))
       .map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: item.name, text: "heading" in item ? DAY_HELP : SECTION_HELP }] });
     if (kind === "tasks") return this.taskItems(view, history);
     if (kind === "images") {
