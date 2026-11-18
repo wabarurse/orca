@@ -19,7 +19,7 @@ import { settingChange, effectiveSettings, setEffort } from "../core/data/projec
 
 import { accountChoices, deletionSummary, login, resetProject, useAccount, sendAgentFeedback, restoreConversations } from "./commands";
 import { checkContextClear } from "./commands";
-import { activeAgentRows, liveAgentsOrNull } from "../core/tmux";
+import { activeAgentRows, liveAgentsOrNull, processes } from "../core/tmux";
 import { directories, displayName, listProjects, newProjectName, remoteOf, setDisplayName, shortRemote } from "../core/data/projects";
 import { activeRoles, chooseBubble, chooseModel, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
 import { paths } from "../config";
@@ -74,7 +74,7 @@ export class App {
   private inputTop: number | undefined;
   /** Null until explicitly opened; only a footer scroll position, never a history line. */
   private helpTop: number | null = null;
-  private readonly taskCounts = new TaskCounts<Page>(page => (this.deps.taskCount ?? this.deps.tasks ?? listTasks)(page.project), page => this.validPage(page), () => this.draw());
+  private readonly taskCounts = new TaskCounts<Page>(page => (this.deps.taskCount ?? this.deps.tasks ?? listTasks)(page.project), page => this.validPage(page), () => this.draw(), page => (this.deps.processCount ?? (project => processes.processCount(project, this.deps.sessions)))(page.project));
   /** The full-screen page of Agents, Tasks, Questions, Images and Projects; it takes every key while open. */
   readonly work: WorkPages;
 
@@ -522,7 +522,7 @@ export class App {
   status(page: Page): string {
     const questions = page.questions.loaded && !page.questions.error ? page.questions.open.length : "?";
     const images = this.imageLists.get(page);
-    return `${page.agentCount ?? "?"} agents | ${this.taskCounts.label(page)} | ${questions} questions | ${images?.count ?? "?"} ${images?.rows.some(row => row.kind === "video") ? "media" : "images"}`;
+    return this.taskCounts.withProcesses(page, `${page.agentCount ?? "?"} agents | ${this.taskCounts.label(page)} | ${questions} questions | ${images?.count ?? "?"} ${images?.rows.some(row => row.kind === "video") ? "media" : "images"}`, this.deps.term.cols);
   }
 
   /** Only the selected conversation can animate; tool rows already carry their own shimmer. */

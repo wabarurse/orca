@@ -14,21 +14,22 @@ afterEach(async () => { for (const c of cleanups.splice(0)) await c(); });
 test("unknown until read, counts unarchived rows, single-flight, failure is ? not 0, closed pages ignored, redraw only on change", async () => {
   const page = {}, reads: ReturnType<typeof deferred<TaskRow[]>>[] = [];
   let open = true, draws = 0;
-  const counts = new TaskCounts<object>(() => { const d = deferred<TaskRow[]>(); reads.push(d); return d.promise; }, () => open, () => { draws++; });
-  expect(counts.label(page)).toBe("? tasks");
+  const running = [1, 1, 3]; // what runs in the background, per refresh; then the read fails
+  const counts = new TaskCounts<object>(() => { const d = deferred<TaskRow[]>(); reads.push(d); return d.promise; }, () => open, () => { draws++; }, async () => { if (!running.length) throw new Error("tmux unreadable"); return running.shift()!; });
+  expect(counts.label(page)).toBe("? tasks"); expect(counts.processes(page)).toBe("? processes");
   const first = counts.refresh(page); void counts.refresh(page);
   await Bun.sleep(0); expect(reads).toHaveLength(1);
   reads[0]!.resolve([row("a"), row("b", true)]); await first;
-  expect(counts.label(page)).toBe("1 task"); expect(draws).toBe(1);
+  expect(counts.label(page)).toBe("1 task"); expect(counts.processes(page)).toBe("1 process"); expect(draws).toBe(2);
   const again = counts.refresh(page); await Bun.sleep(0);
   reads[1]!.resolve([row("a"), row("c")]); await again;
-  expect(counts.label(page)).toBe("2 tasks");
+  expect(counts.label(page)).toBe("2 tasks"); expect(draws).toBe(3); // the unchanged process count did not redraw
   const same = counts.refresh(page); await Bun.sleep(0);
   reads[2]!.resolve([row("a"), row("c")]); await same;
-  expect(draws).toBe(2); // an unchanged label does not redraw
+  expect(counts.processes(page)).toBe("3 processes"); expect(draws).toBe(4); // an unchanged task label does not redraw
   const failing = counts.refresh(page); await Bun.sleep(0);
   reads[3]!.reject(new Error("corrupt registry")); await failing;
-  expect(counts.label(page)).toBe("? tasks");
+  expect(counts.label(page)).toBe("? tasks"); expect(counts.processes(page)).toBe("? processes"); // a failed read is unknown, never 0
   // A shared read (the Tasks panel's) sets the count and passes its rows/error through.
   expect(await counts.observe(page, Promise.resolve([]))).toEqual([]);
   expect(counts.label(page)).toBe("0 tasks");

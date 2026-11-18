@@ -90,6 +90,13 @@ export async function processView(project: string, now = Date.now(), from: Sessi
   return { watches: [...watches.values()].sort((a, b) => a.repository.localeCompare(b.repository) || a.number - b.number), commands, sessions: await agentSessions(project, from) };
 }
 
+/** How many things run in the background for the conversation right now: watched pull requests, commands still
+ * running and agent-opened tmux sessions with a live window. For the status bar: no output is read. */
+export async function processCount(project: string, from: Sessions = sessions): Promise<number> {
+  const view = await processView(project, Date.now(), { ...from, tail: async () => "" });
+  return view.watches.length + view.commands.filter(command => command.live).length + view.sessions.filter(session => session.windows.some(w => w.live)).length;
+}
+
 const told = (project: string, text: string) => put(project, "orchestrator", { from: "runtime", text });
 /** The user stopped one command from the Processes tab: like Ctrl+C in its terminal, and the orchestrator is told. */
 export async function stopCommand(project: string, id: string): Promise<void> {

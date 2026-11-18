@@ -46,10 +46,10 @@ test("Images uses project-local counts and Vim selection; only Enter opens a vie
     await app.refreshSessions();
     await until(() => term.screen().includes("Screenshot 4"));
     expect(select("Screenshot 2")).toBe(true);
-    expect(app.status(app.page!)).toEndWith("4 images");
+    expect(app.status(app.page!)).toContain("| 4 images");
     term.type("k"); await until(() => select("Screenshot 3"));
     await app.openPage(other);
-    expect(app.status(app.page!)).toEndWith("0 images");
+    expect(app.status(app.page!)).toContain("| 0 images");
     term.type("P"); await until(() => term.screen().includes("No images"));
     term.type("gT"); await until(() => app.page?.project === project);
     term.type("P"); await until(() => app.work.kind === "images");
@@ -160,7 +160,7 @@ test("Images lists retained recordings beside images and opens video only on Ent
     await until(() => !!app.page);
     app.work.show("images"); await until(() => term.screen().includes("Video · demo.mp4"));
     expect(term.screen()).toContain("Screenshot");
-    expect(app.status(app.page!)).toEndWith("2 media");
+    expect(app.status(app.page!)).toContain("| 2 media");
     expect(opened).toEqual([]);
     // Recordings are newer than the delivered screenshot.
     term.press({ name: "enter" }); await until(() => opened.length === 1);
@@ -168,7 +168,7 @@ test("Images lists retained recordings beside images and opens video only on Ent
     await until(() => term.screen().includes("Opened demo.mp4"));
     term.type("d"); await until(() => term.screen().includes("Archive 1 images?"));
     term.type("y"); await until(() => term.screen().includes("Archived (1)"));
-    expect(app.status(app.page!)).toEndWith("1 media");
+    expect(app.status(app.page!)).toContain("| 1 media");
     expect(await Bun.file(video).exists()).toBe(true);
     expect(term.raw()).not.toContain("1337;File=");
   } finally { app.quit(); await running; }
