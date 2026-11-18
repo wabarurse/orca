@@ -96,13 +96,13 @@ test("image archive survives reopening, preserves bytes and can be viewed and re
     term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
     term.type("P"); await until(() => term.screen().includes("Old screenshot"));
     term.type("dy"); await until(() => term.screen().includes("Archived (1)"));
-    expect(app.status(app.page!)).toEndWith("0 images");
+    expect(app.status(app.page!)).toContain("| 0 images");
     term.press({ name: "escape" }); term.type("P");
     await until(() => term.screen().includes("▸ Archived (1)"));
     expect(term.screen()).not.toContain("Old screenshot");
     term.type("lj"); await until(() => term.screen().includes("Old screenshot"));
     expect(term.raw()).not.toContain("1337;File=");
-    term.type("u"); await until(() => app.status(app.page!).endsWith("1 images"));
+    term.type("u"); await until(() => app.status(app.page!).includes("| 1 images"));
     expect(await Bun.file(path).bytes()).toEqual(before);
     expect(workViews.workArchive("another-conversation", "images")[ref.id]).toBeUndefined();
   } finally { await stop(); }

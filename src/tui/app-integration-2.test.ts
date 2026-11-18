@@ -98,7 +98,7 @@ test("header caches model and filters subagent counts; unchanged background fram
   let now = 0;
   const clock: Clock = { now: () => now, every: (fn, ms) => { const tick = { fn, ms }; ticks.push(tick); return () => { ticks.splice(ticks.indexOf(tick), 1); }; } };
   let model = "model-a", reads = 0;
-  const app = new App({ term, clock, pollMs: 100_000, taskCount: async () => [], projectModel: async () => { reads++; return model; }, agents: async () => [{ name: "orchestrator", live: true }, { name: "worker-a", live: true }, { name: "reviewer-a", live: true }, { name: "worker-old", live: false }], openOrchestrator: fakeOrchestrators().openOrchestrator });
+  const app = new App({ term, clock, pollMs: 100_000, taskCount: async () => [], processCount: async () => 0, projectModel: async () => { reads++; return model; }, agents: async () => [{ name: "orchestrator", live: true }, { name: "worker-a", live: true }, { name: "reviewer-a", live: true }, { name: "worker-old", live: false }], openOrchestrator: fakeOrchestrators().openOrchestrator });
   const running = app.run("header-test");
   await until(() => term.screen().includes("model-a") && term.screen().includes("2 agents | 0 tasks"));
   const readOnce = reads;

@@ -106,6 +106,8 @@ export interface AppDeps {
   /** The status bar's own `N tasks` read (page open/switch, polls while the Tasks panel is closed); defaults to `tasks`. */
   taskCount?: typeof listTasks;
   treeTasks?: typeof allTasks;
+  /** The status bar's `N processes` read; defaults to the conversation's watches, live commands and tmux sessions. */
+  processCount?: (project: string) => Promise<number>;
   /** How the Processes tab asks tmux for agent-opened sessions and ends one; tests stub it. */
   sessions?: processes.Sessions;
   removeTask?: typeof removeTask;
