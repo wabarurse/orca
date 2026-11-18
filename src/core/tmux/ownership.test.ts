@@ -58,26 +58,30 @@ test("the tree reads folder → projects → sessions → items, and says what a
   expect(worktrees.find(s => s.path === dirty)!.items.task).toEqual([task.id]);
   expect(folder.projects.find(node => node.id === "q")!.sessions.filter(s => s.worktree)).toEqual([]);
 
-  expect(describeDeletion([p])).toBe("1 task, 1 question, 2 worktrees, 1 with uncommitted files that will be lost");
-  expect(describeDeletion(folder.projects)).toBe("2 conversations, 1 task, 1 question, 2 worktrees, 1 with uncommitted files that will be lost");
+  expect(describeDeletion([p])).toBe("1 task, 1 question, 2 worktrees, 1 with local changes, saved to an orca-saved branch first");
+  expect(describeDeletion(folder.projects)).toBe("2 conversations, 1 task, 1 question, 2 worktrees, 1 with local changes, saved to an orca-saved branch first");
   expect(describeDeletion([await projectNode("q")])).toBe("");
 });
 
 test("deleting a project removes its worktrees and every record under it, and nothing of its sibling", async () => {
   const mine = await ensureWorktree("p", "task/mine");
   const theirs = await ensureWorktree("q", "task/theirs");
-  writeFileSync(join(mine, "draft"), "uncommitted");
+  writeFileSync(join(mine, "draft"), "uncommitted"); writeFileSync(join(mine, ".env"), "SECRET=only-here\n");
+  writeFileSync(join(mine, ".gitignore"), "node_modules/\n.env\n");
   mkdirSync(join(mine, "node_modules")); writeFileSync(join(mine, "node_modules/fixture"), "generated");
   await registerTask("p", { name: "Mine", summary: "Work", branch: "task/mine", authorized: true });
   await ask("p", [{ text: "Mine?" }]);
   const kept = await ask("q", [{ text: "Theirs?" }]);
   const namespace = paths.worktrees("p"), folder = await folderOf("p");
 
-  // Uncommitted files refuse the deletion until the caller says to discard them.
-  await expect(deleteProject("p", quiet)).rejects.toThrow("local files or changes");
-  expect(existsSync(mine)).toBe(true); expect(existsSync(paths.project("p"))).toBe(true);
-
-  await deleteProject("p", { ...quiet, discard: true });
+  // Local changes never refuse a deletion and are never lost: they are saved to a branch first.
+  const { saved } = await deleteProject("p", quiet);
+  expect(saved).toHaveLength(1); expect(saved[0]).toMatch(/^orca-saved\/task-mine-\d{8}-\d{6}$/);
+  const files = git(repo, "ls-tree", "-r", "--name-only", saved[0]!).split("\n");
+  expect(files).toContain("draft"); expect(files).toContain(".env"); expect(files).toContain(".gitignore"); // an ignored file nothing regenerates too
+  expect(files.some(f => f.startsWith("node_modules"))).toBe(false); // build output is not saved
+  expect(git(repo, "show", `${saved[0]}:.env`)).toBe("SECRET=only-here");
+  expect(git(repo, "rev-parse", `${saved[0]}^`)).toBe(git(repo, "rev-parse", "task/mine")); // on top of the branch, which did not move
   expect(existsSync(mine)).toBe(false); expect(existsSync(namespace)).toBe(false);
   expect(existsSync(paths.project("p"))).toBe(false); expect(existsSync(paths.runtimeProject("p"))).toBe(false);
   expect(git(repo, "branch", "--list", "task/mine")).toContain("task/mine"); // Commits stay on the branch.

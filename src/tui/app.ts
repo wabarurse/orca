@@ -1161,7 +1161,7 @@ export class App {
       await page.orch.checkClear!();
       if (!this.clearCurrent(operation)) return;
       this.checkClearPage(page);
-      const losing = await deletionSummary({ name: page.project }).then(text => { operation!.discard = true; return text; }, () => "");
+      const losing = await deletionSummary({ name: page.project }).catch(() => "");
       this.helpTop = null; this.work.close();
       this.menu = operation.menu = {
         title: dim(`clear ${page.name}? removes its history${losing ? `, ${losing}` : ""}; name, folder and settings stay. ↑↓ enter · esc`),
@@ -1201,7 +1201,7 @@ export class App {
       if (projectIdentity(page.project) !== operation.identity) throw new Error("project changed; reopen it before clearing context");
       // The project as if just created (commands/project.ts): its page closes once the checks pass and reopens in the same tab.
       const at = this.pages.indexOf(page), draft = this.input;
-      await (this.deps.resetProject ?? resetProject)(page.project, { ...this.deps.projects, discard: operation.discard, beforeRemove: () => { if (!this.clearCurrent(operation)) throw new Error("you moved to another page"); this.closePage(at); } });
+      await (this.deps.resetProject ?? resetProject)(page.project, { ...this.deps.projects, beforeRemove: () => { if (!this.clearCurrent(operation)) throw new Error("you moved to another page"); this.closePage(at); } });
       const fresh = await this.openPage(page.project);
       this.pages.splice(at, 0, ...this.pages.splice(this.pages.indexOf(fresh), 1)); this.active = at; this.input = draft;
       this.note("cleared: history, tasks, questions, images and agents removed.", fresh);

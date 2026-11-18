@@ -57,7 +57,7 @@ function running(agents: string[], exitAfter = 1) {
 test("stopping asks first and waits: agents that exit by themselves are never ended, and the daemon stops last", async () => {
   const { options, log } = running(["worker-feat"]);
   const report = await stopTree("p", options);
-  expect(report).toEqual({ agents: ["worker-feat"], forced: [], commands: 0, problems: [] });
+  expect(report).toEqual({ agents: ["worker-feat"], forced: [], commands: 0, endedCommands: 0, watches: [], problems: [] });
   expect(execution.stopped("p")).toBe(true); // the durable barrier: nothing new starts
   expect(log).toEqual(["stop-daemon p", "kill-idle p"]); // no window was closed
   expect(execution.stopped("q")).toBe(false);
@@ -71,16 +71,59 @@ test("an agent still alive after the wait has its window closed, and the report 
   await expect(stopTree("p", { ...options, live: async () => null })).rejects.toThrow("cannot check live agents; nothing was stopped");
 });
 
-test("a running command gets its stop file, and one that never stops is reported, not hidden", async () => {
-  const at = new Date().toISOString(), id = "00000000-0000-4000-8000-000000000001";
-  const record: ProcessRecord = { id, project: "p", owner: "worker-feat", role: "worker", cwd: repo, command: "bun run stack", createdAt: at, updatedAt: at,
-    state: "running", timeoutMs: 0, maxBytes: 0, notify: false, events: [] };
+const command = (n: number, extra: Partial<ProcessRecord>): ProcessRecord => {
+  const at = new Date().toISOString();
+  return { id: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, project: "p", owner: "worker-feat", role: "worker", cwd: repo, command: `bun run stack ${n}`,
+    createdAt: at, updatedAt: at, state: "running", timeoutMs: 0, maxBytes: 0, notify: false, events: [], ...extra };
+};
+
+test("a supervisor that ignores its stop file is ended after the wait, and the command is closed as cancelled", async () => {
+  // Real processes, standing in for a supervisor and its command that never read the stop file.
+  const supervisor = Bun.spawn(["sleep", "60"]), child = Bun.spawn(["sleep", "60"]);
+  await Bun.sleep(1100); // ps reports start times in whole seconds
+  const record = command(1, { supervisorPid: supervisor.pid, pid: child.pid, updatedAt: new Date().toISOString() });
   await saveProcess(record);
   const { options } = running([]);
-  const report = await stopTree("p", { ...options, graceMs: 60 });
-  expect(report.commands).toBe(1);
-  expect(existsSync(join(processDirectory("p", id), "stop")) || (await readProcess("p", id)).state !== "running").toBe(true);
-  expect(report.problems.join(" ")).toMatch(/1 command had not stopped after the wait|^$/);
+  const report = await stopTree("p", { ...options, graceMs: 50, end: { waitMs: 500 } });
+  expect(report.commands).toBe(1); expect(report.endedCommands).toBe(1); expect(report.problems).toEqual([]);
+  expect(await supervisor.exited).not.toBe(0); expect(await child.exited).not.toBe(0);
+  const closed = await readProcess("p", record.id);
+  expect(closed.state).toBe("cancelled"); expect(closed.reason).toContain("did not stop in time"); expect(closed.settledAt).toBeTruthy();
+  expect(existsSync(join(processDirectory("p", record.id), "stop"))).toBe(true); // it was asked first
+});
+
+test("a pid the system gave to another program is never signalled; a record with no supervisor is closed", async () => {
+  const stranger = Bun.spawn(["sleep", "60"]);
+  try {
+    await Bun.sleep(1100);
+    // The record's last observation is before the stranger started: same number, not the same process.
+    const reused = command(2, { supervisorPid: stranger.pid, pid: stranger.pid, updatedAt: new Date(Date.now() - 60_000).toISOString() });
+    const stub = command(3, {});
+    await saveProcess(reused); await saveProcess(stub);
+    const { options } = running([]);
+    const report = await stopTree("p", { ...options, graceMs: 50, end: { waitMs: 200 } });
+    expect(stranger.killed).toBe(false); expect(stranger.exitCode).toBeNull();
+    expect((await readProcess("p", reused.id)).state).toBe("cancelled"); // what blocked was not it, so the record closes
+    expect((await readProcess("p", stub.id)).reason).toContain("no supervisor was ever recorded");
+    expect(report.problems).toEqual([]);
+  } finally { stranger.kill(); }
+});
+
+test("PR watches are switched off with their orc, explicit and task ones alike, and switched on again by a restore", async () => {
+  const { registerPRWatch, prWatchEnabled, listProcesses } = await import("../data/processes");
+  const { observeTaskPR } = await import("../data/tasks");
+  const head = "a".repeat(40);
+  await registerPRWatch("p", { repository: "o/r", number: 9, head });
+  const task = await registerTask("p", { name: "Linked", summary: "s", branch: "feat/linked", authorized: true });
+  await observeTaskPR("p", task.id, { pr: { repository: "o/r", number: 7, url: "https://github.com/o/r/pull/7", head }, branch: "feat/linked", state: "OPEN", ready: false, checks: "pending" });
+  const { options } = running([]);
+  const report = await archiveProject("p", options);
+  expect(report.stop.watches.map(w => w.number).sort()).toEqual([7, 9]);
+  expect(prWatchEnabled("p", { repository: "o/r", number: 7 })).toBe(false); expect(prWatchEnabled("p", { repository: "o/r", number: 9 })).toBe(false);
+  expect((await listProcesses("p")).filter(p => p.prWatch).map(p => p.state)).toEqual(["cancelled"]);
+  expect(report.kept.join(" ")).toContain("Linked"); // its PR is open, so the task itself stays as it is
+  await restoreProject("p");
+  expect(prWatchEnabled("p", { repository: "o/r", number: 7 })).toBe(true);
 });
 
 test("deleting an orc archives it from the bottom up: nothing is removed, lists drop it, and a restore brings back exactly what it put away", async () => {
@@ -138,16 +181,19 @@ test("deleting a bubble is deleting each of its orcs; one that cannot be checked
 
 test("orca clean is the purge: an archived orc is listed in a preview and removed, with its last bubble, when applied", async () => {
   const bubble = await ensureBubble("p", "Solo");
+  const tree = await ensureWorktree("p", "task/dirty");
+  writeFileSync(join(tree, "draft"), "only copy"); // local changes never keep an archived orc from being purged
   const { options } = running([]);
   await archiveProject("p", options);
   const purged: string[] = [];
-  const preview = await cleanStorage(false, async project => { purged.push(project); });
+  const preview = await cleanStorage(false, async project => { purged.push(project); return { saved: [] }; });
   expect(preview.find(change => change.path === paths.project("p"))!.disposition).toMatch(/^would remove: conversation ".*" deleted \d{4}-\d\d-\d\d$/);
   expect(purged).toEqual([]); expect(existsSync(paths.project("p"))).toBe(true);
   const { deleteProject } = await import("./ownership");
   const applied = await cleanStorage(true, project => deleteProject(project, { stop: async () => {}, live: async () => [], kill: async () => {} }));
-  expect(applied.find(change => change.path === paths.project("p"))!.disposition).toStartWith("removed: conversation");
-  expect(existsSync(paths.project("p"))).toBe(false);
+  expect(applied.find(change => change.path === paths.project("p"))!.disposition).toMatch(/^removed: conversation .*; local changes saved to orca-saved\/task-dirty-\d{8}-\d{6}$/);
+  expect(existsSync(paths.project("p"))).toBe(false); expect(existsSync(tree)).toBe(false);
+  expect(git(repo, "branch", "--list", "orca-saved/*")).toContain("orca-saved/task-dirty-");
   expect(existsSync(join(paths.bubbles, bubble.id))).toBe(false);
   expect(existsSync(paths.project("q"))).toBe(true); // a live conversation is never purged
 });

@@ -3,6 +3,7 @@ export { processInspection } from "./inspection";
 export { handoffProcess } from "./handoff";
 export { registerPRWatch, prWatchEnabled, setPRWatchEnabled } from "./pr-watch";
 export { processCleanupBlocker } from "./cleanup-guard";
+export { endProcess, type EndOptions } from "./terminate";
 export { controlProcess, superviseProcess } from "./supervisor";
 export { recoverableProcesses } from "./store";
 export { launchProcess } from "./launch";

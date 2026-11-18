@@ -9,6 +9,8 @@ export interface ProjectArchive {
   tasks: string[];
   /** Questions and agents it hid, and the worktree sessions it marked archived. */
   questions: string[]; agents: string[]; sessions: string[];
+  /** The PR watches it switched off. */
+  watches: { repository: string; number: number }[];
 }
 
 /** The archive record of a conversation, undefined while it is live (or unreadable: an unreadable one is listed). */

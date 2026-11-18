@@ -147,8 +147,6 @@ export interface ClearConfirmation {
   controller: AbortController;
   menu?: ActiveMenu;
   committing?: boolean;
-  /** The question named what the reset removes, uncommitted worktree files included. */
-  discard?: boolean;
 }
 
 /**

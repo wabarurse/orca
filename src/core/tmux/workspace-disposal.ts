@@ -1,5 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
-import { lstat, readdir, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { paths } from "../../config";
 import { workspaces, assertWorktree } from "../data/projects";
@@ -112,4 +113,34 @@ export async function removeResource(r: workspaces.Resource): Promise<string | u
     } else safeOwnedPath(path.startsWith(paths.runtime + sep) ? paths.runtime : paths.project(r.project), path);
     await rm(path, { recursive: true, force: true });
   }
+}
+
+/** Keep what only this checkout holds before it is removed: tracked edits, untracked files and ignored files no build
+ * regenerates (an `.env`) become one commit on a new branch `orca-saved/<branch>-<time>`, built in a private index so
+ * the checkout, its branch and the user's index are untouched. Build output (node_modules, dist…) is left out.
+ * Returns the branch. Throws, removing nothing, when git cannot save it. */
+export async function saveUncommitted(path: string, why: string, now = new Date()): Promise<string> {
+  const scratch = await mkdtemp(join(tmpdir(), "orca-save-"));
+  try {
+    const env = { ...process.env, GIT_INDEX_FILE: join(scratch, "index") };
+    const git = async (args: string[], extra: Record<string, string> = {}) => {
+      const out = await run(["git", ...args], { cwd: path, timeoutMs: 120_000, env: { ...env, ...extra } });
+      if (!out || out.code !== 0) throw new Error(`could not save local changes in ${path} (git ${args[0]}): ${out?.err.trim().slice(-300) ?? "timed out"}`);
+      return out.out.trim();
+    };
+    const head = await git(["rev-parse", "--verify", "HEAD"]);
+    const branch = await git(["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "detached");
+    await git(["read-tree", head]);
+    await git(["add", "-A"]);
+    const ignored = (await git(["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"])).split("\0").filter(f => f && !generated(f, path));
+    if (ignored.length) await git(["add", "-f", "--", ...ignored.map(f => f.replace(/\/$/, ""))]);
+    const tree = await git(["write-tree"]);
+    // The repository's own identity when it has one; a fixed one only so the save never fails for lack of it.
+    const known = (await run(["git", "var", "GIT_COMMITTER_IDENT"], { cwd: path, timeoutMs: 15_000 }))?.code === 0;
+    const who: Record<string, string> = known ? {} : { GIT_AUTHOR_NAME: "orca", GIT_AUTHOR_EMAIL: "orca@localhost", GIT_COMMITTER_NAME: "orca", GIT_COMMITTER_EMAIL: "orca@localhost" };
+    const commit = await git(["commit-tree", tree, "-p", head, "-m", `orca: local changes saved before ${why}\n\nFrom ${path} on ${branch}.`], who);
+    const name = `orca-saved/${branch.replace(/[^A-Za-z0-9._-]+/g, "-")}-${now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15)}`;
+    await git(["update-ref", `refs/heads/${name}`, commit, ""]);
+    return name;
+  } finally { await rm(scratch, { recursive: true, force: true }); }
 }

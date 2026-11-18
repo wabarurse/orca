@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { conversationIds, paths } from "../../config";
 import { pruneBuildScratch } from "../../core/install";
 import { cleanup, ownership } from "../../core/tmux";
+const { retire } = ownership;
 import { stopDaemon } from "../../core/agent-loop/orc";
 import { listVerifications, pruneSettledProcesses } from "../../core/data/processes";
 import { directories, displayName, workspaces } from "../../core/data/projects";
@@ -9,7 +10,14 @@ import { ARCHIVE_DAYS, listBubbles, orphanBubbles, purgeNotebook, removeBubble }
 import { pruneProjectOutputs } from "../../core/tools/bash";
 
 /** The caller selects preview or deletion explicitly; only owned disposable resources qualify. */
-export async function cleanStorage(apply: boolean, purge: (project: string) => Promise<void> = project => ownership.deleteProject(project, { stop: stopDaemon })) {
+/** Removing an archived conversation for good: whatever still runs under it is stopped first (so a leftover command
+ * or PR watch never keeps it), then the ownership cascade removes it, saving its worktrees' local changes to branches. */
+async function purgeArchived(project: string): Promise<{ saved: string[] }> {
+  const stopped = await retire.stopTree(project, { stop: stopDaemon });
+  if (stopped.problems.length) throw new Error(stopped.problems.join("; "));
+  return ownership.deleteProject(project, { stop: stopDaemon });
+}
+export async function cleanStorage(apply: boolean, purge: (project: string) => Promise<{ saved: string[] }> = purgeArchived) {
   const changes: { path: string; disposition: string }[] = [];
   // A conversation the user deleted was only archived (core/tmux/retire.ts): this is where it is removed for good.
   // The purge is the ownership cascade, with its refusals: a worktree holding uncommitted files keeps the conversation.
@@ -18,8 +26,8 @@ export async function cleanStorage(apply: boolean, purge: (project: string) => P
     if (!archive) continue;
     const name = await displayName(project).catch(() => project);
     try {
-      if (apply) await purge(project);
-      changes.push({ path: paths.project(project), disposition: `${apply ? "removed" : "would remove"}: conversation "${name}" deleted ${archive.at.slice(0, 10)}` });
+      const saved = apply ? (await purge(project)).saved : [];
+      changes.push({ path: paths.project(project), disposition: `${apply ? "removed" : "would remove"}: conversation "${name}" deleted ${archive.at.slice(0, 10)}${saved.length ? `; local changes saved to ${saved.join(", ")}` : ""}` });
     } catch (error) { changes.push({ path: paths.project(project), disposition: `kept: conversation "${name}" could not be removed (${error instanceof Error ? error.message : error})` }); }
   }
   const current = conversationIds(paths.root);

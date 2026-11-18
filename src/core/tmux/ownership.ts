@@ -27,7 +27,7 @@ import { leaveBubble } from "../data/bubbles";
 import { purgeLedgerProject } from "../data/tasks";
 import { command } from "../proc";
 import { killProjectSession, liveAgentsOrNull } from "./liveness";
-import { inspectCheckout } from "./workspace-disposal";
+import { inspectCheckout, saveUncommitted } from "./workspace-disposal";
 
 /** Deleting as the user sees it (stop gracefully, archive, keep the files) is retire.ts; the cascade below is the purge. */
 export * as retire from "./retire";
@@ -99,7 +99,7 @@ export function describeDeletion(projects: ProjectNode[]): string {
   const items = (kind: workspaces.Kind) => projects.reduce((sum, p) => sum + new Set(p.sessions.flatMap(s => s.items[kind] ?? []).filter(key => key !== "orchestrator")).size, 0);
   return [projects.length > 1 ? count(projects.length, "conversation") : "", count(items("task"), "task"), count(items("agent"), "agent"),
     count(items("question"), "question"), count(items("image"), "image"), count(worktrees.length, "worktree"),
-    uncommitted ? `${uncommitted} with uncommitted files that will be lost` : ""].filter(Boolean).join(", ");
+    uncommitted ? `${uncommitted} with local changes, saved to an orca-saved branch first` : ""].filter(Boolean).join(", ");
 }
 
 // --- the cascade ---------------------------------------------------------------
@@ -113,16 +113,13 @@ export interface DeleteOptions {
   kill?: (project: string) => Promise<void>;
   /** Runs once the checks pass, before anything is removed (the TUI closes its page here); a throw leaves everything in place. */
   beforeRemove?: (project: string) => Promise<void> | void;
-  /** Remove worktrees that hold uncommitted files too. Without it they refuse the deletion; the
-   * TUI sets it after telling the user how many there are. Branches and commits always stay. */
-  discard?: boolean;
   /** Keep the conversation's bubble (its shared memory, notebook and behavior) even when it is the last member:
    * a reset recreates the conversation and attaches it again. A deletion lets the bubble go with its last member. */
   keepBubble?: boolean;
 }
 
 /** Everything that refuses a project's deletion, checked before anything is stopped or removed. */
-async function assertDeletable(name: string, node: ProjectNode, { live = liveAgentsOrNull, discard }: DeleteOptions): Promise<void> {
+async function assertDeletable(name: string, node: ProjectNode, { live = liveAgentsOrNull }: DeleteOptions): Promise<void> {
   const agents = await live(name);
   if (agents === null) throw new Error("cannot check live agents; project was not deleted");
   if (agents.length) throw new Error(`${name} still has live agents (${agents.join(", ")}); wait for them or stop them first`);
@@ -132,13 +129,19 @@ async function assertDeletable(name: string, node: ProjectNode, { live = liveAge
   }
   for (const session of node.sessions) {
     if (session.problem) throw new Error(session.problem);
-    if (session.uncommitted && !discard) throw new Error(`worktree has local files or changes (${session.uncommitted}); keep or remove it before deleting this project: ${session.path}`);
   }
 }
 
-/** Session level: a worktree goes with everything in it; the folder itself is the user's and only loses this project. */
-async function deleteSessions(name: string, node: ProjectNode): Promise<void> {
-  const roots = new Set<string>();
+/** Session level: a worktree goes with everything in it; the folder itself is the user's and only loses this project.
+ * Local changes a worktree holds are first saved to an `orca-saved/…` branch, so a deletion never loses them.
+ * Returns the branches it saved to. */
+async function deleteSessions(name: string, node: ProjectNode): Promise<string[]> {
+  const roots = new Set<string>(), saved: string[] = [];
+  // Every save before the first removal: a save that fails leaves every worktree in place.
+  for (const session of node.sessions.filter(s => s.worktree && s.uncommitted)) {
+    await assertWorktree(name, session.path);
+    saved.push(await saveUncommitted(session.path, `deleting conversation ${name}`));
+  }
   for (const session of node.sessions.filter(s => s.worktree)) {
     await assertWorktree(name, session.path); // Again, now that nothing can be running in it.
     const removed = await command(["git", "worktree", "remove", "--force", "--", session.path], paths.repo(name));
@@ -155,6 +158,7 @@ async function deleteSessions(name: string, node: ProjectNode): Promise<void> {
   }
   if (repositoryBinding(name)?.branch && existsSync(paths.repo(name))) await command(["git", "worktree", "prune"], paths.repo(name));
   workspaces.release(name); // Item level: every ownership record of this project.
+  return saved;
 }
 
 /**
@@ -162,7 +166,7 @@ async function deleteSessions(name: string, node: ProjectNode): Promise<void> {
  * transcripts and runtime state, its folder membership and its pin. The folder's directory and
  * the repository's branches are never touched. Refused while an agent or command may be running.
  */
-export async function deleteProject(name: string, options: DeleteOptions): Promise<void> {
+export async function deleteProject(name: string, options: DeleteOptions): Promise<{ saved: string[] }> {
   if (!validProjectName(name)) throw new Error(`not a project name: ${name}`);
   if (!existsSync(paths.project(name))) throw new Error(`no project named ${name}`);
   const lock = conversationTurnLock(name);
@@ -173,6 +177,7 @@ export async function deleteProject(name: string, options: DeleteOptions): Promi
       ? `${name} orchestrator is mid-turn in another session (${describeOwner(owner)}); wait for that turn to end, then delete`
       : `${name} turn lock ${lock} is held by an unknown owner; verify no orca process is using ${name}, remove the lock, then delete`);
   }
+  let saved: string[] = [];
   try {
     await assertDeletable(name, await projectNode(name), options);
     await options.stop(name); // The daemon must be gone before its files are, or it writes them back.
@@ -181,7 +186,7 @@ export async function deleteProject(name: string, options: DeleteOptions): Promi
       const node = await projectNode(name);
       await assertDeletable(name, node, { ...options, live: async () => [] });
       await options.beforeRemove?.(name); // The last point a caller can refuse: nothing has been removed yet.
-      await deleteSessions(name, node);
+      saved = await deleteSessions(name, node);
       purgeLedgerProject(name); // Its tasks, while its identity can still be read.
       if (!options.keepBubble) await leaveBubble(name); // The bubble's files go with its last conversation; other members keep it.
       const scope = projectStateScope(name), settings = stateEntries(paths.memory, scope).map(([key]) => key);
@@ -195,6 +200,7 @@ export async function deleteProject(name: string, options: DeleteOptions): Promi
     const { pinned } = await loadConfig();
     if (pinned.includes(name)) await saveConfig({ pinned: pinned.filter(n => n !== name) });
   } finally { await release(); }
+  return { saved };
 }
 
 /**
