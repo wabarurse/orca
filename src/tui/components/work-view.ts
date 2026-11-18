@@ -9,7 +9,7 @@ export const ARCHIVED_SECTION = ":archived";
 export const archiveTitle = (count: number, expanded: boolean) => `${expanded ? "▾" : "▸"} Archived (${count})`;
 
 /** One table row. `lead` is drawn dim before the name and is not searched (tree connectors, a pin). */
-/** `heading` marks a group title (a day): drawn like a row, never counted and never under the cursor. */
+/** `heading` marks a group title (a day): a bold, ruled row that is never counted; selecting it folds its group. */
 export interface WorkRow { id: string; name: string; lead?: string; status?: string; color?: number; info?: string; heading?: true }
 /** A details block: wrapped text, `key value` fields (a third element makes the value a link), or numbered options. */
 export interface WorkSection {
@@ -56,10 +56,29 @@ export function byDay<T extends WorkRow>(items: readonly T[], at: (item: T) => n
   return result;
 }
 
-/** The header is a selectable row, so arrows, Enter and mouse share navigation. */
-export function withArchiveSection<T extends WorkRow & { archived?: boolean }>(items: T[], expanded: boolean): (T | WorkRow & { section: true })[] {
+/** A heading's text: the fold marker, its name and how many rows it holds. */
+export const headingTitle = (name: string, count: number, open: boolean) => `${open ? "▾" : "▸"} ${name} (${count})`;
+/** Headings as fold rows: each is titled with its row count, and the rows of one whose id is in `folded` are left out.
+ * A group runs to the next heading or to the Archived row. */
+export function foldHeadings<T extends WorkRow & { section?: true }>(items: readonly T[], folded: ReadonlySet<string>): T[] {
+  const result: T[] = [];
+  let shut = false;
+  items.forEach((item, i) => {
+    if (item.heading) {
+      let count = 0;
+      while (items[i + 1 + count] && !items[i + 1 + count]!.heading && !items[i + 1 + count]!.section) count++;
+      shut = folded.has(item.id);
+      result.push({ ...item, name: headingTitle(item.name, count, !shut) });
+    } else if (item.section || !shut) { shut = false; result.push(item); }
+  });
+  return result;
+}
+
+/** A tab's rows as shown: archived ones under their own header row (a selectable row, so arrows, Enter and mouse share
+ * navigation), and the headings in `folded` shut. */
+export function withArchiveSection<T extends WorkRow & { archived?: boolean }>(items: T[], expanded: boolean, folded: ReadonlySet<string>): (T | WorkRow & { section: true })[] {
   const archived = items.filter(item => item.archived);
-  return [...items.filter(item => !item.archived), ...(archived.length ? [{ id: ARCHIVED_SECTION, name: archiveTitle(archived.length, expanded), section: true as const }, ...(expanded ? archived : [])] : [])];
+  return foldHeadings<T | WorkRow & { section: true }>([...items.filter(item => !item.archived), ...(archived.length ? [{ id: ARCHIVED_SECTION, name: archiveTitle(archived.length, expanded), section: true as const }, ...(expanded ? archived : [])] : [])], folded);
 }
 
 /** The index of the next item (from `from`, stepping `dir`, wrapping) whose name contains `query`; -1 when none does. */
@@ -155,6 +174,8 @@ export function renderWorkPage(page: WorkPage): WorkPageRender {
   const w = widths(cols, page.items);
   const table = page.items.slice(top, top + size).map((item, k) => {
     const selected = top + k === page.selected;
+    // A heading spans the row: bold, then a rule to the edge, so a day stands out from its rows.
+    if (item.heading) { const title = bold(fit(plainText(item.name), Math.max(1, cols - 3))); return fit((selected ? "› " : "  ") + title + " " + dim("─".repeat(Math.max(0, cols - 3 - visibleLength(title)))), cols); }
     return fit((selected ? "› " : "  ") + pad(name(item, selected, page.query), w.name)
       + (w.status ? " " + pad(paint(item.color, plainText(item.status ?? "")), w.status) : "")
       + (w.info ? " " + dim(fit(plainText(item.info ?? ""), w.info)) : ""), cols);

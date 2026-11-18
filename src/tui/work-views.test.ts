@@ -57,9 +57,14 @@ test("j/k, gg, G and Ctrl+D/Ctrl+U move the selection; the page is the same with
       await key(app, "j"); await key(app, "j"); expect(selected(app)).toBe("reviewer-beta");
       await key(app, "k"); expect(selected(app)).toBe("worker-beta");
       await key(app, "G"); expect(selected(app)).toBe("reviewer-omega");
-      await key(app, "g"); expect(selected(app)).toBe("reviewer-omega"); await key(app, "g"); expect(selected(app)).toBe("worker-alpha");
+      await key(app, "g"); expect(selected(app)).toBe("reviewer-omega"); await key(app, "g"); expect(selected(app)).toBe("▾ Today (6)"); // the day heading is the first row
+      await key(app, "j"); expect(selected(app)).toBe("worker-alpha");
       await app.onKey({ name: "d", ctrl: true }); expect(selected(app)).toBe("worker-delta"); // half of the nine table rows
       await app.onKey({ name: "u", ctrl: true }); expect(selected(app)).toBe("worker-alpha");
+      // The heading folds its day: Enter or ← shuts it (the count stays), Enter or → opens it again.
+      await key(app, "k"); await app.onKey({ name: "enter" }); expect(names(app)).toEqual(["▸ Today (6)"]);
+      await app.onKey({ name: "right" }); expect(names(app).length).toBe(7); expect(app.work.kind).toBe("agents");
+      await key(app, "h"); expect(names(app)).toEqual(["▸ Today (6)"]); await key(app, "l"); expect(names(app)[0]).toBe("▾ Today (6)");
       await app.onKey({ name: "escape" }); expect(app.work.open).toBe(false);
     }
   } finally { await stop(); }
@@ -184,7 +189,7 @@ test("Agents hides unverified rows, folds old ones under Archived and archives o
   try {
     term.press({ name: "a", ctrl: true });
     await until(() => term.screen().includes("worker-live"));
-    expect(names(app)).toEqual(["Today", "worker-live", "Earlier", "worker-queued", "▸ Archived (1)"]);
+    expect(names(app)).toEqual(["▾ Today (1)", "worker-live", "▾ Earlier (1)", "worker-queued", "▸ Archived (1)"]);
     expect(term.display.screen()[4]).toMatch(/^› worker-live +running/);
     await key(app, "a"); await until(() => term.screen().includes("worker-old"));
     await key(app, "D"); await until(() => term.screen().includes("Archive 1 finished agents?"));
@@ -203,10 +208,13 @@ test("Tasks is the outline as rows: h/l and ←/→ fold instead of switching ta
     await setTaskDependencies(project, child.id, [parent.id]);
     term.press({ name: "t", ctrl: true });
     await until(() => term.screen().includes("Task #1 Parent"));
-    expect(term.display.screen().slice(3, 6).map(row => row.trimEnd().replace(/ {2,}/g, " | "))).toEqual([" | Today", "› ▾ #1 Parent | queued", " | └─ #2 Child | queued"]); // the cursor starts on a task, not the day heading
+    expect(term.display.screen().slice(3, 6).map(row => row.trimEnd().replace(/ {2,}/g, " | ").replace(/─+/, "─"))).toEqual([" | ▾ Today (2) ─", "› ▾ #1 Parent | queued", " | └─ #2 Child | queued"]); // the cursor starts on a task, not the day heading
     expect(term.screen()).toContain("Keep the ledger");
-    await key(app, "h"); expect(app.work.kind).toBe("tasks"); expect(names(app)).toEqual(["Today", "#1 Parent"]);
-    await app.onKey({ name: "right" }); expect(names(app)).toEqual(["Today", "#1 Parent", "#2 Child"]);
+    await key(app, "h"); expect(app.work.kind).toBe("tasks"); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent"]);
+    // ← again goes up to the day, and once more folds the whole day; → opens it and steps back in.
+    await key(app, "h"); expect(selected(app)).toBe("▾ Today (2)"); await key(app, "h"); expect(names(app)).toEqual(["▸ Today (2)"]);
+    await key(app, "l"); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent"]); await key(app, "l"); expect(selected(app)).toBe("#1 Parent");
+    await app.onKey({ name: "right" }); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent", "#2 Child"]);
     await key(app, "l"); expect(selected(app)).toBe("#2 Child"); await key(app, "h"); expect(selected(app)).toBe("#1 Parent");
     await key(app, "c"); await until(() => term.screen().includes("1 dependents retained"));
     await key(app, "n"); expect((await getTask(project, parent.id)).attention).toBeUndefined();
@@ -333,7 +341,7 @@ test("Processes lists background commands under a heading; s asks, then stops th
       state: "running", timeoutMs: 0, maxBytes: 0, notify: false, events: [] });
     term.press({ name: "a", ctrl: true }); await key(app, "5");
     await until(() => names(app).length === 2);
-    expect(names(app)).toEqual(["Commands · Today", "bun run stack"]);
+    expect(names(app)).toEqual(["▾ Commands · Today (1)", "bun run stack"]);
     expect(selected(app)).toBe("bun run stack"); // never starts on the heading
     await until(() => /Processes 1/.test(term.display.screen()[0]!) && term.screen().includes("no output yet"));
     expect(term.display.screen().find(row => row.includes("bun run stack") && row.includes("running"))).toContain("worker-feat · 1m 3");
@@ -343,6 +351,7 @@ test("Processes lists background commands under a heading; s asks, then stops th
     await key(app, "s"); await key(app, "y");
     await until(() => app.work.state?.notice === "Stop requested. The orchestrator was told.");
     expect(existsSync(join(processDirectory(project, id), "stop"))).toBe(true);
-    await key(app, "k"); expect(selected(app)).toBe("bun run stack"); // the cursor never rests on a heading
+    await key(app, "k"); expect(selected(app)).toBe("▾ Commands · Today (1)"); // the cursor rests on a heading, where it folds
+    await key(app, "s"); expect(app.work.state!.confirm).toBeUndefined(); // a heading is not a command
   } finally { await stop(); }
 });

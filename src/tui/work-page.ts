@@ -29,7 +29,7 @@ const HINTS: Record<WorkKind, string> = {
   processes: "j/k move · s stop · r refresh · f find · esc close",
   projects: "j/k move · enter open · p pin · c close page · d delete · f find · esc close",
 };
-const DAY_HELP = "Items last active on this day, newest first.";
+const DAY_HELP = "Items last active on this day, newest first. Enter or ← folds the day away; Enter or → opens it again.";
 const SECTION_HELP = "Archived items are retained. Enter or → expands; ← collapses. u restores an item to the list without resuming work.";
 const RESTORED = "Restored to list. No work resumed or questions reopened.";
 const NO_PAGE = "open a conversation first";
@@ -61,6 +61,8 @@ interface View {
   kind: WorkKind; page?: Page;
   selected: Partial<Record<WorkKind, string>>; history: Partial<Record<WorkKind, boolean>>; detailTop: number;
   agents: AgentInfo[]; tasks: Awaited<ReturnType<typeof allTasks>>; collapsed: Set<string>; nodes: OutlineNode[];
+  /** Per tab other than Tasks (whose folds are `collapsed`): the headings folded away. */
+  folded: Map<WorkKind, Set<string>>;
   /** Why the task registry cannot be drawn as an outline (it is valid again once this is unset). */
   invalid?: string;
   hiddenQuestions: Record<string, boolean>; projects: ProjectEntry[]; parent?: string;
@@ -141,7 +143,7 @@ export class WorkPages {
     const page = this.host.page();
     if (this.view) return this.tab(this.view, kind);
     this.host.opening();
-    const view: View = this.view = { kind, page, selected: {}, history: {}, detailTop: 0, agents: [], tasks: [], collapsed: new Set(), nodes: [],
+    const view: View = this.view = { kind, page, selected: {}, history: {}, detailTop: 0, agents: [], tasks: [], collapsed: new Set(), nodes: [], folded: new Map(),
       hiddenQuestions: {}, projects: [], background: { watches: [], commands: [] }, bubbles: {}, loaded: new Set(), reads: new Map(), again: new Set(), errors: {}, query: "", option: 0, g: -Infinity };
     for (const each of WORK_KINDS) void this.read(view, each);
     this.host.draw();
@@ -211,10 +213,10 @@ export class WorkPages {
     const page = view.page, history = !!view.history[kind];
     if (kind === "projects") return this.projectItems(view);
     if (!page) return [];
-    if (kind === "processes") return processItems(view.background, this.host.clock.now());
+    if (kind === "processes") return withArchiveSection(processItems(view.background, this.host.clock.now()), false, this.folds(view, kind)) as Item[]; // nothing here is archived
     const now = this.host.clock.now();
     // Listed rows newest first under a heading per day; archived rows keep their own section below.
-    const section = (items: Item[], at: (item: Item) => number) => withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history)
+    const section = (items: Item[], at: (item: Item) => number) => withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history, this.folds(view, kind))
       .map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: item.name, text: "heading" in item ? DAY_HELP : SECTION_HELP }] });
     if (kind === "tasks") return this.taskItems(view, history);
     if (kind === "images") {
@@ -259,7 +261,7 @@ export class WorkPages {
       view.nodes = nodes; view.invalid = undefined;
       return rows.map((row): Item => {
         const task = row.section ? undefined : tasks.find(t => t.id === row.id);
-        if (row.heading) return { ...row, sections: [{ title: row.name, text: "Tasks last touched on this day, newest first. A task moves here when it is worked on, its PR changes or it is edited." }] };
+        if (row.heading) return { ...row, sections: [{ title: row.name, text: "Tasks last touched on this day, newest first. A task moves here when it is worked on, its PR changes or it is edited. Enter or ← folds the day away; Enter or → opens it again." }] };
         return { ...row, archived: !!task?.removedAt, sections: task ? taskSections(tasks, task) : [{ title: "Archived", text: SECTION_HELP }] };
       });
     } catch (error) {
@@ -375,6 +377,7 @@ export class WorkPages {
     else if (key === "a" && view.kind !== "projects" && view.kind !== "processes") { view.history[view.kind] = !view.history[view.kind]; view.selected[view.kind] = ARCHIVED_SECTION; view.detailTop = 0; }
     else if (key === "r") { view.notice = "Refreshing…"; this.host.draw(); await Promise.all(WORK_KINDS.map(kind => this.read(view, kind))); if (view.notice === "Refreshing…") view.notice = view.errors[view.kind] ? undefined : `Refreshed ${formatDateTime(this.host.clock.now())}`; }
     else if (key === "enter" && items[index]?.section) view.history[view.kind] = !view.history[view.kind];
+    else if (key === "enter" && items[index]?.heading) { const folds = this.folds(view), id = items[index].id; if (!folds.delete(id)) folds.add(id); }
     else if (key === "t" && view.kind === "images" && view.page) await this.retry(view, view.page);
     else if (items[index] && !items[index].heading && view.page && view.kind !== "projects") await this.itemKey(view, view.page, key, items, items[index]);
     else if (items[index]?.project) await this.projectKey(view, key, items[index].project);
@@ -390,12 +393,8 @@ export class WorkPages {
   }
 
   private move(view: View, items: Item[], to: number): void {
-    // The cursor never rests on a heading: it goes on to the next row the way it was moving, else back to the nearest.
-    const clamp = (n: number) => Math.max(0, Math.min(items.length - 1, n)), step = to < this.index(view, items) ? -1 : 1;
-    let at = clamp(to);
-    while (items[at]?.heading && items[at + step]) at += step;
-    while (items[at]?.heading && items[at - step]) at -= step;
-    view.selected[view.kind] = items[at]?.id;
+    // A heading is a row like the Archived one: the cursor rests on it, which is where its day is folded.
+    view.selected[view.kind] = items[Math.max(0, Math.min(items.length - 1, to))]?.id;
     view.detailTop = 0;
   }
 
@@ -405,9 +404,18 @@ export class WorkPages {
     this.host.draw();
   }
 
-  /** ←/→ and h/l: fold on Tasks, open or shut the Archived row, else the previous or next tab. */
+  /** The headings folded away on a tab. */
+  private folds(view: View, kind = view.kind): Set<string> {
+    if (kind === "tasks") return view.collapsed;
+    const folds = view.folded.get(kind) ?? new Set<string>();
+    view.folded.set(kind, folds);
+    return folds;
+  }
+
+  /** ←/→ and h/l: fold on Tasks, open or shut the Archived row or a day heading, else the previous or next tab. */
   private sideways(view: View, selected: Item | undefined, forward: boolean): void {
     if (selected?.section) view.history[view.kind] = forward;
+    else if (selected?.heading && view.kind !== "tasks") { if (forward) this.folds(view).delete(selected.id); else this.folds(view).add(selected.id); }
     else if (view.kind === "tasks") { view.selected.tasks = navigateOutline(view.nodes, selected?.id, view.collapsed, forward ? "right" : "left"); view.detailTop = 0; }
     else this.tab(view, WORK_KINDS[(WORK_KINDS.indexOf(view.kind) + (forward ? 1 : WORK_KINDS.length - 1)) % WORK_KINDS.length]!);
   }
