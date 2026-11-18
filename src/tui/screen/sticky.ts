@@ -1,7 +1,7 @@
 import { headerHeight } from "../header";
 import type { Line } from "../conversation";
 import { captureAnchor, resolveAnchor } from "../conversation";
-import { fit, sanitize, wrap } from "../components";
+import { baseText, fit, sanitize, textRow, wrap } from "../components";
 import { liveRows, type Frame } from "../footer";
 import { whaleRows } from "../header";
 
@@ -50,11 +50,15 @@ export function stickyRows(f: Frame, history: string[], chrome: string[], scroll
 }
 
 /** Repaint changed rows only, without scrolling either bar or flashing the screen. */
+/** The text colour the rows on screen were last painted in: a change (the terminal reported its background) repaints every row. */
+let painted: string | null = null;
 export function stickyUpdate(next: StickyScreen, previous?: StickyScreen): string {
   let output = "";
+  const colour = baseText(), recoloured = colour !== painted;
+  painted = colour;
   for (let row = 0; row < next.rows.length; row++) {
-    if (previous?.cols === next.cols && previous.rows.length === next.rows.length && previous.rows[row] === next.rows[row]) continue;
-    output += `\x1b[${row + 1};1H\x1b[0m\x1b[2K${next.rows[row]}\x1b[0m`;
+    if (!recoloured && previous?.cols === next.cols && previous.rows.length === next.rows.length && previous.rows[row] === next.rows[row]) continue;
+    output += `\x1b[${row + 1};1H\x1b[0m\x1b[2K${colour ? textRow(next.rows[row]!, colour) : next.rows[row]}\x1b[0m`;
   }
   if (!output && previous?.cursor === next.cursor && previous.col === next.col) return "";
   return `\x1b[?25l${output}\x1b[${next.cursor + 1};${next.col + 1}H\x1b[?25h`;

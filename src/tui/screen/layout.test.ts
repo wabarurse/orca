@@ -143,3 +143,19 @@ test("one-row queue budgets still preview the oldest prompt; compact headings pr
   expect(queuedRows(queued, 40, 0)).toEqual([]);
   expect(queuedRows({ ...queued, texts: [] }, 40, 4)).toEqual([]);
 });
+
+test("rows are painted in the text colour, and a change of colour repaints rows whose text did not change", async () => {
+  const { setBaseText } = await import("../components/style");
+  const screen = { rows: ["one \x1b[2mdim\x1b[0m", "two"], cols: 20, cursor: 1, col: 0, bodyHeight: 2, bodyTop: 0, start: 0, maxStart: 0 };
+  const white = "\x1b[38;5;231m";
+  try {
+    setBaseText(null);
+    expect(stickyUpdate(screen)).toContain("\x1b[2Kone \x1b[2mdim\x1b[0m\x1b[0m");
+    expect(stickyUpdate(screen, screen)).toBe(""); // nothing changed, nothing drawn
+    setBaseText(white);
+    const repaint = stickyUpdate(screen, screen);
+    expect(repaint).toContain(`\x1b[2K${white}one \x1b[2mdim\x1b[0m${white}\x1b[0m`);
+    expect(repaint).toContain(`\x1b[2K${white}two\x1b[0m`);
+    expect(stickyUpdate(screen, screen)).toBe("");
+  } finally { setBaseText(null); stickyUpdate(screen); }
+});

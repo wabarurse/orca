@@ -2,13 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { commit, live, liveRows, type Frame } from "../footer/render";
 import { userLines } from "../conversation/restore";
 import { lineRows } from "../conversation/lines";
-import { fillRow, nearest256, parseBgReply, pickFill, setUserFill, shade, useTerminalBackground, userFill } from "./style";
+import { baseText, fillRow, nearest256, parseBgReply, pickFill, pickText, setBaseText, setUserFill, shade, textRow, useTerminalBackground, userFill } from "./style";
 import { FakeScreen } from "./testing";
 
 const BG = "\x1b[48;5;236m";
 /** The background a FakeScreen cell gets from BG. */
 const CELL = "48;5;236";
-afterEach(() => setUserFill(null));
+afterEach(() => { setUserFill(null); setBaseText(null); });
 
 const frame = (over: Partial<Frame> = {}): Frame => ({ cols: 20, rows: 12, input: { prompt: "> ", text: "hi", cursor: 2 }, menu: null, status: "s", ...over });
 const draw = (f: Frame) => { const s = new FakeScreen(f.cols, f.rows); s.write(live(f).text); return s; };
@@ -155,4 +155,23 @@ describe("colour choice", () => {
     expect(parseBgReply("10;rgb:0000/0000/0000")).toBeNull();
     expect(parseBgReply("11;rgb:zz/00/00")).toBeNull();
   });
+});
+
+test("ordinary text is pure white on a background known to be dark, and the terminal's own colour otherwise", () => {
+  const dark = { r: 30, g: 30, b: 30 }, light = { r: 250, g: 250, b: 250 };
+  expect(pickText({ COLORTERM: "truecolor" }, dark)).toBe("\x1b[38;2;255;255;255m");
+  expect(pickText({}, dark)).toBe("\x1b[38;5;231m");
+  expect(pickText({ COLORFGBG: "15;0" })).toBe("\x1b[38;5;231m");
+  expect(pickText({ COLORTERM: "truecolor" }, light)).toBeNull();
+  expect(pickText({ COLORTERM: "truecolor" })).toBeNull(); // unknown background: never white on white
+  expect(pickText({ NO_COLOR: "1" }, dark)).toBeNull();
+  const before = baseText();
+  try { useTerminalBackground(dark, { COLORTERM: "truecolor" }); expect(baseText()).toBe("\x1b[38;2;255;255;255m"); }
+  finally { setBaseText(before); setUserFill(pickFill({ NO_COLOR: "1" })); }
+});
+
+test("a row in the text colour returns to it after every reset inside, and keeps other colours", () => {
+  const w = "\x1b[38;5;231m";
+  expect(textRow("plain \x1b[2mdim\x1b[0m then \x1b[1;32mgreen\x1b[0m", w)).toBe(`${w}plain \x1b[2mdim\x1b[0m${w} then \x1b[1;32mgreen\x1b[0m${w}`);
+  expect(textRow("\x1b[31mred\x1b[39m back", w)).toBe(`${w}\x1b[31mred\x1b[39m${w} back`);
 });
