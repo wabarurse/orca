@@ -141,6 +141,10 @@ function tail(screen: string, lines = 20, max = 2000): string {
   return text.length > max ? `…${text.slice(-max)}` : text;
 }
 
+/** Between the fields of a tmux format. Never a tab: tmux 3.7 prints control characters in a format as "_", so a
+ * tab-split answer is one field and every pane reads as gone or unknown. Window names (role and branch slug), pane
+ * ids, exit codes and signal names never hold a "|". */
+const FIELD = "|";
 export const tmux = {
   /** `tmux` argv on orca's own server. */
   argv(...args: string[]): string[] {
@@ -206,9 +210,9 @@ export const tmux = {
 
   /** Whether `pane` has exited, and how; null when it no longer exists (display-message answers for another pane, or none, then). */
   async pane(pane: string, signal?: AbortSignal): Promise<PaneState | null> {
-    const res = await command(tmux.argv("display-message", "-p", "-t", pane, "#{pane_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}"), process.cwd(), signal);
+    const res = await command(tmux.argv("display-message", "-p", "-t", pane, ["#{pane_id}", "#{pane_dead}", "#{pane_dead_status}", "#{pane_dead_signal}"].join(FIELD)), process.cwd(), signal);
     if (res.code !== 0) return null;
-    const [id = "", dead = "", status = "", sig = ""] = res.out.trim().split("\t");
+    const [id = "", dead = "", status = "", sig = ""] = res.out.trim().split(FIELD);
     if (id !== pane) return null;
     return { dead: dead === "1", status: /^\d+$/.test(status) ? Number(status) : null, signal: sig };
   },
@@ -234,10 +238,10 @@ export const tmux = {
   /** Point-in-time pane inventory; retained dead panes are not running agents. */
   async agentPanes(session: string, signal?: AbortSignal): Promise<{ name: string; live: boolean }[] | null> {
     if (!Bun.which("tmux")) return null;
-    const out = await run(tmux.argv("list-panes", "-s", "-t", "=" + session + ":", "-F", "#{window_name}\t#{pane_dead}"), { cwd: process.cwd(), timeoutMs: 5000, signal });
+    const out = await run(tmux.argv("list-panes", "-s", "-t", "=" + session + ":", "-F", ["#{window_name}", "#{pane_dead}"].join(FIELD)), { cwd: process.cwd(), timeoutMs: 5000, signal });
     if (!out) return null;
     if (out.code !== 0) return /can't find session|no server running|error connecting to .*\((No such file or directory|Connection refused)\)/i.test(out.err) ? [] : null;
-    const rows = out.out.trim().split("\n").filter(Boolean).map(line => line.split("\t"));
+    const rows = out.out.trim().split("\n").filter(Boolean).map(line => line.split(FIELD));
     if (rows.some(row => row.length !== 2 || !row[0] || !/^[01]$/.test(row[1]!))) return null;
     return rows.map(([name, dead]) => ({ name: name!, live: dead === "0" }));
   },
