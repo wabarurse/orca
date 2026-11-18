@@ -7,6 +7,7 @@ import { all, ask } from "../core/data/inbox/questions";
 import type { AgentInfo } from "../protocol";
 import { processDirectory, saveProcess } from "../core/data/processes";
 import { existsSync } from "node:fs";
+import { paths } from "../config";
 
 const { home, fakeTerm, fakeOrchestrators, until, projectList } = appFixture();
 
@@ -353,5 +354,24 @@ test("Processes lists background commands under a heading; s asks, then stops th
     expect(existsSync(join(processDirectory(project, id), "stop"))).toBe(true);
     await key(app, "k"); expect(selected(app)).toBe("▾ Commands · Today (1)"); // the cursor rests on a heading, where it folds
     await key(app, "s"); expect(app.work.state!.confirm).toBeUndefined(); // a heading is not a command
+  } finally { await stop(); }
+});
+
+test("Processes lists a tmux session an agent opened itself; s asks, ends it and says the orchestrator was told", async () => {
+  const project = "processes-sessions", killed: string[] = [];
+  const pane = (window: string, command: string) => ({ session: "dev-stack", created: Date.now() - 3_600_000, window, pane: `%${window}`, path: join(paths.worktreeRoots(project)[0]!, "feat-x"), command, live: true });
+  const { app, term, stop } = await setup(project, { sessions: {
+    panes: async () => killed.length ? [] : [pane("web", "pnpm dev --port 15220"), pane("api", "")], tail: async id => id === "%web" ? "ready on http://127.0.0.1:15220" : "", kill: async name => { killed.push(name); } } });
+  try {
+    term.press({ name: "a", ctrl: true }); await key(app, "5");
+    await until(() => names(app).length === 2);
+    expect(names(app)).toEqual(["▾ tmux sessions (1)", "web: pnpm dev --port 15220 · api: shell"]);
+    await until(() => /Processes 1/.test(term.display.screen()[0]!) && term.screen().includes("ready on http://127.0.0.1:15220"));
+    expect(term.display.screen().find(row => row.includes("web: pnpm dev"))).toMatch(/tmux +dev-stack · 1h/);
+    await key(app, "s"); expect(app.work.state!.confirm).toBe("End tmux session dev-stack (2 windows)?");
+    await key(app, "n"); expect(killed).toEqual([]);
+    await key(app, "s"); await key(app, "y");
+    await until(() => app.work.state?.notice === "Session ended. The orchestrator was told.");
+    expect(killed).toEqual(["dev-stack"]); expect(names(app)).toEqual([]);
   } finally { await stop(); }
 });

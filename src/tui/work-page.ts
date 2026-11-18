@@ -55,7 +55,7 @@ export interface WorkHost {
 
 interface Item extends WorkRow {
   sections: WorkSection[]; archived?: boolean; section?: true; heading?: true;
-  agent?: AgentInfo; media?: DeliveredMedia; question?: Question; project?: ProjectEntry; watch?: processes.WatchRow; command?: processes.CommandRow;
+  agent?: AgentInfo; media?: DeliveredMedia; question?: Question; project?: ProjectEntry; watch?: processes.WatchRow; command?: processes.CommandRow; session?: processes.SessionRow;
 }
 interface View {
   kind: WorkKind; page?: Page;
@@ -109,9 +109,19 @@ function processItems(view: processes.ProcessView, now: number): Item[] {
       info: [p.custody?.owner ?? p.owner, Number.isFinite(end - started) ? formatElapsed(end - started) : "", p.readyAt ? p.readyUrl : ""].filter(Boolean).join(" · "), command,
       sections: [{ title: "Command", text: p.command }, { title: "Run", fields }, { title: "Output (last lines)", text: command.tail || "no output yet" }] };
   });
+  // A session an agent opened with tmux itself: no record, so what tmux says about its windows is all there is.
+  const sessions = view.sessions.map((session): Item => {
+    const live = session.windows.filter(w => w.live), text = (w: processes.SessionRow["windows"][number]) => w.command.replace(/\s+/g, " ").trim() || "shell";
+    return { id: `session:${session.name}`, name: session.windows.map(w => `${w.window}: ${text(w)}`).join(" · "), status: live.length ? "tmux" : "ended", color: live.length ? 36 : 90,
+      info: [session.name, Number.isFinite(session.createdAt) ? formatElapsed(now - session.createdAt) : ""].filter(Boolean).join(" · "), session,
+      sections: [{ title: "tmux session", fields: [["name", session.name], ["started", Number.isFinite(session.createdAt) ? formatDateTime(session.createdAt) : "unknown"], ["windows", String(session.windows.length)]] },
+        { title: "Why it is here", text: "An agent opened this with tmux from a shell command, not with the process tool, so orca has no record of it: no owner, no exit code. s ends the whole session." },
+        ...session.windows.map(w => ({ title: `${w.window} · ${w.live ? "running" : "ended"}`, text: [text(w), w.path, w.tail].filter(Boolean).join("\n") }))] };
+  });
   return [...(watches.length ? [heading(":watches", "PR watches", "Pull requests the orchestrator is told about when they change: checks, reviews, conflicts, a merge. s stops listening to the selected one."), ...watches] : []),
     ...byDay(commands, item => item.command!.live ? now : Date.parse(item.command!.record.updatedAt), now).map((item): Item => "sections" in item ? item
-      : heading(`:commands${item.id}`, `Commands · ${item.name}`, "Background commands agents started, such as a local stack or a long check, by when they last ran. s stops the selected one, like Ctrl+C."))];
+      : heading(`:commands${item.id}`, `Commands · ${item.name}`, "Background commands agents started, such as a local stack or a long check, by when they last ran. s stops the selected one, like Ctrl+C.")),
+    ...(sessions.length ? [heading(":sessions", "tmux sessions", "Sessions agents opened with tmux themselves, in this conversation's folders. s ends the selected one."), ...sessions] : [])];
 }
 
 export class WorkPages {
@@ -144,7 +154,7 @@ export class WorkPages {
     if (this.view) return this.tab(this.view, kind);
     this.host.opening();
     const view: View = this.view = { kind, page, selected: {}, history: {}, detailTop: 0, agents: [], tasks: [], collapsed: new Set(), nodes: [], folded: new Map(),
-      hiddenQuestions: {}, projects: [], background: { watches: [], commands: [] }, bubbles: {}, loaded: new Set(), reads: new Map(), again: new Set(), errors: {}, query: "", option: 0, g: -Infinity };
+      hiddenQuestions: {}, projects: [], background: { watches: [], commands: [], sessions: [] }, bubbles: {}, loaded: new Set(), reads: new Map(), again: new Set(), errors: {}, query: "", option: 0, g: -Infinity };
     for (const each of WORK_KINDS) void this.read(view, each);
     this.host.draw();
   }
@@ -162,7 +172,7 @@ export class WorkPages {
     const view = this.view;
     if (!view || view.page === this.host.page()) return;
     if (view.kind !== "projects") return this.close();
-    Object.assign(view, { page: this.host.page(), agents: [], tasks: [], background: { watches: [], commands: [] }, hiddenQuestions: {}, selected: { projects: view.selected.projects }, loaded: new Set(["projects"]) });
+    Object.assign(view, { page: this.host.page(), agents: [], tasks: [], background: { watches: [], commands: [], sessions: [] }, hiddenQuestions: {}, selected: { projects: view.selected.projects }, loaded: new Set(["projects"]) });
     for (const each of WORK_KINDS) if (each !== "projects") void this.read(view, each);
     this.host.draw();
   }
@@ -201,7 +211,7 @@ export class WorkPages {
       } else if (!page) return;
       else if (kind === "agents") { const rows = await (deps.agents ?? listAgents)(page.project); if (view.page === page) view.agents = rows; }
       else if (kind === "tasks") { const rows = await (deps.treeTasks ?? allTasks)(page.project); if (view.page === page) view.tasks = rows; }
-      else if (kind === "processes") { const rows = await processes.processView(page.project); if (view.page === page) view.background = rows; }
+      else if (kind === "processes") { const rows = await processes.processView(page.project, undefined, deps.sessions); if (view.page === page) view.background = rows; }
       else if (kind === "questions") { await this.host.questions.refresh(page); view.hiddenQuestions = workViews.workArchive(page.project, "questions"); }
       else await this.host.readImages(page);
       delete view.errors[kind];
@@ -492,13 +502,13 @@ export class WorkPages {
     };
     if (kind === "processes") {
       // s is Ctrl+C for that one command, or stops listening to that pull request; the orchestrator is told either way.
-      const { watch, command } = selected, live = command?.live;
-      if (key !== "s" || !watch && !command) return;
+      const { watch, command, session } = selected, live = command?.live;
+      if (key !== "s" || !watch && !command && !session) return;
       if (command && !live) { view.notice = "That command has already ended."; return; }
-      view.confirm = { text: watch ? `Stop watching PR #${watch.number}?` : "Stop this command?", run: async () => {
-        if (watch) await processes.stopWatch(page.project, watch); else await processes.stopCommand(page.project, command!.record.id);
+      view.confirm = { text: watch ? `Stop watching PR #${watch.number}?` : session ? `End tmux session ${session.name} (${session.windows.length} windows)?` : "Stop this command?", run: async () => {
+        if (watch) await processes.stopWatch(page.project, watch); else if (session) await processes.stopSession(page.project, session.name, deps.sessions); else await processes.stopCommand(page.project, command!.record.id);
         await this.read(view, "processes");
-        view.notice = watch ? "Watch stopped. The orchestrator was told." : "Stop requested. The orchestrator was told.";
+        view.notice = watch ? "Watch stopped. The orchestrator was told." : session ? "Session ended. The orchestrator was told." : "Stop requested. The orchestrator was told.";
       } };
       return;
     }

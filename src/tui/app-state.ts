@@ -3,7 +3,7 @@ import type { ClipboardImage, Key, Terminal } from "./components";
 import type { ImageRef, AgentInfo, Message, ToolCall, ToolOutcome, Role } from "../protocol";
 import type { RequestSettings } from "../api/model";
 import type { Orchestrator } from "../core/agent-loop/orc";
-import { archiveAgents, restoreAgents, cancelSession } from "../core/tmux";
+import { archiveAgents, restoreAgents, cancelSession, type processes } from "../core/tmux";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
 import { login, sendAgentFeedback, modelChoices, effortChoices, setModel, type DeleteOptions } from "./commands";
 import type { Line, MarkdownStream, Calls } from "./conversation";
@@ -106,6 +106,8 @@ export interface AppDeps {
   /** The status bar's own `N tasks` read (page open/switch, polls while the Tasks panel is closed); defaults to `tasks`. */
   taskCount?: typeof listTasks;
   treeTasks?: typeof allTasks;
+  /** How the Processes tab asks tmux for agent-opened sessions and ends one; tests stub it. */
+  sessions?: processes.Sessions;
   removeTask?: typeof removeTask;
   /** How long Enter, digits and typing are ignored after a question first shows (QUESTION_DELAY_MS); tests shorten it. */
   questionDelayMs?: number;

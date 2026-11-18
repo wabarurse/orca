@@ -6,7 +6,7 @@ import { paths } from "../../config";
 import { observe } from "../data/inbox";
 import { prWatchEnabled, processDirectory, registerPRWatch, saveProcess, type ProcessRecord } from "../data/processes";
 import { observeTaskPR, registerTask } from "../data/tasks";
-import { processView, stopCommand, stopWatch } from "./process-view";
+import { processView, stopCommand, stopSession, stopWatch, type Pane, type Sessions } from "./process-view";
 
 // Isolated ORCA_HOME per test: never the real home, GitHub or a real command.
 let root: string, previous: string | undefined;
@@ -53,4 +53,32 @@ test("stopping a watch ends the notices for that PR and tells the orchestrator; 
   const ended = await command(2, { state: "exited", exitCode: 0 });
   await expect(stopCommand(project, ended.id)).rejects.toThrow("already ended");
   expect(messages()).toHaveLength(2);
+});
+
+function fakeTmux(panes: Pane[] | null): Sessions & { killed: string[] } {
+  const killed: string[] = [];
+  return { killed, panes: async () => panes && panes.filter(pane => !killed.includes(pane.session)), tail: async pane => `last lines of ${pane}`, kill: async session => { killed.push(session); } };
+}
+const pane = (session: string, window: string, path: string, extra: Partial<Pane> = {}): Pane => ({ session, created: now - 3_600_000, window, pane: `%${session}-${window}`, path, command: `run ${window}`, live: true, ...extra });
+
+test("tmux sessions agents opened themselves are listed when a pane runs in this conversation's folders; orca's own and others' are not", async () => {
+  const tree = join(paths.worktreeRoots(project)[0]!, "feat-x");
+  const tmux = fakeTmux([pane("dev", "web", join(tree, "apps/web")), pane("dev", "api", "/elsewhere", { live: false }), pane("orca-p", "worker-feat-x", tree),
+    pane("other", "web", "/another/conversation"), pane("prefix", "web", paths.worktreeRoots(project)[0]! + "-sibling/feat-x")]);
+  const view = await processView(project, now, tmux);
+  expect(view.sessions.map(s => s.name)).toEqual(["dev"]); // every window of a matching session, whichever folder it is in
+  expect(view.sessions[0]!.windows.map(w => [w.window, w.live, w.tail])).toEqual([["web", true, "last lines of %dev-web"], ["api", false, ""]]);
+  expect((await processView(project, now, fakeTmux(null))).sessions).toEqual([]); // tmux not asked: no rows, no error
+});
+
+test("ending a session kills only one the view lists and tells the orchestrator", async () => {
+  const tree = join(paths.worktreeRoots(project)[0]!, "feat-x");
+  const tmux = fakeTmux([pane("dev", "web", tree), pane("orca-p", "orchestrator", tree), pane("other", "web", "/another/conversation")]);
+  await expect(stopSession(project, "orca-p", tmux)).rejects.toThrow("already ended");
+  await expect(stopSession(project, "other", tmux)).rejects.toThrow("already ended");
+  expect(tmux.killed).toEqual([]);
+  await stopSession(project, "dev", tmux);
+  expect(tmux.killed).toEqual(["dev"]);
+  expect(messages().map(m => m.text)).toEqual([expect.stringMatching(/^\[session-stopped\] The user ended tmux session dev \(web: run web\)\. Nothing was restarted\./)]);
+  await expect(stopSession(project, "dev", tmux)).rejects.toThrow("already ended");
 });
