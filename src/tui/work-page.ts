@@ -10,7 +10,7 @@ import { directories, togglePin, workViews } from "../core/data/projects";
 import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/data/bubbles";
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
 import { archiveAgents, cancelSession, launchIdentity, listAgents, processes, restoreAgents } from "../core/tmux";
-import { ARCHIVED_SECTION, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
+import { ARCHIVED_SECTION, byDay, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
   type Key, type OutlineNode, type WorkPageRender, type WorkRow, type WorkSection } from "./components";
 import { deleteFolder, deleteProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
 import { elapsedMs, formatElapsed } from "./header";
@@ -29,6 +29,7 @@ const HINTS: Record<WorkKind, string> = {
   processes: "j/k move · s stop · r refresh · f find · esc close",
   projects: "j/k move · enter open · p pin · c close page · d delete · f find · esc close",
 };
+const DAY_HELP = "Items last active on this day, newest first.";
 const SECTION_HELP = "Archived items are retained. Enter or → expands; ← collapses. u restores an item to the list without resuming work.";
 const RESTORED = "Restored to list. No work resumed or questions reopened.";
 const NO_PAGE = "open a conversation first";
@@ -107,7 +108,8 @@ function processItems(view: processes.ProcessView, now: number): Item[] {
       sections: [{ title: "Command", text: p.command }, { title: "Run", fields }, { title: "Output (last lines)", text: command.tail || "no output yet" }] };
   });
   return [...(watches.length ? [heading(":watches", "PR watches", "Pull requests the orchestrator is told about when they change: checks, reviews, conflicts, a merge. s stops listening to the selected one."), ...watches] : []),
-    ...(commands.length ? [heading(":commands", "Commands", "Background commands agents started, such as a local stack or a long check, running first. s stops the selected one, like Ctrl+C."), ...commands] : [])];
+    ...byDay(commands, item => item.command!.live ? now : Date.parse(item.command!.record.updatedAt), now).map((item): Item => "sections" in item ? item
+      : heading(`:commands${item.id}`, `Commands · ${item.name}`, "Background commands agents started, such as a local stack or a long check, by when they last ran. s stops the selected one, like Ctrl+C."))];
 }
 
 export class WorkPages {
@@ -210,7 +212,10 @@ export class WorkPages {
     if (kind === "projects") return this.projectItems(view);
     if (!page) return [];
     if (kind === "processes") return processItems(view.background, this.host.clock.now());
-    const section = <T extends Item>(items: T[]) => withArchiveSection(items, history).map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: "Archived", text: SECTION_HELP }] });
+    const now = this.host.clock.now();
+    // Listed rows newest first under a heading per day; archived rows keep their own section below.
+    const section = (items: Item[], at: (item: Item) => number) => withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history)
+      .map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: item.name, text: "heading" in item ? DAY_HELP : SECTION_HELP }] });
     if (kind === "tasks") return this.taskItems(view, history);
     if (kind === "images") {
       const list = this.host.images(page);
@@ -219,10 +224,9 @@ export class WorkPages {
         sections: [{ title: "File", fields: [["kind", media.kind], ["from", media.from], ["at", formatDateTime(media.at)], ["id", media.id]] },
           { title: "Caption", text: media.text }, { title: "Open", text: "Enter draws it in the terminal when it can (Ghostty, Kitty, WezTerm; any key closes it), else opens the desktop viewer." }],
         media, archived: list?.archived[media.id] ?? media.archived,
-      })));
+      })), item => Date.parse(item.media!.at));
     }
-    if (kind === "questions") return section((page.questions.all ?? page.questions.open).map(question => this.questionItem(view, question)));
-    const now = this.host.clock.now();
+    if (kind === "questions") return section((page.questions.all ?? page.questions.open).map(question => this.questionItem(view, question)), item => Date.parse(item.question!.ts));
     return section(view.agents.filter(agent => agent.status !== "unknown").map((agent): Item => {
       const ms = elapsedMs(agent, now), queued = `${agent.queuedMessages ?? "?"} queued messages`;
       return { id: agent.name, name: agent.name, status: agent.live ? "running" : agent.archived ? "archived" : "exited", color: agent.live ? 33 : 90,
@@ -231,7 +235,7 @@ export class WorkPages {
           ...(agent.endedAt ? [["exited", formatDateTime(agent.endedAt)] as [string, string]] : []), ["inbox", queued]] },
           { title: "Last activity", text: agent.activity ?? "" }],
         agent, archived: !agent.live && !agent.queuedMessages && (agent.archived || !recentAgent(agent, now)) };
-    }));
+    }), item => item.agent!.live ? now : Date.parse(item.agent!.lastActiveAt ?? item.agent!.endedAt ?? item.agent!.startedAt ?? ""));
   }
 
   private questionItem(view: View, question: Question): Item {
@@ -289,7 +293,10 @@ export class WorkPages {
     let id = view.selected[view.kind];
     if (id === undefined && view.kind === "projects") { const current = this.host.page()?.project ?? ""; id = view.projects.find(p => p.name === current || p.conversations?.includes(current))?.name; }
     const at = items.findIndex(item => item.id === id);
-    return at >= 0 ? at : Math.max(0, items.findIndex(item => !item.heading)); // never start on a day heading
+    if (at >= 0) return at;
+    // Questions are answered oldest first: with nothing selected (or the selected one gone) the cursor is on the oldest open one, wherever newest-first puts it.
+    const head = view.kind === "questions" ? items.findIndex(item => item.id === view.page?.questions.open[0]?.id) : -1;
+    return head >= 0 ? head : Math.max(0, items.findIndex(item => !item.heading)); // never on a day heading
   }
 
   // --- drawing ----------------------------------------------------------------
@@ -383,7 +390,12 @@ export class WorkPages {
   }
 
   private move(view: View, items: Item[], to: number): void {
-    view.selected[view.kind] = items[Math.max(0, Math.min(items.length - 1, to))]?.id;
+    // The cursor never rests on a heading: it goes on to the next row the way it was moving, else back to the nearest.
+    const clamp = (n: number) => Math.max(0, Math.min(items.length - 1, n)), step = to < this.index(view, items) ? -1 : 1;
+    let at = clamp(to);
+    while (items[at]?.heading && items[at + step]) at += step;
+    while (items[at]?.heading && items[at - step]) at -= step;
+    view.selected[view.kind] = items[at]?.id;
     view.detailTop = 0;
   }
 

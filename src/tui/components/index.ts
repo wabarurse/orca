@@ -6,5 +6,5 @@ export { shimmer } from "./shimmer";
 export { realTerminal, repositoryTitle, type Terminal } from "./term";
 export { ImageOverlay } from "./image-overlay";
 
-export { ARCHIVED_SECTION, findItem, inputLine, renderWorkPage, tableRows, withArchiveSection, type WorkPageRender, type WorkRow, type WorkSection } from "./work-view";
+export { ARCHIVED_SECTION, byDay, findItem, inputLine, renderWorkPage, tableRows, withArchiveSection, type WorkPageRender, type WorkRow, type WorkSection } from "./work-view";
 export { navigateOutline, taskRows, taskSections, type OutlineNode } from "./task-tree";

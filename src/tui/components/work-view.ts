@@ -1,14 +1,16 @@
 // The one full-screen page every list view renders through (Agents, Tasks,
-// Questions, Images, Projects): a tab line, a table, a rule naming the selected
+// Questions, Images, Processes, Projects): a tab line, a table, a rule naming the selected
 // item, its details as short sections, and a single status/input line. Pure:
 // the caller owns the items, selection, scrolling and keys (work-page.ts).
+import { formatDateTime } from "../../protocol";
 import { bold, cells, dim, fit, LINK_CLOSE, linkOpen, plainText, visibleLength, wordWrap, wrap } from "./text";
 
 export const ARCHIVED_SECTION = ":archived";
 export const archiveTitle = (count: number, expanded: boolean) => `${expanded ? "▾" : "▸"} Archived (${count})`;
 
 /** One table row. `lead` is drawn dim before the name and is not searched (tree connectors, a pin). */
-export interface WorkRow { id: string; name: string; lead?: string; status?: string; color?: number; info?: string }
+/** `heading` marks a group title (a day): drawn like a row, never counted and never under the cursor. */
+export interface WorkRow { id: string; name: string; lead?: string; status?: string; color?: number; info?: string; heading?: true }
 /** A details block: wrapped text, `key value` fields (a third element makes the value a link), or numbered options. */
 export interface WorkSection {
   title: string; text?: string; fields?: [string, string, string?][];
@@ -30,6 +32,28 @@ export interface WorkPageRender {
   /** Screen row of the first table row, the first item shown and how many fit. */
   table: { y: number; top: number; rows: number };
   detail: { top: number; max: number; rows: number };
+}
+
+export const DAY_HEADING = ":day:";
+export const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+/** A day heading's text: Today, Yesterday, the date, or Earlier for rows whose time is unknown. */
+export function dayName(id: string, now: number): string {
+  const day = id.slice(DAY_HEADING.length), today = new Date(now);
+  if (day === localDay(today)) return "Today";
+  if (day === "unknown") return "Earlier";
+  return day === localDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)) ? "Yesterday" : formatDateTime(day);
+}
+/** Rows by when each was last active (`at`, ms; not finite when unknown), newest first, under a heading row per local day. */
+export function byDay<T extends WorkRow>(items: readonly T[], at: (item: T) => number, now: number): (T | WorkRow & { heading: true })[] {
+  const timed = items.map((item, order) => { const ms = at(item); return { item, order, ms: Number.isFinite(ms) ? ms : -Infinity }; });
+  const result: (T | WorkRow & { heading: true })[] = [];
+  let heading = "";
+  for (const row of timed.sort((a, b) => b.ms - a.ms || a.order - b.order)) {
+    const id = DAY_HEADING + (row.ms === -Infinity ? "unknown" : localDay(new Date(row.ms)));
+    if (id !== heading) result.push({ id: heading = id, name: dayName(id, now), heading: true });
+    result.push(row.item);
+  }
+  return result;
 }
 
 /** The header is a selectable row, so arrows, Enter and mouse share navigation. */
@@ -84,7 +108,8 @@ function widths(cols: number, items: readonly WorkRow[]): { name: number; status
 }
 
 function tabLine(page: WorkPage): string {
-  const at = page.items.length ? `${page.selected + 1} of ${page.items.length}` : "";
+  const real = page.items.filter(item => !item.heading).length, before = page.items.slice(0, page.selected + 1).filter(item => !item.heading).length;
+  const at = real ? `${Math.max(1, before)} of ${real}` : "";
   const tab = (t: WorkPage["tabs"][number], i: number, counts: boolean) =>
     (i === page.active ? `\x1b[1;4m${t.name}\x1b[0m` : dim(t.name)) + (counts && t.count !== undefined ? dim(` ${t.count}`) : "");
   const active = page.tabs[page.active];

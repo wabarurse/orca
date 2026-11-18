@@ -2,7 +2,7 @@
 // a dependency outline, flattened with tree connectors and fold markers. Invalid
 // registries fail closed (the functions throw; the page shows the error).
 import { formatDateTime } from "../../protocol";
-import { ARCHIVED_SECTION, archiveTitle, type WorkRow, type WorkSection } from "./work-view";
+import { ARCHIVED_SECTION, DAY_HEADING, archiveTitle, dayName, localDay, type WorkRow, type WorkSection } from "./work-view";
 import { publicTaskStatus, taskPublicationMilestone, check, type TaskDisplayStatus, type Task, type TaskTreeView } from "../../protocol/task";
 import { plainText } from "./text";
 import { treeTasks, type TreeTask } from "./task-tree-data";
@@ -54,14 +54,6 @@ function outlineGroup(input: TreeTask[], collapsed: ReadonlySet<string>): Outlin
   return result;
 }
 
-export const DAY_HEADING = ":day:";
-const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-/** A heading's text: Today, Yesterday, else the date. */
-function dayName(id: string, now: number): string {
-  const day = id.slice(DAY_HEADING.length), today = new Date(now);
-  if (day === localDay(today)) return "Today";
-  return day === localDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)) ? "Yesterday" : formatDateTime(day);
-}
 /** The listed tasks by when they were last touched, newest first, under a heading per local day. A task is touched
  * by any change to its record (a run starting or ending, its PR, attention, an edit), not only by its creation. A
  * dependency tree moves as one, at its most recently touched member, so a prerequisite never leaves its dependents. */
