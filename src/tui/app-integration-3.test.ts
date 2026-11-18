@@ -573,7 +573,7 @@ for (const width of [80, 120]) test(`Tasks page real App ${width}: confirmed mer
     term.type("r"); await app.refreshSessions(); expect(screen()).toContain("Task #2 Queued child");
     term.type("\x14"); expect(app.input.text).toBe("draft"); term.type("\x14");
     await until(() => app.work.state?.items.length === 3);
-    expect(app.work.state!.items.map(item => item.name)).toEqual(["Today", "#2 Queued child", "▸ Archived (1)"]);
+    expect(app.work.state!.items.map(item => item.name)).toEqual(["▾ Today (1)", "#2 Queued child", "▸ Archived (1)"]);
   } finally { app.quit(); await running; }
 });
 

@@ -33,7 +33,7 @@ test("abandoned tasks archive, expand in place and restore without changing depe
     term.type("d"); await until(() => term.screen().includes("Archive 1 settled"));
     term.type("y"); await until(() => term.screen().includes("Archived (1)"));
     expect(term.screen()).toContain("Active child");
-    expect(app.work.state!.items.map(item => item.name)).toEqual(["Today", "#2 Active child", "▸ Archived (1)"]);
+    expect(app.work.state!.items.map(item => item.name)).toEqual(["▾ Today (1)", "#2 Active child", "▸ Archived (1)"]);
     term.type("a"); await until(() => term.screen().includes("▾ Archived (1)"));
     expect(term.screen()).toContain("#1 Old parent"); expect(term.screen()).toContain("Active child");
     term.type("h"); await until(() => term.screen().includes("▸ Archived (1)"));

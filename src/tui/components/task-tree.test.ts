@@ -14,7 +14,7 @@ const label = (row: { lead?: string; name: string }) => (row.lead ?? "") + row.n
 test("the outline flattens into rows: connectors and fold markers lead the name, other prerequisites and the PR are info", () => {
   const tasks = sample(), collapsed = new Set<string>();
   const all = taskRows(tasks, collapsed, false), out = { ...all, rows: all.rows.filter(row => !row.heading) };
-  expect(all.rows[0]).toMatchObject({ heading: true, name: "Jan 2, 2026" }); // one day, one heading
+  expect(all.rows[0]).toMatchObject({ heading: true, name: "▾ Jan 2, 2026 (6)" }); // one day, one heading
   expect(all.rows).toEqual(taskRows([...tasks].reverse().map(taskTreeView), collapsed, false).rows);
   expect(out.rows.map(row => row.id)).toEqual([5, 1, 2, 6, 3, 4].map(id));
   expect(out.rows.map(label)).toEqual(["▾ #5 Clarify empty inbox", "├─ ▾ #1 Restore session draft", "│  └─ ▾ #2 Export task history",
@@ -51,10 +51,16 @@ test("tasks are listed by when they were last touched, newest first, under a hea
   // #1 was created first and touched today; #3 depends on #2 and was touched yesterday, so both sit under Yesterday.
   const tasks = [at(1, local(10, 9)), at(2, local(5, 9)), at(3, local(9, 23), [2]), at(4, local(10, 14)), at(5, local(7, 12))];
   const { rows, nodes } = taskRows(tasks, new Set(), false, now);
-  expect(rows.map(row => row.heading ? row.name : label(row))).toEqual(["Today", "#4 Task 4", "#1 Task 1", "Yesterday", "▾ #2 Task 2", "└─ #3 Task 3", "Jan 7, 2026", "#5 Task 5"]);
+  expect(rows.map(row => row.heading ? row.name : label(row))).toEqual(["▾ Today (2)", "#4 Task 4", "#1 Task 1", "▾ Yesterday (2)", "▾ #2 Task 2", "└─ #3 Task 3", "▾ Jan 7, 2026 (1)", "#5 Task 5"]);
   expect(rows.filter(row => row.heading).every(row => row.status === undefined && row.id.startsWith(":day:"))).toBe(true);
   // A folded tree still sits at its hidden member's day.
-  expect(taskRows(tasks, new Set([id(2)]), false, now).rows.map(row => row.name).slice(3, 5)).toEqual(["Yesterday", "#2 Task 2"]);
+  expect(taskRows(tasks, new Set([id(2)]), false, now).rows.map(row => row.name).slice(3, 5)).toEqual(["▾ Yesterday (2)", "#2 Task 2"]);
+  // A folded day keeps its heading and count; its trees are left out and come back unchanged.
+  expect(taskRows(tasks, new Set([":day:2026-01-09"]), false, now).rows.map(row => row.name)).toEqual(["▾ Today (2)", "#4 Task 4", "#1 Task 1", "▸ Yesterday (2)", "▾ Jan 7, 2026 (1)", "#5 Task 5"]);
+  const folds = new Set<string>();
+  expect(navigateOutline(nodes, id(2), folds, "left")).toBe(id(2)); expect(folds.has(id(2))).toBe(true); // a tree folds first
+  expect(navigateOutline(nodes, id(1), folds, "left")).toBe(":day:2026-01-10"); // then ← goes up to the day
+  expect(navigateOutline(nodes, ":day:2026-01-10", folds, "left")).toBe(":day:2026-01-10"); expect(folds.has(":day:2026-01-10")).toBe(true);
   expect(navigateOutline(nodes, id(1), new Set(), "down")).toBe(":day:2026-01-09"); // a heading is a row like the Archived one
 });
 
