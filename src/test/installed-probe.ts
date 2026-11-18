@@ -34,7 +34,7 @@ if (cmd === "images") {
   }
   if (a[0] === "display-message") {
     const exit = rows().reverse().find(r => r.exit !== undefined)?.exit;
-    console.log(exit === undefined ? "%1\t0\t\t" : `%1\t1\t${exit}\t`);
+    console.log(exit === undefined ? "%1|0||" : `%1|1|${exit}|`);
   }
   if (a[0] === "capture-pane") console.log("fake pane: last line of output");
 } else if (cmd === "agent") {

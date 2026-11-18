@@ -106,7 +106,7 @@ test("production runtime tool and /agents agree, retaining history separately wi
   record(agent, { pid: process.pid });
   const bin = join(home, "bin"); mkdirSync(bin);
   const executable = join(bin, "tmux");
-  writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec\\t0\\n'\n`); chmodSync(executable, 0o755); process.env.PATH = bin;
+  writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec|0\\n'\n`); chmodSync(executable, 0o755); process.env.PATH = bin;
   await recordRuntime(project, "worker-old", { model: "old", system: "", tools: [], contextTokens: 500 });
   const runFile = join(paths.runs(project), `${agent}.json`), before = readFileSync(runFile);
   await registerTask(project, { name: "Planned", summary: "Not started", branch: "feat/planned", authorized: true });
@@ -119,12 +119,12 @@ test("production runtime tool and /agents agree, retaining history separately wi
   expect(await local.running(project, [agent])).toEqual([agent]);
   expect((await listAgents(project))[0]).toMatchObject({ name: agent, live: true, status: "running" });
   expect(readFileSync(runFile)).toEqual(before);
-  writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec\\tinvalid\\n'\n`);
+  writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec|invalid\\n'\n`);
   const unknown = JSON.parse(await runtime.run({ action: "status" }, { project, role: "orchestrator", cwd: home }));
   expect(unknown.runningCount).toBeNull(); expect(unknown.agents[0].status).toBe("unknown");
   expect(await local.running(project, [agent])).toBeNull();
   writeFileSync(join(paths.runtimeProject(project), "contexts", "worker-old.json"), "invalid");
-  writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec\\t0\\n'\n`);
+  writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec|0\\n'\n`);
   const historicalError = JSON.parse(await runtime.run({ action: "status" }, { project, role: "orchestrator", cwd: home }));
   expect(historicalError.runningCount).toBe(1); expect(historicalError.contextObservations).toBeNull();
   expect(historicalError.errors).toContain("historical context observations unavailable");
@@ -134,7 +134,7 @@ test("dispatch ignores retained dead panes only when its matching process is pro
   expect(await child.exited).toBe(0);
   record(agent, { pid: child.pid });
   const bin = join(home, "dispatch-bin"); mkdirSync(bin);
-  const executable = join(bin, "tmux"); writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec\\t1\\n'\n`); chmodSync(executable, 0o755); process.env.PATH = bin;
+  const executable = join(bin, "tmux"); writeFileSync(executable, `#!/bin/sh\nprintf 'worker-spec|1\\n'\n`); chmodSync(executable, 0o755); process.env.PATH = bin;
   expect(await local.running(project, [agent])).toEqual([]);
   record(agent, { pid: process.pid });
   expect(await local.running(project, [agent])).toBeNull();
