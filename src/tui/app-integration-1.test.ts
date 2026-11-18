@@ -870,7 +870,7 @@ test("scrolling and new output keep both bars fixed, preserve the draft, and fol
     await until(() => !!app.page);
     for (let i = 0; i < 60; i++) app.say(`history row ${i}`);
     term.type("my draft");
-    await until(() => term.screen().includes("history row 59") && term.screen().includes("0 tasks") && term.screen().includes("0 agents")); // both counts are read in the background
+    await until(() => term.screen().includes("history row 59") && term.screen().includes("0 tasks") && term.screen().includes("0 agents") && term.screen().includes("0 processes")); // the counts are read in the background
     const top = bodyStart(term);
     const header = term.display.screen().slice(0, top);
     const footer = term.display.screen().slice(-4);

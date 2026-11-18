@@ -256,7 +256,7 @@ test("an active conversation blocks its own deletion and allows deleting an idle
   rmSync(conversationTurnLock("p"), { recursive: true });
 });
 
-test("deletion refuses local worker files; clean deletion unregisters worktrees and preserves original files, login and branches", async () => {
+test("deletion saves local worker files to a branch, then unregisters worktrees and preserves original files, login and branches", async () => {
   await ensureProject("p", repo);
   await git(repo, "config", "test.login", "keep-login");
   await Bun.write(join(repo, "draft"), "keep-original");
@@ -264,15 +264,12 @@ test("deletion refuses local worker files; clean deletion unregisters worktrees 
   await Bun.write(join(worker, "draft"), "keep-worker");
   const opts = { live: async () => [], kill: async () => {} };
   await expect(deleteProject("p", { ...opts, live: async () => null })).rejects.toThrow("cannot check live agents");
-  await expect(deleteProject("p", opts)).rejects.toThrow("local files or changes");
-  expect(await Bun.file(join(worker, "draft")).text()).toBe("keep-worker");
-  rmSync(join(worker, "draft"));
   await Bun.write(join(repo, ".git", "info", "exclude"), ".env\n");
-  await Bun.write(join(worker, ".env"), "keep-local-login");
-  await expect(deleteProject("p", opts)).rejects.toThrow("local files or changes");
-  expect(await Bun.file(join(worker, ".env")).text()).toBe("keep-local-login");
-  rmSync(join(worker, ".env"));
-  await deleteProject("p", opts);
+  await Bun.write(join(worker, ".env"), "keep-local-login"); // ignored, and nothing regenerates it
+  const { saved } = await deleteProject("p", opts);
+  expect(saved).toHaveLength(1);
+  expect(await git(repo, "show", `${saved[0]}:draft`)).toBe("keep-worker");
+  expect(await git(repo, "show", `${saved[0]}:.env`)).toBe("keep-local-login");
   expect(existsSync(paths.project("p"))).toBe(false);
   expect(existsSync(worker)).toBe(false);
   expect(await Bun.file(join(repo, "draft")).text()).toBe("keep-original");

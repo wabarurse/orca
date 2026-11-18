@@ -770,12 +770,25 @@ describe("tui app", () => {
     expect(projectList(app)!.items[projectList(app)!.index]!.name).toBe("sb-del");
     term.type("d");
     term.type("y");
-    await until(() => !existsSync(join(home, "projects", "sb-del")));
+    await until(() => !!directories.projectArchive("sb-del"));
+    expect(existsSync(join(home, "projects", "sb-del"))).toBe(true); // archived, not removed
     await until(() => !projectList(app)!.items.some((i) => i.name === "sb-del"));
     expect(app.pages.map((p) => p.project)).toEqual(["alpha"]);
     expect(app.page!.project).toBe("alpha");
     await until(() => term.screen().includes("deleted sb-del"));
     expect(killed).toEqual(["sb-del"]);
+    // It sits under Archived: Enter does not open it, u brings it back and starts nothing.
+    term.type("a");
+    await until(() => projectList(app)!.items.some((i) => i.name === "sb-del"));
+    term.type("j");
+    await until(() => projectList(app)?.items[projectList(app)!.index]?.name === "sb-del");
+    term.type("\r");
+    await until(() => strip(projectList(app)!.status).includes("is archived; u restores it"));
+    expect(app.pages.map((p) => p.project)).toEqual(["alpha"]);
+    term.type("u");
+    await until(() => !directories.projectArchive("sb-del"));
+    await until(() => strip(projectList(app)!.status).startsWith("restored sb-del"));
+    expect(app.pages.map((p) => p.project)).toEqual(["alpha"]);
     app.quit();
     await running;
   });
@@ -832,10 +845,11 @@ describe("tui app", () => {
     term.type("d");
     expect(projectList(app)!.confirm).toBe("delete Shiny app?");
     term.type("y");
-    await until(() => strip(projectList(app)!.status) === "deleted Shiny app");
+    await until(() => strip(projectList(app)!.status).startsWith("deleted Shiny app"));
     expect(checked).toEqual(["sb-orch1"]);
     expect(killed).toEqual(["sb-orch1"]);
-    expect(existsSync(join(home, "projects", "sb-orch1"))).toBe(false);
+    expect(existsSync(join(home, "projects", "sb-orch1"))).toBe(true); // archived: kept until orca clean
+    expect(directories.projectArchive("sb-orch1")).toBeTruthy();
     expect((await loadConfig()).pinned).not.toContain("sb-orch1");
     expect(projectList(app)!.items.some((i) => i.name === "sb-orch1")).toBe(false);
 
@@ -846,59 +860,38 @@ describe("tui app", () => {
     await running;
   });
 
-  test("a project mid-turn, or one with live agents, is not deleted", async () => {
+  test("deleting a project with a live agent waits for it to stop, then archives; unknown liveness stops nothing", async () => {
     mkdirSync(join(home, "projects", "sb-busy", "repo"), { recursive: true });
     const term = fakeTerm(90);
-    let finish!: () => void;
-    let turns = 0;
-    let queued = false;
-    const openOrchestrator = async (): Promise<Orchestrator> => ({
-      async say() { queued = true; },
-      async pending() { return queued; },
-      async turn() { queued = false; turns++; await new Promise<void>((r) => (finish = r)); return []; },
-    });
-    let live: string[] = [];
-    let checking: (() => void) | null = null;
-    const projects = {
-      live: async () => { await new Promise<void>((r) => (checking = r)); return live; },
-      kill: async () => {},
-    };
-    const app = new App({ term, openOrchestrator, pollMs: 10, projects });
-    const running = app.run("sb-busy");
+    const orchs = fakeOrchestrators();
+    let live: string[] | null = null, looks = 0;
+    const closed: string[] = [];
+    const projects = { live: async () => { if (live && ++looks > 2) live = []; return live; }, kill: async () => {}, stop: async () => {},
+      killWindow: async (_project: string, window: string) => { closed.push(window); } };
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000, projects });
+    const running = app.run("alpha");
     await until(() => !!app.page);
+    await app.openPage("sb-busy");
     const dir = join(home, "projects", "sb-busy");
-    const askDelete = async (before = async () => {}) => {
+    const askDelete = async () => {
       term.type("\x02");
       await until(() => projectList(app)?.items[projectList(app)!.index]?.name === "sb-busy");
-      term.type("d");
-      await before();
-      term.type("y"); // marks the page as deleting before the next poll tick
+      term.type("d"); term.type("y");
     };
-
-    // Busy when asked: refused at once.
-    term.type("go\r");
-    await until(() => app.page!.busy);
+    // tmux cannot be asked: nothing is stopped, nothing is archived, the page stays.
     await askDelete();
-    await until(() => !!projectList(app)?.status.includes("mid-turn"));
-    expect(existsSync(dir)).toBe(true);
-    expect(app.pages.length).toBe(1);
-    finish();
-    await until(() => !app.page!.busy);
-
-    // While the live-agent check runs, the poll does not start a turn on it.
-    term.press({ name: "escape" });
-    await askDelete(() => app.page!.orch.say("report"));
-    await until(() => !!checking);
-    await Bun.sleep(50);
-    expect(turns).toBe(1);
+    await until(() => !!projectList(app)?.status.includes("cannot check live agents; nothing was stopped"));
+    expect(directories.projectArchive("sb-busy")).toBeUndefined();
+    expect(app.pages.map(p => p.project)).toContain("sb-busy");
+    // A worker is running: it is asked to stop and waited for. It exits by itself, so no window is closed.
     live = ["worker-x"];
-    checking!();
-    await until(() => !!projectList(app)?.status.includes("live agents (worker-x)"));
-    expect(existsSync(dir)).toBe(true);
-    expect(app.pages.length).toBe(1);
-    expect(app.page!.deleting).toBe(false);
-    await until(() => turns === 2); // turns resume once the delete is refused
-    finish();
+    term.press({ name: "escape" });
+    await askDelete();
+    await until(() => !!directories.projectArchive("sb-busy"));
+    await until(() => !!projectList(app)?.status.includes("deleted sb-busy · stopped 1 agent"));
+    expect(closed).toEqual([]);
+    expect(existsSync(dir)).toBe(true); // archived, not removed
+    expect(app.pages.map(p => p.project)).toEqual(["alpha"]);
     app.quit();
     await running;
   });

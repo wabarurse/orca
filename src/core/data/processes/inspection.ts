@@ -1,24 +1,31 @@
 import type { ProcessRecord } from "./store";
 
-interface Entry { pid: number; group: number; started: number }
-/** One read-only OS snapshot per recovery/cleanup pass. No signalling based on
- * old PIDs: a recycled PID must never target an unrelated process. */
-export function processInspection(read = () => {
+export interface Entry { pid: number; group: number; started: number }
+const listing = () => {
   const result = Bun.spawnSync(["ps", "-axo", "pid=,pgid=,lstart="], {
-    env: { ...process.env, LC_ALL: "C" }, stdout: "pipe", stderr: "pipe", timeout: 2000,
+    // ps prints start times in its own timezone with no zone named: ask for UTC and read them as UTC, so the
+    // comparison never depends on this process's timezone (bun test runs in UTC; a shell usually does not).
+    env: { ...process.env, LC_ALL: "C", TZ: "UTC" }, stdout: "pipe", stderr: "pipe", timeout: 2000,
   });
   if (result.exitCode !== 0) throw new Error("process inspection failed");
   return result.stdout.toString();
-}): (p: ProcessRecord) => string | undefined {
+};
+/** Every process on the machine with its group and start time; throws when the listing is incomplete. */
+export function processTable(read = listing): Entry[] {
+  return read().trim().split("\n").map(line => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    const started = match ? Date.parse(`${match[3]!} UTC`) : NaN;
+    if (!match || !Number.isFinite(started)) throw new Error("incomplete process inspection");
+    return { pid: Number(match[1]), group: Number(match[2]), started };
+  });
+}
+/** One read-only OS snapshot per recovery/cleanup pass. No signalling based on
+ * old PIDs: a recycled PID must never target an unrelated process. */
+export function processInspection(read = listing): (p: ProcessRecord) => string | undefined {
   let entries: Entry[] | undefined;
   return p => {
     try {
-      entries ??= read().trim().split("\n").map(line => {
-        const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
-        const started = match ? Date.parse(match[3]!) : NaN;
-        if (!match || !Number.isFinite(started)) throw new Error("incomplete process inspection");
-        return { pid: Number(match[1]), group: Number(match[2]), started };
-      });
+      entries ??= processTable(read);
     } catch { return "operating-system process inspection unavailable"; }
     const at = Date.parse(p.updatedAt);
     if (!Number.isFinite(at)) return "command has no valid last observation time";

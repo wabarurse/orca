@@ -9,10 +9,11 @@ import { abandonTask, allTasks, removeTask, restoreTask } from "../core/data/tas
 import { directories, togglePin, workViews } from "../core/data/projects";
 import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/data/bubbles";
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
-import { archiveAgents, cancelSession, launchIdentity, listAgents, processes, restoreAgents } from "../core/tmux";
+import { archiveAgents, cancelSession, launchIdentity, listAgents, ownership, processes, restoreAgents } from "../core/tmux";
+const { retire } = ownership;
 import { ARCHIVED_SECTION, byDay, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
   type Key, type OutlineNode, type WorkPageRender, type WorkRow, type WorkSection } from "./components";
-import { deleteFolder, deleteProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
+import { archiveBubble, archiveFolder, archiveProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
 import { elapsedMs, formatElapsed } from "./header";
 import { fileStore, QUESTION_PROGRESS, type Questions } from "./footer";
 import type { StickyScreen } from "./screen";
@@ -27,7 +28,7 @@ const HINTS: Record<WorkKind, string> = {
   questions: "j/k move · enter answer · d delete · u restore · a archived · f find · esc close",
   images: "j/k move · enter view · t retry unsent · d archive · a archived · f find · esc close",
   processes: "j/k move · s stop · r refresh · f find · esc close",
-  projects: "j/k move · enter open · p pin · c close page · d delete · f find · esc close",
+  projects: "j/k move · enter open · p pin · c close page · d delete · D delete bubble · u restore · a archived · esc close",
 };
 const DAY_HELP = "Items last active on this day, newest first. Enter or ← folds the day away; Enter or → opens it again.";
 const SECTION_HELP = "Archived items are retained. Enter or → expands; ← collapses. u restores an item to the list without resuming work.";
@@ -221,7 +222,8 @@ export class WorkPages {
 
   private items(view: View, kind = view.kind): Item[] {
     const page = view.page, history = !!view.history[kind];
-    if (kind === "projects") return this.projectItems(view);
+    if (kind === "projects") return withArchiveSection(this.projectItems(view), history, this.folds(view, kind))
+      .map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: item.name, text: "Deleted conversations. Nothing in them runs and their files are kept until orca clean. u restores the selected one." }] });
     if (!page) return [];
     if (kind === "processes") return withArchiveSection(processItems(view.background, this.host.clock.now()), false, this.folds(view, kind)) as Item[]; // nothing here is archived
     const now = this.host.clock.now();
@@ -285,14 +287,14 @@ export class WorkPages {
     const pages = this.host.pages(), current = this.host.page()?.project;
     return view.projects.map((entry): Item => {
       const members = new Set([entry.name, ...(entry.conversations ?? [])]), open = pages.filter(page => members.has(page.project));
-      const status = open.some(page => page.busy) ? "turn" : current && members.has(current) ? "current" : open.length ? "open" : "";
+      const status = entry.archivedAt ? "archived" : open.some(page => page.busy) ? "turn" : current && members.has(current) ? "current" : open.length ? "open" : "";
       const bubble = view.bubbles[entry.name], shared = bubble && bubble.size > 1;
       return { id: entry.name, lead: entry.pinned ? "★ " : "", name: shared ? `${bubble.name} ▸ ${entry.label}` : entry.label, status, color: status === "turn" ? 33 : status === "current" ? 32 : 90,
         info: shared ? `bubble · ${bubble.size} orcs` : entry.directory ?? entry.name,
         sections: [{ title: entry.directory ? "Project" : "Conversation", fields: [["id", entry.name], ...(entry.directory ? [["folder", entry.directory] as [string, string]] : []),
           ...(bubble ? [["bubble", `${bubble.name} · shared by ${bubble.size} orchestrator${bubble.size === 1 ? "" : "s"}`] as [string, string]] : []),
           ...(entry.conversations ? [["chats", `${entry.conversations.length} conversations, ${open.length} open here`] as [string, string]] : []), ["pinned", entry.pinned ? "yes" : "no"]] }],
-        project: entry };
+        project: entry, archived: !!entry.archivedAt };
     });
   }
 
@@ -384,7 +386,7 @@ export class WorkPages {
       if (hit === -1) view.notice = view.query ? `no item matches "${view.query}"` : "f starts a find; then n/N go to the next and previous match";
       else this.move(view, items, hit);
     }
-    else if (key === "a" && view.kind !== "projects" && view.kind !== "processes") { view.history[view.kind] = !view.history[view.kind]; view.selected[view.kind] = ARCHIVED_SECTION; view.detailTop = 0; }
+    else if (key === "a" && view.kind !== "processes") { view.history[view.kind] = !view.history[view.kind]; view.selected[view.kind] = ARCHIVED_SECTION; view.detailTop = 0; }
     else if (key === "r") { view.notice = "Refreshing…"; this.host.draw(); await Promise.all(WORK_KINDS.map(kind => this.read(view, kind))); if (view.notice === "Refreshing…") view.notice = view.errors[view.kind] ? undefined : `Refreshed ${formatDateTime(this.host.clock.now())}`; }
     else if (key === "enter" && items[index]?.section) view.history[view.kind] = !view.history[view.kind];
     else if (key === "enter" && items[index]?.heading) { const folds = this.folds(view), id = items[index].id; if (!folds.delete(id)) folds.add(id); }
@@ -600,7 +602,12 @@ export class WorkPages {
   /** Projects: Enter opens (a directory project lists its conversations first), p pins, c closes an open page, d deletes after y/n, n starts a conversation in the listed project. */
   private async projectKey(view: View, key: string, entry: ProjectEntry): Promise<void> {
     const pages = this.host.pages();
-    if (key === "enter") {
+    if (entry.archivedAt) {
+      // An archived conversation only comes back: nothing in it opens or runs until it is restored.
+      if (key !== "u") { if (["enter", "d", "D", "p", "c", "b"].includes(key)) view.notice = `${entry.label} is archived; u restores it`; return; }
+      try { await retire.restoreProject(entry.name); await this.read(view, "projects"); view.notice = `restored ${entry.label}; nothing was started`; }
+      catch (error) { view.notice = message(error); }
+    } else if (key === "enter") {
       if ((await directories.directoryProjects()).some(p => p.id === entry.name)) {
         Object.assign(view, { parent: entry.name, projects: [], query: "" }); view.selected.projects = undefined; view.loaded.delete("projects");
         return this.read(view, "projects");
@@ -628,38 +635,30 @@ export class WorkPages {
       if (!page) { view.notice = `${entry.label} has no open page`; return; }
       this.host.closePage(pages.indexOf(page));
       if (this.view === view) view.notice = `closed ${page.name}; its project and history are kept`;
-    } else if (key === "d") {
-      // A folder row deletes every conversation in it; a conversation row deletes that one. Either
-      // way its worktrees go too, so the question says how many and whether any holds uncommitted files.
-      const members = entry.directory ? entry.conversations ?? [] : [entry.name];
-      const open = () => pages.filter(p => members.includes(p.project));
-      // The question is up at once; what will be lost joins it when read. Until the user has seen
-      // that, uncommitted worktree files still refuse the deletion instead of being discarded.
-      let told = false;
-      const confirm = { text: `delete ${entry.label}?`, run: async () => {
-        const busy = open().find(p => p.busy), midTurn = (name: string) => `${name} is mid-turn; try again when it ends`;
-        if (busy) throw new Error(midTurn(busy.name));
-        const deleting = open();
-        for (const page of deleting) page.deleting = true;
-        const options = { ...this.host.deps.projects, discard: told, beforeRemove: (project: string) => {
+    } else if (key === "d" || key === "D") {
+      // Delete works up from the bottom: agents and commands are asked to stop and waited for, what the conversation
+      // owns is archived, then the conversation is. Nothing is removed from disk; orca clean does that later.
+      // d: this conversation, or every conversation of a folder row. D: every conversation sharing this one's bubble.
+      const bubble = key === "D" ? view.bubbles[entry.name] : undefined;
+      if (key === "D" && !bubble) { view.notice = `${entry.label} is in no bubble; d deletes it`; return; }
+      const what = bubble ? `bubble ${bubble.name} and its ${bubble.size} orc${bubble.size === 1 ? "" : "s"}` : entry.label;
+      const confirm = { text: `delete ${what}?`, run: async () => {
+        const options = { ...this.host.deps.projects, sessions: this.host.deps.sessions, beforeArchive: (project: string) => {
           const page = this.host.pages().find(p => p.project === project);
-          if (!page) return;
-          if (page.busy) throw new Error(midTurn(page.name));
-          this.host.closePage(this.host.pages().indexOf(page));
+          if (page) this.host.closePage(this.host.pages().indexOf(page));
         } };
-        try { await (entry.directory ? deleteFolder(entry.name, options) : deleteProject(entry.name, options)); }
-        catch (error) { for (const page of deleting) page.deleting = false; throw error; }
-        finally { if (entry.directory) delete view.parent; await this.read(view, "projects"); }
-        view.notice = `deleted ${entry.label}`;
+        view.notice = `stopping what runs under ${what}…`; this.host.draw();
+        let reports: Awaited<ReturnType<typeof archiveFolder>> = [];
+        try { reports = bubble ? await archiveBubble(bubble.id, options) : entry.directory ? await archiveFolder(entry.conversations ?? [], options) : [await archiveProject(entry.name, options)]; }
+        finally { await this.read(view, "projects"); }
+        view.notice = [`deleted ${what}`, retire.describeArchive(reports), "kept until orca clean; a then u restores"].filter(Boolean).join(" · ");
       } };
       view.confirm = confirm;
-      void deletionSummary(entry).then(losing => {
-        if (view.confirm !== confirm) return;
-        const what = [losing, entry.directory ? `${entry.directory} itself is kept` : ""].filter(Boolean).join("; ");
-        if (what) confirm.text = `delete ${entry.label} (${what})?`;
-        told = true;
+      void deletionSummary(entry).then(holding => {
+        if (view.confirm !== confirm || bubble) return;
+        if (holding) confirm.text = `delete ${what} (${holding}; running work is stopped, everything is archived)?`;
         if (this.view === view) this.host.draw();
-      }, () => { /* the deletion's own checks report what cannot be read */ });
+      }, () => { /* the archive's own checks report what cannot be read */ });
     }
   }
 }

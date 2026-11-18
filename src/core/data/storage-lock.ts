@@ -30,8 +30,8 @@ function processStart(pid: number, now = Date.now()): number | null {
   if (known && now - known.at < START_TTL_MS) return known.started;
   let started: number | null = null;
   try {
-    const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { env: { ...process.env, LC_ALL: "C" }, stdout: "pipe", stderr: "ignore" });
-    const ms = out.exitCode === 0 ? Date.parse(out.stdout.toString().trim()) : NaN;
+    const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { env: { ...process.env, LC_ALL: "C", TZ: "UTC" }, stdout: "pipe", stderr: "ignore" });
+    const ms = out.exitCode === 0 ? Date.parse(`${out.stdout.toString().trim()} UTC`) : NaN; // asked and read in UTC: no timezone mismatch
     if (Number.isFinite(ms)) started = ms;
   } catch { /* no ps: unknown */ }
   if (starts.size > 512) starts.clear();

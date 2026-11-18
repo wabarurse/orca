@@ -2,6 +2,7 @@
 // supplies what that layer cannot import: stopping the project's daemon.
 
 import { ownership } from "../../core/tmux";
+const { retire } = ownership;
 import { ensureProject, stopDaemon } from "../../core/agent-loop/orc";
 import { inheritedSettings, loadConfig, paths, projectStateScope, readState, repositoryBinding, saveConfig, writeProjectState } from "../../config";
 import { directories } from "../../core/data/projects";
@@ -14,6 +15,17 @@ const withStop = (options: DeleteOptions): ownership.DeleteOptions => ({ stop: s
 export const deleteProject = (name: string, options: DeleteOptions = {}) => ownership.deleteProject(name, withStop(options));
 /** Delete a folder's conversations, then its record. The directory on disk is kept. */
 export const deleteFolder = (id: string, options: DeleteOptions = {}) => ownership.deleteFolder(id, withStop(options));
+/** Delete from the Bubbles page: stop everything under the conversation gracefully and archive it (core/tmux/retire.ts). */
+export type RetireOptions = Partial<ownership.retire.RetireOptions>;
+const retiring = (options: RetireOptions): ownership.retire.RetireOptions => ({ stop: stopDaemon, ...options });
+export const archiveProject = (name: string, options: RetireOptions = {}) => retire.archiveProject(name, retiring(options));
+export const archiveBubble = (id: string, options: RetireOptions = {}) => retire.archiveBubble(id, retiring(options));
+/** A folder row: each of its live conversations, one after another; the folder and its directory stay. */
+export async function archiveFolder(conversations: string[], options: RetireOptions = {}): Promise<ownership.retire.ArchiveReport[]> {
+  const reports: ownership.retire.ArchiveReport[] = [];
+  for (const name of conversations) reports.push(await retire.archiveProject(name, retiring(options)));
+  return reports;
+}
 /** What survives a reset: what the user chose for the project, never what happened in it. */
 // The bubble is what the project knows beyond one conversation: a reset keeps it, like saved facts.
 const KEPT = ["name", "bubble", ...inheritedSettings];
@@ -49,11 +61,14 @@ export async function restoreConversations(options: {
   const { directories, displayName, listProjects, newProjectName, projectFor } = await import("../../core/data/projects");
   if (options.project) { await options.open(options.project, options.directory); return; }
   await directories.directoryProjects();
-  const known = await listProjects(), saved = directories.rememberedConversations();
-  const existing = options.source ? await projectFor(options.source, saved.selected) : null;
+  const { projectArchive } = directories;
+  // An archived conversation is never opened: a checkout whose conversations are all archived starts a new one.
+  const every = await listProjects(), known = every.filter(id => !projectArchive(id)), saved = directories.rememberedConversations();
+  const found = options.source ? await projectFor(options.source, saved.selected) : null;
+  const existing = found && projectArchive(found) ? directories.parentProject(found)?.conversations.find(id => known.includes(id)) ?? null : found;
   if (options.source && !existing) {
-    const names = await Promise.all(known.map(displayName));
-    await options.open(newProjectName([...known, ...names]), options.source);
+    const names = await Promise.all(every.map(displayName));
+    await options.open(newProjectName([...every, ...names]), options.source);
     return;
   }
   const group = existing ? directories.parentProject(existing) : undefined;
