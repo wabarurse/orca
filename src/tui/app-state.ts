@@ -3,7 +3,7 @@ import type { ClipboardImage, Key, Terminal } from "./components";
 import type { ImageRef, AgentInfo, Message, ToolCall, ToolOutcome, Role } from "../protocol";
 import type { RequestSettings } from "../api/model";
 import type { Orchestrator } from "../core/agent-loop/orc";
-import { archiveAgents, restoreAgents, cancelSession, type processes } from "../core/tmux";
+import { archiveAgents, restoreAgents, cancelSession, type ownership, type processes } from "../core/tmux";
 import { allTasks, listTasks, removeTask } from "../core/data/tasks";
 import { login, sendAgentFeedback, modelChoices, effortChoices, setModel, type DeleteOptions } from "./commands";
 import type { Line, MarkdownStream, Calls } from "./conversation";
@@ -93,7 +93,8 @@ export interface AppDeps {
   modelAgents?: (project: string) => Promise<string[] | null>;
   saveModel?: typeof setModel;
   /** How the project list checks for live agents, stops a deleted project's orchestrator daemon and closes its tmux session; tests stub them. */
-  projects?: Pick<DeleteOptions, "live" | "stop" | "kill">;
+  /** What deleting from the Bubbles page stops and waits on (core/tmux/retire.ts); tests replace it. */
+  projects?: Pick<DeleteOptions, "live" | "stop" | "kill"> & Partial<Pick<ownership.retire.RetireOptions, "killWindow" | "graceMs" | "sleep">>;
   /** Keeps each open project's orchestrator daemon running: called on open and each poll; returns a line to show when it did something (orchestrator-client.ts daemonKeeper). Absent in tests. */
   ensureDaemon?: (project: string) => Promise<string | undefined>;
   /** Extra per-poll watchers for every open page; production runs none here (the exit watchdog and merge watcher run in the orchestrator daemon). Tests inject them. */

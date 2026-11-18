@@ -1,15 +1,27 @@
 import { join } from "node:path";
 import { conversationIds, paths } from "../../config";
 import { pruneBuildScratch } from "../../core/install";
-import { cleanup } from "../../core/tmux";
+import { cleanup, ownership } from "../../core/tmux";
+import { stopDaemon } from "../../core/agent-loop/orc";
 import { listVerifications, pruneSettledProcesses } from "../../core/data/processes";
-import { workspaces } from "../../core/data/projects";
+import { directories, displayName, workspaces } from "../../core/data/projects";
 import { ARCHIVE_DAYS, listBubbles, orphanBubbles, purgeNotebook, removeBubble } from "../../core/data/bubbles";
 import { pruneProjectOutputs } from "../../core/tools/bash";
 
 /** The caller selects preview or deletion explicitly; only owned disposable resources qualify. */
-export async function cleanStorage(apply: boolean) {
+export async function cleanStorage(apply: boolean, purge: (project: string) => Promise<void> = project => ownership.deleteProject(project, { stop: stopDaemon })) {
   const changes: { path: string; disposition: string }[] = [];
+  // A conversation the user deleted was only archived (core/tmux/retire.ts): this is where it is removed for good.
+  // The purge is the ownership cascade, with its refusals: a worktree holding uncommitted files keeps the conversation.
+  for (const project of conversationIds(paths.root)) {
+    const archive = directories.projectArchive(project);
+    if (!archive) continue;
+    const name = await displayName(project).catch(() => project);
+    try {
+      if (apply) await purge(project);
+      changes.push({ path: paths.project(project), disposition: `${apply ? "removed" : "would remove"}: conversation "${name}" deleted ${archive.at.slice(0, 10)}` });
+    } catch (error) { changes.push({ path: paths.project(project), disposition: `kept: conversation "${name}" could not be removed (${error instanceof Error ? error.message : error})` }); }
+  }
   const current = conversationIds(paths.root);
   const projects = new Set([...current, ...workspaces.list().filter(w => !w.cleanedAt).map(w => w.members[0]!.project)]);
   for (const project of projects) {

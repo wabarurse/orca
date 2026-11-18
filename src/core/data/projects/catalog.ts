@@ -5,6 +5,9 @@ import { loadConfig, paths, attachDirectory, detachConversation, removeDirectory
 import { repositoryBinding } from "../../../config";
 import { listProjects, displayName, orderedProjects } from "./registry";
 import type { ProjectEntry } from "../../../protocol";
+import { projectArchive } from "./archive-state";
+// The archive record of a conversation is part of this catalog's namespace (`directories.projectArchive`).
+export { projectArchive, setProjectArchive, type ProjectArchive } from "./archive-state";
 
 export function attachConversation(conversation: string): DirectoryProject | undefined {
   const existing = parentProject(conversation);
@@ -24,16 +27,18 @@ export async function directoryProjects(): Promise<DirectoryProject[]> {
   for (const conversation of await listProjects()) attachConversation(conversation);
   return projectCatalog(paths.memory).projects.map(p => ({ ...p, conversations: p.conversations.filter(id => parentProject(id)?.id === p.id) }));
 }
+const archived = (id: string): { archivedAt?: string } => { const at = projectArchive(id)?.at; return at ? { archivedAt: at } : {}; };
 export async function projectRows(parent?: string): Promise<ProjectEntry[]> {
   const projects = await directoryProjects();
   if (parent) {
     const project = projects.find(p => p.id === parent);
     if (!project) throw new Error("project not found");
-    return Promise.all(project.conversations.filter(id => existsSync(paths.project(id))).map(async id => ({ name: id, label: `${await displayName(id)} (${id})`, pinned: false })));
+    return Promise.all(project.conversations.filter(id => existsSync(paths.project(id))).map(async id => ({ name: id, label: `${await displayName(id)} (${id})`, pinned: false, ...archived(id) })));
   }
-  const legacy = (await orderedProjects()).filter(row => !projects.some(p => p.conversations.includes(row.name)));
+  const legacy = (await orderedProjects()).filter(row => !projects.some(p => p.conversations.includes(row.name))).map(row => ({ ...row, ...archived(row.name) }));
   const pinned = new Set((await loadConfig()).pinned);
-  return [...projects.map(p => ({ name: p.id, label: `${p.name} · ${p.conversations.length} conversations${existsSync(p.directory) ? "" : " · directory missing"}`, pinned: pinned.has(p.id) || p.conversations.some(id => pinned.has(id)), directory: p.directory, conversations: p.conversations })), ...legacy].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.label.localeCompare(b.label));
+  // A folder counts and hands on its live conversations only: an archived one is reached inside the folder, under Archived.
+  return [...projects.map(p => ({ ...p, conversations: p.conversations.filter(id => !projectArchive(id)) })).map(p => ({ name: p.id, label: `${p.name} · ${p.conversations.length} conversations${existsSync(p.directory) ? "" : " · directory missing"}`, pinned: pinned.has(p.id) || p.conversations.some(id => pinned.has(id)), directory: p.directory, conversations: p.conversations })), ...legacy].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.label.localeCompare(b.label));
 }
 export function rememberedConversations(): { open?: string[]; selected?: string } {
   const { open, selected } = projectCatalog(paths.memory); return { open, selected };

@@ -29,6 +29,9 @@ import { command } from "../proc";
 import { killProjectSession, liveAgentsOrNull } from "./liveness";
 import { inspectCheckout } from "./workspace-disposal";
 
+/** Deleting as the user sees it (stop gracefully, archive, keep the files) is retire.ts; the cascade below is the purge. */
+export * as retire from "./retire";
+
 // --- the tree, as data ---------------------------------------------------------
 
 export interface SessionNode {
