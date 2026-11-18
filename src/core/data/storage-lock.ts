@@ -1,8 +1,10 @@
 // Cooperative locks for short storage transactions and long-lived turn ownership.
 // Never steal a lock on a timer: a slow model/tool is not a dead process. A lock
-// is taken over only when its recorded owner pid is verifiably gone (ESRCH); a
-// live, unsignalable (EPERM, which includes pid reuse) or unreadable owner keeps
-// it, and an operator must verify the owner is gone before removal.
+// is taken over only when its recorded owner is verifiably gone: its pid no
+// longer exists (ESRCH), or the process now holding that pid started after the
+// lock was taken, so it is another program the system gave the number to. An
+// unreadable owner, or one whose start time cannot be read, keeps the lock, and
+// an operator must verify the owner is gone before removal.
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -20,6 +22,33 @@ export function pidAlive(pid: number): boolean {
   }
 }
 
+/** When the process holding `pid` started (ms), from `ps`; null when it cannot be told. Asked at most once per pid
+ * every `START_TTL_MS`: a start time only changes when the pid is given to another process. */
+const START_TTL_MS = 30_000, starts = new Map<number, { at: number; started: number | null }>();
+function processStart(pid: number, now = Date.now()): number | null {
+  const known = starts.get(pid);
+  if (known && now - known.at < START_TTL_MS) return known.started;
+  let started: number | null = null;
+  try {
+    const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { env: { ...process.env, LC_ALL: "C" }, stdout: "pipe", stderr: "ignore" });
+    const ms = out.exitCode === 0 ? Date.parse(out.stdout.toString().trim()) : NaN;
+    if (Number.isFinite(ms)) started = ms;
+  } catch { /* no ps: unknown */ }
+  if (starts.size > 512) starts.clear();
+  starts.set(pid, { at: now, started });
+  return started;
+}
+/** `ps` reports whole seconds, and a clock step may move `since` slightly: only a clearly later start is another process. */
+const START_SLACK_MS = 5000;
+/** Whether the process that recorded itself as `owner` (its pid, and a time `since` at which it was already running)
+ * may still be running. A live pid whose process started after `since` is a different program: the owner is gone.
+ * `started` is injectable for tests. */
+export function ownerAlive(owner: { pid: number; since: string }, started: (pid: number) => number | null = processStart): boolean {
+  if (!pidAlive(owner.pid)) { starts.delete(owner.pid); return false; }
+  const since = Date.parse(owner.since), start = started(owner.pid);
+  return start === null || !Number.isFinite(since) || start <= since + START_SLACK_MS;
+}
+
 /** The holder recorded in a lock directory, or undefined when there is none or it is unreadable. */
 export async function lockOwner(path: string): Promise<LockOwner | undefined> {
   try {
@@ -32,13 +61,13 @@ export async function lockOwner(path: string): Promise<LockOwner | undefined> {
 /**
  * Whether `path` is held by someone who may still be working: it exists and
  * its recorded owner is alive, unsignalable or unreadable. A lock whose owner
- * pid is verifiably gone is not held (the next taker moves it aside), so a
+ * is verifiably gone (`ownerAlive`) is not held (the next taker moves it aside), so a
  * crashed or signal-killed holder cannot gate others forever.
  */
 export async function lockHeld(path: string): Promise<boolean> {
   if (!existsSync(path)) return false;
   const owner = await lockOwner(path);
-  return !owner || pidAlive(owner.pid);
+  return !owner || ownerAlive(owner);
 }
 
 /** `pid N since T` plus the owning project when recorded, for refusal messages. */
@@ -97,7 +126,7 @@ async function takeOverDead(path: string): Promise<boolean> {
 /** Claim the lock directory for takeover if its recorded owner is dead, confirming it after the claim. */
 async function claimDead(path: string): Promise<"claimed" | "held" | "gone"> {
   const dead = await lockOwner(path);
-  if (!dead || pidAlive(dead.pid)) return "held";
+  if (!dead || ownerAlive(dead)) return "held";
   const claim = `${path}/takeover`;
   try { await mkdir(claim); }
   catch (error) {
@@ -107,7 +136,7 @@ async function claimDead(path: string): Promise<"claimed" | "held" | "gone"> {
     throw error;
   }
   const now = await lockOwner(path);
-  if (now && now.pid === dead.pid && now.since === dead.since && !pidAlive(now.pid)) return "claimed";
+  if (now && now.pid === dead.pid && now.since === dead.since && !ownerAlive(now)) return "claimed";
   await rmdir(claim).catch(() => {});
   return "held";
 }
