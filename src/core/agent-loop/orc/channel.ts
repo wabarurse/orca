@@ -11,7 +11,7 @@ import { readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../../config";
 import type { Ack, Command, DaemonState, DaemonStatus, Request } from "../../../protocol";
-import { lockOwner, pidAlive } from "../../data";
+import { lockOwner, ownerAlive } from "../../data";
 import { delay } from "../../tmux";
 
 /** How long a client waits for the daemon to answer before giving up on a request (the daemon may still run it). */
@@ -44,7 +44,7 @@ export const writeStatus = (project: string, status: DaemonStatus): Promise<void
 /** The daemon's process id while one holds the project's daemon lock and that process exists. */
 export async function daemonPid(project: string): Promise<number | undefined> {
   const owner = await lockOwner(paths.daemonLock(project));
-  return owner && pidAlive(owner.pid) ? owner.pid : undefined;
+  return owner && ownerAlive(owner) ? owner.pid : undefined; // a pid since given to another program is not the daemon
 }
 export const daemonAlive = async (project: string): Promise<boolean> => (await daemonPid(project)) !== undefined;
 

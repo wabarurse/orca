@@ -70,3 +70,24 @@ test("owner metadata is pid and time, plus the project when given", async () => 
   expect(await lockOwner(path)).toEqual({ pid: process.pid, since: expect.any(String) });
   await release!();
 });
+
+test("a live pid whose process started after the lock was taken is another program: the owner is gone and the lock is taken over", async () => {
+  const { ownerAlive, lockHeld } = await import("./storage-lock");
+  const now = Date.now(), iso = (ms: number) => new Date(ms).toISOString();
+  // This process holds its own pid: a lock it could have taken (since now) is held, one dated before it started is not.
+  expect(ownerAlive({ pid: process.pid, since: iso(now) })).toBe(true);
+  expect(ownerAlive({ pid: process.pid, since: "2024-01-01T00:00:00.000Z" })).toBe(false);
+  // The start is compared with slack, an unreadable start or date keeps the owner, and a missing pid is never asked.
+  expect(ownerAlive({ pid: process.pid, since: iso(now) }, () => now + 4000)).toBe(true);
+  expect(ownerAlive({ pid: process.pid, since: iso(now) }, () => now + 60_000)).toBe(false);
+  expect(ownerAlive({ pid: process.pid, since: iso(now) }, () => null)).toBe(true);
+  expect(ownerAlive({ pid: process.pid, since: "not a date" }, () => now + 60_000)).toBe(true);
+  expect(ownerAlive({ pid: await deadPid(), since: iso(now) }, () => { throw new Error("asked"); })).toBe(false);
+  const reused = join(home, "reused"), held = join(home, "held-live");
+  plant(reused, { pid: process.pid, since: "2024-01-01T00:00:00.000Z" }); plant(held, { pid: process.pid, since: iso(now) });
+  expect(await lockHeld(reused)).toBe(false); expect(await lockHeld(held)).toBe(true);
+  expect(await tryStorageLock(held)).toBeUndefined();
+  const release = await tryStorageLock(reused);
+  expect((await lockOwner(reused))?.pid).toBe(process.pid); expect(Date.parse((await lockOwner(reused))!.since)).toBeGreaterThanOrEqual(now);
+  await release!();
+});

@@ -1,1 +1,1 @@
-export { describeOwner, lockHeld, lockOwner, pidAlive, tryStorageLock, withStorageLock } from "./storage-lock";
+export { describeOwner, lockHeld, lockOwner, ownerAlive, pidAlive, tryStorageLock, withStorageLock } from "./storage-lock";

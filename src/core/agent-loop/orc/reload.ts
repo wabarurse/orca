@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BUILD_ID, paths, conversationIds } from "../../../config";
 import type { DaemonStatus } from "../../../protocol";
-import { pidAlive, tryStorageLock } from "../../data";
+import { ownerAlive, tryStorageLock } from "../../data";
 import { projectIdentity } from "../../data/projects";
 import { execution } from "../../data/projects/lifecycle";
 import { cliCommand, delay } from "../../tmux";
@@ -18,7 +18,8 @@ export interface ReloadOptions {
   projects?: () => Promise<string[]>;
   status?: typeof liveStatus;
   pid?: typeof daemonPid;
-  alive?: typeof pidAlive;
+  /** Whether the daemon that wrote a status (its pid, and the status's `since`) is still that process. */
+  alive?: (pid: number, since: string) => boolean;
   identity?: typeof projectIdentity;
   stop?: (project: string, run: string) => Promise<unknown>;
   start?: (project: string) => Promise<unknown>;
@@ -39,7 +40,7 @@ export async function reloadRunningDaemons(options: ReloadOptions = {}): Promise
   // Do not drop a second update: some projects may already have restarted into
   // the previous build while the first helper waits for another project's turn.
   while (!release) { await delay(1000); release = await tryStorageLock(join(paths.runtime, "update-lock")); }
-  const o = { build: BUILD_ID, status: liveStatus, pid: daemonPid, alive: pidAlive, identity: projectIdentity,
+  const o = { build: BUILD_ID, status: liveStatus, pid: daemonPid, alive: (pid: number, since: string) => ownerAlive({ pid, since }), identity: projectIdentity,
     stop: (project: string, run: string) => request(project, { kind: "stop" }, run),
     start: async (project: string) => ensureDaemon(project, { build: await installedBuild() }),
     currentBuild: options.build ? async () => options.build! : installedBuild,
@@ -74,7 +75,7 @@ async function reloadOne(project: string, old: DaemonStatus, identity: string, o
   if (current && (current.run !== old.run || current.pid !== old.pid)) throw new Error("daemon changed during update; run orca pull again");
   o.write(`${project}: ${old.build ?? "unknown build"} → ${o.build}; waiting for the current turn to finish`);
   if (current && current.state !== "stopped") await o.stop(project, old.run);
-  while (o.alive(old.pid)) {
+  while (o.alive(old.pid, old.since)) {
     if (o.identity(project) !== identity) throw new Error("project replaced during update; reopen it manually");
     if (o.now() >= deadline) throw new Error("still running after the update wait; no process was killed. Run orca pull again after it finishes");
     await o.sleep(250);
