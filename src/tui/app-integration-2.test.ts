@@ -497,8 +497,8 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     const draft = { ...app.input };
     const headerRows = () => term.display.buf.slice(term.display.top, term.display.top + 2).map(row => row.join(""));
     // The boxed header's tabs row and its details row: the tabs and the account/models stay; the context at the right
-    // of the tabs row is telemetry and may change.
-    const identity = (rows: string[]) => [rows[0]!.replace(/│$/, "").replace(/ctx \S+\s*$/, "").trimEnd(), rows[1]!];
+    // of the details row is telemetry and may change.
+    const identity = (rows: string[]) => [rows[0]!, rows[1]!.replace(/│$/, "").replace(/ctx \S+\s*$/, "").trimEnd()];
     const header = headerRows();
     term.press({ name: "pageup" });
     term.resize(23, 24);
@@ -517,7 +517,7 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     expect(await app.page!.orch.pending()).toBe(false);
     // Context/review telemetry can change during the cancelled turn; identity stays pinned.
     expect(identity(headerRows())).toEqual(identity(header));
-    expect(identity(header)[0]).toBe("│ combined-cancel-e");
+    expect(identity(header)[0]!.replace(/│$/, "").trimEnd()).toBe("│ combined-cancel-e");
     term.press({ name: "escape" }); // only intentional draft clearing for this continuation
     term.type("resume saved turn\r");
     await until(() => provider.calls.length === 2 && !app.page!.busy);

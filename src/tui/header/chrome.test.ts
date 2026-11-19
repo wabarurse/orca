@@ -9,11 +9,11 @@ const plain = (rows: string[]) => rows.map(Bun.stripANSI);
 const chapter: Chapter = { tabs: [{ name: "orch-one" }, { name: "orch-two" }], active: 1, model: "model-a" };
 const counts = "2 agents running │ 1 task │ 3 questions";
 
-test("the header is a box open at the top: plain tabs with the context at the right, the models in dim, then its bottom line", () => {
+test("the header is a box open at the top: plain tabs, then the models in dim with the context at the right, then its bottom line", () => {
   const rows = chapterRows({ ...chapter, context: "ctx ~3.9k/1M" }, 80);
   expect(plain(rows)).toEqual([
-    "│ orch-one   orch-two" + " ".repeat(45) + "ctx ~3.9k/1M │",
-    "│ model-a" + " ".repeat(69) + " │",
+    "│ orch-one   orch-two" + " ".repeat(57) + " │",
+    "│ model-a" + " ".repeat(57) + "ctx ~3.9k/1M │",
     "└" + "─".repeat(78) + "┘",
   ]);
   expect(rows[0]).toContain("\x1b[1morch-two");
@@ -69,15 +69,14 @@ test("the header keeps to its budget: the box needs three rows, else the tabs an
   for (const rows of [2, 3, 6, 12, 24, 50]) expect(chapterRows(c, 40, headerHeight(rows)).length).toBeLessThanOrEqual(Math.max(0, headerHeight(rows)));
 });
 
-test("the details row leads with the account and clips its tail; the context stays on the tabs row", () => {
+test("the details row leads with the account and clips its tail; the context stays whole at its right", () => {
   const roles = "orch gpt-6-astra · workers claude-sonnet-5-5 · reviewers claude-haiku-5-5 · effort high";
   const c: Chapter = { ...chapter, account: "openai:phoebe", model: roles, context: "ctx 112k/272k" };
   const wide = plain(chapterRows(c, 200));
-  expect(wide[0]).toEndWith("ctx 112k/272k │");
-  expect(wide[1]).toBe(`│ openai:phoebe · ${roles}`.padEnd(198) + " │");
+  expect(wide[1]).toStartWith(`│ openai:phoebe · ${roles} `);
+  expect(wide[1]).toEndWith(" ctx 112k/272k │");
   const narrow = plain(chapterRows(c, 80));
-  expect(narrow[0]).toEndWith("ctx 112k/272k │");
-  expect(narrow[1]).toBe("│ openai:phoebe · orch gpt-6-astra · workers claude-sonnet-5-5 · reviewers cl… │");
+  expect(narrow[1]).toBe("│ openai:phoebe · orch gpt-6-astra · workers claude-sonnet-5-5…  ctx 112k/272k │");
   expect(narrow.every(row => Bun.stringWidth(row) === 80)).toBe(true);
   expect(plain(chapterRows({ ...c, agent: "worker-feat" }, 120))[1]).toStartWith("│ view worker-feat · openai:phoebe");
 });
