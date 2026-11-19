@@ -289,8 +289,7 @@ exec ${quote(process.execPath)} ${quote(boundary)} ${tool} "$@"
       GIT_DIR: join(f.caller, ".git"), GIT_WORK_TREE: f.caller, GIT_CONFIG_COUNT: "invalid",
     });
     expect({ code: result.code, err: result.err, status: await f.g(f.app, "status", "--porcelain") }).toEqual({ code: 0, err: "", status: "" });
-    expect(result.out).toContain(`installed ${f.target} from ${f.after}`);
-    expect(result.out).toContain("scheduling global orchestrator updates next");
+    expect(result.out).toMatch(new RegExp(`^✓ orca [0-9a-f]{7} → ${f.after.slice(0, 7)}\n`));
     expect(await f.g(f.app, "rev-parse", "HEAD")).toBe(f.after);
     expect(new Bun.CryptoHasher("sha256").update(readFileSync(f.target)).digest("hex")).not.toBe(oldHash);
     expect(await exec([f.target, "version"], f.caller)).toEqual({ code: 0, out: "updated standalone fixture\n", err: "" });
@@ -304,6 +303,6 @@ exec ${quote(process.execPath)} ${quote(boundary)} ${tool} "$@"
     const missingBun = await exec([installed, "pull"], f.caller, { HOME: f.home, ORCA_HOME: f.state, PATH: "/usr/bin:/bin" });
     expect(missingBun.code).toBe(1);
     expect(missingBun.err).toContain("requires bun on PATH");
-    expect(missingBun.err).toContain("installed executable was not replaced");
+    expect(missingBun.err).toContain("the installed orca was not replaced");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 }, 120_000);
