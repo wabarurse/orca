@@ -39,7 +39,7 @@ test("status words carry the state's colour; a PR and running work show as info;
   tasks[2]!.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
   tasks[3]!.removedAt = "2026-01-03";
   const shut = taskRows(tasks, new Set(), false).rows.filter(row => !row.heading), open = taskRows(tasks, new Set(), true).rows.filter(row => !row.heading);
-  expect(shut.map(row => [row.status, row.color])).toEqual([["queued", "38;5;245"], ["working", "38;5;80"], ["merged", "38;5;141"], [undefined, undefined]]);
+  expect(shut.map(row => [row.status, row.color])).toEqual([["queued", "38;5;246"], ["working", "38;5;152"], ["merged", "38;5;183"], [undefined, undefined]]);
   expect(shut[1]!.info).toBe("working"); expect(shut[2]!.info).toBe("PR #105");
   expect(shut[3]).toMatchObject({ id: ARCHIVED_SECTION, name: "▸ Archived (1)", section: true });
   expect(open.map(row => row.name)).toEqual(["#1 Task 1", "#2 Task 2", "#3 Task 3", "▾ Archived (1)", "#4 Task 4"]);

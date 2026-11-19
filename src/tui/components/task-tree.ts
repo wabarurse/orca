@@ -5,6 +5,7 @@ import { formatDateTime } from "../../protocol";
 import { ARCHIVED_SECTION, DAY_HEADING, archiveTitle, dayName, headingTitle, localDay, type WorkRow, type WorkSection } from "./work-view";
 import { publicTaskStatus, taskPublicationMilestone, check, type TaskDisplayStatus, type Task, type TaskTreeView } from "../../protocol/task";
 import { plainText } from "./text";
+import { pastel } from "./style";
 import { treeTasks, type TreeTask } from "./task-tree-data";
 
 /** `count`: the tasks under a day heading, shown or folded away; 0 on every other node. */
@@ -87,10 +88,9 @@ function active(task: TreeTask): boolean {
 
 function status(task: TreeTask): TaskDisplayStatus { return publicTaskStatus(task); }
 
-/** The row and status text always share the same state and colour. Fixed xterm-256 colours, not the theme's eight
- * (whose "magenta" is pink in many themes), so a state looks the same in every terminal: merged is always purple. */
+/** The row and status text always share the same state and colour, from the fixed pastel palette: merged is always purple. */
 export function taskStateColor(state: TaskDisplayStatus): string {
-  return ({ queued: "38;5;245", working: "38;5;80", waiting: "38;5;221", "pr open": "38;5;114", merged: "38;5;141", closed: "38;5;203" })[state];
+  return ({ queued: pastel.grey, working: pastel.cyan, waiting: pastel.yellow, "pr open": pastel.green, merged: pastel.purple, closed: pastel.red })[state];
 }
 
 function activity(task: TreeTask): string {

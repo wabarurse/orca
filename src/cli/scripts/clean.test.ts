@@ -48,7 +48,7 @@ test("a real run reports what it removed and freed, and the branches local chang
 
 test("nothing to clean says so; colour only when asked; more than three kept rows are counted", () => {
   expect(cleanReport([], false, false)).toBe("✓ nothing to clean");
-  expect(cleanReport([], false, true)).toContain("\x1b[32m✓\x1b[0m");
+  expect(cleanReport([], false, true)).toContain("\x1b[38;5;151m✓\x1b[0m");
   const held = ["a", "b", "c", "d"].map(name => ({ path: `/w/${name}`, disposition: "kept: has uncommitted files", bytes: 1 }));
   expect(cleanReport(held, false, false)).toContain("kept a (has uncommitted files) · b (has uncommitted files) · c (has uncommitted files) · +1 more");
 });

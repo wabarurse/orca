@@ -12,7 +12,7 @@ import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/dat
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
 import { archiveAgents, cancelSession, launchIdentity, listAgents, ownership, processes, restoreAgents } from "../core/tmux";
 const { retire } = ownership;
-import { dim, navigateOutline, sanitize, taskRows, taskSections, workView, type Key, type OutlineNode } from "./components";
+import { dim, navigateOutline, pastel, sanitize, taskRows, taskSections, workView, type Key, type OutlineNode } from "./components";
 const { ARCHIVED_SECTION, byDay, findItem, inputLine, renderWorkPage, tableRows, withArchiveSection } = workView;
 type WorkPageRender = workView.WorkPageRender;
 type WorkRow = workView.WorkRow;
@@ -91,12 +91,12 @@ const timeOf = (at: string | number) => { const text = formatDateTime(at); retur
 const shortFolder = (path: string) => /\/worktrees\/[^/]+\/([^/]+)$/.exec(path)?.[1] ?? path.replace(homedir(), "~");
 
 /** What the watcher last saw of a PR, as one word or two and its colour. */
-function watchStatus(state: Record<string, string> | null): { status: string; color: number } {
-  if (!state) return { status: "watching", color: 90 };
-  if (state.mergeable === "conflicting") return { status: "conflicts", color: 31 };
-  if (state.checks === "failed") return { status: "checks failed", color: 31 };
-  if (state.review === "CHANGES_REQUESTED") return { status: "changes asked", color: 33 };
-  return state.checks === "passed" ? { status: "checks passed", color: 32 } : { status: "open", color: 33 };
+function watchStatus(state: Record<string, string> | null): { status: string; color: string } {
+  if (!state) return { status: "watching", color: pastel.grey };
+  if (state.mergeable === "conflicting") return { status: "conflicts", color: pastel.red };
+  if (state.checks === "failed") return { status: "checks failed", color: pastel.red };
+  if (state.review === "CHANGES_REQUESTED") return { status: "changes asked", color: pastel.yellow };
+  return state.checks === "passed" ? { status: "checks passed", color: pastel.green } : { status: "open", color: pastel.yellow };
 }
 /** The Processes tab's rows: the watched pull requests, then the background commands, each group under a heading. */
 function processItems(view: processes.ProcessView, now: number): Item[] {
@@ -114,14 +114,14 @@ function processItems(view: processes.ProcessView, now: number): Item[] {
     const fields: [string, string, string?][] = [["owner", p.custody?.owner ?? p.owner], ...(p.custody ? [["started by", p.owner] as [string, string]] : []),
       ["folder", shortFolder(p.cwd)], ["started", formatDateTime(p.createdAt)], ["state", p.state], ...(p.exitCode === undefined ? [] : [["exit code", String(p.exitCode)] as [string, string]]),
       ...(p.reason ? [["reason", p.reason] as [string, string]] : []), ...(p.readyUrl ? [["url", p.readyAt ? p.readyUrl : `${p.readyUrl} (not ready yet)`, p.readyUrl] as [string, string, string]] : [])];
-    return { id: p.id, name: p.command.replace(/\s+/g, " ").trim(), status: p.state, color: command.live ? 36 : p.state === "exited" ? 90 : 31,
+    return { id: p.id, name: p.command.replace(/\s+/g, " ").trim(), status: p.state, color: command.live ? pastel.cyan : p.state === "exited" ? pastel.grey : pastel.red,
       info: [p.custody?.owner ?? p.owner, Number.isFinite(end - started) ? formatElapsed(end - started) : ""].filter(Boolean).join(" · "), command,
       sections: [{ title: "Command", text: p.command }, { title: "Run", fields }, { title: "Output (last lines)", text: command.tail || "no output yet" }] };
   });
   // A session an agent opened with tmux itself: no record, so what tmux says about its windows is all there is.
   const sessions = view.sessions.map((session): Item => {
     const live = session.windows.filter(w => w.live), text = (w: processes.SessionRow["windows"][number]) => w.command.replace(/\s+/g, " ").trim() || "shell";
-    return { id: `session:${session.name}`, name: session.windows.map(w => `${w.window}: ${text(w)}`).join(" · "), status: live.length ? "tmux" : "ended", color: live.length ? 36 : 90,
+    return { id: `session:${session.name}`, name: session.windows.map(w => `${w.window}: ${text(w)}`).join(" · "), status: live.length ? "tmux" : "ended", color: live.length ? pastel.cyan : pastel.grey,
       info: [session.name, Number.isFinite(session.createdAt) ? formatElapsed(now - session.createdAt) : ""].filter(Boolean).join(" · "), session,
       sections: [{ title: "tmux session", fields: [["name", session.name], ["started", Number.isFinite(session.createdAt) ? formatDateTime(session.createdAt) : "unknown"], ["windows", String(session.windows.length)]] },
         ...session.windows.map(w => ({ title: `${w.window} · ${w.live ? "running" : "ended"}`, text: [text(w), w.path, w.tail].filter(Boolean).join("\n") }))] };
@@ -250,7 +250,7 @@ export class WorkPages {
     if (kind === "questions") return section((page.questions.all ?? page.questions.open).map(question => this.questionItem(view, question)), item => Date.parse(item.question!.ts));
     return section(view.agents.filter(agent => agent.status !== "unknown").map((agent): Item => {
       const ms = elapsedMs(agent, now), queued = `${agent.queuedMessages ?? "?"} queued messages`;
-      return { id: agent.name, name: agent.name, status: agent.live ? "running" : agent.archived ? "archived" : "exited", color: agent.live ? 33 : 90,
+      return { id: agent.name, name: agent.name, status: agent.live ? "running" : agent.archived ? "archived" : "exited", color: agent.live ? pastel.yellow : pastel.grey,
         info: [ms === null ? undefined : (agent.approximateEnd ? "~" : "") + formatElapsed(ms), agent.activity].filter(Boolean).join(" · "),
         sections: [{ title: "Now", text: agent.activity ?? "" }, { title: "Run", fields: [...(agent.startedAt ? [["started", formatDateTime(agent.startedAt)] as [string, string]] : []),
           ...(agent.endedAt ? [["exited", formatDateTime(agent.endedAt)] as [string, string]] : []), ...(agent.queuedMessages ? [["inbox", queued] as [string, string]] : [])] }],
@@ -262,7 +262,7 @@ export class WorkPages {
     const open = question.status === "open", options = question.options ?? [];
     const choosing = view.kind === "questions" && this.form(view) && view.page!.questions.selectedId === question.id && !this.host.questions.answering();
     const preset = options.indexOf(question.default ?? "");
-    return { id: question.id, name: question.text.replace(/\s+/g, " "), status: question.status, color: open ? 33 : question.status === "answered" ? 32 : 90,
+    return { id: question.id, name: question.text.replace(/\s+/g, " "), status: question.status, color: open ? pastel.yellow : question.status === "answered" ? pastel.green : pastel.grey,
       info: `asked ${timeOf(question.ts)}`,
       sections: [{ title: "Question", text: question.text },
         ...(options.length ? [{ title: "Options", options: { items: open ? [...options, "Other…"] : options, cursor: choosing ? view.option : undefined, default: preset < 0 ? undefined : preset } }] : []),
@@ -294,7 +294,7 @@ export class WorkPages {
       const members = new Set([entry.name, ...(entry.conversations ?? [])]), open = pages.filter(page => members.has(page.project));
       const status = entry.archivedAt ? "archived" : open.some(page => page.busy) ? "turn" : current && members.has(current) ? "current" : open.length ? "open" : "";
       const bubble = view.bubbles[entry.name], shared = bubble && bubble.size > 1;
-      return { id: entry.name, lead: entry.pinned ? "★ " : "", name: shared ? `${bubble.name} ▸ ${entry.label}` : entry.label, status, color: status === "turn" ? 33 : status === "current" ? 32 : 90,
+      return { id: entry.name, lead: entry.pinned ? "★ " : "", name: shared ? `${bubble.name} ▸ ${entry.label}` : entry.label, status, color: status === "turn" ? pastel.yellow : status === "current" ? pastel.green : pastel.grey,
         info: shared ? `bubble · ${bubble.size} orcs` : "",
         sections: [{ title: entry.directory ? "Project" : "Conversation", fields: [...(entry.directory ? [["folder", entry.directory] as [string, string]] : []),
           ...(bubble ? [["bubble", `${bubble.name} · shared by ${bubble.size} orchestrator${bubble.size === 1 ? "" : "s"}`] as [string, string]] : []),

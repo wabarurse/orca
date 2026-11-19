@@ -9,6 +9,7 @@ import { listVerifications, pruneSettledProcesses } from "../../core/data/proces
 import { directories, displayName, workspaces } from "../../core/data/projects";
 import { ARCHIVE_DAYS, listBubbles, orphanBubbles, purgeNotebook, removeBubble } from "../../core/data/bubbles";
 import { pruneProjectOutputs } from "../../core/tools/bash";
+import { pastel } from "../../tui/components";
 
 /** The caller selects preview or deletion explicitly; only owned disposable resources qualify. */
 /** Removing an archived conversation for good: whatever still runs under it is stopped first (so a leftover command
@@ -99,7 +100,7 @@ export function formatBytes(bytes: number): string {
 /** C1/C2: a WHAT · ITEMS · SIZE table with a total, then what was kept and why, then the saved branches or the next step. */
 export function cleanReport(rows: CleanRow[], apply: boolean, colour: boolean): string {
   const style = (code: string) => (text: string) => colour ? `\x1b[${code}m${text}\x1b[0m` : text;
-  const dim = style("2"), bold = style("1"), green = style("32"), yellow = style("33");
+  const dim = style("2"), bold = style("1"), green = style(pastel.green), yellow = style(pastel.yellow);
   const pad = (text: string, width: number) => text.length >= width ? text : text + " ".repeat(width - text.length);
   const right = (text: string, width: number) => text.length >= width ? text : " ".repeat(width - text.length) + text;
   const count = (n: number) => n.toLocaleString("en-US");

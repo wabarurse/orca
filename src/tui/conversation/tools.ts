@@ -15,14 +15,14 @@ import type { Part } from "./view";
 import type { Line, Shown } from "./lines";
 import { dim, fit, sanitize, visibleLength } from "../components";
 import { shimmer } from "../components";
-import { noColour } from "../components";
+import { noColour, pastel } from "../components";
 
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 
 /** The marker before a call: dim, or red when it failed (bold without colour). */
 function mark(failed: boolean, glyph = TOOL_MARK): string {
   if (!failed) return dim(glyph);
-  return noColour() ? bold(glyph) : `\x1b[31m${glyph}\x1b[0m`;
+  return noColour() ? bold(glyph) : `\x1b[${pastel.red}m${glyph}\x1b[0m`;
 }
 
 /** "Bash(git status)" with the tool's name in bold. */

@@ -11,6 +11,9 @@
 // the nearest xterm-256 colour. NO_COLOR (or TERM=dumb) turns it off; the "> "
 // marker stays.
 
+/** The one palette for state colours: soft pastel xterm-256 shades, never the theme's strong eight, so a state reads the same in every terminal. */
+export const pastel = { grey: "38;5;246", red: "38;5;217", yellow: "38;5;223", green: "38;5;151", cyan: "38;5;152", purple: "38;5;183" } as const;
+
 export interface Rgb { r: number; g: number; b: number }
 
 type Env = Record<string, string | undefined>;

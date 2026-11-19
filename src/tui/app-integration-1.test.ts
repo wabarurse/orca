@@ -679,7 +679,7 @@ describe("tool calls", () => {
     await until(() => term.screen().includes("▸ 2 tool calls · bash ×2 · 1 failed"));
     expect(term.screen()).not.toContain("⎿");
     expect(term.screen()).not.toContain("bash(make)");
-    expect(term.raw()).toContain("\x1b[31m▸");
+    expect(term.raw()).toContain("\x1b[38;5;217m▸");
     state.finish!();
     await until(() => !app.page!.busy);
     expect(state.ticks.length).toBe(0); // nothing runs: no timer
@@ -777,7 +777,7 @@ describe("tool calls", () => {
     const ys = term.display.screen().findLastIndex(row => row.includes("2 tool calls")) + 1;
     await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
     await until(() => body().join("\n") === ["first", summary, "between", summary, "after"].join("\n"));
-    expect(term.raw()).toContain("\x1b[31m▸"); // the marker red: a call failed
+    expect(term.raw()).toContain("\x1b[38;5;217m▸"); // the marker red: a call failed
     // A click before another page's frame is painted never reaches this page's groups.
     await app.openPage("clicky-other");
     await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
@@ -853,7 +853,7 @@ test("unfinished calls commit red in turns and finished agent transcripts", asyn
   term.type("go\r");
   await until(() => term.screen().includes("⏺ bash(wait)\n  ⎿  interrupted"));
   expect(app.page!.calls.size).toBe(0);
-  expect(term.raw()).toContain("\x1b[31m⏺");
+  expect(term.raw()).toContain("\x1b[38;5;217m⏺");
   term.press({ name: "a", ctrl: true });
   await until(() => app.work.state?.items.some(item => item.name.startsWith("worker-")) === true);
   term.press({ name: "enter" });

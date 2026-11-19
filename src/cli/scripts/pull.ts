@@ -2,6 +2,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pullHarness } from "../../core/install";
+import { pastel } from "../../tui/components";
 
 /** `orca pull`: update the installed checkout and binary, then hand running orchestrators over to the new build.
  * One line says what happened: the commit moved, it was already up to date, or the pull failed (the old binary stays). */
@@ -9,7 +10,7 @@ type Output = { write: (text: string) => unknown; isTTY: boolean | undefined };
 
 export async function pull(out: Output = process.stdout, err: Output = process.stderr, colour = !!process.stdout.isTTY && !process.env.NO_COLOR, update = pullHarness): Promise<void> {
   const style = (code: string) => (text: string) => colour ? `\x1b[${code}m${text}\x1b[0m` : text;
-  const dim = style("2"), bold = style("1"), green = style("32"), red = style("31");
+  const dim = style("2"), bold = style("1"), green = style(pastel.green), red = style(pastel.red);
   const short = (sha: string) => sha.slice(0, 7);
   if (out.isTTY) out.write(dim("pulling orca…"));
   const clear = () => { if (out.isTTY) out.write("\r\x1b[2K"); };
