@@ -453,7 +453,7 @@ export class App {
     const matches = this.vimCommand !== undefined && !prefix.includes(" ")
       ? [...this.commands.keys()].filter(name => name.startsWith(prefix)).slice(0, 5) : [];
     const notes = [...this.feedbackRows(page), ...(this.vimCommand !== undefined ? [fit(sanitize(`:${this.vimCommand} ▏ ${matches.join("  ")}`), this.deps.term.cols)] : [])];
-    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols, this.composerRows()).length + (showImages ? 1 : 0) + notes.length);
+    const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols - 4, this.composerRows()).length + (showImages ? 1 : 0) + notes.length);
     if (showImages) {
       area.lines.unshift(dim(`${imageLabels(refs)} · ctrl+y remove last`.slice(0, this.deps.term.cols)));
       area.row++;

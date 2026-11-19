@@ -29,21 +29,22 @@ describe("input area", () => {
     const plain = draw(f);
     setUserFill(BG);
     const s = draw(f);
-    expect(s.screen().slice(0, 4)).toEqual(["┌──────────────────┐", "│> hi              │", "└──────────────────┘", "s"]);
-    expect(marks(s).slice(0, 2)).toEqual([full(20), full(20)]);
+    // The count row sits inside the box, in place of its bottom edge.
+    expect(s.screen().slice(0, 4)).toEqual(["┌──────────────────┐", "│ > hi             │", "│ s                │", ""]);
+    expect(marks(s).slice(0, 3)).toEqual([full(20), full(20), full(20)]);
     expect([s.row, s.col]).toEqual([plain.row, plain.col]);
-    expect([s.row, s.col]).toEqual([1, 5]);
+    expect([s.row, s.col]).toEqual([1, 6]);
   });
 
   test("a wrapped multi-row input: every row filled, the cursor on its row and column", () => {
     setUserFill(BG);
     const text = "0123456789abcdefghij\nsecond";
     const s = draw(frame({ input: { prompt: "> ", text, cursor: 12 } }));
-    expect(s.screen().slice(0, 6)).toEqual(["┌──────────────────┐", "│> 0123456789abcdef│", "│  ghij            │", "│  second          │", "└──────────────────┘", "s"]);
-    expect(marks(s).slice(0, 4)).toEqual(Array(4).fill(full(20)));
-    expect([s.row, s.col]).toEqual([1, 15]); // after "> 0123456789ab"
+    expect(s.screen().slice(0, 6)).toEqual(["┌──────────────────┐", "│ > 0123456789abcd │", "│   efghij         │", "│   second         │", "│ s                │", ""]);
+    expect(marks(s).slice(0, 5)).toEqual(Array(5).fill(full(20)));
+    expect([s.row, s.col]).toEqual([1, 16]); // after "│ > 0123456789ab"
     const end = draw(frame({ input: { prompt: "> ", text, cursor: text.length } }));
-    expect([end.row, end.col]).toEqual([3, 9]);
+    expect([end.row, end.col]).toEqual([3, 10]);
   });
 
   test("input and status remain filled on a short screen", () => {
@@ -56,9 +57,9 @@ describe("input area", () => {
 
   test("CJK input pads by display width", () => {
     setUserFill(BG);
-    const s = draw(frame({ cols: 9, input: { prompt: "> ", text: "你好世界", cursor: 4 } }));
-    expect(s.screen().slice(0, 4)).toEqual(["┌───────┐", "│> 你好 │", "│  世界 │", "└───────┘"]);
-    expect(marks(s).slice(0, 3)).toEqual(Array(3).fill(full(9)));
+    const s = draw(frame({ cols: 11, input: { prompt: "> ", text: "你好世界", cursor: 4 } }));
+    expect(s.screen().slice(0, 4)).toEqual(["┌─────────┐", "│ > 你好  │", "│   世界  │", "│ s       │"]);
+    expect(marks(s).slice(0, 4)).toEqual(Array(4).fill(full(11)));
   });
 
   test("a dim prompt and a narrow width keep the fill", () => {
@@ -72,7 +73,7 @@ describe("input area", () => {
     setUserFill(pickFill({ NO_COLOR: "1" }));
     expect(userFill()).toBeNull();
     const s = draw(frame());
-    expect(s.screen().slice(0, 4)).toEqual(["┌──────────────────┐", "│> hi              │", "└──────────────────┘", "s"]);
+    expect(s.screen().slice(0, 4)).toEqual(["┌──────────────────┐", "│ > hi             │", "│ s                │", ""]);
     expect(marks(s).every((r) => !r.includes("#"))).toBe(true);
     expect(liveRows(frame()).cursor).toBe(1);
   });

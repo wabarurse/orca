@@ -44,14 +44,20 @@ export function tabRow(tabs: Tab[], active: number, cols: number): string {
 /** Height budget shared by App's input geometry and the sticky renderer. */
 export const headerHeight = (rows: number) => Math.max(0, Math.min(Math.floor(rows / 3), rows - 3));
 
-/** Two rows: the tabs on a rule, then in dim the agent being viewed, the account, the models and the context, clipped
- * at its tail so the account and the orchestrator's model survive longest. */
+/** A box open at the top edge of the terminal: the tabs with the context (x/y) at the right, then in dim the agent being
+ * viewed, the account and the models, clipped at its tail, then the box's bottom line. Under 12 columns or 3 rows, no box. */
 export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   if (budget < 1) return [];
   cols = Math.max(1, cols);
-  const inset = cols >= 12 ? 3 : 0;
-  const tabs = tabRow(c.tabs, c.active, Math.max(1, cols - inset - (inset ? 1 : 0)));
-  const head = inset ? `${dim("── ")}${tabs}${dim(" " + "─".repeat(Math.max(0, cols - inset - 1 - visibleLength(tabs))))}` : tabs;
-  const meta = plain([c.agent ? `view ${c.agent}` : "", c.account ?? "", c.model, c.context ?? ""].filter(Boolean).join(" · "));
-  return budget > 1 ? [head, dim(" ".repeat(inset) + fit(meta, Math.max(1, cols - inset)))] : [head];
+  const meta = plain([c.agent ? `view ${c.agent}` : "", c.account ?? "", c.model].filter(Boolean).join(" · "));
+  const context = plain(c.context ?? "");
+  if (cols < 12 || budget < 3) {
+    const tabs = tabRow(c.tabs, c.active, cols);
+    return budget > 1 ? [tabs, dim(fit(meta, cols))] : [tabs];
+  }
+  const inner = cols - 4, right = context && visibleLength(context) + 12 <= inner ? context : "";
+  const tabs = tabRow(c.tabs, c.active, inner - (right ? visibleLength(right) + 2 : 0));
+  const side = (text: string) => `${dim("│")} ${text}${" ".repeat(Math.max(0, inner - visibleLength(text)))} ${dim("│")}`;
+  const top = right ? tabs + " ".repeat(Math.max(1, inner - visibleLength(tabs) - visibleLength(right))) + dim(right) : tabs;
+  return [side(top), side(dim(fit(meta, inner))), dim("└" + "─".repeat(cols - 2) + "┘")];
 }

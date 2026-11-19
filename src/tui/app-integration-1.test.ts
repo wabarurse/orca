@@ -25,7 +25,8 @@ describe("markdown replies", () => {
   const TABLE = "| Branch | What it does |\n|---|---|\n| tui-markdown | Render markdown in the chat area |\n";
 
   test("streamed markdown is rendered block by block; held blocks show raw in the live region; the rest stays plain", async () => {
-    const term = fakeTerm(60, 12);
+    // Five body rows: the three-row header box and the counts (two rows inside the composer at this width) leave them at 13.
+    const term = fakeTerm(60, 13);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
@@ -97,9 +98,9 @@ describe("restored pages", () => {
     await until(() => term.screen().includes("Worker done."));
     const restored = ["[resumed]", "> what changed?", "Two things:", "- a", "- b", "⏺ bash(ls)", "  ⎿  1 line", "from worker-feat: all done", "Worker done."];
     const rows = term.screen().split("\n");
-    expect(rows[0]).toStartWith("── resumed ");
+    expect(rows[0]).toStartWith("│ resumed ");
     expect(bodyRows(term).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
-    expect(term.display.buf[term.display.top + term.display.row]!.join("").trimEnd()).toMatch(/^│> +│$/); // boxed input before the counts
+    expect(term.display.buf[term.display.top + term.display.row]!.join("").trimEnd()).toMatch(/^│ > +│$/); // boxed input before the counts
     expect(term.screen()).not.toContain("SECRET-RESULT");
     expect(term.display.clears).toBe(0); // printed under the shell's output, nothing cleared
 
@@ -455,7 +456,7 @@ describe("command and key tables", () => {
     for (const t of ["/compact", "/nope", "hello"]) {
       app.closePage();
       await until(() => app.pages.length === 0);
-      await until(() => app.frame().status === null && term.screen().includes("│>")); // let the close's reprint land first (a reprint with no page drops lines said before it)
+      await until(() => app.frame().status === null && term.screen().includes("│ >")); // let the close's reprint land first (a reprint with no page drops lines said before it)
       term.type("/help\r"); // needs no page: runs with none
       await until(() => term.screen().includes("help"));
       term.press({ name: "escape" });
@@ -597,9 +598,9 @@ describe("user background", () => {
       const at = (s: string) => text.findIndex((l) => l.startsWith(s));
       expect([bg[at("> a message")], bg[at("> a message") + 1], bg[at("alpha says hi")]]).toEqual([true, true, false]);
       const row = term.display.top + term.display.row;
-      expect(term.display.buf[row]!.join("").trimEnd()).toBe("│> draft" + " ".repeat(cols - 9) + "│");
-      expect([bg[row], bg[row + 1]]).toEqual([true, true]); // input, bottom status
-      expect(term.display.col).toBe(8);
+      expect(term.display.buf[row]!.join("").trimEnd()).toBe("│ > draft" + " ".repeat(cols - 10) + "│");
+      expect([bg[row], bg[row + 1]]).toEqual([true, true]); // input, then the counts inside the box
+      expect(term.display.col).toBe(9);
     };
     check(30);
     term.resize(24, 20);
@@ -873,15 +874,15 @@ test("scrolling and new output keep both bars fixed, preserve the draft, and fol
     await until(() => term.screen().includes("history row 59") && term.screen().includes("0 tasks") && term.screen().includes("0 agents") && term.screen().includes("0 processes")); // the counts are read in the background
     const top = bodyStart(term);
     const header = term.display.screen().slice(0, top);
-    const footer = term.display.screen().slice(-4);
+    const footer = term.display.screen().slice(-3); // the box's top, the input, the counts inside it
     term.press({ name: "pageup" });
     await until(() => !term.screen().includes("history row 59"));
-    const body = term.display.screen().slice(top, -4);
+    const body = term.display.screen().slice(top, -3);
     app.say("new output while reading");
     await Bun.sleep(30);
-    expect(term.display.screen().slice(top, -4)).toEqual(body);
+    expect(term.display.screen().slice(top, -3)).toEqual(body);
     expect(term.display.screen().slice(0, top)).toEqual(header);
-    expect(term.display.screen().slice(-4)).toEqual(footer);
+    expect(term.display.screen().slice(-3)).toEqual(footer);
     expect(app.input.text).toBe("my draft");
     const firstRow = Number(body[0]!.match(/\d+/)![0]);
     term.type("\x1b[<64;10;8M".repeat(3));
@@ -890,6 +891,6 @@ test("scrolling and new output keep both bars fixed, preserve the draft, and fol
     await until(() => term.screen().includes("new output while reading"));
     app.say("following again");
     await until(() => term.screen().includes("following again"));
-    expect(term.display.row).toBe(13);
+    expect(term.display.row).toBe(14);
   } finally { app.quit(); await running; }
 });

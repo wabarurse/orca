@@ -65,7 +65,7 @@ async function home(write: (t: ReturnType<typeof open>) => Promise<void>): Promi
   return dir;
 }
 
-const input = (rows: string[]) => rows.find(row => row.startsWith("│>"))?.replace(/\s*│$/, "") ?? "";
+const input = (rows: string[]) => rows.find(row => row.startsWith("│ >"))?.replace(/\s*│$/, "") ?? "";
 
 test.skipIf(!TMUX)("owned terminal: saved history scrolls between pinned bars; exit restores the shell and prints the transcript", async () => {
   const dir = await home(async t => {
@@ -80,15 +80,18 @@ test.skipIf(!TMUX)("owned terminal: saved history scrolls between pinned bars; e
     await app.insert();
     app.paste("PTY-DRAFT\nsecond line");
     await until(async () => (await app.screen()).some(row => row.includes("second line")));
-    const initial = await app.screen(), header = initial.slice(0, 2), footer = initial.slice(-5);
-    expect(header[0]).toStartWith("── probe ─");
+    // The header box (tabs, details, bottom line); the composer box (top, two input rows, the counts inside it).
+    const initial = await app.screen(), header = initial.slice(0, 3), footer = initial.slice(-4);
+    expect(header[0]).toStartWith("│ probe ");
     expect(header[1]).toContain("effort");
+    expect(header[2]).toStartWith("└─");
+    expect(footer[0]).toStartWith("┌");
     expect(initial.join("\n")).not.toContain("PRELAUNCH_SENTINEL");
     for (let i = 0; i < 30; i++) app.key("PPage");
     await until(async () => (await app.screen()).some(row => row.includes("PTY-ORIGINAL-HISTORY")));
     const scrolled = await app.screen();
-    expect(scrolled.slice(0, 2)).toEqual(header);
-    expect(scrolled.slice(-5)).toEqual(footer);
+    expect(scrolled.slice(0, 3)).toEqual(header);
+    expect(scrolled.slice(-4)).toEqual(footer);
     for (let i = 0; i < 30; i++) app.key("NPage");
     await until(async () => (await app.screen()).some(row => row.includes("PTY-LATEST-HISTORY")));
     await app.quit();
@@ -113,13 +116,13 @@ test.skipIf(!TMUX)("owned terminal: Option+Backspace deletes a word; Esc leaves 
     await until(async () => (await app.screen()).some(row => row.includes("PTY-SELECT-ME")));
     await app.insert();
     app.type("hello big world");
-    await until(async () => input(await app.screen()) === "│> hello big world");
+    await until(async () => input(await app.screen()) === "│ > hello big world");
     app.type("\x1b\x7f"); // two separate writes are covered in otui/terminal.test.ts; tmux calls are slower than the Alt window
-    await until(async () => input(await app.screen()) === "│> hello big");
+    await until(async () => input(await app.screen()) === "│ > hello big");
     await Bun.sleep(100);
     app.type("\x1b");
     await until(async () => (await app.screen()).some(row => row.includes("[NORMAL]")));
-    expect(input(await app.screen())).toBe("│> hello big");
+    expect(input(await app.screen())).toBe("│ > hello big");
     await app.quit();
     await until(async () => (await app.history()).includes("EXIT:0"));
   } finally {

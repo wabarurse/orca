@@ -1,17 +1,17 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`help appearance fixtures 80x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
-"── demo ────────────────────────────────────────────────────────────────────────
-   example-model · effort default
+"│ demo                                                                         │
+│ example-model · effort default                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
 Conversation record 27
 Conversation record 28
 Conversation record 29
 Conversation record 30
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│> draft 界                                                                    │
-└──────────────────────────────────────────────────────────────────────────────┘
-2 agents running │ 1 task │ inbox 1
+│ > draft 界                                                                   │
+│ 2 agents running │ 1 task │ inbox 1                                          │
 help · commands & keys                                                 1–11/71
   conversation
   /vim            toggle Vim navigation and editing modes
@@ -102,17 +102,17 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
 `;
 
 exports[`help appearance fixtures 40x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
-"── demo ────────────────────────────────
-   example-model · effort default
+"│ demo                                 │
+│ example-model · effort default       │
+└──────────────────────────────────────┘
 Conversation record 27
 Conversation record 28
 Conversation record 29
 Conversation record 30
 
 ┌──────────────────────────────────────┐
-│> draft 界                            │
-└──────────────────────────────────────┘
-2 agents running │ 1 task │ inbox 1
+│ > draft 界                           │
+│ 2 agents running │ 1 task │ inbox 1  │
 help                          1–11/126
   conversation
   /vim
@@ -258,17 +258,17 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
 `;
 
 exports[`help appearance fixtures End reaches diagnostics with a bounded range and dismissal hint 1`] = `
-"── demo ────────────────────────────────────────────────────────────────────────
-   example-model · effort default
+"│ demo                                                                         │
+│ example-model · effort default                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
 Conversation record 27
 Conversation record 28
 Conversation record 29
 Conversation record 30
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│> draft 界                                                                    │
-└──────────────────────────────────────────────────────────────────────────────┘
-2 agents running │ 1 task │ inbox 1
+│ > draft 界                                                                   │
+│ 2 agents running │ 1 task │ inbox 1                                          │
 help · commands & keys                                                61–71/71
                        text paste is unchanged
   shift/alt+enter      new line

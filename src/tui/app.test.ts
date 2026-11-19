@@ -913,7 +913,7 @@ describe("sticky screen", () => {
     term.type("\r");
     await until(() => term.screen().includes("worker-x done"));
     const lines = term.screen().split("\n");
-    expect(lines[0]).toStartWith("── alpha ");
+    expect(lines[0]).toStartWith("│ alpha ");
     expect(selectedTab(term)).toBe("alpha");
     expect(bodyRows(term).filter(Boolean).slice(0, 3)).toEqual(["> build it", "alpha says hi", "worker-x done"]);
     expect(lines.filter((l) => l === "> build it").length).toBe(1);

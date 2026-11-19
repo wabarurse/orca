@@ -41,7 +41,7 @@ test("both bars stay at screen edges while streaming and scrolling; only changed
   const first = stickyRows(f, history, chrome);
   terminal.write(stickyUpdate(first));
   expect(terminal.screen().slice(0, 4)).toEqual(chrome);
-  expect(terminal.screen().slice(-4)).toEqual(["┌" + "─".repeat(78) + "┐", "│> draft" + " ".repeat(71) + "│", "└" + "─".repeat(78) + "┘", "2 agents running"]);
+  expect(terminal.screen().slice(-3)).toEqual(["┌" + "─".repeat(78) + "┐", "│ > draft" + " ".repeat(69) + " │", "│ 2 agents running" + " ".repeat(60) + " │"]);
   expect(terminal.screen()).toContain("message 99");
   const scrolled = stickyRows(f, history, chrome, 10);
   const update = stickyUpdate(scrolled, first);
@@ -52,29 +52,29 @@ test("both bars stay at screen edges while streaming and scrolling; only changed
   const appended = stickyRows({ ...f, partial: "streaming…" }, [...history, "new output"], chrome, 10);
   expect(stickyUpdate(appended, scrolled)).toBe("");
   expect(terminal.screen().slice(0, 4)).toEqual(chrome);
-  expect(terminal.screen().slice(-4)).toEqual(["┌" + "─".repeat(78) + "┐", "│> draft" + " ".repeat(71) + "│", "└" + "─".repeat(78) + "┘", "2 agents running"]);
+  expect(terminal.screen().slice(-3)).toEqual(["┌" + "─".repeat(78) + "┐", "│ > draft" + " ".repeat(69) + " │", "│ 2 agents running" + " ".repeat(60) + " │"]);
 });
 
 test("the footer gap is one viewport row, not history, even when the conversation fills the screen", () => {
-  for (const saved of [[], ["short reply"], history.slice(0, 15), history.slice(0, 16), [...history]]) {
+  for (const saved of [[], ["short reply"], history.slice(0, 16), history.slice(0, 17), [...history]]) {
     const before = [...saved];
     const next = stickyRows(frame(), saved, chrome);
     expect(next.rows).toHaveLength(24);
-    expect(next.bodyHeight).toBe(15); // 4 header + 15 content + 1 gap + 4 footer
-    expect(next.maxStart).toBe(Math.max(0, saved.length - 15));
+    expect(next.bodyHeight).toBe(16); // 4 header + 16 content + 1 gap + 3 footer (the counts sit inside the box)
+    expect(next.maxStart).toBe(Math.max(0, saved.length - 16));
     expect(next.start).toBe(next.maxStart);
-    const visible = saved.slice(next.start, next.start + 15);
-    expect(next.rows.slice(4, 19)).toEqual([...visible, ...Array(15 - visible.length).fill("")]);
-    expect(next.rows[19]).toBe("");
-    expect(Bun.stripANSI(next.rows[20]!)).toStartWith("┌");
-    expect([next.cursor, next.col]).toEqual([21, 8]);
+    const visible = saved.slice(next.start, next.start + 16);
+    expect(next.rows.slice(4, 20)).toEqual([...visible, ...Array(16 - visible.length).fill("")]);
+    expect(next.rows[20]).toBe("");
+    expect(Bun.stripANSI(next.rows[21]!)).toStartWith("┌");
+    expect([next.cursor, next.col]).toEqual([22, 9]);
     expect(saved).toEqual(before);
   }
-  for (const [requested, start] of [[-1, 0], [0, 0], [10, 10], [84, 84], [85, 85], [100, 85]]) {
+  for (const [requested, start] of [[-1, 0], [0, 0], [10, 10], [83, 83], [84, 84], [100, 84]]) {
     const next = stickyRows(frame(), history, chrome, requested!);
     expect(next.start).toBe(start!);
-    expect(next.rows.slice(4, 19)).toEqual(history.slice(start!, start! + 15));
-    expect(next.rows[19]).toBe("");
+    expect(next.rows.slice(4, 20)).toEqual(history.slice(start!, start! + 16));
+    expect(next.rows[20]).toBe("");
   }
 });
 
@@ -97,10 +97,10 @@ test("every streaming tail ends above the blank gap, which never borrows user or
     for (const [tail, last] of tails) {
       const next = stickyRows({ ...frame(), ...tail }, saved, chrome);
       terminal.write(stickyUpdate(next, previous));
-      expect(terminal.screen().slice(18, 21)).toEqual([last, "", "┌" + "─".repeat(78) + "┐"]);
-      expect(terminal.backgrounds()[19]!.some(Boolean)).toBe(false);
-      expect(terminal.backgrounds()[20]!.every(Boolean)).toBe(true);
-      expect([terminal.row, terminal.col]).toEqual([21, 8]);
+      expect(terminal.screen().slice(19, 22)).toEqual([last, "", "┌" + "─".repeat(78) + "┐"]);
+      expect(terminal.backgrounds()[20]!.some(Boolean)).toBe(false);
+      expect(terminal.backgrounds()[21]!.every(Boolean)).toBe(true);
+      expect([terminal.row, terminal.col]).toEqual([22, 9]);
       expect(terminal.top).toBe(0);
       expect(saved).toEqual(before);
       previous = next;

@@ -246,11 +246,12 @@ test("effort/fast real command dispatch query, set, refuse and no-page feedback"
     ui.key({ name: "escape" });
     // Saves are transient notes above the composer; refusals stay in the conversation.
     ui.type("/effort high\r"); await until(() => note(ui.app).includes("effort for gpt-6-astra: high"));
-    await until(() => ui.writes.some(s => s.includes("effort high ")));
-    expect(ui.writes.findLast(s => s.includes("effort high "))).not.toContain("effort high · fast"); // fast off: no field
+    // The header details end at the effort (the context moved to the tabs row), so match the text without its styling.
+    await until(() => ui.writes.some(s => Bun.stripANSI(s).includes("effort high ")));
+    expect(Bun.stripANSI(ui.writes.findLast(s => Bun.stripANSI(s).includes("effort high ")) ?? "")).not.toContain("effort high · fast"); // fast off: no field
     ui.type("/fast\r"); await until(() => note(ui.app).includes("fast for gpt-6-astra: off"));
     ui.type("/fast on\r"); await until(() => note(ui.app).includes("fast for gpt-6-astra: on"));
-    await until(() => ui.writes.some(s => s.includes("effort high · fast ")));
+    await until(() => ui.writes.some(s => Bun.stripANSI(s).includes("effort high · fast ")));
     expect(lines()).not.toContain("gpt-6-astra");
     ui.type("/effort ultra\r"); await until(() => note(ui.app).includes("effort ultra is unsupported"));
     ui.type("/fast yes\r"); await until(() => note(ui.app).includes("usage: /fast"));
@@ -279,7 +280,7 @@ test("/effort with no args opens a picker of default plus supported levels for t
     await until(() => note(ui.app).includes("effort for gpt-6-astra: xhigh")); // the pick's result is a transient note
     expect(ui.app.menu).toBeNull();
     expect((await effectiveSettings(ui.project, "gpt-6-astra")).effort).toBe("xhigh");
-    await until(() => ui.writes.some(s => s.includes("effort xhigh ")));
+    await until(() => ui.writes.some(s => Bun.stripANSI(s).includes("effort xhigh ")));
     ui.type("/effort\r"); await until(() => !!ui.app.menu);
     ui.key({ name: "up" }); ui.key({ name: "up" }); ui.key({ name: "up" }); ui.key({ name: "up" }); ui.type("\r");
     await until(() => note(ui.app).includes("effort for gpt-6-astra: default;"));
@@ -423,12 +424,12 @@ test("/model for one role: the scope menu shows each role's model; only that rol
     expect(await effectiveModel(ui.project, "worker")).toBe("gpt-5.5");
     expect(await effectiveModel(ui.project, "reviewer")).toBe("gpt-6-astra");
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    await until(() => ui.writes.some((s) => s.includes(" openai:default · orch gpt-6-astra · workers gpt-5.5 · reviewers gpt-6-astra · effort")));
+    await until(() => ui.writes.some((s) => Bun.stripANSI(s).includes(" openai:default · orch gpt-6-astra · workers gpt-5.5 · reviewers gpt-6-astra · effort")));
     // The orchestrator scope never asks: only the orchestrator reads it.
     await pickModel(ui, "gpt-5.5", "orch");
     await until(() => note(ui.app).includes("orchestrator set to gpt-5.5"));
     expect(ui.app.menu).toBeNull();
-    await until(() => ui.writes.some((s) => s.includes("openai:default · orch gpt-5.5 · workers gpt-5.5 · reviewers gpt-6-astra · effort")));
+    await until(() => ui.writes.some((s) => Bun.stripANSI(s).includes("openai:default · orch gpt-5.5 · workers gpt-5.5 · reviewers gpt-6-astra · effort")));
     // No argument: the scope step, each row with its current model.
     await ui.app.commands.get("/model")!.run("", ui.app.page);
     expect(plainItems()).toEqual([
@@ -453,7 +454,7 @@ test("/model for one role: the scope menu shows each role's model; only that rol
     await until(() => note(ui.app).includes("model set to gpt-5.5"));
     expect(await effectiveModel(ui.project, "orchestrator")).toBe("gpt-5.5");
     expect(readProjectState(ui.project, "role-models")).toEqual({});
-    await until(() => ui.writes.some((s) => s.includes(" openai:default · gpt-5.5 · all roles · effort")));
+    await until(() => ui.writes.some((s) => Bun.stripANSI(s).includes(" openai:default · gpt-5.5 · all roles · effort")));
   } finally { await ui.close(); }
 });
 

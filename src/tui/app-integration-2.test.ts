@@ -386,7 +386,7 @@ test("boxed input and question vertical editing share rendered geometry across r
   const running = app.run("boxed-question-e");
   const width = () => inputGeometry(app.frame().input.prompt, term.cols, Math.max(1, term.rows - bodyStart(term) - 1)).width;
   try {
-    await until(() => term.display.screen()[0]!.startsWith("── boxed-question-e "));
+    await until(() => term.display.screen()[0]!.startsWith("│ boxed-question-e "));
     term.type("界".repeat(40) + "é👩‍💻");
     const draft = app.input.text;
     const expected = vertical(app.input, width(), -1)!;
@@ -489,16 +489,16 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     await until(() => !!app.page);
     expect(app.page!.lines.map(raw).join("\n")).toContain("FULL-HISTORY-SENTINEL"); // live history is complete, not just exit output
     // Page data can precede the throttled first frame; never capture "opening…" as the header.
-    await until(() => term.display.screen()[0]!.startsWith("── combined-cancel-e "));
+    await until(() => term.display.screen()[0]!.startsWith("│ combined-cancel-e "));
     term.type("start cancellable tool\r");
     await until(() => existsSync(marker));
     expect(app.page!.calls.size).toBe(1);
     term.type("draft 界é👩‍💻");
     const draft = { ...app.input };
     const headerRows = () => term.display.buf.slice(term.display.top, term.display.top + 2).map(row => row.join(""));
-    // The ruled row's tabs and its blank; the dim right side (context) is telemetry.
-    // The tabs and the account/models stay; the context at the end of the details row may change.
-    const identity = (rows: string[]) => [rows[0]!.slice(0, rows[0]!.indexOf(" ─", 3)), rows[1]!.replace(/ · ctx .*$/, "")];
+    // The boxed header's tabs row and its details row: the tabs and the account/models stay; the context at the right
+    // of the tabs row is telemetry and may change.
+    const identity = (rows: string[]) => [rows[0]!.replace(/│$/, "").replace(/ctx \S+\s*$/, "").trimEnd(), rows[1]!];
     const header = headerRows();
     term.press({ name: "pageup" });
     term.resize(23, 24);
@@ -517,7 +517,7 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     expect(await app.page!.orch.pending()).toBe(false);
     // Context/review telemetry can change during the cancelled turn; identity stays pinned.
     expect(identity(headerRows())).toEqual(identity(header));
-    expect(identity(header)[0]).toBe("── combined-cancel-e");
+    expect(identity(header)[0]).toBe("│ combined-cancel-e");
     term.press({ name: "escape" }); // only intentional draft clearing for this continuation
     term.type("resume saved turn\r");
     await until(() => provider.calls.length === 2 && !app.page!.busy);
