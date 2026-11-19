@@ -22,12 +22,32 @@ export function safeOwnedPath(root: string, path: string): void {
     if (p === root) break;
   }
 }
-export async function allocatedBytes(path: string): Promise<number> {
+/** The space `paths` take on disk together (allocated blocks, symlinks not followed, a hard link counted once; a missing
+ * path is 0). du does the walk natively: walking in JavaScript, one awaited lstat per file, took minutes over a home's
+ * worktrees and their node_modules. Paths go to du in batches so argv stays bounded; without du, the walk is the fallback. */
+export async function allocatedBytes(...paths: string[]): Promise<number> {
+  const present = paths.filter(path => existsSync(path));
+  const batches = Array.from({ length: Math.ceil(present.length / 64) }, (_, i) => present.slice(i * 64, i * 64 + 64));
+  let sum = 0, next = 0;
+  // A few du processes at once: the walk is bound by the disk's latency, not one core.
+  await Promise.all(Array.from({ length: Math.min(6, batches.length) }, async () => {
+    for (let batch = batches[next++]; batch; batch = batches[next++]) { const bytes = await duBytes(batch); sum += bytes; } // read sum after the await, not before
+  }));
+  return sum;
+}
+async function duBytes(batch: string[]): Promise<number> {
+  const result = await run(["du", "-skP", "--", ...batch], { cwd: tmpdir(), timeoutMs: 600_000 });
+  if (!result || !result.out.trim()) { let sum = 0; for (const path of batch) sum += await walkedBytes(path); return sum; }
+  let sum = 0;
+  for (const line of result.out.split("\n")) { const kb = Number(line.split("\t")[0]); if (line.includes("\t") && Number.isFinite(kb)) sum += kb * 1024; }
+  return sum;
+}
+async function walkedBytes(path: string): Promise<number> {
   const st = await lstat(path).catch(e => { if (e.code === "ENOENT") return; throw e; });
   if (!st) return 0;
   if (!st.isDirectory() || st.isSymbolicLink()) return st.blocks * 512;
   let sum = st.blocks * 512;
-  for (const name of await readdir(path)) sum += await allocatedBytes(join(path, name));
+  for (const name of await readdir(path)) sum += await walkedBytes(join(path, name));
   return sum;
 }
 function generated(path: string, root: string): boolean {

@@ -176,38 +176,39 @@ export async function cleanManagedWorkspaces(project: string, apply = false, opt
   return apply ? execute() : workspaces.preview(execute);
 }
 async function cleanRegistered(project: string, apply: boolean, options: CleanupOptions): Promise<CleanupResult[]> {
-  const result: CleanupResult[] = [], check = guards(options);
-  for (const candidate of workspaces.list().filter(w => !w.cleanedAt && w.members[0]?.project === project)) {
+  const check = guards(options), candidates = workspaces.list().filter(w => !w.cleanedAt && w.members[0]?.project === project);
+  const one = async (candidate: workspaces.Workspace): Promise<CleanupResult[]> => {
+    const result: CleanupResult[] = [];
     const row = (disposition: string, bytes?: number) => result.push({ path: candidate.path, session: candidate.id, disposition, ...(bytes !== undefined ? { bytes } : {}) });
     if (!candidate.archivedAt) {
       const reason = (options.now ?? Date.now()) - Date.parse(candidate.lastActivityAt) >= workspaces.INACTIVE_MS ? await check(candidate) : undefined;
-      row(`kept: ${reason ?? "session is not archived"}`); continue;
+      row(`kept: ${reason ?? "session is not archived"}`); return result;
     }
     let release: (() => Promise<void>) | undefined, claimed = false;
     try {
       if (apply) release = await locks(candidate);
       const w = workspaces.get(candidate.id)!;
       const reason = await check(w, apply);
-      if (reason) { row(`kept: ${reason}`); continue; }
+      if (reason) { row(`kept: ${reason}`); return result; }
       if (apply) { workspaces.claim(w.id, w.lastActivityAt); claimed = true; }
       const files = await checkoutFiles(w);
       if (files.blocker) {
-        const bytes = (await Promise.all(files.generated.map(allocatedBytes))).reduce((a, b) => a + b, 0);
+        const bytes = await allocatedBytes(...files.generated);
         if (apply) {
           const changed = await guards(options)(w, true);
-          if (changed) { row(`kept: ${changed}`); continue; }
+          if (changed) { row(`kept: ${changed}`); return result; }
           await removeGenerated(w, files.generated);
         }
         row(`kept: ${files.blocker}; ${apply ? "removed" : "eligible:"} disposable build files only`, bytes);
-        continue;
+        return result;
       }
       const resources = workspaces.resources(w.id), unique = resources.filter(r => r.owners.length === 1);
       const locations = [...(w.disposable ? [w.path] : []), ...(await Promise.all(unique.map(resourcePaths))).flat()];
       const distinct = [...new Set(locations)].filter(path => !locations.some(other => other !== path && path.startsWith(other + sep)));
-      const bytes = (await Promise.all(distinct.map(allocatedBytes))).reduce((a, b) => a + b, 0);
-      if (!apply) { row("eligible: archived workspace and owned resources", bytes); continue; }
+      const bytes = await allocatedBytes(...distinct);
+      if (!apply) { row("eligible: archived workspace and owned resources", bytes); return result; }
       const changed = await guards(options)(w, true);
-      if (changed) { row(`kept: ${changed}`); continue; }
+      if (changed) { row(`kept: ${changed}`); return result; }
       const blockers: string[] = [];
       for (const r of resources.filter(r => r.owners.length > 1)) workspaces.forget(w.id, r);
       for (const member of w.members) {
@@ -237,6 +238,15 @@ async function cleanRegistered(project: string, apply: boolean, options: Cleanup
       row(complete ? "removed archived session" : `partial: ${blockers.join("; ")}`, bytes);
     } catch (e) { row(`kept: ${e instanceof Error ? e.message : String(e)}`); }
     finally { if (claimed) workspaces.finish(candidate.id, false); await release?.(); }
-  }
-  return result;
+    return result;
+  };
+  // A real run holds each worktree's locks and changes it: one at a time. A preview only reads (git, du), so several
+  // worktrees are checked at once; the rows keep the candidates' order either way.
+  if (apply) { const rows: CleanupResult[] = []; for (const candidate of candidates) rows.push(...await one(candidate)); return rows; }
+  const rows: CleanupResult[][] = [];
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(6, candidates.length) }, async () => {
+    for (let i = next++; i < candidates.length; i = next++) rows[i] = await one(candidates[i]!);
+  }));
+  return rows.flat();
 }
