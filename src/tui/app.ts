@@ -214,7 +214,7 @@ export class App {
       deps, questions: this.questions, get clock() { return app.clock; },
       page: () => app.page, pages: () => app.pages, valid: page => app.validPage(page),
       draw: () => app.draw(), reprint: () => app.reprint(),
-      opening: () => { app.beginMenu(); if (app.vimMode) app.vimMode = "normal"; app.menu = null; app.helpTop = null; },
+      opening: () => { app.beginMenu(); app.menuFrom = null; if (app.vimMode) app.vimMode = "normal"; app.menu = null; app.helpTop = null; },
       input: () => app.input, edit: k => app.edit(k),
       noteRow: page => app.noteRow(page),
       commandLine: () => app.vimCommand, modeTag: () => app.vimMode ? `[${app.vimMode.toUpperCase()}] ` : "",
@@ -1024,6 +1024,7 @@ export class App {
   }
 
   private showMenu(menu: ActiveMenu): void {
+    if (this.vimMode === "insert") this.menuFrom = "insert";
     if (this.vimMode) this.vimMode = "normal";
     this.helpTop = null;
     this.menu = menu;
@@ -1350,6 +1351,12 @@ export class App {
   }
 
   private vimMode: "normal" | "insert" | undefined;
+  /** The Vim mode a menu was opened from, given back when the last menu of a flow closes. */
+  private menuFrom: "insert" | null = null;
+  private leaveMenu(): void {
+    if (this.menuFrom && this.vimMode) this.vimMode = this.menuFrom;
+    this.menuFrom = null;
+  }
   private vimPrefix?: { key: "g"; at: number };
   private vimCommand?: string;
   /** Normal-mode Shift letters, each the action of a key or command that exists without Vim. */
@@ -1361,7 +1368,7 @@ export class App {
   ]);
 
   /** A project tab switch from anywhere: it closes whatever is open over the conversation. */
-  private switchTab(delta: number): void { this.menu = null; this.work.close(); this.switchPage(delta); }
+  private switchTab(delta: number): void { this.menu = null; this.menuFrom = null; this.work.close(); this.switchPage(delta); }
 
   /** Shift+S: stop the conversation and its agents after a Cancel-default confirmation (Ctrl+C stops at once). */
   private stopMenu(): void {
@@ -1621,6 +1628,7 @@ export class App {
 
   /** Explicit modal, independent of chat/answer buffers and conversation scroll. */
   private toggleHelp(): void {
+    this.menuFrom = null;
     if (this.vimMode) this.vimMode = "normal";
     this.work.close();
     this.cancelClear();
@@ -1677,6 +1685,7 @@ export class App {
     else if (id === "down") m.index = (m.index + 1) % n;
     else if (id === "enter") { this.menu = null; await m.pick(m.index); }
     else if (id === "escape") { this.modelGeneration++; this.menu = null; }
+    if (!this.menu) this.leaveMenu();
     return this.draw();
   }
 
