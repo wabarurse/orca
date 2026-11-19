@@ -133,7 +133,7 @@ export async function writeNode(bubble: string, write: NodeWrite, author: string
     loaded.delete(bubble);
     // The entry point for tools that only read files (Codex, Claude Code): every node's id and summary, rewritten with each change.
     const all = await memoryNodes(bubble);
-    await writeFileAtomic(join(memoryDir(bubble), "INDEX.md"), ["# Memory index", "Each line is a node file (`<id>.md` in this folder) and its one-line summary. Open the file for the dated detail.", "",
+    await writeFileAtomic(join(memoryDir(bubble), "INDEX.md"), ["# Knowledge index", "Each line is a node file (`<id>.md` in this folder) and its one-line summary. Open the file for the dated detail.", "",
       ...all.map(n => `- ${n.id} — ${n.summary}`), ""].join("\n"));
     return node;
   });

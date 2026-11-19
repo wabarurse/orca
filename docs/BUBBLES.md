@@ -34,7 +34,7 @@ behavior.json                    the behavior lines
 The files are the truth. Search runs over them in process; there is no second index to
 rebuild, and no SQLite table.
 
-## Memory
+## Knowledge (the `knowledge` tool; nodes live in `memory/`)
 
 A node has a one-line **summary** that states the fact itself (it is what sits in context)
 and dated **entries** that carry the detail (read on demand). A node file:
@@ -71,7 +71,7 @@ retired entries leave search and the rendered node, and stay in the file as hist
 is not a cache and nothing is evicted from it: its content is small (19 days of one project
 was under 500 KB) and is only loaded on demand, so what must stay bounded is the index.
 `renderIndex` lists every node while that fits its budget, then shows only the newest nodes
-of the busiest branches with a count; `memory list <branch>` gives the rest.
+of the busiest branches with a count; `knowledge list <branch>` gives the rest.
 
 Limits (`LIMITS`): title 80 characters, summary 200, entry 700, 12 keywords, 8 sources per
 entry, 40 current entries per node (beyond that the writer is told to retire or use a more
@@ -79,7 +79,7 @@ specific node).
 
 ### How memory is written
 
-1. **The orchestrator**, with `memory write`, when the user decides something or a finding
+1. **The orchestrator**, with `knowledge write`, when the user decides something or a finding
    is established.
 2. **A background pass after each turn** (`core/data/memory/bubble-writer.ts`,
    `BubbleWriter`). It reads the transcript entries since its watermark (project state
@@ -107,9 +107,9 @@ imported automatically.
   (`core/data/knowledge/bubble-context.ts`) searches memory with the latest message and
   attaches the best matches as the `bubble-hits` reference section: node id, revision,
   summary, and its best lines. No model call.
-- **`memory search`** takes up to five phrasings at once and returns, per node, the summary
+- **`knowledge search`** takes up to five phrasings at once and returns, per node, the summary
   and the matching lines, which is often enough without a read.
-- **`memory read`** takes up to six node ids in one call. **`memory list`** lists a branch.
+- **`knowledge read`** takes up to six node ids in one call. **`knowledge list`** lists a branch.
 
 Search (`core/data/bubbles/search.ts`) scores every current entry as its own document with
 its node's title, summary and keywords in front of it, and node summaries as documents too,

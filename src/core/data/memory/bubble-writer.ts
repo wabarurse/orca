@@ -39,7 +39,7 @@ export function sliceText(entries: Entry[]): { text: string; said: boolean } {
       if (block.type === "text") {
         if (block.text.startsWith("[Orca reference context")) continue;
         if (block.text.trim()) { rows.push(`${message.role === "user" ? "IN" : "ORCHESTRATOR"}: ${clip(block.text.trim(), 6000)}`); said = true; }
-      } else if (block.type === "tool_use") rows.push(`TOOL ${block.name}: ${clip(JSON.stringify(block.input), ["spawn", "inbox", "task", "memory"].includes(block.name) ? 2500 : 300)}`);
+      } else if (block.type === "tool_use") rows.push(`TOOL ${block.name}: ${clip(JSON.stringify(block.input), ["spawn", "inbox", "task", "knowledge"].includes(block.name) ? 2500 : 300)}`);
       else if (block.type === "tool_result") {
         const text = typeof block.content === "string" ? block.content : (block.content ?? []).map(part => part.type === "text" ? part.text : `[${part.type}]`).join("\n");
         rows.push(`RESULT: ${clip(text.trim(), 500)}`);

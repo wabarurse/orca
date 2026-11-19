@@ -65,14 +65,14 @@ export function renderHits(hits: Hit[]): string {
 }
 
 /** What every member carries in context: one line per node while that fits, else the busiest branches shrink to
- * their newest nodes plus a count, so the index stays inside `budget` characters however large memory grows. */
+ * their newest nodes plus a count, so the index stays inside `budget` characters however large it grows. */
 export function renderIndex(nodes: MemoryNode[], budget = 9000): string {
   const branches = Object.keys(BRANCHES).map(branch => ({ branch, nodes: nodes.filter(n => n.id.startsWith(`${branch}/`)) })).filter(b => b.nodes.length);
   const shown = new Map(branches.map(b => [b.branch, b.nodes.length]));
   const row = (n: MemoryNode) => `- ${n.id} — ${n.summary}`;
   const render = () => branches.map(({ branch, nodes: all }) => {
     const keep = shown.get(branch)!, newest = [...all].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, keep).sort((a, b) => a.id.localeCompare(b.id));
-    return [`## ${branch} — ${BRANCHES[branch]} (${all.length} node${all.length === 1 ? "" : "s"}${keep < all.length ? `, newest ${keep} shown; memory list "${branch}" for the rest` : ""})`, ...newest.map(row)].join("\n");
+    return [`## ${branch} — ${BRANCHES[branch]} (${all.length} node${all.length === 1 ? "" : "s"}${keep < all.length ? `, newest ${keep} shown; knowledge list "${branch}" for the rest` : ""})`, ...newest.map(row)].join("\n");
   }).join("\n");
   let text = render();
   while (text.length > budget) {

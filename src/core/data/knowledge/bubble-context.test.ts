@@ -54,7 +54,7 @@ test("a worker carries behavior and the overview but not the index", async () =>
   await writeNode(id, node("decisions/flags", "Feature flags", "No feature flags unless the user asks.", "User removed both sync flags."), "one");
   const shown = await bubbleContext("one", "remove the feature flags from the sync code", "worker");
   expect(shown.bubble).toContain("What the project is.");
-  expect(shown.bubble).toContain("Memory holds 2 nodes and the notebook 0 pages");
+  expect(shown.bubble).toContain("Knowledge holds 2 nodes and the notebook 0 pages");
   expect(shown.bubble).not.toContain("- decisions/flags —");
   expect(shown["bubble-hits"]).toContain("decisions/flags (rev 1)");
 });

@@ -4,7 +4,7 @@ import { filePath } from "./files";
 import type { Tool } from "./registry";
 
 export const notebook: Tool = {
-  spec: { name: "notebook", description: "The bubble's notebook: bulky material kept out of everyone's context (tool output, reports, documents, tables), shared by the bubble's orchestrators and their workers. Only titles and one-line summaries are listed; content is fetched on demand. put: save text or a file from your workspace or evidence folder with a title and a summary saying what it holds. list: the pages, most recently used first. read: a line range of a page. query: only the lines matching a pattern, so a large page is never loaded whole. Cite a page id as a source when you write memory. The notebook holds a limited number of pages; the least recently used is archived first and a read restores it for a while.",
+  spec: { name: "notebook", description: "The bubble's notebook: bulky material kept out of everyone's context (tool output, reports, documents, tables), shared by the bubble's orchestrators and their workers. Only titles and one-line summaries are listed; content is fetched on demand. put: save text or a file from your workspace or evidence folder with a title and a summary saying what it holds. list: the pages, most recently used first. read: a line range of a page. query: only the lines matching a pattern, so a large page is never loaded whole. Cite a page id as a source when you write knowledge. The notebook holds a limited number of pages; the least recently used is archived first and a read restores it for a while.",
     input_schema: { type: "object", properties: {
       action: { type: "string", enum: ["list", "put", "read", "query"] },
       id: { type: "string", description: "read/query: the page id." },

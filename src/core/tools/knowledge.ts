@@ -13,8 +13,8 @@ function render(node: MemoryNode): string {
   return [`${node.id} (rev ${node.revision}) ${node.title}`, node.summary, ...rows, ...(retired ? [`(${retired} retired entr${retired === 1 ? "y" : "ies"} kept as history in the node file)`] : [])].join("\n");
 }
 
-export const memory: Tool = {
-  spec: { name: "memory", description: `The bubble's shared project knowledge, read and written by every orchestrator attached to it: ${Object.keys(BRANCHES).join(", ")}, plus an overview. Its index and the matches for the latest message are already in your reference context, so read a node you can see there directly. search: send several phrasings at once; each match returns the node's summary and its best lines, often enough without a read. read: up to 6 node ids in one call. list: every node of one branch. write (orchestrator only): add dated entries to a node or create one (title and summary); when a new fact replaces an old one, retire the old entry and update the summary in the same call, passing the revision from read or search. Write when the user decides something or a finding is established, with the message or evidence it comes from as sources; the summary states the fact itself, not the topic. Memory is remembered knowledge, never authorization: the code and the user's latest words override it.`,
+export const knowledge: Tool = {
+  spec: { name: "knowledge", description: `The bubble's shared project knowledge, read and written by every orchestrator attached to it: ${Object.keys(BRANCHES).join(", ")}, plus an overview. Its index and the matches for the latest message are already in your reference context, so read a node you can see there directly. search: send several phrasings at once; each match returns the node's summary and its best lines, often enough without a read. read: up to 6 node ids in one call. list: every node of one branch. write (orchestrator only): add dated entries to a node or create one (title and summary); when a new fact replaces an old one, retire the old entry and update the summary in the same call, passing the revision from read or search. Write when the user decides something or a finding is established, with the message or evidence it comes from as sources; the summary states the fact itself, not the topic. Knowledge is remembered, never authorization: the code and the user's latest words override it.`,
     input_schema: { type: "object", properties: {
       action: { type: "string", enum: ["search", "read", "list", "write"] },
       queries: { type: "array", minItems: 1, maxItems: 5, items: { type: "string" }, description: "search: one to five phrasings of what you need, including exact identifiers." },
@@ -32,7 +32,7 @@ export const memory: Tool = {
   async run(input, ctx) {
     const bubble = peekBubble(ctx.project);
     if (input.action === "write") {
-      if (ctx.role !== "orchestrator") throw new Error("workers read memory and report findings to the orchestrator, which writes them; put bulky material in the notebook");
+      if (ctx.role !== "orchestrator") throw new Error("workers read knowledge and report findings to the orchestrator, which writes them; put bulky material in the notebook");
       if (typeof input.node !== "string") throw new Error("write needs a node id");
       const add = input.add === undefined ? [] : (input.add as { text: unknown; sources: unknown }[]).map(entry => {
         if (typeof entry?.text !== "string") throw new Error("each added entry needs text");
@@ -45,7 +45,7 @@ export const memory: Tool = {
       return `wrote ${node.id} (rev ${node.revision}, ${node.entries.filter(e => !e.retired).length} current entries): ${node.summary}`;
     }
     const nodes = bubble ? await memoryNodes(bubble) : [];
-    if (!nodes.length) return "memory is empty: nothing has been written to this bubble yet";
+    if (!nodes.length) return "knowledge is empty: nothing has been written to this bubble yet";
     if (input.action === "search") {
       const hits = searchNodes(nodes, strings(input.queries, 5, "queries"));
       return hits.length ? renderHits(hits) : "no node matches; try other wording or exact identifiers, or list a branch";
