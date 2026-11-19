@@ -533,13 +533,13 @@ test("Tasks page: r re-reads the real ledger and says when it refreshed; the sta
   try {
     await until(() => !!app.page); term.type("\x14");
     await until(() => screen().includes("#1 First"));
-    expect(term.raw()).toContain("\x1b[90mqueued");
+    expect(term.raw()).toContain("\x1b[38;5;245mqueued");
     await registerTask(project, { name: "Second", summary: "s", branch: "feat/b", authorized: true });
     await setTaskAttention(project, first.id, { kind: "blocked", reason: "stopped" }, first.revision);
     term.type("r"); // no poll, no refreshSessions: only the key
     await until(() => screen().includes("#2 Second"));
     await until(() => /Refreshed [A-Z][a-z]{2} \d{1,2}, \d{4}/.test(screen()));
-    expect(term.raw()).toContain("\x1b[33mwaiting");
+    expect(term.raw()).toContain("\x1b[38;5;221mwaiting");
   } finally { app.quit(); await running; }
 });
 

@@ -10,7 +10,7 @@ export const archiveTitle = (count: number, expanded: boolean) => `${expanded ? 
 
 /** One table row. `lead` is drawn dim before the name and is not searched (tree connectors, a pin). */
 /** `heading` marks a group title (a day): a bold, ruled row that is never counted; selecting it folds its group. */
-export interface WorkRow { id: string; name: string; lead?: string; status?: string; color?: number; info?: string; heading?: true }
+export interface WorkRow { id: string; name: string; lead?: string; status?: string; color?: number | string; info?: string; heading?: true }
 /** A details block: wrapped text, `key value` fields (a third element makes the value a link), or numbered options. */
 export interface WorkSection {
   title: string; text?: string; fields?: [string, string, string?][];
@@ -95,7 +95,7 @@ export function tableRows(rows: number): number {
 }
 
 const pad = (s: string, w: number) => { const cut = fit(s, w); return cut + " ".repeat(Math.max(0, w - visibleLength(cut))); };
-const paint = (code: number | undefined, s: string) => code === undefined || !s ? s : `\x1b[${code}m${s}\x1b[0m`;
+const paint = (code: number | string | undefined, s: string) => code === undefined || !s ? s : `\x1b[${code}m${s}\x1b[0m`;
 const safe = (text: string, w: number) => wordWrap(plainText(text), w).flatMap(line => wrap(line, w));
 
 /** One bottom-line input: `label` then the text around the cursor, then a dim hint when it fits. The cursor's column comes back. */

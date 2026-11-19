@@ -9,10 +9,11 @@ const plain = (rows: string[]) => rows.map(Bun.stripANSI);
 const chapter: Chapter = { tabs: [{ name: "orch-one" }, { name: "orch-two" }], active: 1, model: "model-a" };
 const counts = "2 agents running │ 1 task │ 3 questions";
 
-test("the header is one ruled row: plain tabs, the selected one bold, then a blank; no branding or hints", () => {
+test("the header is two rows: plain tabs on a rule, the selected one bold, then the models in dim; no branding or hints", () => {
   const rows = chapterRows(chapter, 80);
-  expect(plain(rows)).toEqual(["── orch-one   orch-two " + "─".repeat(46) + " model-a ──", ""]);
+  expect(plain(rows)).toEqual(["── orch-one   orch-two " + "─".repeat(57), "   model-a"]);
   expect(rows[0]).toContain("\x1b[1morch-two");
+  expect(rows[1]).toStartWith("\x1b[2m");
   expect(rows.join("")).not.toMatch(/orca|Ctrl\+|48;/);
   const s = new FakeScreen(80, 24);
   s.write(commit(rows, 80));
@@ -56,23 +57,24 @@ test("tool history and running labels also obey one-cell and Unicode limits", ()
   }
 });
 
-test("the header keeps to its budget: the ruled row first, then its blank", () => {
+test("the header keeps to its budget: the tabs first, then the details row", () => {
   const c = { ...chapter, model: "model-a · effort high · fast" };
   expect(chapterRows(c, 40, 0)).toEqual([]);
-  expect(plain(chapterRows(c, 40, 1))).toEqual(["── orch-one   orch-two ─ model-a · e… ──"]);
+  expect(plain(chapterRows(c, 40, 1))).toEqual(["── orch-one   orch-two " + "─".repeat(17)]);
+  expect(plain(chapterRows(c, 40, 2))).toEqual(["── orch-one   orch-two " + "─".repeat(17), "   model-a · effort high · fast"]);
   for (const rows of [2, 3, 6, 12, 24, 50]) expect(chapterRows(c, 40, headerHeight(rows)).length).toBeLessThanOrEqual(Math.max(0, headerHeight(rows)));
 });
 
-test("the account leads the right side; a narrow width clips the tail, keeping the account and the orchestrator's model", () => {
+test("the details row leads with the account; a narrow width clips its tail, keeping the account and the orchestrator's model", () => {
   const roles = "orch claude-opus-5-5 · workers claude-sonnet-5 · reviewers claude-haiku-5-5 · effort high";
   const c: Chapter = { ...chapter, account: "anthropic:phoebe", model: roles, context: "ctx 41% · 82k / 200k" };
-  expect(plain(chapterRows(c, 200))[0]).toEndWith(` anthropic:phoebe · ${roles} · ctx 41% · 82k / 200k ──`);
-  expect(plain(chapterRows({ ...chapter, model: roles }, 160))[0]).toEndWith(` ${roles} ──`);
-  const narrow = plain(chapterRows(c, 80))[0]!;
-  expect(narrow).toContain("── orch-one   orch-two ─");
-  expect(narrow).toContain("anthropic:phoebe · orch claude-opus-5-5");
-  expect(Bun.stringWidth(narrow)).toBe(80);
-  expect(plain(chapterRows({ ...c, agent: "worker-feat" }, 120))[0]).toContain("view worker-feat · anthropic:phoebe");
+  expect(plain(chapterRows(c, 200))[1]).toBe(`   anthropic:phoebe · ${roles} · ctx 41% · 82k / 200k`);
+  expect(plain(chapterRows({ ...chapter, model: roles }, 160))[1]).toBe(`   ${roles}`);
+  const narrow = plain(chapterRows(c, 60));
+  expect(narrow[0]).toStartWith("── orch-one   orch-two ─");
+  expect(narrow[1]).toBe("   anthropic:phoebe · orch claude-opus-5-5 · workers claude…");
+  expect(Bun.stringWidth(narrow[1]!)).toBe(60);
+  expect(plain(chapterRows({ ...c, agent: "worker-feat" }, 120))[1]).toStartWith("   view worker-feat · anthropic:phoebe");
 });
 
 test("new-chat whale is uncaptioned and fits each supported viewport", () => {

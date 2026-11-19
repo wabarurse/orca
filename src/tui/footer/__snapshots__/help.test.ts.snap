@@ -1,8 +1,8 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`help appearance fixtures 80x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
-"── demo ────────────────────────────────────── example-model · effort default ──
-
+"── demo ────────────────────────────────────────────────────────────────────────
+   example-model · effort default
 Conversation record 27
 Conversation record 28
 Conversation record 29
@@ -102,8 +102,8 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
 `;
 
 exports[`help appearance fixtures 40x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
-"── demo ─ example-model · effort def… ──
-
+"── demo ────────────────────────────────
+   example-model · effort default
 Conversation record 27
 Conversation record 28
 Conversation record 29
@@ -258,8 +258,8 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
 `;
 
 exports[`help appearance fixtures End reaches diagnostics with a bounded range and dismissal hint 1`] = `
-"── demo ────────────────────────────────────── example-model · effort default ──
-
+"── demo ────────────────────────────────────────────────────────────────────────
+   example-model · effort default
 Conversation record 27
 Conversation record 28
 Conversation record 29

@@ -87,9 +87,10 @@ function active(task: TreeTask): boolean {
 
 function status(task: TreeTask): TaskDisplayStatus { return publicTaskStatus(task); }
 
-/** The row and status text always share the same state and colour. */
-export function taskStateColor(state: TaskDisplayStatus): number {
-  return ({ queued: 90, working: 36, waiting: 33, "pr open": 32, merged: 35, closed: 31 })[state];
+/** The row and status text always share the same state and colour. Fixed xterm-256 colours, not the theme's eight
+ * (whose "magenta" is pink in many themes), so a state looks the same in every terminal: merged is always purple. */
+export function taskStateColor(state: TaskDisplayStatus): string {
+  return ({ queued: "38;5;245", working: "38;5;80", waiting: "38;5;221", "pr open": "38;5;114", merged: "38;5;141", closed: "38;5;203" })[state];
 }
 
 function activity(task: TreeTask): string {

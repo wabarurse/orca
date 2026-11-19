@@ -497,7 +497,8 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     const draft = { ...app.input };
     const headerRows = () => term.display.buf.slice(term.display.top, term.display.top + 2).map(row => row.join(""));
     // The ruled row's tabs and its blank; the dim right side (context) is telemetry.
-    const identity = (rows: string[]) => [rows[0]!.slice(0, rows[0]!.indexOf(" ─", 3)), rows[1]];
+    // The tabs and the account/models stay; the context at the end of the details row may change.
+    const identity = (rows: string[]) => [rows[0]!.slice(0, rows[0]!.indexOf(" ─", 3)), rows[1]!.replace(/ · ctx .*$/, "")];
     const header = headerRows();
     term.press({ name: "pageup" });
     term.resize(23, 24);

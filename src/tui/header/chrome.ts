@@ -44,18 +44,14 @@ export function tabRow(tabs: Tab[], active: number, cols: number): string {
 /** Height budget shared by App's input geometry and the sticky renderer. */
 export const headerHeight = (rows: number) => Math.max(0, Math.min(Math.floor(rows / 3), rows - 3));
 
-/** One ruled row: the tabs on the left and, on the right in dim, the agent being viewed, the account, the models and the
- * context; a narrow width clips that tail first, so the tabs, the account and the orchestrator's model survive longest. */
+/** Two rows: the tabs on a rule, then in dim the agent being viewed, the account, the models and the context, clipped
+ * at its tail so the account and the orchestrator's model survive longest. */
 export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   if (budget < 1) return [];
   cols = Math.max(1, cols);
   const inset = cols >= 12 ? 3 : 0;
+  const tabs = tabRow(c.tabs, c.active, Math.max(1, cols - inset - (inset ? 1 : 0)));
+  const head = inset ? `${dim("── ")}${tabs}${dim(" " + "─".repeat(Math.max(0, cols - inset - 1 - visibleLength(tabs))))}` : tabs;
   const meta = plain([c.agent ? `view ${c.agent}` : "", c.account ?? "", c.model, c.context ?? ""].filter(Boolean).join(" · "));
-  const tabs = tabRow(c.tabs, c.active, Math.max(1, cols - inset - (inset ? 1 : 0) - Math.min(visibleLength(meta) + 6, 14)));
-  if (!inset) return budget > 1 ? [tabs, ""] : [tabs];
-  const room = cols - inset - visibleLength(tabs) - 6;
-  const right = room >= 8 ? fit(meta, room) : "";
-  const fill = cols - inset - visibleLength(tabs) - 1 - (right ? visibleLength(right) + 4 : 0);
-  const head = `${dim("── ")}${tabs}${dim(" " + "─".repeat(Math.max(0, fill)))}${right ? dim(` ${right} ──`) : ""}`;
-  return budget > 1 ? [head, ""] : [head];
+  return budget > 1 ? [head, dim(" ".repeat(inset) + fit(meta, Math.max(1, cols - inset)))] : [head];
 }

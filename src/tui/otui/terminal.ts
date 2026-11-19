@@ -1,4 +1,4 @@
-import { createCliRenderer, TextRenderable, type CliRenderer, type CliRendererConfig, type KeyEvent, type MouseEvent, type PasteEvent } from "@opentui/core";
+import { createCliRenderer, RGBA, TextRenderable, type CliRenderer, type CliRendererConfig, type KeyEvent, type MouseEvent, type PasteEvent } from "@opentui/core";
 import { BG_REPLY_MS, imageProtocol, plainText, useTerminalBackground, type Key, type PaintedFrame, type Terminal } from "../components";
 import { styledRows } from "./ansi";
 import { keyFrom, mouseFrom, pasteFrom } from "./keys";
@@ -105,7 +105,7 @@ class OpenTuiTerminal implements PaintingTerminal {
   private async start(): Promise<void> {
     const renderer = await this.launch({ exitOnCtrlC: false, exitSignals: [], useMouse: true, autoFocus: false, screenMode: "alternate-screen" });
     if (this.shut) { renderer.destroy(); return; }
-    const view = new TextRenderable(renderer, { content: "", width: "100%", height: "100%", wrapMode: "none", selectable: false });
+    const view = new TextRenderable(renderer, { content: "", fg: RGBA.defaultForeground(), width: "100%", height: "100%", wrapMode: "none", selectable: false });
     view.onMouse = (event: MouseEvent) => { this.mouse(event); };
     renderer.root.add(view);
     renderer.keyInput.on("keypress", (event: KeyEvent) => { this.key(event); });

@@ -95,6 +95,15 @@ describe("terminal", () => {
     expect(frame.split("\n").slice(0, 3)).toEqual(["hello", "", "world"].map(row => row.padEnd(40)));
   });
 
+  test("unstyled text keeps the terminal's own colour; coloured text keeps its colour", async () => {
+    const { term, setup } = await harness();
+    term.paint({ rows: ["plain \x1b[38;5;141mmerged\x1b[0m"], cursor: 0, col: 0 });
+    await setup.waitForFrame(text => text.includes("merged"));
+    const spans = setup.captureSpans().lines[0]?.spans ?? [];
+    expect(spans.find(span => span.text.startsWith("plain"))?.fg).toEqual(RGBA.defaultForeground());
+    expect(spans.find(span => span.text.startsWith("merged"))?.fg).toEqual(RGBA.fromIndex(141));
+  });
+
   test("a frame painted before the renderer is up shows once it is", async () => {
     let made: TestRendererSetup | null = null;
     const term = openTuiTerminal(async (config) => { made = await createTestRenderer({ ...config, width: 20, height: 4 }); return made.renderer; }, tty, out, fakeProc());

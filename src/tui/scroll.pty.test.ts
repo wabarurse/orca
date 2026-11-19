@@ -82,7 +82,7 @@ test.skipIf(!TMUX)("owned terminal: saved history scrolls between pinned bars; e
     await until(async () => (await app.screen()).some(row => row.includes("second line")));
     const initial = await app.screen(), header = initial.slice(0, 2), footer = initial.slice(-5);
     expect(header[0]).toStartWith("── probe ─");
-    expect(header[1]).toBe("");
+    expect(header[1]).toContain("effort");
     expect(initial.join("\n")).not.toContain("PRELAUNCH_SENTINEL");
     for (let i = 0; i < 30; i++) app.key("PPage");
     await until(async () => (await app.screen()).some(row => row.includes("PTY-ORIGINAL-HISTORY")));

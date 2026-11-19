@@ -57,8 +57,9 @@ export function appFixture() {
   /** The header is one ruled row and a blank; the body starts under them. Under 12 columns the row has no rule,
    * only the clipped active tab. */
   const bodyStart = (term: ReturnType<typeof fakeTerm>) => {
-    const [head, gap] = term.display.screen();
-    return head?.startsWith("── ") || (term.cols < 12 && !!head && gap === "") ? 2 : 0;
+    const [head] = term.display.screen(), s = term.display;
+    // Under 12 columns the header has no rule: its first row is the bold selected tab.
+    return head?.startsWith("── ") || (term.cols < 12 && !!head && !!s.attributes()[s.top]?.some(cell => cell?.bold)) ? 2 : 0;
   };
   const bodyRows = (term: ReturnType<typeof fakeTerm>) => term.display.screen().slice(bodyStart(term));
   /** The selected tab: the bold text of the header row ("" when no header is drawn). */

@@ -1083,7 +1083,7 @@ describe("frames, resizes, startup and crashes", () => {
     console.warn("logged %s", "early");
     await until(() => term.screen().includes("logged early"));
     gate();
-    await until(() => selectedTab(term) === "alpha" && term.display.screen()[0]!.includes("effort"));
+    await until(() => selectedTab(term) === "alpha" && term.display.screen()[1]!.includes("effort"));
     expect(bodyRows(term)[0]).toBe("early note");
     expect(app.page!.lines.map(raw)).not.toContain("logged early");
     expect(term.display.clears).toBe(0);
