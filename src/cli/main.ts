@@ -12,7 +12,7 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 // orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
 import { ghTaskPR } from "../core/data/tasks";
-import { cleanStorage, pull, runMcp } from "./scripts";
+import { cleanCommand, cleanStorage, pull, runMcp } from "./scripts";
 import pkg from "../../package.json";
 import { afterExit, runAgent } from "../exec";
 import { put } from "../core/data/inbox";
@@ -44,7 +44,7 @@ function usage(error?: string): never {
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
-  orca clean [--preview]          delete eligible archived storage; --preview lists without deleting
+  orca clean [--preview] [--json] delete eligible archived storage; --preview lists without deleting
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
@@ -61,8 +61,10 @@ if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 switch (cmd) {
   case "clean": {
     // Keep old explicit flags as aliases, particularly --dry-run's non-destructive meaning.
-    if (rest.length > 1 || rest.some(arg => !["--preview", "--apply", "--dry-run"].includes(arg))) usage("clean accepts --preview (or legacy --dry-run / --apply)");
-    console.log(JSON.stringify(await cleanStorage(!rest.includes("--preview") && !rest.includes("--dry-run")), null, 2));
+    if (rest.length > 2 || rest.some(arg => !["--preview", "--apply", "--dry-run", "--json"].includes(arg))) usage("clean accepts --preview and --json (or legacy --dry-run / --apply)");
+    const apply = !rest.includes("--preview") && !rest.includes("--dry-run");
+    if (rest.includes("--json")) console.log(JSON.stringify(await cleanStorage(apply), null, 2));
+    else console.log(await cleanCommand(apply, !!process.stdout.isTTY && !process.env.NO_COLOR));
     break;
   }
   case "startup": {

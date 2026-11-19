@@ -88,7 +88,7 @@ export interface PullOptions {
   write?: (text: string) => void;
 }
 
-export async function pullHarness(options: PullOptions = {}): Promise<string> {
+export async function pullHarness(options: PullOptions = {}): Promise<{ binary: string; from: string; to: string }> {
   const home = options.home ?? homedir(), command = options.command ?? updateCommand, write = options.write ?? console.log;
   const app = await appDirectory(home), env = updateEnvironment(app, home);
   const git = need("git"), bun = need("bun");
@@ -166,6 +166,6 @@ export async function pullHarness(options: PullOptions = {}): Promise<string> {
     await installation.replace(artifact);
     await pruneBuildScratch(app, true).catch(error => write(`build scratch cleanup: ${error}`));
     write(`installed ${installation.target} from ${target}. scheduling global orchestrator updates next.`);
-    return installation.target;
+    return { binary: installation.target, from: before, to: target };
   });
 }
