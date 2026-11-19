@@ -340,7 +340,7 @@ test('automatic copy errors stay visible, highlight supports explicit retry; mot
 });
 
 test("unchanged telemetry polls avoid redraw and agent switches render honestly", async () => {
-  const term = fakeTerm(80, 24);
+  const term = fakeTerm(160, 24); // wide enough that the header's right side keeps its context field
   const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../protocol/task/tasks").TaskRow[];
   const fake = fakeOrchestrators();
   const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks,
@@ -371,7 +371,7 @@ test("unchanged telemetry polls avoid redraw and agent switches render honestly"
 });
 
 test("header denominator: verified claude window, unlisted model shows the session's compaction estimate", async () => {
-  const term = fakeTerm(80, 24);
+  const term = fakeTerm(160, 24); // wide enough that the header's right side keeps its context field
   const fake = fakeOrchestrators();
   let model = "claude-opus-5-5";
   const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], agents: async () => [],
@@ -533,13 +533,13 @@ test("Tasks page: r re-reads the real ledger and says when it refreshed; the sta
   try {
     await until(() => !!app.page); term.type("\x14");
     await until(() => screen().includes("#1 First"));
-    expect(term.raw()).toContain("\x1b[90mqueued");
+    expect(term.raw()).toContain("\x1b[38;5;246mqueued");
     await registerTask(project, { name: "Second", summary: "s", branch: "feat/b", authorized: true });
     await setTaskAttention(project, first.id, { kind: "blocked", reason: "stopped" }, first.revision);
     term.type("r"); // no poll, no refreshSessions: only the key
     await until(() => screen().includes("#2 Second"));
     await until(() => /Refreshed [A-Z][a-z]{2} \d{1,2}, \d{4}/.test(screen()));
-    expect(term.raw()).toContain("\x1b[33mwaiting");
+    expect(term.raw()).toContain("\x1b[38;5;223mwaiting");
   } finally { app.quit(); await running; }
 });
 

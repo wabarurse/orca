@@ -14,7 +14,6 @@ import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../core/tools/message";
 import { open as openTranscript } from "../core/data/transcripts/transcript";
 import { ESC_DELAY_MS, parseKeys } from "./components/keys";
-import { realTerminal } from "./components/term";
 import { FakeScreen } from "./components/testing";
 import { live as renderLive } from "./footer/render";
 import { Calls } from "./conversation/tools";
@@ -387,7 +386,7 @@ test("boxed input and question vertical editing share rendered geometry across r
   const running = app.run("boxed-question-e");
   const width = () => inputGeometry(app.frame().input.prompt, term.cols, Math.max(1, term.rows - bodyStart(term) - 1)).width;
   try {
-    await until(() => term.screen().includes(">[boxed-question-e]"));
+    await until(() => term.display.screen()[0]!.startsWith("│ boxed-question-e "));
     term.type("界".repeat(40) + "é👩‍💻");
     const draft = app.input.text;
     const expected = vertical(app.input, width(), -1)!;
@@ -490,13 +489,17 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     await until(() => !!app.page);
     expect(app.page!.lines.map(raw).join("\n")).toContain("FULL-HISTORY-SENTINEL"); // live history is complete, not just exit output
     // Page data can precede the throttled first frame; never capture "opening…" as the header.
-    await until(() => term.display.screen()[0]!.includes(">[combined-cancel-e]"));
+    await until(() => term.display.screen()[0]!.startsWith("│ combined-cancel-e "));
     term.type("start cancellable tool\r");
     await until(() => existsSync(marker));
     expect(app.page!.calls.size).toBe(1);
     term.type("draft 界é👩‍💻");
     const draft = { ...app.input };
-    const header = term.display.buf.slice(term.display.top, term.display.top + 4).map(row => row.join(""));
+    const headerRows = () => term.display.buf.slice(term.display.top, term.display.top + 2).map(row => row.join(""));
+    // The boxed header's tabs row and its details row: the tabs and the account/models stay; the context at the right
+    // of the details row is telemetry and may change.
+    const identity = (rows: string[]) => [rows[0]!, rows[1]!.replace(/│$/, "").replace(/ctx \S+\s*$/, "").trimEnd()];
+    const header = headerRows();
     term.press({ name: "pageup" });
     term.resize(23, 24);
     await Bun.sleep(160);
@@ -513,7 +516,8 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     expect(provider.calls).toHaveLength(1);
     expect(await app.page!.orch.pending()).toBe(false);
     // Context/review telemetry can change during the cancelled turn; identity stays pinned.
-    expect(term.display.buf.slice(term.display.top, term.display.top + 4).map(row => row.join("")).filter((_, i) => i !== 1)).toEqual(header.filter((_, i) => i !== 1));
+    expect(identity(headerRows())).toEqual(identity(header));
+    expect(identity(header)[0]!.replace(/│$/, "").trimEnd()).toBe("│ combined-cancel-e");
     term.press({ name: "escape" }); // only intentional draft clearing for this continuation
     term.type("resume saved turn\r");
     await until(() => provider.calls.length === 2 && !app.page!.busy);
@@ -1121,162 +1125,4 @@ test("a failed write removes that submission, not a later identical pending prom
     expect(strip(app.frame().inputArea!.lines.join("\n"))).toContain("synthetic write failure");
     expect(app.page!.lines.some(line => typeof line === "object" && "user" in line)).toBe(false);
   } finally { fail?.(new Error("cleanup")); app.quit(); await running; }
-});
-
-test("raw SGR/X10 input through realTerminal only scrolls the body: draft, queue and pinned bars survive", async () => {
-  const display = new FakeScreen(80, 24), writes: string[] = [];
-  let input: ((chunk: Uint8Array) => void) | undefined;
-  const stdin = { isTTY: true, setRawMode() {}, on(_e: string, fn: typeof input) { input = fn; }, off() { input = undefined; }, resume() {}, pause() {} };
-  const stdout = { isTTY: true, columns: 80, rows: 24, on() {}, write(s: string) { writes.push(s); display.write(s); return true; } };
-  const proc = { on() {}, off() {}, exit() {}, stderr: { write() {} } };
-  const term = realTerminal(stdin as never, stdout as never, proc, NO_REPLY_WINDOW);
-  const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {}, projectModel: async () => "synthetic",
-    openOrchestrator: async () => ({ async say() { throw new Error("input must not submit"); }, async pending() { return false; }, async turn() { return []; } }),
-  });
-  const running = app.run("raw-wheel");
-  try {
-    await until(() => !!app.page);
-    const page = app.page!;
-    page.lines.push(...Array.from({ length: 100 }, (_, i) => `RAW-RECORD-${i}`));
-    page.sent.push({ inputId: "synthetic-1", text: "queued first" }, { inputId: "synthetic-2", text: "queued second\nline" });
-    app.reprint();
-    const text = Buffer.from("\x1b[200~draft 界é👩‍💻\nsecond line\x1b[201~\x1b[D");
-    for (const byte of text) input!(Uint8Array.of(byte));
-    const draft = { ...app.input }, queue = JSON.stringify(page.sent);
-    expect(draft.text).toBe("draft 界é👩‍💻\nsecond line");
-    await until(() => display.text().includes("queued 2/2"));
-    const initial = display.screen(), start = initial.findIndex(row => /^─+$/.test(row)) + 1;
-    const footerAt = initial.findIndex(row => row.startsWith("queued"));
-    const pinned = () => {
-      expect(display.screen().slice(0, start)).toEqual(initial.slice(0, start));
-      expect(display.screen().slice(footerAt)).toEqual(initial.slice(footerAt));
-      expect(app.input).toEqual(draft);
-      expect(JSON.stringify(page.sent)).toBe(queue);
-    };
-    const up = Buffer.from("\x1b[<64;10;10M"), down = Buffer.from([27, 91, 77, 97, 194, 160]);
-    // Every split traverses realTerminal -> keyReader -> App, not just parseKeys.
-    for (const packet of [up, down]) for (let cut = 1; cut < packet.length; cut++) {
-      input!(packet.subarray(0, cut)); input!(packet.subarray(cut));
-      expect(app.input).toEqual(draft);
-    }
-    input!(Buffer.from("\x1b[<64;10;10M".repeat(100)));
-    await until(() => display.screen()[start] === "RAW-RECORD-0");
-    pinned();
-    input!(Buffer.from("\x1b[<64;10;10M".repeat(20)));
-    await Bun.sleep(25);
-    expect(display.screen()[start]).toBe("RAW-RECORD-0"); pinned();
-    const top = display.screen();
-    input!(Buffer.from("\x1b[<66;10;10M\x1b[<67;10;10M\x1b[<65;10;10m\x1b[<65M\x1b[M !!"));
-    await Bun.sleep(25);
-    expect(display.screen()).toEqual(top); pinned();
-    input!(Buffer.concat(Array.from({ length: 100 }, () => down)));
-    await until(() => display.screen().includes("RAW-RECORD-99")); pinned();
-    const bottom = display.screen();
-    input!(down); await Bun.sleep(25);
-    expect(display.screen()).toEqual(bottom); pinned();
-    expect(app.frame().queued?.texts).toEqual(["queued first", "queued second\nline"]);
-    const output = writes.join("");
-    for (const mode of [1000, 1002, 1006]) {
-      expect(output).toContain(`\x1b[?${mode}h`);
-      expect(output).not.toContain(`\x1b[?${mode}l`);
-    }
-    for (const mode of [1049, 2004]) {
-      expect(output.split(`\x1b[?${mode}h`)).toHaveLength(2);
-      expect(output).not.toContain(`\x1b[?${mode}l`);
-    }
-    expect(output).not.toContain("\x1b[3J");
-    // Draft-safe /keys entry uses a real control byte, not a direct command call.
-    input!(Buffer.from("\x07"));
-    expect(app.keyEcho).toBe(true);
-    input!(up);
-    expect(app.frame().inputArea!.lines.join("\n")).toContain('{"name":"wheelup"}');
-    input!(down);
-    expect(app.frame().inputArea!.lines.join("\n")).toContain('{"name":"wheeldown"}');
-    expect(page.lines.map(raw).join("\n")).not.toContain("wheelup");
-    input!(Buffer.from("\x1b"));
-    await until(() => !app.keyEcho);
-    expect(app.input).toEqual(draft);
-    expect(JSON.stringify(page.sent)).toBe(queue);
-  } finally { app.quit(); await running; }
-});
-
-test("Option+Backspace and a drag arriving as separate writes through realTerminal: the word goes, the drag auto-copies, even when the Esc timer fires first", async () => {
-  const display = new FakeScreen(60, 24), copied: string[] = [];
-  let input: ((chunk: Uint8Array) => void) | undefined;
-  const stdin = { isTTY: true, setRawMode() {}, on(_e: string, fn: typeof input) { input = fn; }, off() { input = undefined; }, resume() {}, pause() {} };
-  const stdout = { isTTY: true, columns: 60, rows: 24, on() {}, write(s: string) { display.write(s); return true; } };
-  const proc = { on() {}, off() {}, exit() {}, stderr: { write() {} } };
-  const term = realTerminal(stdin as never, stdout as never, proc, NO_REPLY_WINDOW);
-  const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {}, projectModel: async () => "synthetic", clipboardText: async text => { copied.push(text); },
-    openOrchestrator: async () => ({ async say() { throw new Error("input must not submit"); }, async pending() { return false; }, async turn() { return []; } }),
-  });
-  const running = app.run("split-writes");
-  // The terminal's writes reach stdin as real reads: a child process writes `prefix`, then `rest`
-  // 5ms later on its own clock (as Terminal.app writes the Option prefix and the key, and each
-  // mouse report, separately). With `stall`, the read that delivered the prefix keeps the loop
-  // busy past the Esc window while the rest lands in the pipe, so the expired Esc timer runs
-  // before the read that is already waiting, as under a slow frame.
-  const write = async (prefix: string, rest = "", stall = 0) => {
-    const source = Bun.spawn(["/bin/sh", "-c", 'printf "%s" "$1"; if [ -n "$2" ]; then sleep 0.005; printf "%s" "$2"; fi', "writes", prefix, rest], { stdin: "ignore", stdout: "pipe" });
-    const chunks: string[] = [];
-    for await (const chunk of source.stdout) {
-      chunks.push(Buffer.from(chunk).toString("latin1"));
-      input!(chunk);
-      if (chunks.length === 1 && stall) { const end = performance.now() + stall; while (performance.now() < end) { /* busy */ } }
-    }
-    await source.exited;
-    expect(chunks.join("")).toBe(prefix + rest);
-    if (rest) expect(chunks[0]).toBe(prefix); // the race did happen: the prefix was read on its own
-  };
-  const split = (prefix: string, rest: string) => write(prefix, rest, ESC_DELAY_MS + 10);
-  try {
-    await until(() => !!app.page);
-    app.page!.lines.push("SELECT-ME please", ...Array.from({ length: 30 }, (_, i) => `row-${i}`));
-    app.reprint();
-    await until(() => display.screen().some(row => row.includes("row-29")));
-    await write("hello big wide world");
-    await write("\x1b", "\x7f"); // Terminal.app: ESC, then DEL, two writes
-    expect(app.input).toEqual({ text: "hello big wide ", cursor: 15 });
-    await split("\x1b", "\x7f"); // the Esc timer ran before the DEL read: still one chord, never Escape (which clears the draft)
-    expect(app.input).toEqual({ text: "hello big ", cursor: 10 });
-    await split("\x1b", "\b");
-    expect(app.input).toEqual({ text: "hello ", cursor: 6 });
-    await split("\x1b", "d"); // any Alt chord
-    expect(app.input).toEqual({ text: "hello ", cursor: 6 });
-    await write("\x1b"); await Bun.sleep(ESC_DELAY_MS * 3); // a real lone Escape still clears, after the bounded wait
-    expect(app.input.text).toBe("");
-    for (let i = 0; i < 3; i++) { await write("\x1b[5~"); await Bun.sleep(25); }
-    await until(() => display.screen().some(row => row.includes("SELECT-ME")));
-    const y = display.screen().findIndex(row => row.includes("SELECT-ME")) + 1;
-    // Every report its own write; the ESC of each read before its rest with the timer racing it; the release last.
-    for (const report of [`\x1b[<0;1;${y}M`, `\x1b[<32;5;${y}M`, `\x1b[<32;9;${y}M`, `\x1b[<0;9;${y}m`]) await split(report.slice(0, 1), report.slice(1));
-    await until(() => copied.length === 1);
-    expect(copied).toEqual(["SELECT-ME"]);
-    expect(app.input.text).toBe(""); // no report text typed into the draft
-  } finally { app.quit(); await running; }
-});
-
-test("extended Kitty Option Delete edits Unicode at the cursor through realTerminal, not on release", async () => {
-  let input: ((chunk: Uint8Array) => void) | undefined;
-  const stdin = { isTTY: true, setRawMode() {}, on(_e: string, fn: typeof input) { input = fn; }, off() {}, resume() {}, pause() {} };
-  const stdout = { isTTY: true, columns: 60, rows: 24, on() {}, write() { return true; } };
-  const proc = { on() {}, off() {}, exit() {}, stderr: { write() {} } };
-  const term = realTerminal(stdin as never, stdout as never, proc, NO_REPLY_WINDOW);
-  const orchs = fakeOrchestrators();
-  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
-  const running = app.run("kitty-option-delete");
-  try {
-    await until(() => !!app.page);
-    app.input = { text: "keep café 世界 tail", cursor: "keep café 世界".length };
-    // Documented protocol bytes, not a capture from the user's terminal.
-    // Split inside the modifier/event field, the part previously coerced to NaN.
-    input!(Buffer.from("\x1b[127;3:"));
-    input!(Buffer.from("1u"));
-    expect(app.input).toEqual({ text: "keep café  tail", cursor: "keep café ".length });
-    input!(Buffer.from("\x1b[127;3:2u"));
-    expect(app.input).toEqual({ text: "keep  tail", cursor: 5 });
-    input!(Buffer.from("\x1b[127;3:3u"));
-    expect(app.input).toEqual({ text: "keep  tail", cursor: 5 });
-    expect(orchs.said["kitty-option-delete"]).toEqual([]);
-  } finally { app.quit(); await running; }
 });

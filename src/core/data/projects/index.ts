@@ -4,7 +4,7 @@ export { effectiveSettings, effectiveSettingsReport, setEffort, settingChange } 
 export { accountForModel, effectiveAccount, lastProviderModel, saveProjectAccount, seedProjectAccount } from "./project-account";
 export { effectiveModel, projectModelResolver, roleOverrides, saveModelWindows, saveProjectModel, saveRoleModel, validateModel } from "./project-model";
 export { assertWorktree, checkoutNote, initializeWorkspace } from "./workspace";
-export { displayName, listProjects, newProjectName, orderedProjects, projectFor, remoteOf, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "./registry";
+export { displayName, listProjects, newProjectName, orderedProjects, projectFor, repoHere, setDisplayName, togglePin, validProjectName } from "./registry";
 export * as directories from "./catalog";
 export * as workViews from "./work-archive";
 export * as workspaces from "./workspace-sessions";

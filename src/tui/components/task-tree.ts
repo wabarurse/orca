@@ -5,6 +5,7 @@ import { formatDateTime } from "../../protocol";
 import { ARCHIVED_SECTION, DAY_HEADING, archiveTitle, dayName, headingTitle, localDay, type WorkRow, type WorkSection } from "./work-view";
 import { publicTaskStatus, taskPublicationMilestone, check, type TaskDisplayStatus, type Task, type TaskTreeView } from "../../protocol/task";
 import { plainText } from "./text";
+import { pastel } from "./style";
 import { treeTasks, type TreeTask } from "./task-tree-data";
 
 /** `count`: the tasks under a day heading, shown or folded away; 0 on every other node. */
@@ -87,9 +88,9 @@ function active(task: TreeTask): boolean {
 
 function status(task: TreeTask): TaskDisplayStatus { return publicTaskStatus(task); }
 
-/** The row and status text always share the same state and colour. */
-export function taskStateColor(state: TaskDisplayStatus): number {
-  return ({ queued: 90, working: 36, waiting: 33, "pr open": 32, merged: 35, closed: 31 })[state];
+/** The row and status text always share the same state and colour, from the fixed pastel palette: merged is always purple. */
+export function taskStateColor(state: TaskDisplayStatus): string {
+  return ({ queued: pastel.grey, working: pastel.cyan, waiting: pastel.yellow, "pr open": pastel.green, merged: pastel.purple, closed: pastel.red })[state];
 }
 
 function activity(task: TreeTask): string {
@@ -144,7 +145,7 @@ export function taskRows(input: readonly (Task | TaskTreeView)[], collapsed: Rea
 /** What the details pane says about one task: description, record fields, dependencies both ways and the PR link. */
 export function taskSections(tasks: TreeTask[], selected: TreeTask): WorkSection[] {
   const label = (t: TreeTask) => `#${t.number ?? tasks.indexOf(t) + 1} ${t.name}`;
-  const fields: [string, string][] = [["state", status(selected)], ["uuid", selected.id], ["created", formatDateTime(selected.createdAt)]];
+  const fields: [string, string][] = [["state", status(selected)], ["created", formatDateTime(selected.createdAt)]];
   if (active(selected)) fields.push(["activity", activity(selected)]);
   const milestone = taskPublicationMilestone(selected);
   if ("label" in milestone) fields.push(["publication", `${milestone.label} (historical)`]);
@@ -161,6 +162,6 @@ export function taskSections(tasks: TreeTask[], selected: TreeTask): WorkSection
     { title: `Task ${label(selected)}`, text: selected.summary || "No description recorded." },
     { title: "Details", fields },
     { title: "Depends on", text: [needs.join("; ") || "none", ...(unblocks.length ? [`Unblocks: ${unblocks.join("; ")}`] : [])].join("\n") },
-    { title: "Pull request", fields: pr ? [["link", `${pr.repository} #${pr.number}`, pr.url], ["url", pr.url]] : [], ...(pr ? {} : { text: "not recorded" }) },
+    { title: "Pull request", fields: pr ? [["url", pr.url, pr.url]] : [], ...(pr ? {} : { text: "not recorded" }) },
   ];
 }

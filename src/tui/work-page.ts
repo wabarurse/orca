@@ -3,6 +3,7 @@
 // (tabs, find, half pages). components/work-view.ts draws it; app.ts routes
 // every key here while it is open. Questions are answered through the
 // questions controller (footer/questions.ts), so its delivery guarantees hold.
+import { homedir } from "node:os";
 import { formatDateTime, type AgentInfo, type ProjectEntry, type Question } from "../protocol";
 import { canArchiveTask } from "../protocol/task";
 import { abandonTask, allTasks, removeTask, restoreTask } from "../core/data/tasks";
@@ -11,8 +12,11 @@ import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/dat
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
 import { archiveAgents, cancelSession, launchIdentity, listAgents, ownership, processes, restoreAgents } from "../core/tmux";
 const { retire } = ownership;
-import { ARCHIVED_SECTION, byDay, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
-  type Key, type OutlineNode, type WorkPageRender, type WorkRow, type WorkSection } from "./components";
+import { dim, navigateOutline, pastel, sanitize, taskRows, taskSections, workView, type Key, type OutlineNode } from "./components";
+const { ARCHIVED_SECTION, byDay, findItem, inputLine, renderWorkPage, tableRows, withArchiveSection } = workView;
+type WorkPageRender = workView.WorkPageRender;
+type WorkRow = workView.WorkRow;
+type WorkSection = workView.WorkSection;
 import { archiveBubble, archiveFolder, archiveProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
 import { elapsedMs, formatElapsed } from "./header";
 import { fileStore, QUESTION_PROGRESS, type Questions } from "./footer";
@@ -23,12 +27,12 @@ export const WORK_KINDS = ["agents", "tasks", "questions", "images", "processes"
 export type WorkKind = typeof WORK_KINDS[number];
 const TITLES: Record<WorkKind, string> = { agents: "Agents", tasks: "Tasks", questions: "Questions", images: "Images", processes: "Processes", projects: "Bubbles" };
 const HINTS: Record<WorkKind, string> = {
-  agents: "j/k move · enter view transcript · s stop · d archive · u restore · a archived · f find · esc close",
-  tasks: "j/k move · ←/→ fold · d archive · c abandon · u restore · a archived · r refresh · f find · esc close",
-  questions: "j/k move · enter answer · d delete · u restore · a archived · f find · esc close",
-  images: "j/k move · enter view · t retry unsent · d archive · a archived · f find · esc close",
-  processes: "j/k move · s stop · r refresh · f find · esc close",
-  projects: "j/k move · enter open · p pin · c close page · d delete · D delete bubble · u restore · a archived · esc close",
+  agents: "j/k move · enter view · s stop · a archived · f find · esc close",
+  tasks: "j/k move · ←/→ fold · c abandon · a archived · f find · esc close",
+  questions: "j/k move · enter answer · a archived · f find · esc close",
+  images: "j/k move · enter view · a archived · f find · esc close",
+  processes: "j/k move · s stop · f find · esc close",
+  projects: "j/k move · enter open · p pin · d delete · a archived · esc close",
 };
 const DAY_HELP = "Items last active on this day, newest first. Enter or ← folds the day away; Enter or → opens it again.";
 const SECTION_HELP = "Archived items are retained. Enter or → expands; ← collapses. u restores an item to the list without resuming work.";
@@ -81,14 +85,18 @@ interface View {
 }
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+/** The time of day alone: the rows already sit under their day's heading. */
+const timeOf = (at: string | number) => { const text = formatDateTime(at); return text.slice(text.lastIndexOf(", ") + 2); };
+/** A worker checkout by its own name (the folder under the home's worktrees), anything else with the home as ~. */
+const shortFolder = (path: string) => /\/worktrees\/[^/]+\/([^/]+)$/.exec(path)?.[1] ?? path.replace(homedir(), "~");
 
 /** What the watcher last saw of a PR, as one word or two and its colour. */
-function watchStatus(state: Record<string, string> | null): { status: string; color: number } {
-  if (!state) return { status: "watching", color: 90 };
-  if (state.mergeable === "conflicting") return { status: "conflicts", color: 31 };
-  if (state.checks === "failed") return { status: "checks failed", color: 31 };
-  if (state.review === "CHANGES_REQUESTED") return { status: "changes asked", color: 33 };
-  return state.checks === "passed" ? { status: "checks passed", color: 32 } : { status: "open", color: 33 };
+function watchStatus(state: Record<string, string> | null): { status: string; color: string } {
+  if (!state) return { status: "watching", color: pastel.grey };
+  if (state.mergeable === "conflicting") return { status: "conflicts", color: pastel.red };
+  if (state.checks === "failed") return { status: "checks failed", color: pastel.red };
+  if (state.review === "CHANGES_REQUESTED") return { status: "changes asked", color: pastel.yellow };
+  return state.checks === "passed" ? { status: "checks passed", color: pastel.green } : { status: "open", color: pastel.yellow };
 }
 /** The Processes tab's rows: the watched pull requests, then the background commands, each group under a heading. */
 function processItems(view: processes.ProcessView, now: number): Item[] {
@@ -97,26 +105,25 @@ function processItems(view: processes.ProcessView, now: number): Item[] {
     const state = watch.state ?? {};
     return { id: `watch:${watch.repository}#${watch.number}`, name: `PR #${watch.number} ${watch.tasks.map(t => t.name).join(", ") || watch.repository}`, ...watchStatus(watch.state),
       info: watch.tasks.map(t => t.branch).join(", "), watch,
-      sections: [{ title: `PR #${watch.number}`, fields: [["link", `${watch.repository} #${watch.number}`, watch.url], ["url", watch.url]] },
+      sections: [{ title: `PR #${watch.number}`, fields: [["url", watch.url, watch.url]] },
         { title: "Watched for", text: watch.tasks.map(t => `#${t.number ?? "?"} ${t.name} (${t.branch})`).join("\n") || "no task: watched on request" },
         { title: "Last seen", fields: watch.state ? (["checks", "failing", "review", "mergeable", "head"] as const).flatMap((key): [string, string][] => state[key] ? [[key, key === "head" ? state[key]!.slice(0, 12) : state[key]!]] : []) : [], ...(watch.state ? {} : { text: "not looked at yet" }) }] };
   });
   const commands = view.commands.map((command): Item => {
     const p = command.record, started = Date.parse(p.createdAt), end = command.live ? now : Date.parse(p.updatedAt);
-    const fields: [string, string, string?][] = [["id", p.id], ["owner", p.custody?.owner ?? p.owner], ...(p.custody ? [["started by", p.owner] as [string, string]] : []),
-      ["folder", p.cwd], ["started", formatDateTime(p.createdAt)], ["state", p.state], ...(p.exitCode === undefined ? [] : [["exit code", String(p.exitCode)] as [string, string]]),
+    const fields: [string, string, string?][] = [["owner", p.custody?.owner ?? p.owner], ...(p.custody ? [["started by", p.owner] as [string, string]] : []),
+      ["folder", shortFolder(p.cwd)], ["started", formatDateTime(p.createdAt)], ["state", p.state], ...(p.exitCode === undefined ? [] : [["exit code", String(p.exitCode)] as [string, string]]),
       ...(p.reason ? [["reason", p.reason] as [string, string]] : []), ...(p.readyUrl ? [["url", p.readyAt ? p.readyUrl : `${p.readyUrl} (not ready yet)`, p.readyUrl] as [string, string, string]] : [])];
-    return { id: p.id, name: p.command.replace(/\s+/g, " ").trim(), status: p.state, color: command.live ? 36 : p.state === "exited" ? 90 : 31,
-      info: [p.custody?.owner ?? p.owner, Number.isFinite(end - started) ? formatElapsed(end - started) : "", p.readyAt ? p.readyUrl : ""].filter(Boolean).join(" · "), command,
+    return { id: p.id, name: p.command.replace(/\s+/g, " ").trim(), status: p.state, color: command.live ? pastel.cyan : p.state === "exited" ? pastel.grey : pastel.red,
+      info: [p.custody?.owner ?? p.owner, Number.isFinite(end - started) ? formatElapsed(end - started) : ""].filter(Boolean).join(" · "), command,
       sections: [{ title: "Command", text: p.command }, { title: "Run", fields }, { title: "Output (last lines)", text: command.tail || "no output yet" }] };
   });
   // A session an agent opened with tmux itself: no record, so what tmux says about its windows is all there is.
   const sessions = view.sessions.map((session): Item => {
     const live = session.windows.filter(w => w.live), text = (w: processes.SessionRow["windows"][number]) => w.command.replace(/\s+/g, " ").trim() || "shell";
-    return { id: `session:${session.name}`, name: session.windows.map(w => `${w.window}: ${text(w)}`).join(" · "), status: live.length ? "tmux" : "ended", color: live.length ? 36 : 90,
+    return { id: `session:${session.name}`, name: session.windows.map(w => `${w.window}: ${text(w)}`).join(" · "), status: live.length ? "tmux" : "ended", color: live.length ? pastel.cyan : pastel.grey,
       info: [session.name, Number.isFinite(session.createdAt) ? formatElapsed(now - session.createdAt) : ""].filter(Boolean).join(" · "), session,
       sections: [{ title: "tmux session", fields: [["name", session.name], ["started", Number.isFinite(session.createdAt) ? formatDateTime(session.createdAt) : "unknown"], ["windows", String(session.windows.length)]] },
-        { title: "Why it is here", text: "An agent opened this with tmux from a shell command, not with the process tool, so orca has no record of it: no owner, no exit code. s ends the whole session." },
         ...session.windows.map(w => ({ title: `${w.window} · ${w.live ? "running" : "ended"}`, text: [text(w), w.path, w.tail].filter(Boolean).join("\n") }))] };
   });
   return [...(watches.length ? [heading(":watches", "PR watches", "Pull requests the orchestrator is told about when they change: checks, reviews, conflicts, a merge. s stops listening to the selected one."), ...watches] : []),
@@ -220,34 +227,33 @@ export class WorkPages {
     finally { view.loaded.add(kind); if (this.view === view) this.host.draw(); }
   }
 
-  private items(view: View, kind = view.kind): Item[] {
-    const page = view.page, history = !!view.history[kind];
-    if (kind === "projects") return withArchiveSection(this.projectItems(view), history, this.folds(view, kind))
+  /** The tab's rows; `unfolded` ignores folded days and task subtrees (for counts, which must not change on a fold). */
+  private items(view: View, kind = view.kind, unfolded = false): Item[] {
+    const page = view.page, history = !!view.history[kind], folds = unfolded ? new Set<string>() : this.folds(view, kind);
+    if (kind === "projects") return withArchiveSection(this.projectItems(view), history, folds)
       .map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: item.name, text: "Deleted conversations. Nothing in them runs and their files are kept until orca clean. u restores the selected one." }] });
     if (!page) return [];
-    if (kind === "processes") return withArchiveSection(processItems(view.background, this.host.clock.now()), false, this.folds(view, kind)) as Item[]; // nothing here is archived
+    if (kind === "processes") return withArchiveSection(processItems(view.background, this.host.clock.now()), false, folds) as Item[]; // nothing here is archived
     const now = this.host.clock.now();
     // Listed rows newest first under a heading per day; archived rows keep their own section below.
-    const section = (items: Item[], at: (item: Item) => number) => withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history, this.folds(view, kind))
+    const section = (items: Item[], at: (item: Item) => number) => withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history, folds)
       .map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: item.name, text: "heading" in item ? DAY_HELP : SECTION_HELP }] });
-    if (kind === "tasks") return this.taskItems(view, history);
+    if (kind === "tasks") return this.taskItems(view, history, unfolded);
     if (kind === "images") {
       const list = this.host.images(page);
       return section((list?.rows ?? []).map((media): Item => ({
-        id: media.id, name: media.text.split("\n")[0] || media.id.slice(0, 8), status: media.kind, info: `${media.from} · ${formatDateTime(media.at)}`,
-        sections: [{ title: "File", fields: [["kind", media.kind], ["from", media.from], ["at", formatDateTime(media.at)], ["id", media.id]] },
-          { title: "Caption", text: media.text }, { title: "Open", text: "Enter draws it in the terminal when it can (Ghostty, Kitty, WezTerm; any key closes it), else opens the desktop viewer." }],
+        id: media.id, name: media.text.split("\n")[0] || media.id.slice(0, 8), status: media.kind, info: `${media.from} · ${timeOf(media.at)}`,
+        sections: [{ title: "File", fields: [["from", media.from], ["at", formatDateTime(media.at)]] }, ...(media.text.includes("\n") ? [{ title: "Caption", text: media.text }] : [])],
         media, archived: list?.archived[media.id] ?? media.archived,
       })), item => Date.parse(item.media!.at));
     }
     if (kind === "questions") return section((page.questions.all ?? page.questions.open).map(question => this.questionItem(view, question)), item => Date.parse(item.question!.ts));
     return section(view.agents.filter(agent => agent.status !== "unknown").map((agent): Item => {
       const ms = elapsedMs(agent, now), queued = `${agent.queuedMessages ?? "?"} queued messages`;
-      return { id: agent.name, name: agent.name, status: agent.live ? "running" : agent.archived ? "archived" : "exited", color: agent.live ? 33 : 90,
-        info: [ms === null ? undefined : (agent.approximateEnd ? "~" : "") + formatElapsed(ms), agent.activity, agent.queuedMessages ? `${agent.queuedMessages} queued` : undefined].filter(Boolean).join(" · "),
-        sections: [{ title: "Run", fields: [["agent", agent.name], ...(agent.startedAt ? [["started", formatDateTime(agent.startedAt)] as [string, string]] : []),
-          ...(agent.endedAt ? [["exited", formatDateTime(agent.endedAt)] as [string, string]] : []), ["inbox", queued]] },
-          { title: "Last activity", text: agent.activity ?? "" }],
+      return { id: agent.name, name: agent.name, status: agent.live ? "running" : agent.archived ? "archived" : "exited", color: agent.live ? pastel.yellow : pastel.grey,
+        info: [ms === null ? undefined : (agent.approximateEnd ? "~" : "") + formatElapsed(ms), agent.activity].filter(Boolean).join(" · "),
+        sections: [{ title: "Now", text: agent.activity ?? "" }, { title: "Run", fields: [...(agent.startedAt ? [["started", formatDateTime(agent.startedAt)] as [string, string]] : []),
+          ...(agent.endedAt ? [["exited", formatDateTime(agent.endedAt)] as [string, string]] : []), ...(agent.queuedMessages ? [["inbox", queued] as [string, string]] : [])] }],
         agent, archived: !agent.live && !agent.queuedMessages && (agent.archived || !recentAgent(agent, now)) };
     }), item => item.agent!.live ? now : Date.parse(item.agent!.lastActiveAt ?? item.agent!.endedAt ?? item.agent!.startedAt ?? ""));
   }
@@ -256,21 +262,20 @@ export class WorkPages {
     const open = question.status === "open", options = question.options ?? [];
     const choosing = view.kind === "questions" && this.form(view) && view.page!.questions.selectedId === question.id && !this.host.questions.answering();
     const preset = options.indexOf(question.default ?? "");
-    return { id: question.id, name: question.text.replace(/\s+/g, " "), status: question.status, color: open ? 33 : question.status === "answered" ? 32 : 90,
-      info: `asked ${formatDateTime(question.ts)}`,
+    return { id: question.id, name: question.text.replace(/\s+/g, " "), status: question.status, color: open ? pastel.yellow : question.status === "answered" ? pastel.green : pastel.grey,
+      info: `asked ${timeOf(question.ts)}`,
       sections: [{ title: "Question", text: question.text },
         ...(options.length ? [{ title: "Options", options: { items: open ? [...options, "Other…"] : options, cursor: choosing ? view.option : undefined, default: preset < 0 ? undefined : preset } }] : []),
         ...(open && !options.length && question.default ? [{ title: "Suggested answer", text: question.default }] : []),
-        ...(question.answer ? [{ title: "Answer", text: question.answer }] : []), ...(question.reason ? [{ title: "Reason", text: question.reason }] : []),
-        { title: "Asked", fields: [["status", question.status], ["asked", formatDateTime(question.ts)]] }],
+        ...(question.answer ? [{ title: "Answer", text: question.answer }] : []), ...(question.reason ? [{ title: "Reason", text: question.reason }] : [])],
       question, archived: view.hiddenQuestions[question.id] ?? !open };
   }
 
-  private taskItems(view: View, history: boolean): Item[] {
+  private taskItems(view: View, history: boolean, unfolded = false): Item[] {
     if (view.errors.tasks) return []; // an unreadable registry shows its error, never stale rows
     try {
-      const { tasks, nodes, rows } = taskRows(view.tasks, view.collapsed, history);
-      view.nodes = nodes; view.invalid = undefined;
+      const { tasks, nodes, rows } = taskRows(view.tasks, unfolded ? new Set() : view.collapsed, history);
+      if (!unfolded) { view.nodes = nodes; view.invalid = undefined; } // a count leaves the shown outline alone
       return rows.map((row): Item => {
         const task = row.section ? undefined : tasks.find(t => t.id === row.id);
         if (row.heading) return { ...row, sections: [{ title: row.name, text: "Tasks last touched on this day, newest first. A task moves here when it is worked on, its PR changes or it is edited. Enter or ← folds the day away; Enter or → opens it again." }] };
@@ -289,9 +294,9 @@ export class WorkPages {
       const members = new Set([entry.name, ...(entry.conversations ?? [])]), open = pages.filter(page => members.has(page.project));
       const status = entry.archivedAt ? "archived" : open.some(page => page.busy) ? "turn" : current && members.has(current) ? "current" : open.length ? "open" : "";
       const bubble = view.bubbles[entry.name], shared = bubble && bubble.size > 1;
-      return { id: entry.name, lead: entry.pinned ? "★ " : "", name: shared ? `${bubble.name} ▸ ${entry.label}` : entry.label, status, color: status === "turn" ? 33 : status === "current" ? 32 : 90,
-        info: shared ? `bubble · ${bubble.size} orcs` : entry.directory ?? entry.name,
-        sections: [{ title: entry.directory ? "Project" : "Conversation", fields: [["id", entry.name], ...(entry.directory ? [["folder", entry.directory] as [string, string]] : []),
+      return { id: entry.name, lead: entry.pinned ? "★ " : "", name: shared ? `${bubble.name} ▸ ${entry.label}` : entry.label, status, color: status === "turn" ? pastel.yellow : status === "current" ? pastel.green : pastel.grey,
+        info: shared ? `bubble · ${bubble.size} orcs` : "",
+        sections: [{ title: entry.directory ? "Project" : "Conversation", fields: [...(entry.directory ? [["folder", entry.directory] as [string, string]] : []),
           ...(bubble ? [["bubble", `${bubble.name} · shared by ${bubble.size} orchestrator${bubble.size === 1 ? "" : "s"}`] as [string, string]] : []),
           ...(entry.conversations ? [["chats", `${entry.conversations.length} conversations, ${open.length} open here`] as [string, string]] : []), ["pinned", entry.pinned ? "yes" : "no"]] }],
         project: entry, archived: !!entry.archivedAt };
@@ -324,7 +329,7 @@ export class WorkPages {
     const footer = this.footer(view, cols);
     // A failed read is unknown, never a fabricated zero.
     const known = (kind: WorkKind) => view.loaded.has(kind) && (kind === "projects" || !!view.page) && !view.errors[kind] && !(kind === "questions" && (questions?.error || !questions?.loaded));
-    const tabs = WORK_KINDS.map(kind => ({ name: TITLES[kind], count: known(kind) ? (kind === view.kind ? items : this.items(view, kind)).filter(item => !item.section && !item.heading && !item.archived).length : undefined }));
+    const tabs = WORK_KINDS.map(kind => ({ name: TITLES[kind], count: known(kind) ? this.items(view, kind, true).filter(item => !item.section && !item.heading && !item.archived).length : undefined }));
     const empty = !view.page && view.kind !== "projects" ? NO_PAGE : !view.loaded.has(view.kind) ? "Loading…" : known(view.kind) ? `No ${view.kind}` : `${TITLES[view.kind]} unavailable`;
     const render = view.render = renderWorkPage({ cols, rows, tabs, active: WORK_KINDS.indexOf(view.kind), items, selected: index, empty,
       query: view.find?.text ?? view.query, sections: selected?.sections ?? [], detailTop: view.detailTop, footer: footer.line });

@@ -282,3 +282,25 @@ test("ordinary directories share activity across conversations and retain user f
   expect((await workingContext("notes-a")).goal).toBeUndefined();
   expect((await facts("notes-a", "project"))[0]!.text).toBe("Keep responses short");
 });
+
+test("allocated bytes come from du: whole trees, symlinks not followed, missing paths zero, many paths batched", async () => {
+  const { allocatedBytes } = await import("./workspace-disposal");
+  const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = mkdtempSync(join(tmpdir(), "orca-bytes-"));
+  try {
+    mkdirSync(join(root, "tree", "deep"), { recursive: true });
+    writeFileSync(join(root, "tree", "a"), "x".repeat(64 * 1024));
+    writeFileSync(join(root, "tree", "deep", "b"), "y".repeat(32 * 1024));
+    writeFileSync(join(root, "big"), "z".repeat(512 * 1024));
+    symlinkSync(join(root, "big"), join(root, "tree", "link"));
+    const tree = await allocatedBytes(join(root, "tree"));
+    expect(tree).toBeGreaterThanOrEqual(96 * 1024);
+    expect(tree).toBeLessThan(96 * 1024 + 64 * 1024); // the link's 512 KiB target is not counted
+    expect(await allocatedBytes(join(root, "missing"))).toBe(0);
+    expect(await allocatedBytes()).toBe(0);
+    const files = Array.from({ length: 300 }, (_, i) => { const path = join(root, `f${i}`); writeFileSync(path, "q".repeat(4096)); return path; });
+    expect(await allocatedBytes(...files)).toBeGreaterThanOrEqual(300 * 4096);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

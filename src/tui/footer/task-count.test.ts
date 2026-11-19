@@ -4,7 +4,7 @@ import type { TaskRow } from "../../protocol/task";
 import { appFixture } from "../../test/app-fixture";
 import { TaskCounts } from "./task-count";
 
-const { fakeTerm, fakeOrchestrators, until } = appFixture();
+const { fakeTerm, fakeOrchestrators, selectedTab, until } = appFixture();
 const row = (id: string, archived = false): TaskRow => ({ id, name: id, summary: "s", branch: `feat/${id}`, status: "working", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
   ...(archived ? { archive: { reason: "merged", mergedAt: "2026-01-02T00:00:00Z", archivedAt: "2026-01-02T00:00:00Z", pr: { repository: "o/r", number: 1, url: "https://github.com/o/r/pull/1" } } } : {}) } as TaskRow);
 const deferred = <T>() => { let resolve!: (v: T) => void, reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
@@ -61,5 +61,5 @@ test("the status bar shows the page's task count instead of queued messages; rea
   fail = true;
   await app.refreshSessions(false); // the passive poll owns the task-count refresh
   await until(() => app.status(app.page!).includes("? tasks"));
-  await until(() => term.screen().includes(">[count-a]") && term.screen().includes("0 agents | ? tasks |"));
+  await until(() => selectedTab(term) === "count-a" && term.screen().includes("0 agents | ? tasks |"));
 });

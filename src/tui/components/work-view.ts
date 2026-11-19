@@ -1,6 +1,6 @@
 // The one full-screen page every list view renders through (Agents, Tasks,
-// Questions, Images, Processes, Projects): a tab line, a table, a rule naming the selected
-// item, its details as short sections, and a single status/input line. Pure:
+// Questions, Images, Processes, Projects): a tab line, a table, a plain rule, the selected
+// item's details as short sections, and a single status/input line. Pure:
 // the caller owns the items, selection, scrolling and keys (work-page.ts).
 import { formatDateTime } from "../../protocol";
 import { bold, cells, dim, fit, LINK_CLOSE, linkOpen, plainText, visibleLength, wordWrap, wrap } from "./text";
@@ -10,7 +10,7 @@ export const archiveTitle = (count: number, expanded: boolean) => `${expanded ? 
 
 /** One table row. `lead` is drawn dim before the name and is not searched (tree connectors, a pin). */
 /** `heading` marks a group title (a day): a bold, ruled row that is never counted; selecting it folds its group. */
-export interface WorkRow { id: string; name: string; lead?: string; status?: string; color?: number; info?: string; heading?: true }
+export interface WorkRow { id: string; name: string; lead?: string; status?: string; color?: number | string; info?: string; heading?: true }
 /** A details block: wrapped text, `key value` fields (a third element makes the value a link), or numbered options. */
 export interface WorkSection {
   title: string; text?: string; fields?: [string, string, string?][];
@@ -95,7 +95,7 @@ export function tableRows(rows: number): number {
 }
 
 const pad = (s: string, w: number) => { const cut = fit(s, w); return cut + " ".repeat(Math.max(0, w - visibleLength(cut))); };
-const paint = (code: number | undefined, s: string) => code === undefined || !s ? s : `\x1b[${code}m${s}\x1b[0m`;
+const paint = (code: number | string | undefined, s: string) => code === undefined || !s ? s : `\x1b[${code}m${s}\x1b[0m`;
 const safe = (text: string, w: number) => wordWrap(plainText(text), w).flatMap(line => wrap(line, w));
 
 /** One bottom-line input: `label` then the text around the cursor, then a dim hint when it fits. The cursor's column comes back. */
@@ -186,9 +186,8 @@ export function renderWorkPage(page: WorkPage): WorkPageRender {
   if (rows < 2) return { lines: rows ? [footer] : [], table: { y: 0, top, rows: 0 }, detail: { top: 0, max: 0, rows: 0 } };
   if (!full) return { lines: [tabs, ...table, footer], table: { y: 1, top, rows: size }, detail: { top: 0, max: 0, rows: 0 } };
   const head = fit("  " + dim(pad("NAME", w.name) + (w.status ? " " + pad("STATUS", w.status) : "") + (w.info ? " INFO" : "")), cols);
-  const selected = page.items[page.selected], title = plainText(selected?.name ?? ""), spaced = rows >= 14;
-  const label = fit(title, Math.max(0, cols - 8));
-  const rule = label ? dim("── ") + bold(label) + " " + dim("─".repeat(Math.max(0, cols - 4 - visibleLength(label)))) : dim("─".repeat(cols));
+  const spaced = rows >= 14;
+  const rule = dim("─".repeat(cols));
   const indent = cols >= 24 ? "  " : "", inner = cols - indent.length;
   const detail: string[] = [];
   let cursor: number | undefined;

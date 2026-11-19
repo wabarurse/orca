@@ -33,7 +33,7 @@ const ORDER: Order = {
         "agent-loop": { tiers: [["loop"], ["orc"]] },
       },
     },
-    tui: { tiers: [["commands", "history", "components"], ["header", "conversation"], ["footer"], ["screen"], ["app-state"], ["work-page"], ["app"]] },
+    tui: { tiers: [["commands", "history", "components"], ["header", "conversation"], ["footer"], ["screen", "otui"], ["app-state"], ["work-page"], ["app"]] },
   },
 };
 

@@ -5,7 +5,6 @@
 // not drive the application's terminal lifecycle or conversation viewport.
 
 import { bold, dim, fit, sanitize, visibleLength, wrap } from "../components";
-import { fillRow, userFill } from "../components";
 import { layout, scrollWindow } from "./editor";
 
 /** Scrollable footer content is already wrapped to the current width; its viewport is transient. */
@@ -69,12 +68,13 @@ export interface Frame {
 export interface Shown { height: number; cursor: number }
 export const NOTHING: Shown = { height: 0, cursor: 0 };
 /** The input area as laid out on screen: its rows (prompt on the first, indented after), the cursor within them, and the first text row shown. */
-export interface InputArea { lines: string[]; row: number; col: number; top: number }
+/** `boxed`: the composer has side rails; its last line is the bottom edge, which the counts replace (open at the bottom). */
+export interface InputArea { lines: string[]; row: number; col: number; top: number; boxed: boolean }
 
 /** The same geometry drives rendering AND vertical editing, including long/clipped prompts. */
 export function inputGeometry(prompt: string, cols: number, rows: number): { prompt: string; rail: number; width: number } {
   const rail = cols >= 6 && rows >= 8 ? 1 : 0;
-  const inner = Math.max(1, cols - rail * 2);
+  const inner = Math.max(1, cols - rail * 4);
   const clipped = inner < 4 ? "" : fit(sanitize(prompt), inner - 2);
   return { prompt: clipped, rail, width: inner - visibleLength(clipped) };
 }
@@ -91,12 +91,12 @@ export function inputArea(input: Input, cols: number, rows: number, reserved = 0
   const shown = Math.min(all.length, allowance);
   const top = scrollWindow(input.top ?? all.length, row, all.length, shown);
   const lines = all.slice(top, top + shown).map((r, i) => {
-    const text = fit((top + i === 0 ? prompt : " ".repeat(indent)) + sanitize(r.text), cols - rail * 2);
-    return rail ? `${dim("│")}${text}${" ".repeat(Math.max(0, cols - 2 - visibleLength(text)))}${dim("│")}` : text;
+    const text = fit((top + i === 0 ? prompt : " ".repeat(indent)) + sanitize(r.text), cols - rail * 4);
+    return rail ? `${dim("│")} ${text}${" ".repeat(Math.max(0, cols - 4 - visibleLength(text)))} ${dim("│")}` : text;
   });
   if (rail) { lines.unshift(dim("┌" + label + "─".repeat(cols - 2 - label.length) + "┐")); lines.push(dim("└" + "─".repeat(cols - 2) + "┘")); }
   else if (modeRow) lines.unshift(dim(fit(mode, cols)));
-  return { lines, row: row - top + rail + modeRow, col: Math.max(0, Math.min(cols - rail - 1, rail + indent + col)), top };
+  return { lines, row: row - top + rail + modeRow, col: Math.max(0, Math.min(cols - rail * 2 - 1, rail * 2 + indent + col)), top, boxed: !!rail };
 }
 
 /** Pack the three count groups, stacking at narrow widths; on tiny screens input and tail win. */
@@ -156,8 +156,13 @@ export function queuedRows(queue: QueuedInput | undefined, cols: number, height:
 
 /** Share the queue budget with help's scrolling geometry; never shrink/reflow the editor for previews. */
 function footerBase(f: Frame): { status: string[]; input: InputArea; queued: string[]; free: number } {
-  const status = statusRows(f.status, f.cols, f.rows);
-  const input = f.inputArea ?? inputArea(f.input, f.cols, f.rows, status.length);
+  const boxed = inputGeometry(f.input.prompt, f.cols, f.rows).rail === 1;
+  const counts = statusRows(f.status, boxed ? f.cols - 4 : f.cols, f.rows);
+  const area = f.inputArea ?? inputArea(f.input, f.cols, f.rows, counts.length);
+  // A boxed composer is open at the bottom: the counts are its last rows, between its rails, in place of its bottom edge.
+  const inside = area.boxed && counts.length > 0;
+  const input = inside ? { ...area, lines: area.lines.slice(0, -1) } : area;
+  const status = inside ? counts.map(row => `${dim("│")} ${row}${" ".repeat(Math.max(0, f.cols - 4 - visibleLength(row)))} ${dim("│")}`) : counts;
   const available = Math.max(0, f.rows - input.lines.length - status.length);
   // stickyRows already reserves one conversation row. Leave two more for content
   // and its separator when possible; cap previews at six rows / a third of the footer.
@@ -205,8 +210,8 @@ export function liveRows(f: Frame): { rows: string[]; cursor: number; col: numbe
   const streamed = f.partial ? f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)) : [];
   const above = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols)), ...(f.activity ? [fit(sanitize(f.activity), f.cols)] : [])], free - panel.length);
   const band = [...queued, ...input.lines, ...status, ...panel];
-  const fill = userFill();
-  const rows = [...above, ...band.map((r) => fill ? fillRow(r, f.cols, fill) : r)];
+  // The box frames the input; only sent messages in the conversation keep the user background.
+  const rows = [...above, ...band];
   return { rows, cursor: above.length + queued.length + input.row, col: input.col };
 }
 

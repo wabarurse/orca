@@ -63,13 +63,6 @@ export type RoleModels = Partial<Record<Role, string>>;
 export function activeRoles(project: string, model: string): RoleModels {
   try { return roleOverrides(project, model); } catch { return {}; }
 }
-const SHORT: Readonly<Record<Role, string>> = { orchestrator: "orch", worker: "workers", reviewer: "reviewers" };
-/** The header's model field: each role's effective model (its override from roleOverrides, else the project model), compact when
- * every role uses the project model: `claude-opus-5-5 · all roles`, else `orch opus · workers sonnet · reviewers haiku`. */
-export function roleModelsLabel(model: string, roles: RoleModels | undefined): string {
-  const per = (["orchestrator", "worker", "reviewer"] as const).map((role) => [SHORT[role], roles?.[role] ?? model] as const);
-  return per.every(([, m]) => m === model) ? `${model} · all roles` : per.map(([who, m]) => `${who} ${m}`).join(" · ");
-}
 /** The header's account: the project's selected account as provider:profile; undefined when it cannot be read (shown as nothing). */
 export function pageAccount(project: string): Promise<string | undefined> {
   return effectiveAccount(project).then(accountId, () => undefined);

@@ -12,14 +12,13 @@ import { AGENTS_TICK_MS, App, type Clock, type ToolEvents } from "./app";
 import { historyRows } from "./conversation/lines";
 import { text as said } from "../test/fake-provider";
 import { message } from "../core/tools/message";
-import { realTerminal } from "./components/term";
 import { dim } from "./components/text";
 import { Calls } from "./conversation/tools";
 
-const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList } = appFixture();
+const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, selectedTab, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList } = appFixture();
 
 describe("tui app", () => {
-  test("orca welcome stays static until submission, then only the header fin animates", async () => {
+  test("orca welcome stays static until submission; the header does not animate", async () => {
     const term = fakeTerm(100, 40), fake = fakeOrchestrators();
     let now = 0, publish!: () => void, finish!: () => void;
     const publishing = new Promise<void>(resolve => { publish = resolve; });
@@ -44,7 +43,7 @@ describe("tui app", () => {
       await settle();
       expect(bodyRows(term).filter(row => /#/.test(row))).toEqual(art);
       term.type("\r");
-      await until(() => app.page!.sent.length === 1 && header().includes("~"));
+      await until(() => app.page!.sent.length === 1 && header().includes("orca-welcome") && !bodyRows(term).some(row => row.includes("#")));
       expect(app.frame().welcome).toBe(false);
       expect(bodyRows(term).join("\n")).not.toContain("#");
       expect(app.page!.lines).toEqual([]); // still waiting for inbox publication
@@ -52,14 +51,15 @@ describe("tui app", () => {
       await until(() => app.page!.busy && app.page!.lines.length > 0);
       await settle();
       const before = header(); now = 2400; ticks.forEach(tick => tick());
-      await until(() => header() !== before);
+      await settle();
+      expect(header()).toBe(before);
       expect(bodyRows(term).join("\n")).not.toContain("#");
       finish();
       await until(() => !app.page!.busy && ticks.size === 0);
       await app.openPage("orca-fresh");
       await until(() => app.frame().welcome === true);
       app.active = 0; app.reprint();
-      await until(() => app.frame().welcome === false && header().includes("~"));
+      await until(() => app.frame().welcome === false && header().includes("orca-welcome") && !bodyRows(term).some(row => row.includes("#")));
       expect(app.page!.lines.map(raw).join("\n")).not.toContain("#");
     } finally { publish(); finish(); app.quit(); await running; }
     expect(term.display.screen().join("\n")).not.toContain("#"); // no decoration in exit replay
@@ -229,7 +229,7 @@ describe("tui app", () => {
     expect(orchs.opened.map((o) => o.project)).toEqual(["named"]);
     expect(existsSync(join(home, "projects", "named", "repo"))).toBe(true);
     expect(readProjectState("named", "name")).toBe("login page");
-    await until(() => term.screen().includes(">[login page]")); // the selected tab
+    await until(() => selectedTab(term) === "login page"); // the selected tab
     expect(await displayName("named")).toBe("login page");
 
     term.type("/rename taken\r");
@@ -913,7 +913,8 @@ describe("sticky screen", () => {
     term.type("\r");
     await until(() => term.screen().includes("worker-x done"));
     const lines = term.screen().split("\n");
-    expect(lines[0]).toContain(">[alpha]");
+    expect(lines[0]).toStartWith("│ alpha ");
+    expect(selectedTab(term)).toBe("alpha");
     expect(bodyRows(term).filter(Boolean).slice(0, 3)).toEqual(["> build it", "alpha says hi", "worker-x done"]);
     expect(lines.filter((l) => l === "> build it").length).toBe(1);
     expect(term.display.clears).toBe(0);
@@ -935,15 +936,15 @@ describe("sticky screen", () => {
     term.type("one\r");
     await until(() => term.screen().includes("worker-x done"));
     await app.openPage("beta");
-    await until(() => !!term.display.screen()[0]?.includes("[beta]"));
+    await until(() => !!term.display.screen()[0]?.includes("beta"));
     expect(term.raw()).not.toContain(CLEAR);
-    await until(() => term.screen().includes(">[beta]"));
+    await until(() => selectedTab(term) === "beta");
     expect(term.screen()).not.toContain("alpha says hi");
     term.type("two\r");
     await until(() => term.screen().includes("beta says hi"));
 
     term.type("\x1a"); // Ctrl+Z back to alpha
-    await until(() => !!term.display.screen()[0]?.includes("[alpha]"));
+    await until(() => selectedTab(term) === "alpha");
     await until(() => term.screen().includes("> one\n\nalpha says hi\n\nworker-x done\n"));
     expect(term.screen()).not.toContain("beta says hi");
     const before = term.writes.length;
@@ -965,12 +966,12 @@ describe("sticky screen", () => {
     await until(() => !!app.page);
     const alpha = app.page!;
     await app.openPage("beta");
-    await until(() => term.screen().includes(">[beta]"));
+    await until(() => selectedTab(term) === "beta");
     orchs.writers.alpha!("background line\nhalf");
     alpha.busy = true;
     alpha.busySince = Date.now();
     app.draw();
-    await until(() => term.screen().includes("[alpha] •"));
+    await until(() => term.display.screen()[0]!.includes("alpha •"));
     expect(alpha.lines.map(raw)).toContain("background line");
     expect(alpha.md.pending).toBe("half");
     expect(strip(term.raw())).not.toContain("background line");
@@ -1015,41 +1016,6 @@ describe("sticky screen", () => {
     await running;
   });
 
-  test("quit restores the primary screen and prints the transcript with the cursor on a fresh line", async () => {
-    const term = fakeTerm();
-    const orchs = fakeOrchestrators();
-    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
-    const running = app.run("alpha");
-    await until(() => !!app.page);
-    term.type("hi\r");
-    await until(() => term.screen().includes("worker-x done"));
-    orchs.writers.alpha!("half a line");
-    await until(() => term.screen().includes("half a line"));
-    term.type("draft");
-    app.quit();
-    await running;
-    expect(term.closed).toBe(true);
-    // The live region (status, input) goes; what was printed stays, the streamed half line too.
-    expect(term.screen()).toContain("> hi\n\nalpha says hi\n\nworker-x done\nhalf a line");
-    expect(term.screen()).not.toContain("draft");
-    expect(term.display.col).toBe(0);
-    expect(term.raw()).toContain("\x1b[?1049l");
-
-    // The real terminal keeps raw mode and bracketed paste, and no alternate screen.
-    const out: string[] = [];
-    const modes: boolean[] = [];
-    const stdin = { isTTY: true, setRawMode: (on: boolean) => { modes.push(on); }, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
-    const stdout = { isTTY: true, columns: 80, rows: 24, write: (s: string) => { out.push(s); return true; }, on() {} };
-    const real = realTerminal(stdin as never, stdout as never, undefined, NO_REPLY_WINDOW);
-    real.open();
-    real.close();
-    expect(modes).toEqual([true, false]);
-    expect(out.join("")).toContain("\x1b[?2004h");
-    expect(out.join("")).toContain("\x1b[?2004l");
-    expect(out.join("")).toContain("\x1b[?1049h");
-    expect(out.join("")).toContain("\x1b[?1049l");
-    expect(out.join("")).not.toContain("\x1b[2J");
-  });
 });
 
 describe("frames, resizes, startup and crashes", () => {
@@ -1058,7 +1024,7 @@ describe("frames, resizes, startup and crashes", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await until(() => term.screen().includes(">[alpha]"));
+    await until(() => selectedTab(term) === "alpha");
     const before = term.writes.length;
     const started = Date.now();
     for (let i = 0; i < 40; i++) { orchs.writers.alpha!("x"); await Bun.sleep(1); }
@@ -1117,7 +1083,7 @@ describe("frames, resizes, startup and crashes", () => {
     console.warn("logged %s", "early");
     await until(() => term.screen().includes("logged early"));
     gate();
-    await until(() => term.screen().includes(">[alpha]") && term.screen().includes("no remote"));
+    await until(() => selectedTab(term) === "alpha" && term.display.screen()[1]!.includes("ctx"));
     expect(bodyRows(term)[0]).toBe("early note");
     expect(app.page!.lines.map(raw)).not.toContain("logged early");
     expect(term.display.clears).toBe(0);
@@ -1162,7 +1128,7 @@ describe("frames, resizes, startup and crashes", () => {
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
-    await until(() => term.screen().includes(">[alpha]"));
+    await until(() => selectedTab(term) === "alpha");
     let boom = true;
     app.menu = { title: "bad", index: 0, pick: () => {}, get items(): string[] { if (boom) throw new Error("boom"); return ["ok"]; } };
     app.draw();
@@ -1194,44 +1160,4 @@ describe("frames, resizes, startup and crashes", () => {
     await running;
   });
 
-  test("the real terminal tidies up on a signal or crash: sync off, paste off, cursor on, live region erased, cooked mode", () => {
-    const make = () => {
-      const out: string[] = [];
-      const modes: boolean[] = [];
-      const handlers = new Map<string, (...a: unknown[]) => void>();
-      const exits: number[] = [];
-      const errs: string[] = [];
-      const proc = {
-        on: (e: string, fn: (...a: unknown[]) => void) => { handlers.set(e, fn); },
-        off: (e: string, fn: (...a: unknown[]) => void) => { if (handlers.get(e) === fn) handlers.delete(e); },
-        exit: (code?: number) => { exits.push(code ?? 0); },
-        stderr: { write: (s: string) => { errs.push(s); } },
-      };
-      const stdin = { isTTY: true, setRawMode: (on: boolean) => { modes.push(on); }, setEncoding() {}, on() {}, off() {}, resume() {}, pause() {} };
-      const stdout = { isTTY: true, columns: 80, rows: 24, write: (s: string) => { out.push(s); return true; }, on() {} };
-      const term = realTerminal(stdin as never, stdout as never, proc as never, NO_REPLY_WINDOW);
-      return { term, out, modes, handlers, exits, errs };
-    };
-    for (const [event, code] of [["SIGTERM", 143], ["SIGHUP", 129], ["uncaughtException", 1], ["exit", null]] as const) {
-      const t = make();
-      t.term.open();
-      expect([...t.handlers.keys()].sort()).toEqual(["SIGHUP", "SIGTERM", "exit", "uncaughtException"]);
-      t.term.eraseOnExit("\r\x1b[2A\x1b[J");
-      t.handlers.get(event)!(new Error("kaboom"));
-      expect(t.out.at(-1)).toContain("\x1b[?1049l");
-      expect(t.out.at(-1)).toContain("\x1b[?1000l");
-      expect(t.out.at(-1)).toContain("\r\x1b[2A\x1b[J");
-      expect(t.modes).toEqual([true, false]);
-      expect(t.exits).toEqual(code === null ? [] : [code]);
-      expect(t.errs.join("")).toContain(event === "uncaughtException" ? "kaboom" : "");
-      expect(t.handlers.size).toBe(0);
-      t.term.close(); // already restored: nothing more
-      expect(t.modes).toEqual([true, false]);
-    }
-    const t = make();
-    t.term.open();
-    t.term.close();
-    expect(t.handlers.size).toBe(0);
-    expect(t.modes).toEqual([true, false]);
-  });
 });

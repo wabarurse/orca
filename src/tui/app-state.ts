@@ -15,8 +15,6 @@ export interface Page {
   /** What the header tab shows; /rename sets it. */
   name: string;
   orch: Orchestrator;
-  /** Repository remote, for the pinned header. */
-  remote: string;
   /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
   /** Last rendered clear boundary; keep refreshes from reviving old conversation state. */
@@ -48,6 +46,8 @@ export interface Page {
   /** The project's selected account, provider:profile, for the header; undefined until read or when unreadable. */
   account?: string;
   settings?: RequestSettings;
+  /** Each role override's own request settings (effort and fast are kept per model), for the header's role rows. */
+  roleSettings?: Partial<Record<Role, RequestSettings>>;
   agentCount?: number;
 }
 

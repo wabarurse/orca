@@ -1,168 +1,132 @@
-// Real application/input lifecycle through an owned PTY with no user state or
-// model requests. Injected SGR reports are NOT physical Apple Terminal gestures.
+// Real application/input lifecycle in a real terminal with no user state or model requests: the app runs inside a
+// private tmux server, which is the terminal emulator; capture-pane reads back exactly what a person would see.
+// tmux cannot inject raw mouse reports or a literal bracketed paste, so pastes use paste-buffer -p and scrolling uses
+// Page Up/Down; mouse and split-write input are covered in otui/terminal.test.ts and the App tests. Skipped without tmux.
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { open } from "../core/data/transcripts/transcript";
 import { assertLayout } from "../config";
-import { FakeScreen } from "./components/testing";
 
-const END_FRAME = "\x1b[?2026l";
+const TMUX = Bun.which("tmux");
+let last: (() => string) | null = null;
 
-async function until(check: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5000;
-  while (!check() && Date.now() < deadline) await Bun.sleep(10);
-  expect(check()).toBe(true);
+async function until(check: () => Promise<boolean>, ms = 8000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!(await check()) && Date.now() < deadline) await Bun.sleep(25);
+  if (!(await check()) && last !== null) console.log(`pane when the wait gave up:\n${last()}`);
+  expect(await check()).toBe(true);
 }
 
-test("owned PTY: full saved history scrolls between pinned bars without mode changes; exit restores shell", async () => {
-  const home = mkdtempSync(join(tmpdir(), "orca-scroll-pty-"));
-  let child: ReturnType<typeof Bun.spawn> | undefined;
-  try {
-    assertLayout(home);
-    mkdirSync(join(home, "projects", "probe", "repo"), { recursive: true });
-    const t = open(join(home, "projects", "probe", "transcript", "orchestrator.jsonl"));
-    await t.append({ type: "meta", role: "orchestrator", model: "m" });
+/** The app in a private tmux pane: `screen()` is the visible rows, `history()` includes the scrollback. */
+async function launch(home: string) {
+  const sock = join(home, "t.sock");
+  const tmux = (...args: string[]) => Bun.spawnSync([TMUX!, "-S", sock, "-f", "/dev/null", ...args], { env: env(home) });
+  const script = `printf 'STTY_BEFORE:%s\\n' "$(stty -g)"; i=0; while [ "$i" -lt 40 ]; do printf 'PRELAUNCH_SENTINEL_%s\\n' "$i"; i=$((i + 1)); done; "$1" "$2" start probe; printf '\\nEXIT:%s\\nSTTY_AFTER:%s\\n' "$?" "$(stty -g)"; sleep 60`;
+  tmux("new-session", "-d", "-c", home, "-x", "100", "-y", "24", "-s", "pty", "/bin/sh", "-c", script, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli", "main.ts"));
+  tmux("set-option", "-g", "history-limit", "5000");
+  tmux("set-option", "-s", "escape-time", "0");
+  const capture = (...args: string[]) => tmux("capture-pane", "-p", "-t", "pty", ...args).stdout.toString();
+  last = () => capture();
+  return {
+    screen: async () => capture().split("\n").slice(0, 24),
+    history: async () => capture("-J", "-S", "-5000"),
+    type: (text: string) => { tmux("send-keys", "-t", "pty", "-l", text); },
+    key: (name: string) => { tmux("send-keys", "-t", "pty", name); },
+    paste: (text: string) => { tmux("set-buffer", text); tmux("paste-buffer", "-p", "-t", "pty"); },
+    /** Vim mode: Esc leaves insert mode, then the real command exits from Vim's `:` line. */
+    quit: async () => {
+      tmux("send-keys", "-t", "pty", "Escape");
+      await until(async () => capture().includes("[NORMAL]"));
+      await Bun.sleep(100); // past the Alt window, so `:` is not read as Alt+:
+      tmux("send-keys", "-t", "pty", "-l", ":quit");
+      tmux("send-keys", "-t", "pty", "Enter");
+    },
+    /** A fresh home opens in Vim's NORMAL mode: `i` starts typing. */
+    insert: async () => { if (capture().includes("[NORMAL]")) { tmux("send-keys", "-t", "pty", "-l", "i"); await until(async () => capture().includes("[INSERT]")); } },
+    stop: () => {
+      tmux("kill-server");
+      Bun.spawnSync([TMUX!, "-S", join(home, "tmux.sock"), "kill-server"], { env: env(home) });
+    },
+  };
+}
+
+/** No inherited auth, git config or user project; the SSH guard keeps the host clipboard untouched. */
+const env = (home: string) => ({ HOME: home, ORCA_HOME: home, PATH: `${dirname(TMUX!)}:/usr/bin:/bin`, TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" });
+
+async function home(write: (t: ReturnType<typeof open>) => Promise<void>): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), "orca-pty-"));
+  assertLayout(dir);
+  mkdirSync(join(dir, "projects", "probe", "repo"), { recursive: true });
+  const t = open(join(dir, "projects", "probe", "transcript", "orchestrator.jsonl"));
+  await t.append({ type: "meta", role: "orchestrator", model: "m" });
+  await write(t);
+  return dir;
+}
+
+const input = (rows: string[]) => rows.find(row => row.startsWith("│ >"))?.replace(/\s*│$/, "") ?? "";
+
+test.skipIf(!TMUX)("owned terminal: saved history scrolls between pinned bars; exit restores the shell and prints the transcript", async () => {
+  const dir = await home(async t => {
     await t.append({ type: "message", message: { role: "user", content: "PTY-ORIGINAL-HISTORY" } });
     for (let i = 0; i < 140; i++) await t.append({ type: "message", message: { role: "assistant", content: `PTY-RECORD-${i}` } });
     await t.append({ type: "summary", text: "PTY-MODEL-ONLY", retained: [], boundary: t.head() });
     await t.append({ type: "message", message: { role: "assistant", content: "PTY-LATEST-HISTORY" } });
-    let output = "";
-    const decoder = new TextDecoder();
-    child = Bun.spawn(["/bin/sh", "-c", `
-      printf 'STTY_BEFORE:%s\\n' "$(stty -g)"
-      i=0; while [ "$i" -lt 60 ]; do printf 'PRELAUNCH_SENTINEL_%s\\n' "$i"; i=$((i + 1)); done
-      "$1" "$2" start probe <&0 & app=$!
-      trap 'kill -TERM "$app" 2>/dev/null; wait "$app"; exit 143' TERM HUP
-      wait "$app"; result=$?
-      trap - TERM HUP
-      printf '\\nSTTY_AFTER:%s\\n' "$(stty -g)"
-      exit "$result"
-    `, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli", "main.ts")], {
-      cwd: home,
-      // No inherited auth, tmux server/socket, git config, or user's project.
-      env: { HOME: home, ORCA_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-      terminal: { cols: 100, rows: 24, data(_terminal, data) { output += decoder.decode(data, { stream: true }); } },
-    });
-    const screen = () => {
-      const s = new FakeScreen(100, 24);
-      // Output callbacks can split escape sequences; replay complete frames only.
-      s.write(output.slice(0, output.lastIndexOf(END_FRAME) + END_FRAME.length));
-      return s.screen();
-    };
-    await until(() => output.includes("PTY-LATEST-HISTORY"));
-    child.terminal!.write("\x1b[200~PTY-DRAFT\nsecond line\x1b[201~");
-    await until(() => screen().some(row => row.includes("second line")));
-    const initial = screen(), headerEnd = initial.findIndex(row => /^─+$/.test(row)) + 1;
-    const header = initial.slice(0, headerEnd), footer = initial.slice(-5);
-    child.terminal!.write("\x1b[<64;10;8M".repeat(120));
-    await until(() => screen()[headerEnd] === "> PTY-ORIGINAL-HISTORY");
-    child.terminal!.write("\x1b[<64;10;8M".repeat(20));
-    await Bun.sleep(40);
-    expect(screen().slice(0, headerEnd)).toEqual(header);
-    expect(screen().slice(-5)).toEqual(footer);
-    expect(screen().join("\n")).not.toContain("PRELAUNCH_SENTINEL");
-    expect(output.split("\x1b[?1049h")).toHaveLength(2);
-    expect(output.split("\x1b[?2004h")).toHaveLength(2);
-    for (const mode of [1000, 1002, 1006]) expect(output).toContain(`\x1b[?${mode}h`);
-    expect(output).not.toContain("\x1b[?1049l");
-    expect(output).not.toContain("\x1b[3J");
-    // Real raw input pipeline, injected reports, no physical gesture claims.
-    // SSH guard ensures this PTY test can never mutate the host clipboard.
-    const y = headerEnd + 1;
-    child.terminal!.write(`\x1b[<0;3;${y}M\x1b[<32;5;${y}M\x1b[<0;5;${y}m`);
-    await until(() => output.includes("\x1b[7mPTY\x1b[0m"));
-    // Automatic copy uses the same SSH-guarded backend as explicit re-copy.
-    child.terminal!.write("\x0f"); // explicit Ctrl+O, not Cmd-C
-    await Bun.sleep(40);
-    await until(() => screen().some(row => row.includes("copy failed:")));
-    expect(screen().join("\n")).toContain("unavailable over ssh");
-    child.terminal!.write("\x1b"); // clear highlight and temporary feedback, preserve draft
-    await Bun.sleep(40);
-    child.terminal!.write("\x1b[<65;10;8M".repeat(120));
-    await until(() => !screen().some(row => row.includes("copy failed:")));
-    expect(screen().slice(-5)).toEqual(footer);
-    // Clear only this synthetic fixture's draft, then exit through the real command.
-    child.terminal!.write("\x1b");
-    await Bun.sleep(40); // separate Esc from /quit (not an Alt+/ chord)
-    child.terminal!.write("/quit\r");
-    await until(() => output.includes("STTY_AFTER:"));
-    expect(await child.exited).toBe(0);
-    expect(output.match(/STTY_AFTER:([^\r\n]+)/)?.[1]).toBe(output.match(/STTY_BEFORE:([^\r\n]+)/)?.[1]);
-    expect(output.split("\x1b[?1049l")).toHaveLength(2);
-    const restored = new FakeScreen(100, 24);
-    restored.write(output);
-    expect(restored.text()).toContain("PRELAUNCH_SENTINEL_0");
-    expect(restored.text()).toContain("PTY-ORIGINAL-HISTORY");
-    expect(restored.text()).toContain("PTY-LATEST-HISTORY");
-    expect(restored.text()).not.toContain("PTY-MODEL-ONLY");
-    for (const mode of [1049, 1000, 1002, 1006, 2004]) expect(restored.modes.get(mode)).toBe(false);
-  } finally {
-    if (child) {
-      if (child.exitCode === null) child.kill("SIGTERM");
-      await child.exited;
-      child.terminal?.close();
-    }
-    rmSync(home, { recursive: true, force: true });
-  }
-}, 15_000);
-
-// An integration guard for the separate-writes input path through a real PTY. The child is
-// never stalled here, so the late-Esc-timer race itself is not exercised: app.test.ts ("even when
-// the Esc timer fires first") and keys.test.ts cover that.
-test("owned PTY: Option+Backspace and a drag sent as separate writes (Terminal.app's way) delete the word and auto-copy on release", async () => {
-  const home = mkdtempSync(join(tmpdir(), "orca-split-pty-"));
-  let child: ReturnType<typeof Bun.spawn> | undefined;
+  });
+  const app = await launch(dir);
   try {
-    assertLayout(home);
-    mkdirSync(join(home, "projects", "probe", "repo"), { recursive: true });
-    const t = open(join(home, "projects", "probe", "transcript", "orchestrator.jsonl"));
-    await t.append({ type: "meta", role: "orchestrator", model: "m" });
-    await t.append({ type: "message", message: { role: "assistant", content: "PTY-SELECT-ME here" } });
-    let output = "";
-    const decoder = new TextDecoder();
-    child = Bun.spawn(["/bin/sh", "-c", `"$1" "$2" start probe <&0`, "probe-shell", process.execPath, join(import.meta.dir, "..", "cli", "main.ts")], {
-      cwd: home,
-      // No inherited auth, tmux server/socket, git config, or user's project; the SSH guard keeps the host clipboard untouched.
-      env: { HOME: home, ORCA_HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color", SSH_TTY: "fixture-no-desktop", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-      terminal: { cols: 100, rows: 24, data(_terminal, data) { output += decoder.decode(data, { stream: true }); } },
-    });
-    const screen = () => {
-      const s = new FakeScreen(100, 24);
-      s.write(output.slice(0, output.lastIndexOf(END_FRAME) + END_FRAME.length));
-      return s.screen();
-    };
-    const input = () => screen().find(row => row.startsWith("│>"))?.replace(/\s+│$/, "") ?? "";
-    await until(() => output.includes("PTY-SELECT-ME"));
-    child.terminal!.write("hello big world");
-    await until(() => input() === "│> hello big world");
-    // Terminal.app sends Option+Backspace as two writes: ESC, then DEL. (The DEL goes in once the
-    // app is in raw mode; before that it is the line discipline's ICANON erase character.)
-    child.terminal!.write("\x1b"); child.terminal!.write("\x7f");
-    await until(() => input() === "│> hello big");
-    child.terminal!.write("\x1b"); await Bun.sleep(5); child.terminal!.write("\x7f");
-    await until(() => input() === "│> hello");
-    const y = screen().findIndex(row => row.includes("PTY-SELECT-ME")) + 1;
-    expect(y).toBeGreaterThan(0);
-    // Every mouse report its own write, the release last: the drag completes and copies (through the SSH-guarded backend).
-    for (const report of [`\x1b[<0;5;${y}M`, `\x1b[<32;9;${y}M`, `\x1b[<32;13;${y}M`, `\x1b[<0;13;${y}m`]) { child.terminal!.write(report); await Bun.sleep(5); }
-    await until(() => output.includes("\x1b[7mSELECT-ME\x1b[0m"));
-    await until(() => screen().some(row => row.includes("copy failed:")));
-    expect(screen().join("\n")).toContain("unavailable over ssh");
-    expect(input()).toBe("│> hello"); // no report text typed, no draft cleared
-    // Esc clears the highlight, a second the draft (each a lone Escape after its bounded wait), then exit through the real command.
-    for (const esc of [1, 2]) { child.terminal!.write("\x1b"); await Bun.sleep(40 * esc); }
-    await until(() => input() === "│>");
-    child.terminal!.write("/quit\r");
-    expect(await child.exited).toBe(0);
-    expect(output.split("\x1b[?1049l")).toHaveLength(2);
+    await until(async () => (await app.screen()).some(row => row.includes("PTY-LATEST-HISTORY")));
+    await app.insert();
+    app.paste("PTY-DRAFT\nsecond line");
+    await until(async () => (await app.screen()).some(row => row.includes("second line")));
+    // The header box (tabs, details, bottom line); the composer box (top, two input rows, the counts inside it).
+    const initial = await app.screen(), header = initial.slice(0, 3), footer = initial.slice(-4);
+    expect(header[0]).toStartWith("│ probe ");
+    expect(header[1]).toContain("ctx");
+    expect(header[2]).toStartWith("└─");
+    expect(footer[0]).toStartWith("┌");
+    expect(initial.join("\n")).not.toContain("PRELAUNCH_SENTINEL");
+    for (let i = 0; i < 30; i++) app.key("PPage");
+    await until(async () => (await app.screen()).some(row => row.includes("PTY-ORIGINAL-HISTORY")));
+    const scrolled = await app.screen();
+    expect(scrolled.slice(0, 3)).toEqual(header);
+    expect(scrolled.slice(-4)).toEqual(footer);
+    for (let i = 0; i < 30; i++) app.key("NPage");
+    await until(async () => (await app.screen()).some(row => row.includes("PTY-LATEST-HISTORY")));
+    await app.quit();
+    await until(async () => (await app.history()).includes("STTY_AFTER:"));
+    const all = await app.history();
+    expect(all).toContain("EXIT:0");
+    expect(all.match(/STTY_AFTER:(\S+)/)?.[1]).toBe(all.match(/STTY_BEFORE:(\S+)/)?.[1]);
+    expect(all).toContain("PRELAUNCH_SENTINEL_0");
+    expect(all).toContain("PTY-ORIGINAL-HISTORY");
+    expect(all).toContain("PTY-LATEST-HISTORY");
+    expect(all).not.toContain("PTY-MODEL-ONLY");
   } finally {
-    if (child) {
-      if (child.exitCode === null) child.kill("SIGTERM");
-      await child.exited;
-      child.terminal?.close();
-    }
-    rmSync(home, { recursive: true, force: true });
+    app.stop();
+    rmSync(dir, { recursive: true, force: true });
   }
-}, 15_000);
+}, 30_000);
+
+test.skipIf(!TMUX)("owned terminal: Option+Backspace deletes a word; Esc leaves insert mode keeping the draft", async () => {
+  const dir = await home(async t => { await t.append({ type: "message", message: { role: "assistant", content: "PTY-SELECT-ME here" } }); });
+  const app = await launch(dir);
+  try {
+    await until(async () => (await app.screen()).some(row => row.includes("PTY-SELECT-ME")));
+    await app.insert();
+    app.type("hello big world");
+    await until(async () => input(await app.screen()) === "│ > hello big world");
+    app.type("\x1b\x7f"); // two separate writes are covered in otui/terminal.test.ts; tmux calls are slower than the Alt window
+    await until(async () => input(await app.screen()) === "│ > hello big");
+    await Bun.sleep(100);
+    app.type("\x1b");
+    await until(async () => (await app.screen()).some(row => row.includes("[NORMAL]")));
+    expect(input(await app.screen())).toBe("│ > hello big");
+    await app.quit();
+    await until(async () => (await app.history()).includes("EXIT:0"));
+  } finally {
+    app.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 30_000);

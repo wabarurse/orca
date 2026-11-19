@@ -7,26 +7,28 @@ import { userLines } from "../conversation/restore";
 import { MarkdownStream } from "../conversation/mdstream";
 import { FakeScreen } from "../components/testing";
 import { pickFill, setUserFill } from "../components/style";
+import type { RoleLine } from "../header/chrome";
+const everyRole = (model: string, effort = "default", fast = false): RoleLine[] => (["orchestrator", "worker", "reviewer"] as const).map(role => ({ role, model, effort, fast }));
 
 const bg = "\x1b[48;5;236m";
 afterEach(() => setUserFill(null));
 const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, status: "2 agents running │ 0 tasks │ 1 question", input: { prompt: "> ", text: "hello\n你好", cursor: 8 }, menu: { title: "models", items: ["one", "two"], index: 0 } });
 
-test("bottom bar input precedes counts and modal; cursor and backgrounds survive append and resize", () => {
+test("bottom bar input precedes counts and modal; the cursor survives append and resize, with no shading", () => {
   setUserFill(bg);
   const f = frame();
   const r = liveRows(f);
-  expect(r.rows.map(Bun.stripANSI).map((s) => s.trimEnd())).toEqual(["┌──────────────────────────────────────┐", "│> hello                               │", "│  你好                                │", "└──────────────────────────────────────┘", "2 agents running │ 0 tasks │ 1 question", "models", "❯ one", "  two"]);
-  expect([r.cursor, r.col]).toEqual([2, 7]);
+  expect(r.rows.map(Bun.stripANSI).map((s) => s.trimEnd())).toEqual(["┌──────────────────────────────────────┐", "│ > hello                              │", "│   你好                               │", "│ 2 agents running │ 0 tasks           │", "│ 1 question                           │", "models", "❯ one", "  two"]);
+  expect([r.cursor, r.col]).toEqual([2, 8]);
   const screen = new FakeScreen(f.cols, f.rows);
   const first = live(f);
   screen.write(first.text);
-  expect([screen.row, screen.col]).toEqual([2, 7]);
-  expect(screen.backgrounds().slice(0, 6).every((row) => row.length === 40 && row.every((b) => b === "48;5;236"))).toBe(true);
+  expect([screen.row, screen.col]).toEqual([2, 8]);
+  expect(screen.backgrounds().slice(0, 6).every((row) => row.every((b) => !b))).toBe(true); // the box frames the input; nothing is shaded
   const next = append(["reply"], f, first.shown);
   screen.write(next.text);
   expect(screen.text().startsWith("reply\n┌")).toBe(true);
-  expect([screen.row, screen.col]).toEqual([3, 7]);
+  expect([screen.row, screen.col]).toEqual([3, 8]);
   screen.resize(12, 4);
   screen.write("\x1b[2J\x1b[H" + live(frame(12, 4)).text);
   expect(screen.row).toBeLessThan(4);
@@ -51,14 +53,15 @@ test("short and narrow composers never spill or lose cursor; NO_COLOR gives no b
 test("chapter header stays pinned and unshaded while the conversation scrolls", () => {
   const f = frame(80, 24);
   const s = new FakeScreen(f.cols, f.rows);
-  const header = chapterRows({ tabs: [{ name: "project" }], active: 0, model: "model", directory: "/directory", remote: "host/remote" }, f.cols);
+  const header = chapterRows({ tabs: [{ name: "project" }], active: 0, roles: everyRole("model") }, f.cols);
   const first = stickyRows(f, [], header);
   s.write(stickyUpdate(first));
   const next = stickyRows(f, Array.from({ length: 80 }, (_, i) => `response ${i}`), header);
   const update = stickyUpdate(next, first);
   s.write(update);
-  expect(update).not.toContain(">[project]");
-  expect(s.screen()[0]).toContain(">[project]");
+  expect(update).not.toContain("project");
+  expect(s.screen()[0]).toStartWith("│ project ");
+  expect(s.screen()[2]).toStartWith("└─");
   expect(s.text()).toContain("response 79");
   expect(s.backgrounds()[0]!.some(Boolean)).toBe(false);
   expect(s.top).toBe(0);

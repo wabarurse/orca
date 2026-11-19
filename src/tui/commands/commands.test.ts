@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { archiveAgents, listAgents, agentWindows, openTaskAgents } from "../../core/tmux/liveness";
 import { deleteProject } from "./project";
-import { displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "../../core/data/projects/registry";
-import { recentModels, roleModelsLabel } from "./model";
+import { displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, togglePin, validProjectName } from "../../core/data/projects/registry";
+import { recentModels } from "./model";
 import { chooseScope, parseScope, scopeChoices, scopeUsage, type Scope } from "./scope";
 import { switchAllMenu } from "./switch-all";
 import { scopedChoices } from "./model-flow";
@@ -78,12 +78,6 @@ describe("role models in /model and the header", () => {
     const reviewer = scopedChoices(offered, "reviewer", "claude-opus-5", { worker: "claude-sonnet-5" }, dim);
     expect(reviewer[0]).toEqual({ value: null, label: "same as project  claude-opus-5", current: true });
   });
-  test("the header's model field is compact when every role uses the project model, else lists each role's model", () => {
-    expect(roleModelsLabel("opus", undefined)).toBe("opus · all roles");
-    expect(roleModelsLabel("opus", {})).toBe("opus · all roles");
-    expect(roleModelsLabel("opus", { worker: "sonnet" })).toBe("orch opus · workers sonnet · reviewers opus");
-    expect(roleModelsLabel("opus", { reviewer: "haiku", worker: "sonnet", orchestrator: "opus" })).toBe("orch opus · workers sonnet · reviewers haiku");
-  });
 });
 
 describe("project names", () => {
@@ -127,10 +121,6 @@ describe("display names", () => {
 });
 
 describe("repoHere", () => {
-  test("shortRemote drops scheme and .git", () => {
-    expect(shortRemote("https://github.com/example/orca.git")).toBe("github.com/example/orca");
-    expect(shortRemote("git@github.com:me/app.git")).toBe("github.com/me/app");
-  });
   test("retains the original checkout path even when it has an origin", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orca-here-"));
     try {

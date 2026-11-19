@@ -18,7 +18,7 @@ describe("tool rows", () => {
     expect(ok.map(strip)).toEqual(["⏺ bash(git status)", "  ⎿  12 lines"]);
     expect(ok[0]).toBe("\x1b[2m⏺\x1b[0m \x1b[1mbash\x1b[0m(git status)");
     const bad = toolRows({ tool: "bash(make)", summary: "exit 2: boom", failed: true }, 40);
-    expect(bad[0]!.startsWith("\x1b[31m⏺\x1b[0m ")).toBe(true);
+    expect(bad[0]!.startsWith("\x1b[38;5;217m⏺\x1b[0m ")).toBe(true);
     expect(shown(bad, 40)).toBe("⏺ bash(make)\n  ⎿  exit 2: boom");
   });
 
@@ -26,7 +26,7 @@ describe("tool rows", () => {
     process.env.NO_COLOR = "1";
     const bad = toolRows({ tool: "bash(make)", summary: "exit 2", failed: true }, 40);
     expect(bad[0]!.startsWith("\x1b[1m⏺\x1b[0m ")).toBe(true);
-    expect(bad.join("")).not.toContain("\x1b[31m");
+    expect(bad.join("")).not.toContain("\x1b[38;5;217m");
   });
 
   test("cut to narrow widths with …, CJK by display width; escapes in the input cannot get through", () => {
@@ -45,7 +45,7 @@ describe("tool rows", () => {
     const call = (tool: string, failed = false) => ({ tool, summary: failed ? "exit 1" : "ok", failed });
     const seven = [call("bash(a)"), call("read(x)"), call("bash(b)", true), call("edit(y)"), call("bash(c)"), call("read(z)"), call("bash(d)")];
     expect(strip(groupRow(seven, 80))).toBe("▸ 7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed");
-    expect(groupRow(seven, 80)).toBe(`\x1b[31m▸\x1b[0m \x1b[2m7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed\x1b[0m`);
+    expect(groupRow(seven, 80)).toBe(`\x1b[38;5;217m▸\x1b[0m \x1b[2m7 tool calls · bash ×4, read ×2, edit ×1 · 1 failed\x1b[0m`);
     expect(groupRow([call("bash(a)"), call("bash(b)")], 80)).toBe(`\x1b[2m▸\x1b[0m \x1b[2m2 tool calls · bash ×2\x1b[0m`);
     expect(groupRow([call("bash(a)"), call("bash(b)")], 80, true)).toBe(`\x1b[2m▾\x1b[0m \x1b[2m2 tool calls · bash ×2\x1b[0m`); // opened by a click
     expect(strip(groupRow([call("read(a)"), call("bash(b)")], 80))).toBe("▸ 2 tool calls · read ×1, bash ×1"); // a tie keeps the first call's tool first

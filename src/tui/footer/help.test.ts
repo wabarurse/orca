@@ -7,6 +7,8 @@ import { stickyRows, stickyUpdate } from "../screen/sticky";
 import { setUserFill } from "../components/style";
 import type { Terminal } from "../components/term";
 import { FakeScreen } from "../components/testing";
+import type { RoleLine } from "../header/chrome";
+const everyRole = (model: string, effort = "default", fast = false): RoleLine[] => (["orchestrator", "worker", "reviewer"] as const).map(role => ({ role, model, effort, fast }));
 
 // Visual review: __snapshots__/help.test.ts.snap contains the 80x24 and 40x24
 // pinned screens, full content at both widths, and the scrolled diagnostic tail.
@@ -21,7 +23,7 @@ const frame = (cols: number, rows: number, top = 0): Frame => ({
   status: "2 agents running │ 1 task │ inbox 1",
   help: { lines: helpLines(commands, false, cols), top },
 });
-const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "demo" }], active: 0, model: "example-model · effort default · fast off", directory: "/isolated/demo", remote: "example/repo" }, f.cols, headerHeight(f.rows));
+const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "demo" }], active: 0, roles: everyRole("example-model") }, f.cols, headerHeight(f.rows));
 const history = Array.from({ length: 30 }, (_, i) => `Conversation record ${i + 1}`);
 afterEach(() => setUserFill(null));
 

@@ -39,7 +39,7 @@ test("status words carry the state's colour; a PR and running work show as info;
   tasks[2]!.archive = { reason: "merged", mergedAt: "today", archivedAt: "today", pr };
   tasks[3]!.removedAt = "2026-01-03";
   const shut = taskRows(tasks, new Set(), false).rows.filter(row => !row.heading), open = taskRows(tasks, new Set(), true).rows.filter(row => !row.heading);
-  expect(shut.map(row => [row.status, row.color])).toEqual([["queued", 90], ["working", 36], ["merged", 35], [undefined, undefined]]);
+  expect(shut.map(row => [row.status, row.color])).toEqual([["queued", "38;5;246"], ["working", "38;5;152"], ["merged", "38;5;183"], [undefined, undefined]]);
   expect(shut[1]!.info).toBe("working"); expect(shut[2]!.info).toBe("PR #105");
   expect(shut[3]).toMatchObject({ id: ARCHIVED_SECTION, name: "▸ Archived (1)", section: true });
   expect(open.map(row => row.name)).toEqual(["#1 Task 1", "#2 Task 2", "#3 Task 3", "▾ Archived (1)", "#4 Task 4"]);
@@ -64,16 +64,16 @@ test("tasks are listed by when they were last touched, newest first, under a hea
   expect(navigateOutline(nodes, id(1), new Set(), "down")).toBe(":day:2026-01-09"); // a heading is a row like the Archived one
 });
 
-test("details: description, record fields, dependencies both ways and the PR as a link", () => {
+test("details: description, record fields without the UUID, dependencies both ways and the PR as a clickable url", () => {
   const tasks = sample(); tasks[0]!.pr = pr; tasks[0]!.attention = { kind: "blocked", reason: "Need approval" };
   const { tasks: all } = taskRows(tasks, new Set(), false);
   const sections = taskSections(all, all.find(t => t.id === id(1))!);
   expect(sections.map(s => s.title)).toEqual(["Task #1 Restore session draft", "Details", "Depends on", "Pull request"]);
   expect(sections[0]!.text).toBe("Durable summary");
-  expect(sections[1]!.fields).toContainEqual(["uuid", id(1)]);
+  expect(sections[1]!.fields!.map(([key]) => key)).not.toContain("uuid");
   expect(sections[1]!.fields).toContainEqual(["attention", "blocked: Need approval"]);
   expect(sections[2]!.text).toBe("#5 Clarify empty inbox\nUnblocks: #2 Export task history");
-  expect(sections[3]!.fields![0]).toEqual(["link", "sample/repo #105", pr.url]);
+  expect(sections[3]!.fields).toEqual([["url", pr.url, pr.url]]);
   expect(taskSections(all, all.find(t => t.id === id(5))!)[3]).toMatchObject({ fields: [], text: "not recorded" });
 });
 
