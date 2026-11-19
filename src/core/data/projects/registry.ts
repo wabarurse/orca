@@ -2,9 +2,7 @@
 // bound checkout a project reuses, and the pinned/ordered project list.
 
 import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { $ } from "bun";
 import { conversationIds, loadConfig, paths, readProjectState, writeProjectState, repositoryBinding, saveConfig } from "../../../config";
 import { directoryHere } from "./workspace";
 import { withStorageLock } from "../storage-lock";
@@ -49,13 +47,6 @@ export async function setDisplayName(project: string, name: string): Promise<str
   });
 }
 
-/** A project's origin URL, or "no remote". */
-export async function remoteOf(project: string): Promise<string> {
-  if (repositoryBinding(project)?.branch === "" || !Bun.which("git")) return "no remote";
-  const res = await $`git -C ${paths.repo(project)} remote get-url origin`.quiet().nothrow();
-  return res.exitCode === 0 ? res.stdout.toString().trim() : "no remote";
-}
-
 /** Canonical working directory; a Git checkout groups its subdirectories. */
 export async function repoHere(cwd = process.cwd()): Promise<string | null> {
   return directoryHere(cwd);
@@ -71,11 +62,6 @@ export async function projectFor(directory: string, preferred?: string): Promise
     if (existsSync(paths.repo(name)) && realpathSync(paths.repo(name)) === source) return name;
   }
   return null;
-}
-
-/** A clone source for people: no scheme, no .git, home as ~. */
-export function shortRemote(url: string): string {
-  return url.replace(/^[a-z+]+:\/\//, "").replace(/^git@([^:]+):/, "$1/").replace(/\.git$/, "").replace(homedir(), "~");
 }
 
 /** Keep unavailable bound checkouts listed so their conversations remain discoverable. */

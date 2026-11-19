@@ -20,7 +20,7 @@ import { settingChange, effectiveSettings, setEffort } from "../core/data/projec
 import { accountChoices, deletionSummary, login, resetProject, useAccount, sendAgentFeedback, restoreConversations } from "./commands";
 import { checkContextClear } from "./commands";
 import { activeAgentRows, liveAgentsOrNull, processes } from "../core/tmux";
-import { directories, displayName, listProjects, newProjectName, remoteOf, setDisplayName, shortRemote } from "../core/data/projects";
+import { directories, displayName, listProjects, newProjectName, setDisplayName } from "../core/data/projects";
 import { activeRoles, chooseBubble, chooseModel, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
 import { paths } from "../config";
 import { projectIdentity } from "../core/data/projects";
@@ -281,6 +281,7 @@ export class App {
       for (const p of this.pages) { p.orch.dispose?.(); p.view?.leave(); }
       restoreConsole();
       term.close();
+      await term.released;
       this.leave();
     }
   }
@@ -477,9 +478,8 @@ export class App {
   private header(page: Page, decorate = true): string[] {
     const directory = paths.repo(page.project); this.deps.term.setTitle?.(repositoryTitle(directory));
     const settings = page.settings;
-    const model = `${page.model ? roleModelsLabel(page.model, page.roles) : "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"} · fast ${settings ? settings.fast ? "on" : "off" : "…"}`;
-    const lines = chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), directory, remote: page.remote ? shortRemote(page.remote) : "no remote", agent: page.view?.name, fin: decorate && !this.newChat(page) ? { time: this.clock.now(), active: page.view ? page.view.live : page.busy } : undefined }, this.deps.term.cols, headerHeight(this.deps.term.rows));
-    return lines;
+    const model = `${page.model ? roleModelsLabel(page.model, page.roles) : "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"}${settings?.fast ? " · fast" : ""}`;
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), agent: page.view?.name }, this.deps.term.cols, decorate ? headerHeight(this.deps.term.rows) : 1);
   }
 
   /** Submission hides the welcome immediately, even before inbox consumption. */
@@ -643,9 +643,9 @@ export class App {
       this.questions.sync(); // the input holds the chat draft or the shown question's answer
       const next = this.work.open ? this.work.screen() : this.viewport(this.frame());
       this.pointer.frame.paint(next.rows, next.cols);
-      const output = stickyUpdate(next, this.screen);
       if (!this.work.open) this.needReprint = false;
-      // Synchronized output, so the terminal shows the whole update at once.
+      // A painting terminal (OpenTUI) diffs whole frames itself; otherwise write a synchronized diff.
+      const output = this.deps.term.paint ? (this.deps.term.paint(next), "") : stickyUpdate(next, this.screen);
       if (output) this.deps.term.write(`\x1b[?2026h${output}\x1b[?2026l`);
       this.screen = next;
       this.deps.term.eraseOnExit("");
@@ -748,7 +748,7 @@ export class App {
 
   private async refreshPage(page: Page, forced: boolean): Promise<void> {
     if (!this.validPage(page)) return;
-    const nameBefore = page.name, remoteBefore = page.remote;
+    const nameBefore = page.name;
     const now = this.clock.now();
     const metadataDue = forced || now - (this.metadataAt.get(page) ?? -Infinity) >= 30_000;
     const safe: Promise<unknown>[] = [];
@@ -757,8 +757,7 @@ export class App {
       safe.push(this.refreshHeader(page),
         displayName(page.project).then(name => { if (this.validPage(page) && page.name === nameBefore) page.name = name; }));
     }
-    if (forced) safe.push(this.questions.refresh(page),
-      remoteOf(page.project).then(remote => { if (this.validPage(page) && page.remote === remoteBefore) page.remote = remote; }));
+    if (forced) safe.push(this.questions.refresh(page));
     this.checkLive(page.project);
     const results = await Promise.allSettled(safe);
     try {
@@ -869,7 +868,7 @@ export class App {
       if (existing !== this.active) { this.active = existing; this.reprint(); }
       return this.pages[existing]!;
     }
-    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, remote: "", lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null, calls: new Calls() };
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null, calls: new Calls() };
     // Runtime status belongs above the input, including failures and aborted requests.
     const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); this.draw(); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => this.note(text, page) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);
@@ -884,7 +883,6 @@ export class App {
     }
     page.inputHistory = saved.entries;
     page.historyLines = saved.lines;
-    page.remote = await remoteOf(project);
     page.name = await displayName(project);
     this.notices.set(page, [...this.looseLines]);
     page.lines.unshift(...this.looseLines);

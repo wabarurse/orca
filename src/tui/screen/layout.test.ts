@@ -51,14 +51,14 @@ test("short and narrow composers never spill or lose cursor; NO_COLOR gives no b
 test("chapter header stays pinned and unshaded while the conversation scrolls", () => {
   const f = frame(80, 24);
   const s = new FakeScreen(f.cols, f.rows);
-  const header = chapterRows({ tabs: [{ name: "project" }], active: 0, model: "model", directory: "/directory", remote: "host/remote" }, f.cols);
+  const header = chapterRows({ tabs: [{ name: "project" }], active: 0, model: "model" }, f.cols);
   const first = stickyRows(f, [], header);
   s.write(stickyUpdate(first));
   const next = stickyRows(f, Array.from({ length: 80 }, (_, i) => `response ${i}`), header);
   const update = stickyUpdate(next, first);
   s.write(update);
-  expect(update).not.toContain(">[project]");
-  expect(s.screen()[0]).toContain(">[project]");
+  expect(update).not.toContain("project");
+  expect(s.screen()[0]).toStartWith("── project ");
   expect(s.text()).toContain("response 79");
   expect(s.backgrounds()[0]!.some(Boolean)).toBe(false);
   expect(s.top).toBe(0);

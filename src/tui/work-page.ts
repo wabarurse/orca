@@ -11,8 +11,11 @@ import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/dat
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
 import { archiveAgents, cancelSession, launchIdentity, listAgents, ownership, processes, restoreAgents } from "../core/tmux";
 const { retire } = ownership;
-import { ARCHIVED_SECTION, byDay, dim, findItem, inputLine, navigateOutline, renderWorkPage, sanitize, tableRows, taskRows, taskSections, withArchiveSection,
-  type Key, type OutlineNode, type WorkPageRender, type WorkRow, type WorkSection } from "./components";
+import { dim, navigateOutline, sanitize, taskRows, taskSections, workView, type Key, type OutlineNode } from "./components";
+const { ARCHIVED_SECTION, byDay, findItem, inputLine, renderWorkPage, tableRows, withArchiveSection } = workView;
+type WorkPageRender = workView.WorkPageRender;
+type WorkRow = workView.WorkRow;
+type WorkSection = workView.WorkSection;
 import { archiveBubble, archiveFolder, archiveProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
 import { elapsedMs, formatElapsed } from "./header";
 import { fileStore, QUESTION_PROGRESS, type Questions } from "./footer";

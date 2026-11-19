@@ -101,7 +101,7 @@ const UNTERMINATED_OSC = /^\x1b\]\d+;[^\x07\x1b]*\x1b?$/;
 const REPLY_END = /\x07|\x1b\\|\x03/;
 
 /** Pasted text with line endings as \n and other control characters dropped (tabs become spaces). */
-function cleanPaste(text: string): string {
+export function cleanPaste(text: string): string {
   return text.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "");
 }
 

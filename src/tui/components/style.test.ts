@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { commit, live, liveRows, type Frame } from "../footer/render";
 import { userLines } from "../conversation/restore";
 import { lineRows } from "../conversation/lines";
-import { baseText, fillRow, nearest256, parseBgReply, pickFill, pickText, setBaseText, setUserFill, shade, textRow, useTerminalBackground, userFill } from "./style";
+import { baseText, fillRow, nearest256, pickFill, pickText, setBaseText, setUserFill, shade, textRow, useTerminalBackground, userFill } from "./style";
 import { FakeScreen } from "./testing";
 
 const BG = "\x1b[48;5;236m";
@@ -144,16 +144,6 @@ describe("colour choice", () => {
     expect(pickFill({ TERM: "dumb" })).toBeNull();
     useTerminalBackground({ r: 255, g: 255, b: 255 }, { COLORTERM: "24bit" });
     expect(userFill()).toBe("\x1b[48;2;230;230;230m");
-  });
-
-  test("OSC 11 replies parse in their usual forms", () => {
-    expect(parseBgReply("11;rgb:0000/0000/0000")).toEqual({ r: 0, g: 0, b: 0 });
-    expect(parseBgReply("11;rgb:ffff/8080/1e1e")).toEqual({ r: 255, g: 128, b: 30 });
-    expect(parseBgReply("11;rgb:ff/80/1e")).toEqual({ r: 255, g: 128, b: 30 });
-    expect(parseBgReply("11;rgba:ffff/ffff/ffff/ffff")).toEqual({ r: 255, g: 255, b: 255 });
-    expect(parseBgReply("11;#1e1e2e")).toEqual({ r: 30, g: 30, b: 46 });
-    expect(parseBgReply("10;rgb:0000/0000/0000")).toBeNull();
-    expect(parseBgReply("11;rgb:zz/00/00")).toBeNull();
   });
 });
 

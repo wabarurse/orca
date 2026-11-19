@@ -97,7 +97,7 @@ describe("restored pages", () => {
     await until(() => term.screen().includes("Worker done."));
     const restored = ["[resumed]", "> what changed?", "Two things:", "- a", "- b", "⏺ bash(ls)", "  ⎿  1 line", "from worker-feat: all done", "Worker done."];
     const rows = term.screen().split("\n");
-    expect(rows[0]).toContain(">[resumed]");
+    expect(rows[0]).toStartWith("── resumed ");
     expect(bodyRows(term).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
     expect(term.display.buf[term.display.top + term.display.row]!.join("").trimEnd()).toMatch(/^│> +│$/); // boxed input before the counts
     expect(term.screen()).not.toContain("SECRET-RESULT");

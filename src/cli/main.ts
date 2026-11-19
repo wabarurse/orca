@@ -26,7 +26,7 @@ import { ensureProject } from "../core/agent-loop/orc";
 import { createClientOrchestrator, daemonKeeper, ensureDaemon, stopDaemon } from "../core/agent-loop/orc";
 import type { Role } from "../protocol";
 import { App } from "../tui";
-import { realTerminal } from "../tui/components";
+import { openTuiTerminal } from "../tui/otui";
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (["", "start", "startup", "msg", "stop", "agent", "agent-exit", "process-supervisor", "watch-pr-checks", "clean", "pull", "reload", "mcp"].includes(cmd ?? "")) assertLayout(paths.root);
@@ -92,7 +92,7 @@ switch (cmd) {
     if (!process.stdin.isTTY || !process.stdout.isTTY) usage("start requires an interactive terminal");
     const closing = new AbortController(); // quitting abandons a daemon launch still being confirmed
     const app = new App({
-      term: realTerminal(),
+      term: openTuiTerminal(),
       source: await repoHere(),
       vim: (await loadConfig()).vim,
       saveVim: async on => { await saveConfig({ vim: on }); },

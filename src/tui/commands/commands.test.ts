@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { archiveAgents, listAgents, agentWindows, openTaskAgents } from "../../core/tmux/liveness";
 import { deleteProject } from "./project";
-import { displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, shortRemote, togglePin, validProjectName } from "../../core/data/projects/registry";
+import { displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, togglePin, validProjectName } from "../../core/data/projects/registry";
 import { recentModels, roleModelsLabel } from "./model";
 import { chooseScope, parseScope, scopeChoices, scopeUsage, type Scope } from "./scope";
 import { switchAllMenu } from "./switch-all";
@@ -127,10 +127,6 @@ describe("display names", () => {
 });
 
 describe("repoHere", () => {
-  test("shortRemote drops scheme and .git", () => {
-    expect(shortRemote("https://github.com/example/orca.git")).toBe("github.com/example/orca");
-    expect(shortRemote("git@github.com:me/app.git")).toBe("github.com/me/app");
-  });
   test("retains the original checkout path even when it has an origin", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orca-here-"));
     try {

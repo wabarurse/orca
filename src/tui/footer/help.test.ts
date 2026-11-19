@@ -21,7 +21,7 @@ const frame = (cols: number, rows: number, top = 0): Frame => ({
   status: "2 agents running │ 1 task │ inbox 1",
   help: { lines: helpLines(commands, false, cols), top },
 });
-const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "demo" }], active: 0, model: "example-model · effort default · fast off", directory: "/isolated/demo", remote: "example/repo" }, f.cols, headerHeight(f.rows));
+const chrome = (f: Frame) => chapterRows({ tabs: [{ name: "demo" }], active: 0, model: "example-model · effort default" }, f.cols, headerHeight(f.rows));
 const history = Array.from({ length: 30 }, (_, i) => `Conversation record ${i + 1}`);
 afterEach(() => setUserFill(null));
 

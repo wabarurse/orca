@@ -183,7 +183,7 @@ test("Questions panel sanitizes fields and stays bounded at narrow/tiny sizes; E
   for (const [cols, rows] of [[100, 28], [40, 24], [20, 12], [12, 8], [4, 4], [1, 1]]) {
     ui.term.cols = cols!; ui.term.rows = rows!;
     await openForm(app);
-    const f = app.frame(), screen = stickyRows(f, [], chapterRows({ tabs: [], active: 0, model: "fake-model", directory: "/tmp", remote: "" }, f.cols, headerHeight(f.rows)));
+    const f = app.frame(), screen = stickyRows(f, [], chapterRows({ tabs: [], active: 0, model: "fake-model" }, f.cols, headerHeight(f.rows)));
     expect(screen.rows).toHaveLength(rows!);
     expect(screen.rows.every(line => visibleLength(line) <= cols!)).toBe(true);
     expect(screen.rows.join("")).not.toMatch(/\x1b\]|\x1b\[2J|\x1b\[31m|\u202e|\x07/);

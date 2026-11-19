@@ -340,7 +340,7 @@ test('automatic copy errors stay visible, highlight supports explicit retry; mot
 });
 
 test("unchanged telemetry polls avoid redraw and agent switches render honestly", async () => {
-  const term = fakeTerm(80, 24);
+  const term = fakeTerm(160, 24); // wide enough that the header's right side keeps its context field
   const tasks = [{ id: "one", branch: "feat/one", review: { rounds: 1, unknown: false, ci: false } }] as import("../protocol/task/tasks").TaskRow[];
   const fake = fakeOrchestrators();
   const app = new App({ term, pollMs: 100_000, projectModel: async () => "gpt-5.5", tasks: async () => tasks,
@@ -371,7 +371,7 @@ test("unchanged telemetry polls avoid redraw and agent switches render honestly"
 });
 
 test("header denominator: verified claude window, unlisted model shows the session's compaction estimate", async () => {
-  const term = fakeTerm(80, 24);
+  const term = fakeTerm(160, 24); // wide enough that the header's right side keeps its context field
   const fake = fakeOrchestrators();
   let model = "claude-opus-5-5";
   const app = new App({ term, pollMs: 100_000, projectModel: async () => model, tasks: async () => [], agents: async () => [],

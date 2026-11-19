@@ -7,7 +7,7 @@ import { paths, repositoryBinding } from "../../../config/config";
 import { ensureProject, createOrchestrator } from "../../agent-loop/orc/orchestrator";
 import { ensureWorktree, removeWorktree } from "../../tmux/runner";
 import { deleteProject, restoreConversations } from "../../../tui/commands/project";
-import { listProjects, projectFor, repoHere, remoteOf } from "./registry";
+import { listProjects, projectFor, repoHere } from "./registry";
 import { checkoutNote } from "./workspace";
 import { conversationTurnLock } from "./state";
 import { lockOwner, tryStorageLock } from "../storage-lock";
@@ -49,7 +49,6 @@ test("ordinary directories work without Git, reopen by exact directory, and neve
     expect(repositoryBinding("plain")?.branch).toBe("");
     const task = await registerTask("plain", { name: "Organize notes", summary: "Local work", branch: "notes-worker", authorized: true });
     expect(task.status).toBe("queued");
-    expect(await remoteOf("plain")).toBe("no remote");
     expect(await checkoutNote("plain")).toBe(""); // an ordinary directory has no branch to describe
     expect(await ensureWorktree("plain", "notes-worker")).toBe(folder);
     expect(paths.worktree("plain", "notes-worker")).toBe(folder);

@@ -20,7 +20,7 @@ describe("inline", () => {
     expect(inline("a **b** c")).toBe("a \x1b[1mb\x1b[0m c");
     expect(inline("*i* and _j_")).toBe("\x1b[3mi\x1b[0m and \x1b[3mj\x1b[0m");
     expect(inline("~~gone~~")).toBe("\x1b[9mgone\x1b[0m");
-    expect(inline("run `ls -la` now")).toBe("run \x1b[36mls -la\x1b[0m now");
+    expect(inline("run `ls -la` now")).toBe("run \x1b[1mls -la\x1b[0m now");
     expect(inline("**bold *both* bold**")).toBe("\x1b[1mbold \x1b[3mboth\x1b[0m\x1b[1m bold\x1b[0m");
     expect(inline("***both***")).toBe("\x1b[1m\x1b[3mboth\x1b[0m");
   });
@@ -38,14 +38,14 @@ describe("inline", () => {
     expect(inline("**a *b* c**")).toBe("\x1b[1ma \x1b[3mb\x1b[0m\x1b[1m c\x1b[0m");
     expect(inline("**a *b***")).toBe("\x1b[1ma \x1b[3mb\x1b[0m\x1b[1m\x1b[0m");
     expect(inline("**a***")).toBe("\x1b[1ma\x1b[0m*");
-    expect(inline("*a `*` b*")).toBe("\x1b[3ma \x1b[36m*\x1b[0m\x1b[3m b\x1b[0m");
+    expect(inline("*a `*` b*")).toBe("\x1b[3ma \x1b[1m*\x1b[0m\x1b[3m b\x1b[0m");
     expect(inline("**a\\**")).toBe("**a**"); // the escaped star is text: nothing closes the bold
     expect(inline("*a\\* b*")).toBe("\x1b[3ma* b\x1b[0m");
   });
 
   test("backslash escapes and code spans keep markdown characters literal", () => {
     expect(inline("\\*not italic\\*")).toBe("*not italic*");
-    expect(inline("`a*b*c` and ``x ` y``")).toBe("\x1b[36ma*b*c\x1b[0m and \x1b[36mx ` y\x1b[0m");
+    expect(inline("`a*b*c` and ``x ` y``")).toBe("\x1b[1ma*b*c\x1b[0m and \x1b[1mx ` y\x1b[0m");
     expect(inline("an `unclosed span")).toBe("an `unclosed span");
   });
 

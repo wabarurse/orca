@@ -4,7 +4,7 @@
 //
 // The shade is the terminal's own background blended 10% towards white (dark
 // terminals) or black (light ones), as Codex does. The terminal is asked for
-// its background once at start (OSC 11, `BG_QUERY`; term.ts reads the reply);
+// its palette once at start (tui/otui reads its default background);
 // until it answers, or when it never does, COLORFGBG decides dark or light, and
 // with neither a dark grey with an explicit light foreground is used, so the
 // text stays readable on any terminal. Truecolor when COLORTERM says so, else
@@ -20,24 +20,11 @@ export const noColour = (env: Env = process.env) => !!env.NO_COLOR || env.TERM =
 /** Whether 24-bit colour is supported, as COLORTERM says. */
 export const truecolor = (env: Env = process.env) => /^(truecolor|24bit)$/i.test(env.COLORTERM ?? "");
 
-/** Ask the terminal for its background colour; answered as `ESC ] 11 ; rgb:RRRR/GGGG/BBBB` and BEL or ST. */
-export const BG_QUERY = "\x1b]11;?\x1b\\";
-/** How long after the query a reply still counts; a later one is dropped, so the shade does not change after lines went into the scrollback. */
+/** How long the palette query may take; a later answer is dropped, so the shade does not change after lines went into the scrollback. */
 export const BG_REPLY_MS = 300;
 
 /** The unknown-background fallback: grey 236 behind grey 252 text. */
 const FALLBACK = "\x1b[48;5;236;38;5;252m";
-
-/** Parse an OSC 11 reply body ("11;rgb:1e1e/1e1e/1e1e", "11;rgba:…", "11;#1e1e1e"); null for anything else. */
-export function parseBgReply(body: string): Rgb | null {
-  const m = /^11;rgba?:([0-9a-f]{1,4})\/([0-9a-f]{1,4})\/([0-9a-f]{1,4})(?:\/[0-9a-f]{1,4})?$/i.exec(body);
-  if (m) {
-    const [r, g, b] = [m[1]!, m[2]!, m[3]!].map((h) => Math.round((parseInt(h, 16) / (16 ** h.length - 1)) * 255));
-    return { r: r!, g: g!, b: b! };
-  }
-  const hex = /^11;#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(body);
-  return hex ? { r: parseInt(hex[1]!, 16), g: parseInt(hex[2]!, 16), b: parseInt(hex[3]!, 16) } : null;
-}
 
 /** COLORFGBG ("fg;bg" or "fg;default;bg", ANSI indexes): black for a dark background, white for a light one, null when unset or unclear. */
 function fromColorFgBg(v: string | undefined): Rgb | null {

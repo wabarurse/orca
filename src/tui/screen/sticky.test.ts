@@ -205,7 +205,8 @@ test("resize, wrapped input and menus keep the cursor in the bottom bar without 
 
 test("selected tabs remain visible in a narrow terminal, with names treated as display text", () => {
   const pages = [{ name: "alpha", busy: false }, { name: "beta", busy: true }, { name: "gamma", busy: false }];
-  expect(Bun.stripANSI(tabRow(pages, 2, 16))).toContain("[gamma]");
+  expect(Bun.stripANSI(tabRow(pages, 2, 16))).toContain("gamma");
+  expect(tabRow(pages, 2, 16)).toContain("\x1b[1mgamma");
   expect(Bun.stringWidth(tabRow(pages, 2, 16))).toBeLessThanOrEqual(16);
 });
 
@@ -216,7 +217,7 @@ test("SGR wheel events scroll without inserting terminal reports into the draft"
 
 test("selected activity and tools live only at the conversation tail, never in either pinned bar", () => {
   const f = { ...frame(), status: "2 agents running │ 0 tasks │ 1 question", partial: "partial reply", running: ["⏺ bash(wait)"], activity: "⠋ working…" };
-  const header = chapterRows({ tabs: [{ name: "orch-live" }], active: 0, model: "model · effort high · fast on", directory: "/repo", remote: "host/repo" }, 80, headerHeight(24));
+  const header = chapterRows({ tabs: [{ name: "orch-live" }], active: 0, model: "model · effort high · fast" }, 80, headerHeight(24));
   const s = new FakeScreen(80, 24);
   const first = stickyRows(f, history, header);
   s.write(stickyUpdate(first));

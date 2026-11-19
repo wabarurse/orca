@@ -54,9 +54,19 @@ export function appFixture() {
     return term;
   }
 
-  /** The chapter's closing rule separates pinned metadata from the body. */
-  const bodyStart = (term: ReturnType<typeof fakeTerm>) => term.display.screen().findIndex(row => /^─+$/.test(row)) + 1;
+  /** The header is one ruled row and a blank; the body starts under them. Under 12 columns the row has no rule,
+   * only the clipped active tab. */
+  const bodyStart = (term: ReturnType<typeof fakeTerm>) => {
+    const [head, gap] = term.display.screen();
+    return head?.startsWith("── ") || (term.cols < 12 && !!head && gap === "") ? 2 : 0;
+  };
   const bodyRows = (term: ReturnType<typeof fakeTerm>) => term.display.screen().slice(bodyStart(term));
+  /** The selected tab: the bold text of the header row ("" when no header is drawn). */
+  const selectedTab = (term: ReturnType<typeof fakeTerm>) => {
+    if (!bodyStart(term)) return "";
+    const s = term.display, row = s.buf[s.top] ?? [], styles = s.attributes()[s.top] ?? [];
+    return row.filter((_, c) => styles[c]?.bold).join("").trim();
+  };
 
   /** Click the screen row showing `text` (one press and release on the same cell). */
   async function clickRow(app: App, term: ReturnType<typeof fakeTerm>, text: string): Promise<void> {
@@ -108,5 +118,5 @@ export function appFixture() {
     return state && { items: state.items.map(item => ({ name: item.id, label: item.name, pinned: item.lead === "★ " })), index: state.index, status: state.notice ?? "", confirm: state.confirm ?? null };
   };
 
-  return { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList };
+  return { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, selectedTab, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList };
 }

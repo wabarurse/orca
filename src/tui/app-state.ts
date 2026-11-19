@@ -15,8 +15,6 @@ export interface Page {
   /** What the header tab shows; /rename sets it. */
   name: string;
   orch: Orchestrator;
-  /** Repository remote, for the pinned header. */
-  remote: string;
   /** Finished conversation lines, oldest first, retained while other pages are active. */
   lines: Line[];
   /** Last rendered clear boundary; keep refreshes from reviving old conversation state. */
