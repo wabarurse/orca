@@ -123,7 +123,7 @@ test("viewer errors cannot repaint a closed page, and terminal image capability 
   const running = app.run(project);
   try {
     await until(() => !!app.page);
-    app.work.show("images"); await until(() => term.screen().includes("desktop viewer"));
+    app.work.show("images"); await until(() => term.screen().includes("File"));
     expect(opens).toBe(0);
     term.press({ name: "enter" }); await until(() => opens === 1);
     term.press({ name: "escape" }); await until(() => !app.work.open);

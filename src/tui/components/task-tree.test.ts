@@ -64,16 +64,16 @@ test("tasks are listed by when they were last touched, newest first, under a hea
   expect(navigateOutline(nodes, id(1), new Set(), "down")).toBe(":day:2026-01-09"); // a heading is a row like the Archived one
 });
 
-test("details: description, record fields, dependencies both ways and the PR as a link", () => {
+test("details: description, record fields without the UUID, dependencies both ways and the PR as a clickable url", () => {
   const tasks = sample(); tasks[0]!.pr = pr; tasks[0]!.attention = { kind: "blocked", reason: "Need approval" };
   const { tasks: all } = taskRows(tasks, new Set(), false);
   const sections = taskSections(all, all.find(t => t.id === id(1))!);
   expect(sections.map(s => s.title)).toEqual(["Task #1 Restore session draft", "Details", "Depends on", "Pull request"]);
   expect(sections[0]!.text).toBe("Durable summary");
-  expect(sections[1]!.fields).toContainEqual(["uuid", id(1)]);
+  expect(sections[1]!.fields!.map(([key]) => key)).not.toContain("uuid");
   expect(sections[1]!.fields).toContainEqual(["attention", "blocked: Need approval"]);
   expect(sections[2]!.text).toBe("#5 Clarify empty inbox\nUnblocks: #2 Export task history");
-  expect(sections[3]!.fields![0]).toEqual(["link", "sample/repo #105", pr.url]);
+  expect(sections[3]!.fields).toEqual([["url", pr.url, pr.url]]);
   expect(taskSections(all, all.find(t => t.id === id(5))!)[3]).toMatchObject({ fields: [], text: "not recorded" });
 });
 

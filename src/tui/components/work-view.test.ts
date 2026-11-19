@@ -8,7 +8,7 @@ const page = (over: Partial<WorkPage> = {}): WorkPage => ({ cols: 104, rows: 27,
   active: 1, items, selected: 7, empty: "No tasks", sections: [{ title: "Summary", text: "Stacked on redo PR 2. " + "Adds a confirm step. ".repeat(12) }, { title: "Pull request", fields: [["link", "PR #207", "https://example.test/207"], ["checks", "2 pending"]] }], footer: "j/k move · esc close", ...over });
 const text = (p: WorkPage) => renderWorkPage(p).lines.map(plainText);
 
-test("table over detail: tabs with counts and position, header, a third of the rows as table, a rule naming the selection, sections, the status line last", () => {
+test("table over detail: tabs with counts and position, header, a third of the rows as table, a plain rule, sections, the status line last", () => {
   const out = renderWorkPage(page()), lines = out.lines.map(plainText);
   expect(lines).toHaveLength(27);
   expect(lines[0]).toMatch(/^Agents 5 {3}Tasks 14 {3}Questions 3 {3}Images {3}Projects 5 +8 of 14$/);
@@ -18,7 +18,7 @@ test("table over detail: tabs with counts and position, header, a third of the r
   expect(out.table).toEqual({ y: 3, top: 3, rows: 9 });
   expect(lines.slice(3, 12).filter(line => line.startsWith("› "))).toEqual([lines[7]!]);
   expect(lines[7]).toMatch(/^› Memory backfill redo PR 3: run buttons on the backfill tab +pr open +PR #207$/);
-  expect(lines[12]).toMatch(/^── Memory backfill redo PR 3: run buttons on the backfill tab ─+$/);
+  expect(lines[12]).toMatch(/^─+$/);
   expect(lines[14]).toBe("  Summary");
   expect(lines.join("\n")).toContain("  link    PR #207");
   expect(out.lines.join("\n")).toContain("\x1b]8;;https://example.test/207\x1b\\PR #207\x1b]8;;\x1b\\");

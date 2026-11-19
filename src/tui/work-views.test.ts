@@ -199,6 +199,23 @@ test("Agents hides unverified rows, folds old ones under Archived and archives o
   } finally { await stop(); }
 });
 
+test("rows keep to one or two facts: INFO has no queued count, the divider is a plain rule, hints name only the tab's own keys", async () => {
+  const rows: AgentInfo[] = [{ name: "worker-busy", live: true, status: "running", queuedMessages: 3, activity: "edit search/index.ts" }];
+  const { app, term, stop } = await setup("agents-declutter", { agents: async () => rows });
+  try {
+    term.press({ name: "a", ctrl: true });
+    await until(() => term.screen().includes("worker-busy"));
+    const item = app.work.state!.items.find(row => row.name === "worker-busy")!;
+    expect(item.info).toBe("edit search/index.ts");
+    const screen = term.display.screen();
+    expect(screen.some(row => /^─+$/.test(row))).toBe(true);
+    expect(screen.some(row => row.startsWith("── worker-busy"))).toBe(false);
+    expect(screen.join("\n")).toContain("Now");
+    expect(screen.join("\n")).toContain("3 queued messages");
+    expect(screen.at(-1)!.trim()).toBe("j/k move · enter view · s stop · a archived · f find · esc close");
+  } finally { await stop(); }
+});
+
 test("Tasks is the outline as rows: h/l and ←/→ fold instead of switching tabs; abandoning asks and keeps the task and its dependents", async () => {
   const { registerTask, getTask, setTaskDependencies } = await import("../core/data/tasks/tasks");
   const project = "tasks-page";

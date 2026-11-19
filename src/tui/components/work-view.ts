@@ -1,6 +1,6 @@
 // The one full-screen page every list view renders through (Agents, Tasks,
-// Questions, Images, Processes, Projects): a tab line, a table, a rule naming the selected
-// item, its details as short sections, and a single status/input line. Pure:
+// Questions, Images, Processes, Projects): a tab line, a table, a plain rule, the selected
+// item's details as short sections, and a single status/input line. Pure:
 // the caller owns the items, selection, scrolling and keys (work-page.ts).
 import { formatDateTime } from "../../protocol";
 import { bold, cells, dim, fit, LINK_CLOSE, linkOpen, plainText, visibleLength, wordWrap, wrap } from "./text";
@@ -186,9 +186,8 @@ export function renderWorkPage(page: WorkPage): WorkPageRender {
   if (rows < 2) return { lines: rows ? [footer] : [], table: { y: 0, top, rows: 0 }, detail: { top: 0, max: 0, rows: 0 } };
   if (!full) return { lines: [tabs, ...table, footer], table: { y: 1, top, rows: size }, detail: { top: 0, max: 0, rows: 0 } };
   const head = fit("  " + dim(pad("NAME", w.name) + (w.status ? " " + pad("STATUS", w.status) : "") + (w.info ? " INFO" : "")), cols);
-  const selected = page.items[page.selected], title = plainText(selected?.name ?? ""), spaced = rows >= 14;
-  const label = fit(title, Math.max(0, cols - 8));
-  const rule = label ? dim("── ") + bold(label) + " " + dim("─".repeat(Math.max(0, cols - 4 - visibleLength(label)))) : dim("─".repeat(cols));
+  const spaced = rows >= 14;
+  const rule = dim("─".repeat(cols));
   const indent = cols >= 24 ? "  " : "", inner = cols - indent.length;
   const detail: string[] = [];
   let cursor: number | undefined;
