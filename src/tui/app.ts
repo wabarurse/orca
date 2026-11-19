@@ -21,7 +21,7 @@ import { accountChoices, deletionSummary, login, resetProject, useAccount, sendA
 import { checkContextClear } from "./commands";
 import { activeAgentRows, liveAgentsOrNull, processes } from "../core/tmux";
 import { directories, displayName, listProjects, newProjectName, setDisplayName } from "../core/data/projects";
-import { activeRoles, chooseBubble, chooseModel, effortChoices, modelChoices, pageAccount, roleModelsLabel, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
+import { activeRoles, chooseBubble, chooseModel, effortChoices, modelChoices, pageAccount, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
 import { paths } from "../config";
 import { projectIdentity } from "../core/data/projects";
 import { effectiveModel } from "../core/data/projects";
@@ -44,7 +44,7 @@ import { bold, dim, fit, ImageOverlay, sanitize, repositoryTitle } from "./compo
 import { commit, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type Input, type InputArea } from "./footer";
 import type { Terminal } from "./components";
 import { shimmer } from "./components";
-import { chapterRows, headerHeight } from "./header";
+import { chapterRows, headerHeight, roleLines } from "./header";
 import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./conversation";
 import { Calls, collapseCalls, groupStart, groupStarts } from "./conversation";
 import type { ToolCall, ToolOutcome } from "../protocol";
@@ -477,9 +477,7 @@ export class App {
 
   private header(page: Page, decorate = true): string[] {
     const directory = paths.repo(page.project); this.deps.term.setTitle?.(repositoryTitle(directory));
-    const settings = page.settings;
-    const model = `${page.model ? roleModelsLabel(page.model, page.roles) : "loading model…"} · effort ${settings ? settings.effort ?? "default" : "…"}${settings?.fast ? " · fast" : ""}`;
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, model, context: this.contextLabel(page), agent: page.view?.name }, this.deps.term.cols, decorate ? headerHeight(this.deps.term.rows) : 1);
+    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, roles: roleLines(page.model, page.settings, page.roles, page.roleSettings), context: this.contextLabel(page), agent: page.view?.name }, this.deps.term.cols, decorate ? headerHeight(this.deps.term.rows) : 1);
   }
 
   /** Submission hides the welcome immediately, even before inbox consumption. */
@@ -501,11 +499,12 @@ export class App {
     this.modelVersions.set(page, version);
     const model = await this.readModel(page.project);
     const [settings, account] = await Promise.all([effectiveSettings(page.project, model).catch(() => undefined), pageAccount(page.project)]);
-    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return;
     const roles = activeRoles(page.project, model);
-    const unchanged = model === page.model && account === page.account && JSON.stringify(settings) === JSON.stringify(page.settings) && JSON.stringify(roles) === JSON.stringify(page.roles);
+    const own = Object.fromEntries(await Promise.all(Object.entries(roles).map(async ([role, m]) => [role, await effectiveSettings(page.project, m).catch(() => undefined)] as const)));
+    if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return; // a newer read or a closed page wins
+    const unchanged = model === page.model && account === page.account && JSON.stringify([settings, roles, own]) === JSON.stringify([page.settings, page.roles, page.roleSettings]);
     page.model = model; page.roles = roles; page.account = account;
-    page.settings = settings;
+    page.settings = settings; page.roleSettings = own;
     if (!unchanged && page === this.page) this.draw();
   }
 

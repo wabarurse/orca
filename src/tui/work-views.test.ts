@@ -216,6 +216,32 @@ test("rows keep to one or two facts: INFO has no queued count, the divider is a 
   } finally { await stop(); }
 });
 
+test("folding a day or the archive never changes a tab's count", async () => {
+  const rows: AgentInfo[] = [
+    { name: "worker-now", live: true, status: "running", queuedMessages: 0 },
+    { name: "worker-old", live: false, status: "exited", queuedMessages: 1, lastActiveAt: "2000-01-01" },
+  ];
+  const { app, term, stop } = await setup("fold-counts", { agents: async () => rows });
+  try {
+    term.press({ name: "a", ctrl: true });
+    await until(() => term.screen().includes("worker-now"));
+    const count = () => /Agents (\d+)/.exec(term.display.screen()[0] ?? "")?.[1];
+    expect(count()).toBe("2");
+    expect(names(app)[0]).toBe("▾ Today (1)");
+    while (!selected(app)?.startsWith("▾ Today")) await key(app, "k");
+    term.press({ name: "enter" });
+    await until(() => names(app)[0] === "▸ Today (1)" && term.screen().includes("▸ Today (1)"));
+    expect(names(app)).not.toContain("worker-now");
+    expect(count()).toBe("2");
+    for (const heading of names(app).filter(name => name.startsWith("▾"))) {
+      while (selected(app) !== heading) await key(app, "j");
+      term.press({ name: "enter" });
+    }
+    await until(() => !names(app).some(name => name.startsWith("▾")) && !term.screen().includes("▾ "));
+    expect(count()).toBe("2");
+  } finally { await stop(); }
+});
+
 test("Tasks is the outline as rows: h/l and ←/→ fold instead of switching tabs; abandoning asks and keeps the task and its dependents", async () => {
   const { registerTask, getTask, setTaskDependencies } = await import("../core/data/tasks/tasks");
   const project = "tasks-page";

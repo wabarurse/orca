@@ -10,6 +10,8 @@ import { FakeScreen } from "../components/testing";
 import { setUserFill, userFill } from "../components/style";
 import { parseKeys } from "../components/keys";
 import { whaleRows } from "../header/whale";
+import type { RoleLine } from "../header/chrome";
+const everyRole = (model: string, effort = "default", fast = false): RoleLine[] => (["orchestrator", "worker", "reviewer"] as const).map(role => ({ role, model, effort, fast }));
 
 const frame = (cols = 80, rows = 24): Frame => ({ cols, rows, input: { prompt: "> ", text: "draft", cursor: 5 }, status: "2 agents running", menu: null });
 const chrome = ["[alpha] beta", "alpha · model · effort high · fast on", "/working/directory", "github.com/example/repo"];
@@ -217,7 +219,7 @@ test("SGR wheel events scroll without inserting terminal reports into the draft"
 
 test("selected activity and tools live only at the conversation tail, never in either pinned bar", () => {
   const f = { ...frame(), status: "2 agents running │ 0 tasks │ 1 question", partial: "partial reply", running: ["⏺ bash(wait)"], activity: "⠋ working…" };
-  const header = chapterRows({ tabs: [{ name: "orch-live" }], active: 0, model: "model · effort high · fast" }, 80, headerHeight(24));
+  const header = chapterRows({ tabs: [{ name: "orch-live" }], active: 0, roles: everyRole("model", "high", true) }, 80, headerHeight(24));
   const s = new FakeScreen(80, 24);
   const first = stickyRows(f, history, header);
   s.write(stickyUpdate(first));
@@ -239,7 +241,7 @@ test("selected activity and tools live only at the conversation tail, never in e
 
 test("native sticky geometry is cell-correct through narrow/tiny resizes, panels, and multiline cursors", () => {
   const text = "a界é\nhello 👩‍💻\nlast line";
-  const chapter = { tabs: Array.from({ length: 20 }, (_, i) => ({ name: `orch-${i}` })), active: 19, model: "model · effort high · fast on", directory: "/long/".repeat(100), remote: "host/repo" };
+  const chapter = { tabs: Array.from({ length: 20 }, (_, i) => ({ name: `orch-${i}` })), active: 19, roles: everyRole("model", "high", true), directory: "/long/".repeat(100), remote: "host/repo" };
   for (const cols of [1, 2, 3, 4, 5, 6, 7, 12, 24, 80]) for (const rows of [1, 2, 3, 4, 7, 8, 9, 12, 24]) {
     const header = chapterRows(chapter, cols, headerHeight(rows));
     const s = new FakeScreen(cols, rows);

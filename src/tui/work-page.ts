@@ -227,17 +227,18 @@ export class WorkPages {
     finally { view.loaded.add(kind); if (this.view === view) this.host.draw(); }
   }
 
-  private items(view: View, kind = view.kind): Item[] {
-    const page = view.page, history = !!view.history[kind];
-    if (kind === "projects") return withArchiveSection(this.projectItems(view), history, this.folds(view, kind))
+  /** The tab's rows; `unfolded` ignores folded days and task subtrees (for counts, which must not change on a fold). */
+  private items(view: View, kind = view.kind, unfolded = false): Item[] {
+    const page = view.page, history = !!view.history[kind], folds = unfolded ? new Set<string>() : this.folds(view, kind);
+    if (kind === "projects") return withArchiveSection(this.projectItems(view), history, folds)
       .map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: item.name, text: "Deleted conversations. Nothing in them runs and their files are kept until orca clean. u restores the selected one." }] });
     if (!page) return [];
-    if (kind === "processes") return withArchiveSection(processItems(view.background, this.host.clock.now()), false, this.folds(view, kind)) as Item[]; // nothing here is archived
+    if (kind === "processes") return withArchiveSection(processItems(view.background, this.host.clock.now()), false, folds) as Item[]; // nothing here is archived
     const now = this.host.clock.now();
     // Listed rows newest first under a heading per day; archived rows keep their own section below.
-    const section = (items: Item[], at: (item: Item) => number) => withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history, this.folds(view, kind))
+    const section = (items: Item[], at: (item: Item) => number) => withArchiveSection([...byDay(items.filter(item => !item.archived), at, now), ...items.filter(item => item.archived)], history, folds)
       .map((item): Item => "sections" in item ? item : { ...item, sections: [{ title: item.name, text: "heading" in item ? DAY_HELP : SECTION_HELP }] });
-    if (kind === "tasks") return this.taskItems(view, history);
+    if (kind === "tasks") return this.taskItems(view, history, unfolded);
     if (kind === "images") {
       const list = this.host.images(page);
       return section((list?.rows ?? []).map((media): Item => ({
@@ -270,11 +271,11 @@ export class WorkPages {
       question, archived: view.hiddenQuestions[question.id] ?? !open };
   }
 
-  private taskItems(view: View, history: boolean): Item[] {
+  private taskItems(view: View, history: boolean, unfolded = false): Item[] {
     if (view.errors.tasks) return []; // an unreadable registry shows its error, never stale rows
     try {
-      const { tasks, nodes, rows } = taskRows(view.tasks, view.collapsed, history);
-      view.nodes = nodes; view.invalid = undefined;
+      const { tasks, nodes, rows } = taskRows(view.tasks, unfolded ? new Set() : view.collapsed, history);
+      if (!unfolded) { view.nodes = nodes; view.invalid = undefined; } // a count leaves the shown outline alone
       return rows.map((row): Item => {
         const task = row.section ? undefined : tasks.find(t => t.id === row.id);
         if (row.heading) return { ...row, sections: [{ title: row.name, text: "Tasks last touched on this day, newest first. A task moves here when it is worked on, its PR changes or it is edited. Enter or ← folds the day away; Enter or → opens it again." }] };
@@ -328,7 +329,7 @@ export class WorkPages {
     const footer = this.footer(view, cols);
     // A failed read is unknown, never a fabricated zero.
     const known = (kind: WorkKind) => view.loaded.has(kind) && (kind === "projects" || !!view.page) && !view.errors[kind] && !(kind === "questions" && (questions?.error || !questions?.loaded));
-    const tabs = WORK_KINDS.map(kind => ({ name: TITLES[kind], count: known(kind) ? (kind === view.kind ? items : this.items(view, kind)).filter(item => !item.section && !item.heading && !item.archived).length : undefined }));
+    const tabs = WORK_KINDS.map(kind => ({ name: TITLES[kind], count: known(kind) ? this.items(view, kind, true).filter(item => !item.section && !item.heading && !item.archived).length : undefined }));
     const empty = !view.page && view.kind !== "projects" ? NO_PAGE : !view.loaded.has(view.kind) ? "Loading…" : known(view.kind) ? `No ${view.kind}` : `${TITLES[view.kind]} unavailable`;
     const render = view.render = renderWorkPage({ cols, rows, tabs, active: WORK_KINDS.indexOf(view.kind), items, selected: index, empty,
       query: view.find?.text ?? view.query, sections: selected?.sections ?? [], detailTop: view.detailTop, footer: footer.line });

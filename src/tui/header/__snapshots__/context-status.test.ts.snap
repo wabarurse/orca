@@ -2,6 +2,6 @@
 
 exports[`lowercase telemetry snapshot preserves project, agent, model and context identity 1`] = `
 "│ MyProject                                                                                        │
-│ view reviewer-MyTask · Provider-Model-ID · effort default                                ctx ?/? │
+│ view reviewer-MyTask · Provider-Model-ID · default · ctx ?/?                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘"
 `;

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { archiveAgents, listAgents, agentWindows, openTaskAgents } from "../../core/tmux/liveness";
 import { deleteProject } from "./project";
 import { displayName, newProjectName, orderProjects, orderedProjects, repoHere, setDisplayName, togglePin, validProjectName } from "../../core/data/projects/registry";
-import { recentModels, roleModelsLabel } from "./model";
+import { recentModels } from "./model";
 import { chooseScope, parseScope, scopeChoices, scopeUsage, type Scope } from "./scope";
 import { switchAllMenu } from "./switch-all";
 import { scopedChoices } from "./model-flow";
@@ -77,12 +77,6 @@ describe("role models in /model and the header", () => {
     expect(scopedChoices(offered, "worker", "claude-opus-5", { worker: "claude-sonnet-5" }, dim).map((c) => [c.value, !!c.current])).toEqual([[null, false], ["claude-opus-5", false], ["claude-sonnet-5", true]]);
     const reviewer = scopedChoices(offered, "reviewer", "claude-opus-5", { worker: "claude-sonnet-5" }, dim);
     expect(reviewer[0]).toEqual({ value: null, label: "same as project  claude-opus-5", current: true });
-  });
-  test("the header's model field is compact when every role uses the project model, else lists each role's model", () => {
-    expect(roleModelsLabel("opus", undefined)).toBe("opus · all roles");
-    expect(roleModelsLabel("opus", {})).toBe("opus · all roles");
-    expect(roleModelsLabel("opus", { worker: "sonnet" })).toBe("orch opus · workers sonnet · reviewers opus");
-    expect(roleModelsLabel("opus", { reviewer: "haiku", worker: "sonnet", orchestrator: "opus" })).toBe("orch opus · workers sonnet · reviewers haiku");
   });
 });
 

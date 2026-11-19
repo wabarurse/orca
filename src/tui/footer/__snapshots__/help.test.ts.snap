@@ -2,7 +2,7 @@
 
 exports[`help appearance fixtures 80x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
 "│ demo                                                                         │
-│ example-model · effort default                                               │
+│ example-model · default                                                      │
 └──────────────────────────────────────────────────────────────────────────────┘
 Conversation record 27
 Conversation record 28
@@ -103,7 +103,7 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
 
 exports[`help appearance fixtures 40x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
 "│ demo                                 │
-│ example-model · effort default       │
+│ example-model · default              │
 └──────────────────────────────────────┘
 Conversation record 27
 Conversation record 28
@@ -259,7 +259,7 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
 
 exports[`help appearance fixtures End reaches diagnostics with a bounded range and dismissal hint 1`] = `
 "│ demo                                                                         │
-│ example-model · effort default                                               │
+│ example-model · default                                                      │
 └──────────────────────────────────────────────────────────────────────────────┘
 Conversation record 27
 Conversation record 28

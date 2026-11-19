@@ -1,16 +1,41 @@
 // Chapter rules for the pinned header. Labels are display-only; navigation and
 // storage continue to use the immutable project IDs held by App.
+import type { RequestSettings } from "../../api/model";
 import { bold, dim, fit, sanitize, visibleLength } from "../components";
 
 export interface Tab { name: string; busy?: boolean }
+/** One role's request settings as the header shows them: its model, its effort and whether fast mode is on. */
+export interface RoleLine { role: "orchestrator" | "worker" | "reviewer"; model: string; effort: string; fast: boolean }
 export interface Chapter {
   tabs: Tab[];
   active: number;
-  /** The project's account (provider:profile); leads the model field so narrow widths keep it. */
+  /** The project's account (provider:profile); leads the details so narrow widths keep it. */
   account?: string;
-  model: string;
+  /** Every role, orchestrator first; one details row when they all agree, else a row each. */
+  roles: RoleLine[];
   agent?: string;
   context?: string;
+}
+
+/** Each role's line: its /model override (with that model's own settings) or the project model and its settings. */
+export function roleLines(model: string | undefined, settings: RequestSettings | undefined, roles: Partial<Record<RoleLine["role"], string>> | undefined, own: Partial<Record<RoleLine["role"], RequestSettings>> | undefined): RoleLine[] {
+  return (["orchestrator", "worker", "reviewer"] as const).map(role => {
+    const m = roles?.[role] ?? model, s = m === model ? settings : own?.[role];
+    return { role, model: m ?? "loading model…", effort: s ? s.effort ?? "default" : "…", fast: !!s?.fast };
+  });
+}
+
+const ROLE_LABEL: Record<RoleLine["role"], string> = { orchestrator: "orc", worker: "worker", reviewer: "reviewer" };
+const settingsText = (r: RoleLine) => [r.model, r.effort, ...(r.fast ? ["fast"] : [])].join(" · ");
+
+/** The details rows: `account · model · effort · [fast] · ctx x/y` when every role agrees, else `account · ctx x/y`
+ * then `orc: …`, `worker: …`, `reviewer: …`. The agent being viewed leads the first row. */
+export function detailRows(c: Chapter): string[] {
+  const lead = [c.agent ? `view ${c.agent}` : "", c.account ?? ""];
+  const first = c.roles[0];
+  const same = !!first && c.roles.every(r => settingsText(r) === settingsText(first));
+  const rows = same ? [[...lead, settingsText(first), c.context ?? ""]] : [[...lead, c.context ?? ""], ...c.roles.map(r => [`${ROLE_LABEL[r.role]}: ${settingsText(r)}`])];
+  return rows.map(row => plain(row.filter(Boolean).join(" · ")));
 }
 
 const plain = (s: string) => Bun.stripANSI(sanitize(s.replace(/[\r\n\t]/g, " ")));
@@ -44,24 +69,16 @@ export function tabRow(tabs: Tab[], active: number, cols: number): string {
 /** Height budget shared by App's input geometry and the sticky renderer. */
 export const headerHeight = (rows: number) => Math.max(0, Math.min(Math.floor(rows / 3), rows - 3));
 
-/** A box open at the top edge of the terminal: the tabs, then in dim the agent being viewed, the account and the models,
- * clipped at its tail, with the context (x/y) kept whole at the right, then the box's bottom line. Under 12 columns or
- * 3 rows, no box: the tabs, then the details row. */
+/** A box open at the top edge of the terminal: the tabs, the details rows in dim (each clipped at its tail), then the
+ * box's bottom line. With too few columns or rows for the box: the tabs, then as many details rows as fit. */
 export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   if (budget < 1) return [];
   cols = Math.max(1, cols);
-  const meta = plain([c.agent ? `view ${c.agent}` : "", c.account ?? "", c.model].filter(Boolean).join(" · "));
-  const context = plain(c.context ?? "");
-  const details = (width: number) => {
-    const right = context && visibleLength(context) + 12 <= width ? context : "";
-    const left = fit(meta, width - (right ? visibleLength(right) + 2 : 0));
-    return dim(right ? left + " ".repeat(Math.max(2, width - visibleLength(left) - visibleLength(right))) + right : left);
-  };
-  if (cols < 12 || budget < 3) {
-    const tabs = tabRow(c.tabs, c.active, cols);
-    return budget > 1 ? [tabs, details(cols)] : [tabs];
+  const details = detailRows(c);
+  if (cols < 12 || budget < details.length + 2) {
+    return [tabRow(c.tabs, c.active, cols), ...details.map(row => dim(fit(row, cols)))].slice(0, budget);
   }
   const inner = cols - 4;
   const side = (text: string) => `${dim("│")} ${text}${" ".repeat(Math.max(0, inner - visibleLength(text)))} ${dim("│")}`;
-  return [side(tabRow(c.tabs, c.active, inner)), side(details(inner)), dim("└" + "─".repeat(cols - 2) + "┘")];
+  return [side(tabRow(c.tabs, c.active, inner)), ...details.map(row => side(dim(fit(row, inner)))), dim("└" + "─".repeat(cols - 2) + "┘")];
 }

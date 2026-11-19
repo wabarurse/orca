@@ -83,7 +83,7 @@ test.skipIf(!TMUX)("owned terminal: saved history scrolls between pinned bars; e
     // The header box (tabs, details, bottom line); the composer box (top, two input rows, the counts inside it).
     const initial = await app.screen(), header = initial.slice(0, 3), footer = initial.slice(-4);
     expect(header[0]).toStartWith("│ probe ");
-    expect(header[1]).toContain("effort");
+    expect(header[1]).toContain("ctx");
     expect(header[2]).toStartWith("└─");
     expect(footer[0]).toStartWith("┌");
     expect(initial.join("\n")).not.toContain("PRELAUNCH_SENTINEL");

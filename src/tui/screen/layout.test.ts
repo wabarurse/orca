@@ -7,6 +7,8 @@ import { userLines } from "../conversation/restore";
 import { MarkdownStream } from "../conversation/mdstream";
 import { FakeScreen } from "../components/testing";
 import { pickFill, setUserFill } from "../components/style";
+import type { RoleLine } from "../header/chrome";
+const everyRole = (model: string, effort = "default", fast = false): RoleLine[] => (["orchestrator", "worker", "reviewer"] as const).map(role => ({ role, model, effort, fast }));
 
 const bg = "\x1b[48;5;236m";
 afterEach(() => setUserFill(null));
@@ -51,7 +53,7 @@ test("short and narrow composers never spill or lose cursor; NO_COLOR gives no b
 test("chapter header stays pinned and unshaded while the conversation scrolls", () => {
   const f = frame(80, 24);
   const s = new FakeScreen(f.cols, f.rows);
-  const header = chapterRows({ tabs: [{ name: "project" }], active: 0, model: "model" }, f.cols);
+  const header = chapterRows({ tabs: [{ name: "project" }], active: 0, roles: everyRole("model") }, f.cols);
   const first = stickyRows(f, [], header);
   s.write(stickyUpdate(first));
   const next = stickyRows(f, Array.from({ length: 80 }, (_, i) => `response ${i}`), header);

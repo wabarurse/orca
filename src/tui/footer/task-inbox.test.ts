@@ -19,6 +19,8 @@ import { ask, all as allQuestions } from "../../core/data/inbox/questions";
 import type { Question } from "../../protocol/questions";
 import { archiveMergedTasks, getTask, listTasks, observeTaskPR, prepareTaskRun, registerTask, setTaskAttention, startTaskRun, stopTaskRun } from "../../core/data/tasks/tasks";
 import { taskStatuses, type TaskPR, type TaskRow } from "../../protocol/task/tasks";
+import type { RoleLine } from "../header/chrome";
+const everyRole = (model: string, effort = "default", fast = false): RoleLine[] => (["orchestrator", "worker", "reviewer"] as const).map(role => ({ role, model, effort, fast }));
 
 const plain = (lines: string[]) => lines.map(line => Bun.stripANSI(line).trimEnd()).join("\n");
 function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -183,7 +185,7 @@ test("Questions panel sanitizes fields and stays bounded at narrow/tiny sizes; E
   for (const [cols, rows] of [[100, 28], [40, 24], [20, 12], [12, 8], [4, 4], [1, 1]]) {
     ui.term.cols = cols!; ui.term.rows = rows!;
     await openForm(app);
-    const f = app.frame(), screen = stickyRows(f, [], chapterRows({ tabs: [], active: 0, model: "fake-model" }, f.cols, headerHeight(f.rows)));
+    const f = app.frame(), screen = stickyRows(f, [], chapterRows({ tabs: [], active: 0, roles: everyRole("fake-model") }, f.cols, headerHeight(f.rows)));
     expect(screen.rows).toHaveLength(rows!);
     expect(screen.rows.every(line => visibleLength(line) <= cols!)).toBe(true);
     expect(screen.rows.join("")).not.toMatch(/\x1b\]|\x1b\[2J|\x1b\[31m|\u202e|\x07/);

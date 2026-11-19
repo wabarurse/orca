@@ -46,6 +46,8 @@ export interface Page {
   /** The project's selected account, provider:profile, for the header; undefined until read or when unreadable. */
   account?: string;
   settings?: RequestSettings;
+  /** Each role override's own request settings (effort and fast are kept per model), for the header's role rows. */
+  roleSettings?: Partial<Record<Role, RequestSettings>>;
   agentCount?: number;
 }
 
