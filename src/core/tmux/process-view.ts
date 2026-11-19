@@ -67,6 +67,10 @@ async function tail(project: string, id: string): Promise<string> {
   return (from ? lines.slice(1) : lines).slice(-TAIL_LINES).join("\n").trimEnd(); // a read from the middle starts inside a line
 }
 
+/** The agent-opened tmux sessions the Processes tab lists, without what their windows show: what the process tool's
+ * list returns, so an agent and the tab agree on what is running. */
+export const sessionRows = (project: string, from: Sessions = sessions): Promise<SessionRow[]> => agentSessions(project, { ...from, tail: async () => "" });
+
 /** Watches by PR number; commands live first, then those that ended in the last day, newest first. */
 export async function processView(project: string, now = Date.now(), from: Sessions = sessions): Promise<ProcessView> {
   const records = await listProcesses(project);

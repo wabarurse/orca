@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processTool, waitForProcess } from "./process";
@@ -106,4 +107,21 @@ test("wait on a PR watch returns when the shared observer records a change", asy
   expect(r).toMatchObject({ kind: "pr_watch", state: "running", returned: "pr_changed", pr: { observed: { checks: "failed" } } });
   expect(r.tail).toBeUndefined();
   expect(await pending("test", "worker-work")).toBe(false);
+});
+
+test("list returns the tmux sessions agents opened themselves, as the Processes tab shows them", async () => {
+  const { tmux } = await import("../tmux");
+  process.env.ORCA_HOME = home = realpathSync(home); // tmux reports panes by their real path (/private/var/… on macOS)
+  const repo = paths.repo("test"), elsewhere = join(home, "elsewhere");
+  await mkdir(repo, { recursive: true }); await mkdir(elsewhere, { recursive: true });
+  const started = Bun.spawnSync(tmux.argv("new-session", "-d", "-s", "stack", "-c", repo, "sleep 30"), { cwd: home });
+  expect(started.exitCode).toBe(0);
+  try {
+    const list = async (context: ToolContext) => JSON.parse(await processTool.run({ action: "list" }, context) as string);
+    const orchestrator = await list({ ...ctx, role: "orchestrator", branch: undefined });
+    expect(orchestrator.processes).toEqual([]);
+    expect(orchestrator.sessions).toMatchObject([{ name: "stack", kind: "tmux_session", live: true, windows: [{ path: repo, live: true }] }]);
+    expect((await list({ ...ctx, cwd: repo })).sessions.map((s: { name: string }) => s.name)).toEqual(["stack"]);
+    expect((await list({ ...ctx, cwd: elsewhere })).sessions).toEqual([]); // a worker sees only sessions in its own folder
+  } finally { Bun.spawnSync(tmux.argv("kill-server"), { cwd: home }); }
 });

@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { registerPRWatch, handoffProcess, processOwner, processInspection, unresolvedProcess, controlProcess, processDirectory, listProcesses, processOutput, readProcess, reconcileProcesses, liveProcess, type ProcessRecord } from "../data/processes";
-import { sessionId } from "../tmux";
+import { processes, sessionId } from "../tmux";
 import { originRepo } from "../data/tasks";
 import { sha } from "../../protocol/task";
 import { observation, pending } from "../data/inbox";
@@ -43,13 +43,19 @@ export async function waitForProcess(ctx: ToolContext, id: string, timeoutMs: nu
 }
 
 export const processTool: Tool = {
-  spec: { name: "process", description: "Manage background commands: list, status, output, wait, input, stop, forget or handoff. wait blocks until the command settles or is ready, a watched PR changes, a message arrives or timeout_s passes, and returns status plus an output tail; use it instead of sleep. Handoff transfers control and pending/future events to another existing agent in this conversation without restarting the command; supply to and a reason describing remaining responsibility. Sandbox commands retain their environment lifetime. watch_pr registers ongoing project-owned PR monitoring (CI, review decision, head, closure, merge) in the shared runtime observer, without a shell or command slot; notifications go to the orchestrator after workers finish. Use a PR number and full head SHA in the project origin. Then wait or yield; no Bash polling loops. Status separates unknown outcomes from verified stopped processes. Checks alone do not establish merge readiness. The orchestrator can control all project commands.",
+  spec: { name: "process", description: "Manage background commands: list, status, output, wait, input, stop, forget or handoff. list returns processes (records by id) and sessions: tmux sessions agents opened from bash in this conversation's folders, the same ones the user's Processes tab shows; they have no record, so inspect or end them with tmux itself. wait blocks until the command settles or is ready, a watched PR changes, a message arrives or timeout_s passes, and returns status plus an output tail; use it instead of sleep. Handoff transfers control and pending/future events to another existing agent in this conversation without restarting the command; supply to and a reason describing remaining responsibility. Sandbox commands retain their environment lifetime. watch_pr registers ongoing project-owned PR monitoring (CI, review decision, head, closure, merge) in the shared runtime observer, without a shell or command slot; notifications go to the orchestrator after workers finish. Use a PR number and full head SHA in the project origin. Then wait or yield; no Bash polling loops. Status separates unknown outcomes from verified stopped processes. Checks alone do not establish merge readiness. The orchestrator can control all project commands.",
     input_schema: { type: "object", properties: { action: { type: "string", enum: ["list", "status", "output", "wait", "input", "stop", "forget", "handoff", "watch_pr"] }, id: { type: "string" }, to: { type: "string", description: "Existing agent ID in this conversation, or orchestrator." }, reason: { type: "string", description: "Remaining responsibility for handoff." }, cursor: { type: "integer", minimum: 0 }, timeout_s: { type: "integer", minimum: 1, maximum: 900, description: "For wait; default 300." }, text: { type: "string" }, number: { type: "integer", minimum: 1, description: "GitHub PR number for watch_pr." }, head: { type: "string", description: "Full current PR head SHA for watch_pr." } }, required: ["action"] } },
   async run(input, ctx) {
     await reconcileProcesses(ctx.project);
     const owner = sessionId(ctx.role, ctx.branch);
-    if (input.action === "list") return JSON.stringify((await listProcesses(ctx.project)).filter(p => ctx.role === "orchestrator" || processOwner(p) === owner || p.prWatch)
-      .map(p => ({ id: p.id, owner: processOwner(p), createdBy: p.owner, kind: p.prWatch ? "pr_watch" : "command", state: p.state, settledAt: p.settledAt, readyUrl: p.readyAt ? p.readyUrl : undefined, exitCode: p.exitCode })));
+    if (input.action === "list") {
+      const records = (await listProcesses(ctx.project)).filter(p => ctx.role === "orchestrator" || processOwner(p) === owner || p.prWatch)
+        .map(p => ({ id: p.id, owner: processOwner(p), createdBy: p.owner, kind: p.prWatch ? "pr_watch" : "command", state: p.state, settledAt: p.settledAt, readyUrl: p.readyAt ? p.readyUrl : undefined, exitCode: p.exitCode }));
+      const mine = (path: string) => ctx.role === "orchestrator" || path === ctx.cwd || path.startsWith(ctx.cwd + "/");
+      const sessions = (await processes.sessionRows(ctx.project)).filter(s => s.windows.some(w => mine(w.path)))
+        .map(s => ({ name: s.name, kind: "tmux_session", live: s.windows.some(w => w.live), windows: s.windows.map(w => ({ window: w.window, command: w.command, path: w.path, live: w.live })) }));
+      return JSON.stringify({ processes: records, sessions });
+    }
     if (input.action === "watch_pr") {
       const { number, head } = input;
       if (typeof number !== "number" || !Number.isSafeInteger(number) || number < 1 || typeof head !== "string" || !sha(head)) {
