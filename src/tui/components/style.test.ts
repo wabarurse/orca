@@ -15,6 +15,7 @@ const draw = (f: Frame) => { const s = new FakeScreen(f.cols, f.rows); s.write(l
 /** The visible screen's backgrounds, one string per row: "#" a cell on BG, "." one without. */
 const marks = (s: FakeScreen) => s.backgrounds().slice(s.top).map((r) => Array.from({ length: s.cols }, (_, c) => (r[c] === CELL ? "#" : r[c] ? "?" : ".")).join(""));
 const full = (cols: number) => "#".repeat(cols);
+const none = (cols: number) => ".".repeat(cols);
 /** History lines committed to a fresh screen. */
 const committed = (lines: Parameters<typeof lineRows>[0][], cols: number, rows = 10) => {
   const s = new FakeScreen(cols, rows);
@@ -23,7 +24,7 @@ const committed = (lines: Parameters<typeof lineRows>[0][], cols: number, rows =
 };
 
 describe("input area", () => {
-  test("input and status rows are full-width bands; styling never changes the cursor", () => {
+  test("the input and counts are framed by the box, never shaded; styling never changes the cursor", () => {
     const f = frame();
     setUserFill(null);
     const plain = draw(f);
@@ -31,27 +32,27 @@ describe("input area", () => {
     const s = draw(f);
     // The count row sits inside the box, in place of its bottom edge.
     expect(s.screen().slice(0, 4)).toEqual(["┌──────────────────┐", "│ > hi             │", "│ s                │", ""]);
-    expect(marks(s).slice(0, 3)).toEqual([full(20), full(20), full(20)]);
+    expect(marks(s).slice(0, 3)).toEqual([none(20), none(20), none(20)]);
     expect([s.row, s.col]).toEqual([plain.row, plain.col]);
     expect([s.row, s.col]).toEqual([1, 6]);
   });
 
-  test("a wrapped multi-row input: every row filled, the cursor on its row and column", () => {
+  test("a wrapped multi-row input: every row inside the box, unshaded, the cursor on its row and column", () => {
     setUserFill(BG);
     const text = "0123456789abcdefghij\nsecond";
     const s = draw(frame({ input: { prompt: "> ", text, cursor: 12 } }));
     expect(s.screen().slice(0, 6)).toEqual(["┌──────────────────┐", "│ > 0123456789abcd │", "│   efghij         │", "│   second         │", "│ s                │", ""]);
-    expect(marks(s).slice(0, 5)).toEqual(Array(5).fill(full(20)));
+    expect(marks(s).slice(0, 5)).toEqual(Array(5).fill(none(20)));
     expect([s.row, s.col]).toEqual([1, 16]); // after "│ > 0123456789ab"
     const end = draw(frame({ input: { prompt: "> ", text, cursor: text.length } }));
     expect([end.row, end.col]).toEqual([3, 10]);
   });
 
-  test("input and status remain filled on a short screen", () => {
+  test("input and status stay unshaded on a short screen", () => {
     setUserFill(BG);
     const s = draw(frame({ rows: 3 }));
     expect(s.screen()).toEqual(["> hi", "s", ""]);
-    expect(marks(s).slice(0, 2)).toEqual([full(20), full(20)]);
+    expect(marks(s).slice(0, 2)).toEqual([none(20), none(20)]);
     expect([s.row, s.col]).toEqual([0, 4]);
   });
 
@@ -59,14 +60,14 @@ describe("input area", () => {
     setUserFill(BG);
     const s = draw(frame({ cols: 11, input: { prompt: "> ", text: "你好世界", cursor: 4 } }));
     expect(s.screen().slice(0, 4)).toEqual(["┌─────────┐", "│ > 你好  │", "│   世界  │", "│ s       │"]);
-    expect(marks(s).slice(0, 4)).toEqual(Array(4).fill(full(11)));
+    expect(marks(s).slice(0, 4)).toEqual(Array(4).fill(none(11)));
   });
 
-  test("a dim prompt and a narrow width keep the fill", () => {
+  test("a dim prompt and a narrow width stay unshaded", () => {
     setUserFill(BG);
     const s = draw(frame({ cols: 4, input: { prompt: "\x1b[2ma>\x1b[0m ", text: "xyz", cursor: 3 } }));
     expect(s.screen().slice(0, 2)).toEqual(["a…xy", "  z"]);
-    expect(marks(s).slice(0, 3)).toEqual(Array(3).fill(full(4)));
+    expect(marks(s).slice(0, 3)).toEqual(Array(3).fill(none(4)));
   });
 
   test("NO_COLOR: no background, box and prompt remain legible", () => {

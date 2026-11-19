@@ -581,7 +581,7 @@ describe("command and key tables", () => {
 });
 
 describe("user background", () => {
-  test("sent messages and the input are on the user background, full width, live and after a resize reprint", async () => {
+  test("sent messages are on the user background, full width, live and after a resize reprint; the input box is not", async () => {
     const term = fakeTerm(30, 20);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
@@ -599,7 +599,8 @@ describe("user background", () => {
       expect([bg[at("> a message")], bg[at("> a message") + 1], bg[at("alpha says hi")]]).toEqual([true, true, false]);
       const row = term.display.top + term.display.row;
       expect(term.display.buf[row]!.join("").trimEnd()).toBe("│ > draft" + " ".repeat(cols - 10) + "│");
-      expect([bg[row], bg[row + 1]]).toEqual([true, true]); // input, then the counts inside the box
+      expect(term.display.backgrounds()[row]!.some(Boolean)).toBe(false); // the box frames the input; it is not shaded
+      expect(term.display.backgrounds()[row + 1]!.some(Boolean)).toBe(false);
       expect(term.display.col).toBe(9);
     };
     check(30);
@@ -612,7 +613,7 @@ describe("user background", () => {
 });
 
 describe("terminal background", () => {
-  test("the first page is committed only once the terminal's background is known, in its shade; the input is redrawn in it", async () => {
+  test("the first page is committed only once the terminal's background is known, in its shade; the input box stays unshaded", async () => {
     const t = openTranscript(paths.transcript("shaded", "orchestrator"));
     await t.append({ type: "meta", role: "orchestrator", model: "m" });
     await t.append({ type: "message", message: { role: "user", content: "[user] earlier question" } });
@@ -631,7 +632,7 @@ describe("terminal background", () => {
     const row = term.display.text().split("\n").indexOf("> earlier question");
     expect(term.display.backgrounds()[row]!.every((b) => b === "48;5;254")).toBe(true);
     const input = term.display.top + term.display.row;
-    expect(term.display.backgrounds()[input]![0]).toBe("48;5;254");
+    expect(term.display.backgrounds()[input]!.some(Boolean)).toBe(false); // the input box is not shaded
     app.quit();
     await running;
   });

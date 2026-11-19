@@ -5,7 +5,6 @@
 // not drive the application's terminal lifecycle or conversation viewport.
 
 import { bold, dim, fit, sanitize, visibleLength, wrap } from "../components";
-import { fillRow, userFill } from "../components";
 import { layout, scrollWindow } from "./editor";
 
 /** Scrollable footer content is already wrapped to the current width; its viewport is transient. */
@@ -211,8 +210,8 @@ export function liveRows(f: Frame): { rows: string[]; cursor: number; col: numbe
   const streamed = f.partial ? f.partial.split("\n").flatMap((l) => wrap(sanitize(l), f.cols)) : [];
   const above = lastRows([...streamed, ...(f.running ?? []).map((r) => fit(sanitize(r), f.cols)), ...(f.activity ? [fit(sanitize(f.activity), f.cols)] : [])], free - panel.length);
   const band = [...queued, ...input.lines, ...status, ...panel];
-  const fill = userFill();
-  const rows = [...above, ...band.map((r) => fill ? fillRow(r, f.cols, fill) : r)];
+  // The box frames the input; only sent messages in the conversation keep the user background.
+  const rows = [...above, ...band];
   return { rows, cursor: above.length + queued.length + input.row, col: input.col };
 }
 

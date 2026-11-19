@@ -99,7 +99,7 @@ test("every streaming tail ends above the blank gap, which never borrows user or
       terminal.write(stickyUpdate(next, previous));
       expect(terminal.screen().slice(19, 22)).toEqual([last, "", "┌" + "─".repeat(78) + "┐"]);
       expect(terminal.backgrounds()[20]!.some(Boolean)).toBe(false);
-      expect(terminal.backgrounds()[21]!.every(Boolean)).toBe(true);
+      expect(terminal.backgrounds()[21]!.some(Boolean)).toBe(false);
       expect([terminal.row, terminal.col]).toEqual([22, 9]);
       expect(terminal.top).toBe(0);
       expect(saved).toEqual(before);
