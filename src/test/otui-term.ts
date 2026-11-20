@@ -19,6 +19,8 @@ export type TestTerminal = Terminal & {
   /** A press and release on the cell (1-based x, y), through OpenTUI's mouse. */
   click(x: number, y: number): Promise<void>;
   resize(cols: number, rows: number): void;
+  /** Where OpenTUI puts the terminal cursor (0-based row and column), or null while it is hidden. */
+  cursorAt(): { row: number; col: number } | null;
   /** What was written raw (the transcript printed on exit), and each rendered frame's text, in order. */
   writes: string[];
   shown: screens.Screen | null;
@@ -66,6 +68,10 @@ export function testTerminal(cols = 40, rows = 24): TestTerminal {
       return (line?.spans ?? []).filter(span => (span.attributes & 1) !== 0).map(span => span.text).join("").trim();
     },
     async click(x, y) { await rendering; await setup?.mockMouse.click(x - 1, y - 1); },
+    cursorAt() {
+      const state = setup?.renderer.getCursorState();
+      return state && state.visible ? { row: state.y - 1, col: state.x - 1 } : null;
+    },
     resize(c, r) { term.cols = c; term.rows = r; setup?.resize(c, r); for (const cb of resizers) cb(); render(); },
   };
   term.background = createTestRenderer({ width: cols, height: rows }).then(s => {

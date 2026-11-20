@@ -44,7 +44,7 @@ const plain = (s: string) => Bun.stripANSI(sanitize(s.replace(/[\r\n\t]/g, " "))
 const tabSpan = (labels: string[], start: number, end: number) => `${start > 0 ? "…   " : ""}${labels.slice(start, end + 1).join("   ")}${end < labels.length - 1 ? "   …" : ""}`;
 
 /** Add whole neighbours only; the active tab can never be pushed off the edge. */
-function tabWindow(labels: string[], active: number, cols: number): [number, number] {
+export function tabWindow(labels: string[], active: number, cols: number): [number, number] {
   let start = active, end = active;
   while (true) {
     if (start > 0 && visibleLength(tabSpan(labels, start - 1, end)) <= cols) start--;

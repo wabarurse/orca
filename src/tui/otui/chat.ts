@@ -1,6 +1,7 @@
 import { BoxRenderable, RGBA, ScrollBoxRenderable, StyledText, TextAttributes, TextRenderable, type MouseEvent, type RenderContext, type TextChunk } from "@opentui/core";
 import { CollapsiblePanelRenderable, CollapsibleRootRenderable, CollapsibleTriggerRenderable } from "@tuiparts/core/collapsible";
 import { linkAt, screens } from "../components";
+import { tabWindow } from "../header";
 import { applySgr, styledRows } from "./ansi";
 
 /** The bubble mark before the conversation's bubble in the header. */
@@ -92,6 +93,7 @@ export class ChatView {
   private readonly welcome: BoxRenderable;
   private readonly welcomeArt: TextRenderable;
   private readonly footer: TextRenderable;
+  private footerHeight = 1;
   private built: { key: string; item: Built }[] = [];
   private headerSig = "";
   private pressed: { x: number; y: number } | null = null;
@@ -132,12 +134,14 @@ export class ChatView {
     this.body.visible = !empty;
     this.welcomeArt.content = styledRows(screen.welcome);
     this.footer.content = styledRows(screen.footer);
-    this.footer.height = Math.max(1, screen.footer.length);
+    this.footerHeight = Math.max(1, screen.footer.length);
+    this.footer.height = this.footerHeight;
     this.body.marginBottom = this.ctx.height >= 8 ? 1 : 0;
   }
 
+  /** The footer's rows as last shown; OpenTUI's own height reads the previous layout until the next render. */
   footerRows(): number {
-    return this.footer.height;
+    return this.footerHeight;
   }
 
   scroll(by: "up" | "down" | "page-up" | "page-down" | "home" | "end"): void {
@@ -153,16 +157,20 @@ export class ChatView {
     const wide = cols >= FIN_MIN_COLS && header.fin !== null;
     this.fin.visible = wide;
     if (wide && header.fin !== null) this.fin.content = finText(FIN_COLS, header.fin.time, header.fin.active);
-    const sig = JSON.stringify([header.tabs, header.bubble, header.account, header.details, wide]);
+    const sig = JSON.stringify([header.tabs, header.bubble, header.account, header.details, wide, cols]);
     if (sig === this.headerSig) return;
     this.headerSig = sig;
     for (const child of this.info.getChildren()) child.destroyRecursively();
-    const tabs: TextChunk[] = [];
-    header.tabs.forEach((tab, i) => {
-      if (i > 0) tabs.push(chunk("   ", COLOURS.faint));
-      const label = tab.busy && !tab.active ? `${tab.label} •` : tab.label;
-      tabs.push(tab.active ? chunk(` ${label} `, COLOURS.ink, TextAttributes.BOLD, COLOURS.light) : chunk(label, COLOURS.faint));
-    });
+    // The tabs that fit beside the fin, shifted so the active one always shows; "…" marks the ones left out.
+    const labels = header.tabs.map(tab => tab.active ? ` ${tab.label} ` : tab.busy ? `${tab.label} •` : tab.label);
+    const active = Math.max(0, header.tabs.findIndex(tab => tab.active));
+    const [start, end] = tabWindow(labels, active, Math.max(1, cols - 4 - (wide ? FIN_COLS : 0)));
+    const tabs: TextChunk[] = start > 0 ? [chunk("…   ", COLOURS.faint)] : [];
+    for (let i = start; i <= end; i++) {
+      if (i > start) tabs.push(chunk("   ", COLOURS.faint));
+      tabs.push(i === active ? chunk(labels[i] ?? "", COLOURS.ink, TextAttributes.BOLD, COLOURS.light) : chunk(labels[i] ?? "", COLOURS.faint));
+    }
+    if (end < labels.length - 1) tabs.push(chunk("   …", COLOURS.faint));
     this.info.add(new TextRenderable(this.ctx, { content: styled(tabs), wrapMode: "none" }));
     if (header.bubble !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk(`${BUBBLE} `, COLOURS.light), chunk(header.bubble, COLOURS.mid)]), wrapMode: "none" }));
     if (header.account !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk(header.account, COLOURS.mid)]), wrapMode: "none" }));
