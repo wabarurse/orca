@@ -27,6 +27,11 @@ test("a foreground command sees ORCA_DATA, with the global link in place", async
   expect(bash.spec.description).toContain("$ORCA_DATA/<plugin>");
 });
 
+test("a foreground command gets the agent's evidence folder as ORCA_ARTIFACTS, like a background one", async () => {
+  const out = await bash.run({ command: 'printf "%s" "$ORCA_ARTIFACTS"; test -d "$ORCA_ARTIFACTS" && echo " exists"' }, ctx(home));
+  expect(out).toBe(`${join(home, "projects", "p", "tool-outputs", "evidence", "worker")} exists\n`);
+});
+
 test("captures stderr and reports non-zero exit", async () => {
   const out = await bash.run({ command: "echo out; echo err >&2; exit 3" }, ctx(home));
   expect(out).toContain("out");

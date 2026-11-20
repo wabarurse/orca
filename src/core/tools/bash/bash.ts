@@ -5,7 +5,8 @@ import { outputArtifact, OutputPreview } from "./output";
 import { hint } from "./hints";
 import { readOnly } from "./readonly";
 import type { Tool } from "../registry";
-import { launchProcess } from "../../data/processes";
+import { evidenceDirectory, launchProcess } from "../../data/processes";
+import { mkdir } from "node:fs/promises";
 import { ensureDataDirs } from "../../data/bubbles";
 import { execution } from "../../data/projects/lifecycle";
 import { cliCommand, sessionId } from "../../tmux";
@@ -80,10 +81,12 @@ export const bash: Tool = {
       if (Buffer.byteLength(artifact.partialPath) + 240 > cap) throw new Error("tool output path exceeds preview budget; increase max_output_bytes and maxToolResultBytes");
       ctx.signal?.throwIfAborted();
       execution.assertActive(ctx.project, epoch);
-      const data = await ensureDataDirs(ctx.project);
+      // The same evidence folder a background command gets (data/processes/launch.ts), so $ORCA_ARTIFACTS always means one place.
+      const data = await ensureDataDirs(ctx.project), evidence = evidenceDirectory(ctx.project, sessionId(ctx.role, ctx.branch));
+      await mkdir(evidence, { recursive: true });
       const argv = await shellCommand(`exec 2>&1\n${command}`, ctx.cwd, false);
       execution.assertActive(ctx.project, epoch);
-      const proc = Bun.spawn(argv, { cwd: ctx.cwd, env: { ...process.env, ORCA_DATA: data }, detached: true, stdout: "pipe", stdin: "ignore" });
+      const proc = Bun.spawn(argv, { cwd: ctx.cwd, env: { ...process.env, ORCA_DATA: data, ORCA_ARTIFACTS: evidence }, detached: true, stdout: "pipe", stdin: "ignore" });
       const kill = () => killGroup(proc);
       process.once("exit", kill);
       try {
