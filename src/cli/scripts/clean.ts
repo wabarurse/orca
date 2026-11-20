@@ -1,5 +1,6 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
+import { createInterface } from "node:readline";
 import { conversationIds, paths } from "../../config";
 import { pruneBuildScratch } from "../../core/install";
 import { cleanup, ownership } from "../../core/tmux";
@@ -19,13 +20,25 @@ async function purgeArchived(project: string): Promise<{ saved: string[] }> {
   if (stopped.problems.length) throw new Error(stopped.problems.join("; "));
   return ownership.deleteProject(project, { stop: stopDaemon });
 }
-export async function cleanStorage(apply: boolean, purge: (project: string) => Promise<{ saved: string[] }> = purgeArchived) {
+/** Where a clean is: a phase and how far through it. The CLI draws it on stderr, tests record it. */
+export interface CleanProgress { step(label: string, done: number, total: number): void; end(): void }
+export const quietProgress: CleanProgress = { step() {}, end() {} };
+
+export async function cleanStorage(apply: boolean, purge: (project: string) => Promise<{ saved: string[] }> = purgeArchived, progress: CleanProgress = quietProgress) {
+  const verb = apply ? "cleaning" : "scanning";
+  try { return await collect(apply, purge, (phase, done, total) => progress.step(`${verb} ${phase}`, done, total)); }
+  finally { progress.end(); }
+}
+async function collect(apply: boolean, purge: (project: string) => Promise<{ saved: string[] }>, step: (phase: string, done: number, total: number) => void) {
   const changes: { path: string; disposition: string }[] = [];
   // A conversation the user deleted was only archived (core/tmux/retire.ts): this is where it is removed for good.
   // The purge is the ownership cascade, with its refusals: a worktree holding uncommitted files keeps the conversation.
-  for (const project of conversationIds(paths.root)) {
+  const archived = conversationIds(paths.root).flatMap(project => {
     const archive = directories.projectArchive(project);
-    if (!archive) continue;
+    return archive ? [{ project, archive }] : [];
+  });
+  for (const [index, { project, archive }] of archived.entries()) {
+    step("deleted conversations", index, archived.length);
     const name = await displayName(project).catch(() => project);
     try {
       const saved = apply ? (await purge(project)).saved : [];
@@ -33,8 +46,9 @@ export async function cleanStorage(apply: boolean, purge: (project: string) => P
     } catch (error) { changes.push({ path: paths.project(project), disposition: `kept: conversation "${name}" could not be removed (${error instanceof Error ? error.message : error})` }); }
   }
   const current = conversationIds(paths.root);
-  const projects = new Set([...current, ...workspaces.list().filter(w => !w.cleanedAt).map(w => w.members[0]!.project)]);
-  for (const project of projects) {
+  const projects = [...new Set([...current, ...workspaces.list().filter(w => !w.cleanedAt).map(w => w.members[0]!.project)])];
+  for (const [index, project] of projects.entries()) {
+    step("projects", index, projects.length);
     try {
       if (current.includes(project)) for (const v of await listVerifications(project)) changes.push({ path: v.id, disposition: `verification ${v.state}` });
       // One preview overlay for both: the outputs discovery would register count as registered here too.
@@ -47,6 +61,7 @@ export async function cleanStorage(apply: boolean, purge: (project: string) => P
     } catch (error) { changes.push({ path: project, disposition: `kept: inspection failed (${error})` }); }
   }
   // Bubbles: notebook pages archived longer than the retention go, and so does a bubble no conversation is attached to.
+  step("bubbles", 0, 1);
   try {
     const orphans = await orphanBubbles();
     for (const bubble of orphans) {
@@ -59,8 +74,44 @@ export async function cleanStorage(apply: boolean, purge: (project: string) => P
       }
     }
   } catch (error) { changes.push({ path: paths.bubbles, disposition: `kept: inspection failed (${error})` }); }
+  step("build scratch", 0, 1);
   changes.push(...await pruneBuildScratch(join(paths.runtime, "app"), apply));
   return changes;
+}
+
+/** The scan's one redrawn stderr line: a bar, the phase and its count; cleared when the scan ends. Nothing when
+ * stderr is not a terminal, so piped output and logs never carry carriage returns. */
+export function terminalProgress(stream: { isTTY: boolean; columns: number; write(text: string): unknown }, colour: boolean): CleanProgress {
+  if (!stream.isTTY) return quietProgress;
+  const paint = (code: string, text: string) => colour && text ? `\x1b[${code}m${text}\x1b[0m` : text;
+  let drawn = false;
+  return {
+    step(label, done, total) {
+      const text = `${label} ${done}/${total}…`, width = 20;
+      const filled = total ? Math.round(width * done / total) : 0;
+      const bar = paint(pastel.cyan, "━".repeat(filled)) + paint(pastel.grey, "━".repeat(width - filled));
+      const room = Math.max(0, (stream.columns || 80) - 1);
+      stream.write(`\r\x1b[2K${room >= text.length + width + 2 ? `  ${bar} ${paint("2", text)}` : text.slice(0, room)}`);
+      drawn = true;
+    },
+    end() { if (drawn) stream.write("\r\x1b[2K"); drawn = false; },
+  };
+}
+
+/** The confirmation's answer: true only for y or Y. An input that ends without a line (nothing piped, /dev/null,
+ * a closed terminal) is a no, so a script that forgot --yes removes nothing. A piped answer is echoed after the question. */
+export function askYes(question: string, input: NodeJS.ReadableStream, output: NodeJS.WritableStream): Promise<boolean> {
+  const lines = createInterface({ input, output, terminal: false });
+  output.write(question);
+  return new Promise(resolve => {
+    let answered = false;
+    lines.once("line", line => {
+      answered = true;
+      if (Reflect.get(input, "isTTY") !== true) output.write(`${line}\n`); // a terminal echoes what was typed; a pipe does not
+      lines.close(); resolve(["y", "Y"].includes(line.trim()));
+    });
+    lines.once("close", () => { if (!answered) { output.write("\n"); resolve(false); } });
+  });
 }
 
 /** One clean result: what it is, what happened to it, and its size on disk (measured before anything was removed). */
@@ -97,13 +148,11 @@ export function formatBytes(bytes: number): string {
   return unit === 0 ? `${value} B` : `${value.toFixed(1)} ${units[unit]}`;
 }
 
-/** C1/C2: a WHAT · ITEMS · SIZE table with a total, then what was kept and why, then the saved branches or the next step. */
-export function cleanReport(rows: CleanRow[], apply: boolean, colour: boolean): string {
-  const style = (code: string) => (text: string) => colour ? `\x1b[${code}m${text}\x1b[0m` : text;
-  const dim = style("2"), bold = style("1"), green = style(pastel.green), yellow = style(pastel.yellow);
-  const pad = (text: string, width: number) => text.length >= width ? text : text + " ".repeat(width - text.length);
-  const right = (text: string, width: number) => text.length >= width ? text : " ".repeat(width - text.length) + text;
-  const count = (n: number) => n.toLocaleString("en-US");
+/** Which table: a preview (with the next step), the list a confirmation asks about, or what a run removed. */
+export type ReportMode = "preview" | "confirm" | "removed";
+
+/** The rows a clean would remove (or did), by kind; kept rows and report-only rows are left out. */
+function removable(rows: CleanRow[]): Map<string, { items: number; bytes: number }> {
   const groups = new Map<string, { items: number; bytes: number }>();
   for (const row of rows) {
     const what = kind(row.disposition);
@@ -112,6 +161,18 @@ export function cleanReport(rows: CleanRow[], apply: boolean, colour: boolean): 
     group.items++; group.bytes += row.bytes;
     groups.set(what, group);
   }
+  return groups;
+}
+
+/** C1/C2: a WHAT · ITEMS · SIZE table with a total, then what was kept and why, then the saved branches or the next step. */
+export function cleanReport(rows: CleanRow[], mode: ReportMode, colour: boolean): string {
+  const apply = mode === "removed";
+  const style = (code: string) => (text: string) => colour ? `\x1b[${code}m${text}\x1b[0m` : text;
+  const dim = style("2"), bold = style("1"), green = style(pastel.green), yellow = style(pastel.yellow);
+  const pad = (text: string, width: number) => text.length >= width ? text : text + " ".repeat(width - text.length);
+  const right = (text: string, width: number) => text.length >= width ? text : " ".repeat(width - text.length) + text;
+  const count = (n: number) => n.toLocaleString("en-US");
+  const groups = removable(rows);
   const held = rows.filter(row => kept(row.disposition));
   const saved = rows.flatMap(row => /local changes saved to (.+)$/.exec(row.disposition)?.[1]?.split(", ") ?? []);
   const lines: string[] = [];
@@ -129,15 +190,22 @@ export function cleanReport(rows: CleanRow[], apply: boolean, colour: boolean): 
     lines.push(`  ${yellow("kept")} ${shown.join(dim(" · "))}${held.length > 3 ? dim(` · +${held.length - 3} more`) : ""}`);
   }
   for (const branch of saved) lines.push(`${green("✓")} saved local changes to ${branch}`);
-  if (!apply && groups.size) lines.push("", dim("  run ") + bold("orca clean") + dim(" to remove these"));
+  if (mode === "preview" && groups.size) lines.push("", dim("  run ") + bold("orca clean") + dim(" to remove these"));
   return lines.join("\n");
 }
 
-/** `orca clean [--preview]`: sizes come from a preview taken before anything is removed. */
-export async function cleanCommand(apply: boolean, colour: boolean, clean: (apply: boolean) => Promise<Found[]> = cleanStorage): Promise<string> {
-  const preview = (await clean(false)).map(row => ({ ...row, bytes: row.bytes ?? sizeOf(row.path) }));
-  if (!apply) return cleanReport(preview, false, colour);
+/** How `orca clean` talks to the terminal. `confirm` gets the table of what would go and answers whether to go
+ * ahead; null is --yes (remove without asking). */
+export interface CleanIO { colour: boolean; confirm: ((table: string) => Promise<boolean>) | null; progress: CleanProgress }
+type Clean = (apply: boolean, progress: CleanProgress) => Promise<Found[]>;
+
+/** `orca clean [--preview] [--yes]`: a scan first, which is the preview and gives the sizes; a real run then asks
+ * about that list (unless --yes or nothing would go) and only on yes runs again to remove, rechecking every item. */
+export async function cleanCommand(apply: boolean, io: CleanIO, clean: Clean = (apply, progress) => cleanStorage(apply, purgeArchived, progress)): Promise<string> {
+  const preview = (await clean(false, io.progress)).map(row => ({ ...row, bytes: row.bytes ?? sizeOf(row.path) }));
+  if (!apply || !removable(preview).size) return cleanReport(preview, "preview", io.colour);
+  if (io.confirm && !await io.confirm(cleanReport(preview, "confirm", io.colour))) return "nothing removed";
   const sizes = new Map(preview.map(row => [row.path, row.bytes]));
-  const done = (await clean(true)).map(row => ({ ...row, bytes: row.bytes ?? sizes.get(row.path) ?? 0 }));
-  return cleanReport(done, true, colour);
+  const done = (await clean(true, io.progress)).map(row => ({ ...row, bytes: row.bytes ?? sizes.get(row.path) ?? 0 }));
+  return cleanReport(done, "removed", io.colour);
 }

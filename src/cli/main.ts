@@ -12,7 +12,7 @@ import { readProcess, superviseProcess, watchPRChecks } from "../core/data/proce
 // orca agent-exit --project p --role r --branch b --run id --code n   internal: notice after a non-zero exit (branch "" for the orchestrator)
 
 import { ghTaskPR } from "../core/data/tasks";
-import { cleanCommand, cleanStorage, pull, runMcp } from "./scripts";
+import { askYes, cleanCommand, cleanStorage, pull, runMcp, terminalProgress } from "./scripts";
 import pkg from "../../package.json";
 import { afterExit, runAgent } from "../exec";
 import { put } from "../core/data/inbox";
@@ -44,7 +44,7 @@ function usage(error?: string): never {
   orca                            start for the repository in the current directory
   orca start [project] [directory]
   orca startup <conversation-name|--all>  choose conversations restored on startup
-  orca clean [--preview] [--json] delete eligible archived storage; --preview lists without deleting
+  orca clean [--preview] [--yes] [--json]  delete eligible archived storage after asking; --preview lists without deleting, --yes skips the question
   orca msg <project> <text>
   orca stop <project>             stop its orchestrator daemon (workers keep running)
   orca mcp [test [name] | login <name> | logout <name>]   the mcp servers in ~/.orca/mcp.json
@@ -61,10 +61,17 @@ if (cmd !== "msg" && (rest.includes("--help") || rest.includes("-h"))) usage();
 switch (cmd) {
   case "clean": {
     // Keep old explicit flags as aliases, particularly --dry-run's non-destructive meaning.
-    if (rest.length > 2 || rest.some(arg => !["--preview", "--apply", "--dry-run", "--json"].includes(arg))) usage("clean accepts --preview and --json (or legacy --dry-run / --apply)");
+    if (rest.length > 3 || rest.some(arg => !["--preview", "--apply", "--dry-run", "--json", "--yes", "-y"].includes(arg))) usage("clean accepts --preview, --yes and --json (or legacy --dry-run / --apply)");
     const apply = !rest.includes("--preview") && !rest.includes("--dry-run");
-    if (rest.includes("--json")) console.log(JSON.stringify(await cleanStorage(apply), null, 2));
-    else console.log(await cleanCommand(apply, !!process.stdout.isTTY && !process.env.NO_COLOR));
+    const yes = rest.includes("--yes") || rest.includes("-y");
+    const progress = terminalProgress(process.stderr, !!process.stderr.isTTY && !process.env.NO_COLOR);
+    if (rest.includes("--json")) {
+      if (apply && !yes) usage("clean --json cannot ask before removing: add --yes, or --preview to only list");
+      console.log(JSON.stringify(await cleanStorage(apply, undefined, progress), null, 2));
+      break;
+    }
+    const confirm = async (table: string) => { console.log(table); return askYes("Delete these? [y/N] ", process.stdin, process.stderr); };
+    console.log(await cleanCommand(apply, { colour: !!process.stdout.isTTY && !process.env.NO_COLOR, confirm: yes ? null : confirm, progress }));
     break;
   }
   case "startup": {

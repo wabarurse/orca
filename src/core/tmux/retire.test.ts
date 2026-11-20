@@ -186,7 +186,10 @@ test("orca clean is the purge: an archived orc is listed in a preview and remove
   const { options } = running([]);
   await archiveProject("p", options);
   const purged: string[] = [];
-  const preview = await cleanStorage(false, async project => { purged.push(project); return { saved: [] }; });
+  const steps: string[] = [];
+  const progress = { step: (label: string, done: number, total: number) => { steps.push(`${label} ${done}/${total}`); }, end: () => {} };
+  const preview = await cleanStorage(false, async project => { purged.push(project); return { saved: [] }; }, progress);
+  expect(steps.slice(0, 3)).toEqual(["scanning deleted conversations 0/1", "scanning projects 0/2", "scanning projects 1/2"]); // real progress: one step per item
   expect(preview.find(change => change.path === paths.project("p"))!.disposition).toMatch(/^would remove: conversation ".*" deleted \d{4}-\d\d-\d\d$/);
   expect(purged).toEqual([]); expect(existsSync(paths.project("p"))).toBe(true);
   const { deleteProject } = await import("./ownership");
