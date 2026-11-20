@@ -1,4 +1,5 @@
 import { usageScope } from "../../../api";
+import { restartable } from "../../../api/errors";
 import { usageEvent } from "../../../config";
 import { completeInterruptedTools } from "../../data/transcripts";
 import { materializeImages } from "../../data/images";
@@ -15,7 +16,7 @@ import type { Tracker } from "../../tmux";
 import type { ModelRequestState } from "../../tmux";
 import { consume, content } from "../../data/inbox";
 import type { Message } from "../../../protocol";
-import type { Provider } from "../../../api";
+import type { CompleteRequest, Provider, Turn } from "../../../api";
 import { sessionId } from "../../tmux";
 import type { Transcript } from "../../data/transcripts";
 import type { Role } from "../../../protocol";
@@ -25,7 +26,7 @@ import { scheduleTools } from "./tool-scheduler";
 import type { RollingOptions } from "../../data/memory";
 import { recordCorrection, recordRuntime } from "../../data/knowledge";
 import { execution } from "../../data/projects/lifecycle";
-import { Cancelled } from "../../tmux";
+import { Cancelled, delay } from "../../tmux";
 import { appendContext, type ContextValue } from "./context";
 import { responseTiming, type ResponseTiming } from "./response-timing";
 
@@ -188,6 +189,24 @@ async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Pro
   return msgs.length > 0;
 }
 
+/** Restarts of one reply, and the wait before each. */
+const RESTART_WAIT_MS = [2_000, 8_000];
+/**
+ * A reply that broke after it began left nothing behind: the transcript records a reply only once it completes, and
+ * no tool runs before that. So it is asked again from the start, a bounded number of times, instead of failing the
+ * turn (or crashing a worker). What streamed before the break was already shown; the notice says it is being redone.
+ */
+export async function completeRestarting(provider: Provider, request: CompleteRequest, waits = RESTART_WAIT_MS): Promise<Turn> {
+  for (let restarts = 0; ; restarts++) {
+    try { return await provider.complete(request); }
+    catch (error) {
+      if (restarts >= waits.length || !restartable(error) || request.signal?.aborted) throw error;
+      request.onNotice?.(`response interrupted (${error.reason}); asking again from the start (${restarts + 1}/${waits.length})`);
+      await delay(waits[restarts]!, request.signal);
+    }
+  }
+}
+
 /** One model request, streamed and appended to the transcript. */
 async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void, timing?: ResponseTiming) {
   assertExecution(deps);
@@ -226,7 +245,7 @@ async function ask(deps: AgentDeps, write: (t: string, plain?: boolean) => void,
     };
     await observe("provider-wait");
     timing?.requested();
-    const message = await deps.provider.complete(request);
+    const message = await completeRestarting(deps.provider, request);
     deps.signal?.throwIfAborted();
     if (message.content.some((b) => b.type === "text")) write("\n");
     await observe("completed");

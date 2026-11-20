@@ -10,7 +10,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import { createAgent } from "./agent";
+import { completeRestarting, createAgent } from "./agent";
+import { ModelRequestError } from "../../../api/errors";
 import { task } from "../../tools/task";
 import { listTasks } from "../../data/tasks/tasks";
 import { put } from "../../data/inbox/inbox";
@@ -419,4 +420,35 @@ test("a response that stops for a tool call but carries none is asked to continu
   expect(chain.some(m => Array.isArray(m.content) && m.content.length === 0)).toBe(false);
   expect(seen[1]!.at(-1)).toEqual({ role: "user", content: "The response stopped for a tool call but contained none. Continue the existing request within its current scope." });
   expect(chain.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "done" }] });
+});
+
+describe("a reply that breaks after it began", () => {
+  const request = (notices: string[]) => ({ model: "m", maxTokens: 10, messages: [], tools: [], onText() {}, onNotice: (t: string) => { notices.push(t); } });
+  const failing = (errors: Error[]): Provider & { calls: number } => {
+    const provider = { ...fakeProvider([]), calls: 0, async complete() {
+      provider.calls++;
+      const error = errors.shift();
+      if (error) throw error;
+      return { stop: "end" as const, content: [text("whole reply")] };
+    } };
+    return provider;
+  };
+
+  test("is asked again from the start, with a notice, and the whole reply is what returns", async () => {
+    const notices: string[] = [], provider = failing([new ModelRequestError("interrupted"), new ModelRequestError("idle-timeout")]);
+    expect((await completeRestarting(provider, request(notices), [0, 0])).content).toEqual([text("whole reply")]);
+    expect(provider.calls).toBe(3);
+    expect(notices).toEqual(["response interrupted (response); asking again from the start (1/2)", "response interrupted (idle-timeout); asking again from the start (2/2)"]);
+  });
+
+  test("gives up after its restarts, and never repeats a limit, a bad request or the total deadline", async () => {
+    const broken = failing([1, 2, 3].map(() => new ModelRequestError("interrupted")));
+    await expect(completeRestarting(broken, request([]), [0, 0])).rejects.toThrow("The response already started");
+    expect(broken.calls).toBe(3);
+    for (const error of [new ModelRequestError("interrupted", undefined, "output-limit"), new ModelRequestError("permanent", 400, "invalid-request"), new ModelRequestError("total-timeout")]) {
+      const provider = failing([error]);
+      await expect(completeRestarting(provider, request([]), [0, 0])).rejects.toBe(error);
+      expect(provider.calls).toBe(1);
+    }
+  });
 });
