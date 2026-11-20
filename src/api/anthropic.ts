@@ -137,6 +137,8 @@ function foreignReasoning(block: ThinkingBlockParam): boolean {
   try { return JSON.parse(block.signature)?.provider === "codex"; }
   catch { return false; }
 }
+/** The Messages API refuses a text block with no visible text (HTTP 400), which other providers may have recorded. */
+const blankText = (block: MessageParam["content"][number]) => typeof block !== "string" && block.type === "text" && !block.text.trim();
 export function claudeMessages(messages: MessageParam[]): MessageParam[] {
   for (const message of messages) if (Array.isArray(message.content)) for (const block of message.content) {
     if (block.type === "image") {
@@ -152,7 +154,7 @@ export function claudeMessages(messages: MessageParam[]): MessageParam[] {
   return messages.map((message) => ({
     ...message,
     content: typeof message.content === "string" ? message.content
-      : message.content.filter((block) => block.type !== "thinking" || !foreignReasoning(block)),
+      : message.content.filter((block) => !blankText(block) && (block.type !== "thinking" || !foreignReasoning(block))),
   })).filter((message) => message.content.length > 0);
 }
 

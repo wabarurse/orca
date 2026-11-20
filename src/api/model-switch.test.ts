@@ -91,3 +91,13 @@ test("reasoning-only foreign messages dropped; Claude signed/redacted reasoning 
   // This is a preservation assertion, NOT a claim signatures are accepted by
   // every Claude model. Only the service can validate historic signed thinking.
 });
+
+test("an empty Codex reply reaches Claude as nothing: blank text is never recorded or sent (the Messages API refuses it)", async () => {
+  const reply = fromResponses([{ type: "reasoning", id: "rs_e", summary: [], encrypted_content: "secret" },
+    { type: "message", id: "msg_e", role: "assistant", status: "completed", content: [{ type: "output_text", text: "", annotations: [] }] }] as never);
+  expect(reply.map(b => b.type)).toEqual(["thinking"]);
+  // A transcript an older build wrote, with the blank block already in it.
+  const history: MessageParam[] = [{ role: "user", content: "task" }, { role: "assistant", content: [...reply, { type: "text", text: "" }] },
+    { role: "user", content: "again" }, { role: "assistant", content: [{ type: "text", text: " \n" }, { type: "text", text: "kept" }] }];
+  expect(claudeMessages(history)).toEqual([{ role: "user", content: "task" }, { role: "user", content: "again" }, { role: "assistant", content: [{ type: "text", text: "kept" }] }]);
+});

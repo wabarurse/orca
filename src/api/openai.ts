@@ -84,7 +84,7 @@ export function fromResponses(output: ResponseOutputItem[]): ContentBlock[] {
     if ("status" in item && item.status && item.status !== "completed") throw new Error("codex returned an unfinished output item.");
     if (item.type === "message") {
       for (const part of item.content) {
-        if (part.type === "output_text") content.push({ type: "text", text: part.text, citations: null });
+        if (part.type === "output_text") { if (part.text) content.push({ type: "text", text: part.text, citations: null }); }
         else if (part.type === "refusal") content.push({ type: "text", text: part.refusal, citations: null });
       }
     } else if (item.type === "function_call") {
