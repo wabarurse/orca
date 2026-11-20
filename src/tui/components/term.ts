@@ -1,8 +1,8 @@
-// The terminal the TUI draws on: its size, key and resize events, raw output and a title. In production it is
-// OpenTUI (tui/otui), which owns raw mode, the alternate screen, paste and mouse input and takes whole painted
-// frames (`paint`); tests pass a fake that receives the escape-sequence diff instead.
+// The terminal the TUI draws on: its size, key, resize and click events, raw output and a title. It draws whole
+// screens (`show`): OpenTUI in production (tui/otui), OpenTUI's test renderer in tests.
 
 import type { Key } from "./keys";
+import type { Screen, ScreenAction } from "./screen-view";
 import { basename } from "node:path";
 
 export const repositoryTitle = (directory: string): string => basename(directory) ? `orca · ${basename(directory)}` : "orca";
@@ -28,11 +28,14 @@ export interface Terminal {
   eraseOnExit(text: string): void;
   /** Settles once the terminal's background is known or will not be (the OSC 11 reply or its timeout); the app commits the first page after it. */
   background?: Promise<void>;
-  /** A terminal that draws whole frames itself (OpenTUI) takes the painted rows and the cursor instead of escape-sequence diffs. */
-  paint?(frame: PaintedFrame): void;
+  /** Draw this screen (the chat or a full-screen page). */
+  show(screen: Screen): void;
+  /** Scroll the conversation: a row, a page, or to either end. */
+  scroll(by: "up" | "down" | "page-up" | "page-down" | "home" | "end"): void;
+  /** A click on the screen asked for something (open a fold, a link, a work-page item; copy a selection). */
+  onAction(cb: (action: ScreenAction) => void): void;
+  /** The text selected with the mouse, or "" when nothing is. */
+  selection(): string;
   /** Settles once close() has handed the screen back, so what is printed after it lands on the primary screen. */
   released?: Promise<void>;
 }
-
-/** One painted frame: its rows (with SGR and OSC 8) and the cursor's row and column, zero-based. */
-export interface PaintedFrame { rows: string[]; cursor: number; col: number }

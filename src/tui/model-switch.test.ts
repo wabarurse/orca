@@ -1,3 +1,4 @@
+import { testTerminal } from "../test/otui-term";
 import { afterAll, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,12 +28,8 @@ async function setup(agents: { name: string; live: boolean }[], choices?: AppDep
   const offer = { id: "claude-test" };
   choices ??= async () => ({ choices: [{ value: offer.id, label: offer.id }], errors: [], current: "gpt-6-astra" });
   const project = `p-${crypto.randomUUID()}`;
-  let key: (k: Key) => void = () => {};
-  const writes: string[] = [];
   const opened: string[] = [];
-  const term: Terminal = {
-    cols: 160, rows: 40, write(s) { writes.push(s); }, open() {}, close() {}, eraseOnExit() {}, onResize() {}, onKey(cb) { key = cb; },
-  };
+  const term = testTerminal(160, 40), writes = term.writes, key = (k: Key) => term.press(k);
   const app = new App({ term, pollMs: 100000, modelAgents: async () => agents.filter((a) => a.live).map((a) => a.name), modelChoices: choices,
     watchdog: async () => {}, merges: async () => {},
     openOrchestrator: async (id) => {
@@ -43,7 +40,7 @@ async function setup(agents: { name: string; live: boolean }[], choices?: AppDep
   });
   const running = app.run(project);
   await until(() => !!app.page);
-  return { app, project, writes, opened, offer, type(s: string) { for (const k of parseKeys(s)) key(k); }, key, async close() { app.quit(); await running; } };
+  return { app, project, writes, opened, offer, type(s: string) { term.type(s); }, key, async close() { app.quit(); await running; } };
 }
 
 test("direct switch counts only live subagents; Cancel and Escape never persist; Switch all saves project only", async () => {
@@ -424,7 +421,7 @@ test("/model for one role: the scope menu shows each role's model; only that rol
     expect(await effectiveModel(ui.project, "worker")).toBe("gpt-5.5");
     expect(await effectiveModel(ui.project, "reviewer")).toBe("gpt-6-astra");
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    await until(() => ui.writes.some((s) => { const text = Bun.stripANSI(s); return text.includes(" openai:default · ctx") && text.includes("orc: gpt-6-astra · ") && text.includes("worker: gpt-5.5 · ") && text.includes("reviewer: gpt-6-astra · "); }));
+    await until(() => ui.writes.some((s) => { const text = Bun.stripANSI(s); return text.includes("account openai:default") && text.includes("orc: gpt-6-astra · ") && text.includes("worker: gpt-5.5 · ") && text.includes("reviewer: gpt-6-astra · "); }));
     // The orchestrator scope never asks: only the orchestrator reads it.
     await pickModel(ui, "gpt-5.5", "orch");
     await until(() => note(ui.app).includes("orchestrator set to gpt-5.5"));
@@ -454,7 +451,7 @@ test("/model for one role: the scope menu shows each role's model; only that rol
     await until(() => note(ui.app).includes("model set to gpt-5.5"));
     expect(await effectiveModel(ui.project, "orchestrator")).toBe("gpt-5.5");
     expect(readProjectState(ui.project, "role-models")).toEqual({});
-    await until(() => ui.writes.some((s) => Bun.stripANSI(s).includes(" openai:default · gpt-5.5 · ")));
+    await until(() => ui.writes.some((s) => Bun.stripANSI(s).includes("account openai:default") && Bun.stripANSI(s).includes("gpt-5.5 · ")));
   } finally { await ui.close(); }
 });
 

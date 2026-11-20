@@ -19,6 +19,8 @@ async function setup(project: string, extra: Partial<AppDeps> = {}) {
   await until(() => app.page?.project === project);
   return { app, term, fake, stop: async () => { app.quit(); await running; } };
 }
+/** The status line: the last painted row (the frame text ends in a newline, so `display.screen()` has a blank row after it). */
+const lastRow = (term: { screen(): string }) => term.screen().split("\n").at(-1)!;
 const key = (app: App, text: string) => app.onKey({ name: "char", text });
 const names = (app: App) => app.work.state!.items.map(item => item.name);
 const selected = (app: App) => { const state = app.work.state!; return state.items[state.index]?.name; };
@@ -33,7 +35,7 @@ test("one page, six tabs: digits, Tab, Shift+Tab and h/l switch; chords open the
     await until(() => term.screen().includes("worker-alpha"));
     await until(() => /^Agents 6 {3}Tasks 0 {3}Questions 0 {3}Images 0 {3}Processes 0 {3}Bubbles \d+ +1 of 6$/.test(term.display.screen()[0]!));
     expect(term.display.screen()[2]).toMatch(/^ {2}NAME +STATUS +INFO$/);
-    expect(term.display.screen().at(-1)).toContain("j/k move");
+    expect(lastRow(term)).toContain("j/k move");
     for (const [typed, kind] of [["2", "tasks"], ["3", "questions"], ["4", "images"], ["5", "processes"], ["6", "projects"], ["1", "agents"]] as const) { await key(app, typed); expect(app.work.kind).toBe(kind); }
     await app.onKey({ name: "tab" }); expect(app.work.kind).toBe("tasks");
     await app.onKey({ name: "tab", shift: true }); await app.onKey({ name: "tab", shift: true }); expect(app.work.kind).toBe("projects");
@@ -77,8 +79,8 @@ test("find jumps as you type and marks the match; Enter keeps, Esc restores; n/N
     await key(app, "j");
     await key(app, "f"); expect(app.work.typing).toBe(true);
     term.type("BETA"); expect(selected(app)).toBe("worker-beta"); // from the row the find started on
-    await until(() => term.display.screen().at(-1)!.startsWith("find › BETA"));
-    expect(term.raw()).toContain("worker-\x1b[7mbeta\x1b[27m");
+    await until(() => lastRow(term).startsWith("find › BETA"));
+    expect(term.shown?.kind === "page" ? term.shown.rows.join("\n") : "").toContain("worker-\x1b[7mbeta\x1b[27m"); // the page rows as shown carry the reverse-video mark
     await app.onKey({ name: "backspace" }); await app.onKey({ name: "backspace" }); await app.onKey({ name: "backspace" }); await app.onKey({ name: "backspace" });
     term.type("gamma"); expect(selected(app)).toBe("worker-gamma");
     await app.onKey({ name: "escape" }); expect(selected(app)).toBe("worker-beta"); expect(app.work.open).toBe(true);
@@ -90,7 +92,7 @@ test("find jumps as you type and marks the match; Enter keeps, Esc restores; n/N
     await key(app, "n"); expect(selected(app)).toBe("reviewer-beta");
     await key(app, "N"); expect(selected(app)).toBe("reviewer-omega");
     await key(app, "2"); await key(app, "1"); await key(app, "n");
-    await until(() => term.display.screen().at(-1)!.includes("f starts a find")); // the find text does not follow to another tab
+    await until(() => lastRow(term).includes("f starts a find")); // the find text does not follow to another tab
   } finally { await stop(); }
 });
 
@@ -104,7 +106,7 @@ test("a question with options: Enter chooses from the default; a digit sends at 
     await app.onKey({ name: "enter" });
     await until(() => term.screen().includes("› 2  sqlite   default")); // starts on the default
     expect(term.screen()).toContain("  4  Other…");
-    expect(term.display.screen().at(-1)).toContain("j/k choose · 1–4 pick · enter send · esc cancel");
+    expect(lastRow(term)).toContain("j/k choose · 1–4 pick · enter send · esc cancel");
     await key(app, "j"); expect(app.work.state!.option).toBe(2);
     await app.onKey({ name: "escape" }); // cancels without answering
     expect(app.page!.questions.expanded).toBe(false); expect((await all(project)).every(q => q.status === "open")).toBe(true);
@@ -120,7 +122,7 @@ test("a question with options: Enter chooses from the default; a digit sends at 
     await until(() => selected(app) === "Name the release");
     await app.onKey({ name: "enter" }); await key(app, "3"); // the row after the options is Other…
     expect(app.questions.answering()).toBe(true); expect(app.work.typing).toBe(true);
-    term.type("v3 qf1"); await until(() => term.display.screen().at(-1)!.startsWith("answer › v3 qf1"));
+    term.type("v3 qf1"); await until(() => lastRow(term).startsWith("answer › v3 qf1"));
     await app.onKey({ name: "enter" });
     await until(() => app.page!.questions.open.length === 1);
     expect((await all(project)).find(q => q.id === third!.id)?.answer).toBe("v3 qf1");
@@ -137,7 +139,7 @@ test("a question with options: Enter chooses from the default; a digit sends at 
     expect(fake.said[project]).toEqual([]); // answers reach the orchestrator through its inbox, never as typed chat
     await until(() => selected(app) === "▸ Archived (4)"); // answered questions fold away
     await app.onKey({ name: "enter" }); await key(app, "j"); await app.onKey({ name: "enter" });
-    await until(() => term.display.screen().at(-1)!.includes("Closed question"));
+    await until(() => lastRow(term).includes("Closed question"));
   } finally { await stop(); }
 });
 
@@ -209,7 +211,7 @@ test("rows keep to one or two facts: INFO has no queued count, the divider is a 
     expect(screen.some(row => row.startsWith("── worker-busy"))).toBe(false);
     expect(screen.join("\n")).toContain("Now");
     expect(screen.join("\n")).toContain("3 queued messages");
-    expect(screen.at(-1)!.trim()).toBe("j/k move · h/l tabs · enter view · s stop · a archive · f find · q close");
+    expect(lastRow(term).trim()).toBe("j/k move · h/l tabs · enter view · s stop · a archive · f find · q close");
   } finally { await stop(); }
 });
 
@@ -339,7 +341,7 @@ test("Processes lists background commands under a heading; s asks, then stops th
     expect(selected(app)).toBe("bun run stack"); // never starts on the heading
     await until(() => /Processes 1/.test(term.display.screen()[0]!) && term.screen().includes("no output yet"));
     expect(term.display.screen().find(row => row.includes("bun run stack") && row.includes("running"))).toContain("worker-feat · 1m 3");
-    expect(term.display.screen().at(-1)).toContain("s stop");
+    expect(lastRow(term)).toContain("s stop");
     await key(app, "s"); expect(app.work.state!.confirm).toBe("Stop this command?");
     await key(app, "n"); expect(existsSync(join(processDirectory(project, id), "stop"))).toBe(false);
     await key(app, "s"); await key(app, "y");

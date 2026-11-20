@@ -4,7 +4,7 @@
 // The legacy inline helpers remain useful for isolated renderer tests; they do
 // not drive the application's terminal lifecycle or conversation viewport.
 
-import { bold, dim, fit, sanitize, visibleLength, wrap } from "../components";
+import { bold, dim, fit, railMark, sanitize, visibleLength, wrap } from "../components";
 import { layout, scrollWindow } from "./editor";
 
 /** Scrollable footer content is already wrapped to the current width; its viewport is transient. */
@@ -88,9 +88,9 @@ export function inputArea(input: Input, cols: number, rows: number, reserved = 0
   const top = scrollWindow(input.top ?? all.length, row, all.length, shown);
   const lines = all.slice(top, top + shown).map((r, i) => {
     const text = fit((top + i === 0 ? prompt : " ".repeat(indent)) + sanitize(r.text), cols - rail * 4);
-    return rail ? `${dim("│")} ${text}${" ".repeat(Math.max(0, cols - 4 - visibleLength(text)))} ${dim("│")}` : text;
+    return rail ? `${railMark("│")} ${text}${" ".repeat(Math.max(0, cols - 4 - visibleLength(text)))} ${railMark("│")}` : text;
   });
-  if (rail) { lines.unshift(dim("┌" + "─".repeat(cols - 2) + "┐")); lines.push(dim("└" + "─".repeat(cols - 2) + "┘")); }
+  if (rail) { lines.unshift(railMark("┌" + "─".repeat(cols - 2) + "┐")); lines.push(railMark("└" + "─".repeat(cols - 2) + "┘")); }
   return { lines, row: row - top + rail, col: Math.max(0, Math.min(cols - rail * 2 - 1, rail * 2 + indent + col)), top, boxed: !!rail };
 }
 
@@ -157,7 +157,7 @@ function footerBase(f: Frame): { status: string[]; input: InputArea; queued: str
   // A boxed composer is open at the bottom: the counts are its last rows, between its rails, in place of its bottom edge.
   const inside = area.boxed && counts.length > 0;
   const input = inside ? { ...area, lines: area.lines.slice(0, -1) } : area;
-  const status = inside ? counts.map(row => `${dim("│")} ${row}${" ".repeat(Math.max(0, f.cols - 4 - visibleLength(row)))} ${dim("│")}`) : counts;
+  const status = inside ? counts.map(row => `${railMark("│")} ${row}${" ".repeat(Math.max(0, f.cols - 4 - visibleLength(row)))} ${railMark("│")}`) : counts;
   const available = Math.max(0, f.rows - input.lines.length - status.length);
   // stickyRows already reserves one conversation row. Leave two more for content
   // and its separator when possible; cap previews at six rows / a third of the footer.

@@ -1,18 +1,10 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`help appearance fixtures 80x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
-"│ demo                                                                         │
-│ example-model · default                                                      │
-└──────────────────────────────────────────────────────────────────────────────┘
-Conversation record 27
-Conversation record 28
-Conversation record 29
-Conversation record 30
-
-┌──────────────────────────────────────────────────────────────────────────────┐
+exports[`help appearance fixtures 80x24: help starts below the boxed composer and its counts, leaving room for the conversation 1`] = `
+"┌──────────────────────────────────────────────────────────────────────────────┐
 │ > draft 界                                                                   │
 │ 2 agents running │ 1 task │ inbox 1                                          │
-help · commands & keys                                                 1–11/68
+help · commands & keys                                                 1–12/68
   conversation
   /clear-context  reset the project: history, tasks and agents go
   /help           commands and keyboard shortcuts; esc closes
@@ -24,6 +16,7 @@ help · commands & keys                                                 1–11/6
   model & accounts
   /effort [level|default]        choose or set project/model reasoning effort
   /fast [on|off]                 show or set project/model fast mode
+  /model [orch|worker|reviewer]  choose the model for all agents or one role
 ↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;
 
@@ -98,19 +91,11 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   /compact  summarize model context; keep full history"
 `;
 
-exports[`help appearance fixtures 40x24: help starts below boxed composer and counts, with conversation still visible 1`] = `
-"│ demo                                 │
-│ example-model · default              │
-└──────────────────────────────────────┘
-Conversation record 27
-Conversation record 28
-Conversation record 29
-Conversation record 30
-
-┌──────────────────────────────────────┐
+exports[`help appearance fixtures 40x24: help starts below the boxed composer and its counts, leaving room for the conversation 1`] = `
+"┌──────────────────────────────────────┐
 │ > draft 界                           │
 │ 2 agents running │ 1 task │ inbox 1  │
-help                          1–11/127
+help                          1–12/127
   conversation
   /clear-context
     reset the project: history, tasks
@@ -122,6 +107,7 @@ help                          1–11/127
   projects
   /rename <name>
     rename conversation and its folder
+    link; keep its identity
 ↑↓ scroll · esc close"
 `;
 
@@ -256,18 +242,11 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
 `;
 
 exports[`help appearance fixtures End reaches diagnostics with a bounded range and dismissal hint 1`] = `
-"│ demo                                                                         │
-│ example-model · default                                                      │
-└──────────────────────────────────────────────────────────────────────────────┘
-Conversation record 27
-Conversation record 28
-Conversation record 29
-Conversation record 30
-
-┌──────────────────────────────────────────────────────────────────────────────┐
+"┌──────────────────────────────────────────────────────────────────────────────┐
 │ > draft 界                                                                   │
 │ 2 agents running │ 1 task │ inbox 1                                          │
-help · commands & keys                                                58–68/68
+help · commands & keys                                                57–68/68
+  ctrl+v / ctrl+y      attach clipboard image / remove last image. terminal
                        text paste is unchanged
   shift/alt+enter      new line
   alt+←/→ / alt+b/f    move by word

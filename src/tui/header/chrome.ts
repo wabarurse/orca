@@ -1,7 +1,7 @@
 // Chapter rules for the pinned header. Labels are display-only; navigation and
 // storage continue to use the immutable project IDs held by App.
 import type { RequestSettings } from "../../api/model";
-import { bold, dim, fit, sanitize, visibleLength } from "../components";
+import { bold, dim, fit, sanitize, visibleLength, type screens } from "../components";
 
 export interface Tab { name: string; busy?: boolean }
 /** One role's request settings as the header shows them: its model, its effort and whether fast mode is on. */
@@ -81,4 +81,14 @@ export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
   const inner = cols - 4;
   const side = (text: string) => `${dim("│")} ${text}${" ".repeat(Math.max(0, inner - visibleLength(text)))} ${dim("│")}`;
   return [side(tabRow(c.tabs, c.active, inner)), ...details.map(row => side(dim(fit(row, inner)))), dim("└" + "─".repeat(cols - 2) + "┘")];
+}
+
+/** The header as the screen shows it: the tabs, the account on its own row, then the details rows without it. */
+export function headerView(c: Chapter, fin: screens.ScreenHeader["fin"]): screens.ScreenHeader {
+  return {
+    tabs: c.tabs.map((t, i) => ({ label: plain(t.name), active: i === c.active, busy: !!t.busy })),
+    account: c.account ? plain(c.account) : null,
+    details: detailRows({ ...c, account: undefined }),
+    fin,
+  };
 }

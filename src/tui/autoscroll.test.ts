@@ -7,6 +7,15 @@ import { paths } from "../config";
 
 const { fakeTerm, until, bodyStart, settle } = appFixture();
 
+/** The last conversation row drawn above the composer box. */
+const lastBodyRow = (term: ReturnType<typeof fakeTerm>) => {
+  const rows = term.display.screen().slice(bodyStart(term)), end = rows.findIndex(row => row.startsWith("┌"));
+  return rows.slice(0, end === -1 ? rows.length : end).filter(row => row.trim()).at(-1)?.trim() ?? "";
+};
+/** An agent message shows as its closed `▸ from <agent>` fold at the end; an external user message as its own text. */
+const arrived = (term: ReturnType<typeof fakeTerm>, message: { from: string; text: string }) =>
+  message.from === "user" ? term.screen().includes(message.text) : lastBodyRow(term) === `▸ from ${message.from}`;
+
 async function fixture() {
   const project = `follow-${crypto.randomUUID()}`, record = open(paths.transcript(project, "orchestrator"));
   await record.append({ type: "message", message: { role: "assistant", content: Array.from({ length: 80 }, (_, i) => `history ${i}`).join("\n") } });
@@ -31,7 +40,7 @@ test("worker, reviewer, runtime and external-user messages follow through passiv
       const message = { from, text: `${from} has new work`, inputId: crypto.randomUUID(), ts: new Date().toISOString(), deliveryId: crypto.randomUUID() };
       await f.record.append({ type: "message", inbox: [message], message: { role: "user", content: `[${from}] ${message.text}` } });
       await f.app.refreshSessions();
-      await until(() => f.term.screen().includes(message.text));
+      await until(() => arrived(f.term, message));
       f.write(`answer to ${from}\n`);
       await until(() => f.term.screen().includes(`answer to ${from}`));
       // Preserve real streamed output in the record before the next refresh.
@@ -49,8 +58,8 @@ test("live inbox delivery follows once, not again when the same receipt is resto
     f.term.press({ name: "pageup" }); await until(() => !f.term.screen().includes("history 79"));
     const message = { from: "worker-task", text: "worker result arrived", inputId: crypto.randomUUID(), ts: "now", deliveryId: crypto.randomUUID() };
     f.inbox([message]);
-    await until(() => f.term.screen().includes(message.text));
-    f.term.press({ name: "pageup" }); await until(() => !f.term.screen().includes(message.text));
+    await until(() => arrived(f.term, message));
+    f.term.press({ name: "pageup" }); await until(() => !f.term.screen().includes(`▸ from ${message.from}`));
     const top = f.term.display.screen()[bodyStart(f.term)];
     await f.record.append({ type: "message", inbox: [message], message: { role: "user", content: `[${message.from}] ${message.text}` } });
     f.hooks.onRefresh?.(); await settle();

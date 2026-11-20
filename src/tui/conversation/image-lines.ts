@@ -1,7 +1,7 @@
 import type { ImageRef } from "../../protocol";
-import { dim } from "../components";
+import type { ImageLine } from "./lines";
 
-export function imageLines(attachments: readonly ImageRef[] = []): string[] {
-  return attachments.filter(ref => /^[a-f0-9-]{36}$/.test(ref?.id ?? "")).map((ref, i) =>
-    dim(`Image ${i + 1} · ${ref.id.slice(0, 8)} · open on the Images page`));
+/** Images delivered to the user: one line each, shown in the turn's "+ N images" fold. */
+export function imageLines(attachments: readonly ImageRef[] = []): ImageLine[] {
+  return attachments.filter(ref => /^[a-f0-9-]{36}$/.test(ref?.id ?? "")).map((ref, i) => ({ image: `Image ${i + 1} · ${ref.id.slice(0, 8)}` }));
 }

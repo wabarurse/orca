@@ -1,3 +1,4 @@
+import { testTerminal } from "../../test/otui-term";
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,8 +7,7 @@ import { App, parseCommand, type AppDeps } from "../app";
 import { statusRows, type Frame } from "./render";
 import { visibleLength } from "../components/text";
 import { chapterRows, headerHeight } from "../header/chrome";
-import { stickyRows, stickyUpdate } from "../screen/sticky";
-import { FakeScreen } from "../components/testing";
+import { chatScreen } from "../screen";
 import { Calls } from "../conversation/tools";
 import type { Terminal } from "../components/term";
 import type { Orchestrator } from "../../core/agent-loop/orc/orchestrator";
@@ -35,11 +35,11 @@ async function setup(extra: Partial<AppDeps> = {}) {
   const home = mkdtempSync(join(tmpdir(), "task-inbox-ui-"));
   process.env.ORCA_HOME = home;
   await saveConfig({ model: "fake-model" });
-  const screen = new FakeScreen(100, 28);
+  const base = testTerminal(100, 28), screen = { text: () => base.screen(), screen: () => base.lines() };
   let resize = () => {}, turns = 0, cancelled = 0, closed = false, exit = "";
   const sent: { project: string; text: string; inputId?: string }[] = [];
   const receive = new Map<string, (msgs: Message[]) => void>();
-  const term: Terminal = { cols: 100, rows: 28, open() {}, close() { closed = true; }, eraseOnExit() {}, onKey() {}, onResize(cb) { resize = cb; }, write(s) { screen.write(s); if (closed) exit += s; } };
+  const term: Terminal = Object.assign(base, { open() {}, close() { closed = true; }, eraseOnExit() {}, onResize(cb: () => void) { resize = cb; }, write(s: string) { base.writes.push(s); if (closed) exit += s; } });
   const app = new App({ term, pollMs: 100_000, projectModel: async () => "fake-model", agents: async () => [], watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0, taskCount: async () => [],
     projects: { live: async () => [], kill: async () => {} },
     openOrchestrator: async (project, _url, _write, inbox) => {
@@ -53,7 +53,7 @@ async function setup(extra: Partial<AppDeps> = {}) {
   return { app, screen, term, receive, sent, running, calls: () => ({ turns, cancelled }), exit: () => exit,
     // Drive the existing poll's watchers deterministically, without another timer.
     poll: () => (app as unknown as { watchPages(): void }).watchPages(),
-    resize(cols: number, rows: number) { term.cols = cols; term.rows = rows; screen.resize(cols, rows); resize(); } };
+    resize(cols: number, rows: number) { base.resize(cols, rows); resize(); } };
 }
 /** The Questions page's rows while it is open. */
 const panelRows = (app: App) => app.work.open ? app.work.screen().rows : [];
@@ -185,10 +185,10 @@ test("Questions panel sanitizes fields and stays bounded at narrow/tiny sizes; E
   for (const [cols, rows] of [[100, 28], [40, 24], [20, 12], [12, 8], [4, 4], [1, 1]]) {
     ui.term.cols = cols!; ui.term.rows = rows!;
     await openForm(app);
-    const f = app.frame(), screen = stickyRows(f, [], chapterRows({ tabs: [], active: 0, roles: everyRole("fake-model") }, f.cols, headerHeight(f.rows)));
-    expect(screen.rows).toHaveLength(rows!);
-    expect(screen.rows.every(line => visibleLength(line) <= cols!)).toBe(true);
-    expect(screen.rows.join("")).not.toMatch(/\x1b\]|\x1b\[2J|\x1b\[31m|\u202e|\x07/);
+    const f = app.frame(), screen = chatScreen(f, [], null);
+    expect(screen.footer.length).toBeLessThanOrEqual(rows!);
+    expect(screen.footer.every(line => visibleLength(line) <= cols!)).toBe(true);
+    expect(screen.footer.join("")).not.toMatch(/\x1b\]|\x1b\[2J|\x1b\[31m|\u202e|\x07/);
     await app.onKey({ name: "escape" }); expect(app.input).toEqual(chat); expect(formOpen(app)).toBe(false);
   }
   expect(ui.sent).toEqual([]);

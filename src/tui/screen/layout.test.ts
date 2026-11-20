@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { append, commit, live, liveRows, queuedRows, type Frame } from "../footer/render";
-import { stickyRows, stickyUpdate } from "./sticky";
-import { chapterRows } from "../header/chrome";
+import { chatScreen, headerRows } from "./chat";
+import { chapterRows, headerView } from "../header/chrome";
 import { historyRows, type Line } from "../conversation/lines";
 import { userLines } from "../conversation/restore";
 import { MarkdownStream } from "../conversation/mdstream";
@@ -50,26 +50,29 @@ test("short and narrow composers never spill or lose cursor; NO_COLOR gives no b
   expect(liveRows(frame()).rows.join("")).not.toContain("48;");
 });
 
-test("chapter header stays pinned and unshaded while the conversation scrolls", () => {
+test("chapter header: a box of the tabs and details; the screen header splits the account onto its own row, and the footer does not move with the conversation", () => {
   const f = frame(80, 24);
-  const s = new FakeScreen(f.cols, f.rows);
-  const header = chapterRows({ tabs: [{ name: "project" }], active: 0, roles: everyRole("model") }, f.cols);
-  const first = stickyRows(f, [], header);
-  s.write(stickyUpdate(first));
-  const next = stickyRows(f, Array.from({ length: 80 }, (_, i) => `response ${i}`), header);
-  const update = stickyUpdate(next, first);
-  s.write(update);
-  expect(update).not.toContain("project");
-  expect(s.screen()[0]).toStartWith("│ project ");
-  expect(s.screen()[2]).toStartWith("└─");
-  expect(s.text()).toContain("response 79");
-  expect(s.backgrounds()[0]!.some(Boolean)).toBe(false);
-  expect(s.top).toBe(0);
+  const chapter = { tabs: [{ name: "project" }, { name: "other", busy: true }], active: 0, account: "anthropic:work", roles: everyRole("model") };
+  const box = chapterRows(chapter, f.cols).map(Bun.stripANSI);
+  expect(box[0]).toStartWith("│ project ");
+  expect(box[1]).toStartWith("│ anthropic:work · model · default");
+  expect(box[2]).toStartWith("└─");
+  const header = headerView(chapter, null);
+  expect(header).toEqual({ tabs: [{ label: "project", active: true, busy: false }, { label: "other", active: false, busy: true }], account: "anthropic:work", details: ["model · default"], fin: null });
+  expect(headerRows(header, 80)).toBe(4); // tabs, account, one details row, the box's bottom line
+  expect(headerRows({ ...header, account: null }, 80)).toBe(3);
+  expect(headerRows(null, 80)).toBe(0);
+  const empty = chatScreen(f, [], header);
+  const long = chatScreen(f, Array.from({ length: 80 }, (_, i) => ({ kind: "rows" as const, key: `${i}`, gap: false, rows: [`response ${i}`] })), header);
+  expect(long.footer).toEqual(empty.footer);
+  expect(long.cursor).toEqual(empty.cursor);
+  expect(long.header).toBe(header);
+  expect(empty.footer.join("")).not.toContain("48;"); // nothing in the footer is shaded
 });
 
 test("logical block separators are neutral, tools stay paired, lists and wrapped rows stay together", () => {
   setUserFill(bg);
-  const lines: Line[] = [...userLines("hello long message\ncontinuation"), { md: "reply", block: true }, { md: "", block: true }, { md: "- a", block: true }, { md: "- b", block: true, continuation: true }, { tool: "bash(ls)", summary: "2 lines", failed: false }, { tool: "bash(sleep)", summary: "interrupted", failed: true }];
+  const lines: Line[] = [...userLines("hello long message\ncontinuation"), { md: "reply", block: true }, { md: "", block: true }, { md: "- a", block: true }, { md: "- b", block: true, continuation: true }, { tool: "bash(ls)", summary: "2 lines", failed: false, kind: "tool", items: [] }, { tool: "bash(sleep)", summary: "interrupted", failed: true, kind: "tool", items: [] }];
   const full = historyRows(lines, 12);
   const split = [...historyRows(lines.slice(0, 4), 12), ...historyRows(lines.slice(4), 12, lines[3])];
   expect(split).toEqual(full);
@@ -104,27 +107,23 @@ test("queued previews sit immediately above the composer, with ordered Unicode/m
 });
 
 test("queued layout is bounded at every small size without changing composer geometry or escaping its footer", () => {
+  const header = headerView({ tabs: [{ name: "queue" }], active: 0, account: "openai:me", roles: everyRole("model") }, null);
   for (const cols of [1, 2, 4, 8, 12, 23, 40, 80]) for (const rows of [1, 2, 3, 4, 6, 8, 12, 16, 24, 50]) {
-    const f: Frame = { ...frame(cols, rows), menu: null, queued: { project: "queue", texts: Array.from({ length: 40 }, (_, i) => `${i}: 界é👩‍💻\n\tline\x1b[2J\x1b[H\x1b]0;bad title\x07\x1b[31mred\x1b[0m\b\x07`) } };
-    const plain = stickyRows({ ...f, queued: undefined }, ["conversation"], []);
-    const drawn = stickyRows(f, ["conversation"], []);
-    expect(drawn.rows).toHaveLength(rows);
-    expect(drawn.rows.every(row => Bun.stringWidth(row) <= cols)).toBe(true);
-    expect(drawn.cursor).toBe(plain.cursor); // no editor space stolen by pending input
-    expect(drawn.col).toBe(plain.col);
-    expect(drawn.rows[drawn.cursor]).toBe(plain.rows[plain.cursor]);
-    // The three-row reserve includes the new separator except on tiny screens.
-    expect(drawn.bodyHeight).toBeGreaterThanOrEqual(Math.min(rows < 8 ? 3 : 2, plain.bodyHeight));
-    const bottom = liveRows({ ...f, rows: Math.max(1, rows - 1) });
-    const footerAt = rows - bottom.rows.length;
-    expect(drawn.rows.slice(footerAt)).toEqual(bottom.rows);
-    if (rows >= 8 && footerAt >= 2) expect(drawn.rows[footerAt - 1]).toBe("");
-    expect(plain.bodyHeight - drawn.bodyHeight).toBeLessThanOrEqual(6);
-    const screen = new FakeScreen(cols, rows);
-    screen.write(stickyUpdate(drawn));
-    expect([screen.row, screen.col]).toEqual([drawn.cursor, drawn.col]);
-    expect(screen.top).toBe(0);
-    expect(screen.screen().join("\n")).not.toContain("bad title");
+    const f: Frame = { ...frame(cols, rows), menu: null, queued: { project: "queue", texts: Array.from({ length: 40 }, (_, i) => `${i}: 界é👩‍💻\n\tline\x1b[2J\x1b[H\x1b]0;bad title\x07\x1b[31mred\x1b[0m\b\x07`) } };
+    const items = [{ kind: "rows" as const, key: "0", gap: false, rows: ["conversation"] }];
+    const plain = chatScreen({ ...f, queued: undefined }, items, header);
+    const drawn = chatScreen(f, items, header);
+    expect(drawn.footer.length).toBeLessThanOrEqual(Math.max(1, rows - headerRows(header, f.cols) - 1));
+    expect(drawn.footer.every(row => Bun.stringWidth(row) <= cols)).toBe(true);
+    expect(drawn.cursor).not.toBeNull();
+    const at = drawn.cursor ?? { row: 0, col: 0 }, was = plain.cursor ?? { row: 0, col: 0 };
+    expect(drawn.footer[at.row]).toBe(plain.footer[was.row]); // no editor space stolen by pending input
+    expect(at.col).toBe(was.col);
+    expect(drawn.footer.length - plain.footer.length).toBeLessThanOrEqual(6);
+    const bottom = liveRows({ ...f, rows: Math.max(1, rows - headerRows(header, f.cols) - 1) });
+    expect(drawn.footer).toEqual(bottom.rows);
+    expect(at).toEqual({ row: bottom.cursor, col: bottom.col });
+    expect(drawn.footer.join("\n")).not.toContain("bad title");
   }
 });
 
@@ -145,20 +144,4 @@ test("one-row queue budgets still preview the oldest prompt; compact headings pr
   expect(queuedRows(queued, 24, 2).map(Bun.stripANSI)[0]).toStartWith("queued 1/3 · orch");
   expect(queuedRows(queued, 40, 0)).toEqual([]);
   expect(queuedRows({ ...queued, texts: [] }, 40, 4)).toEqual([]);
-});
-
-test("rows are painted in the text colour, and a change of colour repaints rows whose text did not change", async () => {
-  const { setBaseText } = await import("../components/style");
-  const screen = { rows: ["one \x1b[2mdim\x1b[0m", "two"], cols: 20, cursor: 1, col: 0, bodyHeight: 2, bodyTop: 0, start: 0, maxStart: 0 };
-  const white = "\x1b[38;5;231m";
-  try {
-    setBaseText(null);
-    expect(stickyUpdate(screen)).toContain("\x1b[2Kone \x1b[2mdim\x1b[0m\x1b[0m");
-    expect(stickyUpdate(screen, screen)).toBe(""); // nothing changed, nothing drawn
-    setBaseText(white);
-    const repaint = stickyUpdate(screen, screen);
-    expect(repaint).toContain(`\x1b[2K${white}one \x1b[2mdim\x1b[0m${white}\x1b[0m`);
-    expect(repaint).toContain(`\x1b[2K${white}two\x1b[0m`);
-    expect(stickyUpdate(screen, screen)).toBe("");
-  } finally { setBaseText(null); stickyUpdate(screen); }
 });

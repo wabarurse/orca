@@ -16,7 +16,7 @@ const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
  * (`md`) for a renderer that lays it out, or a tool call starting (`call`) or
  * ending (`result`), for a renderer that pairs them (the TUI's tools.ts).
  */
-export type Part = string | { md: string } | { call: ToolCall } | { result: ToolOutcome };
+export type Part = string | { md: string } | { image: string } | { call: ToolCall } | { result: ToolOutcome };
 
 type Block = Exclude<Extract<Entry, { type: "message" }>["message"]["content"], string>[number];
 
@@ -53,6 +53,7 @@ export function parts(entry: Entry): Part[] | null {
 function partText(p: Part, calls: Map<string, ToolCall>): string {
   if (typeof p === "string") return p;
   if ("md" in p) return p.md;
+  if ("image" in p) return p.image;
   if ("call" in p) { calls.set(p.call.id, p.call); return callText(p.call); }
   const call = calls.get(p.result.id);
   calls.delete(p.result.id);

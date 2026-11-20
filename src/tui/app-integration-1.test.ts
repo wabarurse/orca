@@ -25,14 +25,14 @@ describe("markdown replies", () => {
   const TABLE = "| Branch | What it does |\n|---|---|\n| tui-markdown | Render markdown in the chat area |\n";
 
   test("streamed markdown is rendered block by block; held blocks show raw in the live region; the rest stays plain", async () => {
-    // Five body rows: the three-row header box and the counts (two rows inside the composer at this width) leave them at 13.
+    // Five body rows: the four-row header box and the composer with its two count rows leave them at 13.
     const term = fakeTerm(60, 13);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
     await until(() => !!app.page);
     term.type("keep **this** raw\r");
-    await until(() => term.screen().includes("> keep **this** raw"));
+    await until(() => app.page!.lines.map(raw).some(l => l.endsWith("keep **this** raw")) && term.screen().includes("worker-x done")); // the turn ran; at 13 rows the user block has scrolled above
     const write = orchs.writers.alpha! as (t: string, plain?: boolean) => void;
     write("Some **bold** and snake_case\n| Branch | What");
     await until(() => term.screen().includes("Some bold and snake_case"));
@@ -47,7 +47,7 @@ describe("markdown replies", () => {
     // rather than requiring the whole table AND the trailing tool to fit at once.
     term.press({ name: "pageup" });
     await until(() => term.screen().includes("┬"));
-    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : "md" in l ? l.md : "user" in l ? l.user : l.tool))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
+    expect(app.page!.lines.slice(-3).map((l) => (typeof l === "string" ? "plain" : "md" in l ? l.md : "user" in l ? l.user : "tool" in l ? l.tool : "other"))).toEqual(["Some **bold** and snake_case", TABLE.trimEnd(), "plain"]);
     app.quit();
     await running;
   });
@@ -89,32 +89,32 @@ describe("restored pages", () => {
     await t.append({ type: "message", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x1", content: "SECRET-RESULT" }, { type: "text", text: "[worker-feat] all done" }] } });
     await t.append({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Worker done.", citations: null }] } });
     const term = fakeTerm(50, 40);
-    term.display.write("shell$ orca start\r\n");
     const orchs = fakeOrchestrators();
     // The page is built from the transcript its orchestrator loaded.
     const openOrchestrator: typeof orchs.openOrchestrator = async (...args) => ({ ...(await orchs.openOrchestrator(...args)), entries: () => (args[0] === "resumed" ? t.branch() : []) });
     const app = new App({ term, openOrchestrator, pollMs: 100_000 });
     const running = app.run("resumed");
     await until(() => term.screen().includes("Worker done."));
-    const restored = ["[resumed]", "> what changed?", "Two things:", "- a", "- b", "⏺ bash(ls)", "  ⎿  1 line", "from worker-feat: all done", "Worker done."];
+    // The user's message is a shaded block on the right (trimmed here); the report is a closed fold.
+    const restored = ["[resumed]", "what changed?", "Two things:", "- a", "- b", "⏺ bash(ls)", "⎿  1 line", "▸ from worker-feat", "Worker done."];
+    const body = () => bodyRows(term).map(r => r.trim()).filter(Boolean);
     const rows = term.screen().split("\n");
-    expect(rows[0]).toStartWith("│ resumed ");
-    expect(bodyRows(term).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
-    expect(term.display.buf[term.display.top + term.display.row]!.join("").trimEnd()).toMatch(/^│ > +│$/); // boxed input before the counts
+    expect(rows[0]).toStartWith("│  resumed ");
+    expect(body().slice(0, restored.length - 1)).toEqual(restored.slice(1));
+    expect(term.lines().find(r => r.startsWith("│ >"))).toMatch(/^│ > +│$/); // boxed input before the counts
     expect(term.screen()).not.toContain("SECRET-RESULT");
-    expect(term.display.clears).toBe(0); // printed under the shell's output, nothing cleared
 
     // Typing continues the page under the restored lines.
     term.type("more\r");
     await until(() => term.screen().includes("resumed says hi"));
-    expect(term.screen().indexOf("Worker done.")).toBeLessThan(term.screen().indexOf("> more"));
+    expect(term.screen().indexOf("Worker done.")).toBeLessThan(term.screen().indexOf("more"));
 
     // Another page, then back: the restored history is reprinted with the rest.
     await app.openPage("elsewhere");
     await until(() => !term.screen().includes("Worker done."));
     term.type("\x08"); // Ctrl+H
     await until(() => term.screen().includes("Worker done.") && term.screen().includes("resumed says hi"));
-    expect(bodyRows(term).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
+    expect(body().slice(0, restored.length - 1)).toEqual(restored.slice(1));
     app.quit();
     await running;
   });
@@ -155,14 +155,16 @@ describe("restored pages", () => {
     const live = app.page!.lines;
     expect(live.map(raw)).toContain("All set.");
     expect(live.filter((l) => typeof l !== "string" && "tool" in l)).toEqual([
-      { tool: "spawn(feat, worker)", summary: "spawned worker-feat", failed: false },
-      { tool: "inbox(user: Started **feat**.)", summary: "sent to user", failed: false },
-      { tool: "inbox(user: Second.)", summary: "sent to user", failed: false },
+      { tool: "spawn(feat, worker)", summary: "spawned worker-feat", failed: false, kind: "agent", items: ["worker-feat · feat · worker"] },
+      { tool: "inbox(user: Started **feat**.)", summary: "sent to user", failed: false, kind: "tool", items: [] },
+      { tool: "inbox(user: Second.)", summary: "sent to user", failed: false, kind: "tool", items: [] },
     ]);
-    expect(term.screen()).toContain("⏺ spawn(feat, worker)\n  ⎿  spawned worker-feat");
-    expect(live.map(raw).filter((l) => l.endsWith("> go") || l.endsWith("m go"))).toEqual([`${bold(">")} go`]); // typed here: shown once
-    expect(live.map(raw)).toContain(`${bold(">")} from the cli`);
-    expect(live.map(raw).some((l) => l.includes("from worker-feat: Report:…"))).toBe(true);
+    // The spawn that started an agent folds into its "+ 1 agent" row; reports are closed folds.
+    expect(term.screen()).toContain("▸ + 1 agent\n▸ from worker-feat");
+    const texts = live.filter((l) => typeof l === "string" || !("from" in l)).map(raw);
+    expect(texts.filter((l) => l.endsWith("> go") || l.endsWith("m go"))).toEqual([`${bold(">")} go`]); // typed here: shown once
+    expect(texts).toContain(`${bold(">")} from the cli`);
+    expect(live).toContainEqual({ from: "worker-feat", text: "Report:\n\nall green" });
     app.quit();
     await running;
 
@@ -243,6 +245,8 @@ describe("restored pages", () => {
 });
 
 describe("orchestrator questions", () => {
+  /** The last painted row: the work page's status line. */
+  const statusLine = (term: ReturnType<typeof fakeTerm>) => term.screen().split("\n").at(-1)!;
   const live = (term: ReturnType<typeof fakeTerm>) => term.display.screen().join("\n"), note = (app: App) => strip(app.frame().inputArea!.lines.join("\n"));
   const ask1 = (project: string, text: string, options?: string[], def?: string) => askQuestions(project, [{ text, ...(options ? { options } : {}), ...(def ? { default: def } : {}) }]);
   const statusOf = async (project: string) => (await allQuestions(project)).map((q) => [q.text, q.status, q.answer ?? null]);
@@ -292,9 +296,9 @@ describe("orchestrator questions", () => {
     const { term, app, stop } = await start("qa-note");
     await form(app); term.type("1");
     await until(() => app.page!.questions.open.length === 0);
-    await until(() => term.display.screen().at(-1)!.includes(answeredNote("Which db?", "postgres"))); // on the page's status line
+    await until(() => statusLine(term).includes(answeredNote("Which db?", "postgres"))); // on the page's status line
     await app.onKey({ name: "char", text: "j" });
-    await until(() => !term.display.screen().at(-1)!.includes("Which db? →"));
+    await until(() => !statusLine(term).includes("Which db? →"));
     await stop();
   });
 
@@ -332,7 +336,7 @@ describe("orchestrator questions", () => {
     await ask1("qa-cmd", "Name?");
     const { term, app, stop } = await start("qa-cmd");
     await form(app);
-    await until(() => term.display.screen().at(-1)!.startsWith("answer › "));
+    await until(() => statusLine(term).startsWith("answer › "));
     term.type("/help\r");
     await until(() => app.frame().help !== null);
     term.press({ name: "escape" });
@@ -581,7 +585,7 @@ describe("command and key tables", () => {
 });
 
 describe("user background", () => {
-  test("sent messages are on the user background, full width, live and after a resize reprint; the input box is not", async () => {
+  test("sent messages are a shaded block on the right, live and after a resize reprint; the input box is not", async () => {
     const term = fakeTerm(30, 20);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
@@ -591,17 +595,21 @@ describe("user background", () => {
     await until(() => term.screen().includes("worker-x done"));
     term.type("draft");
     await until(() => term.screen().includes("> draft"));
-    const filled = (cols: number) => term.display.backgrounds().map((r) => r.length === cols && r.every((b) => b === "48;5;236"));
+    // The user's message is a shaded block (OpenTUI's surface colour, chat.ts `user`) on the right, its text without "> ";
+    // the composer is plain rows of the footer, never part of that block.
     const check = (cols: number) => {
-      const text = term.display.text().split("\n");
-      const bg = filled(cols);
-      const at = (s: string) => text.findIndex((l) => l.startsWith(s));
-      expect([bg[at("> a message")], bg[at("> a message") + 1], bg[at("alpha says hi")]]).toEqual([true, true, false]);
-      const row = term.display.top + term.display.row;
-      expect(term.display.buf[row]!.join("").trimEnd()).toBe("│ > draft" + " ".repeat(cols - 10) + "│");
-      expect(term.display.backgrounds()[row]!.some(Boolean)).toBe(false); // the box frames the input; it is not shaded
-      expect(term.display.backgrounds()[row + 1]!.some(Boolean)).toBe(false);
-      expect(term.display.col).toBe(9);
+      const shown = term.shown!;
+      if (shown.kind !== "chat") throw new Error("not the chat screen");
+      expect(shown.items.filter(item => item.kind === "user").map(item => strip(item.rows.join(" ")))).toEqual(["a message long enough to wrap"]);
+      const rows = term.lines();
+      const first = rows.find(r => r.includes("a message"))!;
+      expect(first.trim().startsWith("a message")).toBe(true);
+      expect(first.indexOf("a message")).toBeGreaterThan(Math.floor(cols * 0.22)); // right-aligned, inside its padding
+      expect(rows.find(r => r.includes("alpha says hi"))).toBe("alpha says hi"); // agent text keeps the left edge
+      const input = shown.footer.findIndex(r => strip(r).startsWith("│ > draft"));
+      expect(strip(shown.footer[input]!).trimEnd()).toBe("│ > draft" + " ".repeat(cols - 10) + "│");
+      expect(rows).toContain("│ > draft" + " ".repeat(cols - 10) + "│");
+      expect(shown.cursor).toEqual({ row: input, col: 9 }); // just after the draft
     };
     check(30);
     term.resize(24, 20);
@@ -628,17 +636,24 @@ describe("terminal background", () => {
     await Bun.sleep(40);
     expect(term.screen()).not.toContain("earlier question"); // held until the shade is known
     answer();
-    await until(() => term.screen().includes("> earlier question"));
-    const row = term.display.text().split("\n").indexOf("> earlier question");
-    expect(term.display.backgrounds()[row]!.every((b) => b === "48;5;254")).toBe(true);
-    const input = term.display.top + term.display.row;
-    expect(term.display.backgrounds()[input]!.some(Boolean)).toBe(false); // the input box is not shaded
+    await until(() => term.screen().includes("earlier question"));
+    // The restored message enters as the user's block; the composer stays plain footer rows.
+    // (The block's colour is OpenTUI's fixed surface (chat.ts), which the test renderer's frame text does not expose.)
+    const shown = term.shown!;
+    if (shown.kind !== "chat") throw new Error("not the chat screen");
+    expect(shown.items.map(item => item.kind)).toEqual(["user"]);
+    expect(shown.footer.map(strip).some(r => /^(│ )?> /.test(r))).toBe(true);
     app.quit();
     await running;
   });
 });
 
 describe("tool calls", () => {
+  /** The folds of the chat screen as drawn: title and the red failure note. */
+  const folds = (term: ReturnType<typeof fakeTerm>) => {
+    const shown = term.shown;
+    return shown?.kind === "chat" ? shown.items.flatMap(item => item.kind === "fold" ? [{ title: item.title, failed: item.failed }] : []) : [];
+  };
   /** An orchestrator whose turn runs the tool calls the test drives through `events`, on an injected clock. */
   function scripted() {
     const state = { now: 1000, events: null as ToolEvents | null, finish: null as (() => void) | null, ticks: [] as (() => void)[] };
@@ -675,11 +690,11 @@ describe("tool calls", () => {
     await until(() => term.screen().includes("⏺ bash(make)"));
     expect(term.screen()).toContain("⏺ bash(git status)\n  ⎿  2 lines\n⏺ bash(make)"); // a lone finished call keeps its lines while the next runs below
     state.events!.onToolResult({ id: "c2", ok: true, text: "x: error 1\n[exit 2]" });
-    // Two finished calls in a row fold into one summary line; the failure is counted, and the marker is red.
+    // Two finished calls in a row fold into one summary line; the failure is counted, in red (the fold's `failed` note).
     await until(() => term.screen().includes("▸ 2 tool calls · bash ×2 · 1 failed"));
     expect(term.screen()).not.toContain("⎿");
     expect(term.screen()).not.toContain("bash(make)");
-    expect(term.raw()).toContain("\x1b[38;5;217m▸");
+    expect(folds(term)).toEqual([{ title: "2 tool calls · bash ×2", failed: " · 1 failed" }]);
     state.finish!();
     await until(() => !app.page!.busy);
     expect(state.ticks.length).toBe(0); // nothing runs: no timer
@@ -733,7 +748,7 @@ describe("tool calls", () => {
   });
 
   test("a click on a folded summary opens that group alone and closes it again; it survives a durable sync; the exit replay shows every call", async () => {
-    const term = fakeTerm(60, 40); // tall enough for the whole conversation, as a click pins the scroll like any mousedown
+    const term = fakeTerm(60, 40); // tall enough for the whole conversation, so every row can be clicked
     const orchs = fakeOrchestrators();
     const t = openTranscript(paths.transcript("clicky", "orchestrator"));
     await t.append({ type: "meta", role: "orchestrator", model: "m" });
@@ -750,19 +765,20 @@ describe("tool calls", () => {
     };
     const app = new App({ term, openOrchestrator, pollMs: 100_000 });
     const running = app.run("clicky");
-    const body = () => bodyRows(term).slice(0, -4).map(row => row.trimEnd()).filter(Boolean); // the conversation, without the composer and status
+    const body = () => { const rows = bodyRows(term).map(row => row.trimEnd()); return rows.slice(0, rows.findIndex(row => row.startsWith("┌"))).filter(Boolean); }; // the conversation, without the composer
     const summary = "▸ 2 tool calls · bash ×2 · 1 failed";
     const opened = ["▾ 2 tool calls · bash ×2 · 1 failed", "  ⏺ bash(ls)", "    ⎿  1 line", "  ⏺ bash(false)", "    ⎿  exit 1: boom"];
+    /** The screen row (1-based) of the last group's summary. */
+    const lastSummary = () => term.display.screen().findLastIndex(row => row.includes("2 tool calls")) + 1;
     await until(() => body().join("\n") === ["first", summary, "between", summary].join("\n"));
     // The second group opens; the first stays folded.
-    const y = term.display.screen().findLastIndex(row => row.includes("2 tool calls")) + 1;
-    await app.onKey({ name: "mousedown", x: 3, y }); await app.onKey({ name: "mouseup", x: 3, y });
+    const y = lastSummary();
+    await term.click(1, y);
     await until(() => body().join("\n") === ["first", summary, "between", ...opened].join("\n"));
     expect(app.page!.lines).toHaveLength(6); // the history is untouched
-    // A drag (release elsewhere) is a selection, not a click; a click on an open group's call is not on its summary.
-    await app.onKey({ name: "mousedown", x: 3, y }); await app.onKey({ name: "mouseup", x: 9, y });
-    await app.onKey({ name: "mousedown", x: 3, y: y + 1 }); await app.onKey({ name: "mouseup", x: 3, y: y + 1 });
-    await settle();
+    // A click on an open group's call is not on its summary. (A drag is OpenTUI's own text selection; the test terminal only clicks.)
+    await term.click(3, y + 1);
+    await settle(); await term.settled();
     expect(body().join("\n")).toBe(["first", summary, "between", ...opened].join("\n"));
     // The durable record re-renders the page (syncTranscript): the opened group stays open, matched by its run's order.
     await t.append({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "after", citations: null }] } });
@@ -772,22 +788,22 @@ describe("tool calls", () => {
     expect(body().join("\n")).toBe(["first", summary, "between", ...opened, "after"].join("\n"));
     // A click on the open group's summary folds it again.
     await clickRow(app, term, "bash(ls)"); // its call: not the summary row
-    await settle();
+    await settle(); await term.settled();
     expect(body()).toContain("  ⏺ bash(ls)");
-    const ys = term.display.screen().findLastIndex(row => row.includes("2 tool calls")) + 1;
-    await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
+    const ys = lastSummary();
+    await term.click(1, ys);
     await until(() => body().join("\n") === ["first", summary, "between", summary, "after"].join("\n"));
-    expect(term.raw()).toContain("\x1b[38;5;217m▸"); // the marker red: a call failed
-    // A click before another page's frame is painted never reaches this page's groups.
+    expect(folds(term).map(f => f.failed)).toEqual([" · 1 failed", " · 1 failed"]); // the failure note red: a call failed
+    // A click on another page's screen never reaches this page's groups.
     await app.openPage("clicky-other");
-    await app.onKey({ name: "mousedown", x: 3, y: ys }); await app.onKey({ name: "mouseup", x: 3, y: ys });
     await until(() => !term.screen().includes("between"));
+    await term.click(1, ys);
     app.active = 0; app.reprint();
     await until(() => body().join("\n") === ["first", summary, "between", summary, "after"].join("\n"));
     app.quit();
     await running;
     // The exit replay cannot be clicked: it shows every call.
-    expect(term.display.screen().join("\n")).toContain("first\n\n⏺ bash(ls)\n  ⎿  1 line\n\n⏺ bash(false)\n  ⎿  exit 1: boom\n\nbetween\n\n⏺ bash(ls)\n  ⎿  1 line\n\n⏺ bash(false)\n  ⎿  exit 1: boom\n\nafter");
+    expect(strip(term.raw()).replace(/\r/g, "")).toContain("first\n\n⏺ bash(ls)\n  ⎿  1 line\n\n⏺ bash(false)\n  ⎿  exit 1: boom\n\nbetween\n\n⏺ bash(ls)\n  ⎿  1 line\n\n⏺ bash(false)\n  ⎿  exit 1: boom\n\nafter");
   });
 
   test("an agent view shows a followed agent's running call live, then its lines when the result lands", async () => {
@@ -853,7 +869,7 @@ test("unfinished calls commit red in turns and finished agent transcripts", asyn
   term.type("go\r");
   await until(() => term.screen().includes("⏺ bash(wait)\n  ⎿  interrupted"));
   expect(app.page!.calls.size).toBe(0);
-  expect(term.raw()).toContain("\x1b[38;5;217m⏺");
+  expect(JSON.stringify(term.shown)).toContain(JSON.stringify("\x1b[38;5;217m⏺").slice(1, -1)); // the marker red in the drawn rows
   term.press({ name: "a", ctrl: true });
   await until(() => app.work.state?.items.some(item => item.name.startsWith("worker-")) === true);
   term.press({ name: "enter" });
@@ -874,24 +890,26 @@ test("scrolling and new output keep both bars fixed, preserve the draft, and fol
     term.type("my draft");
     await until(() => term.screen().includes("history row 59") && term.screen().includes("0 tasks") && term.screen().includes("0 agents") && term.screen().includes("0 processes")); // the counts are read in the background
     const top = bodyStart(term);
-    const header = term.display.screen().slice(0, top);
-    const footer = term.display.screen().slice(-3); // the box's top, the input, the counts inside it
+    const rows = () => term.screen().split("\n"); // the frame without the renderer's trailing blank
+    const header = rows().slice(0, top);
+    const footer = rows().slice(-3); // the box's top, the input, the counts inside it
     term.press({ name: "pageup" });
     await until(() => !term.screen().includes("history row 59"));
-    const body = term.display.screen().slice(top, -3);
+    const body = rows().slice(top, -3);
     app.say("new output while reading");
-    await Bun.sleep(30);
-    expect(term.display.screen().slice(top, -3)).toEqual(body);
-    expect(term.display.screen().slice(0, top)).toEqual(header);
-    expect(term.display.screen().slice(-3)).toEqual(footer);
+    await Bun.sleep(30); await term.settled();
+    expect(rows().slice(top, -3)).toEqual(body);
+    expect(rows().slice(0, top)).toEqual(header);
+    expect(rows().slice(-3)).toEqual(footer);
     expect(app.input.text).toBe("my draft");
     const firstRow = Number(body[0]!.match(/\d+/)![0]);
-    term.type("\x1b[<64;10;8M".repeat(3));
-    await until(() => term.display.screen()[top] === `history row ${firstRow - 9}`);
+    term.type("\x1b[<64;10;8M".repeat(3)); // wheel reports that reach the app as keys scroll a row each (OpenTUI's own wheel handling is the ScrollBox's)
+    await until(() => rows()[top] === `history row ${firstRow - 3}`);
     for (let i = 0; i < 3; i++) { term.press({ name: "pagedown" }); await Bun.sleep(20); }
     await until(() => term.screen().includes("new output while reading"));
     app.say("following again");
     await until(() => term.screen().includes("following again"));
-    expect(term.display.row).toBe(14);
+    expect(rows().slice(top, -3).filter(Boolean).at(-1)).toBe("following again"); // followed again: the newest row is the body's last
+    expect(rows().slice(-3)).toEqual(footer);
   } finally { app.quit(); await running; }
 });

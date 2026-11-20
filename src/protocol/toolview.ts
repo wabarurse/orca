@@ -137,6 +137,29 @@ export function toolView(name: string, input: unknown, outcome: Pick<ToolOutcome
   return { tool: toolLabel(name, input), ...toolSummary(name, outcome) };
 }
 
+/** What a finished call adds to the conversation besides itself: questions asked, agents started, tasks recorded. */
+export type CallKind = "tool" | "question" | "agent" | "task";
+
+/** A finished call's kind and the one-line items it stands for (each question's text, each started agent, each recorded task).
+ * Only successful calls become items; a failed or refused one stays a tool call, so its failure shows. */
+export function callItems(name: string, input: unknown, outcome: Pick<ToolOutcome, "ok" | "text">): { kind: CallKind; items: string[] } {
+  const i = asInput(input);
+  if (toolSummary(name, outcome).failed) return { kind: "tool", items: [] };
+  if (name === "ask" && Array.isArray(i.questions)) {
+    const items = (i.questions as { text?: unknown }[]).map(q => oneLine(str(q?.text))).filter(Boolean);
+    if (items.length) return { kind: "question", items };
+  }
+  if (name === "spawn") {
+    const id = oneLine(firstLine(textLines(outcome.text))), branch = oneLine(str(i.branch));
+    if (id) return { kind: "agent", items: [[id, branch, i.role === "reviewer" ? "reviewer" : "worker"].filter(Boolean).join(" · ")] };
+  }
+  if (name === "task" && (i.action === "create" || i.action === "register")) {
+    const title = oneLine(str(i.title ?? i.name));
+    if (title) return { kind: "task", items: [title] };
+  }
+  return { kind: "tool", items: [] };
+}
+
 /** The marker leading a call's line. */
 export const TOOL_MARK = "⏺";
 /** What leads the result line under it. */
