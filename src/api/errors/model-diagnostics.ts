@@ -45,6 +45,13 @@ export class ModelRequestError extends Error {
   }
 }
 
+/** Why a reply that had begun failed, when asking again from the start may well succeed: its stream dropped or broke
+ * (a connection or provider fault), or it went silent past the idle deadline. Never a limit, refusal or bad request,
+ * and never the total deadline: those would fail the same way again. */
+const RESTARTABLE: readonly Reason[] = ["response", "connection", "provider-service", "overload", "idle-timeout"];
+export const restartable = (error: unknown): error is ModelRequestError =>
+  error instanceof ModelRequestError && (error.kind === "interrupted" || error.kind === "idle-timeout") && RESTARTABLE.includes(error.reason);
+
 function reasonFor(error: unknown, status: number | undefined, stage: RequestStage): Reason {
   const evidence = providerErrorEvidence(error);
   const code = evidence?.code ?? evidence?.type;

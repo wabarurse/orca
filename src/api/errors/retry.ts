@@ -4,7 +4,8 @@ import { lockoutUntil } from "./rate-limit";
 // One retry policy for both SDK clients: a transient failure of the initial
 // request (the connection, or a 408/409/429/5xx answer) is tried again a bounded
 // number of times; a stream that has begun is never retried, since its text has
-// already been shown. Aborting the request's signal stops at once, mid-wait too.
+// already been shown. Aborting the request's signal stops at once, mid-wait too. A reply that broke after it began is
+// the agent loop's to ask again from the start (loop/agent.ts completeRestarting, model-diagnostics.ts restartable).
 
 /** Waits before the 1st, 2nd and 3rd retry; each is jittered by ±25%. */
 export const RETRY_BACKOFF_MS = [1_000, 4_000, 10_000];
