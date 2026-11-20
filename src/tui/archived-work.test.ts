@@ -27,19 +27,18 @@ test("abandoned tasks archive, expand in place and restore without changing depe
     const child = await registerTask(project, { name: "Active child", summary: "Depends on parent", branch: "feat/new", authorized: true });
     await setTaskDependencies(project, child.id, [parent.id]);
     await abandonTask(project, parent.id, parent.revision);
-    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
     app.work.show("tasks");
     await until(() => term.screen().includes("Old parent"));
-    term.type("d"); await until(() => term.screen().includes("Archive 1 settled"));
+    term.type("a"); await until(() => term.screen().includes("Archive 1 settled"));
     term.type("y"); await until(() => term.screen().includes("Archived (1)"));
     expect(term.screen()).toContain("Active child");
     expect(app.work.state!.items.map(item => item.name)).toEqual(["▾ Today (1)", "#2 Active child", "▸ Archived (1)"]);
-    term.type("a"); await until(() => term.screen().includes("▾ Archived (1)"));
+    term.type("G\r"); await until(() => term.screen().includes("▾ Archived (1)"));
     expect(term.screen()).toContain("#1 Old parent"); expect(term.screen()).toContain("Active child");
-    term.type("h"); await until(() => term.screen().includes("▸ Archived (1)"));
-    term.type("l"); await until(() => term.screen().includes("▾ Archived (1)"));
-    term.type("h"); await until(() => term.screen().includes("▸ Archived (1)"));
-    term.type("lj"); await until(() => term.screen().includes("Task #1 Old parent"));
+    term.press({ name: "left" }); await until(() => term.screen().includes("▸ Archived (1)"));
+    term.press({ name: "right" }); await until(() => term.screen().includes("▾ Archived (1)"));
+    term.press({ name: "left" }); await until(() => term.screen().includes("▸ Archived (1)"));
+    term.press({ name: "right" }); term.type("j"); await until(() => term.screen().includes("Task #1 Old parent"));
     term.type("u"); await until(() => term.screen().includes("Restored to list"));
     expect((await getTask(project, parent.id)).removedAt).toBeUndefined();
     expect((await getTask(project, parent.id)).attention?.kind).toBe("cancelled");
@@ -71,13 +70,13 @@ test("closed questions expand alongside open questions; restoring only changes l
     app.work.show("questions");
     await until(() => term.screen().includes("Still open") && term.screen().includes("Archived (1)"));
     expect(term.screen()).not.toContain("Saved question");
-    term.type("a"); await until(() => term.screen().includes("Saved question"));
+    term.type("G\r"); await until(() => term.screen().includes("Saved question"));
     term.press({ name: "down" }); await until(() => term.screen().includes("  Saved answer"));
     term.type("u"); await until(() => term.screen().includes("Restored to list"));
     term.press({ name: "enter" }); await until(() => term.screen().includes("Closed question"));
     expect((await all(project)).find(q => q.id === closed!.id)?.status).toBe("answered");
     expect(app.page!.questions.open.map(q => q.id)).toEqual([pending!.id]);
-    term.type("D"); await until(() => term.screen().includes("dismissed without an answer"));
+    term.type("A"); await until(() => term.screen().includes("dismissed without an answer"));
     term.type("y"); await until(() => term.screen().includes("Archived (2)"));
     expect((await all(project)).find(q => q.id === pending!.id)?.status).toBe("skipped");
     expect(fake.said[project]).toEqual([]);
@@ -85,7 +84,7 @@ test("closed questions expand alongside open questions; restoring only changes l
   } finally { await stop(); }
 });
 
-test("image archive survives reopening, preserves bytes and can be viewed and restored with Vim", async () => {
+test("image archive survives reopening, preserves bytes and can be viewed and restored from the keyboard", async () => {
   const project = "archived-images", { app, term, stop } = await setup(project);
   term.inlineImages = true;
   try {
@@ -93,14 +92,13 @@ test("image archive survives reopening, preserves bytes and can be viewed and re
     const record = open(paths.transcript(project, "orchestrator"));
     await record.append({ type: "replies", messages: [{ from: "worker", text: "Old screenshot", attachments: [ref] }] });
     const path = await imageFile(project, ref), before = await Bun.file(path).bytes();
-    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type("P"); await until(() => term.screen().includes("Old screenshot"));
-    term.type("dy"); await until(() => term.screen().includes("Archived (1)"));
+    term.type("\x07"); await until(() => term.screen().includes("Old screenshot"));
+    term.type("ay"); await until(() => term.screen().includes("Archived (1)"));
     expect(app.status(app.page!)).toContain("| 0 images");
-    term.press({ name: "escape" }); term.type("P");
+    term.press({ name: "escape" }); term.type("\x07");
     await until(() => term.screen().includes("▸ Archived (1)"));
     expect(term.screen()).not.toContain("Old screenshot");
-    term.type("lj"); await until(() => term.screen().includes("Old screenshot"));
+    term.press({ name: "right" }); term.type("j"); await until(() => term.screen().includes("Old screenshot"));
     expect(term.raw()).not.toContain("1337;File=");
     term.type("u"); await until(() => app.status(app.page!).includes("| 1 images"));
     expect(await Bun.file(path).bytes()).toEqual(before);
@@ -119,7 +117,7 @@ test("old agents expand without hiding live agents; restore only changes the per
     await archiveAgents(project, ["worker-old", "worker-live"], async () => ["worker-live"]);
     app.work.show("agents");
     await until(() => term.screen().includes("Archived (1)"));
-    term.type("a"); await until(() => term.screen().includes("worker-old"));
+    term.type("G\r"); await until(() => term.screen().includes("worker-old"));
     expect(term.screen()).toContain("worker-live");
     term.press({ name: "down" }); term.type("u");
     await until(() => term.screen().includes("Restored to list"));

@@ -52,10 +52,6 @@ export interface Page {
 }
 
 export interface AppDeps {
-  /** Start in Vim mode (the saved `vim` setting). */
-  vim?: boolean;
-  /** Remember a /vim toggle for the next start; the CLI saves it to config.toml. */
-  saveVim?: (on: boolean) => Promise<void>;
   feedback?: typeof sendAgentFeedback;
   /** Completed drag or explicit Ctrl+O; tests inject a writer, never the live clipboard. */
   clipboardText?: (text: string) => Promise<void>;
@@ -176,11 +172,11 @@ export function parseCommand(text: string, commands: ReadonlyMap<string, Command
 /** One layer of key handling (App.keyLayers): `takes` only looks, `handle` acts. */
 export interface KeyLayer { name: string; takes(k: Key): boolean; handle(k: Key): Promise<void> | void }
 
-/** A menu key as up / down / enter / escape: k j q are ↑ ↓ Esc, Ctrl+P is ↑; other keys by name (doing nothing unless one of those). */
+/** A menu key as up / down / enter / escape: k j q are ↑ ↓ Esc; other keys by name (doing nothing unless one of those). */
 export const MENU_CHARS = new Map([["k", "up"], ["j", "down"], ["q", "escape"]]);
 export const menuKeyId = (k: Key): string | undefined => {
   if (k.name === "char") return MENU_CHARS.get(k.text ?? "");
-  return k.ctrl && k.name === "p" ? "up" : k.name;
+  return k.name;
 };
 
 /** A page shows activity while its turn runs or its agent view follows a live agent. */
@@ -189,7 +185,7 @@ export const active = (p: Page) => p.busy || !!p.view?.live;
 /** Editing keys, as C- (Ctrl) M- (Alt) name; Shift is ignored. Plain Enter submits before this is reached. */
 export const EDITS: Record<string, (s: ed.EditState) => ed.EditState> = {
   enter: ed.newline, "M-enter": ed.newline,
-  backspace: ed.backspace, "M-backspace": ed.deleteWordBack, "C-backspace": ed.deleteWordBack, "C-h": ed.backspace,
+  backspace: ed.backspace, "M-backspace": ed.deleteWordBack, "C-backspace": ed.deleteWordBack,
   delete: ed.deleteForward, "M-d": ed.deleteWordForward,
   left: ed.left, right: ed.right,
   "M-left": ed.wordLeft, "C-left": ed.wordLeft, "M-b": ed.wordLeft,

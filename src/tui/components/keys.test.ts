@@ -146,7 +146,7 @@ describe("parseKeys", () => {
     // Terminal.app writes the Option prefix and the key (and each mouse report) in separate writes.
     // When the loop was busy, the elapsed Esc timer runs before the read that already arrived:
     // the first firing must only yield to it, never decide Escape (which clears the draft).
-    for (const [rest, want] of [["\x7f", { name: "backspace", alt: true }], ["\b", { name: "backspace", alt: true }], ["[<0;3;5M", { name: "mousedown", x: 3, y: 5 }], ["[<0;3;5m", { name: "mouseup", x: 3, y: 5 }], ["[<32;4;5M", { name: "mousemove", x: 4, y: 5 }], ["d", { name: "d", alt: true }]] as const) {
+    for (const [rest, want] of [["\x7f", { name: "backspace", alt: true }], ["\b", { name: "h", ctrl: true, alt: true }], ["[<0;3;5M", { name: "mousedown", x: 3, y: 5 }], ["[<0;3;5m", { name: "mouseup", x: 3, y: 5 }], ["[<32;4;5M", { name: "mousemove", x: 4, y: 5 }], ["d", { name: "d", alt: true }]] as const) {
       const r = reader();
       r.feed("\x1b");
       expect(r.delay).toBe(ESC_DELAY_MS);

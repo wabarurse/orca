@@ -593,8 +593,8 @@ as failed; a lone call keeps its two lines); calls still running shimmer below i
 and fold in as they end. Click that line to open it (`▾`, its calls indented under
 the summary); click it again to fold it. Open groups are not saved. The
 conversation left in the shell on quit shows every call. Ctrl+N starts a new conversation named `orch-xxxx` in the
-original checkout. `/rename <name>` renames it; for another local checkout run `orca` there (the `/new` command is gone). Ctrl+Z and Ctrl+X move between pages,
-reprinting the page you switch to (Ctrl+G shows what your terminal sends for any chord). Type
+original checkout. `/rename <name>` renames it; for another local checkout run `orca` there (the `/new` command is gone). Ctrl+H and Ctrl+L move between pages,
+reprinting the page you switch to (Ctrl+X shows what your terminal sends for any chord). Type
 `/help` for grouped commands and keyboard shortcuts in a panel below the input
 and counts, not in the conversation history. Scroll help with ↑/↓, Page Up/Down
 or the wheel; Home/End jumps to its start/end (including advanced diagnostics).

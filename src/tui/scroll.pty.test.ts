@@ -35,16 +35,13 @@ async function launch(home: string) {
     type: (text: string) => { tmux("send-keys", "-t", "pty", "-l", text); },
     key: (name: string) => { tmux("send-keys", "-t", "pty", name); },
     paste: (text: string) => { tmux("set-buffer", text); tmux("paste-buffer", "-p", "-t", "pty"); },
-    /** Vim mode: Esc leaves insert mode, then the real command exits from Vim's `:` line. */
+    /** Esc empties the draft, then the real command exits. */
     quit: async () => {
       tmux("send-keys", "-t", "pty", "Escape");
-      await until(async () => capture().includes("[NORMAL]"));
-      await Bun.sleep(100); // past the Alt window, so `:` is not read as Alt+:
-      tmux("send-keys", "-t", "pty", "-l", ":quit");
+      await Bun.sleep(100); // past the Alt window, so `/` is not read as Alt+/
+      tmux("send-keys", "-t", "pty", "-l", "/quit");
       tmux("send-keys", "-t", "pty", "Enter");
     },
-    /** A fresh home opens in Vim's NORMAL mode: `i` starts typing. */
-    insert: async () => { if (capture().includes("[NORMAL]")) { tmux("send-keys", "-t", "pty", "-l", "i"); await until(async () => capture().includes("[INSERT]")); } },
     stop: () => {
       tmux("kill-server");
       Bun.spawnSync([TMUX!, "-S", join(home, "tmux.sock"), "kill-server"], { env: env(home) });
@@ -77,7 +74,6 @@ test.skipIf(!TMUX)("owned terminal: saved history scrolls between pinned bars; e
   const app = await launch(dir);
   try {
     await until(async () => (await app.screen()).some(row => row.includes("PTY-LATEST-HISTORY")));
-    await app.insert();
     app.paste("PTY-DRAFT\nsecond line");
     await until(async () => (await app.screen()).some(row => row.includes("second line")));
     // The header box (tabs, details, bottom line); the composer box (top, two input rows, the counts inside it).
@@ -109,20 +105,16 @@ test.skipIf(!TMUX)("owned terminal: saved history scrolls between pinned bars; e
   }
 }, 30_000);
 
-test.skipIf(!TMUX)("owned terminal: Option+Backspace deletes a word; Esc leaves insert mode keeping the draft", async () => {
+test.skipIf(!TMUX)("owned terminal: Option+Backspace deletes a word; letters type at once", async () => {
   const dir = await home(async t => { await t.append({ type: "message", message: { role: "assistant", content: "PTY-SELECT-ME here" } }); });
   const app = await launch(dir);
   try {
     await until(async () => (await app.screen()).some(row => row.includes("PTY-SELECT-ME")));
-    await app.insert();
     app.type("hello big world");
     await until(async () => input(await app.screen()) === "│ > hello big world");
     app.type("\x1b\x7f"); // two separate writes are covered in otui/terminal.test.ts; tmux calls are slower than the Alt window
     await until(async () => input(await app.screen()) === "│ > hello big");
-    await Bun.sleep(100);
-    app.type("\x1b");
-    await until(async () => (await app.screen()).some(row => row.includes("[NORMAL]")));
-    expect(input(await app.screen())).toBe("│ > hello big");
+    expect((await app.screen()).some(row => /\[(NORMAL|INSERT)\]/.test(row))).toBe(false);
     await app.quit();
     await until(async () => (await app.history()).includes("EXIT:0"));
   } finally {

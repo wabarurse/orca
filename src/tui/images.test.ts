@@ -12,7 +12,7 @@ import { replyLines } from "./conversation/restore";
 
 const { fakeTerm, until, raw } = appFixture();
 
-test("Images uses project-local counts and Vim selection; only Enter opens a viewer", async () => {
+test("Images uses project-local counts and j/k selection; only Enter opens a viewer", async () => {
   const project = "image-navigation", other = "image-empty";
   for (const name of [project, other]) mkdirSync(paths.project(name), { recursive: true });
   const record = open(paths.transcript(project, "orchestrator"));
@@ -33,8 +33,7 @@ test("Images uses project-local counts and Vim selection; only Enter opens a vie
   const select = (text: string) => term.display.screen().some(row => row.startsWith(`› ${text}`));
   try {
     await until(() => app.page?.project === project && app.status(app.page).endsWith("3 images"));
-    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type("P"); await until(() => select("Screenshot 3"));
+    term.type("\x07"); await until(() => select("Screenshot 3"));
     term.type("G"); await until(() => select("Screenshot 1"));
     term.type("gg"); await until(() => select("Screenshot 3"));
     term.type("j"); await until(() => select("Screenshot 2"));
@@ -50,9 +49,9 @@ test("Images uses project-local counts and Vim selection; only Enter opens a vie
     term.type("k"); await until(() => select("Screenshot 3"));
     await app.openPage(other);
     expect(app.status(app.page!)).toContain("| 0 images");
-    term.type("P"); await until(() => term.screen().includes("No images"));
-    term.type("gT"); await until(() => app.page?.project === project);
-    term.type("P"); await until(() => app.work.kind === "images");
+    term.type("\x07"); await until(() => term.screen().includes("No images"));
+    term.type("\x08"); await until(() => app.page?.project === project);
+    term.type("\x07"); await until(() => app.work.kind === "images");
     term.resize(32, 14); await until(() => app.work.kind === "images");
     term.type("G"); await until(() => select("Screenshot 1"));
     term.press({ name: "enter" }); await until(() => opened.length === 2);
@@ -166,7 +165,7 @@ test("Images lists retained recordings beside images and opens video only on Ent
     term.press({ name: "enter" }); await until(() => opened.length === 1);
     expect(opened).toEqual(["video:" + video]);
     await until(() => term.screen().includes("Opened demo.mp4"));
-    term.type("d"); await until(() => term.screen().includes("Archive 1 images?"));
+    term.type("a"); await until(() => term.screen().includes("Archive 1 images?"));
     term.type("y"); await until(() => term.screen().includes("Archived (1)"));
     expect(app.status(app.page!)).toContain("| 1 media");
     expect(await Bun.file(video).exists()).toBe(true);

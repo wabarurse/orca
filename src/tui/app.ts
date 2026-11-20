@@ -12,7 +12,7 @@ import { settingChange, effectiveSettings, setEffort } from "../core/data/projec
 // Sticky top and bottom bars around a scrollable conversation. Only changed
 // screen rows are redrawn; on exit the active transcript is printed back to
 // the terminal's normal scrollback. One page per orchestrator: Ctrl+N starts one named
-// orch-xxxx (/rename gives it a display name), Ctrl+Z and Ctrl+X move between
+// orch-xxxx (/rename gives it a display name), Ctrl+H and Ctrl+L move between
 // them, Ctrl+B lists every project (open, pin, delete) on the work page
 // (work-page.ts). Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
@@ -78,7 +78,7 @@ export class App {
   /** The full-screen page of Agents, Tasks, Questions, Images and Projects; it takes every key while open. */
   readonly work: WorkPages;
 
-  private helpContent?: { cols: number; inView: boolean; vim: boolean; lines: string[] };
+  private helpContent?: { cols: number; inView: boolean; lines: string[] };
   menu: ActiveMenu | null = null;
   loggingIn = false;
   /** Text typed while signing in, per page; sent when sign-in succeeds, dropped when it fails. */
@@ -132,7 +132,7 @@ export class App {
     }
     this.runTurn(page);
   }
-  /** Ctrl+G: echo every key as parsed until Esc, to see what a terminal really sends. */
+  /** Ctrl+X: echo every key as parsed until Esc, to see what a terminal really sends. */
   keyEcho = false;
   /** Input history while no page is open; a page keeps its own. */
   private looseHistory: string[] = [];
@@ -190,7 +190,7 @@ export class App {
 
   constructor(private readonly deps: AppDeps) {
     this.finished = new Promise<void>((r) => (this.done = r));
-    const app = this; if (deps.vim) app.vimMode = "normal"; // the saved vim setting
+    const app = this;
     this.questions = new Questions({
       page: () => app.page,
       valid: page => !app.closed && app.pages.includes(page as Page) && !(page as Page).deleting,
@@ -214,10 +214,9 @@ export class App {
       deps, questions: this.questions, get clock() { return app.clock; },
       page: () => app.page, pages: () => app.pages, valid: page => app.validPage(page),
       draw: () => app.draw(), reprint: () => app.reprint(),
-      opening: () => { app.beginMenu(); app.menuFrom = null; if (app.vimMode) app.vimMode = "normal"; app.menu = null; app.helpTop = null; },
+      opening: () => { app.beginMenu(); app.menu = null; app.helpTop = null; },
       input: () => app.input, edit: k => app.edit(k),
       noteRow: page => app.noteRow(page),
-      commandLine: () => app.vimCommand, modeTag: () => app.vimMode ? `[${app.vimMode.toUpperCase()}] ` : "",
       images: page => app.imageLists.get(page), readImages: page => app.imageLists.read(page, true), retryImages: page => app.retryImages(page),
       taskCountChanged: page => app.taskCounts.refresh(page),
       attach: (page, name, live) => app.attach(page, name, live),
@@ -237,19 +236,15 @@ export class App {
     const restoreConsole = this.captureConsole();
     term.onKey(k => {
       const send = (key: Key) => { void this.onKey(key).catch(err => this.note(`error: ${err instanceof Error ? err.message : String(err)}`)); };
-      // The terminal can deliver several typed keys in one event. Keep paste
-      // events intact and pass any text after entering Insert to the editor.
-      if (this.vimMode === "normal" && !k.ctrl && !k.alt && k.name === "char" && k.text) {
-        let offset = 0;
-        for (const char of k.text) {
-          if (this.vimMode !== "normal" || this.vimCommand !== undefined) {
-            send({ ...k, text: k.text.slice(offset) });
-            return;
-          }
-          send({ ...k, text: char });
-          offset += char.length;
-        }
-      } else send(k);
+      // The terminal can deliver several typed letters in one event. Where letters are commands
+      // (the work page, a menu, help, a confirmation) each is its own key; the rest goes to the composer whole.
+      if (k.name !== "char" || k.ctrl || k.alt || !k.text || [...k.text].length < 2) return send(k);
+      let offset = 0;
+      for (const char of k.text) {
+        if (!this.lettersAreCommands()) return send({ ...k, text: k.text.slice(offset) });
+        send({ ...k, text: char });
+        offset += char.length;
+      }
     });
     term.onResize(() => this.resized());
     const poll = setInterval(() => {
@@ -449,10 +444,7 @@ export class App {
     const status = this.started && page ? this.status(page) : null;
     const refs = this.images(page);
     const showImages = refs.length > 0;
-    const prefix = "/" + (this.vimCommand ?? "").replace(/^\//, "");
-    const matches = this.vimCommand !== undefined && !prefix.includes(" ")
-      ? [...this.commands.keys()].filter(name => name.startsWith(prefix)).slice(0, 5) : [];
-    const notes = [...this.feedbackRows(page), ...(this.vimCommand !== undefined ? [fit(sanitize(`:${this.vimCommand} ▏ ${matches.join("  ")}`), this.deps.term.cols)] : [])];
+    const notes = this.feedbackRows(page);
     const { input, area } = this.inputFrame(statusRows(status, this.deps.term.cols - 4, this.composerRows()).length + (showImages ? 1 : 0) + notes.length);
     if (showImages) {
       area.lines.unshift(dim(`${imageLabels(refs)} · ctrl+y remove last`.slice(0, this.deps.term.cols)));
@@ -582,7 +574,7 @@ export class App {
 
   /** The input and its laid-out area, keeping the window's top row between frames. */
   private inputFrame(reserved: number): { input: Input; area: InputArea } {
-    const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, top: this.inputTop, mode: this.vimMode };
+    const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, top: this.inputTop };
     const area = inputArea(input, this.deps.term.cols, this.composerRows(), reserved);
     input.top = this.inputTop = area.top;
     return { input, area };
@@ -1024,8 +1016,6 @@ export class App {
   }
 
   private showMenu(menu: ActiveMenu): void {
-    if (this.vimMode === "insert") this.menuFrom = "insert";
-    if (this.vimMode) this.vimMode = "normal";
     this.helpTop = null;
     this.menu = menu;
     this.draw();
@@ -1131,10 +1121,6 @@ export class App {
    * login() itself). Table order is the order within a /help group.
    */
   readonly commands: ReadonlyMap<string, Command> = new Map<string, Command>([
-    ["/vim", { run: () => {
-      this.vimMode = this.vimMode ? undefined : "normal"; this.vimPrefix = undefined; this.draw();
-      void this.deps.saveVim?.(this.vimMode !== undefined).catch(error => this.note(`vim setting was not saved: ${error instanceof Error ? error.message : String(error)}`));
-    }, help: { group: "conversation", label: "/vim", description: "toggle Vim navigation and editing modes" } }],
     ["/rename", { args: true, run: (args) => this.renamePage(args), help: { group: "projects", label: "/rename <name>", description: "rename conversation and its folder link; keep its identity" } }],
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
@@ -1216,7 +1202,7 @@ export class App {
   private clearKey(k: Key): Promise<void> | void {
     if (k.ctrl && k.name === "c") { this.cancelClear(); return this.interrupt(); }
     if (k.name === "escape") { this.cancelClear(); return this.draw(); }
-    if (k.ctrl && ["n", "z", "x", "b"].includes(k.name)) { this.cancelClear(); return this.onKey(k); }
+    if (k.ctrl && ["n", "h", "l", "b"].includes(k.name)) { this.cancelClear(); return this.onKey(k); }
     const operation = this.clearing!;
     if (operation.committing || !operation.menu || k.ctrl || k.alt || k.shift) return;
     const menu = operation.menu;
@@ -1350,129 +1336,41 @@ export class App {
     this.draw();
   }
 
-  private vimMode: "normal" | "insert" | undefined;
-  /** The Vim mode a menu was opened from, given back when the last menu of a flow closes. */
-  private menuFrom: "insert" | null = null;
-  private leaveMenu(): void {
-    if (this.menuFrom && this.vimMode) this.vimMode = this.menuFrom;
-    this.menuFrom = null;
-  }
-  private vimPrefix?: { key: "g"; at: number };
-  private vimCommand?: string;
-  /** Normal-mode Shift letters, each the action of a key or command that exists without Vim. */
-  private readonly vimActions = new Map<string, () => Promise<void> | void>([
-    ["A", () => this.work.show("agents")], ["T", () => this.work.show("tasks")], ["Q", () => this.work.show("questions")], ["P", () => this.work.show("images")],
-    ["B", () => this.work.show("projects")], ["U", () => this.accountsMenu(this.page)], ["E", () => this.effortMenu(this.page)], ["?", () => this.toggleHelp()],
-    ["V", () => this.pasteImage()], ["X", () => this.removeImage()], ["S", () => this.stopMenu()],
-    ["H", () => this.switchTab(-1)], ["L", () => this.switchTab(1)], ["M", () => this.vimModelMenu()], ["F", () => this.vimFastMenu()], [":", () => { this.vimCommand = ""; }],
-  ]);
-
   /** A project tab switch from anywhere: it closes whatever is open over the conversation. */
-  private switchTab(delta: number): void { this.menu = null; this.menuFrom = null; this.work.close(); this.switchPage(delta); }
+  private switchTab(delta: number): void { this.menu = null; this.work.close(); this.switchPage(delta); }
 
-  /** Shift+S: stop the conversation and its agents after a Cancel-default confirmation (Ctrl+C stops at once). */
-  private stopMenu(): void {
-    const page = this.page;
-    if (!page) return;
-    this.openMenu("Stop this conversation and its agents?", [{ label: "Cancel", value: false }, { label: "Stop", value: true }], confirmed => {
-      if (confirmed && this.page === page && this.validPage(page)) { page.orch.cancel?.(); this.note("Stopping conversation and agents.", page); }
-    });
-  }
-
-  private vimNavigation(k: Key): Key {
-    if (this.vimMode !== "normal" || k.ctrl || k.alt || k.name !== "char") return k;
-    const motion: Record<string, string> = { h: "left", j: "down", k: "up", l: "right", G: "end" };
-    if (k.text === "g") {
-      if (this.vimPrefix?.key === "g" && this.clock.now() - this.vimPrefix.at < 1500) {
-        this.vimPrefix = undefined;
-        return { name: "home" };
-      }
-      this.vimPrefix = { key: "g", at: this.clock.now() };
-      return k;
-    }
-    this.vimPrefix = undefined;
-    const name = motion[k.text ?? ""];
+  /** When the last g of a gg was pressed in a list (a menu, help, a confirmation), else -Infinity. */
+  private gAt = -Infinity;
+  /** In lists nothing is typed, so j/k move, gg and G jump to the ends. */
+  private listNavigation(k: Key): Key {
+    if (k.ctrl || k.alt || k.name !== "char") return k;
+    const g = k.text === "g" && this.clock.now() - this.gAt < 1500;
+    this.gAt = k.text === "g" && !g ? this.clock.now() : -Infinity;
+    if (g) return { name: "home" };
+    const name = ({ j: "down", k: "up", G: "end" } as Record<string, string>)[k.text ?? ""];
     return name ? { name } : k;
-  }
-
-  private async vimKey(k: Key): Promise<boolean> {
-    if (!this.vimMode || k.ctrl || k.alt || this.clearing || this.keyEcho) return false;
-    if (this.vimCommand !== undefined) {
-      if (k.name === "escape") this.vimCommand = undefined;
-      else if (k.name === "enter") {
-        const command = this.vimCommand.trim().replace(/^\//, "");
-        this.vimCommand = undefined;
-        if (command) await this.submit("/" + command);
-      } else if (k.name === "backspace") this.vimCommand = [...this.vimCommand].slice(0, -1).join("");
-      else if (k.name === "tab") {
-        const prefix = "/" + this.vimCommand.replace(/^\//, "");
-        const matches = [...this.commands.keys()].filter(name => name.startsWith(prefix));
-        if (matches.length === 1) this.vimCommand = matches[0]!.slice(1) + " ";
-      } else if (typedText(k)) this.vimCommand += typedText(k);
-      this.draw(); return true;
-    }
-    const key = k.name === "char" ? k.text : undefined;
-    const prefix = this.vimPrefix;
-    this.vimPrefix = undefined;
-    if (prefix && this.clock.now() - prefix.at < 1500) {
-      if (prefix.key === "g" && (key === "t" || key === "T")) { this.switchTab(key === "t" ? 1 : -1); return true; }
-      if (prefix.key === "g" && key === "g") { this.jumpChat(false); return true; }
-    }
-    const action = this.vimMode === "normal" && key ? this.vimActions.get(key) : undefined;
-    if (action) { await action(); this.draw(); return true; }
-    if (this.vimMode === "insert") {
-      if (k.name !== "escape") return false;
-      this.vimMode = "normal";
-      this.vimPrefix = undefined;
-      this.draw(); return true;
-    }
-    if (key === "g") this.vimPrefix = { key, at: this.clock.now() };
-    else if (key === "i") this.vimMode = "insert";
-    else if (key === "j" || key === "k") this.scroll({ name: key === "j" ? "down" : "up" });
-    else if (key === "G") this.jumpChat(true);
-    else if (key === "h" || key === "l") this.edit({ name: key === "h" ? "left" : "right" });
-    else if (k.name === "escape" && this.page?.view) this.page.view.leave();
-    else if (this.canScroll(k)) return false;
-    this.draw(); return true;
-  }
-
-  private jumpChat(end: boolean): void {
-    this.selectionPausedFollow = false;
-    this.scrollTop = end ? null : 0;
-    this.scrollAnchor = undefined;
-    this.draw();
-  }
-
-  private vimModelMenu(): void {
-    this.openMenu("model role", [
-      { label: "All agents", value: "" }, { label: "Orchestrator", value: "orch" },
-      { label: "Worker", value: "worker" }, { label: "Reviewer", value: "reviewer" },
-    ], role => this.modelCommand(role, this.page));
-  }
-
-  private vimFastMenu(): void {
-    this.openMenu("Fast mode", [{ label: "On", value: "on" }, { label: "Off", value: "off" }],
-      value => this.requestSetting(this.page, value, "fast"));
   }
 
   /** Ctrl chords that work everywhere (plain control bytes, so they arrive in every terminal; raw mode, so ^Z does not suspend). */
   private readonly chords = new Map<string, () => Promise<void> | void>([
-    ["t", () => this.work.toggle("tasks")],
-    ["c", () => this.interrupt()],
-    ["g", () => { this.keyEcho = true; this.note(dim("press keys; esc ends")); }],
-    ["q", () => this.work.show("questions")],
     ["a", () => this.work.show("agents")],
+    ["t", () => this.work.toggle("tasks")],
+    ["q", () => this.work.show("questions")],
+    ["g", () => this.work.toggle("images")],
+    ["p", () => this.work.toggle("processes")],
     ["b", () => this.work.toggle("projects")],
+    ["h", () => this.switchTab(-1)],
+    ["l", () => this.switchTab(1)],
+    ["c", () => this.interrupt()],
     ["n", () => this.newPage()],
-    ["z", () => this.switchPage(-1)],
-    ["x", () => this.switchPage(1)],
+    ["x", () => { this.keyEcho = true; this.note(dim("press keys; esc ends")); }],
   ]);
 
   /**
    * Who gets a key the work page did not take: the first layer whose (pure) `takes` says yes. In order:
    * 0. clear: local Cancel-default confirmation owns all keys; navigation cancels it first;
-   * 1. keyEcho: Ctrl+G echoes every key except Ctrl+C until Esc;
-   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+Z / Ctrl+X switch pages, Ctrl+A/T/Q/B open the work page on their tab (T and B close it when it already shows), Ctrl+G starts the key echo;
+   * 1. keyEcho: Ctrl+X echoes every key except Ctrl+C until Esc;
+   * 2. chords: Ctrl+C cancels (twice exits), Ctrl+N opens a page, Ctrl+H / Ctrl+L switch pages, Ctrl+A/T/Q/G/P/B open the work page on Agents/Tasks/Questions/Images/Processes/Bubbles (T, G, P and B close it when it already shows that tab), Ctrl+X starts the key echo;
    * 3. menu: every key while a settings menu is open;
    * 4. help: scroll or dismiss the explicit help panel, preserving the composer;
    * 5. images: Ctrl+V attaches the clipboard image, Ctrl+Y removes the last one;
@@ -1481,7 +1379,7 @@ export class App {
    * 8. editor: the rest edits the input (EDITS, ↑↓ history).
    */
   readonly keyLayers: readonly KeyLayer[] = [
-    { name: "clear", takes: () => !!this.clearing, handle: k => this.clearKey(this.vimNavigation(k)) },
+    { name: "clear", takes: () => !!this.clearing, handle: k => this.clearKey(this.listNavigation(k)) },
     { name: "keyEcho", takes: (k) => this.keyEcho && !(k.ctrl && k.name === "c"), handle: (k) => this.echoKey(k) },
     { name: "chords", takes: (k) => !!k.ctrl && this.chords.has(k.name), handle: (k) => this.chords.get(k.name)!() },
     { name: "menu", takes: () => !!this.menu, handle: (k) => this.menuKey(k) },
@@ -1571,16 +1469,8 @@ export class App {
     if (!this.keyEcho && !this.clearing && !this.work.confirming) {
       if (k.ctrl && !k.alt && this.chords.has(k.name)) return this.chords.get(k.name)!();
       const text = !k.ctrl && !k.alt && k.name === "char" ? k.text : undefined;
-      // A find or a typed answer on the work page takes letters as text: no Vim letter, no q.
-      if (!this.work.typing) {
-        if (this.vimMode === "normal" && (this.vimCommand !== undefined || text && this.vimActions.has(text) || this.vimPrefix?.key === "g" && (text === "t" || text === "T"))) {
-          await this.vimKey(k);
-          return;
-        }
-        if (text === "q" && (this.vimMode === "normal" || !this.vimMode) && (this.work.open || this.menu || this.helpTop !== null || this.page?.view)) k = { name: "escape" };
-        // The page moves with its own g/gg; a g there still starts gt/gT.
-        if (this.vimMode === "normal" && this.work.open) this.vimPrefix = text === "g" && !this.vimPrefix ? { key: "g", at: this.clock.now() } : undefined;
-      }
+      // A find or a typed answer on the work page takes letters as text, q included.
+      if (!this.work.typing && text === "q" && (this.work.open || this.menu || this.helpTop !== null || this.page?.view)) k = { name: "escape" };
     }
     // Ctrl+C retains the global cancellation/double-press exit path even when
     // the page is loading, failed, or waiting on an unresponsive registry.
@@ -1594,7 +1484,6 @@ export class App {
     // Editing within this draft is fine. Navigation/modal/send/clear/history keys
     // invalidate asynchronous reads, even if the user returns before completion.
     if (!(k.ctrl && k.name === "v") && !typedText(k) && !["left", "right", "backspace", "delete"].includes(k.name)) this.clipboardGeneration++;
-    if (this.vimMode && !this.menu && !this.clearing && !this.keyEcho && this.helpTop === null && await this.vimKey(k)) return;
     if (this.canScroll(k)) return this.scroll(k);
     if (k.name === "escape") this.modelGeneration++;
     for (const layer of this.keyLayers) if (layer.takes(k)) return layer.handle(k);
@@ -1616,20 +1505,22 @@ export class App {
     this.draw();
   }
 
+  private lettersAreCommands(): boolean {
+    return this.work.open && !this.work.typing || !!this.menu || !!this.clearing || this.helpTop !== null;
+  }
+
   /** Only rewrap on width/context changes, not on every live-activity tick. */
   private helpView(): Help | null {
     if (this.helpTop === null) return null;
-    const cols = this.deps.term.cols, inView = !!this.page?.view, vim = !!this.vimMode;
-    if (this.helpContent?.cols !== cols || this.helpContent.inView !== inView || this.helpContent.vim !== vim) {
-      this.helpContent = { cols, inView, vim, lines: helpLines(this.commands, inView, cols, vim) };
+    const cols = this.deps.term.cols, inView = !!this.page?.view;
+    if (this.helpContent?.cols !== cols || this.helpContent.inView !== inView) {
+      this.helpContent = { cols, inView, lines: helpLines(this.commands, inView, cols) };
     }
     return { lines: this.helpContent.lines, top: this.helpTop };
   }
 
   /** Explicit modal, independent of chat/answer buffers and conversation scroll. */
   private toggleHelp(): void {
-    this.menuFrom = null;
-    if (this.vimMode) this.vimMode = "normal";
     this.work.close();
     this.cancelClear();
     this.helpTop = this.helpTop === null ? 0 : null;
@@ -1638,7 +1529,9 @@ export class App {
   }
 
   private helpKey(k: Key): void {
-    k = this.vimNavigation(k);
+    // Typing a letter or digit closes help and goes to the composer.
+    if (k.name === "char" && typedText(k) && !/^[jkgG]$/.test(k.text ?? "")) { this.helpTop = null; this.edit(k); this.draw(); return; }
+    k = this.listNavigation(k);
     if (k.name === "escape") { this.helpTop = null; this.draw(); return; }
     if (k.ctrl || k.alt) return;
     const panel = helpPanel({ ...this.frame(), rows: this.composerRows() });
@@ -1666,7 +1559,7 @@ export class App {
     await this.taskCounts.refresh(page);
   }
 
-  /** Ctrl+G: show each key as parsed; Esc ends. */
+  /** Ctrl+X: show each key as parsed; Esc ends. */
   private echoKey(k: Key): void {
     if (k.name !== "escape") return this.note(dim(JSON.stringify(k)));
     this.keyEcho = false;
@@ -1676,7 +1569,7 @@ export class App {
   /** Navigate the settings menu, confirm a selection or dismiss it. */
   private async menuKey(k: Key): Promise<void> {
     const m = this.menu!;
-    const navigation = this.vimNavigation(k);
+    const navigation = this.listNavigation(k);
     const id = menuKeyId(navigation);
     const n = Math.max(1, m.items.length);
     if (navigation.name === "home") m.index = 0;
@@ -1685,7 +1578,6 @@ export class App {
     else if (id === "down") m.index = (m.index + 1) % n;
     else if (id === "enter") { this.menu = null; await m.pick(m.index); }
     else if (id === "escape") { this.modelGeneration++; this.menu = null; }
-    if (!this.menu) this.leaveMenu();
     return this.draw();
   }
 

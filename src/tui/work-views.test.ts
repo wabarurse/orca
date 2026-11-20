@@ -49,11 +49,10 @@ test("one page, six tabs: digits, Tab, Shift+Tab and h/l switch; chords open the
   } finally { await stop(); }
 });
 
-test("j/k, gg, G and Ctrl+D/Ctrl+U move the selection; the page is the same with Vim keys on", async () => {
+test("j/k, gg, G and Ctrl+D/Ctrl+U move the selection", async () => {
   const { app, term, stop } = await setup("moves", { agents: async () => SIX });
   try {
-    for (const vim of [false, true]) {
-      if (vim) { term.type("/vim\r"); await until(() => term.screen().includes("[NORMAL]")); }
+    {
       term.press({ name: "a", ctrl: true }); await until(() => app.work.state?.items.length === 7);
       await key(app, "j"); await key(app, "j"); expect(selected(app)).toBe("reviewer-beta");
       await key(app, "k"); expect(selected(app)).toBe("worker-beta");
@@ -65,7 +64,7 @@ test("j/k, gg, G and Ctrl+D/Ctrl+U move the selection; the page is the same with
       // The heading folds its day: Enter or ← shuts it (the count stays), Enter or → opens it again.
       await key(app, "k"); await app.onKey({ name: "enter" }); expect(names(app)).toEqual(["▸ Today (6)"]);
       await app.onKey({ name: "right" }); expect(names(app).length).toBe(7); expect(app.work.kind).toBe("agents");
-      await key(app, "h"); expect(names(app)).toEqual(["▸ Today (6)"]); await key(app, "l"); expect(names(app)[0]).toBe("▾ Today (6)");
+      await app.onKey({ name: "left" }); expect(names(app)).toEqual(["▸ Today (6)"]); await app.onKey({ name: "right" }); expect(names(app)[0]).toBe("▾ Today (6)");
       await app.onKey({ name: "escape" }); expect(app.work.open).toBe(false);
     }
   } finally { await stop(); }
@@ -142,32 +141,30 @@ test("a question with options: Enter chooses from the default; a digit sends at 
   } finally { await stop(); }
 });
 
-test("q backs out of pages and menus; chat and answer drafts stay apart; Vim letters are text while answering", async () => {
-  const { app, term, stop } = await setup("vim-question-drafts");
+test("q backs out of pages and menus; chat and answer drafts stay apart; letters are text while answering", async () => {
+  const { app, term, stop } = await setup("question-drafts");
   try {
     await ask(app.page!.project, [{ text: "Describe the result" }]);
-    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type("ichat draft"); await until(() => app.input.text === "chat draft");
-    term.press({ name: "escape" });
-    for (const command of ["A", "T", "P", "B", "M", "?"]) {
-      await key(app, command); await key(app, "q");
+    term.type("chat draft"); await until(() => app.input.text === "chat draft");
+    for (const chord of ["a", "t", "g", "p", "b"]) {
+      await app.onKey({ name: chord, ctrl: true }); await key(app, "q");
       expect(app.menu).toBeNull(); expect(app.work.open).toBe(false);
       expect(app.input.text).toBe("chat draft");
     }
-    await key(app, "Q"); await until(() => app.work.state?.items.length === 2);
+    await app.onKey({ name: "q", ctrl: true }); await until(() => app.work.state?.items.length === 2);
     await app.onKey({ name: "enter" });
-    term.type("qHL: answer"); await until(() => app.input.text === "qHL: answer");
+    term.type("qhl: answer"); await until(() => app.input.text === "qhl: answer");
     expect(app.work.kind).toBe("questions");
     term.press({ name: "escape" }); // form -> list
     expect(app.page!.questions.expanded).toBe(false); expect(app.input.text).toBe("chat draft");
     await key(app, "q"); expect(app.work.open).toBe(false);
-    await key(app, "Q"); await app.onKey({ name: "enter" });
-    expect(app.input.text).toBe("qHL: answer");
+    await app.onKey({ name: "q", ctrl: true }); await app.onKey({ name: "enter" });
+    expect(app.input.text).toBe("qhl: answer");
     term.press({ name: "a", ctrl: true }); // another tab puts the form away without taking its answer
     expect(app.page!.questions.expanded).toBe(false); expect(app.input.text).toBe("chat draft");
-    await key(app, "Q"); await app.onKey({ name: "enter" }); await app.onKey({ name: "enter" });
+    await app.onKey({ name: "q", ctrl: true }); await app.onKey({ name: "enter" }); await app.onKey({ name: "enter" });
     await until(() => app.page!.questions.open.length === 0);
-    expect((await all(app.page!.project))[0]!.answer).toBe("qHL: answer");
+    expect((await all(app.page!.project))[0]!.answer).toBe("qhl: answer");
     expect(app.input.text).toBe("chat draft");
   } finally { await stop(); }
 });
@@ -192,8 +189,8 @@ test("Agents hides unverified rows, folds old ones under Archived and archives o
     await until(() => term.screen().includes("worker-live"));
     expect(names(app)).toEqual(["▾ Today (1)", "worker-live", "▾ Earlier (1)", "worker-queued", "▸ Archived (1)"]);
     expect(term.display.screen()[4]).toMatch(/^› worker-live +running/);
-    await key(app, "a"); await until(() => term.screen().includes("worker-old"));
-    await key(app, "D"); await until(() => term.screen().includes("Archive 1 finished agents?"));
+    await key(app, "G"); await app.onKey({ name: "enter" }); await until(() => term.screen().includes("worker-old"));
+    await key(app, "A"); await until(() => term.screen().includes("Archive 1 finished agents?"));
     await key(app, "y"); await until(() => removed.length === 1);
     expect(removed).toEqual([["worker-old"]]);
   } finally { await stop(); }
@@ -212,7 +209,7 @@ test("rows keep to one or two facts: INFO has no queued count, the divider is a 
     expect(screen.some(row => row.startsWith("── worker-busy"))).toBe(false);
     expect(screen.join("\n")).toContain("Now");
     expect(screen.join("\n")).toContain("3 queued messages");
-    expect(screen.at(-1)!.trim()).toBe("j/k move · enter view · s stop · a archived · f find · esc close");
+    expect(screen.at(-1)!.trim()).toBe("j/k move · h/l tabs · enter view · s stop · a archive · f find · q close");
   } finally { await stop(); }
 });
 
@@ -242,7 +239,7 @@ test("folding a day or the archive never changes a tab's count", async () => {
   } finally { await stop(); }
 });
 
-test("Tasks is the outline as rows: h/l and ←/→ fold instead of switching tabs; abandoning asks and keeps the task and its dependents", async () => {
+test("Tasks is the outline as rows: ←/→ fold, h/l switch tabs, and there is no abandon key", async () => {
   const { registerTask, getTask, setTaskDependencies } = await import("../core/data/tasks/tasks");
   const project = "tasks-page";
   const { app, term, stop } = await setup(project, { taskCount: undefined });
@@ -254,17 +251,17 @@ test("Tasks is the outline as rows: h/l and ←/→ fold instead of switching ta
     await until(() => term.screen().includes("Task #1 Parent"));
     expect(term.display.screen().slice(3, 6).map(row => row.trimEnd().replace(/ {2,}/g, " | ").replace(/─+/, "─"))).toEqual([" | ▾ Today (2) ─", "› ▾ #1 Parent | queued", " | └─ #2 Child | queued"]); // the cursor starts on a task, not the day heading
     expect(term.screen()).toContain("Keep the ledger");
-    await key(app, "h"); expect(app.work.kind).toBe("tasks"); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent"]);
+    const left = () => app.onKey({ name: "left" }), right = () => app.onKey({ name: "right" });
+    await left(); expect(app.work.kind).toBe("tasks"); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent"]);
     // ← again goes up to the day, and once more folds the whole day; → opens it and steps back in.
-    await key(app, "h"); expect(selected(app)).toBe("▾ Today (2)"); await key(app, "h"); expect(names(app)).toEqual(["▸ Today (2)"]);
-    await key(app, "l"); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent"]); await key(app, "l"); expect(selected(app)).toBe("#1 Parent");
-    await app.onKey({ name: "right" }); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent", "#2 Child"]);
-    await key(app, "l"); expect(selected(app)).toBe("#2 Child"); await key(app, "h"); expect(selected(app)).toBe("#1 Parent");
-    await key(app, "c"); await until(() => term.screen().includes("1 dependents retained"));
-    await key(app, "n"); expect((await getTask(project, parent.id)).attention).toBeUndefined();
-    await key(app, "c"); await key(app, "y"); await until(() => term.screen().includes("Task abandoned"));
-    expect((await getTask(project, parent.id)).attention?.kind).toBe("cancelled");
+    await left(); expect(selected(app)).toBe("▾ Today (2)"); await left(); expect(names(app)).toEqual(["▸ Today (2)"]);
+    await right(); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent"]); await right(); expect(selected(app)).toBe("#1 Parent");
+    await right(); expect(names(app)).toEqual(["▾ Today (2)", "#1 Parent", "#2 Child"]);
+    await right(); expect(selected(app)).toBe("#2 Child"); await left(); expect(selected(app)).toBe("#1 Parent");
+    await key(app, "c"); expect(app.work.state!.confirm).toBeUndefined();
+    expect((await getTask(project, parent.id)).attention).toBeUndefined();
     expect((await getTask(project, child.id)).dependsOn).toEqual([parent.id]);
+    await key(app, "l"); expect(app.work.kind).toBe("questions"); await key(app, "h"); expect(app.work.kind).toBe("tasks");
   } finally { await stop(); }
 });
 
@@ -294,8 +291,8 @@ test("Projects works with no conversation open; the other tabs say to open one; 
 test("only the kept commands exist; a removed one is unknown; key paths replace the rest", async () => {
   const { app, term, stop } = await setup("commands");
   try {
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/clear-context", "/compact", "/effort", "/fast", "/help", "/login", "/model", "/quit", "/rename", "/vim"]);
-    for (const gone of ["/stop", "/paste-image", "/remove-image", "/runtime", "/usage", "/refresh", "/projects", "/retry-images", "/keys", "/new", "/close", "/tasks", "/agents", "/images", "/clear", "/project", "/project-defaults", "/questions", "/back"]) {
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/clear-context", "/compact", "/effort", "/fast", "/help", "/login", "/model", "/quit", "/rename"]);
+    for (const gone of ["/vim", "/stop", "/paste-image", "/remove-image", "/runtime", "/usage", "/refresh", "/projects", "/retry-images", "/keys", "/new", "/close", "/tasks", "/agents", "/images", "/clear", "/project", "/project-defaults", "/questions", "/back"]) {
       term.type(`${gone}\r`);
       await until(() => term.screen().includes(`unknown command ${gone}`));
       expect(app.work.open).toBe(false); expect(app.menu).toBeNull(); expect(app.pages).toHaveLength(1);
@@ -304,75 +301,28 @@ test("only the kept commands exist; a removed one is unknown; key paths replace 
     term.type("/help\r"); await until(() => app.frame().help !== null);
     expect(app.frame().help!.lines.join("\n")).not.toMatch(/\/(?:agents|tasks|questions|projects|refresh|keys|back|new|close|stop|usage|runtime)\b/);
     term.press({ name: "escape" });
-    term.press({ name: "g", ctrl: true }); expect(app.keyEcho).toBe(true); term.press({ name: "escape" }); expect(app.keyEcho).toBe(false);
-    term.type("/vim\r"); await until(() => term.screen().includes("[NORMAL]"));
-    term.type(":agen"); term.press({ name: "tab" }); term.press({ name: "enter" });
-    await until(() => term.screen().includes("unknown command /agen")); // no completion for a removed command
-    term.type(":qu"); term.press({ name: "tab" }); await until(() => term.screen().includes(":quit")); term.press({ name: "escape" });
+    term.press({ name: "x", ctrl: true }); expect(app.keyEcho).toBe(true); term.press({ name: "escape" }); expect(app.keyEcho).toBe(false);
   } finally { await stop(); }
 });
 
-test("Vim's Shift letters call their actions directly, with legacy and modified-key input, and never in Insert, a command line or a confirmation", async () => {
-  const { app, term, stop } = await setup("shift-routing");
+test("Ctrl+H/L switch project tabs from chat, pages and menus; Shift letters type; drafts stay", async () => {
+  const { app, term, fake, stop } = await setup("tabs-first");
   try {
-    await app.openPage("shift-other");
-    term.type("/vim\r"); await until(() => term.screen().includes("NORMAL"));
-    term.type("\x1b[104;2u"); await until(() => app.page?.project === "shift-routing");
-    term.type("\x1b[27;2;108~"); await until(() => app.page?.project === "shift-other");
-    for (const [letter, kind] of [["A", "agents"], ["T", "tasks"], ["Q", "questions"], ["P", "images"], ["B", "projects"]] as const) {
-      await key(app, letter); expect(app.work.kind).toBe(kind);
-      await app.onKey({ name: "escape" }); await app.onKey({ name: letter.toLowerCase(), shift: true }); expect(app.work.kind).toBe(kind);
-    }
-    await key(app, "?"); expect(app.work.open).toBe(false); expect(app.frame().help).not.toBeNull();
-    await key(app, "U"); await until(() => app.menu?.title.includes("accounts") === true);
-    await key(app, "M"); await until(() => app.menu?.title.includes("model role") === true);
-    await key(app, "F"); await until(() => app.menu?.title.includes("Fast mode") === true);
-    await key(app, "S"); await until(() => app.menu?.title.includes("Stop this conversation") === true);
-    await app.onKey({ name: "escape" });
-    await key(app, "R"); expect(app.menu).toBeNull(); expect(app.work.open).toBe(false); // /refresh is gone, and so is its letter
-    await key(app, "i");
-    for (const letter of "ATQPBUEMFSVX") await app.onKey({ name: letter.toLowerCase(), shift: true });
-    expect(app.input.text).toBe("ATQPBUEMFSVX"); expect(app.work.open).toBe(false); expect(app.menu).toBeNull();
-    await app.onKey({ name: "escape" });
-    term.type(":HLTA"); await until(() => term.screen().includes(":HLTA"));
-    expect(app.page!.project).toBe("shift-other"); expect(app.work.open).toBe(false);
-    await app.onKey({ name: "escape" });
-    app.page!.orch.checkClear = async () => {};
-    app.page!.orch.clear = async () => { throw new Error("must not clear"); };
-    await app.commands.get("/clear-context")!.run("", app.page);
-    expect(app.menu?.title).toContain("clear ");
-    await key(app, "H"); await key(app, "A");
-    expect(app.page!.project).toBe("shift-other"); expect(app.work.open).toBe(false);
-    await app.onKey({ name: "escape" });
-  } finally { await stop(); }
-});
-
-test("Vim keeps drafts, switches project tabs from chat, pages and menus, and tags the page's status line", async () => {
-  const { app, term, fake, stop } = await setup("vim-first");
-  try {
-    await app.openPage("vim-second");
-    term.type("/vim\r"); await until(() => term.screen().includes("[NORMAL]"));
-    expect(term.display.screen().some(row => row.startsWith("┌─ [NORMAL]"))).toBe(true);
-    term.type("gT"); await until(() => app.page?.project === "vim-first");
-    term.type("idraft text"); await until(() => app.input.text === "draft text");
-    term.press({ name: "escape" }); await until(() => term.screen().includes("[NORMAL]"));
-    await key(app, "h"); await key(app, "l"); expect(app.page!.project).toBe("vim-first"); // plain h/l move in the draft
-    term.type("L"); await until(() => app.page?.project === "vim-second");
-    term.type("T"); await until(() => term.display.screen().at(-1)!.startsWith("[NORMAL] "));
-    expect(term.display.screen()[0]).not.toContain("[NORMAL]");
-    term.type("H"); await until(() => app.page?.project === "vim-first"); expect(app.work.open).toBe(false);
-    term.type("M"); await until(() => app.menu?.title.includes("model role") === true);
-    term.type("G"); await until(() => app.menu?.index === 3);
-    term.type("gg"); await until(() => app.menu?.index === 0);
-    term.type("L"); await until(() => app.page?.project === "vim-second"); expect(app.menu).toBeNull();
-    term.type("B"); await until(() => app.work.kind === "projects");
-    term.type("H"); await until(() => app.page?.project === "vim-first"); expect(app.work.open).toBe(false);
-    term.type("P"); term.resize(30, 12); await until(() => term.display.screen().at(-1)!.startsWith("[NORMAL] "));
-    term.press({ name: "escape" });
+    await app.openPage("tabs-second");
+    term.press({ name: "h", ctrl: true }); await until(() => app.page?.project === "tabs-first");
+    term.type("draft text"); await until(() => app.input.text === "draft text");
+    term.type("\x0c"); await until(() => app.page?.project === "tabs-second");
+    term.press({ name: "t", ctrl: true }); await until(() => app.work.kind === "tasks");
+    term.type("\x08"); await until(() => app.page?.project === "tabs-first"); expect(app.work.open).toBe(false);
+    await app.commands.get("/effort")!.run("", app.page);
+    term.type("\x0c"); await until(() => app.page?.project === "tabs-second"); expect(app.menu).toBeNull();
+    term.press({ name: "b", ctrl: true }); await until(() => app.work.kind === "projects");
+    term.type("\x08"); await until(() => app.page?.project === "tabs-first");
+    expect(app.work.open).toBe(false);
     expect(app.input.text).toBe("draft text");
+    for (const letter of "ATQPBUEMFSVXHL") await app.onKey({ name: letter.toLowerCase(), shift: true });
+    expect(app.input.text).toBe("draft textATQPBUEMFSVXHL"); expect(app.work.open).toBe(false); expect(app.menu).toBeNull();
     expect(Object.values(fake.said).flat()).toEqual([]);
-    term.type(":vim\r"); await until(() => !term.screen().includes("[NORMAL]"));
-    expect(app.input.text).toBe("draft text");
   } finally { await stop(); }
 });
 

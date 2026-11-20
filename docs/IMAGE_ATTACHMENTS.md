@@ -15,7 +15,7 @@ and Option-Backspace are unchanged. Ctrl+V with text-only/empty clipboard report
 that there is no image and leaves the draft unchanged; it **does not also paste
 text**, avoiding duplicate terminal paste. Use the terminal's normal text-paste
 shortcut. A terminal or multiplexer that intercepts Ctrl+V must deliver the literal
-control key for this feature to work. Ctrl+G (draft-safe) shows what
+control key for this feature to work. Ctrl+X (draft-safe) shows what
 arrives; orca does not change terminal settings or key bindings for you.
 
 Menus, projects, help, task/question panels and agent views keep ownership of

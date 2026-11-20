@@ -76,7 +76,7 @@ test("bare /clear-context is local, cancel-default and excluded from recall; esc
   await until(() => ui.screen.text().includes("clear context"));
   const visible = ui.screen.screen().map(Bun.stripANSI);
   expect(visible.findIndex(row => row.includes("clear context"))).toBeGreaterThan(visible.findIndex(row => row.includes("0 tasks")));
-  for (const key of [{ name: "paste", text: "danger\n/quit" }, { name: "char", text: "y" }, { name: "q", ctrl: true }, { name: "g", ctrl: true }, { name: "enter", alt: true }]) await app.onKey(key);
+  for (const key of [{ name: "paste", text: "danger\n/quit" }, { name: "char", text: "y" }, { name: "q", ctrl: true }, { name: "x", ctrl: true }, { name: "enter", alt: true }]) await app.onKey(key);
   expect(app.input).toEqual({ text: "draft 界", cursor: 5 });
   await app.onKey({ name: "escape" });
   expect(app.input).toEqual({ text: "draft 界", cursor: 5 });
@@ -175,7 +175,7 @@ test("switching, closing/reopening the same project, and resize invalidate confi
   app.switchPage(-1);
   expect(app.input.text).toBe("p draft");
   await ui.command(); const stale = app.menu!;
-  await app.onKey({ name: "x", ctrl: true });
+  await app.onKey({ name: "l", ctrl: true });
   expect(app.menu).toBeNull();
   expect(app.input.text).toBe("other draft");
   await stale.pick(1);
@@ -242,7 +242,7 @@ test("navigation cancels an authorized clear waiting on persistence, never retar
   await entered.promise;
   await app.onKey({ name: "down" });
   const saving = app.onKey({ name: "enter" });
-  await app.onKey({ name: "x", ctrl: true });
+  await app.onKey({ name: "l", ctrl: true });
   release.resolve(); await blocker; await saving;
   expect(app.page!.project).toBe("other");
   expect(await ui.context()).toHaveLength(1);
@@ -256,7 +256,7 @@ test("late eligibility results cannot open a confirmation after a page change; c
   const check = page.orch.checkClear!;
   page.orch.checkClear = async () => { await release.promise; return check(); };
   const opening = ui.command();
-  await app.onKey({ name: "x", ctrl: true });
+  await app.onKey({ name: "l", ctrl: true });
   release.resolve(); await opening;
   expect(app.menu).toBeNull();
   expect(app.page!.project).toBe("other");

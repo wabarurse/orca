@@ -17,13 +17,13 @@ import { Calls } from "./conversation/tools";
 
 const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until } = appFixture();
 
-test("ctrl+g echoes keys without replacing chat, answer, or no-page drafts and input history", async () => {
+test("ctrl+x echoes keys without replacing chat, answer, or no-page drafts and input history", async () => {
   const term = fakeTerm(100, 24), orchs = fakeOrchestrators();
   const app = new App({ term, pollMs: 100_000, questionDelayMs: 0, openOrchestrator: orchs.openOrchestrator });
   const running = app.run("keys-drafts");
   const check = async () => {
     const draft = { ...app.input }, history = [...(app.page?.inputHistory ?? [])];
-    term.type("\x07");
+    term.type("\x18");
     expect(app.keyEcho).toBe(true);
     term.type("\x1b[<64;1;1M\x1b[<65;1;1M\x1b[200~ignored\x1b[201~\r");
     term.press({ name: "escape" });
@@ -543,7 +543,7 @@ test("Tasks page: r re-reads the real ledger and says when it refreshed; the sta
   } finally { app.quit(); await running; }
 });
 
-for (const width of [80, 120]) test(`Tasks page real App ${width}: confirmed merged d retains SQL and numbering`, async () => {
+for (const width of [80, 120]) test(`Tasks page real App ${width}: confirmed merged a retains SQL and numbering`, async () => {
   const { registerTask, observeTaskPR, getTask, listTasks, setTaskDependencies } = await import("../core/data/tasks/tasks");
   const { searchLedger } = await import("../core/data/tasks/ledger-store");
   const project = `persistent-tree-${width}`;
@@ -560,11 +560,11 @@ for (const width of [80, 120]) test(`Tasks page real App ${width}: confirmed mer
     await until(() => screen().includes("Task #1 Merged parent"));
     expect(term.raw()).toContain("https://github.com/o/r/pull/1"); // OSC8 + visible fallback; not a physical Cmd gesture claim
     term.press({ name: "down" }); await until(() => screen().includes("Task #2 Queued child"));
-    term.type("d"); await until(() => screen().includes("Only merged or abandoned/closed"));
+    term.type("a"); await until(() => screen().includes("Only merged or abandoned/closed"));
     term.press({ name: "up" }); await until(() => screen().includes("Task #1 Merged parent"));
-    term.type("d"); await until(() => screen().includes("y confirm · n/esc cancel"));
+    term.type("a"); await until(() => screen().includes("y confirm · n/esc cancel"));
     term.type("n"); expect(await listTasks(project)).toHaveLength(2);
-    term.type("d"); term.type("y");
+    term.type("a"); term.type("y");
     await until(() => screen().includes("Task #2 Queued child") && screen().includes("▸ Archived (1)"));
     expect((await listTasks(project)).map(t => t.number)).toEqual([2]);
     expect((await getTask(project, b.id)).dependsOn).toEqual([a.id]);

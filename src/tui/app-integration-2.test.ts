@@ -75,7 +75,7 @@ test("saved history beyond the preview budget remains reachable before exit, inc
     term.type("\x1b[<65;10;8M".repeat(rows));
     await until(() => term.screen().includes("LIVE-WHILE-READING"));
     await app.openPage("other-scroll");
-    term.type("\x1a");
+    term.type("\x08");
     await until(() => term.screen().includes("LIVE-WHILE-READING"));
     await scrollToStart();
     expect(app.input).toEqual(draft);
@@ -304,7 +304,7 @@ test("real App login-held pre-cancel input stays paused, retains FIFO, and does 
     await until(() => providers.get("login-cancel-other")!.calls.length === 1);
     expect(providers.get("login-cancel-real")!.calls).toHaveLength(0);
     expect(await cancelled.orch.pending()).toBe(false);
-    term.type("\x1a"); // selected cancelled page
+    term.type("\x08"); // selected cancelled page
     expect(app.page).toBe(cancelled);
     term.type("continue now\r");
     await until(() => providers.get("login-cancel-real")!.calls.length === 1);
@@ -600,7 +600,7 @@ describe("explicit footer help", () => {
       page.view = { name: "worker-help", lines: [], leave: () => { left++; }, live: true, calls: new Calls() };
       await app.commands.get("/help")!.run("", page);
       await until(() => term.screen().includes("help"));
-      for (const key of [{ name: "enter" }, { name: "char", text: "1" }, { name: "paste", text: "not inserted" }, { name: "backspace" }, { name: "tab" }]) await app.onKey(key);
+      for (const key of [{ name: "enter" }, { name: "paste", text: "not inserted" }, { name: "backspace" }, { name: "tab" }]) await app.onKey(key);
       expect(app.input).toEqual(draft);
       expect(page.inputHistory).toEqual(history);
       expect(orchs.said[page.project]).toEqual([]);
@@ -679,10 +679,10 @@ describe("explicit footer help", () => {
       const draft = { text: "draft unchanged", cursor: 3 };
       app.input = { ...draft };
       await help();
-      await app.onKey({ name: "z", ctrl: true });
+      await app.onKey({ name: "h", ctrl: true });
       expect(app.frame().help).toBeNull();
       expect(app.input).toEqual({ text: "", cursor: 0 }); // the other project's own draft
-      await app.onKey({ name: "x", ctrl: true });
+      await app.onKey({ name: "l", ctrl: true });
       expect(app.input).toEqual(draft);
       await help();
       app.openMenu("example menu", [{ value: "one", label: "one" }], () => {});
@@ -698,7 +698,6 @@ describe("explicit footer help", () => {
       await Bun.sleep(170);
       expect(app.frame().help).not.toBeNull();
       await app.onKey({ name: "enter" });
-      await app.onKey({ name: "char", text: "x" });
       await app.onKey({ name: "pagedown" });
       expect(app.input).toEqual(draft);
       await app.onKey({ name: "escape" });
