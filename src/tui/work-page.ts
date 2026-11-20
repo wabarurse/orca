@@ -6,7 +6,7 @@
 import { homedir } from "node:os";
 import { formatDateTime, type AgentInfo, type ProjectEntry, type Question } from "../protocol";
 import { canArchiveTask } from "../protocol/task";
-import { abandonTask, allTasks, removeTask, restoreTask } from "../core/data/tasks";
+import { allTasks, removeTask, restoreTask } from "../core/data/tasks";
 import { directories, togglePin, workViews } from "../core/data/projects";
 import { bubbleMembers, ensureBubble, peekBubble, readBubble } from "../core/data/bubbles";
 import { controlProcess, listProcesses, liveProcess, processOwner, unresolvedProcess } from "../core/data/processes";
@@ -27,12 +27,12 @@ export const WORK_KINDS = ["agents", "tasks", "questions", "images", "processes"
 export type WorkKind = typeof WORK_KINDS[number];
 const TITLES: Record<WorkKind, string> = { agents: "Agents", tasks: "Tasks", questions: "Questions", images: "Images", processes: "Processes", projects: "Bubbles" };
 const HINTS: Record<WorkKind, string> = {
-  agents: "j/k move · enter view · s stop · a archived · f find · esc close",
-  tasks: "j/k move · ←/→ fold · c abandon · a archived · f find · esc close",
-  questions: "j/k move · enter answer · a archived · f find · esc close",
-  images: "j/k move · enter view · a archived · f find · esc close",
-  processes: "j/k move · s stop · f find · esc close",
-  projects: "j/k move · enter open · p pin · d delete · a archived · esc close",
+  agents: "j/k move · h/l tabs · enter view · s stop · a archive · f find · q close",
+  tasks: "j/k move · h/l tabs · ←/→ fold · a archive · f find · q close",
+  questions: "j/k move · h/l tabs · enter answer · a archive · f find · q close",
+  images: "j/k move · h/l tabs · enter view · a archive · f find · q close",
+  processes: "j/k move · h/l tabs · s stop · f find · q close",
+  projects: "j/k move · h/l tabs · enter open · p pin · d delete · q close",
 };
 const DAY_HELP = "Items last active on this day, newest first. Enter or ← folds the day away; Enter or → opens it again.";
 const SECTION_HELP = "Archived items are retained. Enter or → expands; ← collapses. u restores an item to the list without resuming work.";
@@ -49,8 +49,6 @@ export interface WorkHost {
   /** The composer buffer: the answer being typed while a question's answer is open. */
   input(): { text: string; cursor: number }; edit(k: Key): void;
   noteRow(page: Page | undefined): string | undefined;
-  /** Vim's `:` line while it is being typed, and its mode tag ("[NORMAL] ") when Vim keys are on. */
-  commandLine(): string | undefined; modeTag(): string;
   images(page: Page): { rows: DeliveredMedia[]; archived: Record<string, boolean> } | undefined;
   readImages(page: Page): Promise<void>; retryImages(page: Page): Promise<void>;
   taskCountChanged(page: Page): Promise<void>;
@@ -138,7 +136,7 @@ export class WorkPages {
 
   get kind(): WorkKind | undefined { return this.view?.kind; }
   get open(): boolean { return !!this.view; }
-  /** A y/n question owns the keys: chords and Vim letters wait. */
+  /** A y/n question owns the keys: chords and letters wait. */
   get confirming(): boolean { return !!this.view?.confirm; }
   /** The bottom line is a text input (find, or a typed answer): letters are text, not commands. */
   get typing(): boolean { return !!this.view && (!!this.view.find || this.form(this.view) && this.host.questions.answering()); }
@@ -337,10 +335,9 @@ export class WorkPages {
     return { rows: render.lines, cols, cursor: Math.max(0, rows - 1), col: footer.col, bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
   }
 
-  /** The page's one status line: Vim's `:`, a confirmation, an input, a notice, else the tab's key hints. */
+  /** The page's one status line: a confirmation, an input, a notice, else the tab's key hints. */
   private footer(view: View, cols: number): { line: string; col: number } {
-    const command = this.host.commandLine(), questions = view.page?.questions;
-    if (command !== undefined) return inputLine(":", command, command.length, "enter run · esc cancel", cols);
+    const questions = view.page?.questions;
     if (view.confirm) return { line: sanitize(`${view.confirm.text}  y confirm · n/esc cancel`), col: 0 };
     if (view.find) return inputLine("find › ", view.find.text, view.find.text.length, "enter keep · esc cancel · then n/N", cols);
     if (this.form(view) && questions) {
@@ -354,7 +351,7 @@ export class WorkPages {
     }
     const hint = view.kind === "projects" && view.parent ? "j/k move · enter open · n new bubble · b new orc in this bubble · c close page · d delete · esc back" : HINTS[view.kind];
     const notice = this.host.noteRow(view.page) ?? view.notice ?? (view.kind === "questions" && questions?.error ? `questions unavailable: ${questions.error}` : view.errors[view.kind] ?? (view.kind === "tasks" ? view.invalid : undefined));
-    return { line: this.host.modeTag() + (notice ? sanitize(notice) : dim(hint)), col: 0 };
+    return { line: notice ? sanitize(notice) : dim(hint), col: 0 };
   }
 
   // --- keys -------------------------------------------------------------------
@@ -384,14 +381,14 @@ export class WorkPages {
     else if (key === "pageup" || key === "pagedown") view.detailTop += (key === "pageup" ? -1 : 1) * Math.max(1, (view.render?.detail.rows ?? 2) - 1);
     else if (/^[1-6]$/.test(key)) this.tab(view, WORK_KINDS[Number(key) - 1]!);
     else if (key === "tab") this.tab(view, WORK_KINDS[(WORK_KINDS.indexOf(view.kind) + (k.shift ? WORK_KINDS.length - 1 : 1)) % WORK_KINDS.length]!);
-    else if (["h", "l", "left", "right"].includes(key)) this.sideways(view, items[index], key === "l" || key === "right");
+    else if (key === "h" || key === "l") this.tab(view, WORK_KINDS[(WORK_KINDS.indexOf(view.kind) + (key === "l" ? 1 : WORK_KINDS.length - 1)) % WORK_KINDS.length]!);
+    else if (key === "left" || key === "right") this.sideways(view, items[index], key === "right");
     else if (key === "f" || key === "/") view.find = { text: "", from: items[index]?.id };
     else if ((key === "n" || key === "N") && !(key === "n" && view.kind === "projects" && view.parent)) {
       const hit = findItem(items, view.query, index + (key === "n" ? 1 : -1), key === "n" ? 1 : -1);
       if (hit === -1) view.notice = view.query ? `no item matches "${view.query}"` : "f starts a find; then n/N go to the next and previous match";
       else this.move(view, items, hit);
     }
-    else if (key === "a" && view.kind !== "processes") { view.history[view.kind] = !view.history[view.kind]; view.selected[view.kind] = ARCHIVED_SECTION; view.detailTop = 0; }
     else if (key === "r") { view.notice = "Refreshing…"; this.host.draw(); await Promise.all(WORK_KINDS.map(kind => this.read(view, kind))); if (view.notice === "Refreshing…") view.notice = view.errors[view.kind] ? undefined : `Refreshed ${formatDateTime(this.host.clock.now())}`; }
     else if (key === "enter" && items[index]?.section) view.history[view.kind] = !view.history[view.kind];
     else if (key === "enter" && items[index]?.heading) { const folds = this.folds(view), id = items[index].id; if (!folds.delete(id)) folds.add(id); }
@@ -429,7 +426,7 @@ export class WorkPages {
     return folds;
   }
 
-  /** ←/→ and h/l: fold on Tasks, open or shut the Archived row or a day heading, else the previous or next tab. */
+  /** ←/→: fold on Tasks, open or shut the Archived row or a day heading, else the previous or next tab. */
   private sideways(view: View, selected: Item | undefined, forward: boolean): void {
     if (selected?.section) view.history[view.kind] = forward;
     else if (selected?.heading && view.kind !== "tasks") { if (forward) this.folds(view).delete(selected.id); else this.folds(view).add(selected.id); }
@@ -530,9 +527,9 @@ export class WorkPages {
     if (key === "enter" && selected.question) return this.openQuestion(view, page, selected.question);
     if (key === "enter" && agent) { this.close(); page.view?.leave(); await this.host.attach(page, agent.name, agent.live); return this.host.reprint(); }
     if (kind === "tasks") return this.taskKey(view, page, key, task);
-    if (key !== "d" && key !== "D" && !(key === "s" && agent)) return;
+    if (key !== "a" && key !== "A" && !(key === "s" && agent)) return;
     if (kind === "agents") return this.agentKey(view, page, key, agent);
-    const targets = (key === "D" ? items : [selected]).filter(item => !item.section && !item.heading && !item.archived);
+    const targets = (key === "A" ? items : [selected]).filter(item => !item.section && !item.heading && !item.archived);
     if (!targets.length) { view.notice = "No items to archive."; return; }
     view.confirm = { text: `Archive ${targets.length} ${kind}?${kind === "questions" ? " Open questions will be dismissed without an answer." : " Files retained."}`, run: async () => {
       for (const item of targets) {
@@ -563,13 +560,13 @@ export class WorkPages {
       return;
     }
     const eligible = (row: AgentInfo) => row.status === "exited" && !row.live && !row.archived && row.queuedMessages === 0;
-    const candidates = (key === "D" ? view.agents : agent ? [agent] : []).filter(eligible);
+    const candidates = (key === "A" ? view.agents : agent ? [agent] : []).filter(eligible);
     const blocked = new Set((await listProcesses(project)).filter(p => unresolvedProcess(p)).map(p => processOwner(p)));
     const runs = new Map(candidates.filter(row => !blocked.has(row.name)).map(row => [row.name, row.run]));
     const names = [...runs.keys()];
     if (this.view !== view) return;
     if (!names.length) { view.notice = "No eligible finished agents."; return; }
-    view.confirm = { text: key === "D" ? `Archive ${names.length} finished agents?` : `Archive ${names[0]}?`, run: async () => {
+    view.confirm = { text: key === "A" ? `Archive ${names.length} finished agents?` : `Archive ${names[0]}?`, run: async () => {
       const current = await (deps.agents ?? listAgents)(project), commands = await listProcesses(project);
       const safe = current.filter(row => runs.has(row.name) && runs.get(row.name) === row.run && eligible(row) &&
         !commands.some(p => processOwner(p) === row.name && unresolvedProcess(p))).map(row => row.name);
@@ -582,19 +579,9 @@ export class WorkPages {
   private async taskKey(view: View, page: Page, key: string, task: View["tasks"][number] | undefined): Promise<void> {
     if (!view.loaded.has("tasks") || view.errors.tasks || view.invalid) return;
     const archivable = (t: View["tasks"][number]) => canArchiveTask(t) && !t.removedAt;
-    if (key === "c" && task && !task.archive) {
-      const runs = task.runs.filter(run => !run.endedAt && (run.state === "prepared" || run.state === "started"));
-      const dependents = view.tasks.filter(t => t.dependsOn?.includes(task.id));
-      if (runs.length) view.notice = `Stop ${runs.length} active or queued runs first.`;
-      else if (task.pr && task.publication?.state !== "CLOSED") view.notice = `Resolve PR #${task.pr.number} before abandoning.`;
-      else view.confirm = { text: `Abandon task? ${dependents.length} dependents retained.`, run: async () => {
-        await abandonTask(page.project, task.id, task.revision);
-        await this.read(view, "tasks");
-        view.notice = "Task abandoned. Ledger and dependencies retained.";
-      } };
-    } else if (key === "d" || key === "D") {
-      const ids = (key === "D" ? view.tasks : task ? [task] : []).filter(archivable).map(t => t.id);
-      if (!ids.length) { view.notice = key === "D" ? "No settled tasks to archive." : "Only merged or abandoned/closed tasks with no active runs or open PR can be archived."; return; }
+    if (key === "a" || key === "A") {
+      const ids = (key === "A" ? view.tasks : task ? [task] : []).filter(archivable).map(t => t.id);
+      if (!ids.length) { view.notice = key === "A" ? "No settled tasks to archive." : "Only merged or abandoned/closed tasks with no active runs or open PR can be archived."; return; }
       view.confirm = { text: `Archive ${ids.length} settled task(s)?`, run: async () => {
         try { for (const id of ids) await (this.host.deps.removeTask ?? removeTask)(page.project, id, true); }
         catch (error) { throw new Error(`Removal refused: ${message(error)}`); }

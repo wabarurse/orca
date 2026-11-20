@@ -15,7 +15,6 @@ export interface Input {
   prompt: string;
   text: string;
   cursor: number;
-  mode?: "normal" | "insert";
   /** First input row shown last frame, so the window only scrolls when the cursor leaves it; unset shows the end. */
   top?: number;
 }
@@ -82,21 +81,17 @@ export function inputGeometry(prompt: string, cols: number, rows: number): { pro
 /** Lay out a boxed composer, dropping its border on tiny screens before sacrificing editable text. */
 export function inputArea(input: Input, cols: number, rows: number, reserved = 0): InputArea {
   const { prompt, rail, width } = inputGeometry(input.prompt, cols, rows);
-  const mode = input.mode ? `[${input.mode.toUpperCase()}]` : "";
-  const label = mode ? cols >= mode.length + 5 ? `─ ${mode} ` : `[${input.mode![0]!.toUpperCase()}]` : "";
-  const modeRow = !rail && !!mode && rows >= 3 && rows - reserved >= 2 ? 1 : 0;
   const indent = visibleLength(prompt);
   const { rows: all, row, col } = layout(input, width);
-  const allowance = Math.max(1, Math.min(Math.floor(rows / 3), rows - 1 - reserved - rail * 2 - modeRow));
+  const allowance = Math.max(1, Math.min(Math.floor(rows / 3), rows - 1 - reserved - rail * 2));
   const shown = Math.min(all.length, allowance);
   const top = scrollWindow(input.top ?? all.length, row, all.length, shown);
   const lines = all.slice(top, top + shown).map((r, i) => {
     const text = fit((top + i === 0 ? prompt : " ".repeat(indent)) + sanitize(r.text), cols - rail * 4);
     return rail ? `${dim("│")} ${text}${" ".repeat(Math.max(0, cols - 4 - visibleLength(text)))} ${dim("│")}` : text;
   });
-  if (rail) { lines.unshift(dim("┌" + label + "─".repeat(cols - 2 - label.length) + "┐")); lines.push(dim("└" + "─".repeat(cols - 2) + "┘")); }
-  else if (modeRow) lines.unshift(dim(fit(mode, cols)));
-  return { lines, row: row - top + rail + modeRow, col: Math.max(0, Math.min(cols - rail * 2 - 1, rail * 2 + indent + col)), top, boxed: !!rail };
+  if (rail) { lines.unshift(dim("┌" + "─".repeat(cols - 2) + "┐")); lines.push(dim("└" + "─".repeat(cols - 2) + "┘")); }
+  return { lines, row: row - top + rail, col: Math.max(0, Math.min(cols - rail * 2 - 1, rail * 2 + indent + col)), top, boxed: !!rail };
 }
 
 /** Pack the three count groups, stacking at narrow widths; on tiny screens input and tail win. */

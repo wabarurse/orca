@@ -385,7 +385,8 @@ function escapeAt(input: string, i: number, streaming: boolean, bytes: boolean, 
   return altAt(input, i, streaming, bytes);
 }
 
-const CONTROL: Record<number, string> = { 13: "enter", 10: "enter", 127: "backspace", 8: "backspace", 9: "tab" };
+// 8 is Ctrl+H (page left): every terminal orca supports sends 127 for Backspace.
+const CONTROL: Record<number, string> = { 13: "enter", 10: "enter", 127: "backspace", 9: "tab" };
 
 /** A control byte, or a run of printable text batched into one key so pastes stay cheap. */
 function plainAt(input: string, i: number, streaming: boolean, bytes: boolean): Step | null {

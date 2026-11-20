@@ -12,9 +12,8 @@ Conversation record 30
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ > draft 界                                                                   │
 │ 2 agents running │ 1 task │ inbox 1                                          │
-help · commands & keys                                                 1–11/71
+help · commands & keys                                                 1–11/68
   conversation
-  /vim            toggle Vim navigation and editing modes
   /clear-context  reset the project: history, tasks and agents go
   /help           commands and keyboard shortcuts; esc closes
 
@@ -24,12 +23,12 @@ help · commands & keys                                                 1–11/7
 
   model & accounts
   /effort [level|default]        choose or set project/model reasoning effort
+  /fast [on|off]                 show or set project/model fast mode
 ↑↓ / wheel scroll · pgup/pgdn · home/end · esc close"
 `;
 
 exports[`help appearance fixtures 80 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  conversation
-  /vim            toggle Vim navigation and editing modes
   /clear-context  reset the project: history, tasks and agents go
   /help           commands and keyboard shortcuts; esc closes
 
@@ -45,40 +44,38 @@ exports[`help appearance fixtures 80 columns: full grouped content, including le
   /login claude|codex [profile]  sign in to a subscription account
 
   keyboard · navigation
-  ctrl+n                             new orchestrator
-  ctrl+z / ctrl+x                    previous / next project page
-  ctrl+a / ctrl+t / ctrl+q / ctrl+b  open the page on Agents / Tasks /
-                                     Questions / Projects (Images is its
-                                     fourth tab); ctrl+t and ctrl+b also close
-                                     it
-  pgup/pgdn / wheel                  scroll conversation or help (mouse
-                                     reporting required)
-  click ▸                            open a run of tool calls (▾ when open);
-                                     click again to fold it
-  ctrl+c                             stop conversation and its agents; message
-                                     to resume; twice within 2s exits
-  ctrl+g                             show each key as the terminal sends it;
-                                     the draft is kept; esc ends
-  esc                                close panel or page, else leave agent
-                                     view, else clear input
+  ctrl+n              new orchestrator
+  ctrl+h / ctrl+l     previous / next project page
+  ctrl+a/t/q/g/p/b    open Agents / Tasks / Questions / Images (gallery) /
+                      Processes / Bubbles; ctrl+t/g/p/b close it again
+  letters and digits  always type into the input; there is no Normal mode
+  pgup/pgdn / wheel   scroll conversation or help (mouse reporting required)
+  click ▸             open a run of tool calls (▾ when open); click again to
+                      fold it
+  ctrl+c              stop conversation and its agents; message to resume;
+                      twice within 2s exits
+  ctrl+x              show each key as the terminal sends it; the draft is
+                      kept; esc ends
+  esc                 close panel or page, else leave agent view, else clear
+                      input
 
   keyboard · agents, tasks, questions, images, projects page
   j/k ↑/↓ · gg/G             move · first / last row
   ctrl+d / ctrl+u            half a table page down / up; pgup/pgdn scroll the
                              details
-  1–6 · tab/shift+tab · h/l  jump to a tab · next / previous tab (on Tasks h/l
-                             ←/→ fold)
+  h/l · 1–6 · tab/shift+tab  previous / next tab · jump to a tab (←/→ fold on
+                             Tasks and open the Archived row)
   f or / · n/N               find by name as you type (enter keeps, esc
                              restores) · next / previous match
-  a · d/D · u · r            show archived · archive one / all (y confirms) ·
-                             restore · refresh
+  a/A · u · r                archive one / all (y confirms; the Archived row
+                             opens with enter) · restore · refresh
   enter                      agent: view transcript · question: choose or type
                              an answer · image: desktop viewer · project: open
   answering                  j/k or a digit choose an option, Other… types
                              one; enter sends; ctrl+d deletes the question;
                              esc cancels
-  s · c · t                  Agents: stop · Tasks: abandon · Images: retry
-                             unconfirmed image prompts
+  s · t                      Agents: stop · Images: retry unconfirmed image
+                             prompts
   p · c · d · n              Projects: pin · close the open page (project
                              kept) · delete · new conversation (inside a
                              project)
@@ -113,11 +110,8 @@ Conversation record 30
 ┌──────────────────────────────────────┐
 │ > draft 界                           │
 │ 2 agents running │ 1 task │ inbox 1  │
-help                          1–11/126
+help                          1–11/127
   conversation
-  /vim
-    toggle Vim navigation and editing
-    modes
   /clear-context
     reset the project: history, tasks
     and agents go
@@ -125,14 +119,14 @@ help                          1–11/126
     commands and keyboard shortcuts;
     esc closes
 
+  projects
+  /rename <name>
+    rename conversation and its folder
 ↑↓ scroll · esc close"
 `;
 
 exports[`help appearance fixtures 40 columns: full grouped content, including less prominent diagnostics 1`] = `
 "  conversation
-  /vim
-    toggle Vim navigation and editing
-    modes
   /clear-context
     reset the project: history, tasks
     and agents go
@@ -165,13 +159,16 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   keyboard · navigation
   ctrl+n
     new orchestrator
-  ctrl+z / ctrl+x
+  ctrl+h / ctrl+l
     previous / next project page
-  ctrl+a / ctrl+t / ctrl+q / ctrl+b
-    open the page on Agents / Tasks /
-    Questions / Projects (Images is
-    its fourth tab); ctrl+t and ctrl+b
-    also close it
+  ctrl+a/t/q/g/p/b
+    open Agents / Tasks / Questions /
+    Images (gallery) / Processes /
+    Bubbles; ctrl+t/g/p/b close it
+    again
+  letters and digits
+    always type into the input; there
+    is no Normal mode
   pgup/pgdn / wheel
     scroll conversation or help (mouse
     reporting required)
@@ -182,7 +179,7 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     stop conversation and its agents;
     message to resume; twice within 2s
     exits
-  ctrl+g
+  ctrl+x
     show each key as the terminal
     sends it; the draft is kept; esc
     ends
@@ -197,16 +194,18 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
   ctrl+d / ctrl+u
     half a table page down / up;
     pgup/pgdn scroll the details
-  1–6 · tab/shift+tab · h/l
-    jump to a tab · next / previous
-    tab (on Tasks h/l ←/→ fold)
+  h/l · 1–6 · tab/shift+tab
+    previous / next tab · jump to a
+    tab (←/→ fold on Tasks and open
+    the Archived row)
   f or / · n/N
     find by name as you type (enter
     keeps, esc restores) · next /
     previous match
-  a · d/D · u · r
-    show archived · archive one / all
-    (y confirms) · restore · refresh
+  a/A · u · r
+    archive one / all (y confirms; the
+    Archived row opens with enter) ·
+    restore · refresh
   enter
     agent: view transcript · question:
     choose or type an answer · image:
@@ -216,10 +215,9 @@ exports[`help appearance fixtures 40 columns: full grouped content, including le
     Other… types one; enter sends;
     ctrl+d deletes the question; esc
     cancels
-  s · c · t
-    Agents: stop · Tasks: abandon ·
-    Images: retry unconfirmed image
-    prompts
+  s · t
+    Agents: stop · Images: retry
+    unconfirmed image prompts
   p · c · d · n
     Projects: pin · close the open
     page (project kept) · delete · new
@@ -269,7 +267,7 @@ Conversation record 30
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ > draft 界                                                                   │
 │ 2 agents running │ 1 task │ inbox 1                                          │
-help · commands & keys                                                61–71/71
+help · commands & keys                                                58–68/68
                        text paste is unchanged
   shift/alt+enter      new line
   alt+←/→ / alt+b/f    move by word

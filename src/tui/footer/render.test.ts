@@ -151,13 +151,10 @@ describe("live", () => {
     const f = frame({ rows: 9, cols: 10, input: { prompt: "> ", text: "你好世界ab", cursor: 6 } });
     expect(rows(f)).toEqual(box(["> 你好", "  世界", "  ab"], 10));
     expect(liveRows(f)).toMatchObject({ cursor: 3, col: 6 });
-    for (const mode of ["insert", "normal"] as const) for (const [cols, height] of [[8, 9], [20, 9], [8, 5], [2, 3], [2, 2]]) {
-      const plain = inputArea(f.input, cols!, height!);
-      const labeled = inputArea({ ...f.input, mode }, cols!, height!);
-      expect(labeled.col).toBe(plain.col);
-      expect(labeled.lines[labeled.row]).toBe(plain.lines[plain.row]);
-      expect(labeled.lines.every(line => visibleLength(line) <= cols!)).toBe(true);
-      expect(labeled.lines.length).toBeLessThanOrEqual(height!);
+    for (const [cols, height] of [[8, 9], [20, 9], [8, 5], [2, 3], [2, 2]]) {
+      const area = inputArea(f.input, cols!, height!);
+      expect(area.lines.every(line => visibleLength(line) <= cols!)).toBe(true);
+      expect(area.lines.length).toBeLessThanOrEqual(height!);
     }
   });
 

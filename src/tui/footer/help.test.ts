@@ -96,9 +96,8 @@ test("a menu precedes help; closing never reveals the removed question footer", 
   expect(plain(liveRows(f).rows)).not.toMatch(/help|esc|ctrl|↑↓/);
 });
 
-test("Vim help lists Shift shortcuts without Space prefixes", () => {
-  const text = plain(helpLines(commands, false, 100, true));
-  for (const label of ["Shift+H / Shift+L", "Shift+A/T/Q/P/B", "Shift+U/M/E/F", "Shift+S", "Shift+V/X", "Shift+/"]) expect(text).toContain(label);
-  expect(text).not.toContain("Refresh");
-  expect(text).not.toContain("Space");
+test("help lists the page chords and has no Vim modes", () => {
+  const text = plain(helpLines(commands, false, 100));
+  for (const label of ["ctrl+h / ctrl+l", "ctrl+a/t/q/g/p/b", "a/A · u · r", "keyboard · editing"]) expect(text).toContain(label);
+  expect(text).not.toMatch(/\[INSERT\]|Insert mode|Shift\+[A-Z]|abandon|ctrl\+z/);
 });

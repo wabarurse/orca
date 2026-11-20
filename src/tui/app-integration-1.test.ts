@@ -112,7 +112,7 @@ describe("restored pages", () => {
     // Another page, then back: the restored history is reprinted with the rest.
     await app.openPage("elsewhere");
     await until(() => !term.screen().includes("Worker done."));
-    term.type("\x1a"); // Ctrl+Z
+    term.type("\x08"); // Ctrl+H
     await until(() => term.screen().includes("Worker done.") && term.screen().includes("resumed says hi"));
     expect(bodyRows(term).filter(Boolean).slice(0, restored.length - 1)).toEqual(restored.slice(1));
     app.quit();
@@ -206,7 +206,7 @@ describe("restored pages", () => {
     await again.openPage("fresh");
     term2.press({ name: "up" });
     expect(again.input.text).toBe("");
-    term2.type("\x1a"); // Ctrl+Z: back to the page with the history
+    term2.type("\x08"); // Ctrl+H: back to the page with the history
     term2.press({ name: "up" });
     expect(again.input.text).toBe("/help");
     again.quit();
@@ -375,12 +375,12 @@ describe("orchestrator questions", () => {
   test("the form opens over an agent transcript by leaving it; question counts are local to the active page", async () => {
     const { term, app, stop } = await start("qa-fg");
     await app.openPage("qa-bg");
-    term.type("\x1a"); // back to qa-fg
+    term.type("\x08"); // back to qa-fg
     await until(() => app.page?.project === "qa-fg");
     await askQuestions("qa-bg", [{ text: "One?" }, { text: "Two?" }]);
     await until(() => live(term).includes("0 questions"));
     expect(live(term)).not.toContain("One?");
-    term.type("\x18");
+    term.type("\x0c");
     await until(() => app.page?.project === "qa-bg" && live(term).includes("2 questions"));
     let left = 0;
     app.page!.view = { name: "worker-x", lines: [], leave: () => { left++; app.page!.view = null; }, live: false, calls: new Calls() };
@@ -416,7 +416,7 @@ describe("command and key tables", () => {
     for (const name of app.commands.keys()) expect(help).toContain(name);
     expect(help.indexOf("advanced & diagnostics")).toBeGreaterThan(help.indexOf("keyboard · editing"));
     expect(help.indexOf("/compact")).toBeGreaterThan(help.indexOf("advanced & diagnostics"));
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/clear-context", "/compact", "/effort", "/fast", "/help", "/login", "/model", "/quit", "/rename", "/vim"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/clear-context", "/compact", "/effort", "/fast", "/help", "/login", "/model", "/quit", "/rename"]);
   });
 
   test("parsing: name up to the first space, arguments trimmed; arguments to a command that takes none make it unknown", () => {

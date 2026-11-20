@@ -103,8 +103,6 @@ switch (cmd) {
     const app = new App({
       term: openTuiTerminal(),
       source: await repoHere(),
-      vim: (await loadConfig()).vim,
-      saveVim: async on => { await saveConfig({ vim: on }); },
       ensureDaemon: daemonKeeper({ signal: closing.signal }),
       async openOrchestrator(project, url, write, _onInbox, tools) {
         await ensureProject(project, url);

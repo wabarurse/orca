@@ -98,7 +98,7 @@ describe("tui app", () => {
     expect(term.closed).toBe(true);
   });
 
-  test("ctrl+n starts orch-xxxx at once; ctrl+z and ctrl+x switch pages", async () => {
+  test("ctrl+n starts orch-xxxx at once; ctrl+h and ctrl+l switch pages", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
@@ -112,12 +112,12 @@ describe("tui app", () => {
     await until(() => term.screen().includes("/rename <name> to rename"));
     expect(app.page!.lines).toEqual([]); // a transient note above the composer, not conversation
 
-    term.type("\x1a"); // Ctrl+Z
+    term.type("\x08"); // Ctrl+H
     expect(app.page!.project).toBe("alpha");
     expect(strip(app.frame().inputArea!.lines.join("\n"))).not.toContain("/rename");
-    term.type("\x18"); // Ctrl+X
+    term.type("\x0c"); // Ctrl+L
     expect(app.page!.project).toBe(orchs.opened[1]!.project);
-    term.type("\x18"); // wraps around
+    term.type("\x0c"); // wraps around
     expect(app.page!.project).toBe("alpha");
     term.type("\x1b[1;5C"); // Ctrl+Right does nothing
     expect(app.page!.project).toBe("alpha");
@@ -199,7 +199,7 @@ describe("tui app", () => {
     app.note("for notes", page);
     term.type("b");
     expect(strip(above().join("\n"))).not.toContain("/rename");
-    term.type("\x1a"); // Ctrl+Z back to the first page
+    term.type("\x08"); // Ctrl+H back to the first page
     expect(app.page).toBe(page);
     expect(above()[0]).toBe(dim("for notes"));
     await app.refreshSessions(); // a re-sync neither keeps nor clears a note: it is not a page notice
@@ -272,7 +272,7 @@ describe("tui app", () => {
     term.type("/rename viewed\r");
     await until(() => page.name === "viewed");
     await app.openPage("beta");
-    term.type("\x1a"); // back to viewer
+    term.type("\x08"); // back to viewer
     term.press({ name: "escape" }); // esc leaves the agent view
     await until(() => left === 1);
     page.view = null;
@@ -307,7 +307,7 @@ describe("tui app", () => {
     await Bun.sleep(30);
     expect(term.screen()).not.toContain("signer says hi"); // the turn waits for sign-in
     await app.openPage("beta2");
-    term.type("\x1a");
+    term.type("\x08");
     expect(app.page!.project).toBe("signer");
     finish(); // no poll runs (pollMs is huge): login() starts the queued turn itself
     await until(() => term.screen().includes("signer says hi"));
@@ -393,13 +393,13 @@ describe("tui app", () => {
     await running;
   });
 
-  test("ctrl+g echoes parsed keys until esc", async () => {
+  test("ctrl+x echoes parsed keys until esc", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("alpha");
     await until(() => !!app.page);
-    term.press({ name: "g", ctrl: true });
+    term.press({ name: "x", ctrl: true });
     await until(() => app.keyEcho && term.screen().includes("press keys; esc ends"));
     term.type("\x1b[44;5u");
     await until(() => term.screen().includes('{"name":",","ctrl":true}'));
@@ -422,7 +422,7 @@ describe("tui app", () => {
     await until(() => !!app.frame().help);
     const help = app.frame().help!.lines.join("\n");
     expect(app.page!.lines).toEqual([]);
-    for (const cmd of ["ctrl+g", "/rename <name>", "/quit", "ctrl+a / ctrl+t / ctrl+q / ctrl+b", "/model", "/accounts", "/login claude|codex"]) expect(help).toContain(cmd);
+    for (const cmd of ["ctrl+x", "/rename <name>", "/quit", "ctrl+a/t/q/g/p/b", "/model", "/accounts", "/login claude|codex"]) expect(help).toContain(cmd);
     for (const gone of ["/keys", "/new", "/close", "/agents"]) expect(help).not.toContain(gone);
     expect(help).not.toContain("/back");
     app.quit();
@@ -754,8 +754,8 @@ describe("tui app", () => {
       expect(projectList(app)!.confirm).toBeNull();
       expect(checks).toBe(0);
     }
-    // Alt+D does not ask, Ctrl+P does not pin, and batched text like __proto__ does nothing. (Ctrl+D is half a page down.)
-    for (const chord of ["\x1bd", "\x10", "__proto__", "constructor"]) {
+    // Alt+D does not ask and Ctrl+R does not pin. (Ctrl+D is half a page down.)
+    for (const chord of ["\x1bd", "\x12"]) {
       term.type(chord);
       expect(projectList(app)!.confirm).toBeNull();
       expect(projectList(app)!.status).toBe("");
@@ -777,8 +777,8 @@ describe("tui app", () => {
     expect(app.page!.project).toBe("alpha");
     await until(() => term.screen().includes("deleted sb-del"));
     expect(killed).toEqual(["sb-del"]);
-    // It sits under Archived: Enter does not open it, u brings it back and starts nothing.
-    term.type("a");
+    // It sits under Archived (G reaches that row, Enter opens it): Enter does not open it, u brings it back and starts nothing.
+    term.type("G\r");
     await until(() => projectList(app)!.items.some((i) => i.name === "sb-del"));
     term.type("j");
     await until(() => projectList(app)?.items[projectList(app)!.index]?.name === "sb-del");
@@ -943,7 +943,7 @@ describe("sticky screen", () => {
     term.type("two\r");
     await until(() => term.screen().includes("beta says hi"));
 
-    term.type("\x1a"); // Ctrl+Z back to alpha
+    term.type("\x08"); // Ctrl+H back to alpha
     await until(() => selectedTab(term) === "alpha");
     await until(() => term.screen().includes("> one\n\nalpha says hi\n\nworker-x done\n"));
     expect(term.screen()).not.toContain("beta says hi");
@@ -977,7 +977,7 @@ describe("sticky screen", () => {
     expect(strip(term.raw())).not.toContain("background line");
     expect(strip(term.raw())).not.toContain("half");
     alpha.busy = false;
-    term.type("\x1a");
+    term.type("\x08");
     await until(() => term.screen().includes("background line\nhalf"));
     app.quit();
     await running;

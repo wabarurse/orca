@@ -16,8 +16,6 @@ export interface Config {
   anthropicPromptCache: boolean;
   /** Summarize the orchestrator's background memory with the provider's small model (Haiku, Luna); false keeps it on the conversation's model. */
   smallSummaries: boolean;
-  /** Whether the TUI starts in Vim mode (on unless turned off); /vim toggles and saves it. */
-  vim: boolean;
   /** Maximum overlap for calls explicitly marked independent; 1 is sequential. */
   toolConcurrency: number;
   /** Maximum bytes saved per shell command before terminating its process group. */
@@ -37,7 +35,6 @@ export const defaults: Config = {
   openaiAccount: "",
   anthropicPromptCache: true,
   smallSummaries: true,
-  vim: true,
   toolConcurrency: 4,
   maxToolOutputBytes: 64 * 1024 * 1024,
   maxToolResultBytes: 16 * 1024,
@@ -64,7 +61,7 @@ export async function loadConfig(options: { strict?: boolean } = {}): Promise<Co
   }
   // The orchestrator now compacts at a fraction of the selected model's window (rolling-memory.ts).
   // Do not let a saved absolute target restore the old 32k policy or persist it on save.
-  for (const key of ["orchestratorContextTokens", "workerContextTokens", "maxReviewRounds", "dynamicDispatch", "cyclomatic", "cognitive"]) delete (parsed as Record<string, unknown>)[key];
+  for (const key of ["orchestratorContextTokens", "workerContextTokens", "maxReviewRounds", "dynamicDispatch", "cyclomatic", "cognitive", "vim"]) delete (parsed as Record<string, unknown>)[key];
   return withFallbacks({ ...defaults, ...parsed });
 }
 
@@ -72,7 +69,6 @@ export async function loadConfig(options: { strict?: boolean } = {}): Promise<Co
 function withFallbacks(config: Config): Config {
   if (config.sandbox !== "off" && config.sandbox !== "workspace") throw new Error("sandbox must be off or workspace; no execution fallback is permitted");
   if (typeof config.anthropicPromptCache !== "boolean") config.anthropicPromptCache = defaults.anthropicPromptCache;
-  if (typeof config.vim !== "boolean") config.vim = defaults.vim;
   if (typeof config.smallSummaries !== "boolean") config.smallSummaries = defaults.smallSummaries;
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;

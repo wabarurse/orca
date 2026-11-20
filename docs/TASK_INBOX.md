@@ -32,23 +32,16 @@ Workspace inactivity also groups linked items under Archived after 14 days.
 its owned records and unreferenced files. Manually archiving one item does not
 make an active workspace eligible. See [workspace cleanup](WORKSPACE_CLEANUP.md).
 
-`/vim` toggles Vim controls. The mode label sits on the input box's top border
-(beside the bottom controls on full-page lists). In Normal mode, hold Shift and
-press a shortcut; no Space prefix or terminal-specific integration is needed:
+There are no Vim modes: letters and digits always type into the composer.
+Ctrl chords open the work page on a tab, and the same chord closes it
+(Ctrl+A and Ctrl+Q only open):
 
-- Shift+H/L: previous/next project (`gT`/`gt` also work).
-- Shift+A/T/Q/P: Agents, Tasks, Questions, Images & Videos.
-- Shift+U/M/E/F: Accounts, Model, Effort, Fast mode.
-- Shift+B/R/S: Projects, Refresh, Stop.
-- Shift+V/X: attach clipboard image, remove last draft image.
-- `?` (Shift+/): Help. `:`: run any slash command.
+- Ctrl+A/T/Q/G/P/B: Agents, Tasks, Questions, Images (gallery), Processes, Bubbles.
+- Ctrl+H/L: previous/next project page.
 
-These shortcuts work across chat, work pages, settings, Help and Projects.
-Confirmations and command entry retain their own input. `i` enters Insert;
-Esc returns to Normal and preserves the draft. Uppercase letters are ordinary
-text in Insert mode. `q` goes back, `j/k` and `gg/G` navigate, and `h/l`
-switch panes. In Tasks, `c` requests abandonment with confirmation (Shift+A
-always opens Agents). Ctrl+A/T/Q still open Agents/Tasks/Questions.
+On the page `j/k` and `gg/G` move, `h/l` switch tabs, `a`/`A` archive one/all
+(after y/n), `f` finds, `q` or Esc closes. ←/→ fold the Tasks outline and open
+or shut the Archived row.
 
 Images & Videos lists images delivered in this conversation and retained
 recordings from its registered sandboxes, newest first. Selection only shows
@@ -73,11 +66,10 @@ three-letter month names and the machine's local timezone.
   opens its answer form in the detail pane, with numbered options,
   **type your own answer**, and **skip — remove from inbox**. No question controls
   appear under the chat composer. A successful answer returns to the list.
-  In Vim Normal mode, `i` starts editing; `q` returns to the list without sending.
   ↑↓ moves among rows (and within multiline answers); 1–9 picks an option on an
   option row; typing enters `answer>`. Enter explicitly sends the selected option
   or typed answer. Selecting skip and pressing Enter, Ctrl+D in the answer panel,
-  or confirmed `d`/`D` archival in the Questions page dismisses a question:
+  or confirmed `a`/`A` archival in the Questions page dismisses a question:
   it durably leaves the unanswered queue and decrements
   counts, retaining its skipped record/history. Ctrl+D deletes the shown
   question from either the pick or `answer>` mode (for one that is outdated or
