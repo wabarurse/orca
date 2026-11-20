@@ -59,8 +59,18 @@ disposable; only a verified managed Git worktree can be removed wholesale.
 
   ```sh
   orca clean --preview  # Preview discovery, archiving and cleanup; no persistent changes
-  orca clean            # Recheck and remove eligible archived sessions
+  orca clean            # Preview, ask "Delete these? [y/N]", then recheck and remove
+  orca clean --yes      # The same without the question, for scripts
   ```
+
+`orca clean` scans first and shows the preview table, then asks on the terminal;
+only `y`/`Y` removes, and anything else (or a stdin that ends unanswered) leaves
+everything in place. Nothing eligible means no question. `--json` without
+`--preview` needs `--yes`, since it cannot ask. While a scan runs, one redrawn
+stderr line shows the phase and how many items of it are done (conversations,
+projects, bubbles, build scratch); it is cleared at the end and omitted when
+stderr is not a terminal. The removal pass rescans from scratch: a preview leaves
+nothing on disk for it to reuse.
 
 The old `--dry-run` and `--apply` flags remain aliases for preview and deletion,
 respectively. Conflicting or unknown flags fail before cleanup.
