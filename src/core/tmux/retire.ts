@@ -23,7 +23,7 @@ import { abandonTask, allTasks, removeTask, restoreTask } from "../data/tasks";
 import { cancelSession } from "./cancellation";
 import { archiveAgents, killProjectSession, listAgents, liveAgentsOrNull, restoreAgents } from "./liveness";
 import { processView, sessions, type Sessions } from "./process-view";
-import { sessionName, tmux } from "./runner";
+import { mux, sessionName } from "./runner";
 
 export const GRACE_MS = 15_000;
 export interface RetireOptions {
@@ -81,7 +81,7 @@ export async function stopTree(project: string, options: RetireOptions): Promise
     busy = (await running().catch(() => [])).length;
   }
   // Still alive after the wait: the window is closed, which hangs up whatever runs in it.
-  const closeWindow = options.killWindow ?? ((name: string, window: string) => tmux.killWindow(sessionName(name), window));
+  const closeWindow = options.killWindow ?? ((name: string, window: string) => mux.killWindow(sessionName(name), window));
   for (const window of left) await attempt(`closing ${window}`, () => closeWindow(project, window));
   await attempt("sandboxes", async () => { for (const v of await listVerifications(project)) if (v.state !== "closed") await closeVerification(project, v.id); });
   // A command still running (or a supervisor that ignored its stop file) is ended, but only if it is provably the recorded one.

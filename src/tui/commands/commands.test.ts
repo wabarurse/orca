@@ -11,7 +11,7 @@ import { switchAllMenu } from "./switch-all";
 import { scopedChoices } from "./model-flow";
 import { loadConfig, paths, saveConfig } from "../../config/config";
 import { readProjectState } from "../../config/paths";
-import { tmux } from "../../core/tmux/runner";
+import { mux } from "../../core/tmux/runner";
 
 describe("recentModels", () => {
   const ids = ["m6", "m5", "m4", "m3", "m2", "m1", "m0"];
@@ -249,9 +249,9 @@ describe("listAgents", () => {
     const prev = process.env.ORCA_HOME;
     const home = mkdtempSync(join(tmpdir(), "orca-agents-"));
     process.env.ORCA_HOME = home;
-    const windows = tmux.listWindows;
+    const windows = mux.listWindows;
     try { await fn("p", home); } finally {
-      tmux.listWindows = windows;
+      mux.listWindows = windows;
       if (prev === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = prev;
       rmSync(home, { recursive: true, force: true });
     }
@@ -275,7 +275,7 @@ describe("listAgents", () => {
 
   test("live and finished agents carry their latest run's times; the orchestrator is not listed", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => ["shell", "worker-a"];
+      mux.listWindows = async () => ["shell", "worker-a"];
       for (const n of ["orchestrator", "worker-a", "worker-b"]) transcript(project, n, "2020-01-01T00:00:00.000Z");
       state(project, "worker-a", { startedAt: "2024-05-01T10:00:00.000Z" });
       state(project, "worker-b", { startedAt: "2024-05-01T09:00:00.000Z", endedAt: "2024-05-01T09:14:02.000Z" });
@@ -288,7 +288,7 @@ describe("listAgents", () => {
 
   test("a live agent that reported still counts as live and has no end", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => ["worker-a"];
+      mux.listWindows = async () => ["worker-a"];
       transcript(project, "worker-a");
       state(project, "worker-a", { state: "reported", startedAt: "2024-05-01T10:00:00.000Z" });
       expect(by(await listAgents(project), "worker-a")).toEqual({ name: "worker-a", live: true, startedAt: "2024-05-01T10:00:00.000Z" });
@@ -297,7 +297,7 @@ describe("listAgents", () => {
 
   test("a finished agent without endedAt ends approximately at the state's last update", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => [];
+      mux.listWindows = async () => [];
       transcript(project, "worker-k");
       state(project, "worker-k", { startedAt: "2024-05-01T10:00:00.000Z" });
       expect(by(await listAgents(project), "worker-k")).toEqual({ name: "worker-k", live: false, startedAt: "2024-05-01T10:00:00.000Z", endedAt: "2024-05-01T10:30:00.000Z", approximateEnd: true });
@@ -306,7 +306,7 @@ describe("listAgents", () => {
 
   test("live window with a previous run's endedAt shows no clock", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => ["worker-r"];
+      mux.listWindows = async () => ["worker-r"];
       transcript(project, "worker-r", "2024-05-01T08:00:00.000Z");
       state(project, "worker-r", { startedAt: "2024-05-01T09:00:00.000Z", endedAt: "2024-05-01T09:30:00.000Z" });
       expect(by(await listAgents(project), "worker-r")).toEqual({ name: "worker-r", live: true });
@@ -315,7 +315,7 @@ describe("listAgents", () => {
 
   test("an old state file without startedAt starts at the transcript's first entry", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => ["worker-o"];
+      mux.listWindows = async () => ["worker-o"];
       transcript(project, "worker-o", "2024-05-01T08:00:00.000Z");
       transcript(project, "worker-p", "2024-05-01T08:00:00.000Z");
       state(project, "worker-o", {});
@@ -328,7 +328,7 @@ describe("listAgents", () => {
 
   test("with no state file, only the transcript start is known; with nothing usable there is no time at all", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => ["worker-l"];
+      mux.listWindows = async () => ["worker-l"];
       transcript(project, "worker-l", "2024-05-01T08:00:00.000Z");
       transcript(project, "worker-f", "2024-05-01T08:00:00.000Z");
       transcript(project, "worker-n"); // first entry has no ts
@@ -343,7 +343,7 @@ describe("listAgents", () => {
 
   test("rows sort live first, then by latest activity: a finished run's end, else the transcript's last write", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => ["worker-live"];
+      mux.listWindows = async () => ["worker-live"];
       for (const n of ["worker-old", "worker-new", "worker-live", "worker-bare"]) transcript(project, n, "2024-05-01T08:00:00.000Z");
       state(project, "worker-old", { startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-01T09:00:00.000Z" });
       state(project, "worker-new", { startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-02T09:00:00.000Z" });
@@ -358,7 +358,7 @@ describe("listAgents", () => {
 
   test("a removed finished row is marked in project state, its transcript stays, and starting it again lists it again", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => ["worker-live"];
+      mux.listWindows = async () => ["worker-live"];
       for (const n of ["worker-done", "worker-live"]) transcript(project, n, "2024-05-01T08:00:00.000Z");
       state(project, "worker-done", { startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-01T09:00:00.000Z" });
       const result = await archiveAgents(project, ["worker-done", "worker-live", "orchestrator", "../x", "worker-done"], async () => ["worker-live"]);
@@ -375,7 +375,7 @@ describe("listAgents", () => {
       // A live window always shows, even before its new run records a start.
       state(project, "worker-done", { startedAt: "2024-05-01T08:00:00.000Z", endedAt: "2024-05-01T09:00:00.000Z" });
       await archiveAgents(project, ["worker-done"], async () => []);
-      tmux.listWindows = async () => ["worker-done"];
+      mux.listWindows = async () => ["worker-done"];
       expect(by(await listAgents(project), "worker-done")).toMatchObject({ live: true });
       expect(by(await listAgents(project), "worker-done")?.archived).toBeUndefined();
     });
@@ -408,7 +408,7 @@ describe("listAgents", () => {
 
   test("only the first transcript line is read", async () => {
     await withProject(async (project) => {
-      tmux.listWindows = async () => [];
+      mux.listWindows = async () => [];
       mkdirSync(join(paths.transcript(project, "x"), ".."), { recursive: true });
       writeFileSync(paths.transcript(project, "worker-big"), JSON.stringify({ ts: "2024-05-01T08:00:00.000Z" }) + "\n" + "x".repeat(5_000_000));
       expect(by(await listAgents(project), "worker-big")?.startedAt).toBe("2024-05-01T08:00:00.000Z");

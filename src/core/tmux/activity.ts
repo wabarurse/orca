@@ -9,7 +9,7 @@ import { existingTasks } from "../data/tasks";
 import { pendingCount } from "../data/inbox";
 import { launchIdentity } from "./cancellation";
 import { readRun, type RunState } from "./exits";
-import { sessionName, tmux } from "./runner";
+import { mux, sessionName } from "./runner";
 import { classifyAgent, processAlive } from "./agent-evidence";
 
 const valid = (name: string) => /^(worker|reviewer)(-[A-Za-z0-9._-]+)?$/.test(name);
@@ -19,7 +19,7 @@ export interface AgentActivity {
   queuedMessages: number | null; task?: { id: string; number?: number; name: string };
 }
 interface Options {
-  panes?: () => ReturnType<typeof tmux.agentPanes>;
+  panes?: () => ReturnType<typeof mux.agentPanes>;
   processAlive?: (pid: number) => boolean | null;
   read?: typeof readRun;
   launch?: typeof launchIdentity;
@@ -31,10 +31,10 @@ export async function agentActivity(project: string, options: Options = {}) {
   const errors: string[] = [];
   const inventory = async (path: string) => names(path).catch(() => { errors.push(`cannot inspect ${path}`); return []; });
   const [panes, runs, transcripts, inboxes] = await Promise.all([
-    (options.panes?.() ?? tmux.agentPanes(sessionName(project))).catch(() => null),
+    (options.panes?.() ?? mux.agentPanes(sessionName(project))).catch(() => null),
     inventory(paths.runs(project)), inventory(dirname(paths.transcript(project, "orchestrator"))), inventory(paths.inbox(project)),
   ]);
-  if (panes === null) errors.push("cannot verify tmux agent panes");
+  if (panes === null) errors.push("cannot verify agent panes");
   const paneMap = new Map<string, boolean>();
   for (const pane of panes ?? []) if (valid(pane.name)) paneMap.set(pane.name, paneMap.get(pane.name) === true || pane.live);
   const agents = [...new Set([...runs.filter(n => n.endsWith(".json")).map(n => n.slice(0, -5)),

@@ -17,7 +17,7 @@ import { liveReader, type LiveReader } from "./live";
 import type { LiveEvent, LiveKey } from "../../../protocol";
 import { projectIdentity, conversationTurnHeld } from "../../data/projects";
 import { execution } from "../../data/projects/lifecycle";
-import { local, sessionName, tmux, type Runner } from "../../tmux";
+import { local, mux, sessionName, type Runner } from "../../tmux";
 import { pidAlive } from "../../data";
 import type { ToolCall, ToolOutcome } from "../../../protocol";
 import { open, type Transcript } from "../../data/transcripts";
@@ -109,7 +109,7 @@ export async function stopDaemon(project: string, opts: { kill?: (project: strin
   if (pid === undefined) return;
   await request(project, { kind: "stop" });
   if (await waitDead(pid, opts.waitMs ?? STOP_WAIT_MS)) return;
-  await (opts.kill ?? (async (p: string) => { if (Bun.which("tmux")) await tmux.killWindow(sessionName(p), "orchestrator"); }))(project);
+  await (opts.kill ?? (async (p: string) => { await mux.killWindow(sessionName(p), "orchestrator"); }))(project);
   if (!await waitDead(pid, opts.killWaitMs ?? KILL_WAIT_MS)) throw new Error(`orchestrator (pid ${pid}) did not stop; stop it, then delete`);
 }
 

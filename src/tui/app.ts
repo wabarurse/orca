@@ -17,8 +17,7 @@ import { settingChange, effectiveSettings, setEffort } from "../core/data/projec
 // (work-page.ts). Type to talk to the page's orchestrator; worker and reviewer reports
 // arrive through its inbox and show up while you wait. /help lists the commands.
 
-import { accountChoices, deletionSummary, login, resetProject, useAccount, sendAgentFeedback, restoreConversations } from "./commands";
-import { checkContextClear } from "./commands";
+import { accountChoices, checkContextClear, chooseMux, deletionSummary, login, resetProject, useAccount, sendAgentFeedback, restoreConversations } from "./commands";
 import { activeAgentRows, liveAgentsOrNull, processes } from "../core/tmux";
 import { directories, displayName, listProjects, newProjectName, setDisplayName } from "../core/data/projects";
 import { activeRoles, chooseBubble, chooseModel, effortChoices, modelChoices, pageAccount, pageBubble, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
@@ -1053,6 +1052,7 @@ export class App {
     ["/quit", { run: () => this.quit(), help: { group: "projects", label: "/quit", description: "exit; keep conversation history" } }],
     ["/effort", { args: true, run: (args, page) => args ? this.requestSetting(page, args, "effort") : this.effortMenu(page), help: { group: "settings", label: "/effort [level|default]", description: "choose or set project/model reasoning effort" } }],
     ["/fast", { args: true, run: (args, page) => this.requestSetting(page, args, "fast"), help: { group: "settings", label: "/fast [on|off]", description: "show or set project/model fast mode" } }],
+    ["/mux", { args: true, run: (args) => chooseMux(args, { open: (title, choices, pick) => this.openMenu(title, choices, pick), note: text => this.note(text) }), help: { group: "settings", label: "/mux [tmux|rex]", description: "choose where new agents run: tmux or Rex" } }],
     ["/clear-context", { run: (_, page) => this.clearCommand(page), help: { group: "conversation", label: "/clear-context", description: "reset the project: history, tasks and agents go" } }],
     ["/compact", { needsPage: true, run: async (_, page) => { await page!.orch.compact?.(); }, help: { group: "advanced", label: "/compact", description: "summarize model context; keep full history" } }],
     ["/model", { args: true, run: (args, page) => this.modelCommand(args, page), help: { group: "settings", label: "/model [orch|worker|reviewer]", description: "choose the model for all agents or one role" } }],
