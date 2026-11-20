@@ -40,7 +40,7 @@ describe("chat view", () => {
     const h = await harness();
     const rows = await frame(h, chat({ header }));
     expect(rows[0]).toMatch(/^│ {2}probe {4}other •/);
-    expect(rows[1]).toMatch(/^│ account anthropic:work +│$/);
+    expect(rows[1]).toMatch(/^│ anthropic:work +│$/);
     expect(rows[2]).toMatch(/^│ model · default · ctx 1k\/200k +│$/);
     expect(rows[3]).toMatch(/^└─+┘$/);
     const pill = h.setup.captureSpans().lines[0]?.spans.find(span => span.text.includes("probe"));

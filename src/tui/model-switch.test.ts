@@ -421,7 +421,7 @@ test("/model for one role: the scope menu shows each role's model; only that rol
     expect(await effectiveModel(ui.project, "worker")).toBe("gpt-5.5");
     expect(await effectiveModel(ui.project, "reviewer")).toBe("gpt-6-astra");
     expect(await effectiveModel(ui.project)).toBe("gpt-6-astra");
-    await until(() => ui.writes.some((s) => { const text = Bun.stripANSI(s); return text.includes("account openai:default") && text.includes("orc: gpt-6-astra · ") && text.includes("worker: gpt-5.5 · ") && text.includes("reviewer: gpt-6-astra · "); }));
+    await until(() => ui.writes.some((s) => { const text = Bun.stripANSI(s); return text.includes("openai:default") && text.includes("orc: gpt-6-astra · ") && text.includes("worker: gpt-5.5 · ") && text.includes("reviewer: gpt-6-astra · "); }));
     // The orchestrator scope never asks: only the orchestrator reads it.
     await pickModel(ui, "gpt-5.5", "orch");
     await until(() => note(ui.app).includes("orchestrator set to gpt-5.5"));
@@ -451,7 +451,7 @@ test("/model for one role: the scope menu shows each role's model; only that rol
     await until(() => note(ui.app).includes("model set to gpt-5.5"));
     expect(await effectiveModel(ui.project, "orchestrator")).toBe("gpt-5.5");
     expect(readProjectState(ui.project, "role-models")).toEqual({});
-    await until(() => ui.writes.some((s) => Bun.stripANSI(s).includes("account openai:default") && Bun.stripANSI(s).includes("gpt-5.5 · ")));
+    await until(() => ui.writes.some((s) => Bun.stripANSI(s).includes("openai:default") && Bun.stripANSI(s).includes("gpt-5.5 · ")));
   } finally { await ui.close(); }
 });
 

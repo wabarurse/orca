@@ -161,7 +161,7 @@ export class ChatView {
       tabs.push(tab.active ? chunk(` ${label} `, COLOURS.ink, TextAttributes.BOLD, COLOURS.light) : chunk(label, COLOURS.faint));
     });
     this.info.add(new TextRenderable(this.ctx, { content: styled(tabs), wrapMode: "none" }));
-    if (header.account !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk("account ", COLOURS.faint), chunk(header.account, COLOURS.mid)]), wrapMode: "none" }));
+    if (header.account !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk(header.account, COLOURS.mid)]), wrapMode: "none" }));
     for (const row of header.details) {
       const at = row.indexOf(" · ");
       const head = at === -1 ? row : row.slice(0, at);
