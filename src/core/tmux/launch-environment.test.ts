@@ -38,3 +38,14 @@ test("failed window creation can discard its private environment handoff", async
   await launch.cleanup();
   expect(readdirSync(join(paths.project("p"), "launches"))).toEqual([]);
 });
+
+test("in a Rex block the agent keeps that block's REX_SESSION and REX_BLOCK, never the launcher's; outside Rex they are unset", async () => {
+  const launcher = { PATH: "/current/bin", REX_SESSION: "session:launcher", REX_BLOCK: "block:launcher", REX_BIN_DIR: "/rex/bin" };
+  const print = [process.execPath, "-e", "console.log(JSON.stringify(process.env))"];
+  const inside = Bun.spawn((await launchEnvironment("p", print, launcher)).argv, { cwd: home, env: { REX_SESSION: "session:agent", REX_BLOCK: "block:agent" }, stdout: "pipe" });
+  expect(JSON.parse(await new Response(inside.stdout).text())).toMatchObject({ REX_SESSION: "session:agent", REX_BLOCK: "block:agent", REX_BIN_DIR: "/rex/bin" });
+  const outside = Bun.spawn((await launchEnvironment("p", print, launcher)).argv, { cwd: home, env: { TMUX: "window-session" }, stdout: "pipe" });
+  const env = JSON.parse(await new Response(outside.stdout).text());
+  expect(env.REX_SESSION).toBeUndefined();
+  expect(env.REX_BLOCK).toBeUndefined();
+});

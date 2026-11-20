@@ -9,7 +9,7 @@ import { existingTasks } from "../data/tasks";
 import { workspaces } from "../data/projects";
 import { watchdog, type RunState } from "./exits";
 import { mergeWatcher } from "./merges";
-import { sessionName, tmux } from "./runner";
+import { mux, sessionName } from "./runner";
 import { agentActivity } from "./activity";
 import type { AgentInfo } from "../../protocol";
 import type { Task } from "../../protocol/task";
@@ -138,12 +138,12 @@ export const agentWindows = (windows: string[]) => windows.filter((w) => w !== "
 
 /** Agent windows still open in a project's tmux session; read from tmux alone, without transcripts. */
 export async function liveAgents(project: string): Promise<string[]> {
-  return agentWindows(await tmux.listWindows(sessionName(project)).catch(() => [] as string[]));
+  return agentWindows(await mux.listWindows(sessionName(project)).catch(() => [] as string[]));
 }
 
 /** Like liveAgents, but null when tmux could not be asked, so the watchdog never mistakes an error for "all gone". */
 export async function liveAgentsOrNull(project: string): Promise<string[] | null> {
-  const windows = await tmux.windows(sessionName(project)).catch(() => null);
+  const windows = await mux.windows(sessionName(project)).catch(() => null);
   return windows && agentWindows(windows);
 }
 
@@ -160,7 +160,7 @@ export const exitWatchdog = (live: (project: string) => Promise<string[] | null>
  */
 export const mergeWatch = () => mergeWatcher();
 
-/** Close a project's (now idle) tmux session, if tmux is installed. */
+/** Close a project's (now idle) session in each installed multiplexer. */
 export async function killProjectSession(project: string): Promise<void> {
-  if (Bun.which("tmux")) await tmux.killSession(sessionName(project));
+  await mux.killSession(sessionName(project));
 }

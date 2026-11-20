@@ -110,7 +110,7 @@ test("wait on a PR watch returns when the shared observer records a change", asy
 });
 
 test("list returns the tmux sessions agents opened themselves, as the Processes tab shows them", async () => {
-  const { tmux } = await import("../tmux");
+  const { tmux } = await import("../tmux/runner");
   process.env.ORCA_HOME = home = realpathSync(home); // tmux reports panes by their real path (/private/var/… on macOS)
   const repo = paths.repo("test"), elsewhere = join(home, "elsewhere");
   await mkdir(repo, { recursive: true }); await mkdir(elsewhere, { recursive: true });

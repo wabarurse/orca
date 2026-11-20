@@ -1,7 +1,7 @@
 // What a conversation has running in the background, for the work page's Processes tab: the pull requests the
 // daemon's shared watcher is listening to, the commands agents started (local stacks, long checks), and the tmux
-// sessions agents opened themselves in this conversation's folders (`tmux new-session` from bash: no record exists
-// for those, so they are found by where their panes run). Read-only, except the stops a person asks for there; a stop never restarts, retries or signals anything else, and the
+// sessions and Rex blocks agents opened themselves in this conversation's folders (`tmux new-session`, `rex run` from
+// bash: no record exists for those, so they are found by where their panes run). Read-only, except the stops a person asks for there; a stop never restarts, retries or signals anything else, and the
 // orchestrator is told who stopped it so it does not start the same thing again by itself.
 import { join } from "node:path";
 import { paths } from "../../config";
@@ -11,6 +11,7 @@ import { controlProcess, listProcesses, liveProcess, prWatchEnabled, processDire
 import { allTasks } from "../data/tasks";
 import { activePRTask } from "./pr-observations";
 import { tmux } from "./runner";
+import { closeRexRow, REX_ROW, rexMux, rexPanes } from "./rex";
 
 /** A watched pull request. `process` is the explicit `watch_pr` registration, null when only its task links it.
  * `state` is what the watcher last recorded (checks, review, mergeable, failing), null before its first look. */
@@ -32,19 +33,32 @@ const FIELDS = ["session_name", "session_created", "window_name", "pane_id", "pa
 // tmux 3.7 prints a tab in a format as "_", so the fields are split on printable text no path is likely to hold.
 const SPLIT = " |orca| ";
 const ask = (...args: string[]) => run(tmux.argv(...args), { cwd: paths.root, timeoutMs: 5000 });
+/** orca's tmux server's panes; [] when tmux is not installed or its server is not running, null when it could not be asked. */
+async function tmuxPanes(): Promise<Pane[] | null> {
+  if (!Bun.which("tmux")) return [];
+  const out = await ask("list-panes", "-a", "-F", FIELDS.map(field => `#{${field}}`).join(SPLIT));
+  if (!out) return null;
+  if (out.code !== 0) return /no server running|error connecting to .*\((No such file or directory|Connection refused)\)/i.test(out.err) ? [] : null;
+  return out.out.split("\n").filter(Boolean).flatMap(line => {
+    const [session, created, window, pane, path, dead, started, current] = line.split(SPLIT);
+    return session && pane && path ? [{ session, created: Number(created) * 1000, window: window ?? "", pane, path, command: started || current || "", live: dead === "0" }] : [];
+  });
+}
+/** tmux panes and Rex blocks together (a Rex row's session starts with REX_ROW); null when either could not be asked. */
 export const sessions: Sessions = {
   async panes() {
-    if (!Bun.which("tmux")) return null;
-    const out = await ask("list-panes", "-a", "-F", FIELDS.map(field => `#{${field}}`).join(SPLIT));
-    if (!out) return null;
-    if (out.code !== 0) return /no server running|error connecting to .*\((No such file or directory|Connection refused)\)/i.test(out.err) ? [] : null;
-    return out.out.split("\n").filter(Boolean).flatMap(line => {
-      const [session, created, window, pane, path, dead, started, current] = line.split(SPLIT);
-      return session && pane && path ? [{ session, created: Number(created) * 1000, window: window ?? "", pane, path, command: started || current || "", live: dead === "0" }] : [];
-    });
+    const [t, r] = await Promise.all([tmuxPanes(), rexPanes()]);
+    return t && r && [...t, ...r];
   },
-  async tail(pane) { return (await ask("capture-pane", "-p", "-J", "-S", `-${TAIL_LINES}`, "-t", pane))?.out.trimEnd() ?? ""; },
-  async kill(session) { const out = await ask("kill-session", "-t", "=" + session); if (!out || out.code !== 0) throw new Error(`tmux could not end ${session}${out?.err ? `: ${out.err.trim()}` : ""}`); },
+  async tail(pane) {
+    if (pane.startsWith("block:")) return (await rexMux.capture(pane)).split("\n").slice(-TAIL_LINES).join("\n").trimEnd();
+    return (await ask("capture-pane", "-p", "-J", "-S", `-${TAIL_LINES}`, "-t", pane))?.out.trimEnd() ?? "";
+  },
+  async kill(session) {
+    if (session.startsWith(REX_ROW)) return closeRexRow(session);
+    const out = await ask("kill-session", "-t", "=" + session);
+    if (!out || out.code !== 0) throw new Error(`tmux could not end ${session}${out?.err ? `: ${out.err.trim()}` : ""}`);
+  },
 };
 /** The sessions with a pane inside this conversation's worktrees or its checkout; orca's own (`orca-…`) are its
  * agents, shown on the Agents tab. Unknown (tmux not asked) is no rows, never a guess. */
