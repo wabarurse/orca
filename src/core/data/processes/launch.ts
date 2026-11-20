@@ -1,4 +1,5 @@
 import { projectIdentity, workspaces } from "../projects";
+import { ensureDataDirs } from "../bubbles";
 import { execution } from "../projects/lifecycle";
 import { mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
@@ -34,10 +35,11 @@ export async function launchProcess(record: ProcessRecord, executable: string[],
     // Every command gets the same evidence folder, so agents never invent one elsewhere in the home; a sandbox command sets its own.
     const evidence = evidenceDirectory(record.project, record.owner);
     await mkdir(evidence, { recursive: true });
+    const data = await ensureDataDirs(record.project);
     const log = await open(join(processDirectory(record.project, record.id), "supervisor.log"), "a", 0o600);
     try {
       const child = Bun.spawn([...executable, "process-supervisor", "--project", record.project, "--process", record.id], {
-        cwd: record.cwd, env: { ...process.env, ORCA_HOME: paths.root, ORCA_ARTIFACTS: evidence }, detached: true, stdin: "ignore", stdout: log.fd, stderr: log.fd,
+        cwd: record.cwd, env: { ...process.env, ORCA_HOME: paths.root, ORCA_ARTIFACTS: evidence, ORCA_DATA: data }, detached: true, stdin: "ignore", stdout: log.fd, stderr: log.fd,
       });
       child.unref();
     } catch (error) {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertLayout, paths } from "../../../config";
@@ -62,6 +62,15 @@ test("every command gets an evidence folder inside the project's tool outputs", 
   await launchProcess(p, cliCommand(), 0);
   for (let i = 0; i < 100 && unresolvedProcess(await readProcess(project, p.id)); i++) await Bun.sleep(30);
   expect(await Bun.file(join(paths.project(project), "tool-outputs", "evidence", "worker-source", "shot.txt")).text()).toBe("proof");
+});
+
+test("every command sees its conversation's plugin data folder as ORCA_DATA", async () => {
+  const p = record({ state: "starting", pid: undefined, supervisorPid: undefined, reason: undefined,
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), command: 'printf "%s" "$ORCA_DATA" > "$ORCA_ARTIFACTS/data.txt"' });
+  await launchProcess(p, cliCommand(), 0);
+  for (let i = 0; i < 100 && unresolvedProcess(await readProcess(project, p.id)); i++) await Bun.sleep(30);
+  expect(await Bun.file(join(paths.project(project), "tool-outputs", "evidence", "worker-source", "data.txt")).text()).toBe(paths.data(project));
+  expect((await lstat(join(paths.data(project), "global"))).isSymbolicLink()).toBe(true);
 });
 
 test("OS inspection distinguishes PID reuse, surviving descendants and unavailable inspection", () => {

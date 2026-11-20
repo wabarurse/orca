@@ -3,3 +3,4 @@ export { BRANCHES, LIMITS, OVERVIEW, memoryNodes, readNode, writeNode, type Entr
 export { overviewText, renderHits, renderIndex, searchNodes, type Hit } from "./search";
 export { ARCHIVE_DAYS, NOTEBOOK, listPages, purgeNotebook, putPage, queryPage, readPage, renderPages, type Page } from "./notebook";
 export { BEHAVIOR, behavior, setBehavior, type BehaviorLine } from "./behavior";
+export { dataRoots, ensureDataDirs } from "./data";

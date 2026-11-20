@@ -2,6 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { createVerification, closeVerification, listVerifications, readVerification, verificationLock, verificationPaths, launchProcess } from "../data/processes";
 import { execution } from "../data/projects/lifecycle";
+import { ensureDataDirs } from "../data/bubbles";
 import { cliCommand, sessionId } from "../tmux";
 import type { Tool } from "./registry";
 
@@ -56,6 +57,8 @@ export const sandbox: Tool = {
       let command = input.command;
       const temporary = v.backend === "docker" ? "/tmp" : join(paths.workspace, ".orca-tmp");
       const environment = [`TMPDIR=${quote(temporary)}`, `TMP=${quote(temporary)}`, `TEMP=${quote(temporary)}`, `XDG_CACHE_HOME=${quote(`${temporary}/cache`)}`, `ORCA_ARTIFACTS=${quote(v.backend === "docker" ? "/artifacts" : paths.evidence)}`];
+      // A docker session sees only its mounts, so it gets no ORCA_DATA.
+      if (v.backend === "local") environment.push(`ORCA_DATA=${quote(await ensureDataDirs(ctx.project))}`);
       if (v.simulator?.device) environment.push(`ORCA_SIMULATOR=${quote(v.simulator.device)}`, `ORCA_DEVICE_SET=${quote(paths.devices)}`);
       if (input.action === "capture") {
         if (typeof input.filename !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(input.filename)) throw new Error("capture requires a simple evidence filename");

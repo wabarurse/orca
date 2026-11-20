@@ -101,7 +101,11 @@ export const paths = {
   get projects() { return join(root(), "projects"); },
   /** Shared knowledge of one or more conversations (core/data/bubbles): memory nodes, notebook pages, behavior lines. */
   get bubbles() { return join(root(), "bubbles"); },
+  /** Plugin data every conversation shares; `$ORCA_DATA/global` links here (core/data/bubbles/data.ts). */
+  get globalData() { return join(root(), "data"); },
   project: (name: string) => conversationPath(root(), name),
+  /** One conversation's plugin data, the folder `$ORCA_DATA` names. */
+  data: (name: string) => join(conversationPath(root(), name), "data"),
   inputHistory: (name: string) => join(root(), ".runtime", "projects", name, "input-history"),
   cache: (name: string) => join(conversationPath(root(), name), "cache"),
   repo: (name: string) => repositoryBinding(name)?.directory ?? join(conversationPath(root(), name), "repo"),

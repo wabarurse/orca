@@ -6,7 +6,7 @@ export { processCleanupBlocker } from "./cleanup-guard";
 export { endProcess, type EndOptions } from "./terminate";
 export { controlProcess, superviseProcess } from "./supervisor";
 export { recoverableProcesses } from "./store";
-export { launchProcess } from "./launch";
+export { evidenceDirectory, launchProcess } from "./launch";
 export { watchPRChecks } from "./pr-checks";
 export { createVerification, closeVerification, reconcileVerifications } from "./verification";
 export { listVerifications, readVerification, verificationLock, verificationPaths } from "./verification-store";
