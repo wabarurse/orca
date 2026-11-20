@@ -184,7 +184,7 @@ async function readInbox(deps: AgentDeps, results?: ToolResultBlockParam[]): Pro
   if (msgs.length) {
     deps.onInbox?.(msgs);
     await deps.tracker?.instructed();
-  } else if (results) await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
+  } else if (results?.length) await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
   return msgs.length > 0;
 }
 
@@ -301,7 +301,7 @@ async function toolBatch(deps: AgentDeps, content: ContentBlock[], timing?: Resp
     catch (error) { if (!(error instanceof Cancelled)) throw error; }
   }
   // Preserve completed results without consuming input authorized for a new run.
-  await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
+  if (results.length) await deps.transcript.append({ type: "message", message: { role: "user", content: results } });
   return false;
 }
 /** Consecutive output-limit stops answered before the turn fails as it always did. */
@@ -330,6 +330,12 @@ async function runLoop(deps: AgentDeps, boundary: ReturnType<typeof boundaries>,
     deps.signal?.throwIfAborted();
     const message = await ask(current, deps.write!, timing);
     if (message.stop === "limit" && ++limits <= LIMIT_RECOVERIES) { await resumeAfterLimit(current, message.content); continue; }
+    // A response that says it stopped for a tool call but carries none (a provider fault, seen with only thinking
+    // in it) has nothing to run: it is asked to continue like a pause, never answered with an empty result message.
+    if (message.stop === "tool_use" && !message.content.some(block => block.type === "tool_use") && ++pauses <= 2) {
+      await deps.transcript.append({ type: "message", message: { role: "user", content: "The response stopped for a tool call but contained none. Continue the existing request within its current scope." } });
+      continue;
+    }
     if (message.stop === "tool_use") {
       limits = 0;
       refusedTaskBatches = await toolBatch(current, message.content, timing) ? refusedTaskBatches + 1 : 0;
