@@ -622,7 +622,7 @@ describe("tmux.windows", () => {
 test("the TUI runs the watchdog for each open page on every inbox poll", async () => {
   const { App } = await import("../../tui/app");
   const checked: string[] = [];
-  const term = { cols: 40, rows: 8, write() {}, onKey() {}, onResize() {}, open() {}, close() {}, eraseOnExit() {} };
+  const term = { cols: 40, rows: 8, write() {}, onKey() {}, onResize() {}, open() {}, close() {}, eraseOnExit() {}, show() {}, scroll() {}, onAction() {}, selection: () => "" };
   const orch = { async say() {}, async pending() { return false; }, async turn() { return []; } };
   const app = new App({ term, openOrchestrator: async () => orch, pollMs: 10, watchdog: async (p) => { checked.push(p); }, merges: async () => {} });
   const running = app.run("watched");

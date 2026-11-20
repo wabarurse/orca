@@ -3,7 +3,7 @@ import { type Entry, type ModelRequestEntry } from "../../protocol/transcript";
 import { entryNotice } from "./notices";
 import { restore } from "./restore";
 import { parts, render } from "./view";
-import { Calls, collapseCalls, groupStart } from "./tools";
+import { Calls, collapseCalls, foldKeys } from "./tools";
 import { historyRows, type Line } from "./lines";
 
 const base = { uuid: "fixture", parentUuid: null, ts: "" };
@@ -32,9 +32,8 @@ test("live status and transcript replay leave consecutive finished calls collaps
   }
   for (const lines of [live, restore(entries, 120, Infinity)]) {
     expect(text(lines)).toBe("▸ 2 tool calls · bash ×2");
-    const start = groupStart(lines, collapseCalls(lines), 0);
-    expect(start).toBe(0);
-    const expanded = Bun.stripANSI(historyRows(collapseCalls(lines, new Set([start!])), 120).join("\n"));
+    expect(foldKeys(collapseCalls(lines))).toEqual(["calls:0"]);
+    const expanded = Bun.stripANSI(historyRows(collapseCalls(lines, new Set(["calls:0"])), 120).join("\n"));
     expect(expanded).toContain("▾ 2 tool calls");
     expect(expanded).toContain("bash(echo one)");
     expect(expanded).toContain("bash(echo two)");

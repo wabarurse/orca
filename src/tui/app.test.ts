@@ -18,7 +18,7 @@ import { Calls } from "./conversation/tools";
 const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, selectedTab, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList } = appFixture();
 
 describe("tui app", () => {
-  test("orca welcome stays static until submission; the header does not animate", async () => {
+  test("orca welcome stays static until submission; then the header's fin swims while busy", async () => {
     const term = fakeTerm(100, 40), fake = fakeOrchestrators();
     let now = 0, publish!: () => void, finish!: () => void;
     const publishing = new Promise<void>(resolve => { publish = resolve; });
@@ -31,6 +31,8 @@ describe("tui app", () => {
         return { ...orch, say: async (...input) => { await publishing; await orch.say(...input); }, turn: async () => { await orch.turn(); await finishing; return []; } };
       },
     });
+    const exitWrites: string[] = [], write = term.write.bind(term);
+    term.write = s => { exitWrites.push(s); write(s); };
     const running = app.run("orca-welcome");
     const header = () => term.display.screen().slice(0, bodyStart(term)).join("\n");
     try {
@@ -51,8 +53,8 @@ describe("tui app", () => {
       await until(() => app.page!.busy && app.page!.lines.length > 0);
       await settle();
       const before = header(); now = 2400; ticks.forEach(tick => tick());
-      await settle();
-      expect(header()).toBe(before);
+      await until(() => header() !== before); // the fin animates while the selected conversation is busy
+      expect(header()).toContain("#");
       expect(bodyRows(term).join("\n")).not.toContain("#");
       finish();
       await until(() => !app.page!.busy && ticks.size === 0);
@@ -62,7 +64,7 @@ describe("tui app", () => {
       await until(() => app.frame().welcome === false && header().includes("orca-welcome") && !bodyRows(term).some(row => row.includes("#")));
       expect(app.page!.lines.map(raw).join("\n")).not.toContain("#");
     } finally { publish(); finish(); app.quit(); await running; }
-    expect(term.display.screen().join("\n")).not.toContain("#"); // no decoration in exit replay
+    expect(strip(exitWrites.join(""))).not.toContain("#"); // no decoration in exit replay
   });
 
   test("closing pages and quitting dispose idle background memory without cancelling idle projects", async () => {
@@ -92,7 +94,7 @@ describe("tui app", () => {
     term.type("build it\r");
     await until(() => orchs.said.alpha?.length === 1);
     expect(orchs.said.alpha).toEqual(["build it"]);
-    await until(() => ["> build it", "alpha says hi", "worker-x done"].every((t) => term.screen().includes(t)));
+    await until(() => ["build it", "alpha says hi", "worker-x done"].every((t) => term.screen().includes(t)));
     term.type("/quit\r");
     await running;
     expect(term.closed).toBe(true);
@@ -898,36 +900,30 @@ describe("tui app", () => {
 });
 
 describe("sticky screen", () => {
-  const count = (hay: string, needle: string) => hay.split(needle).length - 1;
-  const CLEAR = "\x1b[2J\x1b[3J\x1b[H";
+  /** The conversation's non-blank rows, trimmed: a user message is a shaded block on the right, without its "> ". */
+  const body = (term: ReturnType<typeof fakeTerm>) => bodyRows(term).map(row => row.trim()).filter(Boolean).join("\n");
 
-  test("typing and sending updates the conversation without repainting unchanged rows", async () => {
+  test("typing and sending shows the message once, as a block, with the replies under it", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
-    term.display.write("$ orca start\r\n"); // the shell's output stays above
     const running = app.run("alpha");
     await until(() => !!app.page && term.screen().includes(">"));
     term.type("build it");
-    await until(() => term.screen().includes("> build it"));
+    await until(() => term.screen().includes("> build it")); // still in the composer
     term.type("\r");
     await until(() => term.screen().includes("worker-x done"));
-    const lines = term.screen().split("\n");
-    expect(lines[0]).toStartWith("│ alpha ");
+    expect(term.screen().split("\n")[0]).toStartWith("│  alpha ");
     expect(selectedTab(term)).toBe("alpha");
-    expect(bodyRows(term).filter(Boolean).slice(0, 3)).toEqual(["> build it", "alpha says hi", "worker-x done"]);
-    expect(lines.filter((l) => l === "> build it").length).toBe(1);
-    expect(term.display.clears).toBe(0);
-    expect(term.raw()).not.toContain("\x1b[2J");
-    expect(term.raw()).toContain("\x1b[?1049h");
-    // Each finished line was written once; only the live region repaints.
-    expect(count(strip(term.raw()), "alpha says hi")).toBe(1);
-    expect(count(strip(term.raw()), "worker-x done")).toBe(1);
+    expect(body(term).split("\n").slice(0, 3)).toEqual(["build it", "alpha says hi", "worker-x done"]);
+    expect(term.screen()).not.toContain("> build it"); // the composer was cleared; the sent text shows once, in the block
+    expect(term.lines().filter(row => row.includes("build it"))).toHaveLength(1);
+    // (Row-level repaint counts and shell scrollback belonged to the string diff renderer; OpenTUI owns the frame now.)
     app.quit();
     await running;
   });
 
-  test("page switching and resize refresh the viewport without clearing shell scrollback", async () => {
+  test("page switching and resize refresh the viewport", async () => {
     const term = fakeTerm(60);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
@@ -937,7 +933,6 @@ describe("sticky screen", () => {
     await until(() => term.screen().includes("worker-x done"));
     await app.openPage("beta");
     await until(() => !!term.display.screen()[0]?.includes("beta"));
-    expect(term.raw()).not.toContain(CLEAR);
     await until(() => selectedTab(term) === "beta");
     expect(term.screen()).not.toContain("alpha says hi");
     term.type("two\r");
@@ -945,15 +940,12 @@ describe("sticky screen", () => {
 
     term.type("\x08"); // Ctrl+H back to alpha
     await until(() => selectedTab(term) === "alpha");
-    await until(() => term.screen().includes("> one\n\nalpha says hi\n\nworker-x done\n"));
+    await until(() => body(term).includes("one\nalpha says hi\nworker-x done"));
     expect(term.screen()).not.toContain("beta says hi");
-    const before = term.writes.length;
     term.resize(30, 16);
-    await until(() => term.writes.length > before);
-    expect(term.writes.slice(before).join("")).not.toContain(CLEAR);
-    await until(() => term.screen().includes("> one\n\nalpha says hi\n"));
+    await until(() => body(term).includes("one\nalpha says hi") && term.lines().every(row => Bun.stringWidth(row) <= 30));
     app.closePage();
-    await until(() => term.screen().includes("> two\n\nbeta says hi"));
+    await until(() => body(term).includes("two\nbeta says hi"));
     app.quit();
     await running;
   });
@@ -1010,7 +1002,7 @@ describe("sticky screen", () => {
     await until(() => term.screen().includes("worker line two\n\nbold reply\n\n┌───┬───┐\n│ k │ v │"));
     await until(() => term.screen().includes("> **raw** prompt"));
     term.press({ name: "escape" });
-    await until(() => term.screen().includes("> hello\n\nviewed says hi\n\nworker-x done"));
+    await until(() => body(term).includes("hello\nviewed says hi\nworker-x done"));
     expect(term.screen()).not.toContain("worker line");
     app.quit();
     await running;
@@ -1047,19 +1039,17 @@ describe("frames, resizes, startup and crashes", () => {
     term.type("one\x1b\rtwo\x1b\rthree\x1b\rfour");
     app.openMenu("pick one", ["a", "b", "c", "d", "e", "f"].map((v) => ({ value: v, label: v })), () => {});
     await until(() => term.screen().includes("  four") && term.screen().includes("pick one"));
-    const before = term.writes.length;
+    const before = term.shown;
     term.resize(50, 12);
     term.resize(40, 9);
     await Bun.sleep(30);
     term.resize(30, 6);
-    app.draw(); // a draw mid-resize writes nothing with the stale geometry
-    expect(term.writes.length).toBe(before);
-    await until(() => term.writes.length > before);
-    const after = term.writes.slice(before).join("");
-    expect(after).not.toContain("\x1b[3J");
+    app.draw(); // a draw mid-resize shows nothing with the stale geometry
+    expect(term.shown).toBe(before);
+    await until(() => term.shown !== before);
     await until(() => term.screen().includes("  four"));
     const shown = term.display.screen();
-    expect(shown.length).toBe(6);
+    expect(term.screen().split("\n").length).toBeLessThanOrEqual(6); // the frame is the terminal's height
     expect(shown).toContain("  four");
     expect(app.menu?.title).toContain("pick one"); // Too short to show the panel, but it still owns keys.
     term.press({ name: "escape" });
@@ -1076,17 +1066,15 @@ describe("frames, resizes, startup and crashes", () => {
     const orchs = fakeOrchestrators();
     const openOrchestrator: typeof orchs.openOrchestrator = async (...args) => { await new Promise<void>((r) => (gate = r)); return orchs.openOrchestrator(...args); };
     const app = new App({ term, openOrchestrator, pollMs: 100_000 });
-    term.display.write("$ orca start\r\n");
     const running = app.run("alpha");
     await until(() => term.screen().includes("opening…"));
     app.say("early note");
     console.warn("logged %s", "early");
     await until(() => term.screen().includes("logged early"));
     gate();
-    await until(() => selectedTab(term) === "alpha" && term.display.screen()[1]!.includes("ctx"));
+    await until(() => selectedTab(term) === "alpha" && term.display.screen().slice(0, bodyStart(term)).join("\n").includes("ctx"));
     expect(bodyRows(term)[0]).toBe("early note");
     expect(app.page!.lines.map(raw)).not.toContain("logged early");
-    expect(term.display.clears).toBe(0);
     expect(term.screen()).not.toContain("opening…");
     app.quit();
     await running;

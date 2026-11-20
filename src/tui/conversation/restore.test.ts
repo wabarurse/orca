@@ -33,7 +33,7 @@ const meta = { type: "meta", role: "orchestrator", model: "m" } as const;
 const user = (content: unknown, extra = {}) => ({ type: "message", message: { role: "user", content }, ...extra }) as never;
 const assistant = (content: unknown, extra = {}) => ({ type: "message", message: { role: "assistant", content }, ...extra }) as never;
 const inbox = (...msgs: [string, string][]) => format(msgs.map(([from, text]) => ({ from, text, ts: "" })));
-const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : l.md);
+const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : "from" in l ? `from ${l.from}: ${l.text}` : "image" in l ? l.image : l.md);
 
 test("user messages, agent reports, assistant markdown and replies; tool calls as live, results and thinking hidden", () => {
   const entries = transcript(
@@ -53,14 +53,14 @@ test("user messages, agent reports, assistant markdown and replies; tool calls a
   expect(lines).toEqual([
     { user: `${bold(">")} build a login` }, { user: "  page please" },
     { md: "# Plan", block: true }, { md: "", block: true, continuation: true }, { md: "| a | b |\n|---|---|\n| 1 | 2 |", block: true, continuation: true },
-    { tool: "spawn(feat/login, worker)", summary: "spawned worker-feat-login", failed: false },
-    dim("from worker-feat-login: Done.…"),
-    { tool: "message(user: Login is **done**.)", summary: "sent to user", failed: false },
-    { tool: "message(user: refused one)", summary: "refused: empty message", failed: true },
+    { tool: "spawn(feat/login, worker)", summary: "spawned worker-feat-login", failed: false, kind: "agent", items: ["worker-feat-login · feat/login · worker"] },
+    { from: "worker-feat-login", text: "Done.\n\nAll green." },
+    { tool: "message(user: Login is **done**.)", summary: "sent to user", failed: false, kind: "tool", items: [] },
+    { tool: "message(user: refused one)", summary: "refused: empty message", failed: true, kind: "tool", items: [] },
     { md: "All set.", block: true },
     { md: "Login is **done**.", label: bold("orchestrator") },
   ]);
-  expect(lines.some((l) => raw(l).includes("All green") || raw(l).includes("hmm"))).toBe(false);
+  expect(lines.some((l) => raw(l).includes("hmm"))).toBe(false); // thinking stays hidden; a report keeps its whole text in its fold
 });
 
 test("a tool call restores as the line it showed when it ended, through the formatter agent.ts and the TUI use", async () => {
@@ -74,9 +74,9 @@ test("a tool call restores as the line it showed when it ended, through the form
     assistant([{ type: "tool_use", id: "b3", name: "bash", input: { command: "sleep 9" } }]), // never got a result
   );
   expect(restore(entries, 60)).toEqual([
-    toolView("bash", { command: "ls" }, { ok: true, text: "a\nb\n" }),
-    { tool: "bash(false)", summary: "exit 1: boom", failed: true },
-    { tool: "bash(sleep 9)", summary: "interrupted", failed: true },
+    { ...toolView("bash", { command: "ls" }, { ok: true, text: "a\nb\n" }), kind: "tool", items: [] },
+    { tool: "bash(false)", summary: "exit 1: boom", failed: true, kind: "tool", items: [] },
+    { tool: "bash(sleep 9)", summary: "interrupted", failed: true, kind: "tool", items: [] },
   ]);
 });
 
@@ -102,14 +102,14 @@ test("collapsed: a restored run of calls across assistant entries and their tool
   expect(text(collapseCalls(lines))).toEqual([
     "> go", "Looking",
     "▸ 5 tool calls · bash ×4, read ×1 · 3 failed",
-    "from worker-a: done",
+    "▸ from worker-a",
     "▸ 2 tool calls · bash ×2",
     "Done.", "⏺ bash(true)", "  ⎿  no output",
   ]);
   expect(text(lines)).toEqual([
     "> go", "Looking",
     "⏺ bash(ls)", "  ⎿  1 line", "⏺ bash(false)", "  ⎿  exit 1: boom", "⏺ bash(cat x)", "  ⎿  1 line", "⏺ read(x)", "  ⎿  refused", "⏺ bash(sleep 9)", "  ⎿  interrupted",
-    "from worker-a: done",
+    "▸ from worker-a",
     "⏺ bash(pwd)", "  ⎿  1 line", "⏺ bash(id)", "  ⎿  1 line",
     "Done.", "⏺ bash(true)", "  ⎿  no output",
   ]);
@@ -188,7 +188,7 @@ test("an empty or missing transcript restores nothing", () => {
 
 test("the user's lines lead an inbox turn they share with agent reports, as they were shown when sent", () => {
   const entries = transcript(meta, user(inbox(["worker-a", "report"], ["user", "hi"])));
-  expect(restore(entries, 60)).toEqual([{ user: `${bold(">")} hi` }, dim("from worker-a: report")]);
+  expect(restore(entries, 60)).toEqual([{ user: `${bold(">")} hi` }, { from: "worker-a", text: "report" }]);
 });
 
 const sentTo = (id: string, to: string, text: string) => [
@@ -207,9 +207,9 @@ test("older transcripts: a reply waits for the end of the run, past a report tha
     user(inbox(["user", "next"])),
     assistant([{ type: "text", text: "sure" }]),
   );
-  const tool = { tool: "message(user: Started.)", summary: "sent to user", failed: false };
+  const tool: Line = { tool: "message(user: Started.)", summary: "sent to user", failed: false, kind: "tool", items: [] };
   expect(restore(entries, 60)).toEqual([
-    { user: `${bold(">")} go` }, tool, { md: "ok", block: true }, dim("from worker-a: done"), { md: "more text", block: true },
+    { user: `${bold(">")} go` }, tool, { md: "ok", block: true }, { from: "worker-a", text: "done" }, { md: "more text", block: true },
     replyLine("orchestrator", "Started."),
     { user: `${bold(">")} next` }, { md: "sure", block: true },
   ]);
@@ -252,17 +252,14 @@ test("a capped history that began at a summary drops the summary note and counts
   expect(few).toEqual([{ user: `${bold(">")} q` }]);
 });
 
-test("report lines cut at 100 characters, not UTF-16 units", () => {
+test("an agent's report keeps its whole text, folded under its sender", () => {
   const emoji = "😀".repeat(150);
-  const line = restore(transcript(meta, user(inbox(["worker-a", emoji]))), 60)[0] as string;
-  expect(line).toBe(dim(`from worker-a: ${"😀".repeat(100)}…`));
-  const exact = restore(transcript(meta, user(inbox(["worker-a", "😀".repeat(100)]))), 60)[0];
-  expect(exact).toBe(dim(`from worker-a: ${"😀".repeat(100)}`));
+  expect(restore(transcript(meta, user(inbox(["worker-a", emoji]))), 60)[0]).toEqual({ from: "worker-a", text: emoji });
 });
 
 test("tags inside a report or a user message are not senders", () => {
   const entries = transcript(meta, user(inbox(["worker-a", "Report\n\n[x] done\n\n[1] item"], ["user", "list:\n\n[x] done\n\n[1] item"])));
-  expect(restore(entries, 60)).toEqual([...[`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item"].map((user) => ({ user })), dim("from worker-a: Report…")]);
+  expect(restore(entries, 60)).toEqual([...[`${bold(">")} list:`, "  ", "  [x] done", "  ", "  [1] item"].map((user) => ({ user })), { from: "worker-a", text: "Report\n\n[x] done\n\n[1] item" }]);
 });
 
 test("settled questions leave no line: answers and legacy delivered skips are left out of the restored page, chat that merely looks like one is not", () => {
@@ -280,7 +277,7 @@ test("settled questions leave no line: answers and legacy delivered skips are le
     )),
     assistant("Noted."),
   );
-  expect(restore(entries, 80).map(raw)).toEqual([`${bold(">")} go`, "Which db?", `${bold(">")} [not a question] hello`, dim("from worker-a: done"), "Noted."]);
+  expect(restore(entries, 80).map(raw)).toEqual([`${bold(">")} go`, "Which db?", `${bold(">")} [not a question] hello`, "from worker-a: done", "Noted."]);
   // The reply still counts as the user speaking: a held legacy reply to the user is released by it, and it is not an omitted "earlier message".
   const replyOnly = transcript(meta, user(inbox(["user", `[${id}] answer to "Which db?": postgres`])), assistant("Noted."));
   expect(restoreItems(replyOnly).map(item => item.lines().map(raw))).toEqual([["Noted."]]);
@@ -306,7 +303,7 @@ test("live and replay keep mixed-case user, assistant/code, paths, URLs, tool ar
   const restored = lines.map(raw).join("\n");
   for (const text of [userText, "LLM Reply", "const APIKey = 'MiXeD';", command, result]) expect(restored).toContain(text);
   const live = toolView("bash", { command }, { ok: false, text: result });
-  expect(lines.find(line => typeof line !== "string" && "tool" in line)).toEqual(live);
+  expect(lines.find(line => typeof line !== "string" && "tool" in line)).toEqual({ ...live, kind: "tool", items: [] });
   expect(live).toEqual({ tool: `bash(${command})`, summary: result, failed: true });
   const rendered = lines.flatMap(line => lineRows(line, 120)).map(Bun.stripANSI).join("\n");
   for (const text of [userText, "LLM Reply", "const APIKey = 'MiXeD';", command, result]) expect(rendered).toContain(text);
@@ -318,7 +315,7 @@ test("unchanged history is laid out once: settled entries keep their lines and e
   const running = restore([entry("u", "user", "go"), call], 80, Infinity);
   const result = entry("r", "user", [{ type: "tool_result", tool_use_id: "c1", content: "a\nb" }]);
   const done = restore([entry("u", "user", "go"), call, result], 80, Infinity);
-  expect(done.at(-1)).toEqual(toolView("bash", { command: "ls" }, { ok: true, text: "a\nb" })); // the unsettled rendering was not kept
+  expect(done.at(-1)).toEqual({ ...toolView("bash", { command: "ls" }, { ok: true, text: "a\nb" }), kind: "tool", items: [] }); // the unsettled rendering was not kept
   expect(running.at(-1)).not.toEqual(done.at(-1));
   const again = restore([entry("u", "user", "go"), call, result, entry("n", "assistant", [{ type: "text", text: "Done" }])], 80, Infinity);
   expect(again[1]).toBe(done[1]); // same line object: the settled entry was not laid out again

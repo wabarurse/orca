@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { RGBA, TextAttributes, type CliRendererConfig } from "@opentui/core";
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing";
-import type { Key } from "../components";
+import type { Key, screens } from "../components";
 import { rowChunks, styledRows } from "./ansi";
 import { hexColor, openTuiTerminal, type PaintingTerminal, type Proc } from "./terminal";
 
 const tty = { isTTY: true };
+const page = (rows: string[], cursor = 0, col = 0): screens.PageScreen => ({ kind: "page", rows, cursor, col });
+const chat = (over: Partial<screens.ChatScreen> = {}): screens.ChatScreen => ({ kind: "chat", header: null, items: [], tail: [], welcome: [], footer: ["> "], cursor: { row: 0, col: 2 }, ...over });
 const out = { write: () => true, columns: 40, rows: 8, isTTY: true };
 
 type Harness = { term: PaintingTerminal; setup: TestRendererSetup; keys: Key[] };
@@ -88,32 +90,57 @@ describe("ansi rows", () => {
 });
 
 describe("terminal", () => {
-  test("paints frames through the renderer", async () => {
+  test("shows a page screen through the renderer", async () => {
     const { term, setup } = await harness();
-    term.paint({ rows: ["\x1b[1mhello\x1b[0m", "", "world"], cursor: 2, col: 5 });
+    term.show(page(["\x1b[1mhello\x1b[0m", "", "world"], 2, 5));
     const frame = await setup.waitForFrame(text => text.includes("world"));
     expect(frame.split("\n").slice(0, 3)).toEqual(["hello", "", "world"].map(row => row.padEnd(40)));
   });
 
+  test("shows a chat screen: the conversation above, the footer on the last rows; a page screen then replaces it", async () => {
+    const { term, setup } = await harness(40, 10);
+    term.show(chat({ items: [{ kind: "rows", key: "0", gap: false, rows: ["first reply"] }], tail: ["streaming"], footer: ["┌─box─┐", "│ > hi │", "└─────┘"], cursor: { row: 1, col: 5 } }));
+    const frame = await setup.waitForFrame(text => text.includes("streaming") && text.includes("box"));
+    const rows = frame.split("\n").map(row => row.trimEnd());
+    expect(rows.indexOf("first reply")).toBeLessThan(rows.indexOf("streaming"));
+    expect(rows.slice(7, 10)).toEqual(["┌─box─┐", "│ > hi │", "└─────┘"]);
+    term.show(page(["work page"]));
+    const after = await setup.waitForFrame(text => text.includes("work page"));
+    expect(after).not.toContain("first reply");
+    expect(after).not.toContain("box");
+  });
+
   test("unstyled text keeps the terminal's own colour; coloured text keeps its colour", async () => {
     const { term, setup } = await harness();
-    term.paint({ rows: ["plain \x1b[38;5;141mmerged\x1b[0m"], cursor: 0, col: 0 });
+    term.show(page(["plain \x1b[38;5;141mmerged\x1b[0m"]));
     await setup.waitForFrame(text => text.includes("merged"));
     const spans = setup.captureSpans().lines[0]?.spans ?? [];
     expect(spans.find(span => span.text.startsWith("plain"))?.fg).toEqual(RGBA.defaultForeground());
     expect(spans.find(span => span.text.startsWith("merged"))?.fg).toEqual(RGBA.fromIndex(141));
   });
 
-  test("a frame painted before the renderer is up shows once it is", async () => {
+  test("a screen shown before the renderer is up shows once it is", async () => {
     let made: TestRendererSetup | null = null;
     const term = openTuiTerminal(async (config) => { made = await createTestRenderer({ ...config, width: 20, height: 4 }); return made.renderer; }, tty, out, fakeProc());
-    term.paint({ rows: ["early"], cursor: 0, col: 0 });
+    term.show(page(["early"]));
     term.open();
     await term.background;
     opened.push({ term, setup: made ?? (() => { throw new Error("no renderer"); })(), keys: [] });
     const setup = opened[0]?.setup;
     if (setup === undefined) throw new Error("no setup");
     expect(await setup.waitForFrame(text => text.includes("early"))).toContain("early");
+  });
+
+  test("a click on a link in the conversation reaches onAction", async () => {
+    const { term, setup } = await harness(40, 8);
+    const actions: screens.ScreenAction[] = [];
+    term.onAction(action => { actions.push(action); });
+    term.show(chat({ items: [{ kind: "rows", key: "0", gap: false, rows: ["see https://example.com/x now"] }] }));
+    const frame = await setup.waitForFrame(text => text.includes("example.com"));
+    const y = frame.split("\n").findIndex(row => row.includes("example.com"));
+    await setup.mockMouse.click(8, y);
+    await until(() => actions.length > 0);
+    expect(actions).toEqual([{ kind: "link", url: "https://example.com/x" }]);
   });
 
   test("keys arrive as orca keys", async () => {
@@ -171,7 +198,7 @@ describe("terminal", () => {
 
   test("left clicks, drags and the wheel become mouse keys with one-based cells", async () => {
     const { term, setup, keys } = await harness();
-    term.paint({ rows: ["x"], cursor: 0, col: 0 });
+    term.show(page(["x"]));
     await setup.renderOnce();
     await setup.mockMouse.click(3, 2);
     await setup.mockMouse.drag(1, 1, 5, 1);

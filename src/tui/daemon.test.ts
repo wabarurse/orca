@@ -1,9 +1,9 @@
+import { testTerminal } from "../test/otui-term";
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App, type AppDeps } from "./app";
-import { FakeScreen } from "./components/testing";
 import type { Terminal } from "./components/term";
 import { createOrchestrator, type Orchestrator } from "../core/agent-loop/orc/orchestrator";
 import { paths, saveConfig } from "../config/config";
@@ -51,8 +51,8 @@ function clientStub(calls: string[]): Orchestrator {
 
 /** An App on the current home; quitting it is queued for the test's cleanup. */
 async function openApp(extra: Partial<AppDeps> = {}) {
-  const screen = new FakeScreen(90, 28);
-  const term: Terminal = { cols: 90, rows: 28, open() {}, close() {}, eraseOnExit() {}, onKey() {}, onResize() {}, write(s) { screen.write(s); } };
+  const base = testTerminal(90, 28), screen = { text: () => base.screen(), screen: () => base.lines() };
+  const term: Terminal = Object.assign(base, { open() {}, close() {}, eraseOnExit() {}, onResize() {}, write(s: string) { base.writes.push(s); } });
   const calls: string[] = [];
   const app = new App({ term, pollMs: 30, projectModel: async () => "fake-model", agents: async () => [], questionDelayMs: 0,
     projects: { live: async () => [], kill: async () => {} },
@@ -113,8 +113,8 @@ test("the daemon's cancel acknowledgement and compaction progress are transient 
   let notice!: (text: string) => void;
   let closed = false;
   const calls: string[] = [];
-  const screen = new FakeScreen(90, 28);
-  const term: Terminal = { cols: 90, rows: 28, open() {}, close() { closed = true; }, eraseOnExit() {}, onKey() {}, onResize() {}, write(s) { screen.write(s); } };
+  const base = testTerminal(90, 28), screen = { text: () => base.screen(), screen: () => base.lines() };
+  const term: Terminal = Object.assign(base, { open() {}, close() { closed = true; }, eraseOnExit() {}, onResize() {}, write(s: string) { base.writes.push(s); } });
   let now = 1000;
   const { app } = await setup({ term, clock: { now: () => now, every: () => () => {} }, openOrchestrator: async (project, _url, _write, _inbox, tools) => {
     mkdirSync(paths.repo(project), { recursive: true });

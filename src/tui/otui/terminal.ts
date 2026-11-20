@@ -1,11 +1,11 @@
-import { createCliRenderer, RGBA, TextRenderable, type CliRenderer, type CliRendererConfig, type KeyEvent, type MouseEvent, type PasteEvent } from "@opentui/core";
-import { BG_REPLY_MS, imageProtocol, plainText, useTerminalBackground, type Key, type PaintedFrame, type Terminal } from "../components";
-import { styledRows } from "./ansi";
-import { keyFrom, mouseFrom, pasteFrom } from "./keys";
+import { createCliRenderer, type CliRenderer, type CliRendererConfig, type KeyEvent, type PasteEvent } from "@opentui/core";
+import { BG_REPLY_MS, imageProtocol, plainText, useTerminalBackground, type Key, type Terminal, type screens } from "../components";
+import { Display, type ScrollBy } from "./display";
+import { keyFrom, pasteFrom } from "./keys";
 
-export type PaintingTerminal = Terminal & { paint: (frame: PaintedFrame) => void; released: Promise<void> };
+export type PaintingTerminal = Terminal & { released: Promise<void> };
 
-type Live = { renderer: CliRenderer; view: TextRenderable };
+type Live = { renderer: CliRenderer; display: Display };
 
 type Output = { write: (text: string) => unknown; columns: number | undefined; rows: number | undefined; isTTY: boolean | undefined };
 type Input = { isTTY: boolean | undefined };
@@ -51,10 +51,11 @@ class OpenTuiTerminal implements PaintingTerminal {
   private live: Live | null = null;
   private opened = false;
   private shut = false;
-  private latest: PaintedFrame | null = null;
+  private latest: screens.Screen | null = null;
   private title = "";
   private readonly keyHandlers: ((key: Key) => void)[] = [];
   private readonly resizeHandlers: (() => void)[] = [];
+  private readonly actionHandlers: ((action: screens.ScreenAction) => void)[] = [];
   private readonly handlers: [Event, Listener][] = [
     ["SIGTERM", () => { this.die(143); }],
     ["SIGHUP", () => { this.die(129); }],
@@ -76,9 +77,19 @@ class OpenTuiTerminal implements PaintingTerminal {
     if (this.live !== null) this.live.renderer.setTerminalTitle(this.title);
   }
 
-  paint(screen: PaintedFrame): void {
+  onAction(handler: (action: screens.ScreenAction) => void): void { this.actionHandlers.push(handler); }
+
+  show(screen: screens.Screen): void {
     this.latest = screen;
-    if (this.live !== null) this.show(this.live, screen);
+    if (this.live !== null) this.live.display.show(screen);
+  }
+
+  scroll(by: ScrollBy): void {
+    if (this.live !== null) this.live.display.scroll(by);
+  }
+
+  selection(): string {
+    return this.live === null ? "" : this.live.display.selection();
   }
 
   open(): void {
@@ -105,17 +116,15 @@ class OpenTuiTerminal implements PaintingTerminal {
   private async start(): Promise<void> {
     const renderer = await this.launch({ exitOnCtrlC: false, exitSignals: [], useMouse: true, autoFocus: false, screenMode: "alternate-screen" });
     if (this.shut) { renderer.destroy(); return; }
-    const view = new TextRenderable(renderer, { content: "", fg: RGBA.defaultForeground(), width: "100%", height: "100%", wrapMode: "none", selectable: false });
-    view.onMouse = (event: MouseEvent) => { this.mouse(event); };
-    renderer.root.add(view);
+    const display = new Display(renderer, action => { this.act(action); }, key => { this.emit(key); });
     renderer.keyInput.on("keypress", (event: KeyEvent) => { this.key(event); });
     renderer.keyInput.on("paste", (event: PasteEvent) => { this.emit(pasteFrom(event.bytes)); });
     renderer.on("resize", (width: number, height: number) => { this.resized(width, height); });
-    this.live = { renderer, view };
+    this.live = { renderer, display };
     this.cols = renderer.width;
     this.rows = renderer.height;
     if (this.title.length > 0) renderer.setTerminalTitle(this.title);
-    if (this.latest !== null) this.show(this.live, this.latest);
+    if (this.latest !== null) display.show(this.latest);
     await this.detect(renderer);
   }
 
@@ -135,11 +144,6 @@ class OpenTuiTerminal implements PaintingTerminal {
     this.imageCell = { width: resolution.width / this.cols, height: resolution.height / this.rows };
   }
 
-  private show(live: Live, screen: PaintedFrame): void {
-    live.view.content = styledRows(screen.rows);
-    live.renderer.setCursorPosition(screen.col + 1, screen.cursor + 1, true);
-  }
-
   private die(code: number): void {
     this.close();
     this.proc.exit(code);
@@ -155,8 +159,9 @@ class OpenTuiTerminal implements PaintingTerminal {
     this.emit(keyFrom(event));
   }
 
-  private mouse(event: MouseEvent): void {
-    this.emit(mouseFrom(event));
+  private act(action: screens.ScreenAction): void {
+    if (this.shut) return;
+    for (const handler of this.actionHandlers) handler(action);
   }
 
   private emit(key: Key | null): void {

@@ -76,17 +76,24 @@ test.skipIf(!TMUX)("owned terminal: saved history scrolls between pinned bars; e
     await until(async () => (await app.screen()).some(row => row.includes("PTY-LATEST-HISTORY")));
     app.paste("PTY-DRAFT\nsecond line");
     await until(async () => (await app.screen()).some(row => row.includes("second line")));
-    // The header box (tabs, details, bottom line); the composer box (top, two input rows, the counts inside it).
-    const initial = await app.screen(), header = initial.slice(0, 3), footer = initial.slice(-4);
-    expect(header[0]).toStartWith("│ probe ");
-    expect(header[1]).toContain("ctx");
-    expect(header[2]).toStartWith("└─");
+    // The header box open at the top (the tab as a pill, the account row, the details, the fin beside them, its bottom
+    // line); the composer box (top line, two input rows, the counts inside it, open at the bottom).
+    const initial = await app.screen(), bottom = initial.findIndex(row => row.startsWith("└─"));
+    const header = initial.slice(0, bottom + 1), footer = initial.slice(-4);
+    expect(bottom).toBeGreaterThanOrEqual(3);
+    expect(header[0]).toMatch(/^│ +probe /);
+    expect(header[1]).toMatch(/^│ account \S+/);
+    expect(header.slice(2, bottom).join("\n")).toContain("ctx");
     expect(footer[0]).toStartWith("┌");
+    expect(footer[1]).toStartWith("│ > PTY-DRAFT");
+    expect(footer[2]).toStartWith("│   second line");
+    expect(footer[3]).toStartWith("│ ");
     expect(initial.join("\n")).not.toContain("PRELAUNCH_SENTINEL");
     for (let i = 0; i < 30; i++) app.key("PPage");
     await until(async () => (await app.screen()).some(row => row.includes("PTY-ORIGINAL-HISTORY")));
     const scrolled = await app.screen();
-    expect(scrolled.slice(0, 3)).toEqual(header);
+    expect(scrolled.slice(0, bottom + 1)).toEqual(header);
+    expect(scrolled.some(row => row.includes("> PTY-ORIGINAL-HISTORY"))).toBe(false); // the user's own message: a shaded block, no "> "
     expect(scrolled.slice(-4)).toEqual(footer);
     for (let i = 0; i < 30; i++) app.key("NPage");
     await until(async () => (await app.screen()).some(row => row.includes("PTY-LATEST-HISTORY")));

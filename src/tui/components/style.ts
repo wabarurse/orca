@@ -12,7 +12,10 @@
 // marker stays.
 
 /** The one palette for state colours: soft pastel xterm-256 shades, never the theme's strong eight, so a state reads the same in every terminal. */
-export const pastel = { grey: "38;5;246", red: "38;5;217", yellow: "38;5;223", green: "38;5;151", cyan: "38;5;152", purple: "38;5;183" } as const;
+export const pastel = { grey: "38;5;246", red: "38;5;217", yellow: "38;5;223", green: "38;5;151", cyan: "38;5;152", purple: "38;5;183", blue: "38;5;67", lightBlue: "38;5;153" } as const;
+
+/** The composer box's rails: dark pastel blue (plain dim without colour). */
+export const railMark = (s: string) => noColour() ? `\x1b[2m${s}\x1b[0m` : `\x1b[${pastel.blue}m${s}\x1b[0m`;
 
 export interface Rgb { r: number; g: number; b: number }
 

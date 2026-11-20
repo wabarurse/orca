@@ -9,13 +9,11 @@ import { put } from "../core/data/inbox/inbox";
 import type { Message } from "../protocol/inbox";
 import { all as allQuestions, answer as answerQuestion, ask as askQuestions } from "../core/data/inbox/questions";
 import { MAX_RESTORED_ROWS, userLines } from "./conversation/restore";
-import { historyRows, lineRows } from "./conversation/lines";
+import { historyRows } from "./conversation/lines";
 import { fakeProvider, text as said, toolUse } from "../test/fake-provider";
 import { message } from "../core/tools/message";
 import { open as openTranscript } from "../core/data/transcripts/transcript";
-import { ESC_DELAY_MS, parseKeys } from "./components/keys";
-import { FakeScreen } from "./components/testing";
-import { live as renderLive } from "./footer/render";
+import { parseKeys } from "./components/keys";
 import { Calls } from "./conversation/tools";
 
 /** Ctrl+Q, then Enter on the selected (first open) question: its answer form. */
@@ -24,7 +22,9 @@ async function openForm(app: App): Promise<void> {
   await app.work.refresh("questions");
   await app.onKey({ name: "enter" });
 }
-const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until, projectList } = appFixture();
+const { home, strip, raw, fakeTerm, bodyStart, bodyRows, selectedTab, fakeOrchestrators, settle, until, projectList } = appFixture();
+/** The transcript App prints on exit (its one raw write starting with a reset), without escapes; rendered frames are left out. */
+const exitText = (term: ReturnType<typeof fakeTerm>) => strip(term.writes.filter(w => w.startsWith("\x1b[0m")).join(""));
 
 test("saved history beyond the preview budget remains reachable before exit, including before compaction", async () => {
   const project = "full-scroll", t = openTranscript(paths.transcript(project, "orchestrator"));
@@ -34,7 +34,6 @@ test("saved history beyond the preview budget remains reachable before exit, inc
   await t.append({ type: "summary", text: "MODEL-ONLY-SUMMARY", retained: [], boundary: t.head() });
   await t.append({ type: "message", message: { role: "assistant", content: "AFTER-COMPACTION" } });
   const term = fakeTerm(100, 24), orchs = fakeOrchestrators();
-  for (let i = 0; i < 40; i++) term.write(`PRELAUNCH-SHELL-${i}\r\n`);
   const app = new App({ term, pollMs: 100_000, watchdog: async () => {}, merges: async () => {},
     openOrchestrator: async (p, url, write, inbox) => ({ ...await orchs.openOrchestrator(p, url, write, inbox), entries: () => p === project ? t.history!() : [] }),
   });
@@ -44,35 +43,34 @@ test("saved history beyond the preview budget remains reachable before exit, inc
     const rows = historyRows(app.page!.lines, term.cols).length;
     expect(rows).toBeGreaterThan(MAX_RESTORED_ROWS * 2);
     expect(app.page!.lines.map(raw).join("\n")).not.toMatch(/MODEL-ONLY-SUMMARY|earlier messages/);
-    term.type("\x1b[200~draft 界é👩‍💻\nsecond line\x1b[201~");
+    term.type("\x1b[200~draft 界é👩‍💻\nsecond line\x1b[201~");
     await until(() => term.screen().includes("second line"));
     const draft = { ...app.input }, top = bodyStart(term);
     await until(() => term.screen().includes("0 tasks")); // Settle the async count before asserting that scrolling preserves the footer.
     const header = term.display.screen().slice(0, top), footer = term.display.screen().slice(-5);
-    // Injected reports exercise the application path, NOT physical Apple Terminal gestures.
+    // Injected reports exercise the application path, NOT physical Apple Terminal gestures. Each wheel step is one row.
     const scrollToStart = async () => {
-      term.type("\x1b[<64;10;8M".repeat(Math.ceil(rows / 3) + 10));
-      await until(() => term.screen().includes("ORIGINAL-BEFORE-COMPACTION"));
+      term.type("\x1b[<64;10;8M".repeat(rows + 10));
+      await until(() => bodyRows(term).slice(0, 4).some(row => row.trim() === "ORIGINAL-BEFORE-COMPACTION"));
     };
     await scrollToStart();
-    expect(term.display.screen()[top]).toBe("> ORIGINAL-BEFORE-COMPACTION");
     const body = term.display.screen().slice(top, -5);
     term.type("\x1b[<64;10;8M".repeat(20)); // clamp at the original first message
     app.say("LIVE-WHILE-READING");
     await Bun.sleep(40);
+    await term.settled();
     expect(term.display.screen().slice(top, -5)).toEqual(body);
     expect(term.display.screen().slice(0, top)).toEqual(header);
     expect(term.display.screen().slice(-5)).toEqual(footer);
-    expect(term.screen()).not.toContain("PRELAUNCH-SHELL");
-    expect(term.display.modes.get(1049)).toBe(true);
     for (const cols of [23, 100]) {
       term.resize(cols, 24);
       await Bun.sleep(170);
-      expect(bodyRows(term)[0]).toStartWith("> ORIGINAL-BEFORE");
+      await term.settled();
+      expect(bodyRows(term).join("\n")).toContain("ORIGINAL-"); // still reading the start: a resize never jumps to the tail
       expect(app.input).toEqual(draft);
     }
     // Tail-following resumes at the bottom; switching projects never drops the original history.
-    term.type("\x1b[<65;10;8M".repeat(rows));
+    term.type("\x1b[<65;10;8M".repeat(rows * 2));
     await until(() => term.screen().includes("LIVE-WHILE-READING"));
     await app.openPage("other-scroll");
     term.type("\x08");
@@ -82,13 +80,12 @@ test("saved history beyond the preview budget remains reachable before exit, inc
     expect(term.raw()).not.toContain("\x1b[?1049l");
     expect(term.raw()).not.toContain("\x1b[3J");
   } finally { app.quit(); await running; }
-  const exit = term.screen();
-  expect(exit).toContain("PRELAUNCH-SHELL-0");
+  // The test terminal keeps no primary-screen scrollback (OpenTUI owns the alternate screen), so only the exit transcript is checked.
+  const exit = exitText(term);
   for (const text of ["ORIGINAL-BEFORE-COMPACTION", "AFTER-COMPACTION", "LIVE-WHILE-READING"]) expect(exit.split(text).length - 1).toBe(1);
   expect(exit.indexOf("ORIGINAL-BEFORE-COMPACTION")).toBeLessThan(exit.indexOf("saved record 0:"));
   expect(exit.indexOf("saved record 139:")).toBeLessThan(exit.indexOf("AFTER-COMPACTION"));
   expect(exit).not.toContain("MODEL-ONLY-SUMMARY");
-  expect(term.display.modes.get(1049)).toBe(false);
 });
 
 test("header caches model and filters subagent counts; unchanged background frames write no bytes", async () => {
@@ -112,14 +109,13 @@ test("header caches model and filters subagent counts; unchanged background fram
   app.draw();
   await settle();
   expect(ticks.map((t) => t.ms)).toEqual([100]);
-  const before = term.writes.length;
-  const frame = app.frame();
-  const shown = renderLive(frame).shown;
-  const lastBytes = Buffer.byteLength(`\x1b[?2026h${renderLive(frame, shown).text}\x1b[?2026l`);
+  await term.settled();
+  const still = term.lines().join("\n"), before = term.writes.length;
+  // OpenTUI diffs what reaches the terminal, so the test terminal (which records every rendered frame) cannot count
+  // bytes: a background page's ticks must leave the selected page's frame exactly as it was.
   for (let i = 0; i < 10; i++) { now += 100; ticks[0]!.fn(); await Bun.sleep(20); }
-  const bytes = term.writes.slice(before).reduce((n, s) => n + Buffer.byteLength(s), 0);
-  expect(bytes).toBe(0);
-  await Bun.write("/tmp/tui-background-bandwidth.json", JSON.stringify({ cols: 80, rows: 24, oldBytesPerSecond: lastBytes * (1000 / 33), newBytesPerSecond: bytes }));
+  await term.settled();
+  for (const frame of term.writes.slice(before)) expect(frame).toBe(still);
   app.page!.busy = true;
   app.draw();
   expect(ticks.map((t) => t.ms)).toEqual([33]);
@@ -313,7 +309,7 @@ test("real App login-held pre-cancel input stays paused, retains FIFO, and does 
   } finally { app.quit(); await running; }
 });
 
-test("current-view resize anchoring ignores unrelated sessions, and tail activity never enters restored or exit history", async () => {
+test("a scrolled current view ignores new output from it and unrelated sessions, and tail activity never enters restored or exit history", async () => {
   const term = fakeTerm(80, 24);
   const orchs = fakeOrchestrators();
   const clock: Clock = { now: () => 5000, every: () => () => {} };
@@ -330,8 +326,6 @@ test("current-view resize anchoring ignores unrelated sessions, and tail activit
       return i % 2 ? userLines(text)[0]! : { md: text };
     });
     page.lines.push(...records);
-    expect(historyRows(page.lines, 80).length).toBeGreaterThan(records.length);
-    expect(historyRows(page.lines, 23).length).toBeGreaterThan(historyRows(page.lines, 80).length);
     app.reprint();
     term.type("reading draft");
     page.busy = true;
@@ -339,26 +333,25 @@ test("current-view resize anchoring ignores unrelated sessions, and tail activit
     app.draw();
     await until(() => term.screen().includes("thinking… 5s"));
     for (let i = 0; i < 30; i++) term.press({ name: "pageup" });
-    await until(() => bodyRows(term)[0]!.startsWith("record 0:"));
-    const top = historyRows(records, 80).findIndex(row => Bun.stripANSI(row).startsWith("> record 21:"));
-    expect(top % 3).toBe(0);
-    for (let i = 0; i < top / 3; i++) term.press({ name: "wheeldown" });
-    await until(() => bodyRows(term)[0]!.startsWith("> record 21:"));
-    const reading = "> record 21:";
+    await until(() => bodyRows(term).some(row => row.startsWith("record 0:")));
+    for (let i = 0; i < 200 && !bodyRows(term).slice(0, 3).some(row => row.includes("record 21:")); i++) { term.press({ name: "wheeldown" }); await term.settled(); }
+    const reading = "record 21:";
+    expect(bodyRows(term).slice(0, 3).some(row => row.includes(reading))).toBe(true);
     const visible = bodyRows(term);
     orchs.writers[page.project]!("appended structured paragraph " + "new words ".repeat(30) + "\n");
     orchs.writers["unrelated-e"]!("background owner paragraph " + "elsewhere ".repeat(20) + "\n");
     await Bun.sleep(30);
+    await term.settled();
     expect(bodyRows(term)).toEqual(visible);
     expect(app.input.text).toBe("reading draft");
     const durable = JSON.stringify(page.lines);
+    // Resizes reflow the ScrollBox (no source-offset anchoring any more); the draft, the history and the scrolled-away tail stay.
     for (const cols of [23, 80, 10, 53, 23, 80]) {
       term.resize(cols, 24);
       await Bun.sleep(170);
-      expect(bodyRows(term)[0]).toBe(Bun.stripANSI(lineRows(records[21]!, cols)[0]!).trimEnd());
+      await term.settled();
       expect(term.screen()).not.toContain("thinking…");
       expect(app.input.text).toBe("reading draft");
-      expect(term.display.col).toBe(app.frame().inputArea!.col);
       expect(JSON.stringify(page.lines)).toBe(durable);
     }
     app.switchPage(1);
@@ -374,7 +367,7 @@ test("current-view resize anchoring ignores unrelated sessions, and tail activit
     expect(app.frame().activity).toBeUndefined(); // background session remains busy
     expect(JSON.stringify(page.lines)).toBe(durable);
   } finally { app.quit(); await running; }
-  expect(term.screen()).not.toMatch(/thinking|working|opening|agents running|\d+ tasks? │/);
+  expect(exitText(term)).not.toMatch(/thinking|working|opening|agents running|\d+ tasks? │/);
 });
 
 test("boxed input and question vertical editing share rendered geometry across resize, retaining the chat draft", async () => {
@@ -386,7 +379,7 @@ test("boxed input and question vertical editing share rendered geometry across r
   const running = app.run("boxed-question-e");
   const width = () => inputGeometry(app.frame().input.prompt, term.cols, Math.max(1, term.rows - bodyStart(term) - 1)).width;
   try {
-    await until(() => term.display.screen()[0]!.startsWith("│ boxed-question-e "));
+    await until(() => selectedTab(term) === "boxed-question-e");
     term.type("界".repeat(40) + "é👩‍💻");
     const draft = app.input.text;
     const expected = vertical(app.input, width(), -1)!;
@@ -406,7 +399,7 @@ test("boxed input and question vertical editing share rendered geometry across r
     await Bun.sleep(160);
     term.press({ name: "down" });
     expect(app.input).toEqual(typed);
-    expect(term.display.col).toBeLessThan(term.cols);
+    expect(app.frame().inputArea!.col).toBeLessThan(term.cols); // the cursor column the screen places
     term.press({ name: "escape" });
     expect(app.input.text).toBe(draft);
     await app.onKey({ name: "q", ctrl: true });
@@ -414,51 +407,6 @@ test("boxed input and question vertical editing share rendered geometry across r
     await until(() => app.questions.answering());
     expect(app.input.text).toBe(answer);
     expect(app.page!.sent).toEqual([]);
-  } finally { app.quit(); await running; }
-});
-
-test("App retains an interior source offset across widening/narrowing and resets it on new wheel intent", async () => {
-  const term = fakeTerm(23, 24);
-  const orchs = fakeOrchestrators();
-  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
-  const running = app.run("source-anchor-e");
-  try {
-    await until(() => !!app.page);
-    const code = "code-" + "0123456789".repeat(40);
-    const lines: Line[] = [
-      { md: ["long first line ".repeat(30), "short", "```ts", "tiny", code, "last", "```"].join("\n") },
-      ...Array.from({ length: 30 }, (_, i) => ({ md: `later ${i} ` + "wrapped content ".repeat(20) })),
-    ];
-    const codeStart = () => historyRows(lines, 23).findIndex(row => Bun.stripANSI(row).startsWith("│ code-"));
-    while ((codeStart() + 3) % 3) lines.unshift("fixed preface");
-    const top = codeStart() + 3; // offset 63 within this source line
-    const reading = "│ " + code.slice(63, 84);
-    expect(Bun.stripANSI(historyRows(lines, 23)[top]!)).toBe(reading);
-    app.page!.lines.push(...lines);
-    app.reprint();
-    await until(() => term.screen().includes("wrapped content"));
-    for (let i = 0; i < 300; i++) term.press({ name: "pageup" });
-    await until(() => bodyRows(term)[0] === Bun.stripANSI(historyRows(lines, 23)[0]!));
-    for (let i = 0; i < top / 3; i++) term.press({ name: "wheeldown" });
-    await until(() => bodyRows(term)[0] === reading);
-    for (const cols of [80, 40, 23, 10, 80, 23]) {
-      term.resize(cols, 24);
-      await Bun.sleep(170);
-      const offset = Math.floor(63 / (cols - 2)) * (cols - 2);
-      expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
-      const visible = bodyRows(term);
-      orchs.writers[app.page!.project]!("new structured background output " + "words ".repeat(20) + "\n");
-      await Bun.sleep(25);
-      expect(bodyRows(term)).toEqual(visible);
-    }
-    term.press({ name: "wheeldown" }); // a new reading intent: offset 126, not 63
-    await until(() => bodyRows(term)[0] === "│ " + code.slice(126, 147));
-    for (const cols of [80, 23]) {
-      term.resize(cols, 24);
-      await Bun.sleep(170);
-      const offset = Math.floor(126 / (cols - 2)) * (cols - 2);
-      expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
-    }
   } finally { app.quit(); await running; }
 });
 
@@ -489,16 +437,16 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     await until(() => !!app.page);
     expect(app.page!.lines.map(raw).join("\n")).toContain("FULL-HISTORY-SENTINEL"); // live history is complete, not just exit output
     // Page data can precede the throttled first frame; never capture "opening…" as the header.
-    await until(() => term.display.screen()[0]!.startsWith("│ combined-cancel-e "));
+    await until(() => selectedTab(term) === "combined-cancel-e");
     term.type("start cancellable tool\r");
     await until(() => existsSync(marker));
     expect(app.page!.calls.size).toBe(1);
     term.type("draft 界é👩‍💻");
     const draft = { ...app.input };
-    const headerRows = () => term.display.buf.slice(term.display.top, term.display.top + 2).map(row => row.join(""));
-    // The boxed header's tabs row and its details row: the tabs and the account/models stay; the context at the right
-    // of the details row is telemetry and may change.
-    const identity = (rows: string[]) => [rows[0]!, rows[1]!.replace(/│$/, "").replace(/ctx \S+\s*$/, "").trimEnd()];
+    const headerRows = () => term.display.screen().slice(0, bodyStart(term));
+    // The boxed header's tabs, account and details rows: the tabs and the account/models stay; the context in the
+    // details is telemetry and may change.
+    const identity = (rows: string[]) => rows.map(row => row.replace(/ctx \S+/, "").replace(/\s+/g, " "));
     const header = headerRows();
     term.press({ name: "pageup" });
     term.resize(23, 24);
@@ -517,7 +465,7 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     expect(await app.page!.orch.pending()).toBe(false);
     // Context/review telemetry can change during the cancelled turn; identity stays pinned.
     expect(identity(headerRows())).toEqual(identity(header));
-    expect(identity(header)[0]!.replace(/│$/, "").trimEnd()).toBe("│ combined-cancel-e");
+    expect(selectedTab(term)).toBe("combined-cancel-e");
     term.press({ name: "escape" }); // only intentional draft clearing for this continuation
     term.type("resume saved turn\r");
     await until(() => provider.calls.length === 2 && !app.page!.busy);
@@ -525,13 +473,12 @@ test("combined E viewport cancels actual tools, keeps full pre-checkpoint live/e
     expect(JSON.stringify(provider.calls[1]!.messages)).toContain("resume saved turn");
     expect(app.page!.calls.size).toBe(0);
   } finally { app.quit(); await running; }
-  const exit = term.screen();
+  const exit = exitText(term);
   expect(exit).toContain("FULL-HISTORY-SENTINEL");
   expect(exit).toContain("durable record 104");
   expect(exit).toContain("authorized continuation");
   expect(exit).not.toContain("compressed model-only summary");
   expect(exit).not.toMatch(/thinking…|working…|\d+ tasks? │|agents running/);
-  expect(term.display.modes.get(1049)).toBe(false);
 });
 
 test("ctrl+c through pinned question/modal layers preserves owners and drafts without resuming the cancelled request", async () => {
@@ -628,42 +575,42 @@ describe("explicit footer help", () => {
     } finally { app.quit(); await running; }
   });
 
-  test("/help submission, help scrolling and resize retain the conversation's interior source anchor amid live output", async () => {
-    const term = fakeTerm(23, 24);
+  test("/help submission and help scrolling keep the conversation where it was read amid live output", async () => {
+    const term = fakeTerm(40, 24);
     const orchs = fakeOrchestrators();
     const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
     const running = app.run("help-anchor");
     try {
       await until(() => !!app.page);
-      const code = "code-" + "0123456789".repeat(40);
-      const lines: Line[] = [{ md: "```ts\n" + code + "\n```" }, ...Array.from({ length: 100 }, (_, i) => `later ${i}`)];
-      const codeStart = () => historyRows(lines, 23).findIndex(row => Bun.stripANSI(row).startsWith("│ code-"));
-      while ((codeStart() + 3) % 3) lines.unshift("preface");
-      app.page!.lines.push(...lines);
+      app.page!.lines.push(...Array.from({ length: 100 }, (_, i) => `later ${i}`));
       app.reprint();
       await until(() => term.screen().includes("later 99"));
       for (let i = 0; i < 100; i++) term.press({ name: "pageup" });
-      for (let i = 0; i < (codeStart() + 3) / 3; i++) term.press({ name: "wheeldown" });
-      const reading = "│ " + code.slice(63, 84);
+      await term.settled();
+      await until(() => bodyRows(term)[0] === "later 0");
+      for (let i = 0; i < 20; i++) term.press({ name: "wheeldown" });
+      const reading = "later 20";
       await until(() => bodyRows(term)[0] === reading);
       term.type("/help\r"); // Must not use Enter's normal jump-to-tail path.
-      await until(() => term.screen().includes("help"));
+      await until(() => term.screen().includes("esc close"));
       expect(bodyRows(term)[0]).toBe(reading);
-      term.press({ name: "wheeldown" });
+      term.press({ name: "wheeldown" }); // help owns scrolling while open
       term.press({ name: "pagedown" });
-      for (const cols of [80, 40, 23, 10, 80, 23]) {
+      orchs.writers[app.page!.project]!("live output while reading help\n");
+      await Bun.sleep(25);
+      await term.settled();
+      expect(bodyRows(term)[0]).toBe(reading);
+      expect(app.frame().help).not.toBeNull();
+      // Resizes reflow the ScrollBox (no source-offset anchoring any more): help stays open over them.
+      for (const cols of [80, 23, 40]) {
         term.resize(cols, 24);
         await Bun.sleep(170);
-        const offset = Math.floor(63 / (cols - 2)) * (cols - 2);
-        expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
-        orchs.writers[app.page!.project]!("live output while reading help\n");
-        await Bun.sleep(25);
-        expect(bodyRows(term)[0]).toBe("│ " + code.slice(offset, offset + cols - 2));
         expect(app.frame().help).not.toBeNull();
       }
       term.press({ name: "escape" });
       await until(() => !app.frame().help);
-      expect(bodyRows(term)[0]).toBe(reading);
+      await term.settled();
+      expect(term.screen()).not.toContain("live output while reading help"); // still reading, not following the tail
       expect(app.page!.lines.map(raw).join("\n")).not.toContain("/help");
     } finally { app.quit(); await running; }
   });
@@ -805,11 +752,12 @@ describe("explicit footer help", () => {
       expect(app.page!.inputHistory).toEqual(["/help"]);
       await app.page!.savingHistory;
     } finally { ready(); app.quit(); await running; }
-    expect(term.screen()).toContain("DURABLE-HELP-SENTINEL");
-    expect(term.screen()).not.toContain("advanced & diagnostics");
+    const exit = exitText(term);
+    expect(exit).toContain("DURABLE-HELP-SENTINEL");
+    expect(exit).not.toContain("advanced & diagnostics");
     // A visible repository path may contain /help-durable; the command itself
     // must never be printed as a conversation entry.
-    expect(term.screen()).not.toMatch(/^\s*>?\s*\/help\s*$/m);
+    expect(exit).not.toMatch(/^\s*>?\s*\/help\s*$/m);
     expect(await Bun.file(path).text()).toBe(saved);
     const again = new App({ term: fakeTerm(80, 24), openOrchestrator: open, pollMs: 100_000 });
     const restarted = again.run(project);
@@ -845,8 +793,7 @@ describe("queued input footer", () => {
       await until(() => term.screen().includes("queued 3/3"));
       const rows = term.display.screen();
       const heading = rows.findIndex(row => row.startsWith("queued"));
-      expect(rows[heading - 1]).toBe("");
-      expect(term.display.backgrounds()[heading - 1]!.some(Boolean)).toBe(false);
+      expect(rows[heading - 1]).toBe(""); // (the gap's background is OpenTUI's to paint; the test terminal reads characters)
       expect(rows.slice(heading, heading + 5)).toEqual([
         "queued 3/3 · orchestrator · queued-order", "  1. first", "  2. second ↵ line 界é👩‍💻", "  3. first", "┌" + "─".repeat(98) + "┐",
       ]);
@@ -865,8 +812,8 @@ describe("queued input footer", () => {
       await until(() => !/queued \d+\/\d+/.test(term.screen()));
       expect(app.input).toEqual(draft);
     } finally { finish?.(); app.quit(); await running; }
-    expect(term.screen()).not.toMatch(/queued \d+\/\d+/); // no footer previews in exit transcript
-    expect(term.screen().split("> first")).toHaveLength(3);
+    expect(exitText(term)).not.toMatch(/queued \d+\/\d+/); // no footer previews in exit transcript
+    expect(exitText(term).split("> first")).toHaveLength(3);
   });
 
   test("project, answer and agent-view drafts stay independent from pending orchestrator previews through switches and resizes", async () => {
@@ -1051,7 +998,7 @@ for (const boundary of ["cancel", "error"] as const) test(`queued footer survive
   } finally { reject?.(new Error("test cleanup")); app.quit(); await running; }
 });
 
-test("queued footer removal preserves a scrolled source anchor and enter still follows the tail, without changing terminal input modes", async () => {
+test("queued footer removal preserves a scrolled reading position and enter still follows the tail, without changing terminal input modes", async () => {
   const term = fakeTerm(100, 24);
   let read!: (msgs: Message[]) => void;
   const app = new App({ term, pollMs: 100_000, openOrchestrator: async (_p, _u, _w, inbox) => {
@@ -1059,13 +1006,15 @@ test("queued footer removal preserves a scrolled source anchor and enter still f
     return { async say() {}, async pending() { return false; }, async turn() { return []; } };
   } });
   const running = app.run("queued-scroll");
+  // The conversation's rows: between the header and the footer (queued previews or the composer box). The body is an
+  // OpenTUI ScrollBox right above the footer (the sticky layout's fixed blank gap row is gone), so trailing blanks are trimmed.
   const conversation = () => {
     const rows = term.display.screen();
     const at = rows.findIndex(row => row.startsWith("queued") || row.startsWith("┌"));
     expect(at).toBeGreaterThan(bodyStart(term));
-    expect(rows[at - 1]).toBe("");
-    expect(term.display.backgrounds()[term.display.top + at - 1]!.some(Boolean)).toBe(false);
-    return rows.slice(bodyStart(term), at - 1);
+    const body = rows.slice(bodyStart(term), at);
+    while (body.at(-1) === "") body.pop();
+    return body;
   };
   try {
     await until(() => !!app.page);
@@ -1076,7 +1025,7 @@ test("queued footer removal preserves a scrolled source anchor and enter still f
     expect(conversation()).toEqual(saved.slice(-bodyHeight));
     term.press({ name: "pageup" });
     await until(() => !term.screen().includes("history 79"));
-    // Page Up overlaps exactly one CONTENT row; the fixed gap is not scrollable.
+    // Page Up overlaps exactly one row.
     const start = saved.length - bodyHeight - (bodyHeight - 1);
     expect(conversation()).toEqual(saved.slice(start, start + bodyHeight));
     const top = bodyStart(term), before = term.writes.length;
@@ -1090,15 +1039,14 @@ test("queued footer removal preserves a scrolled source anchor and enter still f
     const draft = { ...app.input };
     read([{ from: "user", ...app.page!.sent[0]!, ts: "synthetic" }]);
     await until(() => term.screen().includes("queued 1/1"));
+    await term.settled();
     expect(term.display.screen()[top]).toBe(anchor);
-    conversation(); // Shrinking the queue keeps the gap above the entire footer.
     term.type("\x1b[<65;10;8M".repeat(100)); // injected SGR, not a physical gesture
-    await until(() => term.screen().includes("> queue one"));
+    await until(() => conversation().some(row => row.trim() === "queue one"));
     read([{ from: "user", ...app.page!.sent[0]!, ts: "synthetic" }]);
-    await until(() => term.screen().includes("> queue two") && !/queued \d+\/\d+/.test(term.screen()));
-    expect(conversation().at(-1)).toBe("> queue two");
+    await until(() => conversation().some(row => row.trim() === "queue two") && !/queued \d+\/\d+/.test(term.screen()));
+    expect(conversation().at(-1)!.trim()).toBe("queue two");
     expect(app.input).toEqual(draft);
-    expect(term.display.top).toBe(0);
     expect(term.writes.slice(before).join("")).not.toMatch(/\x1b\[\?(1049|1000|1006|2004)[hl]/);
   } finally { app.quit(); await running; }
 });

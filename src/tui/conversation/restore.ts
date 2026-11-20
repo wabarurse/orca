@@ -40,7 +40,7 @@ import { imageLines } from "./image-lines";
 
 import { parseFormatted } from "../../protocol";
 import type { Entry, MessageEntry } from "../../protocol";
-import { interruptedView, toolView, type ToolOutcome } from "../../protocol";
+import { callItems, interruptedView, toolView, type ToolOutcome } from "../../protocol";
 import { historyRows, type Line } from "./lines";
 import { MarkdownStream } from "./mdstream";
 import { bold, dim, wrap } from "../components";
@@ -68,16 +68,9 @@ export const questionReply = (text: string): boolean => REPLY.test(text);
 /** A message from the user as the page shows it: "> …", or nothing for a settled question's reply. */
 export const fromUserLines = (text: string): Line[] => (questionReply(text) ? [] : userLines(text));
 
-const REPORT_CHARS = 100;
 
-/** An agent's message to the orchestrator: one dim line (its first, cut at 100 characters); the full report is in /agents. */
-export function reportLine(from: string, text: string): Line {
-  const first = text.split("\n").find((l) => l.trim()) ?? "";
-  const chars = [...first];
-  const cut = chars.slice(0, REPORT_CHARS).join("");
-  const more = chars.length > REPORT_CHARS || text.trim() !== first.trim();
-  return dim(`from ${from}: ${cut}${more ? "…" : ""}`);
-}
+/** An agent's message to the orchestrator: a fold under its sender ("▸ from worker-a"), the message inside. */
+export const reportLine = (from: string, text: string): Line => ({ from, text });
 
 /** A message to the user, led by its sender. */
 export const replyLine = (from: string, text: string): Line => ({ md: text, label: bold(from) });
@@ -112,7 +105,7 @@ function outcomes(chain: Entry[]): Map<string, ToolOutcome> {
 function callLine(b: Extract<Block, { type: "tool_use" }>, results: Map<string, ToolOutcome>, omit?: Set<string>): Line | null {
   const outcome = results.get(b.id);
   if (!outcome && omit?.has(b.id)) return null;
-  return outcome ? toolView(b.name, b.input, outcome) : interruptedView(b.name, b.input);
+  return outcome ? { ...toolView(b.name, b.input, outcome), ...callItems(b.name, b.input, outcome) } : { ...interruptedView(b.name, b.input), kind: "tool", items: [] };
 }
 
 /**

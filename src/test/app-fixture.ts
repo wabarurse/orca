@@ -7,8 +7,7 @@ import type { Message } from "../protocol";
 import { paths } from "../config";
 import { App, type Line } from "../tui/app";
 import { parseKeys, type Key } from "../tui/components/keys";
-import type { Terminal } from "../tui/components/term";
-import { FakeScreen } from "../tui/components/testing";
+import { testTerminal } from "./otui-term";
 import { setUserFill } from "../tui/components/style";
 
 /** Called once per test file: hooks, temporary state and terminal failures stay local. */
@@ -26,57 +25,28 @@ export function appFixture() {
 
   const strip = (s: string) => s.replace(/\x1b\[[0-9;?<>]*[A-Za-z]/g, "");
   /** A history line's text: plain lines as they are, markdown as written. */
-  const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : l.md);
+  const raw = (l: Line) => (typeof l === "string" ? l : "user" in l ? l.user : "tool" in l ? `${l.tool} ⎿ ${l.summary}` : "from" in l ? `from ${l.from}: ${l.text}` : "image" in l ? l.image : l.md);
 
-  /** A fake terminal: records every raw write and applies it to a FakeScreen, so `screen()` is the scrollback plus the screen. */
+  /** A terminal drawn by OpenTUI's test renderer (src/test/otui-term.ts): `screen()` is the rendered frame, `display.screen()` its rows. */
   function fakeTerm(cols = 40, rows = 24) {
-    const handlers: ((k: Key) => void)[] = [];
-    const resizers: (() => void)[] = [];
-    const display = new FakeScreen(cols, rows);
-    const writes: string[] = [];
-    const term: Terminal & { type(s: string): void; press(k: Key): void; screen(): string; raw(): string; writes: string[]; display: FakeScreen; resize(cols: number, rows: number): void; eraser: string; opened: boolean; closed: boolean } = {
-      cols, rows, opened: false, closed: false, writes, display, eraser: "",
-      eraseOnExit(text) { this.eraser = text; },
-      write: (s) => {
-        writes.push(s);
-        try { display.write(s); } catch (err) { screenErrors.push(String(err)); throw err; }
-      },
-      onKey: (cb) => { handlers.push(cb); },
-      onResize: (cb) => { resizers.push(cb); },
-      resize(c, r) { this.cols = c; this.rows = r; display.resize(c, r); for (const cb of resizers) cb(); },
-      open() { this.opened = true; this.write("\x1b[?1049h"); },
-      close() { this.write("\x1b[?1049l"); this.closed = true; },
-      press: (k) => { for (const h of handlers) h(k); },
-      type: (s) => { for (const k of parseKeys(s)) for (const h of handlers) h(k); },
-      screen: () => display.text(),
-      raw: () => writes.join(""),
-    };
-    return term;
+    const term = testTerminal(cols, rows);
+    return Object.assign(term, { display: { screen: () => term.lines() }, raw: () => term.writes.join("") });
   }
 
-  /** The header is one ruled row and a blank; the body starts under them. Under 12 columns the row has no rule,
-   * only the clipped active tab. */
+  /** The header is a box open at the top (tabs, account, details) closed by its bottom line; the body starts under it. */
   const bodyStart = (term: ReturnType<typeof fakeTerm>) => {
-    const screen = term.display.screen(), s = term.display;
-    // The header is a box open at the top: two rows between rails, then its bottom line. Under 12 columns it has no
-    // box: the bold selected tab, then the details row.
-    if (screen[0]?.startsWith("│ ") && screen[2]?.startsWith("└")) return 3;
-    return term.cols < 12 && !!screen[0] && !!s.attributes()[s.top]?.some(cell => cell?.bold) ? 2 : 0;
+    const at = term.display.screen().findIndex(row => row.startsWith("└"));
+    return at === -1 ? 0 : at + 1;
   };
   const bodyRows = (term: ReturnType<typeof fakeTerm>) => term.display.screen().slice(bodyStart(term));
-  /** The selected tab: the bold text of the header row ("" when no header is drawn). */
-  const selectedTab = (term: ReturnType<typeof fakeTerm>) => {
-    if (!bodyStart(term)) return "";
-    const s = term.display, row = s.buf[s.top] ?? [], styles = s.attributes()[s.top] ?? [];
-    return row.filter((_, c) => styles[c]?.bold).join("").trim();
-  };
+  /** The selected tab: the bold pill in the header's first row ("" when no header is drawn). */
+  const selectedTab = (term: ReturnType<typeof fakeTerm>) => bodyStart(term) ? term.bold(0) : "";
 
-  /** Click the screen row showing `text` (one press and release on the same cell). */
-  async function clickRow(app: App, term: ReturnType<typeof fakeTerm>, text: string): Promise<void> {
-    const y = term.display.screen().findIndex(row => row.includes(text)) + 1;
-    expect(y).toBeGreaterThan(0);
-    await app.onKey({ name: "mousedown", x: 3, y });
-    await app.onKey({ name: "mouseup", x: 3, y });
+  /** Click the screen row showing `text` on its first character, through OpenTUI's mouse. */
+  async function clickRow(_app: App, term: ReturnType<typeof fakeTerm>, text: string): Promise<void> {
+    const rows = term.display.screen(), y = rows.findIndex(row => row.includes(text));
+    expect(y).toBeGreaterThan(-1);
+    await term.click(Bun.stringWidth(rows[y]!.slice(0, rows[y]!.indexOf(text))) + 1, y + 1);
   }
 
   function fakeOrchestrators() {

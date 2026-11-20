@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { workViews } from "../core/data/projects";
-import { ConversationSelection, hitRow, Pointer } from "./screen";
+import { chatItems, chatScreen, fittingHeader, headerRows } from "./screen";
 import { writeClipboardText, readClipboardImage } from "./components";
 import { imageLabels, MAX_IMAGES, pendingImageInputs, saveImage, saveImageInput } from "../core/data/images";
 import type { ImageRef } from "../protocol";
@@ -42,13 +42,11 @@ import { deliveredImageBytes, ImageLists, openDeliveredMedia, openLink, type Del
 import { open } from "../core/data/transcripts";
 import { bold, dim, fit, ImageOverlay, sanitize, repositoryTitle } from "./components";
 import { commit, helpPanel, inputArea, inputGeometry, statusRows, type Frame, type Help, type Input, type InputArea } from "./footer";
-import type { Terminal } from "./components";
+import type { Terminal, screens } from "./components";
 import { shimmer } from "./components";
-import { chapterRows, headerHeight, roleLines } from "./header";
-import { captureAnchor, resolveAnchor, type HistoryAnchor } from "./conversation";
-import { Calls, collapseCalls, groupStart, groupStarts } from "./conversation";
+import { chapterRows, headerView, roleLines } from "./header";
+import { Calls, collapseCalls, foldKeys } from "./conversation";
 import type { ToolCall, ToolOutcome } from "../protocol";
-import { stickyRows, stickyUpdate, type StickyScreen } from "./screen";
 
 export { helpLines } from "./footer";
 export { lineRows, type Line } from "./conversation";
@@ -148,10 +146,6 @@ export class App {
   private frameTimer: ReturnType<typeof setTimeout> | null = null;
   /** Pending resize reprint; nothing is drawn until it fires, as the old geometry is stale. */
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Finished rows not yet added to the active viewport's rendered history. */
-  private pending: string[] = [];
-  /** Rebuild the rendered history on the next draw (switches, resizes, agent views). */
-  private needReprint = false;
   /**
    * Set once pages and terminal background are ready. Until then show only
    * startup notes and transient "opening…" activity at the conversation tail.
@@ -160,14 +154,7 @@ export class App {
   private stopSpinner: (() => void) | null = null;
   /** The animation timer's current period. */
   private tickMs = 0;
-  private screen: StickyScreen | undefined;
   private readonly imageView = new ImageOverlay(); // an image over the screen (Images page, Kitty graphics); next key closes it
-  private screenHistory: string[] = [];
-  private screenOwner: Page | Page["view"] | undefined;
-  private scrollTop: number | null = null;
-  private scrollAnchor?: HistoryAnchor;
-  /** A mouse selection temporarily paused tail-following; a click must not pin it forever. */
-  private selectionPausedFollow = false;
   private readonly followedInput = new WeakMap<Page, string>();
   private liveCheckedAt = 0;
   /** Liveness checks still running, per project; a tick skips a project while its last check is pending. */
@@ -247,6 +234,7 @@ export class App {
       }
     });
     term.onResize(() => this.resized());
+    term.onAction(a => { void this.action(a).catch(err => this.note(`error: ${err instanceof Error ? err.message : String(err)}`)); });
     const poll = setInterval(() => {
       if (this.page) this.checkLive(this.page.project);
       this.watchPages();
@@ -261,7 +249,6 @@ export class App {
       await this.openStartPages(project, url);
       await shaded; // restored user rows first enter the viewport in the resolved shade
       this.started = true;
-      this.needReprint = true;
       this.draw();
       await this.finished;
     } finally {
@@ -305,7 +292,7 @@ export class App {
 
   /** Append a finished line to the page's agent view if one is up, else to the page (or the screen when there is none). */
   say(line: string, page = this.page): void {
-    if (!page) { this.looseLines.push(line); this.pending.push(line); return this.draw(); }
+    if (!page) { this.looseLines.push(line); return this.draw(); }
     if (page.view) this.toView(page, page.view, [line]);
     else { this.keepNotice(page, line); this.toPage(page, [line]); }
   }
@@ -346,43 +333,22 @@ export class App {
 
   /** Finished lines of the page's own history; they reach the screen only while it is active and shows no agent. */
   private toPage(page: Page, lines: Line[]): void {
-    const previous = page.lines.at(-1);
     page.lines.push(...lines);
-    if (this.started && page === this.page && !page.view) this.append(page, lines, previous);
     this.draw();
   }
 
   /** Finished lines of an agent view; on screen only while it is what the active page shows. */
-  private toView(page: Page, view: NonNullable<Page["view"]>, lines: Line[]): void {
-    const previous = view.lines.at(-1);
+  private toView(_page: Page, view: NonNullable<Page["view"]>, lines: Line[]): void {
     view.lines.push(...lines);
-    if (this.started && page === this.page && page.view === view) this.append(page, lines, previous);
     this.draw();
   }
 
-  /** New lines onto the screen: appended rows, unless they fold into the run of calls already drawn (its summary row changes), which needs a reprint. */
-  private append(page: Page, lines: Line[], previous?: Line): void {
-    const run = previous === undefined ? lines : [previous, ...lines];
-    if (collapseCalls(run).length !== run.length) this.needReprint = true;
-    else this.pending.push(...this.rows(lines, previous));
-  }
-
-  /** Groups a click opened, by the start index of their run, per history (a page's or a view's lines); a new history (syncTranscript) carries them over by order. */
-  private readonly openGroups = new WeakMap<readonly Line[], Set<number>>();
+  /** Folds a click opened, by key (tools.ts `collapseCalls`), per history (a page's or a view's lines); a new history (syncTranscript) carries them over by order. */
+  private readonly openGroups = new WeakMap<readonly Line[], Set<string>>();
 
   /** The lines a page shows (its agent view's, else its own): runs of finished calls folded into one line each, the clicked-open ones with their calls under it; `all` leaves every call as it is (the quit replay). */
   private shown(page: Page, lines = page.view?.lines ?? page.lines, all = false): readonly Shown[] {
     return all ? lines : collapseCalls(lines, this.openGroups.get(lines));
-  }
-
-  /** What the screen shows for the active page: its agent view or its history. */
-  private screenLines(page = this.page): string[] {
-    return page ? this.rows(this.shown(page)) : this.looseLines;
-  }
-
-  /** History lines laid out at the terminal's width. */
-  private rows(lines: readonly Shown[], previous?: Shown): string[] {
-    return historyRows(lines, this.deps.term.cols, previous);
   }
 
   /** Model text and legacy tool output remain in conversation; runtime status uses the footer. */
@@ -419,10 +385,8 @@ export class App {
     const key = JSON.stringify([incoming.from, incoming.inputId ?? incoming.event?.id, incoming.ts, incoming.text]);
     if (this.followedInput.get(page) === key) return;
     this.followedInput.set(page, key); // Live notification and durable refresh describe the same delivery.
-    if (page !== this.page || page.view || this.selection.active) return;
-    this.scrollTop = null;
-    this.scrollAnchor = undefined;
-    this.selectionPausedFollow = false;
+    if (page !== this.page || page.view) return;
+    this.deps.term.scroll("end");
   }
 
   /** A tool call started: it ends the streamed text and runs in the live region until it ends. */
@@ -467,9 +431,21 @@ export class App {
     };
   }
 
-  private header(page: Page, decorate = true): string[] {
-    const directory = paths.repo(page.project); this.deps.term.setTitle?.(repositoryTitle(directory));
-    return chapterRows({ tabs: this.pages, active: this.pages.indexOf(page), account: page.account, roles: roleLines(page.model, page.settings, page.roles, page.roleSettings), context: this.contextLabel(page), agent: page.view?.name }, this.deps.term.cols, decorate ? headerHeight(this.deps.term.rows) : 1);
+  private chapter(page: Page) {
+    return { tabs: this.pages, active: this.pages.indexOf(page), account: page.account, roles: roleLines(page.model, page.settings, page.roles, page.roleSettings), context: this.contextLabel(page), agent: page.view?.name };
+  }
+
+  /** The header's one-row form for the transcript printed on exit. */
+  private header(page: Page): string[] {
+    return chapterRows(this.chapter(page), this.deps.term.cols, 1);
+  }
+
+  /** The header as the screen shows it, with the fin swimming while the conversation works. */
+  private headerModel(page: Page | undefined): screens.ScreenHeader | null {
+    if (!page) return null;
+    this.deps.term.setTitle?.(repositoryTitle(paths.repo(page.project)));
+    // A new chat shows the static orca in the conversation; the fin swims in the header once the first prompt is sent.
+    return fittingHeader(headerView(this.chapter(page), this.started && this.newChat(page) ? null : { time: this.clock.now(), active: page.busy || !!page.view?.live }), this.deps.term.cols, this.deps.term.rows);
   }
 
   /** Submission hides the welcome immediately, even before inbox consumption. */
@@ -582,7 +558,7 @@ export class App {
 
   /** Same available height as stickyRows: fixed header, plus at least one body row. */
   private composerRows(): number {
-    return Math.max(1, this.deps.term.rows - (this.page ? this.header(this.page).length : 0) - 1);
+    return Math.max(1, this.deps.term.rows - headerRows(this.headerModel(this.page), this.deps.term.cols) - 1);
   }
 
   private inputWidth(prompt: string): number {
@@ -613,14 +589,11 @@ export class App {
 
   /** Reflow the active conversation while preserving the bars and shell scrollback. */
   reprint(): void {
-    if (!this.started) return this.draw(); // nothing of ours is on screen yet but the live region
-    this.needReprint = true;
     this.draw();
   }
 
   /** A resize: wait until it settles, drawing nothing meanwhile (the old region's rows no longer match), then reprint. */
   private resized(): void {
-    this.clearSelection();
     if (this.closed) return;
     this.cancelClear();
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
@@ -632,65 +605,36 @@ export class App {
     if (this.imageView.active) return; // an image is on the screen; a frame now would paint over it.
     try {
       this.questions.sync(); // the input holds the chat draft or the shown question's answer
-      const next = this.work.open ? this.work.screen() : this.viewport(this.frame());
-      this.pointer.frame.paint(next.rows, next.cols);
-      if (!this.work.open) this.needReprint = false;
-      // A painting terminal (OpenTUI) diffs whole frames itself; otherwise write a synchronized diff.
-      const output = this.deps.term.paint ? (this.deps.term.paint(next), "") : stickyUpdate(next, this.screen);
-      if (output) this.deps.term.write(`\x1b[?2026h${output}\x1b[?2026l`);
-      this.screen = next;
-      this.deps.term.eraseOnExit("");
+      if (this.work.open) { this.deps.term.show(this.work.screen()); return; }
+      const page = this.page, cols = this.deps.term.cols;
+      const shown = !this.started ? [] : page ? this.shown(page) : this.looseLines;
+      this.deps.term.show(chatScreen(this.frame(), chatItems(shown, cols), this.headerModel(page)));
     } catch (err) {
-      // A bad frame must not take the app down. Its lines are still in the page's history; say so once and reprint next time.
+      // A bad frame must not take the app down. Its lines are still in the page's history; say so once.
       const note = `error drawing the screen: ${err instanceof Error ? err.message : String(err)}`;
-      this.screen = undefined;
-      if (this.started) this.needReprint = true;
       if (note !== this.drawError) { this.drawError = note; this.note(dim(note)); }
     }
   }
 
-  private readonly selection = new ConversationSelection();
-
-  private clearSelection(): void {
-    this.selection.clear();
-    if (this.selectionPausedFollow) {
-      this.scrollTop = null;
-      this.scrollAnchor = undefined;
-      this.selectionPausedFollow = false;
-    }
+  /** A click asked for something: open or close a fold, open a link, open a work-page tab, copy the selection. */
+  private async action(a: screens.ScreenAction): Promise<void> {
+    if (a.kind === "copy") return this.copy(a.text);
+    if (a.kind === "link") return this.note(dim(await openLink(a.url, this.deps.openUrl)));
+    if (a.kind === "open") return this.work.show(a.tab);
+    const page = this.page;
+    if (!page) return;
+    const lines = page.view?.lines ?? page.lines;
+    const open = this.openGroups.get(lines) ?? new Set<string>();
+    if (!open.delete(a.key)) open.add(a.key);
+    this.openGroups.set(lines, open);
+    this.draw();
   }
 
-  private selectionAllowed(): boolean {
-    return !this.clearing && !this.keyEcho && !this.menu && this.helpTop === null && !this.work.open;
-  }
-
-  private validateSelection(owner: typeof this.screenOwner, cols: number): void {
-    if (!this.selectionAllowed() || owner !== this.screenOwner || this.screen?.cols !== cols) this.clearSelection();
-  }
-
-  private viewport(f: Frame): StickyScreen {
-    const owner = this.page?.view ?? this.page;
-    this.validateSelection(owner, f.cols);
-    this.anchorScroll(owner, f.cols);
-    if (this.needReprint || owner !== this.screenOwner) this.screenHistory = this.started ? this.screenLines() : [...this.looseLines];
-    else this.screenHistory.push(...this.pending);
-    this.screenOwner = owner;
-    this.pending = [];
-    const chrome = this.page ? this.header(this.page) : [];
-    const screen = stickyRows(f, this.screenHistory, chrome, this.scrollTop);
-    this.selection.paint(screen, this.screenHistory);
-    if (this.scrollTop !== null) this.scrollTop = screen.start;
-    return screen;
-  }
-
-  /** Only a resize of the same conversation can reuse its scroll anchor. */
-  private anchorScroll(owner: typeof this.screenOwner, cols: number): void {
-    if (owner !== this.screenOwner) this.scrollTop = null;
-    if (this.scrollTop === null) { this.scrollAnchor = undefined; return; }
-    if (!this.screen || this.screen.cols === cols) return;
-    const lines = this.page ? this.shown(this.page) : this.looseLines;
-    this.scrollAnchor ??= captureAnchor(lines, this.screen.cols, this.scrollTop);
-    this.scrollTop = resolveAnchor(lines, cols, this.scrollAnchor);
+  /** Copy text to the clipboard. Never awaited in the input path: a stalled pasteboard service (pbcopy can hang for the
+   * whole timeout) must not freeze input or rendering; only a failure surfaces, as a note. */
+  private copy(text: string): void {
+    if (!text) return;
+    void (this.deps.clipboardText ?? writeClipboardText)(text).catch(error => this.note(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)));
   }
 
   /** The last drawing error said, so a frame that keeps failing is reported once. */
@@ -702,8 +646,7 @@ export class App {
     const held = page && !page.view ? page.md.pending : "";
     // Folded groups cannot be opened once the TUI is gone: the scrollback gets every call.
     const history = page ? this.shown(page, undefined, true) : this.looseLines;
-    const lines = [...(page ? this.header(page, false) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
-    this.pending = [];
+    const lines = [...(page ? this.header(page) : []), ...historyRows(history, this.deps.term.cols), ...(held ? held.split("\n") : [])];
     this.deps.term.write(`\x1b[0m${commit(lines, this.deps.term.cols)}\x1b[?25h`);
   }
 
@@ -804,9 +747,6 @@ export class App {
     page.contextBoundary = boundary;
     if (cleared) {
       this.notices.delete(page); this.feedback.clear(page); this.openGroups.delete(page.lines);
-      if (page === this.page && !page.view) {
-        this.pending = []; this.screenHistory = []; this.scrollTop = null; this.scrollAnchor = undefined; this.clearSelection();
-      }
     }
     // Status is a live event, never restored from saved metadata or re-emitted by refresh.
     page.md.reset(); page.calls.clear();
@@ -817,31 +757,19 @@ export class App {
     this.notices.set(page, notes);
     const next = [...lines, ...notes];
     if (!cleared) this.carryOpen(page.lines, next);
-    const anchor = this.relocatedAnchor(page, next);
     page.lines = next;
-    if (anchor) { this.scrollAnchor = anchor; this.scrollTop = resolveAnchor(this.shown(page), this.deps.term.cols, anchor); }
     this.renderedHeads.set(page, head);
     if (page === this.page && !page.view) this.reprint();
   }
 
-  /** The groups opened in `from` stay open in `to`, its re-rendering: the same group is the same run in order. */
+  /** The folds opened in `from` stay open in `to`, its re-rendering: the same fold is the same kind at the same place in order. */
   private carryOpen(from: readonly Line[], to: readonly Line[]): void {
     const open = this.openGroups.get(from);
     if (!open?.size) return;
-    const starts = groupStarts(to);
-    this.openGroups.set(to, new Set(groupStarts(from).flatMap((start, i) => open.has(start) && starts[i] !== undefined ? [starts[i]!] : [])));
-  }
-
-  /** Where the scrolled-up viewport's anchor line sits in the re-rendered `lines` (the same shown line's same occurrence), if the page is scrolled. */
-  private relocatedAnchor(page: Page, lines: Line[]): HistoryAnchor | undefined {
-    if (page !== this.page || page.view || this.scrollTop === null) return;
-    const old = this.shown(page, page.lines), next = this.shown(page, lines);
-    const anchor = captureAnchor(old, this.deps.term.cols, this.scrollTop);
-    const source = JSON.stringify(old[anchor.line]);
-    const occurrence = old.slice(0, anchor.line).filter(line => JSON.stringify(line) === source).length;
-    const matches = next.flatMap((line, i) => JSON.stringify(line) === source ? [i] : []);
-    anchor.line = matches[occurrence] ?? Math.min(anchor.line, next.length);
-    return anchor;
+    const ordinal = (keys: string[]) => { const seen = new Map<string, number>(); return keys.map(key => { const kind = key.split(":")[0]!, n = seen.get(kind) ?? 0; seen.set(kind, n + 1); return `${kind}#${n}`; }); };
+    const before = foldKeys(collapseCalls(from, open)), after = foldKeys(collapseCalls(to));
+    const was = new Map(ordinal(before).map((id, i) => [id, before[i]!])), now = ordinal(after);
+    this.openGroups.set(to, new Set(after.filter((_, i) => open.has(was.get(now[i]!) ?? ""))));
   }
 
   /** The record as lines. While the turn runs (`running`), the newest entry's calls without a result are left out: the live view shows them running, and the record says how they ended once it does. */
@@ -1390,78 +1318,15 @@ export class App {
     { name: "editor", takes: () => true, handle: (k) => { this.edit(k); this.draw(); } },
   ];
 
-  private readonly pointer = new Pointer();
-  /** Every mouse report. A click on a link opens it (mouse reporting keeps the click from the terminal, and no report says Cmd is held).
-   * A drag selects: history rows when it began on one (they scroll with their text), the painted frame anywhere else. */
+  /** Mouse reports reach the app only from a full-screen page (the work page's table); the chat's are its own (tui/otui). */
   private async mouse(k: Key): Promise<void> {
-    const frame = this.resizeTimer ? undefined : this.screen;
-    const { click, url } = this.pointer.track(k, frame?.rows);
-    if (url) { this.clearSelection(); this.pointer.frame.clear(); return this.note(dim(await openLink(url, this.deps.openUrl))); }
-    if (k.name === "mousedown") this.pointer.inBody = !!frame && this.selectionAllowed() && !this.needReprint && !!hitRow(k, frame, this.screenHistory.length);
-    if (this.pointer.inBody) { this.pointer.frame.clear(); if (click) this.toolClick(k); return this.selectionMouse(k); }
-    this.clearSelection();
-    const done = !!frame && this.pointer.frame.mouse(k); // Before any await: the reports of one drag arrive in one burst.
     if (this.work.open && !this.clearing && k.name === "mousedown") await this.work.key(k);
     this.draw();
-    if (done) this.copySelection();
-  }
-
-  /** The painted frame is what a click hit: not while a reprint is due, nor when the frame shows another page or view than the current one. */
-  private clickable(): StickyScreen | undefined {
-    if (!this.selectionAllowed() || this.resizeTimer || this.needReprint || (this.page?.view ?? this.page) !== this.screenOwner) return;
-    return this.screen;
-  }
-
-  /** The folded group whose summary row is painted history row `index`: where its run starts in the page's (or view's) lines. */
-  private groupAt(page: Page, index: number, cols: number): number | undefined {
-    const lines = page.view?.lines ?? page.lines, shown = this.shown(page);
-    const at = captureAnchor(shown, cols, index);
-    return at.part === 0 ? groupStart(lines, shown, at.line) : undefined;
-  }
-
-  /** A click on a folded group's summary line opens it (its calls under the summary), or closes it again: the only way to see a run's calls. */
-  private toolClick(k: Key): void {
-    const screen = this.clickable(), page = this.page;
-    const hit = screen && page && hitRow(k, screen, this.screenHistory.length);
-    const start = hit ? this.groupAt(page, hit.row, screen.cols) : undefined;
-    if (start === undefined || !page) return;
-    const lines = page.view?.lines ?? page.lines;
-    const open = this.openGroups.get(lines) ?? new Set<number>();
-    if (!open.delete(start)) open.add(start);
-    this.openGroups.set(lines, open);
-    this.clearSelection(); // the rows under it moved
-    this.reprint();
-  }
-
-  private async selectionMouse(k: Key): Promise<void> {
-    const screen = this.screen;
-    if (!this.selectionAllowed() || !screen || this.resizeTimer || this.needReprint) return this.clearSelection();
-    // Hit-test the painted frame, not the pending scroll destination. Only a
-    // new selection pins follow mode; motion/release must not undo queued scroll.
-    const completed = this.selection.mouse(k, screen, this.screenHistory);
-    if (k.name === "mousedown" && this.selection.active && this.scrollTop === null) {
-      this.selectionPausedFollow = true;
-      this.scrollTop = screen.start;
-    }
-    if (!this.selection.active) this.clearSelection();
-    this.draw();
-    if (completed) this.copySelection();
-  }
-
-  private copySelection(): void {
-    if (this.resizeTimer) return;
-    this.flush(); // Validate against the latest layout before copying, even between frames.
-    const text = (this.selectionAllowed() ? this.selection.text() : "") || this.pointer.frame.text();
-    if (!text) return;
-    // Never await the clipboard write in the input path: a stalled pasteboard service (pbcopy can hang
-    // for the whole timeout) must not freeze input or rendering. The text is already captured, so the
-    // write runs detached and only its failure surfaces, as a note.
-    void (this.deps.clipboardText ?? writeClipboardText)(text).catch(error => this.note(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)));
   }
 
   async onKey(k: Key): Promise<void> {
     // An image overlay owns the next key: close it, and an undefined screen forces a full repaint.
-    if (this.imageView.active) { this.imageView.close(this.deps.term); this.screen = undefined; this.reprint(); return; }
+    if (this.imageView.active) { this.imageView.close(this.deps.term); this.reprint(); return; }
     // Kitty/modifyOtherKeys may report Shift+letter separately; legacy terminals
     // send the uppercase character. Normalize both without changing Ctrl/Alt.
     if (k.shift && !k.ctrl && !k.alt && /^[a-z?/]$/.test(k.name)) k = { name: "char", text: k.name === "/" ? "?" : k.name.toUpperCase() };
@@ -1475,12 +1340,9 @@ export class App {
     // Ctrl+C retains the global cancellation/double-press exit path even when
     // the page is loading, failed, or waiting on an unresponsive registry.
     if (!this.keyEcho && ["mousedown", "mousemove", "mouseup"].includes(k.name)) return this.mouse(k);
-    if (!this.keyEcho && k.ctrl && k.name === "o") return this.copySelection();
-    if (this.pointer.frame.active && !k.name.startsWith("wheel")) { this.pointer.frame.clear(); this.draw(); }
+    if (!this.keyEcho && k.ctrl && k.name === "o") return this.copy(this.deps.term.selection());
     if (this.work.open && !this.keyEcho && !this.clearing && !(k.ctrl && k.name === "c")) return this.work.key(k);
-    if (!this.selectionAllowed()) this.clearSelection();
     this.clearNote(k);
-    if (k.name === "escape" && this.selection.active) { this.clearSelection(); this.draw(); return; }
     // Editing within this draft is fine. Navigation/modal/send/clear/history keys
     // invalidate asynchronous reads, even if the user returns before completion.
     if (!(k.ctrl && k.name === "v") && !typedText(k) && !["left", "right", "backspace", "delete"].includes(k.name)) this.clipboardGeneration++;
@@ -1493,16 +1355,9 @@ export class App {
     return ["pageup", "pagedown", "wheelup", "wheeldown"].includes(k.name) && !this.clearing && !this.keyEcho && !this.menu && this.helpTop === null;
   }
 
+  /** Page Up/Down and the wheel (when a terminal sends it as keys) scroll the conversation; the terminal keeps the rows. */
   private scroll(k: Key): void {
-    const screen = this.screen;
-    if (!screen) return;
-    this.selectionPausedFollow = false; // Explicit scrolling owns the viewport, even during a drag.
-    const delta = k.name === "up" || k.name === "down" ? 1 : k.name.startsWith("wheel") ? 3 : Math.max(1, screen.bodyHeight - 1);
-    const start = this.scrollTop ?? screen.maxStart;
-    const top = Math.max(0, Math.min(screen.maxStart, start + (k.name.endsWith("up") ? -delta : delta)));
-    this.scrollTop = top === screen.maxStart ? null : top;
-    this.scrollAnchor = undefined;
-    this.draw();
+    this.deps.term.scroll(k.name === "pageup" ? "page-up" : k.name === "pagedown" ? "page-down" : k.name === "wheelup" ? "up" : "down");
   }
 
   private lettersAreCommands(): boolean {
@@ -1599,7 +1454,7 @@ export class App {
     if (attachments.length && Buffer.byteLength(text) > 60000) return this.note(dim("image prompt text exceeds 60,000 bytes; shorten it before sending. draft retained."));
     if (attachments.length && this.page?.view) return this.note(dim("return to project chat before sending images."));
     if (this.page) this.draftImages.delete(this.page);
-    if (text !== "/help") this.scrollTop = null;
+    if (text !== "/help") this.deps.term.scroll("end");
     this.input = { text: "", cursor: 0 };
     this.historyAt = -1;
     if (!text && !attachments.length) return this.draw();

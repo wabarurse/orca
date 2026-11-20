@@ -76,7 +76,9 @@ test("delivered screenshots restore in chat and list on the Images page without 
   const running = app.run(project);
   try {
     await until(() => !!app.page);
-    expect(app.page!.lines.map(raw).join("\n")).toContain("open on the Images page");
+    // The delivered image restores as its own line, shown in the reply's "+ 1 images" fold.
+    expect(app.page!.lines).toContainEqual({ image: `Image 1 · ${ref.id.slice(0, 8)}` });
+    await until(() => term.screen().includes("+ 1 image"));
     app.work.show("images"); await until(() => app.work.kind === "images" && term.screen().includes("Screenshot after the fix"));
     expect(opened).toEqual([]);
     term.press({ name: "enter" }); await until(() => opened.length === 1);

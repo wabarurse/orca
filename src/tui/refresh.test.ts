@@ -1,10 +1,10 @@
+import { testTerminal } from "../test/otui-term";
 import { writeProjectState } from "../config";
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App, type AppDeps } from "./app";
-import { FakeScreen } from "./components/testing";
 import type { Terminal } from "./components/term";
 import { createOrchestrator } from "../core/agent-loop/orc/orchestrator";
 import { loadConfig, paths, saveConfig } from "../config/config";
@@ -36,8 +36,8 @@ async function setup(extra: Partial<AppDeps> = {}) {
   const home = mkdtempSync(join(tmpdir(), "tui-refresh-"));
   process.env.ORCA_HOME = home;
   await saveConfig({ model: "fake-model" });
-  const screen = new FakeScreen(90, 28);
-  const term: Terminal = { cols: 90, rows: 28, open() {}, close() {}, eraseOnExit() {}, onKey() {}, onResize() {}, write(s) { screen.write(s); } };
+  const base = testTerminal(90, 28), screen = { text: () => base.screen(), screen: () => base.lines() };
+  const term: Terminal = Object.assign(base, { open() {}, close() {}, eraseOnExit() {}, onResize() {}, write(s: string) { base.writes.push(s); } });
   const provider = fakeProvider([]);
   const app = new App({ term, pollMs: 100_000, projectModel: async () => "fake-model", agents: async () => [],
     watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0,

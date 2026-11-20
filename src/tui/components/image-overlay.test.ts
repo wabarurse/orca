@@ -4,7 +4,7 @@ import type { Terminal } from "./term";
 
 function fakeTerm(protocol: "kitty" | null): Terminal & { out: string } {
   const t = { out: "", cols: 80, rows: 24, imageProtocol: protocol,
-    write(s: string) { t.out += s; }, onKey() {}, onResize() {}, open() {}, close() {}, eraseOnExit() {} } as Terminal & { out: string };
+    write(s: string) { t.out += s; }, onKey() {}, onResize() {}, open() {}, close() {}, eraseOnExit() {}, show() {}, scroll() {}, onAction() {}, selection: () => "" };
   return t;
 }
 

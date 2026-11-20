@@ -13,6 +13,7 @@ import { all as allQuestions, ask as askQuestions } from "../core/data/inbox/que
 import { text as said } from "../test/fake-provider";
 import { registerTask } from "../core/data/tasks/tasks";
 import { type Key } from "./components/keys";
+import type { ScreenAction } from "./components/screen-view";
 import { Calls } from "./conversation/tools";
 
 const { home, screenErrors, USER_BG, strip, raw, fakeTerm, bodyStart, bodyRows, clickRow, fakeOrchestrators, settle, NO_REPLY_WINDOW, until } = appFixture();
@@ -193,55 +194,48 @@ describe("clipboard image drafts and immutable queue ownership (isolated fixture
 
 });
 
-test('conversation drag highlights only history, auto-copies on release; ctrl+o re-copies and esc/resize/context clear', async () => {
-  const term = fakeTerm(60, 24), orchs = fakeOrchestrators();
+/** A terminal whose screen actions (OpenTUI's own selection, clicks on folds and links) the test can raise like OpenTUI does,
+ * and whose current selection it sets: dragging is OpenTUI's native selection, which App only copies. */
+function selectionTerm(cols: number, rows: number) {
+  const term = fakeTerm(cols, rows), actors: ((a: ScreenAction) => void)[] = [], onAction = term.onAction.bind(term);
+  let selected = '';
+  term.onAction = cb => { actors.push(cb); onAction(cb); };
+  term.selection = () => selected;
+  return { term, select: (text: string) => { selected = text; for (const act of actors) act({ kind: 'copy', text }); }, setSelection: (text: string) => { selected = text; } };
+}
+
+test('a finished selection copies once; ctrl+o re-copies what is selected, nothing when nothing is; keys keep their own jobs', async () => {
+  const { term, select, setSelection } = selectionTerm(60, 24), orchs = fakeOrchestrators();
   const copied: string[] = [];
   const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, pollMs: 100_000 });
   const running = app.run('selection-probe');
   try {
     await until(() => !!app.page);
-    app.page!.lines.push('SELECT-ME 界é', ...Array.from({ length: 40 }, (_, i) => `row-${i}`));
+    app.page!.lines.push('SELECT-ME 界é', ...Array.from({ length: 40 }, (_, i) => `row-${i}`));
     app.reprint();
     await until(() => term.display.screen().some(row => row.includes('row-39')));
-    term.press({ name: 'pageup' }); term.press({ name: 'pageup' }); term.press({ name: 'pageup' });
-    await until(() => term.display.screen().some(row => row.includes('SELECT-ME')));
-    const y = term.display.screen().findIndex(row => row.includes('SELECT-ME')) + 1;
-    expect(y).toBeGreaterThan(0);
-    term.type(`\x1b[<0;1;${y}M\x1b[<32;9;${y}M\x1b[<0;9;${y}m`);
-    await settle();
-    expect(term.raw()).toContain('\x1b[7mSELECT-ME\x1b[0m');
+    select('SELECT-ME'); await settle();
     expect(copied).toEqual(['SELECT-ME']);
     term.press({ name: 'wheeldown' }); await settle();
     await app.onKey({ name: 'o', ctrl: true });
     expect(copied).toEqual(['SELECT-ME', 'SELECT-ME']);
-    term.type('draft'); await app.onKey({ name: 'escape' });
+    term.type('draft');
     expect(app.input.text).toBe('draft');
-    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(2);
-    // The header is selectable too (the painted frame), and a key puts that selection away.
-    const header = term.display.screen()[0]!.slice(0, 9).trimEnd();
-    term.type('\x1b[<0;1;1M\x1b[<32;9;1M\x1b[<0;9;1m'); await settle();
-    expect(copied).toEqual(['SELECT-ME', 'SELECT-ME', header]);
-    copied.pop();
-    await app.onKey({ name: 'escape' });
+    setSelection('');
     await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(2);
     expect(app.commands.has('/mouse')).toBe(false);
-    term.press({ name: 'pageup' }); await settle();
-    term.type(`\x1b[<0;1;${y}M\x1b[<32;9;${y}M\x1b[<0;9;${y}m`);
-    term.resize(40, 20); await Bun.sleep(160);
-    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(3);
-    for (let i = 0; i < 4; i++) { await app.onKey({ name: 'pageup' }); await Bun.sleep(25); }
-    await until(() => term.display.screen().some(row => row.includes('SELECT-ME')));
-    const currentY = term.display.screen().findIndex(row => row.includes('SELECT-ME')) + 1;
-    expect(currentY).toBeGreaterThan(0);
-    term.type(`\x1b[<0;1;${currentY}M\x1b[<32;9;${currentY}M\x1b[<0;9;${currentY}m`);
-    await settle();
-    await app.openPage('selection-other'); await settle();
-    await app.onKey({ name: 'o', ctrl: true }); expect(copied).toHaveLength(4);
-
+    // Mouse reports that reach the app in the chat (the renderables own them) neither copy nor disturb the draft.
+    term.type('\x1b[<0;1;8M\x1b[<32;9;8M\x1b[<0;9;8m'); await settle();
+    expect(copied).toHaveLength(2); expect(app.input.text).toBe('draft');
+    // The work page is one selectable text: its selection copies the same way.
+    await app.onKey({ name: 'b', ctrl: true });
+    await until(() => term.screen().includes('Bubbles'));
+    select('Bubbles'); await settle();
+    expect(copied).toEqual(['SELECT-ME', 'SELECT-ME', 'Bubbles']);
   } finally { app.quit(); await running; }
 });
 
-test('a click on a link opens it, a drag over it selects; the work page is selectable and keeps its keys', async () => {
+test('a click on a link opens it, a click beside it does not; the work page keeps its keys', async () => {
   const term = fakeTerm(80, 24), orchs = fakeOrchestrators();
   const copied: string[] = [], opened: string[] = [];
   const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, openUrl: async url => { opened.push(url); }, pollMs: 100_000 });
@@ -250,73 +244,32 @@ test('a click on a link opens it, a drag over it selects; the work page is selec
     const rows = term.display.screen(), y = rows.findIndex(row => row.includes(text));
     return { y: y + 1, x: rows[y]!.indexOf(text) + 1 };
   };
-  const drag = (y: number, from: number, to: number) => term.type(`\x1b[<0;${from};${y}M\x1b[<32;${to};${y}M\x1b[<0;${to};${y}m`);
   try {
     await until(() => !!app.page);
     app.page!.lines.push('go \x1b]8;;https://example.com/docs\x1b\\LINKED\x1b]8;;\x1b\\ now');
     app.reprint();
     await until(() => term.display.screen().some(row => row.includes('go LINKED now')));
     const link = find('LINKED');
-    term.type(`\x1b[<0;${link.x + 2};${link.y}M\x1b[<0;${link.x + 2};${link.y}m`); await settle();
+    await term.click(link.x + 2, link.y);
+    await until(() => opened.length === 1);
     expect(opened).toEqual(['https://example.com/docs']); expect(copied).toEqual([]);
-    term.type(`\x1b[<0;${link.x - 2};${link.y}M\x1b[<0;${link.x - 2};${link.y}m`); await settle();
+    await term.click(link.x - 2, link.y); await settle();
     expect(opened).toHaveLength(1); // beside the link is not the link
-    drag(link.y, link.x, link.x + 5); await settle();
-    expect(copied).toEqual(['LINKED']); expect(opened).toHaveLength(1);
 
     await app.onKey({ name: 'b', ctrl: true });
-    // The tab line moves while the page's lists load; locate the word once two looks agree.
-    let seen = '';
-    await until(() => { const now = term.display.screen().join('\n'), settled = now === seen && now.includes('Bubbles'); seen = now; return settled; });
-    await settle();
-    const tab = find('Bubbles');
-    drag(tab.y, tab.x, tab.x + 6); await settle();
-    expect(copied).toEqual(['LINKED', 'Bubbles']);
-    expect(term.raw()).toContain('\x1b[7mBubbles\x1b[0m');
-    await app.onKey({ name: 'o', ctrl: true });
-    expect(copied).toEqual(['LINKED', 'Bubbles', 'Bubbles']);
-    // A key puts the highlight away and still does its own job.
+    await until(() => term.screen().includes('Bubbles'));
+    // A key on the work page still does its own job: Esc closes it and the conversation is back.
     await app.onKey({ name: 'escape' });
     await until(() => term.display.screen().some(row => row.includes('go LINKED now')));
-    await app.onKey({ name: 'o', ctrl: true });
-    expect(copied).toHaveLength(3);
+    expect(copied).toEqual([]);
   } finally { app.quit(); await running; }
 });
 
-for (const scroll of ['wheeldown', 'pagedown', 'wheelup']) test(`drag ${scroll} motion/release in one input burst preserves queued scroll and painted coordinates`, async () => {
-  const term = fakeTerm(60, 24), orchs = fakeOrchestrators(), copied: string[] = [];
-  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, pollMs: 100_000 });
-  const running = app.run(`selection-burst-${scroll}`);
-  try {
-    await until(() => !!app.page);
-    const records = Array.from({ length: 60 }, (_, i) => `ROW-${String(i).padStart(2, '0')}`);
-    app.page!.lines = records;
-    app.reprint();
-    await until(() => term.display.screen().includes('ROW-59'));
-    if (scroll !== 'wheelup') {
-      for (let i = 0; i < 10; i++) term.press({ name: 'pageup' });
-      await until(() => term.display.screen().includes('ROW-00'));
-    }
-    const painted = term.display.screen();
-    const y = painted.findIndex(row => row.startsWith('ROW-')) + 1;
-    const first = Number(painted[y - 1]!.slice(4));
-    const count = painted.filter(row => row.startsWith('ROW-')).length;
-    const target = first + (scroll === 'wheelup' ? -3 : scroll === 'wheeldown' ? 3 : count - 1);
-    // No yields/settles: events queue behind the same throttled frame. Motion
-    // still refers to the old painted rows, not the requested scroll target.
-    term.press({ name: 'mousedown', x: 1, y });
-    term.press({ name: scroll });
-    term.press({ name: 'mousemove', x: 6, y: y + 1 });
-    term.press({ name: 'mouseup', x: 6, y: y + 1 });
-    expect(copied).toEqual([`${records[first]}\n${records[first + 1]}`]);
-    await app.onKey({ name: 'o', ctrl: true }); // flush pending frame + explicit copy
-    expect(term.display.screen()[y - 1]).toBe(records[target]!);
-    expect(copied).toEqual(Array(2).fill(`${records[first]}\n${records[first + 1]}`));
-  } finally { app.quit(); await running; }
-});
+// The drag-burst tests (wheel/page keys queued between a press, a motion and a release) covered the string renderer's
+// own selection over painted rows; selection is now OpenTUI's, so App no longer maps mouse coordinates in the chat.
 
-test('automatic copy errors stay visible, highlight supports explicit retry; motion and canceled release do not copy', async () => {
-  const term = fakeTerm(60, 24), orchs = fakeOrchestrators(), copied: string[] = [];
+test('copy errors stay visible and ctrl+o retries; mouse reports reaching the app never copy', async () => {
+  const { term, select } = selectionTerm(60, 24), orchs = fakeOrchestrators(), copied: string[] = [];
   const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => {
     copied.push(text); throw new Error('fixture desktop unavailable');
   }, pollMs: 100_000 });
@@ -325,15 +278,13 @@ test('automatic copy errors stay visible, highlight supports explicit retry; mot
     await until(() => !!app.page);
     app.page!.lines = ['COPY-ME']; app.reprint(); await settle();
     const y = term.display.screen().findIndex(row => row.includes('COPY-ME')) + 1;
-    const down = () => app.onKey({ name: 'mousedown', x: 1, y });
-    const up = () => app.onKey({ name: 'mouseup', x: 7, y });
-    await down(); await app.onKey({ name: 'mousemove', x: 7, y });
+    await app.onKey({ name: 'mousedown', x: 1, y }); await app.onKey({ name: 'mousemove', x: 7, y });
+    await app.onKey({ name: 'escape' }); await app.onKey({ name: 'mouseup', x: 7, y });
     expect(copied).toEqual([]);
-    await app.onKey({ name: 'escape' }); await up();
-    expect(copied).toEqual([]);
-    await down(); await up(); await up();
+    select('COPY-ME');
+    await until(() => app.frame().inputArea!.lines.join('\n').includes('copy failed: fixture desktop unavailable'));
     expect(copied).toEqual(['COPY-ME']);
-    expect(app.frame().inputArea!.lines.join('\n')).toContain('copy failed: fixture desktop unavailable');
+    await until(() => term.screen().includes('copy failed: fixture desktop unavailable'));
     await app.onKey({ name: 'o', ctrl: true });
     expect(copied).toEqual(['COPY-ME', 'COPY-ME']);
   } finally { app.quit(); await running; }
@@ -530,16 +481,18 @@ test("Tasks page: r re-reads the real ledger and says when it refreshed; the sta
   const term = fakeTerm(100, 30), fake = fakeOrchestrators();
   const app = new App({ term, pollMs: 100_000, agents: async () => [], openOrchestrator: fake.openOrchestrator });
   const running = app.run(project), screen = () => term.display.screen().join("\n");
+  /** The work page rows as shown, colours included. */
+  const styled = () => term.shown?.kind === "page" ? term.shown.rows.join("\n") : "";
   try {
     await until(() => !!app.page); term.type("\x14");
     await until(() => screen().includes("#1 First"));
-    expect(term.raw()).toContain("\x1b[38;5;246mqueued");
+    expect(styled()).toContain("\x1b[38;5;246mqueued");
     await registerTask(project, { name: "Second", summary: "s", branch: "feat/b", authorized: true });
     await setTaskAttention(project, first.id, { kind: "blocked", reason: "stopped" }, first.revision);
     term.type("r"); // no poll, no refreshSessions: only the key
     await until(() => screen().includes("#2 Second"));
     await until(() => /Refreshed [A-Z][a-z]{2} \d{1,2}, \d{4}/.test(screen()));
-    expect(term.raw()).toContain("\x1b[38;5;223mwaiting");
+    await until(() => styled().includes("\x1b[38;5;223mwaiting"));
   } finally { app.quit(); await running; }
 });
 

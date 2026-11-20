@@ -20,7 +20,7 @@ type WorkSection = workView.WorkSection;
 import { archiveBubble, archiveFolder, archiveProject, deletionSummary, openDeliveredMedia, recentAgent, type DeliveredMedia } from "./commands";
 import { elapsedMs, formatElapsed } from "./header";
 import { fileStore, QUESTION_PROGRESS, type Questions } from "./footer";
-import type { StickyScreen } from "./screen";
+import type { screens } from "./components";
 import { typedText, type AppDeps, type Clock, type Page } from "./app-state";
 
 export const WORK_KINDS = ["agents", "tasks", "questions", "images", "processes", "projects"] as const;
@@ -318,7 +318,7 @@ export class WorkPages {
 
   // --- drawing ----------------------------------------------------------------
 
-  screen(): StickyScreen {
+  screen(): screens.PageScreen {
     const view = this.view!, { cols, rows } = this.host.deps.term, questions = view.page?.questions;
     // The form answers the selected question only: a question closed elsewhere, or another tab, puts it away.
     if (questions?.expanded && (view.kind !== "questions" || !questions.closing && !questions.open.some(q => q.id === questions.selectedId))) this.host.questions.hide(view.page!);
@@ -332,7 +332,7 @@ export class WorkPages {
     const render = view.render = renderWorkPage({ cols, rows, tabs, active: WORK_KINDS.indexOf(view.kind), items, selected: index, empty,
       query: view.find?.text ?? view.query, sections: selected?.sections ?? [], detailTop: view.detailTop, footer: footer.line });
     view.detailTop = render.detail.top;
-    return { rows: render.lines, cols, cursor: Math.max(0, rows - 1), col: footer.col, bodyTop: 0, bodyHeight: rows, start: 0, maxStart: 0 };
+    return { kind: "page", rows: render.lines, cursor: Math.max(0, rows - 1), col: footer.col };
   }
 
   /** The page's one status line: a confirmation, an input, a notice, else the tab's key hints. */

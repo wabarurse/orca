@@ -1,10 +1,10 @@
+import { testTerminal } from "../test/otui-term";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App, type AppDeps } from "./app";
 import type { Terminal } from "./components/term";
-import { FakeScreen } from "./components/testing";
 import { Calls } from "./conversation/tools";
 import { open } from "../core/data/transcripts/transcript";
 import { createOrchestrator, ensureProject } from "../core/agent-loop/orc/orchestrator";
@@ -37,8 +37,8 @@ async function setup(extra: Partial<AppDeps> = {}) {
   const provider = fakeProvider([]);
   let resize = () => {};
   let exit = "", closed = false;
-  const screen = new FakeScreen(100, 24);
-  const term: Terminal = { cols: 100, rows: 24, write: s => { screen.write(s); if (closed) exit += s; }, onKey() {}, onResize(cb) { resize = cb; }, open() {}, close() { closed = true; }, eraseOnExit() {} };
+  const base = testTerminal(100, 24), screen = { text: () => base.screen(), screen: () => base.lines() };
+  const term: Terminal = Object.assign(base, { write: (s: string) => { base.writes.push(s); if (closed) exit += s; }, onResize(cb: () => void) { resize = cb; }, open() {}, close() { closed = true; }, eraseOnExit() {} });
   const app = new App({ term, pollMs: 100000, agents: async () => [], watchdog: async () => {}, merges: async () => {}, questionDelayMs: 0,
     projects: { live: async () => [], stop: async () => {}, kill: async () => {} },
     openOrchestrator: async (project, _url, write, onInbox) => createOrchestrator({ project, provider, tools: {}, write, onInbox }), ...extra });
@@ -48,7 +48,7 @@ async function setup(extra: Partial<AppDeps> = {}) {
   const command = () => app.commands.get("/clear-context")!.run("", app.page);
   const context = () => open(t.path).chain();
   return { app, project, folder, t, term, screen, provider, command, context, running, exit: () => exit,
-    resize(cols: number, rows: number) { term.cols = cols; term.rows = rows; screen.resize(cols, rows); resize(); },
+    resize(cols: number, rows: number) { base.resize(cols, rows); resize(); },
     confirm: async () => { await app.onKey({ name: "down" }); await app.onKey({ name: "enter" }); } };
 }
 const uiText = (app: App) => JSON.stringify(app.page?.lines);
