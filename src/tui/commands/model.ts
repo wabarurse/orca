@@ -8,6 +8,7 @@ import { accountForModel, effectiveAccount, effectiveModel, roleOverrides, saveM
 import type { Role } from "../../protocol";
 import { accountId } from "../../api/auth";
 import { effectiveSettingsReport } from "../../core/data/projects";
+import { peekBubble, readBubble } from "../../core/data/bubbles";
 
 export interface Choice<T> { value: T; label: string; current?: boolean }
 
@@ -64,6 +65,11 @@ export function activeRoles(project: string, model: string): RoleModels {
   try { return roleOverrides(project, model); } catch { return {}; }
 }
 /** The header's account: the project's selected account as provider:profile; undefined when it cannot be read (shown as nothing). */
+/** The conversation's bubble by name, for the header; null when it has none or it cannot be read. */
+export async function pageBubble(project: string): Promise<string | null> {
+  try { const id = peekBubble(project); return id ? (await readBubble(id))?.name ?? null : null; } catch { return null; }
+}
+
 export function pageAccount(project: string): Promise<string | undefined> {
   return effectiveAccount(project).then(accountId, () => undefined);
 }

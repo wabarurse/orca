@@ -14,7 +14,7 @@ afterEach(() => {
   made = [];
 });
 
-const header: screens.ScreenHeader = { tabs: [{ label: "probe", active: true, busy: false }, { label: "other", active: false, busy: true }], account: "anthropic:work", details: ["model · default · ctx 1k/200k"], fin: null };
+const header: screens.ScreenHeader = { tabs: [{ label: "probe", active: true, busy: false }, { label: "other", active: false, busy: true }], bubble: null, account: "anthropic:work", details: ["model · default · ctx 1k/200k"], fin: null };
 
 const chat = (over: Partial<screens.ChatScreen> = {}): screens.ChatScreen => ({ kind: "chat", header: null, items: [], tail: [], welcome: [], footer: ["> "], cursor: { row: 0, col: 2 }, ...over });
 
@@ -49,6 +49,9 @@ describe("chat view", () => {
     const without = await frame(h, chat({ header: { ...header, account: null } }));
     expect(without[1]).toMatch(/^│ model · default/);
     expect(without[2]).toMatch(/^└─+┘$/);
+    const bubbled = await frame(h, chat({ header: { ...header, bubble: "orca-core" } }));
+    expect(bubbled[1]).toMatch(/^│ ○ orca-core +│$/);
+    expect(bubbled[2]).toMatch(/^│ anthropic:work +│$/);
   });
 
   test("the fin swims beside the details only when the header has one and the screen is at least 72 columns wide", async () => {

@@ -12,7 +12,7 @@ const ask: CallLine = { tool: "ask(Which?)", summary: "asked", failed: false, ki
 const plain = (rows: string[]) => rows.map(row => Bun.stripANSI(row));
 const gaps = (items: screens.ScreenItem[]) => items.map(i => i.gap);
 const frame = (over: Partial<Frame> = {}): Frame => ({ cols: 60, rows: 20, input: { prompt: "> ", text: "draft", cursor: 5 }, menu: null, status: "0 agents │ 0 tasks", ...over });
-const header: screens.ScreenHeader = { tabs: [{ label: "probe", active: true, busy: false }], account: "anthropic:work", details: ["model · default"], fin: null };
+const header: screens.ScreenHeader = { tabs: [{ label: "probe", active: true, busy: false }], bubble: null, account: "anthropic:work", details: ["model · default"], fin: null };
 
 test("a user message's lines become one block without the \"> \" (keyed by its first line); the next message starts another", () => {
   const items = chatItems([...userLines("hello\nsecond line"), ...userLines("again")], 40);
@@ -58,8 +58,9 @@ test("fold items: an open calls fold lists its calls; groups name the tab their 
   for (const row of items.flatMap(i => i.rows)) expect(Bun.stringWidth(Bun.stripANSI(row))).toBeLessThanOrEqual(bodyCols(24));
 });
 
-test("headerRows: tabs, the account row when known, each details row and the bottom line", () => {
+test("headerRows: tabs, the bubble and account rows when known, each details row and the bottom line", () => {
   expect(headerRows(header, 60)).toBe(4);
+  expect(headerRows({ ...header, bubble: "orca-core" }, 60)).toBe(5);
   expect(headerRows({ ...header, account: null, details: ["orc: a", "worker: b", "reviewer: c", "ctx"] }, 60)).toBe(6);
   expect(headerRows({ ...header, fin: { time: 0, active: false } }, 80)).toBe(6); // the fin is five rows beside the text
   expect(headerRows({ ...header, fin: { time: 0, active: false } }, 60)).toBe(4); // no fin under 72 columns

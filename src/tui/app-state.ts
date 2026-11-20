@@ -45,6 +45,8 @@ export interface Page {
   roles?: Partial<Record<Role, string>>;
   /** The project's selected account, provider:profile, for the header; undefined until read or when unreadable. */
   account?: string;
+  /** The bubble (shared memory) the conversation belongs to, by name; null until read or when it has none. */
+  bubble: string | null;
   settings?: RequestSettings;
   /** Each role override's own request settings (effort and fast are kept per model), for the header's role rows. */
   roleSettings?: Partial<Record<Role, RequestSettings>>;

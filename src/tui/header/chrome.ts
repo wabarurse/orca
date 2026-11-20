@@ -11,6 +11,8 @@ export interface Chapter {
   active: number;
   /** The project's account (provider:profile); leads the details so narrow widths keep it. */
   account?: string;
+  /** The bubble the conversation shares memory through, by name; null when it has none. */
+  bubble: string | null;
   /** Every role, orchestrator first; one details row when they all agree, else a row each. */
   roles: RoleLine[];
   agent?: string;
@@ -87,6 +89,7 @@ export function chapterRows(c: Chapter, cols: number, budget = 10): string[] {
 export function headerView(c: Chapter, fin: screens.ScreenHeader["fin"]): screens.ScreenHeader {
   return {
     tabs: c.tabs.map((t, i) => ({ label: plain(t.name), active: i === c.active, busy: !!t.busy })),
+    bubble: c.bubble ? plain(c.bubble) : null,
     account: c.account ? plain(c.account) : null,
     details: detailRows({ ...c, account: undefined }),
     fin,

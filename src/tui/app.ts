@@ -21,7 +21,7 @@ import { accountChoices, deletionSummary, login, resetProject, useAccount, sendA
 import { checkContextClear } from "./commands";
 import { activeAgentRows, liveAgentsOrNull, processes } from "../core/tmux";
 import { directories, displayName, listProjects, newProjectName, setDisplayName } from "../core/data/projects";
-import { activeRoles, chooseBubble, chooseModel, effortChoices, modelChoices, pageAccount, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
+import { activeRoles, chooseBubble, chooseModel, effortChoices, modelChoices, pageAccount, pageBubble, setModel, switchAllMenu, type Choice, type Scope } from "./commands";
 import { paths } from "../config";
 import { projectIdentity } from "../core/data/projects";
 import { effectiveModel } from "../core/data/projects";
@@ -432,7 +432,7 @@ export class App {
   }
 
   private chapter(page: Page) {
-    return { tabs: this.pages, active: this.pages.indexOf(page), account: page.account, roles: roleLines(page.model, page.settings, page.roles, page.roleSettings), context: this.contextLabel(page), agent: page.view?.name };
+    return { tabs: this.pages, active: this.pages.indexOf(page), account: page.account, bubble: page.bubble, roles: roleLines(page.model, page.settings, page.roles, page.roleSettings), context: this.contextLabel(page), agent: page.view?.name };
   }
 
   /** The header's one-row form for the transcript printed on exit. */
@@ -466,12 +466,12 @@ export class App {
     const version = (this.modelVersions.get(page) ?? 0) + 1;
     this.modelVersions.set(page, version);
     const model = await this.readModel(page.project);
-    const [settings, account] = await Promise.all([effectiveSettings(page.project, model).catch(() => undefined), pageAccount(page.project)]);
+    const [settings, account, bubble] = await Promise.all([effectiveSettings(page.project, model).catch(() => undefined), pageAccount(page.project), pageBubble(page.project)]);
     const roles = activeRoles(page.project, model);
     const own = Object.fromEntries(await Promise.all(Object.entries(roles).map(async ([role, m]) => [role, await effectiveSettings(page.project, m).catch(() => undefined)] as const)));
     if (this.modelVersions.get(page) !== version || !this.pages.includes(page) || page.deleting) return; // a newer read or a closed page wins
-    const unchanged = model === page.model && account === page.account && JSON.stringify([settings, roles, own]) === JSON.stringify([page.settings, page.roles, page.roleSettings]);
-    page.model = model; page.roles = roles; page.account = account;
+    const unchanged = model === page.model && account === page.account && bubble === page.bubble && JSON.stringify([settings, roles, own]) === JSON.stringify([page.settings, page.roles, page.roleSettings]);
+    page.model = model; page.roles = roles; page.account = account; page.bubble = bubble;
     page.settings = settings; page.roleSettings = own;
     if (!unchanged && page === this.page) this.draw();
   }
@@ -787,7 +787,7 @@ export class App {
       if (existing !== this.active) { this.active = existing; this.reprint(); }
       return this.pages[existing]!;
     }
-    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null, calls: new Calls() };
+    const page: Page = { project, name: project, orch: null as unknown as Orchestrator, lines: [], md: new MarkdownStream(), busy: false, busySince: 0, streamed: false, inputHistory: [], historyLines: 0, savingHistory: Promise.resolve(), sent: [], questions: pageQuestions(), view: null, calls: new Calls(), bubble: null };
     // Runtime status belongs above the input, including failures and aborted requests.
     const tools: ToolEvents = { onRefresh: () => { this.syncTranscript(page); this.refreshedTurns.add(page); this.draw(); }, onTool: (call) => this.toolStarted(page, call), onToolResult: (outcome) => this.toPage(page, [page.calls.finish(outcome)]), notice: text => this.note(text, page) };
     page.orch = await this.deps.openOrchestrator(project, url, (text, plain) => this.stream(page, text, plain), (msgs) => this.inbox(page, msgs), tools);

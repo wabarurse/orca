@@ -20,6 +20,8 @@ export const FIN_COLS = 32, FIN_MIN_COLS = 72, FIN_ROWS = 5;
 
 export type ScreenHeader = {
   tabs: ScreenTab[];
+  /** The bubble the conversation belongs to, its own row above the account; null when it has none. */
+  bubble: string | null;
   /** The project's account, its own row; null while unknown. */
   account: string | null;
   /** Each role's model and settings (one row when they agree), the context label on the first. */

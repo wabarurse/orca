@@ -8,7 +8,7 @@ import type { RoleLine } from "./chrome";
 const everyRole = (model: string, effort = "default", fast = false): RoleLine[] => (["orchestrator", "worker", "reviewer"] as const).map(role => ({ role, model, effort, fast }));
 
 const plain = (rows: string[]) => rows.map(Bun.stripANSI);
-const chapter: Chapter = { tabs: [{ name: "orch-one" }, { name: "orch-two" }], active: 1, roles: everyRole("model-a") };
+const chapter: Chapter = { tabs: [{ name: "orch-one" }, { name: "orch-two" }], active: 1, bubble: null, roles: everyRole("model-a") };
 const counts = "2 agents running │ 1 task │ 3 questions";
 
 test("the header is a box open at the top: plain tabs, then the details in dim, then its bottom line", () => {

@@ -52,13 +52,13 @@ test("short and narrow composers never spill or lose cursor; NO_COLOR gives no b
 
 test("chapter header: a box of the tabs and details; the screen header splits the account onto its own row, and the footer does not move with the conversation", () => {
   const f = frame(80, 24);
-  const chapter = { tabs: [{ name: "project" }, { name: "other", busy: true }], active: 0, account: "anthropic:work", roles: everyRole("model") };
+  const chapter = { tabs: [{ name: "project" }, { name: "other", busy: true }], active: 0, bubble: null, account: "anthropic:work", roles: everyRole("model") };
   const box = chapterRows(chapter, f.cols).map(Bun.stripANSI);
   expect(box[0]).toStartWith("│ project ");
   expect(box[1]).toStartWith("│ anthropic:work · model · default");
   expect(box[2]).toStartWith("└─");
   const header = headerView(chapter, null);
-  expect(header).toEqual({ tabs: [{ label: "project", active: true, busy: false }, { label: "other", active: false, busy: true }], account: "anthropic:work", details: ["model · default"], fin: null });
+  expect(header).toEqual({ tabs: [{ label: "project", active: true, busy: false }, { label: "other", active: false, busy: true }], bubble: null, account: "anthropic:work", details: ["model · default"], fin: null });
   expect(headerRows(header, 80)).toBe(4); // tabs, account, one details row, the box's bottom line
   expect(headerRows({ ...header, account: null }, 80)).toBe(3);
   expect(headerRows(null, 80)).toBe(0);
@@ -107,7 +107,7 @@ test("queued previews sit immediately above the composer, with ordered Unicode/m
 });
 
 test("queued layout is bounded at every small size without changing composer geometry or escaping its footer", () => {
-  const header = headerView({ tabs: [{ name: "queue" }], active: 0, account: "openai:me", roles: everyRole("model") }, null);
+  const header = headerView({ tabs: [{ name: "queue" }], active: 0, bubble: null, account: "openai:me", roles: everyRole("model") }, null);
   for (const cols of [1, 2, 4, 8, 12, 23, 40, 80]) for (const rows of [1, 2, 3, 4, 6, 8, 12, 16, 24, 50]) {
     const f: Frame = { ...frame(cols, rows), menu: null, queued: { project: "queue", texts: Array.from({ length: 40 }, (_, i) => `${i}: 界é👩‍💻\n\tline\x1b[2J\x1b[H\x1b]0;bad title\x07\x1b[31mred\x1b[0m\b\x07`) } };
     const items = [{ kind: "rows" as const, key: "0", gap: false, rows: ["conversation"] }];
