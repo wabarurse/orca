@@ -12,7 +12,7 @@ const everyRole = (model: string, effort = "default", fast = false): RoleLine[] 
 
 const bg = "\x1b[48;5;236m";
 afterEach(() => setUserFill(null));
-const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, status: "2 agents running │ 0 tasks │ 1 question", input: { prompt: "> ", text: "hello\n你好", cursor: 8 }, menu: { title: "models", items: ["one", "two"], index: 0 } });
+const frame = (cols = 40, rows = 12): Frame => ({ cols, rows, status: "2 agents running │ 0 tasks │ 1 question", input: { prompt: "> ", text: "hello\n你好", cursor: 8, selected: false }, menu: { title: "models", items: ["one", "two"], index: 0 } });
 
 test("bottom bar input precedes counts and modal; the cursor survives append and resize, with no shading", () => {
   setUserFill(bg);

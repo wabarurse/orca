@@ -71,6 +71,13 @@ export const deleteWordForward = (s: EditState) => replace(s, s.cursor, wordForw
 /** Ctrl+W: the whitespace-delimited word before the cursor (unix-word-rubout). */
 export const rubout = (s: EditState) => replace(s, back(s.text, s.cursor, (g) => !isSpace(g)), s.cursor);
 
+/** After Cmd+A selected the whole text: typing or a paste replaces it and Backspace or Delete clears it, as in a text
+ * field; null when the key leaves the text alone and only ends the selection. */
+export function selectedEdit(s: EditState, typed: string | undefined, key: string): EditState | null {
+  if (typed !== undefined) return { text: typed, cursor: typed.length };
+  return key === "backspace" || key === "delete" ? { ...s, text: "", cursor: 0 } : null;
+}
+
 /** A wrapped row: text[start, end). */
 export interface Row { start: number; end: number; text: string }
 export interface Layout { rows: Row[]; row: number; col: number }
