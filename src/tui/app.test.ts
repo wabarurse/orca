@@ -1166,3 +1166,28 @@ describe("frames, resizes, startup and crashes", () => {
   });
 
 });
+
+test("Cmd+A highlights only the draft and copies it; typing replaces it, Backspace clears it, any other key just ends it", async () => {
+  const term = fakeTerm(), orchs = fakeOrchestrators(), copied: string[] = [];
+  const app = new App({ term, openOrchestrator: orchs.openOrchestrator, clipboardText: async text => { copied.push(text); }, pollMs: 100_000 });
+  const running = app.run("alpha");
+  await until(() => !!app.page);
+  const input = () => app.frame().inputArea!.lines.join("\n");
+  term.type("draft text");
+  term.press({ name: "a", cmd: true });
+  expect(input()).toContain("\x1b[7mdraft text\x1b[27m");
+  expect(input()).not.toContain("\x1b[7m> ");
+  expect(copied).toEqual(["draft text"]);
+  term.type("new");
+  expect(app.input).toEqual({ text: "new", cursor: 3 });
+  expect(input()).not.toContain("\x1b[7m");
+  term.press({ name: "a", cmd: true });
+  term.press({ name: "backspace" });
+  expect(app.input.text).toBe("");
+  term.type("kept");
+  term.press({ name: "a", cmd: true });
+  term.press({ name: "left" });
+  expect(app.input).toEqual({ text: "kept", cursor: 3 });
+  expect(input()).not.toContain("\x1b[7m");
+  app.quit(); await running;
+});

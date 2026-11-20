@@ -15,6 +15,8 @@ export interface Input {
   prompt: string;
   text: string;
   cursor: number;
+  /** Cmd+A selected the whole text: it is drawn highlighted (inverse), the prompt and rails are not. */
+  selected: boolean;
   /** First input row shown last frame, so the window only scrolls when the cursor leaves it; unset shows the end. */
   top?: number;
 }
@@ -87,7 +89,8 @@ export function inputArea(input: Input, cols: number, rows: number, reserved = 0
   const shown = Math.min(all.length, allowance);
   const top = scrollWindow(input.top ?? all.length, row, all.length, shown);
   const lines = all.slice(top, top + shown).map((r, i) => {
-    const text = fit((top + i === 0 ? prompt : " ".repeat(indent)) + sanitize(r.text), cols - rail * 4);
+    const lead = top + i === 0 ? prompt : " ".repeat(indent), fitted = fit(lead + sanitize(r.text), cols - rail * 4);
+    const text = input.selected && fitted.length > lead.length && fitted.startsWith(lead) ? `${lead}\x1b[7m${fitted.slice(lead.length)}\x1b[27m` : fitted;
     return rail ? `${railMark("│")} ${text}${" ".repeat(Math.max(0, cols - 4 - visibleLength(text)))} ${railMark("│")}` : text;
   });
   if (rail) { lines.unshift(railMark("┌" + "─".repeat(cols - 2) + "┐")); lines.push(railMark("└" + "─".repeat(cols - 2) + "┘")); }

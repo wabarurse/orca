@@ -54,7 +54,7 @@ test("restore budgets actual separators and omission note, keeps whole messages 
 
 test("pending unfinished fenced text preserves interior blanks before and after commit", () => {
   const partial = "```txt\nfirst\n\nsecond\n";
-  const f: Frame = { cols: 20, rows: 12, partial, input: { prompt: "> ", text: "", cursor: 0 }, menu: null };
+  const f: Frame = { cols: 20, rows: 12, partial, input: { prompt: "> ", text: "", cursor: 0, selected: false }, menu: null };
   const rows = strip(liveRows(f).rows);
   expect(rows.slice(0, 5)).toEqual(["```txt", "first", "", "second", ""]);
   const md = new MarkdownStream();
@@ -67,13 +67,13 @@ test("one-column fit, status and modal never overflow and erase returns to the l
   expect(fit("abc", 1)).toBe("…");
   expect(fit("界", 1)).toBe("…");
   expect(fit("x", 0)).toBe("");
-  const f: Frame = { cols: 1, rows: 5, status: "status", input: { prompt: "> ", text: "界", cursor: 1 }, menu: { title: "models", items: ["one"], index: 0 } };
+  const f: Frame = { cols: 1, rows: 5, status: "status", input: { prompt: "> ", text: "界", cursor: 1, selected: false }, menu: { title: "models", items: ["one"], index: 0 } };
   const s = new FakeScreen(1, 8);
   s.write(commit([fit("界 directory", 1)], 1));
   const first = live(f);
   s.write(first.text);
   expect(liveRows(f).rows.every((r) => Bun.stringWidth(r) <= 1)).toBe(true);
   expect(s.col).toBe(0);
-  s.write(live({ ...f, menu: null, status: null, input: { prompt: "> ", text: "", cursor: 0 } }, first.shown).text);
+  s.write(live({ ...f, menu: null, status: null, input: { prompt: "> ", text: "", cursor: 0, selected: false } }, first.shown).text);
   expect(s.screen().slice(2).every((r) => !r)).toBe(true);
 });

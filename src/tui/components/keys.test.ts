@@ -480,3 +480,7 @@ test('SGR left drag and release survive every byte boundary; modified clicks ign
   }
   expect(parseKeys('\x1b[<4;1;2M\x1b[<8;1;2M\x1b[<16;1;2M')).toEqual([]);
 });
+
+test("Cmd arrives as cmd when the terminal forwards it through the kitty keyboard protocol", () => {
+  expect(parseKeys("\x1b[97;9u")).toEqual([{ name: "a", cmd: true }]);
+});

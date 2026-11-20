@@ -17,6 +17,8 @@ export interface Key {
   y?: number;
   ctrl?: boolean;
   alt?: boolean;
+  /** Cmd (super): only through the kitty keyboard protocol, and only for keys the terminal does not keep for itself. */
+  cmd?: boolean;
   shift?: boolean;
   /** Printable text for name "char" (consecutive characters are batched) and "paste"; the body for "osc". */
   text?: string;
@@ -32,6 +34,7 @@ function withMods(key: Key, mod: number): Key {
   if (bits & 1) key.shift = true;
   if (bits & 2) key.alt = true;
   if (bits & 4) key.ctrl = true;
+  if (bits & 8) key.cmd = true;
   return key;
 }
 
