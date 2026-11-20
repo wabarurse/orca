@@ -50,7 +50,7 @@ describe("chat view", () => {
     expect(without[1]).toMatch(/^│ model · default/);
     expect(without[2]).toMatch(/^└─+┘$/);
     const bubbled = await frame(h, chat({ header: { ...header, bubble: "orca-core" } }));
-    expect(bubbled[1]).toMatch(/^│ ○ orca-core +│$/);
+    expect(bubbled[1]).toMatch(/^│ 🫧 orca-core +│$/);
     expect(bubbled[2]).toMatch(/^│ anthropic:work +│$/);
   });
 

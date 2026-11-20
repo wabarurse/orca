@@ -4,7 +4,7 @@ import { linkAt, screens } from "../components";
 import { applySgr, styledRows } from "./ansi";
 
 /** The bubble mark before the conversation's bubble in the header. */
-const BUBBLE = "○";
+const BUBBLE = "🫧";
 
 export const COLOURS = {
   light: "#afd7ff",
