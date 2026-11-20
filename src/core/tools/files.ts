@@ -6,6 +6,7 @@ import { paths } from "../../config";
 import { MAX_IMAGE_BYTES, sniffImage, validateImage, type ImageMime } from "../../api";
 import { withStorageLock } from "../data";
 import { imageBlock, saveImage } from "../data/images";
+import { dataRoots } from "../data/bubbles";
 import { forwardImages } from "./attachments";
 import type { Tool, ToolContext, ToolResult } from "./registry";
 
@@ -23,7 +24,7 @@ export async function filePath(input: unknown, ctx: ToolContext, writing = false
   if (stat?.isSymbolicLink()) throw new Error("use the resolved file path, not a symlink");
   const canonical = stat ? await realpath(path) : join(await realpath(dirname(path)), path.slice(dirname(path).length + 1));
   const roots = [await realpath(ctx.cwd)];
-  if (!writing) for (const dir of [paths.project(ctx.project), paths.runtimeProject(ctx.project), join(paths.root, "skills")]) {
+  if (!writing) for (const dir of [paths.project(ctx.project), paths.runtimeProject(ctx.project), join(paths.root, "skills"), ...dataRoots(ctx.project)]) {
     const resolved = await realpath(dir).catch(error => { if (error.code === "ENOENT") return undefined; throw error; });
     if (resolved) roots.push(resolved);
   }

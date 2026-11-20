@@ -21,6 +21,12 @@ test("runs in cwd", async () => {
   expect((await bash.run({ command: "pwd" }, ctx(dir))).trim()).toBe(dir);
 });
 
+test("a foreground command sees ORCA_DATA, with the global link in place", async () => {
+  const out = await bash.run({ command: 'printf "%s" "$ORCA_DATA"; test -L "$ORCA_DATA/global" && echo " linked"' }, ctx(home));
+  expect(out).toBe(`${join(home, "projects", "p", "data")} linked\n`);
+  expect(bash.spec.description).toContain("$ORCA_DATA/<plugin>");
+});
+
 test("captures stderr and reports non-zero exit", async () => {
   const out = await bash.run({ command: "echo out; echo err >&2; exit 3" }, ctx(home));
   expect(out).toContain("out");

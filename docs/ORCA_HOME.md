@@ -15,9 +15,12 @@ Layout 3 keeps the public home small and separates original evidence from rebuil
       transcript/             # original conversation/agent JSONL and companions
       tool-outputs/           # tool evidence; detailed worker reports in reports/
       images/                 # attachments and input metadata
+      data/                   # plugin data, $ORCA_DATA: <plugin>/, bubble/ → the bubble's data/, global/ → ~/.orca/data/
   worktrees/
     phoebe--3f2a9c1e/          # worker checkouts: one folder per repository and conversation
       fix-login/               # one Git worktree per task branch; removed when its work is merged or closed
+  bubbles/<bubble-id>/data/    # plugin data shared by a bubble's conversations; removed with the bubble
+  data/                        # plugin data shared by every conversation
   mcp.json                     # your MCP servers; edit by hand (docs/MCP.md)
   memory.sqlite                # project metadata, facts, working briefs, ledger/index
   .runtime/

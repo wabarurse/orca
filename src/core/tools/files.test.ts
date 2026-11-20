@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertLayout, paths } from "../../config";
-import { edit, editPreview, mutate, read } from "./files";
+import { ensureBubble, ensureDataDirs } from "../data/bubbles";
+import { edit, editPreview, mutate, read, write } from "./files";
 import type { ToolContext } from "./registry";
 
 let home: string, cwd: string, ctx: ToolContext, previous: string | undefined;
@@ -104,4 +105,16 @@ test("a file changed by another writer between the read and the rename is left a
   await expect(raced).rejects.toThrow("file changed during edit; no changes applied");
   expect(await text("raced.txt")).toBe("theirs\n");
   expect(await readdir(cwd)).toEqual(["raced.txt"]);
+});
+
+test("read opens plugin data through $ORCA_DATA's bubble and global links; write still refuses there", async () => {
+  await ensureBubble("test");
+  const data = await ensureDataDirs("test");
+  for (const scope of ["bubble", "global"]) {
+    await mkdir(join(data, scope, "plugin"), { recursive: true });
+    await writeFile(join(data, scope, "plugin", "state.txt"), `${scope} data\n`);
+    expect(JSON.parse(await read.run({ path: join(data, scope, "plugin", "state.txt") }, ctx) as string).content).toContain(`${scope} data`);
+    await expect(write.run({ path: join(data, scope, "plugin", "state.txt"), content: "changed" }, ctx)).rejects.toThrow("outside");
+  }
+  await expect(write.run({ path: join(data, "own.txt"), content: "changed" }, ctx)).rejects.toThrow("outside");
 });
