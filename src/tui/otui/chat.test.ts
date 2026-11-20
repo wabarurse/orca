@@ -54,6 +54,18 @@ describe("chat view", () => {
     expect(bubbled[2]).toMatch(/^│ anthropic:work +│$/);
   });
 
+  test("tabs that do not fit shift so the active one shows, with … for the ones left out", async () => {
+    const h = await harness(40);
+    const tabs = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"].map((label, i) => ({ label, active: i === 6, busy: false }));
+    const last = await frame(h, chat({ header: { ...header, tabs } }));
+    expect(last[0]).toMatch(/^│ …   \S.* golf  +│$/);
+    expect(last[0]).not.toContain("alpha");
+    const first = await frame(h, chat({ header: { ...header, tabs: tabs.map((t, i) => ({ ...t, active: i === 0 })) } }));
+    expect(first[0]).toMatch(/^│ {2}alpha .*   … +│$/);
+    const middle = await frame(h, chat({ header: { ...header, tabs: tabs.map((t, i) => ({ ...t, active: i === 3 })) } }));
+    expect(middle[0]).toMatch(/^│ …   .* delta .*   … +│$/);
+  });
+
   test("the fin swims beside the details only when the header has one and the screen is at least 72 columns wide", async () => {
     const fin = finRows(32, 0, false);
     const wide = await harness(80);

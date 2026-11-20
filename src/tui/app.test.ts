@@ -635,6 +635,23 @@ describe("tui app", () => {
     expect(writesAfterClose).toBe(1); // Final transcript is printed after restoring the primary screen.
   });
 
+  test("the terminal cursor stays on the input's row as the composer grows and shrinks", async () => {
+    const term = fakeTerm(60, 24);
+    const orchs = fakeOrchestrators();
+    const app = new App({ term, openOrchestrator: orchs.openOrchestrator, pollMs: 100_000 });
+    const running = app.run("alpha");
+    await until(() => !!app.page);
+    const row = async () => { await settle(); await term.settled(); const at = term.cursorAt(); return at ? term.lines()[at.row] ?? "" : ""; };
+    expect(await row()).toMatch(/^│ > +│$/);
+    term.type("one\x1b[13;2utwo");
+    expect(await row()).toMatch(/^│ {3}two +│$/);
+    term.type("\x1b[A");
+    expect(await row()).toMatch(/^│ > one +│$/);
+    term.press({ name: "escape" });
+    expect(await row()).toMatch(/^│ > +│$/);
+    app.quit(); await running;
+  });
+
   test("multi-line input: Shift+enter, paste, rows before history, word deletion", async () => {
     const term = fakeTerm();
     const orchs = fakeOrchestrators();
