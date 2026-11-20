@@ -4,9 +4,6 @@ import { linkAt, screens } from "../components";
 import { tabWindow } from "../header";
 import { applySgr, styledRows } from "./ansi";
 
-/** The bubble mark before the conversation's bubble in the header. */
-const BUBBLE = "🫧";
-
 export const COLOURS = {
   light: "#afd7ff",
   mid: "#87afd7",
@@ -172,7 +169,7 @@ export class ChatView {
     }
     if (end < labels.length - 1) tabs.push(chunk("   …", COLOURS.faint));
     this.info.add(new TextRenderable(this.ctx, { content: styled(tabs), wrapMode: "none" }));
-    if (header.bubble !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk(`${BUBBLE} `, COLOURS.light), chunk(header.bubble, COLOURS.mid)]), wrapMode: "none" }));
+    if (header.bubble !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk(header.bubble, COLOURS.mid)]), wrapMode: "none" }));
     if (header.account !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk(header.account, COLOURS.mid)]), wrapMode: "none" }));
     for (const row of header.details) {
       const at = row.indexOf(" · ");
