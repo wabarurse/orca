@@ -139,6 +139,10 @@ function foreignReasoning(block: ThinkingBlockParam): boolean {
 }
 /** The Messages API refuses a text block with no visible text (HTTP 400), which other providers may have recorded. */
 const blankText = (block: MessageParam["content"][number]) => typeof block !== "string" && block.type === "text" && !block.text.trim();
+/** orca never prefills: a request ending in an assistant message that holds only reasoning is one whose reply never
+ * came (a failed or empty response), and the Messages API refuses to continue it. */
+const reasoningOnly = (message: MessageParam) => message.role === "assistant" && typeof message.content !== "string"
+  && message.content.every(block => block.type === "thinking" || block.type === "redacted_thinking");
 export function claudeMessages(messages: MessageParam[]): MessageParam[] {
   for (const message of messages) if (Array.isArray(message.content)) for (const block of message.content) {
     if (block.type === "image") {
@@ -151,11 +155,13 @@ export function claudeMessages(messages: MessageParam[]): MessageParam[] {
       validatedBase64(item);
     }
   }
-  return messages.map((message) => ({
+  const kept = messages.map((message) => ({
     ...message,
     content: typeof message.content === "string" ? message.content
       : message.content.filter((block) => !blankText(block) && (block.type !== "thinking" || !foreignReasoning(block))),
   })).filter((message) => message.content.length > 0);
+  while (kept.length && reasoningOnly(kept.at(-1)!)) kept.pop();
+  return kept;
 }
 
 export function claudeRequestSettings(model: string, settings: RequestSettings = {}) {

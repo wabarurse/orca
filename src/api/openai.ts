@@ -32,8 +32,8 @@ export function toResponses(messages: MessageParam[]): CodexInputItem[] {
     for (const block of blocks) {
       if (block.type === "text") {
         if (message.role === "user") addUser({ type: "input_text", text: block.text });
-        // Codex accepts stateless assistant history without a stored server item ID.
-        else input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: block.text, annotations: [] }], status: "completed" });
+        // Codex accepts stateless assistant history without a stored server item ID. Blank text says nothing.
+        else if (block.text.trim()) input.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: block.text, annotations: [] }], status: "completed" });
       } else if (block.type === "image") {
         if (message.role !== "user") throw new Error("assistant image input is unsupported.");
         const image = validatedBase64(block);

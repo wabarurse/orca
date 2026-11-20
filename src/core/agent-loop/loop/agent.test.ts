@@ -404,3 +404,19 @@ test("durable requests survive later runs, checkpoints and resets without enteri
   expect(diagnostics).toEqual([]); // Lifecycle evidence stays on disk, outside conversation rows.
   console.info("Captured restored terminal historyRows renderer (not an interactive TUI session):\n" + historyRows(diagnostics, 160).join("\n"));
 });
+
+test("a response that stops for a tool call but carries none is asked to continue, never answered with an empty message", async () => {
+  const transcript = fakeTranscript();
+  await transcript.append(user("work"));
+  const replies: Awaited<ReturnType<Provider["complete"]>>[] = [
+    { stop: "tool_use", content: [{ type: "thinking", thinking: "plan", signature: "s" }] },
+    { stop: "end", content: [text("done")] },
+  ];
+  const seen: MessageParam[][] = [];
+  const provider: Provider = { ...fakeProvider([]), async complete(req) { seen.push(req.messages); return replies.shift()!; } };
+  await createAgent({ provider, transcript, tools: { echo }, model: "m", ctx, write() {} }).run();
+  const chain = await transcript.chain();
+  expect(chain.some(m => Array.isArray(m.content) && m.content.length === 0)).toBe(false);
+  expect(seen[1]!.at(-1)).toEqual({ role: "user", content: "The response stopped for a tool call but contained none. Continue the existing request within its current scope." });
+  expect(chain.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "done" }] });
+});

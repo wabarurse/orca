@@ -101,3 +101,11 @@ test("an empty Codex reply reaches Claude as nothing: blank text is never record
     { role: "user", content: "again" }, { role: "assistant", content: [{ type: "text", text: " \n" }, { type: "text", text: "kept" }] }];
   expect(claudeMessages(history)).toEqual([{ role: "user", content: "task" }, { role: "user", content: "again" }, { role: "assistant", content: [{ type: "text", text: "kept" }] }]);
 });
+
+test("a history ending in a reply that never came (reasoning only) is not sent as a prefill; blank Claude text never reaches Codex", async () => {
+  const history: MessageParam[] = [{ role: "user", content: "task" }, { role: "assistant", content: [{ type: "text", text: "on it" }] },
+    { role: "user", content: [] }, { role: "assistant", content: [{ type: "thinking", thinking: "plan", signature: "claude-signed" }] }];
+  expect(claudeMessages(history)).toEqual(history.slice(0, 2));
+  const codex = toResponses([{ role: "user", content: "task" }, { role: "assistant", content: [{ type: "text", text: "" }, { type: "text", text: "kept" }] }]);
+  expect(codex.filter(item => "role" in item && item.role === "assistant")).toHaveLength(1);
+});
