@@ -58,7 +58,7 @@ export function chatItems(shown: readonly Shown[], cols: number): screens.Screen
 /** The header's rows on screen at `cols`: the tabs, the account and the details (or the fin beside them, when taller), and the box's bottom line. */
 export const headerRows = (header: screens.ScreenHeader | null, cols: number) => {
   if (!header) return 0;
-  const text = 1 + (header.account === null ? 0 : 1) + header.details.length;
+  const text = 1 + (header.bubble === null ? 0 : 1) + (header.account === null ? 0 : 1) + header.details.length;
   return 1 + Math.max(text, header.fin !== null && cols >= screens.FIN_MIN_COLS ? screens.FIN_ROWS : 0);
 };
 

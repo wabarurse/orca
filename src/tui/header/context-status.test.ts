@@ -32,14 +32,14 @@ test("task progress still counts confirmed code reviews, not CI or prepared/lega
 
 test("telemetry and identities remain bounded at narrow widths and height budgets", () => {
   for (const cols of [1, 4, 12, 25, 40, 80, 160]) for (const budget of [0, 1, 2, 4, 8]) {
-    const rows = chapterRows({ tabs: [{ name: "Project" }], active: 0, roles: everyRole("Model-ID"), context: contextStatus("gpt-5.5", 12000), agent: "reviewer-Task" }, cols, budget);
+    const rows = chapterRows({ tabs: [{ name: "Project" }], active: 0, bubble: null, roles: everyRole("Model-ID"), context: contextStatus("gpt-5.5", 12000), agent: "reviewer-Task" }, cols, budget);
     expect(rows.length).toBeLessThanOrEqual(budget);
     for (const row of rows) expect(visibleLength(row)).toBeLessThanOrEqual(cols);
   }
 });
 
 test("lowercase telemetry snapshot preserves project, agent, model and context identity", () => {
-  const chapter = { tabs: [{ name: "MyProject" }], active: 0, roles: everyRole("Provider-Model-ID"), context: contextStatus(undefined), agent: "reviewer-MyTask" };
+  const chapter = { tabs: [{ name: "MyProject" }], active: 0, bubble: null, roles: everyRole("Provider-Model-ID"), context: contextStatus(undefined), agent: "reviewer-MyTask" };
   const rendered = chapterRows(chapter, 100, 9).map(Bun.stripANSI).join("\n");
   expect(rendered).toMatchSnapshot();
   for (const value of ["MyProject", "Provider-Model-ID", chapter.agent, "ctx ?/?"]) expect(rendered).toContain(value);

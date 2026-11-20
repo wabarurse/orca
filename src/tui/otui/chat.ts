@@ -3,6 +3,9 @@ import { CollapsiblePanelRenderable, CollapsibleRootRenderable, CollapsibleTrigg
 import { linkAt, screens } from "../components";
 import { applySgr, styledRows } from "./ansi";
 
+/** The bubble mark before the conversation's bubble in the header. */
+const BUBBLE = "🫧";
+
 export const COLOURS = {
   light: "#afd7ff",
   mid: "#87afd7",
@@ -150,7 +153,7 @@ export class ChatView {
     const wide = cols >= FIN_MIN_COLS && header.fin !== null;
     this.fin.visible = wide;
     if (wide && header.fin !== null) this.fin.content = finText(FIN_COLS, header.fin.time, header.fin.active);
-    const sig = JSON.stringify([header.tabs, header.account, header.details, wide]);
+    const sig = JSON.stringify([header.tabs, header.bubble, header.account, header.details, wide]);
     if (sig === this.headerSig) return;
     this.headerSig = sig;
     for (const child of this.info.getChildren()) child.destroyRecursively();
@@ -161,7 +164,8 @@ export class ChatView {
       tabs.push(tab.active ? chunk(` ${label} `, COLOURS.ink, TextAttributes.BOLD, COLOURS.light) : chunk(label, COLOURS.faint));
     });
     this.info.add(new TextRenderable(this.ctx, { content: styled(tabs), wrapMode: "none" }));
-    if (header.account !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk("account ", COLOURS.faint), chunk(header.account, COLOURS.mid)]), wrapMode: "none" }));
+    if (header.bubble !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk(`${BUBBLE} `, COLOURS.light), chunk(header.bubble, COLOURS.mid)]), wrapMode: "none" }));
+    if (header.account !== null) this.info.add(new TextRenderable(this.ctx, { content: styled([chunk(header.account, COLOURS.mid)]), wrapMode: "none" }));
     for (const row of header.details) {
       const at = row.indexOf(" · ");
       const head = at === -1 ? row : row.slice(0, at);

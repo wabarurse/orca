@@ -14,7 +14,7 @@ afterEach(() => {
   made = [];
 });
 
-const header: screens.ScreenHeader = { tabs: [{ label: "probe", active: true, busy: false }, { label: "other", active: false, busy: true }], account: "anthropic:work", details: ["model · default · ctx 1k/200k"], fin: null };
+const header: screens.ScreenHeader = { tabs: [{ label: "probe", active: true, busy: false }, { label: "other", active: false, busy: true }], bubble: null, account: "anthropic:work", details: ["model · default · ctx 1k/200k"], fin: null };
 
 const chat = (over: Partial<screens.ChatScreen> = {}): screens.ChatScreen => ({ kind: "chat", header: null, items: [], tail: [], welcome: [], footer: ["> "], cursor: { row: 0, col: 2 }, ...over });
 
@@ -40,7 +40,7 @@ describe("chat view", () => {
     const h = await harness();
     const rows = await frame(h, chat({ header }));
     expect(rows[0]).toMatch(/^│ {2}probe {4}other •/);
-    expect(rows[1]).toMatch(/^│ account anthropic:work +│$/);
+    expect(rows[1]).toMatch(/^│ anthropic:work +│$/);
     expect(rows[2]).toMatch(/^│ model · default · ctx 1k\/200k +│$/);
     expect(rows[3]).toMatch(/^└─+┘$/);
     const pill = h.setup.captureSpans().lines[0]?.spans.find(span => span.text.includes("probe"));
@@ -49,6 +49,9 @@ describe("chat view", () => {
     const without = await frame(h, chat({ header: { ...header, account: null } }));
     expect(without[1]).toMatch(/^│ model · default/);
     expect(without[2]).toMatch(/^└─+┘$/);
+    const bubbled = await frame(h, chat({ header: { ...header, bubble: "orca-core" } }));
+    expect(bubbled[1]).toMatch(/^│ 🫧 orca-core +│$/);
+    expect(bubbled[2]).toMatch(/^│ anthropic:work +│$/);
   });
 
   test("the fin swims beside the details only when the header has one and the screen is at least 72 columns wide", async () => {

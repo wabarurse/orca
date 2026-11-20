@@ -1,5 +1,5 @@
 export { accountChoices, login, useAccount } from "./accounts";
-export { activeRoles, effortChoices, modelChoices, pageAccount, setModel, type Choice } from "./model";
+export { activeRoles, effortChoices, modelChoices, pageAccount, pageBubble, setModel, type Choice } from "./model";
 export { bubbleChoices, chooseBubble, type BubbleHost } from "./bubble";
 export { chooseScope, type Scope } from "./scope";
 export { switchAllMenu } from "./switch-all";
