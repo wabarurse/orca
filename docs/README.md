@@ -18,6 +18,7 @@ subscription login, provider implementation and tool guidance.
 ## Design and evidence
 
 - [Harness design plan](PLAN.md)
+- [Core loop and plugins plan](PLUGINS.md)
 - [Terminal selection and isolation](TERMINAL_ISOLATION.md): current behavior first,
   followed by historical investigations retained as evidence, not current UX.
 - [Efficiency evaluation report](../evals/efficiency/REPORT.md) and
