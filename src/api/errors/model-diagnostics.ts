@@ -87,6 +87,19 @@ export function diagnoseModelError(error: unknown, consumed = false, stage: Requ
     }
   }
   const transient = transientFailure(error);
-  return new ModelRequestError(consumed ? "interrupted" : transient ? "exhausted" : "permanent",
-    status, reasonFor(error, status, consumed ? "response" : transient ? "connection" : stage));
+  const reason = reasonFor(error, status, consumed ? "response" : transient ? "connection" : stage);
+  return new ModelRequestError(consumed ? "interrupted" : transient ? "exhausted" : "permanent", status, reason, reason === "rate-limit" ? rateLimitKind(error) : undefined);
+}
+
+/** Which limit a 429 hit, recognised from the provider's message without echoing it (bodies can carry user data, like
+ * the image-limit check above); an unrecognised message keeps the generic guidance. */
+const RATE_LIMITS: [RegExp, string][] = [
+  [/long[- ]context/i, "The account cannot make long-context requests (over 200k tokens) without extra usage. Run /compact to shrink the conversation, or switch to an account with extra usage."],
+  [/input tokens per minute/i, "The account's input-tokens-per-minute limit was reached. Wait a minute before resuming, or run /compact to send less."],
+  [/output tokens per minute/i, "The account's output-tokens-per-minute limit was reached. Wait a minute before resuming."],
+  [/requests per minute/i, "The account's requests-per-minute limit was reached. Wait a minute before resuming."],
+];
+function rateLimitKind(error: unknown): string | undefined {
+  const message = providerErrorEvidence(error)?.message;
+  return typeof message === "string" ? RATE_LIMITS.find(([pattern]) => pattern.test(message))?.[1] : undefined;
 }
