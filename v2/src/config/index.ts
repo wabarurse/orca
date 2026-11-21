@@ -1,3 +1,4 @@
+export { asRecord, errorCode, errorMessage, fail, ok, parseJson, type Result } from "./result";
 export { BUILD_ID } from "./build";
 export { paths } from "./paths";
 export { readState, updateState } from "./state";

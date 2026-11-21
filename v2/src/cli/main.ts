@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { BUILD_ID } from "../config";
+import { BUILD_ID, errorMessage, fail, ok, type Result } from "../config";
 import { conversationFor, listConversations, readConversation } from "../core/conversations";
 import { removeConversation } from "../core/lifecycle";
 import { runDaemon } from "../core/daemon/daemon";
@@ -39,15 +39,13 @@ async function ask(question: string): Promise<boolean> {
   return false;
 }
 
-type Picked = { ok: true; data: string } | { ok: false; error: string };
-
-async function conversationArg(args: string[]): Promise<Picked> {
+async function conversationArg(args: string[]): Promise<Result<string>> {
   const given = option(args, "--conversation");
   if (given !== null) {
-    if (await readConversation(given) === null) return { ok: false, error: `no conversation ${given}` };
-    return { ok: true, data: given };
+    if (await readConversation(given) === null) return fail(`no conversation ${given}`);
+    return ok(given);
   }
-  return { ok: true, data: (await conversationFor(process.cwd())).id };
+  return ok((await conversationFor(process.cwd())).id);
 }
 
 function refuse(error: string): number {
@@ -78,7 +76,8 @@ export async function main(argv: string[]): Promise<number> {
     if (!picked.ok) return refuse(picked.error);
     const conversation = picked.data;
     await say(conversation, text, [], "steer");
-    await ensureDaemon(conversation, null);
+    const started = await ensureDaemon(conversation, null);
+    if (!started.ok) return refuse(started.error);
     out(`sent to ${conversation}\n`);
     return 0;
   }
@@ -91,7 +90,8 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "delete") {
     const conversation = option(args, "--conversation");
     if (conversation === null) { out("usage: orca2 delete --conversation <id>  (stops its agents, removes its folder, $ORCA_DATA and worktrees)\n"); return 2; }
-    await removeConversation(conversation, out);
+    const removed = await removeConversation(conversation, out);
+    if (!removed.ok) return refuse(removed.error);
     out(`deleted ${conversation}\n`);
     return 0;
   }
@@ -99,7 +99,7 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "login") return runLogin(args, out);
   if (command === "accounts") return runAccounts(out);
   if (command === "trust" || command === "untrust") { await setTrust(args[0] ?? process.cwd(), command === "trust"); out(`${command}ed ${args[0] ?? process.cwd()}\n`); return 0; }
-  if (command === "mcp") { await runMcp(args, line => { out(`${line}\n`); }); return 0; }
+  if (command === "mcp") return runMcp(args, line => { out(`${line}\n`); });
   if (command === "plugin") return runPlugin(args, out, ask, process.stdin.isTTY === true);
   if (command === "version" || command === "--version") { out(`orca2 ${BUILD_ID}\n`); return 0; }
   if (command === "help" || command === "--help" || command === "-h") { out(`usage:\n  ${USAGE}\n`); return 0; }
@@ -113,7 +113,7 @@ export async function main(argv: string[]): Promise<number> {
 
 if (import.meta.main) {
   main(process.argv.slice(2)).then(code => { process.exit(code); }, (error: unknown) => {
-    process.stderr.write(`orca2: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`orca2: ${errorMessage(error)}\n`);
     process.exit(1);
   });
 }

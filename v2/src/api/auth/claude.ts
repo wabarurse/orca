@@ -2,9 +2,8 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { paths } from "../../config";
-import { fail, ok, type Result } from "../result";
-import { CredentialError, loginOAuth, validateProfile, withCredentialLock, writeTokens, type Fetch, type LoginOptions, type OAuthTokens as ClaudeTokens } from "./oauth";
+import { fail, ok, paths, type Result } from "../../config";
+import { CredentialError, loginOAuth, parseProfile, validateProfile, withCredentialLock, writeTokens, type Fetch, type LoginOptions, type OAuthTokens as ClaudeTokens } from "./oauth";
 
 export const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 export const CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
@@ -129,8 +128,9 @@ function keychainCredentials(): unknown {
   }
 }
 
-export async function importClaudeCode(profile: string): Promise<void> {
-  validateProfile(profile);
+export async function importClaudeCode(profile: string): Promise<Result<null>> {
+  const named = parseProfile(profile);
+  if (!named.ok) return named;
   const configured = process.env.CLAUDE_CONFIG_DIR;
   const dir = configured ?? join(homedir(), ".claude");
   let value: unknown;
@@ -138,27 +138,32 @@ export async function importClaudeCode(profile: string): Promise<void> {
     const file = Bun.file(join(dir, name));
     if (await file.exists()) {
       const read: Result<unknown> = await file.json().then((data: unknown) => ok(data), () => fail("unreadable"));
-      if (!read.ok) throw new Error("claude code credentials could not be read; use /login anthropic.");
+      if (!read.ok) return fail("claude code credentials could not be read; use /login anthropic.");
       value = read.data;
       break;
     }
   }
   if (value === undefined && process.platform === "darwin" && (configured === undefined || configured === "")) value = keychainCredentials();
-  if (absent(value)) throw new Error("no claude code login found; use /login anthropic to sign in with your claude subscription.");
+  if (absent(value)) return fail("no claude code login found; use /login anthropic to sign in with your claude subscription.");
   const wrapped = credentialFile.safeParse(value);
   const inner = wrapped.success ? wrapped.data.claudeAiOauth ?? wrapped.data.oauth ?? value : value;
-  await saveClaudeTokens(profile, tokensFrom(inner));
+  const tokens = parseTokens(inner);
+  if (!tokens.ok) return tokens;
+  await saveClaudeTokens(profile, tokens.data);
+  return ok(null);
 }
 
-export async function loginClaude(profile: string, options: LoginOptions): Promise<void> {
-  validateProfile(profile);
-  await loginOAuth({
+export async function loginClaude(profile: string, options: LoginOptions): Promise<Result<null>> {
+  const named = parseProfile(profile);
+  if (!named.ok) return named;
+  return loginOAuth({
     label: "claude", authorizeURL: "https://claude.ai/oauth/authorize", clientId: CLAUDE_CLIENT_ID,
     scope: SCOPES, port: 53692, callbackPath: "/callback", extraParams: { code: "true" },
     async exchange(body, fetcher, signal) {
       const tokens = await requestTokens(body, fetcher, undefined, signal);
-      if (!tokens.ok) throw tokens.error;
+      if (!tokens.ok) return fail(tokens.error.message);
       await saveClaudeTokens(profile, tokens.data, signal);
+      return ok(null);
     },
   }, options);
 }

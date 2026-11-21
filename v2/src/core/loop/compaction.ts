@@ -4,7 +4,7 @@ import { effortUpTo, type RequestSettings } from "../../api/model";
 import { historicalMessages } from "../images";
 import { paired, type Transcript } from "../transcript";
 import { budget, ContextBlocked, estimate, fits, inputRoom, limitOf, outputCap, replyCap, requireFits, type Window } from "./budget";
-import { errorMessage, fail, ok, type Result } from "../result";
+import { errorMessage, fail, ok, type Result } from "../../config";
 
 export const COMPACT_AT = 0.9;
 const SUMMARY_TOKENS = 4096;

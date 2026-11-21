@@ -34,7 +34,7 @@ test("pin, list and the tab, count and memory section agree", async () => {
 
 test("the beforeTool hook blocks an over-long pin", async () => {
   const hook = plugin.hooks.beforeTool[0];
-  const pctx: PluginContext = { plugin: "example", conversation: "c", agent: "orchestrator", role: "orchestrator", cwd: home, data: async () => home };
+  const pctx: PluginContext = { plugin: "example", conversation: "c", agent: "orchestrator", role: "orchestrator", cwd: home, data: async () => ({ ok: true, data: home }) };
   const result = await hook?.({ name: "pin", input: { action: "add", text: "x".repeat(201) } }, pctx);
   expect(result?.action).toBe("block");
 });

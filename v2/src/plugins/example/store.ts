@@ -1,13 +1,12 @@
 import { join } from "node:path";
 import { z } from "zod";
+import type { Result } from "../../core/plugins";
 
 const PinSchema = z.object({ id: z.string(), text: z.string(), by: z.string(), at: z.string() });
 const PinsSchema = z.array(PinSchema);
 
 export type Pin = z.infer<typeof PinSchema>;
-export type PinsRead = { ok: true; data: Pin[] } | { ok: false; error: string };
-
-export async function readPins(dir: string): Promise<PinsRead> {
+export async function readPins(dir: string): Promise<Result<Pin[]>> {
   const file = Bun.file(join(dir, "pins.json"));
   if (!await file.exists()) return { ok: true, data: [] };
   let raw: unknown;
@@ -17,8 +16,9 @@ export async function readPins(dir: string): Promise<PinsRead> {
   return parsed.success ? { ok: true, data: parsed.data } : { ok: false, error: `pins.json is not a list of pins: ${parsed.error.message}` };
 }
 
-export async function shownPins(dir: string): Promise<Pin[]> {
-  const read = await readPins(dir);
+export async function shownPins(dir: Result<string>): Promise<Pin[]> {
+  if (!dir.ok) return [];
+  const read = await readPins(dir.data);
   return read.ok ? read.data : [];
 }
 

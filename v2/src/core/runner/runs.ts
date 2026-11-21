@@ -1,11 +1,10 @@
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../config";
+import { parseJson, paths } from "../../config";
 import { writeAtomic } from "../conversations";
 import { pidAlive } from "../lock";
 import type { AgentInfo } from "../tools/registry";
 import { z } from "zod";
-import { parseJson } from "../result";
 import type { Role } from "../types";
 
 export type RunState = AgentInfo["state"];

@@ -1,4 +1,4 @@
-import { searchInput, searchOperation, searchText, SearchError } from "../../api/search";
+import { parseSearchInput, searchOperation, searchText, SearchError } from "../../api/search";
 import type { Tool } from "./registry";
 
 export const web_search: Tool = {
@@ -14,13 +14,19 @@ export const web_search: Tool = {
     },
   },
   async run(input, ctx) {
-    const { query, maxResults } = searchInput(input);
-    return searchOperation(ctx.signal, async signal => {
-      const search = ctx.provider.search;
-      if (search === undefined) throw new SearchError("unsupported");
-      const result = await search.call(ctx.provider, { query, maxResults, signal, model: ctx.model, settings: ctx.settings ?? {} });
+    const parsed = parseSearchInput(input);
+    if (!parsed.ok) throw parsed.error;
+    const { query, maxResults } = parsed.data;
+    const search = ctx.provider.search;
+    if (search === undefined) throw new SearchError("unsupported");
+    const result = await searchOperation(ctx.signal, async signal => {
+      const found = await search.call(ctx.provider, { query, maxResults, signal, model: ctx.model, settings: ctx.settings ?? {} });
       signal.throwIfAborted();
-      return searchText(result, maxResults);
+      return found;
     });
+    if (!result.ok) throw result.error;
+    const text = searchText(result.data, maxResults);
+    if (!text.ok) throw text.error;
+    return text.data;
   },
 };

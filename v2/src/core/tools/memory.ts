@@ -50,7 +50,7 @@ export const memory: Tool = {
         if (!e.success) throw new Error("each added entry needs text");
         return { text: e.data.text, sources: e.data.sources === undefined ? [] : strings(e.data.sources, 8, "sources") };
       }) : [];
-      const id = bubble ?? (await ensureBubble(ctx.conversation)).id;
+      const id = bubble ?? settled(await ensureBubble(ctx.conversation)).id;
       const node = settled(await writeNode(id, { node: input.node, title: typeof input.title === "string" ? input.title : null, summary: typeof input.summary === "string" ? input.summary : null,
         keywords: input.keywords === undefined ? null : strings(input.keywords, 12, "keywords"), add,
         retire: Array.isArray(input.retire) ? input.retire.map(Number) : [], revision: typeof input.revision === "number" ? input.revision : null }, ctx.agent));

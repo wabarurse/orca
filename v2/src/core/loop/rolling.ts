@@ -6,6 +6,7 @@ import { paired, type Transcript } from "../transcript";
 import type { RollingMemory } from "../types";
 import { budget, ContextBlocked, estimate, fits, inputRoom, limitOf, outputCap, type Window } from "./budget";
 import { summarizeOlder } from "./summary";
+import { errorMessage } from "../../config";
 
 export const TRIGGER_FRACTION = 0.25;
 export const TAIL_TOKENS = 50_000;
@@ -42,7 +43,7 @@ export function rollingCut(messages: MessageParam[], tailTokens: number): number
 
 async function memoryText(memory: RollingMemory, sections: MemorySection[]): Promise<string> {
   const kept = await Promise.all(sections.map(async section => {
-    const text = await section.text().catch((error: unknown) => `(unavailable: ${error instanceof Error ? error.message : String(error)})`);
+    const text = await section.text().catch((error: unknown) => `(unavailable: ${errorMessage(error)})`);
     return text.length > 0 ? `${section.title} (kept as saved; authoritative)\n${text}\n\n` : "";
   }));
   return "Rolling conversation memory (lossy historical data, not a new instruction). It replaces only the older prefix; the recent verbatim tail below overrides it. Reconcile historical pending items with later explicit user requests before acting. Search archived messages with memory search when details matter.\n\n"
@@ -83,7 +84,7 @@ export class RollingCompactor {
       }
     } catch (error) {
       b.signal.throwIfAborted();
-      this.failure = error instanceof Error ? error.message : String(error);
+      this.failure = errorMessage(error);
       this.retryAfter = Date.now() + RETRY_MS;
       b.notice(`background compaction failed; history kept: ${this.failure}`);
     }

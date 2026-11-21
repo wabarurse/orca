@@ -15,7 +15,9 @@ const ui: PluginUi = defineUi({
       key: "d", label: "unpin",
       run: async (row, host) => {
         if (row === null || !await host.confirm(`unpin ${row.id}?`)) return;
-        const dir = await host.data("conversation");
+        const folder = await host.data("conversation");
+        if (!folder.ok) { host.note(folder.error); return; }
+        const dir = folder.data;
         const read = await readPins(dir);
         if (!read.ok) { host.note(read.error); return; }
         await writePins(dir, read.data.filter(p => p.id !== row.id));
@@ -29,7 +31,9 @@ const ui: PluginUi = defineUi({
     run: async (args, host) => {
       const text = args.trim().length > 0 ? args.trim() : await host.input("pin", "");
       if (text === null || text.length === 0) return;
-      const dir = await host.data("conversation");
+      const folder = await host.data("conversation");
+      if (!folder.ok) { host.note(folder.error); return; }
+      const dir = folder.data;
       const read = await readPins(dir);
       if (!read.ok) { host.note(read.error); return; }
       const pins = read.data;

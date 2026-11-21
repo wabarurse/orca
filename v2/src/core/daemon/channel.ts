@@ -1,10 +1,9 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../config";
+import { parseJson, paths } from "../../config";
 import { writeAtomic } from "../conversations";
 import { z } from "zod";
 import { lockOwner, pidAlive } from "../lock";
-import { parseJson } from "../result";
 
 export type DaemonStatus = { pid: number; run: string; state: "idle" | "turn" | "stopped"; since: string; turns: number; error: string | null; contextTokens: number | null };
 export type Command = { id: string; kind: "cancel" | "compact" | "stop"; at: string };

@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { access, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { paths } from "../config";
-import { errorCode } from "./result";
+import { errorCode, paths } from "../config";
 
 export async function repositoryRoot(base: string): Promise<string> {
   for (let dir = base; ; dir = dirname(dir)) {

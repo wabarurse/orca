@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { fail, ok, type Result } from "../result";
 import { knownEfforts, modelCapabilities, type Effort } from "./capabilities";
+import { fail, ok, type Result } from "../../config";
 
 export type RequestSettings = { effort?: Effort; fast?: boolean };
 

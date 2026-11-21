@@ -8,6 +8,7 @@ import {
   CLAUDE_CLIENT_ID, CLAUDE_TOKEN_URL, claudeCredentials, claudeCredentialsPath,
   claudeProfiles, importClaudeCode, loginClaude, readClaudeTokens, saveClaudeTokens,
 } from "./claude";
+const refused = (result: { ok: true; data: null } | { ok: false; error: string }): string => result.ok ? "" : result.error;
 function required<T>(value: T | null | undefined): T {
   if (value === null || value === undefined) throw new Error("missing test value");
   return value;
@@ -95,7 +96,7 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
       return tokenResponse();
     },
   });
-  await login;
+  expect(await login).toEqual({ ok: true, data: null });
   await callback;
   expect((await readClaudeTokens("personal"))?.refreshToken).toBe("new-refresh");
   expect(claudeProfiles()).toEqual(["personal"]);
@@ -110,13 +111,13 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
 test("cancelled login releases its callback port and saves nothing", async () => {
   const abort = new AbortController();
   let port = 0;
-  await expect(loginClaude("default", {
+  expect(refused(await loginClaude("default", {
     port: 0, signal: abort.signal, write() {},
     openBrowser(url) {
       port = Number(new URL(required(new URL(url).searchParams.get("redirect_uri"))).port);
       abort.abort();
     },
-  })).rejects.toThrow("cancelled");
+  }))).toContain("cancelled");
   const server = Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response() });
   await server.stop(true);
   expect(claudeProfiles()).toEqual([]);
@@ -130,10 +131,10 @@ test("login prints an ssh tunnel hint only over ssh and removes the URL file whe
       if (ssh) process.env.SSH_CONNECTION = "1.2.3.4 5 6.7.8.9 22";
       const abort = new AbortController();
       let written = "";
-      await expect(loginClaude("default", {
+      expect(refused(await loginClaude("default", {
         port: 0, signal: abort.signal, write(text) { written += text; },
         openBrowser() { abort.abort(); },
-      })).rejects.toThrow("cancelled");
+      }))).toContain("cancelled");
       expect(written.includes("ssh -L")).toBe(ssh);
       expect(existsSync(join(home, ".runtime", "login-url.txt"))).toBe(false);
     }
@@ -147,10 +148,10 @@ test("login still works with just the short link when the URL file cannot be wri
   mkdirSync(join(home, ".runtime", "login-url.txt"), { recursive: true });
   const abort = new AbortController();
   let written = "";
-  await expect(loginClaude("default", {
+  expect(refused(await loginClaude("default", {
     port: 0, signal: abort.signal, write(text) { written += text; },
     openBrowser() { abort.abort(); },
-  })).rejects.toThrow("cancelled");
+  }))).toContain("cancelled");
   expect(written).toMatch(/http:\/\/localhost:\d+\/login\//);
   expect(written).not.toContain("login-url.txt");
   expect(statSync(join(home, ".runtime", "login-url.txt")).isDirectory()).toBe(true);
@@ -162,7 +163,7 @@ test("cancelling a code exchange aborts the request and preserves the previous l
   const abort = new AbortController();
   let callback: Promise<Response> | undefined;
   let exchangeAborted = false;
-  await expect(loginClaude("default", {
+  expect(refused(await loginClaude("default", {
     port: 0, signal: abort.signal, write() {},
     openBrowser(url) {
       const authorization = new URL(url);
@@ -178,7 +179,7 @@ test("cancelling a code exchange aborts the request and preserves the previous l
       abort.abort();
       return pending;
     },
-  })).rejects.toThrow("cancelled");
+  }))).toContain("cancelled");
   expect(required(await callback).status).toBe(400);
   expect(exchangeAborted).toBe(true);
   expect(await readClaudeTokens("default")).toEqual(original);
@@ -189,7 +190,7 @@ test("denied browser authorization leaves the existing profile untouched", async
   await saveClaudeTokens("default", original);
   let callback: Promise<Response> | undefined;
   let exchanges = 0;
-  await expect(loginClaude("default", {
+  expect(refused(await loginClaude("default", {
     port: 0, write() {},
     openBrowser(url) {
       const authorization = new URL(url);
@@ -199,7 +200,7 @@ test("denied browser authorization leaves the existing profile untouched", async
       callback = fetch(target);
     },
     async fetcher() { exchanges++; return tokenResponse(); },
-  })).rejects.toThrow("cancelled or denied");
+  }))).toContain("cancelled or denied");
   expect(required(await callback).status).toBe(400);
   expect(exchanges).toBe(0);
   expect(await readClaudeTokens("default")).toEqual(original);
@@ -285,7 +286,7 @@ test("Claude Code import copies credentials without changing the source or other
   const data = JSON.stringify({ claudeAiOauth: fresh() });
   await Bun.write(source, data);
   await saveClaudeTokens("work", { ...fresh(), accessToken: "work-access" });
-  await importClaudeCode("personal");
+  expect(await importClaudeCode("personal")).toEqual({ ok: true, data: null });
   expect((await readClaudeTokens("personal"))?.accessToken).toBe("test-access");
   expect((await readClaudeTokens("work"))?.accessToken).toBe("work-access");
   expect(await Bun.file(source).text()).toBe(data);
@@ -294,7 +295,7 @@ test("Claude Code import copies credentials without changing the source or other
 
 test("missing, invalid and unsafe profiles fail without reading developer-platform credentials", async () => {
   await expect(claudeCredentials("missing")()).rejects.toThrow("not signed in");
-  await expect(importClaudeCode("missing")).rejects.toThrow("no claude code login");
+  expect(refused(await importClaudeCode("missing"))).toContain("no claude code login");
   for (const name of ["../outside", "a/b", "", "env", "x".repeat(65)]) {
     await expect(saveClaudeTokens(name, fresh())).rejects.toThrow("profile must");
   }

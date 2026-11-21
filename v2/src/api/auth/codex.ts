@@ -2,9 +2,8 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { paths } from "../../config";
-import { fail, ok, type Result } from "../result";
-import { CredentialError, loginOAuth, validateProfile, type OAuthTokens, withCredentialLock, writeTokens, type Fetch, type LoginOptions } from "./oauth";
+import { fail, ok, paths, type Result } from "../../config";
+import { CredentialError, loginOAuth, parseProfile, validateProfile, type OAuthTokens, withCredentialLock, writeTokens, type Fetch, type LoginOptions } from "./oauth";
 
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -144,24 +143,28 @@ async function nativeTokens(authPath: string): Promise<Result<CodexTokens>> {
   return tokens.ok ? tokens : invalid;
 }
 
-export async function importCodex(profile: string, authPath = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json")): Promise<void> {
-  validateProfile(profile);
-  if (!(await Bun.file(authPath).exists())) throw new Error("no codex file login found; use /login openai to sign in with chatgpt.");
+export async function importCodex(profile: string, authPath = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json")): Promise<Result<null>> {
+  const named = parseProfile(profile);
+  if (!named.ok) return named;
+  if (!(await Bun.file(authPath).exists())) return fail("no codex file login found; use /login openai to sign in with chatgpt.");
   const tokens = await nativeTokens(authPath);
-  if (!tokens.ok) throw new Error(tokens.error);
+  if (!tokens.ok) return tokens;
   await saveCodexTokens(profile, tokens.data);
+  return ok(null);
 }
 
-export async function loginCodex(profile: string, options: LoginOptions): Promise<void> {
-  validateProfile(profile);
-  await loginOAuth({
+export async function loginCodex(profile: string, options: LoginOptions): Promise<Result<null>> {
+  const named = parseProfile(profile);
+  if (!named.ok) return named;
+  return loginOAuth({
     label: "chatgpt (codex)", authorizeURL: "https://auth.openai.com/oauth/authorize", clientId: CODEX_CLIENT_ID,
     scope: "openid profile email offline_access", port: 1455, callbackPath: "/auth/callback",
     extraParams: { id_token_add_organizations: "true", codex_cli_simplified_flow: "true", originator: "codex_cli_rs" },
     async exchange(body, fetcher, signal) {
       const tokens = await requestTokens(body, fetcher, undefined, signal);
-      if (!tokens.ok) throw tokens.error;
+      if (!tokens.ok) return fail(tokens.error.message);
       await saveCodexTokens(profile, tokens.data, signal);
+      return ok(null);
     },
   }, options);
 }

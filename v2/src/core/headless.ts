@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { paths } from "../config";
+import { errorMessage, paths, type Result } from "../config";
 import { createConversation, readConversation, saveConversation } from "./conversations";
 import { lockPath } from "./daemon/channel";
 import { pending, put } from "./inbox";
@@ -23,7 +23,7 @@ export type HeadlessOptions = {
   yes: boolean;
   trust: boolean;
   out: (text: string) => void;
-  resolve: (() => Promise<Resolved>) | null;
+  resolve: (() => Promise<Result<Resolved>>) | null;
 };
 
 const IDLE_POLL_MS = 500;
@@ -75,7 +75,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
     }
   } catch (cause) {
     status = abort.signal.aborted ? "cancelled" : "failed";
-    error = cause instanceof Error ? cause.message : String(cause);
+    error = errorMessage(cause);
   } finally {
     rolling?.dispose();
     await release();

@@ -1,8 +1,7 @@
 import { join } from "node:path";
-import { paths } from "../../config";
+import { fail, ok, paths, type Result } from "../../config";
 import { z } from "zod";
 import { withStorageLock } from "../lock";
-import { fail, ok, type Result } from "../result";
 import { bubbleDir, readJson, rows as validRows, writeFileAtomic } from "./store";
 
 export type BehaviorLine = { key: string; text: string; confidence: "explicit" | "tentative"; source: string; quote: string; at: string };

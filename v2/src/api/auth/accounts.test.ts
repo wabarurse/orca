@@ -4,12 +4,22 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accounts } from "./accounts";
-import { provider } from "../account";
+import { provider as loadProvider } from "../account";
 import { CLAUDE_TOKEN_URL, saveClaudeTokens } from "./claude";
 import { CLAUDE_BETAS } from "../anthropic";
+import type { Provider } from "../provider";
 import { clearCatalogEfforts, modelCapabilities } from "../model/capabilities";
 import { saveCodexTokens } from "./codex";
 import { fakeCodexTokens } from "../../test/codex";
+async function provider(...args: Parameters<typeof loadProvider>): Promise<Provider> {
+  const loaded = await loadProvider(...args);
+  if (!loaded.ok) throw new Error(loaded.error);
+  return loaded.data;
+}
+async function refusal(...args: Parameters<typeof loadProvider>): Promise<string> {
+  const loaded = await loadProvider(...args);
+  return loaded.ok ? "" : loaded.error;
+}
 function required<T>(value: T | null | undefined): T {
   if (value === null || value === undefined) throw new Error("missing test value");
   return value;
@@ -46,8 +56,8 @@ test("named subscription profiles load without any default login and expose only
   await saveProfile("personal");
   expect((await provider("openai", { profile: "phoebe" })).account).toBe("openai:phoebe");
   expect((await provider("anthropic", { profile: "personal" })).account).toBe("anthropic:personal");
-  await expect(provider("openai")).rejects.toThrow("default");
-  await expect(provider("anthropic", { profile: "missing" })).rejects.toThrow("missing");
+  expect(await refusal("openai")).toContain("default");
+  expect(await refusal("anthropic", { profile: "missing" })).toContain("missing");
 });
 
 function streamResponse(): Response {
@@ -139,8 +149,8 @@ test("environment and legacy saved API keys cannot authenticate either provider"
   process.env.ANTHROPIC_API_KEY = "unused-anthropic-key";
   process.env.OPENAI_API_KEY = "unused-openai-key";
   await Bun.write(join(home, "credentials.json"), JSON.stringify({ openai: "unused-saved-key" }));
-  await expect(provider("anthropic", { profile: "none" })).rejects.toThrow("not signed in");
-  await expect(provider("openai", { profile: "none" })).rejects.toThrow("not signed in");
+  expect(await refusal("anthropic", { profile: "none" })).toContain("not signed in");
+  expect(await refusal("openai", { profile: "none" })).toContain("not signed in");
   expect((await accounts()).every((account) => !account.ok && !account.active)).toBe(true);
   expect((await accounts({ provider: "openai", profile: "default" })).filter((account) => account.active)).toHaveLength(1);
 });
@@ -171,13 +181,13 @@ test("Codex account selection stays independent of Claude and ignores API creden
     return Response.json({ models: [{ slug: "gpt-test", visibility: "list" }] });
   });
   expect(await (await provider("openai", { profile: "work" })).models()).toEqual(["gpt-test"]);
-  await expect(provider("openai", { profile: "missing" })).rejects.toThrow("not signed in");
+  expect(await refusal("openai", { profile: "missing" })).toContain("not signed in");
 });
 
 test("custom Anthropic Authorization headers cannot select a different authentication flow", async () => {
   await saveProfile("default");
   process.env.ANTHROPIC_CUSTOM_HEADERS = "Authorization: Bearer platform-token";
-  await expect(provider("anthropic")).rejects.toThrow("custom anthropic authorization headers are unsupported");
+  expect(await refusal("anthropic")).toContain("custom anthropic authorization headers are unsupported");
 });
 
 test("a 401 refreshes the subscription token once and retries with the rotated token", async () => {
@@ -213,7 +223,7 @@ test("profile switching updates credentials; missing selection cannot fall back 
   expect(used).toEqual(["Bearer account-one", "Bearer account-two"]);
   expect((await accounts({ provider: "anthropic", profile: "two" })).find((a) => a.id === "anthropic:two")?.active).toBe(true);
   await Bun.write(join(required(process.env.ANTHROPIC_CONFIG_DIR), "credentials", "legacy.json"), JSON.stringify({ access_token: "platform-token" }));
-  await expect(provider("anthropic", { profile: "legacy" })).rejects.toThrow("not signed in");
+  expect(await refusal("anthropic", { profile: "legacy" })).toContain("not signed in");
   expect((await accounts({ provider: "anthropic", profile: "legacy" })).find((a) => a.id === "anthropic:legacy")).toMatchObject({ ok: false, active: true });
   expect(used).toHaveLength(2);
 });

@@ -2,6 +2,7 @@ import type { MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/
 import type { MemorySection } from "../loop/rolling";
 import type { Tool, ToolResult } from "../tools/registry";
 import type { Message, Role } from "../types";
+import type { Result } from "../../config";
 
 export type StorageScope = "conversation" | "bubble" | "global";
 
@@ -11,7 +12,7 @@ export type PluginContext = {
   agent: string;
   role: Role;
   cwd: string;
-  data: (scope: StorageScope) => Promise<string>;
+  data: (scope: StorageScope) => Promise<Result<string>>;
 };
 
 export type ToolCallInfo = { name: string; input: Record<string, unknown> };
@@ -105,4 +106,4 @@ export function defineBackground(background: PluginBackground): PluginBackground
   return background;
 }
 
-export type { MemorySection };
+export type { MemorySection, Result };

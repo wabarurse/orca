@@ -26,7 +26,9 @@ describe("plugins", () => {
     const c = await createConversation(home.path(), "a");
     await saveConfig({ plugins: ["alpha", "beta"] });
     expect(await enabledNames(c.id)).toEqual(["alpha", "beta"]);
-    const bubble = await ensureBubble(c.id);
+    const ensured = await ensureBubble(c.id);
+    if (!ensured.ok) throw new Error(ensured.error);
+    const bubble = ensured.data;
     await setBubblePlugin(bubble.id, "beta", "off");
     await setBubblePlugin(bubble.id, "gamma", "on");
     expect(await enabledNames(c.id)).toEqual(["alpha", "gamma"]);

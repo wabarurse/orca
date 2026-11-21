@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { loadConfig, paths, saveConfig } from "../config";
+import { loadConfig, ok, paths, saveConfig, type Result } from "../config";
 import { ensureBubble, setBubblePlugin } from "../core/bubbles";
 import { conversationFor } from "../core/conversations";
 import { availablePlugins, builtinPlugins, loadForCheck, pluginHash, type LoadedPlugin } from "../core/plugins";
@@ -25,13 +25,16 @@ function locate(target: string): string | null {
   return builtinPlugins().find(p => p.name === target)?.dir ?? null;
 }
 
-export async function describePlugin(loaded: LoadedPlugin): Promise<string[]> {
+export async function describePlugin(loaded: LoadedPlugin): Promise<Result<string[]>> {
   const p = loaded.plugin;
-  const ui = await loaded.ui();
-  const background = await loaded.background();
+  const loadedUi = await loaded.ui();
+  if (!loadedUi.ok) return loadedUi;
+  const loadedBackground = await loaded.background();
+  if (!loadedBackground.ok) return loadedBackground;
+  const ui = loadedUi.data, background = loadedBackground.data;
   const listed = (names: string[]): string => names.length > 0 ? names.join(", ") : "none";
   const hooks = Object.entries(p.hooks).filter(([, list]) => list.length > 0).map(([name, list]) => `${name} ×${list.length}`);
-  return [
+  return ok([
     `${p.name}: ${p.description}`,
     `  tools: ${p.tools.length > 0 ? p.tools.map(t => `${t.tool.spec.name} (${t.roles.join(", ")}${t.replaces ? ", replaces core" : ""})`).join("; ") : "none"}`,
     `  hooks: ${hooks.length > 0 ? hooks.join(", ") : "none"}`,
@@ -40,7 +43,7 @@ export async function describePlugin(loaded: LoadedPlugin): Promise<string[]> {
     `  ui: ${ui === null ? "none" : `tabs ${listed(ui.tabs.map(t => t.title))}; commands ${listed(ui.commands.map(c => `/${c.name}`))}; counts ${ui.counts.length}`}`,
     `  background: ${background === null ? "none" : `watchers ${listed(background.watchers.map(w => w.name))}${background.runner === null ? "" : `; runner ${background.runner.name}`}${background.memory === null ? "" : `; memory section "${background.memory.title}"`}`}`,
     `  folder: ${loaded.dir}`,
-  ];
+  ]);
 }
 
 async function newPlugin(args: string[], out: Out): Promise<number> {
@@ -71,12 +74,14 @@ export async function checkPlugin(args: string[], out: Out): Promise<number> {
   let failures = 0;
   const fail = (text: string): void => { failures++; out(`FAIL ${text}\n`); };
   try {
-    let loaded: LoadedPlugin | null = null;
-    try { loaded = await loadForCheck(dir, name); out(`ok   loads: ${loaded.plugin.name}\n`); }
-    catch (error) { fail(`load: ${error instanceof Error ? error.message : String(error)}`); }
+    const loading = await loadForCheck(dir, name);
+    const loaded: LoadedPlugin | null = loading.ok ? loading.data : null;
+    if (loading.ok) out(`ok   loads: ${loading.data.plugin.name}\n`);
+    else fail(`load: ${loading.error}`);
     if (loaded !== null) {
-      try { for (const line of await describePlugin(loaded)) out(`     ${line}\n`); }
-      catch (error) { fail(`ui/background: ${error instanceof Error ? error.message : String(error)}`); }
+      const described = await describePlugin(loaded);
+      if (described.ok) for (const line of described.data) out(`     ${line}\n`);
+      else fail(`ui/background: ${described.error}`);
       for (const skill of loaded.plugin.skills) if (!existsSync(join(dir, skill, "SKILL.md"))) fail(`skill folder ${skill} has no SKILL.md`);
     }
     const tsc = ["tsc", "tsc6"].map(name => join(APP_ROOT, "node_modules", "typescript", "bin", name)).find(path => existsSync(path)) ?? "";
@@ -103,11 +108,22 @@ export async function checkPlugin(args: string[], out: Out): Promise<number> {
   return failures === 0 ? 0 : 1;
 }
 
-async function scopeBubble(args: string[]): Promise<string | null> {
-  if (!args.includes("--bubble")) return null;
+async function scopeBubble(args: string[]): Promise<Result<string | null>> {
+  if (!args.includes("--bubble")) return ok(null);
   const given = option(args, "--bubble");
-  if (given !== null && given.startsWith("bubble-")) return given;
-  return (await ensureBubble((await conversationFor(process.cwd())).id)).id;
+  if (given !== null && given.startsWith("bubble-")) return ok(given);
+  const bubble = await ensureBubble((await conversationFor(process.cwd())).id);
+  return bubble.ok ? ok(bubble.data.id) : bubble;
+}
+
+async function switchBubblePlugin(args: string[], name: string, state: "on" | "off", out: Out): Promise<number | null> {
+  const bubble = await scopeBubble(args);
+  if (!bubble.ok) { out(`${bubble.error}\n`); return 1; }
+  if (bubble.data === null) return null;
+  const switched = await setBubblePlugin(bubble.data, name, state);
+  if (!switched.ok) { out(`${switched.error}\n`); return 1; }
+  out(`${name} ${state} for ${bubble.data}\n`);
+  return 0;
 }
 
 export async function enablePlugin(args: string[], out: Out, ask: Ask, interactive: boolean): Promise<number> {
@@ -127,16 +143,17 @@ export async function enablePlugin(args: string[], out: Out, ask: Ask, interacti
     const pinned = `${name}@${await pluginHash(dir)}`;
     if (!config.approved.includes(pinned)) {
       if (!interactive) { out(`refused: enabling ${name} needs the user's approval at a terminal (run orca2 plugin enable ${name} yourself)\n`); return 3; }
-      let loaded: LoadedPlugin;
-      try { loaded = await loadForCheck(dir, name); }
-      catch (error) { out(`${name} does not load: ${error instanceof Error ? error.message : String(error)}\n`); return 1; }
-      out(`${(await describePlugin(loaded)).join("\n")}\nIt will run with your permissions.\n`);
+      const loaded = await loadForCheck(dir, name);
+      if (!loaded.ok) { out(`${name} does not load: ${loaded.error}\n`); return 1; }
+      const described = await describePlugin(loaded.data);
+      if (!described.ok) { out(`${name} does not load: ${described.error}\n`); return 1; }
+      out(`${described.data.join("\n")}\nIt will run with your permissions.\n`);
       if (!await ask(`Approve and enable ${name}?`)) { out("not enabled\n"); return 1; }
       await saveConfig({ approved: [...config.approved.filter(entry => !entry.startsWith(`${name}@`)), pinned] });
     }
   }
-  const bubble = await scopeBubble(args);
-  if (bubble !== null) { await setBubblePlugin(bubble, name, "on"); out(`${name} on for ${bubble}\n`); return 0; }
+  const scoped = await switchBubblePlugin(args, name, "on", out);
+  if (scoped !== null) return scoped;
   const config = await loadConfig();
   if (!config.plugins.includes(name)) await saveConfig({ plugins: [...config.plugins, name].sort() });
   out(`${name} enabled (applies to the next agent or orchestrator turn)\n`);
@@ -145,8 +162,8 @@ export async function enablePlugin(args: string[], out: Out, ask: Ask, interacti
 
 async function disablePlugin(args: string[], out: Out): Promise<number> {
   const name = args[0] ?? "";
-  const bubble = await scopeBubble(args);
-  if (bubble !== null) { await setBubblePlugin(bubble, name, "off"); out(`${name} off for ${bubble}\n`); return 0; }
+  const scoped = await switchBubblePlugin(args, name, "off", out);
+  if (scoped !== null) return scoped;
   const config = await loadConfig();
   await saveConfig({ plugins: config.plugins.filter(p => p !== name) });
   out(`${name} disabled\n`);

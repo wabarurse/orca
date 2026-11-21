@@ -2,13 +2,14 @@ import type { Tool as ApiTool, MessageParam } from "@anthropic-ai/sdk/resources/
 import type { AfterTool, BeforeRequest, BeforeTool, OnInput, PluginContext } from "../plugins/types";
 import type { ToolResult } from "../tools/registry";
 import type { Message } from "../types";
+import { errorMessage } from "../../config";
 
 export type Bound<H> = { hook: H; ctx: PluginContext };
 export type LoopHooks = { beforeTool: Bound<BeforeTool>[]; afterTool: Bound<AfterTool>[]; beforeRequest: Bound<BeforeRequest>[]; onInput: Bound<OnInput>[] };
 
 export const emptyHooks = (): LoopHooks => ({ beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] });
 
-const named = (ctx: PluginContext, error: unknown): Error => new Error(`plugin ${ctx.plugin}: ${error instanceof Error ? error.message : String(error)}`);
+const named = (ctx: PluginContext, error: unknown): Error => new Error(`plugin ${ctx.plugin}: ${errorMessage(error)}`);
 
 export type ToolDecision = { action: "run"; input: Record<string, unknown> } | { action: "block"; reason: string };
 

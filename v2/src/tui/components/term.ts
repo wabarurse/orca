@@ -17,7 +17,6 @@ export type Terminal = {
   open(): void;
   close(): void;
   eraseOnExit(text: string): void;
-  background?: Promise<void>;
   show(screen: Screen): void;
   scroll(by: "up" | "down" | "page-up" | "page-down" | "home" | "end"): void;
   onAction(cb: (action: ScreenAction) => void): void;

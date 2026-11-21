@@ -5,7 +5,9 @@ const background: PluginBackground = defineBackground({
   watchers: [{
     name: "dedupe", everyMs: 60_000,
     run: async ctx => {
-      const dir = await ctx.data("conversation");
+      const folder = await ctx.data("conversation");
+      if (!folder.ok) return;
+      const dir = folder.data;
       const read = await readPins(dir);
       if (!read.ok) return;
       const pins = read.data;

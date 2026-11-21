@@ -1,9 +1,10 @@
+import { errorMessage, fail, ok, type Result } from "../../config";
 import { createCliRenderer, type CliRenderer, type CliRendererConfig, type KeyEvent, type PasteEvent } from "@opentui/core";
 import { BG_REPLY_MS, imageProtocol, plainText, useTerminalBackground, type Key, type Terminal, type screens } from "../components";
 import { Display, type ScrollBy } from "./display";
 import { keyFrom, pasteFrom } from "./keys";
 
-export type PaintingTerminal = Terminal & { released: Promise<void> };
+export type PaintingTerminal = Terminal & { released: Promise<void>; launched: Promise<Result<null>> };
 
 type Live = { renderer: CliRenderer; display: Display };
 
@@ -35,11 +36,9 @@ export function hexColor(hex: string): { r: number; g: number; b: number } | nul
 
 const size = (value: number | undefined, fallback: number): number => value !== undefined && value > 0 ? value : fallback;
 
-export type Opened = { ok: true; data: PaintingTerminal } | { ok: false; error: string };
-
-export function openTuiTerminal(launch: Launch = createCliRenderer, stdin: Input = process.stdin, stdout: Output = process.stdout, proc: Proc = realProc): Opened {
-  if (stdin.isTTY !== true || stdout.isTTY !== true) return { ok: false, error: "orca2 start needs a terminal; run it from an interactive shell" };
-  return { ok: true, data: new OpenTuiTerminal(launch, stdout, proc) };
+export function openTuiTerminal(launch: Launch = createCliRenderer, stdin: Input = process.stdin, stdout: Output = process.stdout, proc: Proc = realProc): Result<PaintingTerminal> {
+  if (stdin.isTTY !== true || stdout.isTTY !== true) return fail("orca2 start needs a terminal; run it from an interactive shell");
+  return ok(new OpenTuiTerminal(launch, stdout, proc));
 }
 
 class OpenTuiTerminal implements PaintingTerminal {
@@ -48,8 +47,9 @@ class OpenTuiTerminal implements PaintingTerminal {
   inlineImages = false;
   imageCell: { width: number; height: number } | undefined = undefined;
   imageProtocol: "kitty" | null = imageProtocol(process.env);
-  background: Promise<void> = Promise.resolve();
   released: Promise<void> = Promise.resolve();
+  private readonly launchDone = Promise.withResolvers<Result<null>>();
+  readonly launched: Promise<Result<null>> = this.launchDone.promise;
   private live: Live | null = null;
   private opened = false;
   private shut = false;
@@ -98,9 +98,9 @@ class OpenTuiTerminal implements PaintingTerminal {
     if (this.opened) return;
     this.opened = true;
     for (const [event, listener] of this.handlers) this.proc.on(event, listener);
-    this.background = this.start().catch((error: unknown) => {
+    this.start().then(() => { this.launchDone.resolve(ok(null)); }, (error: unknown) => {
       this.shut = true;
-      throw error;
+      this.launchDone.resolve(fail(`terminal renderer did not start: ${errorMessage(error)}`));
     });
   }
 

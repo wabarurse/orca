@@ -1,8 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { paths } from "../../config";
-import { fail, ok, type Result } from "../result";
+import { fail, ok, paths, type Result } from "../../config";
 
 async function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
   const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });

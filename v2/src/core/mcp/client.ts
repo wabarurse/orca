@@ -4,8 +4,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { serverKey, usableServer, type Server } from "./config";
-import { errorMessage } from "../result";
 import { oauthProvider } from "./auth";
+import { errorMessage, fail, ok, type Result } from "../../config";
 
 export const IDLE_MS = 10 * 60_000;
 export const CONNECT_MS = 60_000;
@@ -52,9 +52,11 @@ function open(server: Server, cwd: string): Live {
 }
 
 export async function withServer<T>(name: string, cwd: string, signal: AbortSignal | undefined,
-  action: (client: Client, options: { signal: AbortSignal; timeout: number }) => Promise<T>): Promise<T> {
-  const server = usableServer(name);
-  signal?.throwIfAborted();
+  action: (client: Client, options: { signal: AbortSignal; timeout: number }) => Promise<T>): Promise<Result<T>> {
+  const usable = usableServer(name);
+  if (!usable.ok) return usable;
+  const server = usable.data;
+  if (signal?.aborted === true) return fail(errorMessage(signal.reason));
   const key = `${serverKey(server)}:${cwd}`;
   for (const [old, item] of live) if (item.server.name === name && old !== key && item.users === 0) await close(old, item);
   let item = live.get(key);
@@ -71,11 +73,11 @@ export async function withServer<T>(name: string, cwd: string, signal: AbortSign
     await current.ready;
     signal?.throwIfAborted();
     const timeout = AbortSignal.timeout(server.timeoutMs);
-    return await action(current.client, { signal: signal !== undefined ? AbortSignal.any([signal, timeout]) : timeout, timeout: server.timeoutMs });
+    return ok(await action(current.client, { signal: signal !== undefined ? AbortSignal.any([signal, timeout]) : timeout, timeout: server.timeoutMs }));
   } catch (error) {
     const answered = error instanceof UsageError || error instanceof McpError && error.code !== ErrorCode.ConnectionClosed && error.code !== ErrorCode.RequestTimeout;
     if (!answered) await close(key, current);
-    throw error;
+    return fail(errorMessage(error));
   } finally {
     signal?.removeEventListener("abort", cancelled); current.users--;
     if (current.users === 0 && live.get(key) === current) {

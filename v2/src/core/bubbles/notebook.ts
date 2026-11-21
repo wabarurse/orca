@@ -2,8 +2,8 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { withStorageLock } from "../lock";
-import { fail, ok, type Result } from "../result";
 import { bubbleDir, readJson, rows as validRows, writeFileAtomic } from "./store";
+import { fail, ok, type Result } from "../../config";
 
 export type Page = { id: string; title: string; summary: string; bytes: number; author: string; createdAt: string; usedAt: string; archivedAt: string | null };
 const PageRow = z.object({ id: z.string(), title: z.string(), summary: z.string(), bytes: z.number(), author: z.string(), createdAt: z.string(), usedAt: z.string(), archivedAt: z.string().nullable() });

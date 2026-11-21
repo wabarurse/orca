@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { loadConfig, paths } from "../../config";
+import { loadConfig, ok, parseJson, paths, type Result } from "../../config";
 import { askUser } from "../confirm";
 import { readConversation } from "../conversations";
 import { put } from "../inbox";
@@ -15,7 +15,6 @@ import { plainRunner } from "./plain";
 import { listRuns, live, newRun, readRun, updateRun, writeRun, type RunRecord } from "./runs";
 import { slug, workspaceFor } from "./worktree";
 import { z } from "zod";
-import { parseJson } from "../result";
 
 export function selfCommand(): string[] {
   const forced = process.env.ORCA2_SELF;
@@ -36,7 +35,8 @@ export async function runners(conversation: string): Promise<Runner[]> {
   const { plugins } = await availablePlugins(directory, trusted);
   const out: Runner[] = [plainRunner];
   for (const name of await enabledNames(conversation)) {
-    const runner = (await plugins.get(name)?.background())?.runner ?? null;
+    const background = await plugins.get(name)?.background();
+    const runner = background?.ok === true ? background.data?.runner ?? null : null;
     if (runner !== null) out.push(runner);
   }
   return out;
@@ -50,13 +50,14 @@ export async function selectedRunner(conversation: string): Promise<Runner> {
 export const toInfo = (run: RunRecord): AgentInfo => ({ agent: run.agent, role: run.role, bundle: run.bundle, branch: run.branch, state: run.state, pid: run.pid,
   runner: run.runner, startedAt: run.startedAt, endedAt: run.endedAt, log: run.log, lastTool: run.lastTool });
 
-export async function launch(record: RunRecord, cwd: string, extra: string[], command: "agent" | "daemon" = "agent"): Promise<RunRecord> {
+export async function launch(record: RunRecord, cwd: string, extra: string[], command: "agent" | "daemon" = "agent"): Promise<Result<RunRecord>> {
   const runner = (await runners(record.conversation)).find(r => r.name === record.runner) ?? plainRunner;
   const data = await ensureDataDirs(record.conversation);
+  if (!data.ok) return data;
   const argv = [...selfCommand(), command, "--conversation", record.conversation, "--agent", record.agent, "--run", record.run, ...extra];
   await mkdir(paths.logs(record.conversation), { recursive: true, mode: 0o700 });
-  const { handle, pid } = await runner.start({ conversation: record.conversation, agent: record.agent, argv, cwd, env: agentEnv(record.conversation, record.agent, data), log: record.log });
-  return (await updateRun(record.conversation, record.agent, { handle, pid: pid ?? record.pid })) ?? record;
+  const { handle, pid } = await runner.start({ conversation: record.conversation, agent: record.agent, argv, cwd, env: agentEnv(record.conversation, record.agent, data.data), log: record.log });
+  return ok((await updateRun(record.conversation, record.agent, { handle, pid: pid ?? record.pid })) ?? record);
 }
 
 export async function stopAgent(conversation: string, agent: string): Promise<string> {
@@ -88,7 +89,7 @@ export function runtimeFor(conversation: string, self: string, confirm: (questio
       await put(conversation, agent, self, request.brief, { images: request.images, delivery: "steer" });
       const record = newRun({ conversation, agent, role: shape.bundle.role, bundle: shape.bundle.name, branch: request.branch, runner: (await selectedRunner(conversation)).name });
       await writeRun(record);
-      const started = await launch(record, cwd, ["--bundle", shape.bundle.name, "--branch", request.branch, "--cwd", cwd, ...(request.fresh ? ["--fresh"] : [])]);
+      const started = settled(await launch(record, cwd, ["--bundle", shape.bundle.name, "--branch", request.branch, "--cwd", cwd, ...(request.fresh ? ["--fresh"] : [])]));
       return toInfo(started);
     },
     async agents() {

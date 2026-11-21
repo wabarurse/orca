@@ -1,6 +1,6 @@
 import { plain, textLines } from "../api";
-import { asRecord } from "./result";
 import type { ToolCall, ToolOutcome } from "./types";
+import { asRecord } from "../config";
 
 export type ToolView = { tool: string; summary: string; failed: boolean };
 

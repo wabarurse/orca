@@ -1,6 +1,6 @@
 import { inflateSync } from "node:zlib";
 import type { ImageBlockParam } from "@anthropic-ai/sdk/resources/messages";
-import { fail, ok, type Result } from "./result";
+import { errorMessage, fail, ok, type Result } from "../config";
 
 export const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_PIXELS = 4096 * 4096;
@@ -62,7 +62,7 @@ function webpSize(b: Buffer): Result<Size> {
   return fail("invalid webp image header.");
 }
 
-export function checkImage(input: Uint8Array, mime: string = "image/png"): Result<Size> {
+export function validateImage(input: Uint8Array, mime: string = "image/png"): Result<Size> {
   const known = imageMime(mime);
   if (known === undefined) return fail("unsupported image format; copy a png image (macos also converts tiff/jpeg).");
   const b = Buffer.from(input);
@@ -75,12 +75,6 @@ export function checkImage(input: Uint8Array, mime: string = "image/png"): Resul
     return dimensions(b.readUInt16LE(6), b.readUInt16LE(8));
   }
   return pngSize(b);
-}
-
-export function validateImage(input: Uint8Array, mime = "image/png"): Size {
-  const checked = checkImage(input, mime);
-  if (!checked.ok) throw new Error(checked.error);
-  return checked.data;
 }
 
 type PngHeader = { width: number; height: number; depth: number; color: number };
@@ -128,7 +122,7 @@ function pngSize(b: Buffer): Result<Size> {
   if (row * height > 64 * 1024 * 1024) return fail("decoded image exceeds 64 mib.");
   let pixels: Buffer;
   try { pixels = inflateSync(Buffer.concat(data), { maxOutputLength: row * height }); }
-  catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
+  catch (error) { return fail(errorMessage(error)); }
   if (pixels.length !== row * height) return fail("invalid png scanline length.");
   for (let y = 0; y < height; y++) if ((pixels[y * row] ?? 0) > 4) return fail("invalid png scanline filter.");
   return ok({ width, height });
@@ -143,7 +137,7 @@ export function validatedBase64(block: ImageBlockParam): Result<{ data: string; 
   if (data.length === 0 || data.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 || data.length % 4 !== 0 || /[^A-Za-z0-9+/]/.test(data.slice(0, data.length - padding))) {
     return fail("invalid image base64.");
   }
-  const checked = checkImage(Buffer.from(data, "base64"), mime);
+  const checked = validateImage(Buffer.from(data, "base64"), mime);
   if (!checked.ok) return checked;
   return ok({ data, mime });
 }

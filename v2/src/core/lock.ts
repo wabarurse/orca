@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises"
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { errorCode } from "./result";
+import { errorCode } from "../config";
 
 export type LockOwner = { pid: number; since: string; project: string | null };
 

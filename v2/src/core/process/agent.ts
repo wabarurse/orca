@@ -4,7 +4,7 @@ import { fileConfirm, runtimeFor } from "../runner/runtime";
 import { readRun, updateRun } from "../runner/runs";
 import { openSession } from "../session";
 import type { AgentEvent } from "../types";
-import { asRecord } from "../result";
+import { asRecord, errorMessage } from "../../config";
 
 export type AgentArgs = { conversation: string; agent: string; run: string; bundle: string; branch: string; cwd: string; fresh: boolean };
 
@@ -38,7 +38,7 @@ export async function agentProcess(args: AgentArgs, out: (text: string) => void 
       status = result.status;
       error = result.error;
     }
-  } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
+  } catch (cause) { error = errorMessage(cause); }
   const endedAt = new Date().toISOString();
   const state = status === "cancelled" ? "stopped" : status === "failed" ? "failed" : reported ? "reported" : "exited";
   await updateRun(args.conversation, args.agent, { state, endedAt, error, lastTool });

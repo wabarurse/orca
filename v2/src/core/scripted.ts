@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Provider } from "../api";
 import { z } from "zod";
 import { withStorageLock } from "./lock";
-import { parseJson } from "./result";
+import { parseJson } from "../config";
 
 const Block = z.looseObject({ type: z.string() });
 const Replies = z.array(z.array(z.custom<ContentBlock>(value => Block.safeParse(value).success)));

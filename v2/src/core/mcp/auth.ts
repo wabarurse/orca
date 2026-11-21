@@ -3,9 +3,8 @@ import { join } from "node:path";
 import { auth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { OAuthClientInformationFullSchema, OAuthClientInformationSchema, OAuthTokensSchema } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { z } from "zod";
-import { paths } from "../../config";
+import { errorCode, errorMessage, fail, ok, parseJson, paths, type Result } from "../../config";
 import { withStorageLock } from "../lock";
-import { errorCode, parseJson } from "../result";
 import { loginKey, type Server } from "./config";
 
 const CredentialsFile = z.object({
@@ -57,9 +56,9 @@ export function oauthProvider(s: Target, interactive?: { redirect: string; state
   };
 }
 
-export async function loginServer(s: Server, show: (url: string) => void, signal?: AbortSignal): Promise<void> {
+export async function loginServer(s: Server, show: (url: string) => void, signal?: AbortSignal): Promise<Result<null>> {
   const serverUrl = s.url;
-  if (serverUrl === undefined || serverUrl === "") throw new Error(`${s.name} is a local command; only a url server has a sign-in`);
+  if (serverUrl === undefined || serverUrl === "") return fail(`${s.name} is a local command; only a url server has a sign-in`);
   const abort = signal !== undefined ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000);
   const state = crypto.randomUUID();
   const { promise: code, resolve, reject } = Promise.withResolvers<string>();
@@ -79,5 +78,8 @@ export async function loginServer(s: Server, show: (url: string) => void, signal
     const provider = oauthProvider(s, { redirect: `http://127.0.0.1:${server.port}/callback`, state, show });
     const fetchFn = (input: string | URL | Request, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal !== undefined && init.signal !== null ? AbortSignal.any([abort, init.signal]) : abort });
     if (await auth(provider, { serverUrl, fetchFn }) === "REDIRECT") await auth(provider, { serverUrl, authorizationCode: await code, fetchFn });
+    return ok(null);
+  } catch (error) {
+    return fail(`${s.name} sign-in failed: ${errorMessage(error)}`);
   } finally { abort.removeEventListener("abort", cancelled); void server.stop(true).catch(() => {}); }
 }

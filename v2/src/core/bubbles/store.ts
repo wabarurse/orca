@@ -1,10 +1,9 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { paths } from "../../config";
+import { fail, ok, parseJson, paths, type Result } from "../../config";
 import { readConversation, saveConversation, writeAtomic } from "../conversations";
 import { withStorageLock } from "../lock";
-import { fail, ok, parseJson, type Result } from "../result";
 
 export type PluginSwitches = { on: string[]; off: string[] };
 export type Bubble = { id: string; name: string; createdAt: string; plugins: PluginSwitches };
@@ -50,16 +49,16 @@ export async function peekBubble(conversation: string): Promise<string | null> {
   return (await readConversation(conversation))?.bubble ?? null;
 }
 
-export async function ensureBubble(conversation: string): Promise<Bubble> {
-  return withStorageLock(join(paths.runtime, "bubble-locks", conversation), async () => {
+export async function ensureBubble(conversation: string): Promise<Result<Bubble>> {
+  return withStorageLock(join(paths.runtime, "bubble-locks", conversation), async (): Promise<Result<Bubble>> => {
     const current = await readConversation(conversation);
-    if (current === null) throw new Error(`no conversation ${conversation}`);
+    if (current === null) return fail(`no conversation ${conversation}`);
     const existing = current.bubble === null ? null : await readBubble(current.bubble);
-    if (existing !== null) return existing;
+    if (existing !== null) return ok(existing);
     const bubble: Bubble = { id: current.bubble ?? `bubble-${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`, name: current.name, createdAt: new Date().toISOString(), plugins: { on: [], off: [] } };
     await writeBubble(bubble);
     await saveConversation({ ...current, bubble: bubble.id });
-    return bubble;
+    return ok(bubble);
   });
 }
 
@@ -78,16 +77,17 @@ export async function listBubbles(): Promise<Bubble[]> {
   return found.filter((b): b is Bubble => b !== null).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function setBubblePlugin(id: string, plugin: string, state: "on" | "off" | null): Promise<Bubble> {
-  return withStorageLock(join(bubbleDir(id), ".plugins-lock"), async () => {
+export async function setBubblePlugin(id: string, plugin: string, state: "on" | "off" | null): Promise<Result<Bubble>> {
+  if (!ID.test(id)) return fail(`invalid bubble id ${JSON.stringify(id)}`);
+  return withStorageLock(join(bubbleDir(id), ".plugins-lock"), async (): Promise<Result<Bubble>> => {
     const bubble = await readBubble(id);
-    if (bubble === null) throw new Error(`no bubble ${id}`);
+    if (bubble === null) return fail(`no bubble ${id}`);
     const on = bubble.plugins.on.filter(name => name !== plugin), off = bubble.plugins.off.filter(name => name !== plugin);
     if (state === "on") on.push(plugin);
     if (state === "off") off.push(plugin);
     const next = { ...bubble, plugins: { on, off } };
     await writeBubble(next);
-    return next;
+    return ok(next);
   });
 }
 

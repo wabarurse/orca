@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { loadConfig, paths } from "../../config";
+import { asRecord, errorMessage, fail, loadConfig, ok, paths, type Result } from "../../config";
 import { CORE_TOOL_NAMES } from "../tools/registry";
 import { z } from "zod";
-import { asRecord, errorMessage, fail, ok, type Result } from "../result";
 import type { Tool } from "../tools/registry";
 import type { AfterTool, BeforeRequest, BeforeTool, OnInput, Plugin, PluginBackground, PluginUi } from "./types";
 
@@ -22,8 +21,8 @@ export type LoadedPlugin = {
   plugin: Plugin;
   dir: string;
   source: PluginSource;
-  ui: () => Promise<PluginUi | null>;
-  background: () => Promise<PluginBackground | null>;
+  ui: () => Promise<Result<PluginUi | null>>;
+  background: () => Promise<Result<PluginBackground | null>>;
 };
 
 export type PluginProblem = { name: string; dir: string; problem: string };
@@ -114,16 +113,24 @@ export function validatePlugin(value: unknown, folder: string): Result<Plugin> {
 
 const moduleDefault = (module: unknown): unknown => typeof module === "object" && module !== null && "default" in module ? module.default : undefined;
 
+async function importModule(file: string): Promise<Result<unknown>> {
+  try {
+    const module: unknown = await import(file);
+    return ok(module);
+  } catch (error) { return fail(errorMessage(error)); }
+}
+
 async function loadFolder(dir: string, name: string, source: PluginSource): Promise<Result<LoadedPlugin>> {
-  const module: unknown = await import(join(dir, "index.ts"));
-  const plugin = validatePlugin(moduleDefault(module), name);
+  const module = await importModule(join(dir, "index.ts"));
+  if (!module.ok) return module;
+  const plugin = validatePlugin(moduleDefault(module.data), name);
   if (!plugin.ok) return plugin;
-  const sub = <T>(path: string | null, schema: z.ZodType<T>, what: string) => async (): Promise<T | null> => {
-    if (path === null) return null;
-    const loaded: unknown = await import(join(dir, path));
-    const parsed = schema.safeParse(moduleDefault(loaded));
-    if (!parsed.success) throw new Error(`${name}: ${path} must default-export ${what}({...})`);
-    return parsed.data;
+  const sub = <T>(path: string | null, schema: z.ZodType<T>, what: string) => async (): Promise<Result<T | null>> => {
+    if (path === null) return ok(null);
+    const loaded = await importModule(join(dir, path));
+    if (!loaded.ok) return fail(`${name}: ${path} does not load: ${loaded.error}`);
+    const parsed = schema.safeParse(moduleDefault(loaded.data));
+    return parsed.success ? ok(parsed.data) : fail(`${name}: ${path} must default-export ${what}({...})`);
   };
   return ok({ plugin: plugin.data, dir, source, ui: sub(plugin.data.ui, UiModule, "defineUi"), background: sub(plugin.data.background, BackgroundModule, "defineBackground") });
 }
@@ -147,7 +154,8 @@ export async function availablePlugins(directory: string | null, trusted: boolea
       if (!plugin.ok) { problems.push({ name: builtin.name, dir: builtin.dir, problem: plugin.error }); continue; }
       const ui = builtin.ui, background = builtin.background;
       plugins.set(builtin.name, { plugin: plugin.data, dir: builtin.dir, source: "builtin",
-        ui: async () => ui === null ? null : (await ui()).default, background: async () => background === null ? null : (await background()).default });
+        ui: async () => ui === null ? ok(null) : ui().then(module => ok(module.default), (error: unknown) => fail(`${builtin.name}: ui does not load: ${errorMessage(error)}`)),
+        background: async () => background === null ? ok(null) : background().then(module => ok(module.default), (error: unknown) => fail(`${builtin.name}: background does not load: ${errorMessage(error)}`)) });
     } catch (error) { problems.push({ name: builtin.name, dir: builtin.dir, problem: errorMessage(error) }); }
   }
   const roots: { root: string; source: PluginSource }[] = [{ root: paths.plugins, source: "user" }];
@@ -160,18 +168,14 @@ export async function availablePlugins(directory: string | null, trusted: boolea
         problems.push({ name, dir, problem: `not approved (new or changed): run orca2 plugin enable ${name}` });
         continue;
       }
-      try {
-        const loaded = await loadFolder(dir, name, source);
-        if (loaded.ok) plugins.set(name, loaded.data);
-        else problems.push({ name, dir, problem: loaded.error });
-      } catch (error) { problems.push({ name, dir, problem: errorMessage(error) }); }
+      const loaded = await loadFolder(dir, name, source);
+      if (loaded.ok) plugins.set(name, loaded.data);
+      else problems.push({ name, dir, problem: loaded.error });
     }
   }
   return { plugins, problems };
 }
 
-export async function loadForCheck(dir: string, name: string): Promise<LoadedPlugin> {
-  const loaded = await loadFolder(dir, name, "user");
-  if (!loaded.ok) throw new Error(loaded.error);
-  return loaded.data;
+export async function loadForCheck(dir: string, name: string): Promise<Result<LoadedPlugin>> {
+  return loadFolder(dir, name, "user");
 }

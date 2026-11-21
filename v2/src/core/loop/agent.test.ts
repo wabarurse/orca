@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import type { ContentBlock } from "@anthropic-ai/sdk/resources/messages";
-import { paths } from "../../config";
+import { ok, paths } from "../../config";
 import { fakeProvider, text, toolUse } from "../../test/fake-provider";
 import { tempHome } from "../../test/home";
 import { createConversation } from "../conversations";
@@ -28,7 +28,7 @@ async function setup(script: ContentBlock[][], tools: Tool[], hooks: LoopHooks =
   const transcript = openTranscript(paths.transcript(conversation.id, "orchestrator"));
   const config: AgentSetup = {
     conversation: conversation.id, agent: "orchestrator", role: "orchestrator", branch: null, cwd: home.path(), data: home.path(), trusted: false, pluginSkills: [],
-    transcript, tools, system: "test", resolve: async () => ({ model: "claude-sonnet-5-5", provider, settings: null, contextLimit: null }),
+    transcript, tools, system: "test", resolve: async () => ok({ model: "claude-sonnet-5-5", provider, settings: null, contextLimit: null }),
     context: async () => ({}), hooks, runtime: { ...runtime, confirm }, emit: event => { events.push(event); }, signal: new AbortController().signal,
     concurrency: 1, rolling: null, requireInput: true, compactRequested: () => false,
   };
@@ -65,7 +65,7 @@ describe("agent loop", () => {
 
   test("hooks change input, block, ask, rewrite results, shape requests and filter input", async () => {
     const hooks = emptyHooks();
-    const ctx = { plugin: "p", conversation: "", agent: "orchestrator", role: "orchestrator" as const, cwd: "", data: async () => "" };
+    const ctx = { plugin: "p", conversation: "", agent: "orchestrator", role: "orchestrator" as const, cwd: "", data: async () => ok("") };
     hooks.beforeTool.push({ ctx, hook: async call => call.input.text === "secret" ? { action: "block", reason: "no secrets" }
       : call.input.text === "ask" ? { action: "ask", question: "ok?" } : { action: "run", input: { text: `${String(call.input.text)}!` } } });
     hooks.afterTool.push({ ctx, hook: async (_call, result) => ({ ...result, content: `${String(result.content)} (checked)` }) });

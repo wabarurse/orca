@@ -1,7 +1,6 @@
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { z } from "zod";
-import { paths } from "../config";
-import { fail, ok, type Result } from "./result";
+import { fail, ok, paths, type Result } from "../config";
 
 export type Conversation = {
   id: string;

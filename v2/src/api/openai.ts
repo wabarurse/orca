@@ -7,13 +7,13 @@ import { validateSettings, type RequestSettings } from "./model";
 import OpenAI from "openai";
 import type { Stream } from "openai/streaming";
 import { z } from "zod";
-import { fail, ok, type Result } from "./result";
 import type { FunctionTool, ResponseCreateParamsStreaming, ResponseFunctionCallOutputItem, ResponseOutputItemDoneEvent, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
 import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { codexCredentials, CodexTokens } from "./auth";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./model";
 import { codexCatalogEfforts, rememberCatalogEfforts } from "./model";
+import { fail, ok, type Result } from "../config";
 
 export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 

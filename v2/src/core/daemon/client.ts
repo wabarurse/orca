@@ -1,3 +1,4 @@
+import { fail, ok, type Result } from "../../config";
 import { pidAlive } from "../lock";
 import { readConversation } from "../conversations";
 import { put, withdraw } from "../inbox";
@@ -8,22 +9,23 @@ import { daemonPid, readStatus, request } from "./channel";
 
 export const STOP_WAIT_MS = 10_000;
 
-export async function ensureDaemon(conversation: string, model: string | null): Promise<number> {
+export async function ensureDaemon(conversation: string, model: string | null): Promise<Result<number>> {
   const running = await daemonPid(conversation);
-  if (running !== null) return running;
+  if (running !== null) return ok(running);
   const meta = await readConversation(conversation);
-  if (meta === null) throw new Error(`no conversation ${conversation}`);
+  if (meta === null) return fail(`no conversation ${conversation}`);
   const record = newRun({ conversation, agent: "orchestrator", role: "orchestrator", bundle: "orchestrator", branch: "", runner: (await selectedRunner(conversation)).name });
   await writeRun(record);
-  await launch(record, meta.directory, model === null ? [] : ["--model", model], "daemon");
+  const launched = await launch(record, meta.directory, model === null ? [] : ["--model", model], "daemon");
+  if (!launched.ok) return launched;
   for (let i = 0; i < 50; i++) {
     const pid = await daemonPid(conversation);
-    if (pid !== null) return pid;
+    if (pid !== null) return ok(pid);
     const run = await readRun(conversation, "orchestrator");
     if (run !== null && run.pid !== null && !pidAlive(run.pid) && i > 5) break;
     await Bun.sleep(100);
   }
-  throw new Error(`the daemon did not start; see ${record.log}`);
+  return fail(`the daemon did not start; see ${record.log}`);
 }
 
 export async function say(conversation: string, text: string, images: string[], delivery: Delivery): Promise<Message> {

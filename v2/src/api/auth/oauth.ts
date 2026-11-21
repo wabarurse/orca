@@ -2,8 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { paths } from "../../config";
-import { fail, ok, type Result } from "../result";
+import { errorMessage, fail, ok, paths, type Result } from "../../config";
 
 export class CredentialError extends Error {
   constructor(readonly reason: "credentials-invalid" | "credential-lock" | "oauth-connection" | "oauth-http" | "oauth-response",
@@ -119,7 +118,7 @@ export type OAuthLoginConfig = {
   port: number;
   callbackPath: string;
   extraParams?: Record<string, string>;
-  exchange: (body: Record<string, string>, fetcher: Fetch, signal: AbortSignal) => Promise<void>;
+  exchange: (body: Record<string, string>, fetcher: Fetch, signal: AbortSignal) => Promise<Result<null>>;
 };
 
 function isShortLink(request: Request, url: URL, nonce: string): boolean {
@@ -149,17 +148,19 @@ function loginMessage(label: string, shortLink: string, port: number | undefined
   return lines.join("\n");
 }
 
-export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions): Promise<void> {
+export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions): Promise<Result<null>> {
   const verifier = randomBytes(32).toString("base64url");
   const state = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const result = Promise.withResolvers<void>();
+  const result = Promise.withResolvers<Result<null>>();
   const cancellation = new AbortController();
   let received = false;
   const nonce = randomBytes(6).toString("base64url");
   let authorizeURL = "";
-  const server = Bun.serve({
-    hostname: "127.0.0.1", port: options.port ?? config.port,
+  const port = options.port ?? config.port;
+  let server: Bun.Server<undefined>;
+  try { server = Bun.serve({
+    hostname: "127.0.0.1", port,
     idleTimeout: 60,
     async fetch(request) {
       const url = new URL(request.url);
@@ -169,20 +170,16 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
       if (received) return new Response("login already received", { status: 409 });
       const code = url.searchParams.get("code");
       if (code === null || code === "" || url.searchParams.has("error")) {
-        result.reject(new Error(`${config.label} login was cancelled or denied; try logging in again.`));
+        result.resolve(fail(`${config.label} login was cancelled or denied; try logging in again.`));
         return new Response("login was not completed.", { status: 400 });
       }
       received = true;
-      try {
-        await config.exchange({ grant_type: "authorization_code", code, state, code_verifier: verifier, redirect_uri: redirectUri }, options.fetcher ?? fetch, cancellation.signal);
-        result.resolve();
-        return new Response("signed in to orca. you can close this tab.");
-      } catch (err) {
-        result.reject(err);
-        return new Response("login failed. return to orca and try again.", { status: 400 });
-      }
+      const exchanged = await config.exchange({ grant_type: "authorization_code", code, state, code_verifier: verifier, redirect_uri: redirectUri }, options.fetcher ?? fetch, cancellation.signal)
+        .catch((error: unknown) => fail(errorMessage(error)));
+      result.resolve(exchanged);
+      return exchanged.ok ? new Response("signed in to orca. you can close this tab.") : new Response("login failed. return to orca and try again.", { status: 400 });
     },
-  });
+  }); } catch (error) { return fail(`${config.label} login could not listen on port ${port}: ${errorMessage(error)}`); }
   const redirectUri = `http://localhost:${server.port}${config.callbackPath}`;
   const url = new URL(config.authorizeURL);
   url.search = new URLSearchParams({
@@ -193,13 +190,12 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
   const shortLink = `http://localhost:${server.port}/login/${nonce}`;
   const urlFile = join(paths.runtime, "login-url.txt");
   let urlFileAttempted = false;
-  const fail = (message: string) => {
-    const error = new Error(message);
-    cancellation.abort(error);
-    result.reject(error);
+  const abandon = (message: string): void => {
+    cancellation.abort(new Error(message));
+    result.resolve(fail(message));
   };
-  const cancel = () => fail(`${config.label} login cancelled.`);
-  const timer = setTimeout(() => fail(`${config.label} login timed out; try logging in again.`), 5 * 60_000);
+  const cancel = () => { abandon(`${config.label} login cancelled.`); };
+  const timer = setTimeout(() => { abandon(`${config.label} login timed out; try logging in again.`); }, 5 * 60_000);
   options.signal?.addEventListener("abort", cancel, { once: true });
   try {
     if (options.signal?.aborted === true) cancel();
@@ -209,7 +205,7 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
       options.write(loginMessage(config.label, shortLink, server.port, savedUrl ? urlFile : undefined));
       void Promise.resolve().then(() => (options.openBrowser ?? openBrowser)(authorizeURL)).catch(() => {});
     }
-    await result.promise;
+    return await result.promise;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", cancel);

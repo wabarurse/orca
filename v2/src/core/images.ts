@@ -2,7 +2,7 @@ import type { ContentBlockParam, ImageBlockParam, MessageParam, TextBlockParam, 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { sniffImage, validateImage, type ImageMime } from "../api";
-import { paths } from "../config";
+import { fail, ok, paths, type Result } from "../config";
 
 const ID = /^img-[a-f0-9]{16}$/;
 const EXT: Record<ImageMime, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
@@ -19,14 +19,15 @@ function mapImages(messages: MessageParam[], image: (block: ImageBlockParam) => 
   return messages.map(message => typeof message.content === "string" ? message : { ...message, content: message.content.filter(keep).map(block) });
 }
 
-export async function saveImage(conversation: string, bytes: Uint8Array): Promise<string> {
+export async function saveImage(conversation: string, bytes: Uint8Array): Promise<Result<string>> {
   const mime = sniffImage(bytes);
-  if (mime === undefined) throw new Error("not a png, jpeg, gif or webp image");
-  validateImage(bytes, mime);
+  if (mime === undefined) return fail("not a png, jpeg, gif or webp image");
+  const valid = validateImage(bytes, mime);
+  if (!valid.ok) return valid;
   const id = `img-${new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 16)}`;
   await mkdir(paths.images(conversation), { recursive: true, mode: 0o700 });
   await Bun.write(join(paths.images(conversation), `${id}.${EXT[mime]}`), bytes);
-  return id;
+  return ok(id);
 }
 
 export function imageFile(conversation: string, id: string): string | null {

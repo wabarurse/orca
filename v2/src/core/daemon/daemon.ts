@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { paths } from "../../config";
+import { errorMessage, paths } from "../../config";
 import { pluginData } from "../bubbles";
 import { readConversation } from "../conversations";
 import { consume, pending, put } from "../inbox";
@@ -31,8 +31,10 @@ async function backgroundWatchers(conversation: string, directory: string): Prom
   const out: ScheduledWatcher[] = [];
   for (const name of await enabledNames(conversation)) {
     const loaded = plugins.get(name);
-    const background = loaded === undefined ? null : await loaded.background().catch(() => null);
-    if (loaded === undefined || background === null) continue;
+    if (loaded === undefined) continue;
+    const loadedBackground = await loaded.background();
+    const background = loadedBackground.ok ? loadedBackground.data : null;
+    if (background === null) continue;
     const ctx: BackgroundContext = { plugin: name, conversation, directory, data: scope => pluginData(conversation, name, scope),
       notify: async text => { await put(conversation, "orchestrator", name, text, { images: [], delivery: "steer" }); } };
     for (const watcher of background.watchers) out.push({ watcher, ctx, next: 0, running: false });
@@ -132,7 +134,7 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
             if (result.error !== null) options.log(`\nturn failed: ${result.error}\n`);
           }
         } catch (error) {
-          await setStatus({ error: error instanceof Error ? error.message : String(error) });
+          await setStatus({ error: errorMessage(error) });
         } finally {
           clearInterval(poll);
           turnAbort = null;

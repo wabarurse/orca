@@ -1,7 +1,7 @@
 import type { ContentBlock, Message, WebSearchResultBlock } from "@anthropic-ai/sdk/resources/messages";
 import type { ResponseFunctionWebSearch, ResponseOutputItem, ResponseOutputMessage } from "openai/resources/responses/responses";
-import { fail, ok, type Result } from "../result";
 import { SearchError, type SearchResult, type SearchSource } from "./web-search";
+import { fail, ok, type Result } from "../../config";
 
 type Sources = Result<SearchSource[], SearchError>;
 const refuse = (code: SearchError["code"]): { ok: false; error: SearchError } => fail(new SearchError(code));

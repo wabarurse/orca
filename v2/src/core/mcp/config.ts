@@ -1,8 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { paths } from "../../config";
-import { asRecord, fail, ok, parseJson, type Result } from "../result";
+import { asRecord, fail, ok, parseJson, paths, type Result } from "../../config";
 
 export type Server = {
   name: string;
@@ -110,14 +109,14 @@ export function readServers(): { path: string; entries: Entry[]; problem?: strin
   return { path, entries: Object.entries(servers).map(([name, value]) => entry(name, value)) };
 }
 
-export function usableServer(name: string): Server {
+export function usableServer(name: string): Result<Server> {
   const { path, entries, problem } = readServers();
-  if (problem !== undefined) throw new Error(problem);
+  if (problem !== undefined) return fail(problem);
   const found = entries.find(candidate => candidate.name === name);
-  if (found === undefined) throw new Error(`no MCP server named ${name} in ${path}${entries.length > 0 ? ` (it has: ${entries.map(e => e.name).join(", ")})` : ""}`);
-  if (found.disabled) throw new Error(`MCP server ${name} is disabled in ${path}`);
-  if (found.server === undefined) throw new Error(`MCP server ${name} in ${path}: ${found.problem ?? "unusable"}`);
-  return found.server;
+  if (found === undefined) return fail(`no MCP server named ${name} in ${path}${entries.length > 0 ? ` (it has: ${entries.map(e => e.name).join(", ")})` : ""}`);
+  if (found.disabled) return fail(`MCP server ${name} is disabled in ${path}`);
+  if (found.server === undefined) return fail(`MCP server ${name} in ${path}: ${found.problem ?? "unusable"}`);
+  return ok(found.server);
 }
 
 export const serverKey = (s: Server) => createHash("sha256").update(JSON.stringify([s.name, s.command, s.args, s.env, s.url, s.headers])).digest("hex");

@@ -8,7 +8,7 @@ import type { Role } from "../types";
 import { enabledNames } from "./enable";
 import { availablePlugins, type LoadedPlugin, type PluginProblem } from "./loader";
 import type { Bundle, PluginContext } from "./types";
-import { fail, ok, type Result } from "../result";
+import { fail, ok, type Result } from "../../config";
 
 export const BUILTIN_BUNDLES: Bundle[] = [
   { name: "orchestrator", role: "orchestrator", prompt: rolePrompt("orchestrator"), plugins: ["*"] },

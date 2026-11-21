@@ -19,7 +19,7 @@ export const notebook: Tool = {
     if (input.action === "put") {
       if ((input.content === undefined) === (input.path === undefined)) throw new Error("put needs exactly one of content or path");
       const content = typeof input.content === "string" ? input.content : await Bun.file(settled(await filePath(input.path, ctx))).text();
-      const bubble = await peekBubble(ctx.conversation) ?? (await ensureBubble(ctx.conversation)).id;
+      const bubble = await peekBubble(ctx.conversation) ?? settled(await ensureBubble(ctx.conversation)).id;
       const page = settled(await putPage(bubble, { title: String(input.title ?? ""), summary: String(input.summary ?? ""), content }, ctx.agent));
       return `saved ${page.id} "${page.title}" (${page.bytes} bytes)`;
     }

@@ -2,7 +2,7 @@ import type { ContentBlock, MessageParam, ToolResultBlockParam } from "@anthropi
 import type { CompleteRequest, Provider, Turn } from "../../api";
 import { restartable } from "../../api/errors";
 import type { RequestSettings } from "../../api/model";
-import { usageEvent } from "../../config";
+import { asRecord, errorMessage, fail, ok, type Result, usageEvent } from "../../config";
 import { materialize, withImages } from "../images";
 import { consume, format } from "../inbox";
 import type { Runtime, Tool, ToolContext, ToolResult } from "../tools/registry";
@@ -15,7 +15,6 @@ import { afterTool, beforeRequest, beforeTool, onInput, type LoopHooks } from ".
 import type { RollingCompactor } from "./rolling";
 import { budget, replyCap, requireFits } from "./budget";
 import { scheduleTools } from "./schedule";
-import { asRecord, errorMessage, fail, ok, type Result } from "../result";
 
 export type Resolved = { model: string; provider: Provider; settings: RequestSettings | null; contextLimit: number | null };
 
@@ -31,7 +30,7 @@ export type AgentSetup = {
   transcript: Transcript;
   tools: Tool[];
   system: string;
-  resolve: () => Promise<Resolved>;
+  resolve: () => Promise<Result<Resolved>>;
   context: (query: string) => Promise<Record<string, string>>;
   hooks: LoopHooks;
   runtime: Runtime;
@@ -95,10 +94,12 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
     return taken.length > 0;
   }
 
-  async function boundary(manual: boolean): Promise<Resolved> {
+  async function boundary(manual: boolean): Promise<Result<Resolved>> {
     setup.signal.throwIfAborted();
     await closeInterrupted(setup.transcript);
-    const next = await setup.resolve();
+    const loaded = await setup.resolve();
+    if (!loaded.ok) return loaded;
+    const next = loaded.data;
     if (resolved !== null && next.model !== resolved.model) { failedCompaction = false; window.measured = null; }
     resolved = next;
     window.model = next.model;
@@ -112,7 +113,7 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
       if (result !== null) failedCompaction = !result;
     }
     requireFits(window, setup.transcript.chain(), "model request");
-    return next;
+    return ok(next);
   }
 
   async function ask(model: Resolved): Promise<Turn> {
@@ -178,7 +179,9 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
     if (setup.requireInput && !started) return ok(null);
     let pauses = 0, limits = 0;
     for (;;) {
-      const model = await boundary(setup.compactRequested());
+      const prepared = await boundary(setup.compactRequested());
+      if (!prepared.ok) return prepared;
+      const model = prepared.data;
       const turn = await ask(model);
       const calls = turn.content.filter((block): block is ToolUse => block.type === "tool_use");
       if (turn.stop === "limit" && limits++ < 2) {

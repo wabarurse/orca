@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { loadConfig, paths } from "../config";
+import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
 import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
@@ -16,7 +16,7 @@ import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustQuestion, trustState } from "../core/trust";
 import type { AgentEvent, Message } from "../core/types";
-import { dim, editor, fit, readClipboardImage, screens, type Clipboard, type Key, type Terminal } from "./components";
+import { dim, editor, fit, readClipboardImage, screens, type Key, type Terminal } from "./components";
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
 import { renderWork, type WorkTab } from "./work";
@@ -32,8 +32,8 @@ export type AppDeps = {
   terminal: Terminal;
   directory: string;
   now: () => number;
-  ensureDaemon: (conversation: string) => Promise<void>;
-  clipboard: () => Promise<Clipboard<Uint8Array>>;
+  ensureDaemon: (conversation: string) => Promise<Result<number>>;
+  clipboard: () => Promise<Result<Uint8Array>>;
   exit: (code: number) => void;
 };
 
@@ -87,7 +87,7 @@ export class App {
     await this.poll();
   }
 
-  private failed(error: unknown): void { this.flash(error instanceof Error ? error.message : String(error)); }
+  private failed(error: unknown): void { this.flash(errorMessage(error)); }
 
   async start(): Promise<void> {
     const existing = (await listConversations()).find(c => c.directory === this.deps.directory);
@@ -121,7 +121,7 @@ export class App {
     this.folds = loaded.folds;
     if (loaded.problems.length > 0) this.flash(loaded.problems.join("; "));
     this.deps.terminal.setTitle?.(`orca2 · ${conversation.name}`);
-    await this.deps.ensureDaemon(conversation.id).catch((error: unknown) => { this.flash(`daemon: ${error instanceof Error ? error.message : String(error)}`); });
+    await this.startDaemon(conversation.id);
   }
 
   async poll(): Promise<void> {
@@ -158,7 +158,7 @@ export class App {
 
   private async slow(pid: number | null): Promise<void> {
     const id = this.conversation.id;
-    if (pid === null && this.queued.length > 0) await this.deps.ensureDaemon(id).catch(() => {});
+    if (pid === null && this.queued.length > 0) await this.deps.ensureDaemon(id).catch((error: unknown) => fail(errorMessage(error)));
     const runs = await listRuns(id);
     const running = runs.filter(r => r.agent !== "orchestrator" && live(r)).length;
     const parts = [`${running} agent${running === 1 ? "" : "s"} running`];
@@ -199,7 +199,13 @@ export class App {
       confirm: question => this.ask({ kind: "confirm", question }),
       input: (prompt, initial) => this.ask({ kind: "input", prompt, initial }),
       pick: (title, options) => this.ask({ kind: "pick", title, options }),
-      say: async text => { await say(this.conversation.id, text, [], "steer"); await this.deps.ensureDaemon(this.conversation.id); } };
+      say: async text => { await say(this.conversation.id, text, [], "steer"); await this.startDaemon(this.conversation.id); } };
+  }
+
+  private async startDaemon(conversation: string): Promise<boolean> {
+    const started = await this.deps.ensureDaemon(conversation).catch((error: unknown) => fail(errorMessage(error)));
+    if (!started.ok) this.flash(`daemon: ${started.error}`);
+    return started.ok;
   }
 
   private flash(text: string): void { this.note = text.replace(/\s+/g, " ").trim(); this.draw(); }
@@ -265,7 +271,7 @@ export class App {
     if (text.startsWith("/")) { await this.command(text); return; }
     await say(this.conversation.id, text, this.images, delivery);
     this.images = [];
-    await this.deps.ensureDaemon(this.conversation.id).catch((error: unknown) => { this.flash(`daemon: ${error instanceof Error ? error.message : String(error)}`); });
+    await this.startDaemon(this.conversation.id);
     await this.poll();
   }
 
@@ -283,9 +289,11 @@ export class App {
     try {
       const read = await this.deps.clipboard();
       if (!read.ok) { this.flash(`paste failed: ${read.error}`); return; }
-      this.images.push(await saveImage(this.conversation.id, read.data));
+      const saved = await saveImage(this.conversation.id, read.data);
+      if (!saved.ok) { this.flash(`paste failed: ${saved.error}`); return; }
+      this.images.push(saved.data);
       this.flash(`image attached (${this.images.length})`);
-    } catch (error) { this.flash(`paste failed: ${error instanceof Error ? error.message : String(error)}`); }
+    } catch (error) { this.flash(`paste failed: ${errorMessage(error)}`); }
   }
 
   private async cycle(step: number): Promise<void> {
@@ -302,7 +310,7 @@ export class App {
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
     if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+V image · Ctrl+N new · Alt+←/→ switch · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
-    if (name === "compact") { await compactNow(id); await this.deps.ensureDaemon(id); this.flash("compacting…"); return; }
+    if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
     if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted (restart agents to load its instructions)"); return; }
     if (name === "model") {
@@ -316,7 +324,7 @@ export class App {
     if (name === "plugins") { await this.pluginsMenu(); return; }
     const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
     if (own === undefined) { this.flash(`unknown command /${name}`); return; }
-    try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${error instanceof Error ? error.message : String(error)}`); }
+    try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${errorMessage(error)}`); }
   }
 
   private commands(): { name: string }[] { return this.uis.flatMap(bound => bound.ui.commands); }
@@ -330,8 +338,12 @@ export class App {
     const choice = await this.ask({ kind: "pick", title: "plugins for this bubble (Enter toggles; config.toml holds the defaults)", options });
     const name = choice === null ? undefined : names[choice];
     if (name === undefined) return;
-    const bubble = this.conversation.bubble ?? (await ensureBubble(this.conversation.id)).id;
-    await setBubblePlugin(bubble, name, enabled.includes(name) ? "off" : "on");
+    const ensured = this.conversation.bubble === null ? await ensureBubble(this.conversation.id) : null;
+    if (ensured !== null && !ensured.ok) { this.flash(ensured.error); return; }
+    const bubble = ensured === null ? this.conversation.bubble : ensured.data.id;
+    if (bubble === null) return;
+    const switched = await setBubblePlugin(bubble, name, enabled.includes(name) ? "off" : "on");
+    if (!switched.ok) { this.flash(switched.error); return; }
     await this.switchTo((await readConversation(this.conversation.id)) ?? this.conversation);
     this.flash(`${name} ${enabled.includes(name) ? "off" : "on"} for this bubble (from the next turn)`);
   }
@@ -382,7 +394,7 @@ export class App {
       page.error = null;
       const row = page.rows[page.index];
       page.details = row === undefined ? [] : await this.details(tab, row);
-    } catch (error) { page.error = error instanceof Error ? error.message : String(error); page.rows = []; page.details = []; }
+    } catch (error) { page.error = errorMessage(error); page.rows = []; page.details = []; }
   }
 
   private async details(tab: ReturnType<App["tabs"]>[number], row: Row): Promise<Section[]> {
@@ -414,7 +426,7 @@ export class App {
       const def = tab.plugin.ui.tabs.find(t => t.id === tab.id);
       const action = def?.actions.find(a => a.key === char);
       if (action !== undefined) {
-        try { await action.run(page.rows[page.index] ?? null, this.host(tab.plugin)); } catch (error) { page.status = `${action.label}: ${error instanceof Error ? error.message : String(error)}`; }
+        try { await action.run(page.rows[page.index] ?? null, this.host(tab.plugin)); } catch (error) { page.status = `${action.label}: ${errorMessage(error)}`; }
       }
     }
     await this.loadPage();
@@ -480,9 +492,11 @@ export async function startTui(directory: string): Promise<number> {
   const terminal = opened.data;
   return new Promise<number>(resolve => {
     const app = new App({ terminal, directory, now: () => Date.now(),
-      ensureDaemon: async conversation => { await ensureDaemon(conversation, null); },
-      clipboard: async () => { const image = await readClipboardImage(); return image.ok ? { ok: true, data: image.data.bytes } : image; },
+      ensureDaemon: conversation => ensureDaemon(conversation, null),
+      clipboard: async () => { const image = await readClipboardImage(); return image.ok ? ok(image.data.bytes) : image; },
       exit: code => { (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }, () => { resolve(code); }); } });
-    app.start().catch((error: unknown) => { app.stop(); process.stderr.write(`orca2: ${error instanceof Error ? error.message : String(error)}\n`); resolve(1); });
+    const abandon = (error: string): void => { app.stop(); process.stderr.write(`orca2: ${error}\n`); resolve(1); };
+    terminal.launched.then(launched => { if (!launched.ok) abandon(launched.error); }, (error: unknown) => { abandon(errorMessage(error)); });
+    app.start().catch((error: unknown) => { abandon(errorMessage(error)); });
   });
 }

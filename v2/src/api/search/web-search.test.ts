@@ -186,7 +186,8 @@ test("bounded transport explicitly reports its byte limit and disconnects at the
   const big = boundedSearchResponse(new Response(new Uint8Array(SEARCH_RESPONSE_BYTES + 1)), controller.signal);
   await expect(big.text()).rejects.toThrow("exceeded the 2 mib limit");
   let cancelled = false;
-  await expect(searchOperation(undefined, signal => boundedSearchResponse(new Response(new ReadableStream({ cancel() { cancelled = true; } })), signal).text(), 5)).rejects.toThrow("timed out");
+  const timedOut = await searchOperation(undefined, signal => boundedSearchResponse(new Response(new ReadableStream({ cancel() { cancelled = true; } })), signal).text(), 5);
+  expect(timedOut.ok ? "" : timedOut.error.message).toContain("timed out");
   expect(cancelled).toBe(true);
 });
 

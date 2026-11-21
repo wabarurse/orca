@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { MessageRecord } from "../inbox";
-import { parseJson } from "../result";
 import type { Entry, NewEntry } from "../types";
 import { publish } from "./storage";
 import { paired } from "./pairs";
+import { parseJson } from "../../config";
 
 export type Transcript = {
   path: string;

@@ -2,8 +2,8 @@ import { mkdir, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { withStorageLock } from "../lock";
-import { errorCode, fail, ok, parseJson, type Result } from "../result";
 import { bubbleDir, writeFileAtomic } from "./store";
+import { errorCode, fail, ok, parseJson, type Result } from "../../config";
 
 export type Entry = { text: string; at: string; author: string; sources: string[]; retired: string | null };
 export type MemoryNode = { id: string; title: string; summary: string; keywords: string[]; updated: string; revision: number; entries: Entry[] };

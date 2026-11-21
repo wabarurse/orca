@@ -1,8 +1,8 @@
 import { readServers, UsageError, withServer } from "../mcp";
 import { imageBlock, saveImage } from "../images";
 import { z } from "zod";
-import { asRecord } from "../result";
-import type { Tool, ToolResult } from "./registry";
+import { settled, type Tool, type ToolResult } from "./registry";
+import { asRecord } from "../../config";
 
 const ImageItem = z.object({ type: z.literal("image"), data: z.string().min(1), mimeType: z.string().min(1) });
 
@@ -21,7 +21,7 @@ export const mcp: Tool = {
       return JSON.stringify({ file: path, servers: entries.map(e => ({ name: e.name, state: e.disabled ? "disabled" : e.problem !== undefined ? `unusable: ${e.problem}` : "ready", ...(e.server !== undefined ? { kind: e.server.command !== undefined ? "local command" : "url" } : {}) })) });
     }
     if (typeof input.server !== "string") throw new Error("server is required");
-    return withServer(input.server, ctx.cwd, ctx.signal, async (client, options) => {
+    return settled(await withServer(input.server, ctx.cwd, ctx.signal, async (client, options): Promise<ToolResult> => {
       const name = () => { if (typeof input.name !== "string" || input.name === "") throw new UsageError("name is required"); return input.name; };
       const args = (): Record<string, unknown> | undefined => {
         if (input.arguments === undefined) return undefined;
@@ -59,11 +59,12 @@ export const mcp: Tool = {
       for (const item of content) {
         const image = ImageItem.safeParse(item);
         if (image.success) {
-          blocks.push(imageBlock(await saveImage(ctx.conversation, Buffer.from(image.data.data, "base64"))));
-          metadata.content.push({ type: "image", stored: true });
+          const saved = await saveImage(ctx.conversation, Buffer.from(image.data.data, "base64"));
+          if (saved.ok) blocks.push(imageBlock(saved.data));
+          metadata.content.push(saved.ok ? { type: "image", stored: true } : { type: "image", stored: false, error: saved.error });
         } else metadata.content.push(item);
       }
       return [{ type: "text", text: JSON.stringify(metadata) }, ...blocks];
-    });
+    }));
   },
 };

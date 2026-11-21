@@ -22,7 +22,7 @@ export const behaviorTool: Tool = {
     if (ctx.role !== "orchestrator") throw new Error("workers propose behavior lines to the orchestrator");
     const key = typeof input.key === "string" ? input.key : "";
     if (!/^[a-zA-Z0-9._-]{1,100}$/.test(key)) throw new Error("invalid behavior key");
-    const scope: BehaviorScope = input.scope === "user" ? { kind: "user" } : { kind: "bubble", bubble: existing ?? (await ensureBubble(ctx.conversation)).id };
+    const scope: BehaviorScope = input.scope === "user" ? { kind: "user" } : { kind: "bubble", bubble: existing ?? settled(await ensureBubble(ctx.conversation)).id };
     if (input.action === "forget") { settled(await setBehavior(scope, { key, text: null })); return `forgot ${input.scope} behavior ${key}`; }
     if (input.action !== "save" || typeof input.text !== "string") throw new Error("save needs text");
     const at = new Date().toISOString();

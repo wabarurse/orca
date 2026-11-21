@@ -1,8 +1,8 @@
 import type { ImageBlockParam, TextBlockParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider } from "../../api";
 import type { RequestSettings } from "../../api/model";
-import type { Result } from "../result";
 import type { Role } from "../types";
+import { type Result } from "../../config";
 
 export type AgentInfo = {
   agent: string;

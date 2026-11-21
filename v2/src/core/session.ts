@@ -2,7 +2,7 @@ import { rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { provider as loadProvider } from "../api";
 import { providerFor } from "../api/model";
-import { loadConfig, paths } from "../config";
+import { fail, loadConfig, ok, paths, type Result } from "../config";
 import { ensureDataDirs } from "./bubbles";
 import { readConversation } from "./conversations";
 import { referenceSections } from "./knowledge";
@@ -18,7 +18,6 @@ import { put } from "./inbox";
 import { pluginData } from "./bubbles";
 import { scriptedProvider } from "./scripted";
 import { ensureBuiltinSkills } from "./builtin-skills";
-import { fail, ok, type Result } from "./result";
 
 export type SessionInput = {
   conversation: string;
@@ -34,20 +33,20 @@ export type SessionInput = {
   compactRequested: () => boolean;
   model: string | null;
   keep: { transcript: Transcript; rolling: RollingCompactor | null } | null;
-  resolve: (() => Promise<Resolved>) | null;
+  resolve: (() => Promise<Result<Resolved>>) | null;
 };
 
 export type Session = { assembled: Assembled; transcript: Transcript; run: () => Promise<RunResult>; rolling: RollingCompactor | null };
 
-export async function resolveModel(conversation: string, override: string | null): Promise<Resolved> {
+export async function resolveModel(conversation: string, override: string | null): Promise<Result<Resolved>> {
   const config = await loadConfig();
   const meta = await readConversation(conversation);
   const model = override ?? meta?.model ?? config.model;
   const scripted = process.env.ORCA2_SCRIPTED;
-  if (scripted !== undefined && scripted.length > 0) return { model, provider: scriptedProvider(scripted), settings: null, contextLimit: null };
+  if (scripted !== undefined && scripted.length > 0) return ok({ model, provider: scriptedProvider(scripted), settings: null, contextLimit: null });
   const name = providerFor(model);
   const provider = await loadProvider(name, { profile: name === "anthropic" ? config.account : config.openaiAccount });
-  return { model, provider, settings: null, contextLimit: null };
+  return provider.ok ? ok({ model, provider: provider.data, settings: null, contextLimit: null }) : provider;
 }
 
 export async function openSession(input: SessionInput): Promise<Result<Session>> {
@@ -63,14 +62,18 @@ export async function openSession(input: SessionInput): Promise<Result<Session>>
   if (input.fresh && existsSync(path)) await rename(path, path.replace(/\.jsonl$/, `.${Date.now()}.jsonl`));
   const transcript = input.keep?.transcript ?? openTranscript(path);
   transcript.refresh();
-  const data = await ensureDataDirs(input.conversation);
+  const dataDirs = await ensureDataDirs(input.conversation);
+  if (!dataDirs.ok) return dataDirs;
+  const data = dataDirs.data;
   const skills = [...assembled.skills, ...await ensureBuiltinSkills()];
   const config = await loadConfig();
   let rolling: RollingCompactor | null = input.keep?.rolling ?? null;
   if (assembled.bundle.role === "orchestrator" && rolling === null) {
     const sections = [];
     for (const loaded of assembled.plugins) {
-      const memory = (await loaded.background())?.memory ?? null;
+      const background = await loaded.background();
+      if (!background.ok) { input.emit({ kind: "notice", text: `plugin ${loaded.plugin.name}: ${background.error}` }); continue; }
+      const memory = background.data?.memory ?? null;
       if (memory === null) continue;
       const ctx: BackgroundContext = { plugin: loaded.plugin.name, conversation: input.conversation, directory: meta.directory,
         data: scope => pluginData(input.conversation, loaded.plugin.name, scope),
@@ -80,7 +83,9 @@ export async function openSession(input: SessionInput): Promise<Result<Session>>
     rolling = new RollingCompactor(input.conversation, transcript, { small: config.smallSummaries, triggerTokens: null, tailTokens: null, sections });
   }
   const resolve = input.resolve ?? (() => resolveModel(input.conversation, input.model));
-  const first = await resolve();
+  const resolved = await resolve();
+  if (!resolved.ok) return resolved;
+  const first = resolved.data;
   const plugins = assembled.plugins.map(p => p.plugin.name);
   const last = transcript.all().findLast(entry => entry.type === "meta");
   if (last?.type !== "meta" || last.model !== first.model || last.plugins.join(",") !== plugins.join(","))

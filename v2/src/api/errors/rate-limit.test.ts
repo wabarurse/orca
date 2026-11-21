@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import { paths, readState, updateState } from "../../config";
 import { anthropic } from "../anthropic";
 import { coordinatedTransport, lockoutUntil } from "./rate-limit";
@@ -36,8 +37,8 @@ test("a lockout is never saved or waited for: every request asks the provider", 
   expect((await coordinatedTransport("long", async () => new Response("ok"))("https://example.test")).ok).toBe(true);
 });
 test("a lockout saved by an older build is asked about, and a success clears it", async () => {
-  const saved = () => readState(paths.memory, "provider-rate:old", "cooldown");
-  updateState(paths.memory, "provider-rate:old", "cooldown", () => ({ until: Date.now() + 3600_000, probeAt: Date.now() + 3600_000, failures: 1, version: "v" }));
+  const saved = () => readState(paths.memory, z.unknown(), "provider-rate:old", "cooldown");
+  updateState(paths.memory, z.unknown(), "provider-rate:old", "cooldown", () => ({ until: Date.now() + 3600_000, probeAt: Date.now() + 3600_000, failures: 1, version: "v" }));
   expect((await coordinatedTransport("old", async () => locked())("https://example.test")).status).toBe(429);
   expect(saved()).toBeDefined();
   expect((await coordinatedTransport("old", async () => new Response("ok"))("https://example.test")).ok).toBe(true);

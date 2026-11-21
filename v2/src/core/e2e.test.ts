@@ -38,7 +38,7 @@ test("orchestrator → worker → report → orchestrator, through the daemon an
   const c = await createConversation(repo, "e2e");
   conversation = c.id;
   await say(c.id, "please add hello.txt", [], "steer");
-  await ensureDaemon(c.id, null);
+  expect((await ensureDaemon(c.id, null)).ok).toBe(true);
   const transcript = openTranscript(paths.transcript(c.id, "orchestrator"));
   const replies = (): string[] => { transcript.refresh(); return transcript.all().flatMap(e => e.type === "message" && e.message.role === "assistant" && Array.isArray(e.message.content) ? e.message.content.flatMap(b => b.type === "text" ? [b.text] : []) : []); };
   for (let i = 0; i < 200 && !replies().includes("the worker wrote hello.txt"); i++) await Bun.sleep(100);

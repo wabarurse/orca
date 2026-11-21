@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CODEX_CLIENT_ID, CODEX_TOKEN_URL, codexCredentials, codexCredentialsPath, importCodex, loginCodex, readCodexTokens, saveCodexTokens } from "./codex";
 import { fakeCodexTokens } from "../../test/codex";
+const refused = (result: { ok: true; data: null } | { ok: false; error: string }): string => result.ok ? "" : result.error;
 function required<T>(value: T | null | undefined): T {
   if (value === null || value === undefined) throw new Error("missing test value");
   return value;
@@ -47,7 +48,7 @@ test("Codex browser login uses its public client ID, PKCE and form token exchang
   let authorization: URL;
   let callback: Promise<void> | undefined;
   let output = "";
-  await loginCodex("personal", {
+  const signedIn = await loginCodex("personal", {
     port: 0, write(text) { output += text; },
     openBrowser(url) {
       authorization = new URL(url);
@@ -82,6 +83,7 @@ test("Codex browser login uses its public client ID, PKCE and form token exchang
       return Response.json({ access_token: tokens.accessToken, refresh_token: tokens.refreshToken, expires_in: 3600 });
     },
   });
+  expect(signedIn).toEqual({ ok: true, data: null });
   await callback;
   expect((await readCodexTokens("personal"))?.accountId).toBe("test-account");
   expect(statSync(codexCredentialsPath("personal")).mode & 0o777).toBe(0o600);
@@ -150,11 +152,11 @@ test("Codex import accepts native ChatGPT tokens and rejects API-key-only auth",
   const tokens = fakeCodexTokens();
   const data = JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: tokens.accessToken, refresh_token: tokens.refreshToken, account_id: tokens.accountId } });
   await Bun.write(file, data);
-  await importCodex("personal", file);
+  expect(await importCodex("personal", file)).toEqual({ ok: true, data: null });
   expect((await readCodexTokens("personal"))?.accessToken).toBe(tokens.accessToken);
   expect(await Bun.file(file).text()).toBe(data);
   await Bun.write(file, JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "unused-key" }));
-  await expect(importCodex("api", file)).rejects.toThrow("chatgpt subscription login");
+  expect(refused(await importCodex("api", file))).toContain("chatgpt subscription login");
   expect(await readCodexTokens("api")).toBeNull();
 });
 
@@ -162,8 +164,8 @@ test("Codex cancellation leaves the old profile intact", async () => {
   const tokens = fakeCodexTokens();
   await saveCodexTokens("personal", tokens);
   const abort = new AbortController();
-  await expect(loginCodex("personal", {
+  expect(refused(await loginCodex("personal", {
     port: 0, signal: abort.signal, write() {}, openBrowser() { abort.abort(); },
-  })).rejects.toThrow("cancelled");
+  }))).toContain("cancelled");
   expect(await readCodexTokens("personal")).toEqual(tokens);
 });

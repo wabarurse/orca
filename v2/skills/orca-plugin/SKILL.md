@@ -93,7 +93,8 @@ skill (`skills/<skill>/SKILL.md` with a `description:` line); agents find it wit
 
 Declare each scope you use in `storage` with what is kept there. In a tool, `join(ctx.data, "<plugin>")` is the
 conversation folder; in hooks, UI and background code call `await ctx.data("conversation" | "bubble" | "global")`
-(it creates the folder). Agents may read these folders; change them only through your tools. Write files whole
+(it creates the folder and returns `{ ok: true, data: folder }`, or `{ ok: false, error }`, e.g. `bubble` before the
+conversation has one). Agents may read these folders; change them only through your tools. Write files whole
 (write a temp file, then rename) so a reader never sees half a file. Deleting a conversation deletes its folder.
 
 ### Hooks

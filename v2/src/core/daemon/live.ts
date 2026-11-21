@@ -1,9 +1,8 @@
 import { appendFile, mkdir, open, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { paths } from "../../config";
+import { parseJson, paths } from "../../config";
 import { z } from "zod";
 import { MessageRecord } from "../inbox";
-import { parseJson } from "../result";
 import type { AgentEvent } from "../types";
 
 const Call = z.object({ id: z.string(), name: z.string(), input: z.unknown() });

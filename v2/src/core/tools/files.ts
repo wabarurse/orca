@@ -1,12 +1,11 @@
 import { createHash } from "node:crypto";
 import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
-import { paths } from "../../config";
+import { asRecord, errorCode, errorMessage, fail, ok, paths, type Result } from "../../config";
 import { MAX_IMAGE_BYTES, sniffImage, validateImage, type ImageMime } from "../../api";
 import { withStorageLock } from "../lock";
 import { imageBlock, imageFile, saveImage } from "../images";
 import { repositoryInstructions } from "../instructions";
-import { asRecord, errorCode, errorMessage, fail, ok, type Result } from "../result";
 import { settled, type Tool, type ToolContext, type ToolResult } from "./registry";
 
 const MAX_FILE = 2 * 1024 * 1024;
@@ -84,15 +83,12 @@ async function readImage(path: string, mime: ImageMime, ctx: ToolContext): Promi
   if (s.size > MAX_IMAGE_BYTES) return fail(`${format} image is ${mib(s.size)}, over the 64 MiB image memory limit; ${downscale}`);
   const data = await readFile(path);
   if (data.length > MAX_IMAGE_BYTES) return fail(`${format} image grew past the 64 MiB image memory limit; ${downscale}`);
-  let size: { width: number; height: number };
-  try { size = validateImage(data, mime); }
-  catch (error) {
-    const message = errorMessage(error);
-    return fail(/dimensions/.test(message) ? `${format} ${message.replace(/\.$/, "")}; ${downscale}` : `${format} image cannot be sent: ${message}`);
-  }
+  const size = validateImage(data, mime);
+  if (!size.ok) return fail(/dimensions/.test(size.error) ? `${format} ${size.error.replace(/\.$/, "")}; ${downscale}` : `${format} image cannot be sent: ${size.error}`);
   const id = await saveImage(ctx.conversation, data);
-  const meta = { path, revision: revision(data), type: mime, ...size, bytes: data.length, image_id: id };
-  return ok([{ type: "text", text: JSON.stringify(meta) }, imageBlock(id)]);
+  if (!id.ok) return fail(`${format} image cannot be saved: ${id.error}`);
+  const meta = { path, revision: revision(data), type: mime, ...size.data, bytes: data.length, image_id: id.data };
+  return ok([{ type: "text", text: JSON.stringify(meta) }, imageBlock(id.data)]);
 }
 
 export type Change = { text: string; report: Record<string, unknown> };

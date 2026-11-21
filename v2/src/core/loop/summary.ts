@@ -3,9 +3,9 @@ import type { CompleteRequest, Provider, Turn } from "../../api";
 import { effortUpTo, type RequestSettings } from "../../api/model";
 import { historicalMessages } from "../images";
 import { z } from "zod";
-import { asRecord, fail, ok, parseJson, type Result } from "../result";
 import type { RollingMemory } from "../types";
 import { budget, ContextBlocked, estimate, inputRoom, limitOf, replyCap, type Window } from "./budget";
+import { asRecord, fail, ok, parseJson, type Result } from "../../config";
 
 const LIMITS = { summary: 32, pending: 16, item: 1000, targetChars: 8000, tokens: 4096, responseChars: 65536 } as const;
 type SummaryTarget = {

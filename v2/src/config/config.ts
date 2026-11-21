@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { paths } from "./paths";
+import { errorMessage } from "./result";
 
 const Table = z.record(z.string(), z.unknown());
 
@@ -74,7 +75,7 @@ export async function loadConfig(): Promise<Config> {
     const table = Table.safeParse(parsed);
     return parseConfig(table.success ? table.data : {});
   } catch (error) {
-    const warning = `orca2: ignoring ${paths.config}: ${error instanceof Error ? error.message : String(error)}`;
+    const warning = `orca2: ignoring ${paths.config}: ${errorMessage(error)}`;
     if (warning !== warned) console.error(warning);
     warned = warning;
     return { ...defaults };
