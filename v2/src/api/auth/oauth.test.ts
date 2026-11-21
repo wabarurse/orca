@@ -14,7 +14,6 @@ async function workdir(): Promise<string> {
   return dir;
 }
 
-/** A pid that has certainly exited. */
 async function deadPid(): Promise<number> {
   const p = Bun.spawn(["true"]);
   await p.exited;
@@ -35,7 +34,7 @@ test("breakStaleLock removes a lock whose owner pid is dead", async () => {
 
 test("breakStaleLock leaves a live owner's lock alone", async () => {
   const lock = join(await workdir(), "cred.json.lock");
-  await placeLock(lock, process.pid); // this test process is alive
+  await placeLock(lock, process.pid);
   expect(await breakStaleLock(lock)).toBe(false);
   expect(existsSync(lock)).toBe(true);
 });
@@ -54,14 +53,16 @@ test("withCredentialLock breaks a stale lock and runs the action", async () => {
   const result = await withCredentialLock(path, async () => { ran = true; return 42; });
   expect(ran).toBe(true);
   expect(result).toBe(42);
-  expect(existsSync(`${path}.lock`)).toBe(false); // released after the action
+  expect(existsSync(`${path}.lock`)).toBe(false);
 });
 
 test("withCredentialLock serializes two callers on the same path", async () => {
   const path = join(await workdir(), "cred.json");
   const order: string[] = [];
-  const first = withCredentialLock(path, async () => { order.push("a-start"); await Bun.sleep(30); order.push("a-end"); });
+  const entered = Promise.withResolvers<void>();
+  const first = withCredentialLock(path, async () => { order.push("a-start"); entered.resolve(); await Bun.sleep(30); order.push("a-end"); });
+  await entered.promise;
   const second = withCredentialLock(path, async () => { order.push("b"); });
   await Promise.all([first, second]);
-  expect(order).toEqual(["a-start", "a-end", "b"]); // b waits for a to release
+  expect(order).toEqual(["a-start", "a-end", "b"]);
 });

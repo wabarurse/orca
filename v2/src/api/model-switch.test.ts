@@ -3,8 +3,24 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { anthropic } from "./anthropic";
 import { toResponses } from "./openai";
+import { z } from "zod";
 
-// Exercise adapter boundaries without credentials, HTTP or server-side state.
+const sse = [
+  { type: "message_start", message: { id: "m", type: "message", role: "assistant", content: [], model: "claude-test", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
+  { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } },
+  { type: "message_stop" },
+].map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+const sentRequest = z.object({ model: z.string(), messages: z.array(z.unknown()) });
+type SentRequest = z.infer<typeof sentRequest>;
+
+function recordingClient(requests: SentRequest[]): Anthropic {
+  return new Anthropic({ apiKey: "test-only", baseURL: "https://api.anthropic.test", fetch: async (input, init) => {
+    const body: unknown = await (input instanceof Request ? new Request(input, init) : new Request(String(input), init)).json();
+    requests.push(sentRequest.parse(body));
+    return new Response(sse, { headers: { "content-type": "text/event-stream" } });
+  } });
+}
+
 test("cross-provider history preserves text and paired tool IDs but not foreign reasoning", async () => {
   const messages: MessageParam[] = [
     { role: "user", content: "task" },
@@ -15,17 +31,14 @@ test("cross-provider history preserves text and paired tool IDs but not foreign 
     ] },
     { role: "user", content: [{ type: "tool_result", tool_use_id: "call_123", content: "result" }] },
   ];
-  let sent: MessageParam[] = [];
-  const client = { messages: { stream(req: { messages: MessageParam[] }) {
-    sent = req.messages;
-    return { on() {}, async finalMessage() { return { content: [], stop_reason: "end_turn" }; } };
-  } } } as unknown as Anthropic;
-  await anthropic(client).complete({ model: "claude-test", messages, tools: [], maxTokens: 100, onText() {} });
+  const requests: SentRequest[] = [];
+  await anthropic(recordingClient(requests)).complete({ model: "claude-test", messages, tools: [], maxTokens: 100, onText() {} });
+  const sent = requests[0]?.messages;
   expect(JSON.stringify(sent)).not.toContain("encrypted");
   expect(JSON.stringify(sent)).toContain("context");
   expect(JSON.stringify(sent)).toContain("call_123");
   expect(JSON.stringify(sent)).toContain("result");
-  expect(JSON.stringify(messages)).toContain("encrypted"); // disk/memory history unchanged
+  expect(JSON.stringify(messages)).toContain("encrypted");
   const claude: MessageParam[] = [{ role: "assistant", content: [
     { type: "thinking", thinking: "private", signature: "claude-signature" },
     { type: "text", text: "context" },
@@ -52,7 +65,7 @@ test("actual Codex adapter output roundtrips mixed text/caller/multiple error to
     { type: "tool_result", tool_use_id: "call_b", content: "failure", is_error: true },
   ] }];
   const claude = claudeMessages(history);
-  expect(claude[0]!.content).toContainEqual({ type: "tool_use", id: "call_a", name: "echo", input: { text: "a" }, caller: { type: "direct" } });
+  expect(claude[0]?.content).toContainEqual({ type: "tool_use", id: "call_a", name: "echo", input: { text: "a" }, caller: { type: "direct" } });
   expect(JSON.stringify(claude)).not.toContain("secret");
   const roundtrip = toResponses(claude);
   expect(roundtrip).toContainEqual({ type: "function_call_output", call_id: "call_a", output: "success" });
@@ -75,28 +88,24 @@ test("reasoning-only foreign messages dropped; Claude signed/redacted reasoning 
   ];
   const sanitized = claudeMessages(history);
   expect(sanitized).toHaveLength(2);
-  expect(sanitized[1]).toEqual(history[2]!);
+  expect(sanitized[1]).toEqual(history[2]);
   const codex = toResponses(history);
   expect(JSON.stringify(codex)).not.toContain("claude-signed");
   expect(JSON.stringify(codex)).not.toContain("opaque-claude-data");
   expect(codex).toContainEqual({ type: "reasoning", id: "rs_only", summary: [], encrypted_content: "secret" });
-  const requests: { model: string; messages: MessageParam[] }[] = [];
-  const client = { messages: { stream(req: { model: string; messages: MessageParam[] }) {
-    requests.push(req); return { on() {}, async finalMessage() { return { content: [], stop_reason: "end_turn" }; } };
-  } } } as unknown as Anthropic;
+  const requests: SentRequest[] = [];
+  const client = recordingClient(requests);
   for (const model of ["claude-sonnet-4-6", "claude-opus-5-5"]) {
     await anthropic(client).complete({ model, messages: history, tools: [], maxTokens: 100, onText() {} });
   }
-  expect(requests[0]!.messages).toEqual(requests[1]!.messages);
-  // This is a preservation assertion, NOT a claim signatures are accepted by
-  // every Claude model. Only the service can validate historic signed thinking.
+  expect(requests).toHaveLength(2);
+  expect(requests[0]?.messages).toEqual(requests[1]?.messages);
 });
 
 test("an empty Codex reply reaches Claude as nothing: blank text is never recorded or sent (the Messages API refuses it)", async () => {
   const reply = fromResponses([{ type: "reasoning", id: "rs_e", summary: [], encrypted_content: "secret" },
-    { type: "message", id: "msg_e", role: "assistant", status: "completed", content: [{ type: "output_text", text: "", annotations: [] }] }] as never);
+    { type: "message", id: "msg_e", role: "assistant", status: "completed", content: [{ type: "output_text", text: "", annotations: [] }] }]);
   expect(reply.map(b => b.type)).toEqual(["thinking"]);
-  // A transcript an older build wrote, with the blank block already in it.
   const history: MessageParam[] = [{ role: "user", content: "task" }, { role: "assistant", content: [...reply, { type: "text", text: "" }] },
     { role: "user", content: "again" }, { role: "assistant", content: [{ type: "text", text: " \n" }, { type: "text", text: "kept" }] }];
   expect(claudeMessages(history)).toEqual([{ role: "user", content: "task" }, { role: "user", content: "again" }, { role: "assistant", content: [{ type: "text", text: "kept" }] }]);

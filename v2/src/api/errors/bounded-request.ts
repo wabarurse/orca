@@ -18,12 +18,13 @@ function requestDeadline(options: Options) {
     stopIdle();
     if (!controller.signal.aborted) idle = setTimeout(() => controller.abort(new ModelRequestError("idle-timeout")), idleMs);
   };
-  const callerAbort = () => controller.abort(options.signal!.reason);
-  options.signal?.addEventListener("abort", callerAbort, { once: true });
+  const caller = options.signal;
+  const callerAbort = () => controller.abort(caller?.reason);
+  caller?.addEventListener("abort", callerAbort, { once: true });
   const total = setTimeout(() => controller.abort(new ModelRequestError("total-timeout")), totalMs);
-  let rejectAbort!: (reason: unknown) => void;
-  const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
-  const onAbort = () => rejectAbort(controller.signal.reason);
+  const abortion = Promise.withResolvers<never>();
+  const aborted = abortion.promise;
+  const onAbort = () => abortion.reject(controller.signal.reason);
   controller.signal.addEventListener("abort", onAbort, { once: true });
   return { controller, aborted, activity, stopIdle, close() {
     clearTimeout(total); stopIdle();
@@ -39,22 +40,11 @@ async function runAttempt<T>(execute: (scope: RequestScope) => Promise<T>, deadl
   const attempt = transportAttempt(deadline.controller, transport, deadline.activity, started);
   try { return await execute(attempt.scope); }
   finally {
-    // Abort HTTP and await cooperative reader cleanup BEFORE allowing a retry. The outer
-    // deadline race still terminates hung cleanup; its aborted signal forbids a replacement.
     await attempt.close();
     deadline.stopIdle();
   }
 }
 
-/** Enabled by the account factories. One executor owns the whole completion, not just headers.
- * Integration MUST disable SDK retries, preserve deliberate 401 refresh separately, use scoped fetch
- * and signal, and await stream completion. Never nest this around existing withTransientRetries.
- * Headers and nonempty transport bytes (including SSE heartbeat/reasoning/tools) reset idle;
- * any successful-response body byte conservatively forbids replay. SDK text callbacks are not activity clocks.
- * Total includes backoff and cannot be extended by activity. Idle pauses during backoff.
- * 10m/90s favor long reasoning over fast detection; silent-but-healthy providers can time out.
- * Deadlines are terminal. An executor ignoring abort may remain pending, but is NEVER duplicated.
- */
 export async function boundedModelRequest<T>(execute: (scope: RequestScope) => Promise<T>, options: Options = {}, transport: RequestScope["fetch"] = fetch): Promise<T> {
   const deadline = requestDeadline(options);
   const { signal } = deadline.controller;
@@ -74,7 +64,7 @@ export async function boundedModelRequest<T>(execute: (scope: RequestScope) => P
       signal, backoffMs: options.backoffMs, onRetry: options.onRetry, notice: () => {},
     })]);
   } catch (error) {
-    if (options.signal?.aborted) throw options.signal.reason;
+    if (options.signal?.aborted === true) throw options.signal.reason;
     if (signal.aborted) throw signal.reason;
     throw diagnoseModelError(error, consumed, stage);
   } finally { deadline.close(); }

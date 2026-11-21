@@ -5,8 +5,12 @@ import { openai } from "../openai";
 import { codexSSE, fakeCodexTokens } from "../../test/codex";
 import { CredentialError } from "../auth/oauth";
 import type { RecoveryPolicy } from "./provider-recovery";
+import { ModelRequestError } from "./model-diagnostics";
 
-let mock: ReturnType<typeof spyOn> | undefined;
+const caught = (promise: Promise<unknown>): Promise<unknown> => promise.then(() => undefined, (error: unknown) => error);
+const messageOf = (value: unknown): string => value instanceof Error ? value.message : "";
+
+let mock: { mockRestore(): void } | undefined;
 afterEach(() => { mock?.mockRestore(); });
 const encoder = new TextEncoder();
 const req = { model: "test", messages: [{ role: "user" as const, content: "hi" }], tools: [], maxTokens: 100, onText() {} };
@@ -61,9 +65,9 @@ for (const name of ["claude", "codex"] as const) {
   for (const [status, reason] of [[403, "permission"], [404, "model-unavailable"], [413, "input-too-large"], [429, "rate-limit"]] as const) {
     test(`${name}: diagnoses HTTP ${status} without exposing the response body`, async () => {
       const provider = make(fetcher(async () => Response.json({ error: { message: "SECRET" } }, { status })));
-      const error = await provider.complete(req).catch(error => error);
+      const error = await caught(provider.complete(req));
       expect(error).toMatchObject({ status, reason });
-      expect(error.message).not.toContain("SECRET");
+      expect(messageOf(error)).not.toContain("SECRET");
     });
   }
   test(`${name}: reports rejected credential exchange separately from model HTTP errors`, async () => {
@@ -72,10 +76,10 @@ for (const name of ["claude", "codex"] as const) {
     const provider = name === "claude"
       ? anthropic(new Anthropic({ apiKey: null, authToken: null, credentials, fetch: transport }), { recovery: policy })
       : openai(credentials, { recovery: policy });
-    const error = await provider.complete(req).catch(error => error);
+    const error = await caught(provider.complete(req));
     expect(error).toMatchObject({ kind: "permanent", reason: "oauth-http", oauthStatus: 400 });
-    expect(error.status).toBeUndefined();
-    expect(error.message).not.toContain("SECRET");
+    expect(error instanceof ModelRequestError && error.status === undefined).toBe(true);
+    expect(messageOf(error)).not.toContain("SECRET");
   });
   for (const stage of ["headers", "body", "partial"] as const) test(`${name}: stalled ${stage} is terminal, no replay`, async () => {
     let calls = 0;
@@ -121,7 +125,6 @@ for (const name of ["claude", "codex"] as const) {
   });
   test(`${name}: constructor defaults leave bounded recovery off`, async () => {
     make(fetcher(async () => Response.json({ error: { type: "invalid_request_error" } }, { status: 400 })), undefined);
-    // Explicitly omit the policy (make's default is for integration tests).
     const actual = name === "claude" ? anthropic(new Anthropic({ apiKey: "test", fetch: fetcher(async () => Response.json({}, { status: 400 })) })) : openai(async () => fakeCodexTokens());
     await expect(actual.complete(req)).rejects.not.toHaveProperty("kind");
   });
@@ -188,14 +191,14 @@ for (const { outcome, statuses, flags } of refreshScenarios) test(`Codex opt-in 
   }, { preconnect: fetch.preconnect }));
   const provider = openai(async opts => {
     refresh.push(opts?.forceRefresh);
-    if (opts?.forceRefresh && outcome === "cancelled") caller.abort(reason);
-    return opts?.forceRefresh || refresh.length > 1 ? renewed : initial;
+    if (opts?.forceRefresh === true && outcome === "cancelled") caller.abort(reason);
+    return opts?.forceRefresh === true || refresh.length > 1 ? renewed : initial;
   }, { recovery: policy, retry: { backoffMs: [0, 0] } });
   const result = provider.complete({ ...req, signal: caller.signal });
   await expectRefreshResult(result, outcome, reason);
   expect(calls).toBe(statuses.length);
   expect(refresh).toEqual([...flags]);
-  expect(authorization).toEqual([`Bearer ${initial.accessToken}`, ...Array(calls - 1).fill(`Bearer ${renewed.accessToken}`)]);
+  expect(authorization).toEqual([`Bearer ${initial.accessToken}`, ...Array.from({ length: calls - 1 }, () => `Bearer ${renewed.accessToken}`)]);
 });
 
 test("Codex keeps structured diagnostics when the response fails during streaming", async () => {
@@ -208,8 +211,8 @@ test("Codex keeps structured diagnostics when the response fails during streamin
     ]);
   }, { preconnect: fetch.preconnect }));
   const provider = openai(async () => fakeCodexTokens(), { recovery: policy, retry: { backoffMs: [0, 0] } });
-  const error = await provider.complete(req).catch(error => error);
+  const error = await caught(provider.complete(req));
   expect(error).toMatchObject({ kind: "interrupted", reason: "provider-service" });
-  expect(error.message).not.toContain("SECRET");
+  expect(messageOf(error)).not.toContain("SECRET");
   expect(calls).toBe(1);
 });

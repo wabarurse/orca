@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -7,6 +8,12 @@ import {
   CLAUDE_CLIENT_ID, CLAUDE_TOKEN_URL, claudeCredentials, claudeCredentialsPath,
   claudeProfiles, importClaudeCode, loginClaude, readClaudeTokens, saveClaudeTokens,
 } from "./claude";
+function required<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) throw new Error("missing test value");
+  return value;
+}
+const bodyText = (body: RequestInit["body"]): string => typeof body === "string" ? body : "";
+const parseJSON = (text: string): unknown => JSON.parse(text);
 
 let home: string;
 let previousHome: string | undefined;
@@ -34,12 +41,12 @@ const tokenResponse = (access = "new-access", refresh: string | undefined = "new
 async function expectShortLink(output: string, port: string, full: string, file: string) {
   const link = output.match(/http:\/\/localhost:\d+\/login\/[\w-]+/)?.[0];
   expect(link).toBeDefined();
-  expect(link!.length).toBeLessThan(50);
+  expect(required(link).length).toBeLessThan(50);
   expect(output).not.toContain(full);
   expect(output).toContain(file);
   expect(statSync(file).mode & 0o777).toBe(0o600);
   expect(readFileSync(file, "utf8").trim()).toBe(full);
-  const short = new URL(link!);
+  const short = new URL(required(link));
   short.hostname = "127.0.0.1";
   expect(short.port).toBe(port);
   const redirect = await fetch(short, { redirect: "manual" });
@@ -63,13 +70,13 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
         expect(authorization.searchParams.get("client_id")).toBe(CLAUDE_CLIENT_ID);
         expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
         expect(authorization.searchParams.get("scope")).toContain("user:inference");
-        const target = new URL(authorization.searchParams.get("redirect_uri")!);
+        const target = new URL(required(authorization.searchParams.get("redirect_uri")));
         target.hostname = "127.0.0.1";
         await expectShortLink(written, target.port, authorization.toString(), join(home, ".runtime", "login-url.txt"));
         target.search = new URLSearchParams({ code: "test-code", state: "wrong-state" }).toString();
         expect((await fetch(target)).status).toBe(400);
         expect(await readClaudeTokens("personal")).toBeNull();
-        target.searchParams.set("state", authorization.searchParams.get("state")!);
+        target.searchParams.set("state", required(authorization.searchParams.get("state")));
         const response = await fetch(target);
         expect(response.status).toBe(200);
         expect(await response.text()).toContain("signed in");
@@ -77,13 +84,13 @@ test("browser OAuth validates state and exchanges a PKCE code for private, named
     },
     async fetcher(url, init) {
       expect(url).toBe(CLAUDE_TOKEN_URL);
-      const body = JSON.parse(init.body as string);
+      const body = z.record(z.string(), z.unknown()).parse(JSON.parse(bodyText(init.body)));
       expect(body.client_id).toBe(CLAUDE_CLIENT_ID);
       expect(body.grant_type).toBe("authorization_code");
       expect(body.code).toBe("test-code");
       expect(body.state).toBe(authorization.searchParams.get("state"));
       expect(body.redirect_uri).toBe(authorization.searchParams.get("redirect_uri"));
-      expect(createHash("sha256").update(body.code_verifier).digest("base64url")).toBe(authorization.searchParams.get("code_challenge")!);
+      expect(createHash("sha256").update(String(body.code_verifier)).digest("base64url")).toBe(required(authorization.searchParams.get("code_challenge")));
       expect(init.redirect).toBe("error");
       return tokenResponse();
     },
@@ -106,7 +113,7 @@ test("cancelled login releases its callback port and saves nothing", async () =>
   await expect(loginClaude("default", {
     port: 0, signal: abort.signal, write() {},
     openBrowser(url) {
-      port = Number(new URL(new URL(url).searchParams.get("redirect_uri")!).port);
+      port = Number(new URL(required(new URL(url).searchParams.get("redirect_uri"))).port);
       abort.abort();
     },
   })).rejects.toThrow("cancelled");
@@ -137,7 +144,7 @@ test("login prints an ssh tunnel hint only over ssh and removes the URL file whe
 });
 
 test("login still works with just the short link when the URL file cannot be written", async () => {
-  mkdirSync(join(home, ".runtime", "login-url.txt"), { recursive: true }); // a directory in the way makes the write fail
+  mkdirSync(join(home, ".runtime", "login-url.txt"), { recursive: true });
   const abort = new AbortController();
   let written = "";
   await expect(loginClaude("default", {
@@ -159,20 +166,20 @@ test("cancelling a code exchange aborts the request and preserves the previous l
     port: 0, signal: abort.signal, write() {},
     openBrowser(url) {
       const authorization = new URL(url);
-      const target = new URL(authorization.searchParams.get("redirect_uri")!);
+      const target = new URL(required(authorization.searchParams.get("redirect_uri")));
       target.hostname = "127.0.0.1";
-      target.search = new URLSearchParams({ code: "code", state: authorization.searchParams.get("state")! }).toString();
+      target.search = new URLSearchParams({ code: "code", state: required(authorization.searchParams.get("state")) }).toString();
       callback = fetch(target);
     },
     async fetcher(_, init) {
       const pending = new Promise<Response>((_, reject) => {
-        init.signal!.addEventListener("abort", () => { exchangeAborted = true; reject(new Error("aborted")); }, { once: true });
+        init.signal?.addEventListener("abort", () => { exchangeAborted = true; reject(new Error("aborted")); }, { once: true });
       });
       abort.abort();
       return pending;
     },
   })).rejects.toThrow("cancelled");
-  expect((await callback)!.status).toBe(400);
+  expect(required(await callback).status).toBe(400);
   expect(exchangeAborted).toBe(true);
   expect(await readClaudeTokens("default")).toEqual(original);
 });
@@ -186,14 +193,14 @@ test("denied browser authorization leaves the existing profile untouched", async
     port: 0, write() {},
     openBrowser(url) {
       const authorization = new URL(url);
-      const target = new URL(authorization.searchParams.get("redirect_uri")!);
+      const target = new URL(required(authorization.searchParams.get("redirect_uri")));
       target.hostname = "127.0.0.1";
-      target.search = new URLSearchParams({ error: "access_denied", state: authorization.searchParams.get("state")! }).toString();
+      target.search = new URLSearchParams({ error: "access_denied", state: required(authorization.searchParams.get("state")) }).toString();
       callback = fetch(target);
     },
     async fetcher() { exchanges++; return tokenResponse(); },
   })).rejects.toThrow("cancelled or denied");
-  expect((await callback)!.status).toBe(400);
+  expect(required(await callback).status).toBe(400);
   expect(exchanges).toBe(0);
   expect(await readClaudeTokens("default")).toEqual(original);
 });
@@ -203,7 +210,7 @@ test("tokens refresh once across competing clients and preserve rotated refresh 
   let calls = 0;
   const fetcher = async (_: string, init: RequestInit) => {
     calls++;
-    expect(JSON.parse(init.body as string)).toEqual({ client_id: CLAUDE_CLIENT_ID, grant_type: "refresh_token", refresh_token: "test-refresh" });
+    expect(parseJSON(bodyText(init.body))).toEqual({ client_id: CLAUDE_CLIENT_ID, grant_type: "refresh_token", refresh_token: "test-refresh" });
     await Bun.sleep(20);
     return tokenResponse();
   };
@@ -274,7 +281,7 @@ test("malformed token responses cannot overwrite a valid credential store", asyn
 });
 
 test("Claude Code import copies credentials without changing the source or other profiles", async () => {
-  const source = join(process.env.CLAUDE_CONFIG_DIR!, ".credentials.json");
+  const source = join(required(process.env.CLAUDE_CONFIG_DIR), ".credentials.json");
   const data = JSON.stringify({ claudeAiOauth: fresh() });
   await Bun.write(source, data);
   await saveClaudeTokens("work", { ...fresh(), accessToken: "work-access" });

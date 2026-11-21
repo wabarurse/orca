@@ -6,7 +6,9 @@ import { exhaustedQuota, retryNotice, transientFailure, withTransientRetries } f
 import type { CompleteRequest } from "../provider";
 import { codexSSE, fakeCodexTokens } from "../../test/codex";
 
-// ---- the helper ----
+const caught = (promise: Promise<unknown>): Promise<unknown> => promise.then(() => undefined, (error: unknown) => error);
+const messageOf = (value: unknown): string => value instanceof Error ? value.message : "";
+
 
 test("transientFailure: transport errors and 408/409/429/5xx/529 are transient, other 4xx and plain errors are final", () => {
   const withStatus = (status: number) => Object.assign(new Error(`${status} status`), { status });
@@ -15,7 +17,6 @@ test("transientFailure: transport errors and 408/409/429/5xx/529 are transient, 
   expect(transientFailure(Object.assign(new TypeError("The socket connection was closed unexpectedly. For more information, pass `verbose: true`"), { code: "ECONNRESET" }))).toBe("the socket connection was closed unexpectedly");
   expect(transientFailure(Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT" }))).toBe("connect etimedout");
   expect(transientFailure(new DOMException("The operation was aborted.", "AbortError"))).toBe("the operation was aborted");
-  // The SDKs wrap the transport error: it is found through the cause chain.
   expect(transientFailure(Object.assign(new Error("Connection error."), { cause: Object.assign(new TypeError("fetch failed"), { code: "EPIPE" }) }))).toBe("connection error");
   expect(transientFailure(new Error("boom"))).toBeUndefined();
   expect(transientFailure(new TypeError("undefined is not a function"))).toBeUndefined();
@@ -30,12 +31,12 @@ test("withTransientRetries: a bounded number of retries, none after the stream s
   expect(await withTransientRetries(flaky, { backoffMs, notice: t => notices.push(t), what: "fake" })).toBe("ok");
   expect(attempts).toBe(3);
   expect(notices).toHaveLength(2);
-  expect(notices[0]).toBe(retryNotice("fake", "HTTP 529", 1, 1, 3)); // a 1ms backoff jitters to 1ms
+  expect(notices[0]).toBe(retryNotice("fake", "HTTP 529", 1, 1, 3));
   expect(notices[0]).toBe("fake request failed (HTTP 529); retrying in 0.00s (1/3)");
   expect(retryNotice("claude", "HTTP 529", 4200, 2, 3)).toBe("claude request failed (HTTP 529); retrying in 4s (2/3)");
   attempts = 0;
   await expect(withTransientRetries(async () => { attempts++; throw Object.assign(new Error("down"), { status: 503 }); }, { backoffMs, notice() {} })).rejects.toThrow("down");
-  expect(attempts).toBe(4); // the request plus every retry
+  expect(attempts).toBe(4);
   attempts = 0;
   await expect(withTransientRetries(async started => { attempts++; started(); throw Object.assign(new Error("mid-stream"), { code: "ECONNRESET" }); }, { backoffMs, notice() {} })).rejects.toThrow("mid-stream");
   expect(attempts).toBe(1);
@@ -52,17 +53,15 @@ test("withTransientRetries: an abort mid-backoff throws the abort reason at once
     { backoffMs: [60_000], signal: controller.signal, notice: () => { noticed = true; } });
   while (!noticed) await Bun.sleep(1);
   controller.abort(reason);
-  expect(await result.catch(e => e)).toBe(reason);
+  expect(await caught(result)).toBe(reason);
   expect(attempts).toBe(1);
   await expect(withTransientRetries(async () => { attempts++; return 1; }, { signal: controller.signal })).rejects.toBe(reason);
   expect(attempts).toBe(1);
-  // A request that fails because our signal aborted is not a transient failure either.
   const late = new AbortController();
   await expect(withTransientRetries(async () => { attempts++; late.abort(reason); throw Object.assign(new Error("closed"), { code: "ECONNRESET" }); }, { signal: late.signal, backoffMs: [1] })).rejects.toBe(reason);
   expect(attempts).toBe(2);
 });
 
-// ---- the Claude client, over the real SDK against a local server ----
 
 const claudeEvents = [
   { type: "message_start", message: { id: "m", type: "message", role: "assistant", content: [], model: "claude-test", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
@@ -72,7 +71,7 @@ const claudeEvents = [
   { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } },
   { type: "message_stop" },
 ];
-const sse = (events: unknown[]) => events.map(event => `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+const sse = (events: { type: string }[]) => events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
 const claudeRequest = (extra: Partial<CompleteRequest> = {}): CompleteRequest => ({ model: "claude-test", tools: [], messages: [{ role: "user", content: "hi" }], maxTokens: 100, onText() {}, ...extra });
 
 async function claudeServer(respond: (n: number, request: Request) => Response | Promise<Response>) {
@@ -82,7 +81,6 @@ async function claudeServer(respond: (n: number, request: Request) => Response |
   return { client, requests: () => requests, stop: () => server.stop(true) };
 }
 
-// The harness owns retries; SDK retries are disabled to keep one bounded budget.
 test("Claude: overloaded answers are retried by one harness budget until one streams", async () => {
   const s = await claudeServer(n => n <= 2 ? Response.json({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }, { status: 529 })
     : new Response(sse(claudeEvents), { headers: { "content-type": "text/event-stream" } }));
@@ -113,15 +111,15 @@ test("Claude: a cancel during the backoff rejects with the cancellation at once,
     const result = anthropic(s.client, { retry: { backoffMs: [60_000] } }).complete(claudeRequest({ signal: controller.signal, onNotice: () => { noticed = true; } }));
     while (!noticed) await Bun.sleep(1);
     controller.abort(reason);
-    expect(await result.catch(e => e)).toBe(reason);
-    expect(s.requests()).toBe(1); // harness backoff, with no hidden SDK retry
+    expect(await caught(result)).toBe(reason);
+    expect(s.requests()).toBe(1);
   } finally { await s.stop(); }
 });
 
 test("Claude: a stream that fails after its first event is not retried", async () => {
   const s = await claudeServer(() => new Response(new ReadableStream({ start(controller) {
     controller.enqueue(new TextEncoder().encode(sse(claudeEvents.slice(0, 3))));
-    setTimeout(() => controller.close(), 5); // the connection ends before message_stop
+    setTimeout(() => controller.close(), 5);
   } }), { headers: { "content-type": "text/event-stream" } }));
   try {
     const notices: string[] = [];
@@ -130,7 +128,6 @@ test("Claude: a stream that fails after its first event is not retried", async (
   } finally { await s.stop(); }
 });
 
-// ---- the Codex client, over the real SDK with fetch intercepted (its base URL is fixed) ----
 
 let mockFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
 afterEach(() => { mockFetch?.mockRestore(); mockFetch = undefined; });
@@ -138,7 +135,7 @@ function intercept(respond: (n: number, request: Request) => Promise<Response>) 
   let requests = 0;
   mockFetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(
     async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
-      respond(++requests, input instanceof Request ? new Request(input, init as RequestInit) : new Request(String(input), init as RequestInit)),
+      respond(++requests, input instanceof Request ? new Request(input, init) : new Request(String(input), init)),
     { preconnect: fetch.preconnect },
   ));
   return () => requests;
@@ -155,7 +152,8 @@ test("Codex: a closed socket on the first request is retried and the second stre
   const turn = await openai(async () => fakeCodexTokens(), { retry: { backoffMs: [1, 1, 1] } }).complete(codexRequest({ onText: t => { text += t; }, onNotice: t => notices.push(t) }));
   expect(turn.stop).toBe("end"); expect(text).toBe("hello");
   expect(requests()).toBe(2);
-  expect(notices).toEqual([expect.stringMatching(/^codex request failed \(connection error\); retrying in \d\.\d\ds \(1\/3\)$/)]);
+  expect(notices).toHaveLength(1);
+  expect(notices[0]).toMatch(/^codex request failed \(connection error\); retrying in \d\.\d\ds \(1\/3\)$/);
 });
 
 test("Codex: a 500 is retried up to the bound, then fails; a 400 is not retried", async () => {
@@ -163,7 +161,7 @@ test("Codex: a 500 is retried up to the bound, then fails; a 400 is not retried"
   const notices: string[] = [];
   await expect(openai(async () => fakeCodexTokens(), { retry: { backoffMs: [1, 1, 1] } }).complete(codexRequest({ onNotice: t => notices.push(t) }))).rejects.toThrow(/500/);
   expect(requests()).toBe(4); expect(notices).toHaveLength(3);
-  mockFetch!.mockRestore();
+  mockFetch?.mockRestore();
   requests = intercept(async () => Response.json({ error: { message: "bad request" } }, { status: 400 }));
   await expect(openai(async () => fakeCodexTokens(), { retry: { backoffMs: [1, 1, 1] } }).complete(codexRequest({ onNotice: t => notices.push(t) }))).rejects.toThrow(/400/);
   expect(requests()).toBe(1); expect(notices).toHaveLength(3);
@@ -176,7 +174,7 @@ test("Codex: a cancel during the backoff rejects with the cancellation at once, 
   const result = openai(async () => fakeCodexTokens(), { retry: { backoffMs: [60_000] } }).complete(codexRequest({ signal: controller.signal, onNotice: () => { noticed = true; } }));
   while (!noticed) await Bun.sleep(1);
   controller.abort(reason);
-  expect(await result.catch(e => e)).toBe(reason);
+  expect(await caught(result)).toBe(reason);
   expect(requests()).toBe(1);
 });
 
@@ -195,10 +193,10 @@ for (const code of ["insufficient_quota", "usage_limit_reached", "billing_hard_l
   test(`Codex: structured ${code} is persistent with model, no retry or raw secrets`, async () => {
     const requests = intercept(async () => Response.json({ error: { code, message: "Bearer SECRET\u001b[31m", resets_at: 2000000000 } }, { status: 429 }));
     const notices: string[] = [];
-    const error = await openai(async () => fakeCodexTokens()).complete(codexRequest({ onNotice: t => notices.push(t) })).catch(e => e);
-    expect(error.message).toContain("codex (gpt-test): quota exhausted");
-    expect(error.message).toContain("Reset: 2033-05-18T03:33:20.000Z");
-    expect(error.message).not.toContain("SECRET");
+    const error = await caught(openai(async () => fakeCodexTokens()).complete(codexRequest({ onNotice: t => notices.push(t) })));
+    expect(messageOf(error)).toContain("codex (gpt-test): quota exhausted");
+    expect(messageOf(error)).toContain("Reset: 2033-05-18T03:33:20.000Z");
+    expect(messageOf(error)).not.toContain("SECRET");
     expect(requests()).toBe(1); expect(notices).toEqual([]);
   });
 }
@@ -229,9 +227,9 @@ for (const streaming of [false, true]) test(`Claude: quota ${streaming ? "stream
     : Response.json(body, { status: 429 }));
   try {
     const notices: string[] = [];
-    const error = await anthropic(s.client).complete(claudeRequest({ onNotice: t => notices.push(t) })).catch(e => e);
-    expect(error.message).toContain("claude (claude-test): quota exhausted");
-    expect(error.message).not.toContain("Reset:"); expect(error.message).not.toContain("SECRET");
+    const error = await caught(anthropic(s.client).complete(claudeRequest({ onNotice: t => notices.push(t) })));
+    expect(messageOf(error)).toContain("claude (claude-test): quota exhausted");
+    expect(messageOf(error)).not.toContain("Reset:"); expect(messageOf(error)).not.toContain("SECRET");
     expect(s.requests()).toBe(1); expect(notices).toEqual([]);
   } finally { await s.stop(); }
 });

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +10,10 @@ import { CLAUDE_BETAS } from "../anthropic";
 import { clearCatalogEfforts, modelCapabilities } from "../model/capabilities";
 import { saveCodexTokens } from "./codex";
 import { fakeCodexTokens } from "../../test/codex";
+function required<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) throw new Error("missing test value");
+  return value;
+}
 
 const keys = ["ORCA2_HOME", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_CONFIG_DIR", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS", "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_CUSTOM_HEADERS", "OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"];
 let original: Record<string, string | undefined>;
@@ -69,8 +74,7 @@ const turn = (onText = (_: string) => {}) => ({
 function interceptFetch(handler: (request: Request) => Promise<Response>) {
   mockFetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(
     async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      const options = init as RequestInit | undefined;
-      return handler(input instanceof Request ? new Request(input, options) : new Request(String(input), options));
+      return handler(input instanceof Request ? new Request(input, init) : new Request(String(input), init));
     },
     { preconnect: fetch.preconnect },
   ));
@@ -78,7 +82,6 @@ function interceptFetch(handler: (request: Request) => Promise<Response>) {
 
 test("subscription requests use Bearer auth, Claude Code compatibility, streaming tools and model discovery", async () => {
   await saveProfile("personal");
-  // None of the SDK's implicit developer-platform settings may override a subscription.
   process.env.ANTHROPIC_AUTH_TOKEN = "wrong-platform-token";
   process.env.ANTHROPIC_PROFILE = "wrong-profile";
   process.env.ANTHROPIC_BASE_URL = "https://wrong.example";
@@ -97,14 +100,14 @@ test("subscription requests use Bearer auth, Claude Code compatibility, streamin
   expect(result.stop).toBe("tool_use");
   expect(result.content[1]).toMatchObject({ type: "tool_use", name: "bash", id: "tool_1", input: { command: "pwd" } });
   expect(await client.models()).toEqual(["claude-test"]);
-  expect(modelCapabilities("claude-test").effort).toEqual(["low", "high", "max"]); // catalog-reported levels for an otherwise unknown id
+  expect(modelCapabilities("claude-test").effort).toEqual(["low", "high", "max"]);
   for (const request of requests) {
     expect(new URL(request.url).origin).toBe("https://api.anthropic.com");
     expect(request.headers.get("authorization")).toBe("Bearer subscription-access");
     expect(request.headers.get("x-api-key")).toBeNull();
     expect(request.headers.get("anthropic-beta")).toBe(CLAUDE_BETAS);
   }
-  const body = await requests[0]!.json() as Record<string, unknown>;
+  const body = z.record(z.string(), z.unknown()).parse(await required(requests[0]).json());
   expect(body.system).toEqual([{ type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." }]);
   expect(body.messages).toEqual(req.messages);
   expect(body.tools).toEqual(req.tools);
@@ -126,10 +129,10 @@ test("API keys cannot override Claude Code subscription credentials", async () =
   expect(listed.find((a) => a.id === "anthropic:env")).toBeUndefined();
   expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(true);
   await (await provider("anthropic", { profile: "personal" })).complete(turn());
-  expect(request!.headers.get("x-api-key")).toBeNull();
-  expect(request!.headers.get("authorization")).toBe("Bearer subscription-access");
-  expect(request!.headers.get("anthropic-beta")).toBe(CLAUDE_BETAS);
-  expect(await request!.json()).toHaveProperty("system");
+  expect(required(request).headers.get("x-api-key")).toBeNull();
+  expect(required(request).headers.get("authorization")).toBe("Bearer subscription-access");
+  expect(required(request).headers.get("anthropic-beta")).toBe(CLAUDE_BETAS);
+  expect(await required(request).json()).toHaveProperty("system");
 });
 
 test("environment and legacy saved API keys cannot authenticate either provider", async () => {
@@ -153,11 +156,11 @@ test("Codex account selection stays independent of Claude and ignores API creden
   await saveCodexTokens("work", fakeCodexTokens("work-account"));
   await saveCodexTokens("personal", fakeCodexTokens("personal-account"));
   const listed = await accounts({ provider: "openai", profile: "work" });
-  expect(listed.filter((a) => a.active).map((a) => a.id)).toEqual(["openai:work"]); // one selected account across both providers
+  expect(listed.filter((a) => a.active).map((a) => a.id)).toEqual(["openai:work"]);
   expect(listed.find((a) => a.id === "openai:work")).toMatchObject({ active: true, source: "codex (chatgpt subscription)" });
   expect(listed.find((a) => a.id === "anthropic:personal")?.active).toBe(false);
   expect(listed.find((a) => a.id === "openai:personal")?.active).toBe(false);
-  expect((await accounts()).some((a) => a.active)).toBe(false); // no project, no selection
+  expect((await accounts()).some((a) => a.active)).toBe(false);
   interceptFetch(async (request) => {
     expect(request.url).toStartWith("https://chatgpt.com/backend-api/codex/models?");
     expect(request.headers.get("chatgpt-account-id")).toBe("work-account");
@@ -209,7 +212,7 @@ test("profile switching updates credentials; missing selection cannot fall back 
   await (await provider("anthropic", { profile: "two" })).complete(turn());
   expect(used).toEqual(["Bearer account-one", "Bearer account-two"]);
   expect((await accounts({ provider: "anthropic", profile: "two" })).find((a) => a.id === "anthropic:two")?.active).toBe(true);
-  await Bun.write(join(process.env.ANTHROPIC_CONFIG_DIR!, "credentials", "legacy.json"), JSON.stringify({ access_token: "platform-token" }));
+  await Bun.write(join(required(process.env.ANTHROPIC_CONFIG_DIR), "credentials", "legacy.json"), JSON.stringify({ access_token: "platform-token" }));
   await expect(provider("anthropic", { profile: "legacy" })).rejects.toThrow("not signed in");
   expect((await accounts({ provider: "anthropic", profile: "legacy" })).find((a) => a.id === "anthropic:legacy")).toMatchObject({ ok: false, active: true });
   expect(used).toHaveLength(2);

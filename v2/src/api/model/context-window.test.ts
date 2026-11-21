@@ -49,21 +49,21 @@ test("catalog precedence: explicit > smaller of table and catalog; opt-in 1M nev
 test("prefetch is background, cached once per provider, and falls back silently on failure", async () => {
   let calls = 0;
   const failing = { name: "openai", async models(): Promise<string[]> { calls++; throw new Error("offline"); } };
-  prefetchContextLimits(failing);
+  void prefetchContextLimits(failing).catch(() => {});
   expect(contextWindow({ fallback: 64000 }, "gpt-new")).toEqual({ limit: 64000, estimated: true });
   await Bun.sleep(0);
   expect(calls).toBe(1);
   expect(contextWindow({ fallback: 64000 }, "gpt-new")).toEqual({ limit: 64000, estimated: true });
-  let resolve!: () => void;
-  const working = { name: "openai", models: () => { calls++; return new Promise<string[]>((r) => { resolve = () => { rememberCatalogLimits([["gpt-new", 300000]]); r(["gpt-new"]); }; }); } };
-  prefetchContextLimits(working); // A failed fetch may be retried.
-  prefetchContextLimits(working); // In flight or done: cached, no second request.
+  const release = Promise.withResolvers<void>();
+  const working = { name: "openai", models: () => { calls++; return release.promise.then(() => { rememberCatalogLimits([["gpt-new", 300000]]); return ["gpt-new"]; }); } };
+  void prefetchContextLimits(working).catch(() => {});
+  void prefetchContextLimits(working).catch(() => {});
   await Bun.sleep(0);
   expect(calls).toBe(2);
-  expect(contextWindow({}, "gpt-new").estimated).toBe(true); // Not blocked on the fetch.
-  resolve();
+  expect(contextWindow({}, "gpt-new").estimated).toBe(true);
+  release.resolve();
   await Bun.sleep(0);
-  prefetchContextLimits(working);
+  void prefetchContextLimits(working).catch(() => {});
   expect(calls).toBe(2);
   expect(contextWindow({}, "gpt-new")).toEqual({ limit: 300000, estimated: false });
 });
@@ -74,12 +74,12 @@ test("prefetch returns the shared in-flight fetch and never rejects, so a picker
   await prefetchContextLimits(failing);
   await prefetchContextLimits(failing);
   expect(calls).toBe(2);
-  let resolve!: () => void;
-  const working = { name: "openai", models: () => { calls++; return new Promise<string[]>((r) => { resolve = () => { rememberCatalogLimits([["gpt-new", 300000]]); r(["gpt-new"]); }; }); } };
+  const release = Promise.withResolvers<void>();
+  const working = { name: "openai", models: () => { calls++; return release.promise.then(() => { rememberCatalogLimits([["gpt-new", 300000]]); return ["gpt-new"]; }); } };
   const first = prefetchContextLimits(working);
   expect(prefetchContextLimits(working)).toBe(first);
   await Bun.sleep(0);
-  resolve();
+  release.resolve();
   await first;
   expect(calls).toBe(3);
   expect(contextWindow({}, "gpt-new")).toEqual({ limit: 300000, estimated: false });

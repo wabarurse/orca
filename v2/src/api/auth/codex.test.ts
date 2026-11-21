@@ -5,6 +5,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CODEX_CLIENT_ID, CODEX_TOKEN_URL, codexCredentials, codexCredentialsPath, importCodex, loginCodex, readCodexTokens, saveCodexTokens } from "./codex";
 import { fakeCodexTokens } from "../../test/codex";
+function required<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) throw new Error("missing test value");
+  return value;
+}
+const bodyText = (body: RequestInit["body"]): string => typeof body === "string" ? body : "";
 
 let home: string;
 let originalHome: string | undefined;
@@ -22,12 +27,12 @@ afterEach(() => {
 async function expectShortLink(output: string, port: string, full: string, file: string) {
   const link = output.match(/http:\/\/localhost:\d+\/login\/[\w-]+/)?.[0];
   expect(link).toBeDefined();
-  expect(link!.length).toBeLessThan(50);
+  expect(required(link).length).toBeLessThan(50);
   expect(output).not.toContain(full);
   expect(output).toContain(file);
   expect(statSync(file).mode & 0o777).toBe(0o600);
   expect(readFileSync(file, "utf8").trim()).toBe(full);
-  const short = new URL(link!);
+  const short = new URL(required(link));
   short.hostname = "127.0.0.1";
   expect(short.port).toBe(port);
   const redirect = await fetch(short, { redirect: "manual" });
@@ -52,27 +57,27 @@ test("Codex browser login uses its public client ID, PKCE and form token exchang
         expect(authorization.searchParams.get("originator")).toBe("codex_cli_rs");
         expect(authorization.searchParams.get("codex_cli_simplified_flow")).toBe("true");
         expect(authorization.searchParams.get("scope")).toContain("offline_access");
-        const target = new URL(authorization.searchParams.get("redirect_uri")!);
+        const target = new URL(required(authorization.searchParams.get("redirect_uri")));
         expect(target.pathname).toBe("/auth/callback");
         target.hostname = "127.0.0.1";
         await expectShortLink(output, target.port, authorization.toString(), join(home, ".runtime", "login-url.txt"));
         target.search = new URLSearchParams({ code: "test-code", state: "wrong" }).toString();
         expect((await fetch(target)).status).toBe(400);
         expect(await readCodexTokens("personal")).toBeNull();
-        target.searchParams.set("state", authorization.searchParams.get("state")!);
+        target.searchParams.set("state", required(authorization.searchParams.get("state")));
         expect((await fetch(target)).status).toBe(200);
       })();
     },
     async fetcher(url, init) {
       expect(url).toBe(CODEX_TOKEN_URL);
       expect(new Headers(init.headers).get("content-type")).toBe("application/x-www-form-urlencoded");
-      const body = new URLSearchParams(init.body as string);
+      const body = new URLSearchParams(bodyText(init.body));
       expect(body.get("grant_type")).toBe("authorization_code");
       expect(body.get("client_id")).toBe(CODEX_CLIENT_ID);
       expect(body.get("code")).toBe("test-code");
       expect(body.get("state")).toBe(authorization.searchParams.get("state"));
       expect(body.get("redirect_uri")).toBe(authorization.searchParams.get("redirect_uri"));
-      expect(createHash("sha256").update(body.get("code_verifier")!).digest("base64url")).toBe(authorization.searchParams.get("code_challenge")!);
+      expect(createHash("sha256").update(required(body.get("code_verifier"))).digest("base64url")).toBe(required(authorization.searchParams.get("code_challenge")));
       expect(init.redirect).toBe("error");
       return Response.json({ access_token: tokens.accessToken, refresh_token: tokens.refreshToken, expires_in: 3600 });
     },
@@ -92,7 +97,7 @@ test("Codex refresh is serialized and persists rotated tokens and account routin
   const fetcher = async (url: string, init: RequestInit) => {
     refreshes++;
     expect(url).toBe(CODEX_TOKEN_URL);
-    expect(Object.fromEntries(new URLSearchParams(init.body as string))).toEqual({ client_id: CODEX_CLIENT_ID, grant_type: "refresh_token", refresh_token: "test-refresh" });
+    expect(Object.fromEntries(new URLSearchParams(bodyText(init.body)))).toEqual({ client_id: CODEX_CLIENT_ID, grant_type: "refresh_token", refresh_token: "test-refresh" });
     await Bun.sleep(20);
     return Response.json({ access_token: next.accessToken, refresh_token: "rotated-refresh", expires_in: 3600 });
   };

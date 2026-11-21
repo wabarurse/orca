@@ -1,6 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-import type { ResponseOutputItem } from "openai/resources/responses/responses";
+import type { ResponseFunctionToolCall, ResponseOutputItem } from "openai/resources/responses/responses";
+import { z } from "zod";
 import { fromResponses, openai, toResponses, toResponseTools } from "./openai";
 import { providerFor } from "./model/provider-for";
 import { clearCatalogLimits, contextWindow } from "./model/context-window";
@@ -13,14 +14,18 @@ afterEach(() => { mockFetch?.mockRestore(); mockFetch = undefined; clearCatalogL
 function intercept(handler: (request: Request) => Promise<Response>) {
   mockFetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(
     async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      const options = init as RequestInit | undefined;
-      return handler(input instanceof Request ? new Request(input, options) : new Request(String(input), options));
+      return handler(input instanceof Request ? new Request(input, init) : new Request(String(input), init));
     }, { preconnect: fetch.preconnect },
   ));
 }
 const call: ResponseOutputItem = { type: "function_call", id: "fc_1", call_id: "call_1", name: "bash", arguments: '{"command":"pwd"}', status: "completed" };
 const reasoning: ResponseOutputItem = { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "Checking the directory." }], encrypted_content: "test-encrypted-reasoning" };
 const message: ResponseOutputItem = { type: "message", id: "msg_1", role: "assistant", status: "completed", content: [{ type: "output_text", text: "hello", annotations: [] }] };
+const bodyShape = z.record(z.string(), z.unknown());
+async function json(req: Request): Promise<Record<string, unknown>> {
+  const body: unknown = await req.json();
+  return bodyShape.parse(body);
+}
 const request = (onText = (_: string) => {}) => ({ model: "gpt-test", messages: [{ role: "user" as const, content: "hi" }], tools: [], maxTokens: 100, onText });
 
 test("providerFor routes claude models to Claude Code and the rest to Codex", () => {
@@ -66,13 +71,14 @@ test("Codex streams text and tool calls through its subscription endpoint", asyn
   expect(text).toBe("hello");
   expect(result.stop).toBe("tool_use");
   expect(result.content).toEqual(fromResponses([reasoning, message, call]));
-  expect(incoming!.url).toBe("https://chatgpt.com/backend-api/codex/responses");
-  expect(incoming!.headers.get("authorization")).toBe(`Bearer ${tokens.accessToken}`);
-  expect(incoming!.headers.get("chatgpt-account-id")).toBe(tokens.accountId);
-  expect(incoming!.headers.get("originator")).toBe("codex_cli_rs");
-  expect(incoming!.headers.get("openai-beta")).toBe("responses=experimental");
-  expect(incoming!.headers.get("x-api-key")).toBeNull();
-  const body = await incoming!.json() as Record<string, unknown>;
+  if (incoming === undefined) throw new Error("no request was sent");
+  expect(incoming.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+  expect(incoming.headers.get("authorization")).toBe(`Bearer ${tokens.accessToken}`);
+  expect(incoming.headers.get("chatgpt-account-id")).toBe(tokens.accountId);
+  expect(incoming.headers.get("originator")).toBe("codex_cli_rs");
+  expect(incoming.headers.get("openai-beta")).toBe("responses=experimental");
+  expect(incoming.headers.get("x-api-key")).toBeNull();
+  const body = await json(incoming);
   expect(body).toMatchObject({ model: "gpt-test", store: false, stream: true, instructions: "You are Codex, an AI coding agent.", include: ["reasoning.encrypted_content"] });
   expect(body).not.toHaveProperty("max_output_tokens");
   expect(body).not.toHaveProperty("messages");
@@ -87,7 +93,7 @@ test.each([
   intercept(async req => {
     calls++;
     expect(req.url).toBe("https://chatgpt.com/backend-api/codex/responses");
-    const body = await req.json() as Record<string, unknown>;
+    const body = await json(req);
     expect(body.model).toBe(model);
     expect(body.reasoning).toEqual({ summary: "auto", effort: "high" });
     expect(body.service_tier).toBe("priority");
@@ -110,9 +116,9 @@ test.each(["gpt-unknown", "gpt-6-astra-unverified", "gpt-6-astra-2099-01-01", "g
     let credentials = 0, calls = 0;
     intercept(async req => {
       calls++;
-      const body = await req.json() as any;
+      const body = await json(req);
       expect(body.model).toBe(model);
-      expect(body.input[0].content[0]).toEqual({ type: "input_image", image_url: `data:image/png;base64,${png().toString("base64")}`, detail: "auto" });
+      expect(body).toHaveProperty(["input", 0, "content", 0], { type: "input_image", image_url: `data:image/png;base64,${png().toString("base64")}`, detail: "auto" });
       return codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]);
     });
     const provider = openai(async () => { credentials++; return fakeCodexTokens(); });
@@ -136,8 +142,8 @@ test("Codex retries an initial 401 once using refreshed subscription credentials
     return codexSSE([{ type: "response.completed", response: { output: [message] } }]);
   });
   const result = await openai(async (opts) => {
-    credentialsCalls.push(Boolean(opts?.forceRefresh));
-    return opts?.forceRefresh ? rotated : tokens;
+    credentialsCalls.push(opts?.forceRefresh === true);
+    return opts?.forceRefresh === true ? rotated : tokens;
   }).complete(request());
   expect(result.stop).toBe("end");
   expect(credentialsCalls).toEqual([false, true]);
@@ -212,7 +218,7 @@ test("a gap in streamed output fails without returning executable calls", async 
 test("Codex response.done is accepted only with a successful completion status", async () => {
   intercept(async () => codexSSE([{ type: "response.done", response: { status: "completed", output: [message] } }]));
   expect((await openai(async () => fakeCodexTokens()).complete(request())).stop).toBe("end");
-  mockFetch!.mockRestore();
+  mockFetch?.mockRestore();
   intercept(async () => codexSSE([{ type: "response.done", response: { status: "incomplete", output: [call] } }]));
   await expect(openai(async () => fakeCodexTokens()).complete(request())).rejects.toThrow("did not complete");
 });
@@ -224,26 +230,27 @@ test("failed, incomplete and truncated streams never return executable tool call
       attempts++;
       return codexSSE([
         { type: "response.output_item.done", output_index: 0, item: call },
-        ...(terminal ? [{ type: terminal, response: { status: "failed" } }] : []),
+        ...(terminal !== null ? [{ type: terminal, response: { status: "failed" } }] : []),
       ]);
     });
     await expect(openai(async () => fakeCodexTokens()).complete(request())).rejects.toThrow();
     expect(attempts).toBe(1);
-    mockFetch!.mockRestore();
+    mockFetch?.mockRestore();
   }
 });
 
 test("malformed tool arguments fail instead of being executed as an empty command", () => {
-  expect(() => fromResponses([{ ...call, type: "function_call", arguments: "not-json" } as ResponseOutputItem])).toThrow("invalid tool arguments");
-  expect(() => fromResponses([{ ...call, type: "function_call", arguments: "[]" } as ResponseOutputItem])).toThrow("invalid tool call");
-  expect(() => fromResponses([{ ...call, status: "incomplete" } as ResponseOutputItem])).toThrow("unfinished");
+  const tool = (patch: Partial<ResponseFunctionToolCall>): ResponseFunctionToolCall => ({ type: "function_call", id: "fc_1", call_id: "call_1", name: "bash", arguments: '{"command":"pwd"}', status: "completed", ...patch });
+  expect(() => fromResponses([tool({ arguments: "not-json" })])).toThrow("invalid tool arguments");
+  expect(() => fromResponses([tool({ arguments: "[]" })])).toThrow("invalid tool call");
+  expect(() => fromResponses([tool({ status: "incomplete" })])).toThrow("unfinished");
 });
 
 test("Codex subscription wire payload sends selected effort/priority, omits them by default", async () => {
   const bodies: Record<string, unknown>[] = [];
   intercept(async (req) => {
     expect(req.url).toBe("https://chatgpt.com/backend-api/codex/responses");
-    bodies.push(await req.json() as Record<string, unknown>);
+    bodies.push(await json(req));
     return codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]);
   });
   const provider = openai(async () => fakeCodexTokens());
@@ -252,7 +259,7 @@ test("Codex subscription wire payload sends selected effort/priority, omits them
   expect(bodies[0]).toMatchObject({ reasoning: { summary: "auto", effort: "max" }, service_tier: "priority" });
   expect(bodies[1]).toMatchObject({ reasoning: { summary: "auto" } });
   expect(bodies[1]).not.toHaveProperty("service_tier");
-  expect(bodies[1]!.reasoning).not.toHaveProperty("effort");
+  expect(bodies[1]?.reasoning).not.toHaveProperty("effort");
 });
 test("Codex terminal metadata distinguishes refusal and omitted nontext output for summary safety", async () => {
   const refusal: ResponseOutputItem = { type: "message", id: "refused", role: "assistant", status: "completed", content: [{ type: "refusal", refusal: "cannot comply" }] };
@@ -268,19 +275,18 @@ test("Codex terminal metadata distinguishes refusal and omitted nontext output f
 });
 
 test("Codex cancellation aborts the HTTP request and never retries it", async () => {
-  let begun!: () => void;
-  const ready = new Promise<void>(resolve => { begun = resolve; });
+  const ready = Promise.withResolvers<void>();
   let requests = 0, aborted = false;
   intercept(async req => {
     requests++;
-    begun();
+    ready.resolve();
     return new Promise((_resolve, reject) => {
       req.signal.addEventListener("abort", () => { aborted = true; reject(req.signal.reason); }, { once: true });
     });
   });
   const controller = new AbortController();
   const result = openai(async () => fakeCodexTokens()).complete({ ...request(), signal: controller.signal });
-  await ready;
+  await ready.promise;
   controller.abort();
   await expect(result).rejects.toThrow();
   expect(aborted).toBe(true);
@@ -317,15 +323,15 @@ test("Codex terminal usage retains cached context and optional reasoning metrics
 
 test("cache grouping follows the stable prefix, not changing messages or local trace IDs", async () => {
   const tokens=fakeCodexTokens(),sent:Record<string,unknown>[]=[];
-  intercept(async req=>{sent.push(await req.json() as Record<string,unknown>);return codexSSE([{type:'response.completed',response:{status:'completed',output:[message]}}]);});
+  intercept(async req=>{sent.push(await json(req));return codexSSE([{type:'response.completed',response:{status:'completed',output:[message]}}]);});
   const p=openai(async()=>tokens),base={...request(),system:'stable role'};
   await p.complete({...base,trace:{project:'one',run:'first'}});
   await p.complete({...base,messages:[{role:'user',content:'new assignment'}],trace:{project:'two',run:'second'}});
   await p.complete({...base,system:'changed role'});
-  expect(sent[0]!.prompt_cache_key).toBe(sent[1]!.prompt_cache_key);
-  expect(sent[2]!.prompt_cache_key).not.toBe(sent[0]!.prompt_cache_key);
+  expect(sent[0]?.prompt_cache_key).toBe(sent[1]?.prompt_cache_key);
+  expect(sent[2]?.prompt_cache_key).not.toBe(sent[0]?.prompt_cache_key);
   expect(sent[0]).not.toHaveProperty('prompt_cache_options');
-  expect(JSON.stringify(sent[0]!.input)).not.toContain('prompt_cache_breakpoint');
+  expect(JSON.stringify(sent[0]?.input)).not.toContain('prompt_cache_breakpoint');
 });
 
 test("Codex cache-write usage is recorded when present and never subtracted from occupied input", async () => {
@@ -337,17 +343,17 @@ test("Codex cache-write usage is recorded when present and never subtracted from
 });
 
 test("Codex cache affinity uses an opaque session header stable across provider reloads and distinct per transcript", async () => {
-  const tokens=fakeCodexTokens(),sent:{body:any;session:string|null;thread:string|null}[]=[];
-  intercept(async req=>{sent.push({body:await req.json(),session:req.headers.get('session-id'),thread:req.headers.get('thread-id')});
+  const tokens=fakeCodexTokens(),sent:{body:Record<string,unknown>;session:string|null;thread:string|null}[]=[];
+  intercept(async req=>{sent.push({body:await json(req),session:req.headers.get('session-id'),thread:req.headers.get('thread-id')});
     return codexSSE([{type:'response.completed',response:{status:'completed',output:[message]}}]);});
   const base={...request(),system:'stable',cacheScope:'/private/local/transcript-one.jsonl'};
   await openai(async()=>tokens).complete(base);
   await openai(async()=>tokens).complete({...base,messages:[{role:'user',content:'next task'}],trace:{run:'new-run'}});
   await openai(async()=>tokens).complete({...base,cacheScope:'/private/local/transcript-two.jsonl'});
-  expect(sent[0]!.session).toMatch(/^[a-f0-9]{64}$/);
-  expect(sent[0]!.session).toBe(sent[0]!.body.prompt_cache_key);
-  expect(sent[0]!.thread).toBe(sent[0]!.session);
-  expect(sent[1]!.session).toBe(sent[0]!.session);
-  expect(sent[2]!.session).not.toBe(sent[0]!.session);
+  expect(sent[0]?.session).toMatch(/^[a-f0-9]{64}$/);
+  expect(sent[0]?.body).toHaveProperty("prompt_cache_key", sent[0]?.session);
+  expect(sent[0]?.thread).toBe(sent[0]?.session);
+  expect(sent[1]?.session).toBe(sent[0]?.session);
+  expect(sent[2]?.session).not.toBe(sent[0]?.session);
   expect(JSON.stringify(sent)).not.toContain('/private/local');expect(JSON.stringify(sent)).not.toContain('new-run');
 });

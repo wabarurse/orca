@@ -6,6 +6,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { paths, readState, updateState } from "../../config";
 import { anthropic } from "../anthropic";
 import { coordinatedTransport, lockoutUntil } from "./rate-limit";
+
+const caught = (promise: Promise<unknown>): Promise<unknown> => promise.then(() => undefined, (error: unknown) => error);
+const messageOf = (value: unknown): string => value instanceof Error ? value.message : "";
 const root = mkdtempSync(join(tmpdir(), "orca-rate-limit-"));
 process.env.ORCA2_HOME = root;
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -48,9 +51,9 @@ test("a lockout is one request, reported as a rate limit with its end time", asy
   const transport = Object.assign(async () => { calls++; return locked(); }, { preconnect: fetch.preconnect });
   const provider = anthropic(new Anthropic({ apiKey: "test", fetch: transport }), { recovery: { enabled: true, account: "report", idleMs: 100, totalMs: 2000 }, retry: { backoffMs: [0, 0] } });
   const request = { model: "test", messages: [{ role: "user" as const, content: "hi" }], tools: [], maxTokens: 100, onText() {} };
-  const error = await provider.complete(request).catch(error => error);
+  const error = await caught(provider.complete(request));
   expect(error).toMatchObject({ reason: "rate-limit", status: 429 });
-  expect(error.message).toMatch(/^The provider rate limited this account until \w{3} \d+\D+\d+:\d\d [AP]M\. Switch accounts/);
+  expect(messageOf(error)).toMatch(/^The provider rate limited this account until \w{3} \d+\D+\d+:\d\d [AP]M\. Switch accounts/);
   expect(calls).toBe(1);
 });
 test("a cooldown published by another agent process is shared without sharing profiles", async () => {

@@ -3,7 +3,6 @@ import type { RequestScope } from "./bounded-transport";
 import { withTransientRetries, type RetryOptions } from "./retry";
 import { coordinatedTransport } from "./rate-limit";
 
-/** Account factories enable bounded recovery and record sanitized retry diagnostics. */
 export type RecoveryPolicy = {
   enabled: true;
   account?: string;
@@ -18,13 +17,12 @@ export function providerRequest<T>(
   options: RetryOptions,
   transport?: RequestScope["fetch"],
 ): Promise<T> {
-  if (!policy?.enabled) return withTransientRetries(started => execute(started), options);
+  if (policy === undefined) return withTransientRetries(started => execute(started), options);
   return boundedModelRequest(scope => execute(() => {}, scope), {
     ...options, ...policy,
     onRetry(event) {
-      // Only helper-owned enum/numeric metadata, never provider text or payloads.
       try { options.notice?.(`model request failed (${event.reason}); retrying: attempt ${event.attempt}, nextRetryAt ${event.nextRetryAt}`); } catch {}
       policy.onRetry?.(event);
     },
-  }, policy.account ? coordinatedTransport(policy.account, transport ?? fetch) : transport);
+  }, policy.account !== undefined && policy.account !== "" ? coordinatedTransport(policy.account, transport ?? fetch) : transport);
 }

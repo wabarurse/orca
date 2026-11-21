@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { CredentialError } from "../auth";
 import { lockoutUntil } from "./rate-limit";
 import { exhaustedQuota, httpStatus, providerErrorEvidence, QuotaError, transientFailure } from "./retry";
@@ -37,7 +38,7 @@ export class ModelRequestError extends Error {
   constructor(readonly kind: Kind, readonly status?: number, reason?: Reason, detail?: string, readonly oauthStatus?: number) {
     const category = reason ?? (kind === "permanent" ? "setup" : kind === "interrupted" ? "response"
       : kind === "exhausted" ? status === 429 ? "rate-limit" : "connection" : kind);
-    const http = status ? ` HTTP ${status}.` : oauthStatus ? ` Sign-in HTTP ${oauthStatus}.` : "";
+    const http = status !== undefined && status !== 0 ? ` HTTP ${status}.` : oauthStatus !== undefined && oauthStatus !== 0 ? ` Sign-in HTTP ${oauthStatus}.` : "";
     const interrupted = kind === "interrupted" ? " The response already started." : "";
     super(`${detail ?? guidance[category]}${http}${interrupted}`);
     this.name = "ModelRequestError";
@@ -45,9 +46,8 @@ export class ModelRequestError extends Error {
   }
 }
 
-/** Why a reply that had begun failed, when asking again from the start may well succeed: its stream dropped or broke
- * (a connection or provider fault), or it went silent past the idle deadline. Never a limit, refusal or bad request,
- * and never the total deadline: those would fail the same way again. */
+const outputLimited = z.object({ response: z.object({ incomplete_details: z.object({ reason: z.literal("max_output_tokens") }) }) });
+
 const RESTARTABLE: readonly Reason[] = ["response", "connection", "provider-service", "overload", "idle-timeout"];
 export const restartable = (error: unknown): error is ModelRequestError =>
   error instanceof ModelRequestError && (error.kind === "interrupted" || error.kind === "idle-timeout") && RESTARTABLE.includes(error.reason);
@@ -60,11 +60,9 @@ function reasonFor(error: unknown, status: number | undefined, stage: RequestSta
   if (status === 403 || code === "permission_error") return "permission";
   if (status === 404 || code === "model_not_found" || code === "not_found_error") return "model-unavailable";
   if (status === 413 || code === "context_length_exceeded" || code === "request_too_large") return "input-too-large";
-  // Classify known image-limit failures without echoing provider bodies (which
-  // can contain user data). Switching accounts cannot repair the same payload.
   if ((status === 400 || code === "invalid_request_error") && typeof evidence?.message === "string"
     && /many-image requests|too many images|image dimensions? (?:exceed|must)|image exceeds (?:the )?(?:dimension|size|pixel)/i.test(evidence.message)) return "image-limit";
-  if (code === "max_output_tokens" || (error as { response?: { incomplete_details?: { reason?: unknown } } })?.response?.incomplete_details?.reason === "max_output_tokens") return "output-limit";
+  if (code === "max_output_tokens" || outputLimited.safeParse(error).success) return "output-limit";
   if (status === 529 || code === "overloaded_error") return "overload";
   if ((status !== undefined && status >= 500) || code === "server_error" || code === "api_error") return "provider-service";
   if (status === 408) return "request-timeout";
@@ -77,23 +75,23 @@ export function diagnoseModelError(error: unknown, consumed = false, stage: Requ
   if (error instanceof ModelRequestError) return error;
   const quota = error instanceof QuotaError ? error.explanation : exhaustedQuota(error);
   const status = httpStatus(error);
-  if (quota) return new ModelRequestError("quota", status, "quota", quota + " Check usage or switch accounts.");
+  if (quota !== undefined) return new ModelRequestError("quota", status, "quota", quota + " Check usage or switch accounts.");
   const lockout = lockoutUntil(error);
-  if (lockout) {
+  if (lockout !== undefined) {
     const until = new Date(lockout).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     return new ModelRequestError("exhausted", 429, "rate-limit", `The provider rate limited this account until ${until}. Switch accounts or resume after that.`);
   }
 
-  // SDK wrappers can preserve the locally typed credential failure in their cause.
   for (let cause = error, depth = 0; cause instanceof Error && depth < 5; cause = cause.cause, depth++) {
     if (cause instanceof CredentialError) {
-      const detail = cause.oauthStatus && [400, 401, 403].includes(cause.oauthStatus)
+      const detail = cause.oauthStatus !== undefined && [400, 401, 403].includes(cause.oauthStatus)
         ? "The sign-in service rejected the credential exchange. Sign in again."
         : undefined;
       return new ModelRequestError("permanent", undefined, cause.reason, detail, cause.oauthStatus);
     }
   }
   const transient = transientFailure(error);
-  return new ModelRequestError(consumed ? "interrupted" : transient ? "exhausted" : "permanent",
-    status, reasonFor(error, status, consumed ? "response" : transient ? "connection" : stage));
+  const isTransient = transient !== undefined && transient !== "";
+  return new ModelRequestError(consumed ? "interrupted" : isTransient ? "exhausted" : "permanent",
+    status, reasonFor(error, status, consumed ? "response" : isTransient ? "connection" : stage));
 }

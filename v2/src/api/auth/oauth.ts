@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 import { paths } from "../../config";
+import { fail, ok, type Result } from "../result";
 
 export class CredentialError extends Error {
   constructor(readonly reason: "credentials-invalid" | "credential-lock" | "oauth-connection" | "oauth-http" | "oauth-response",
@@ -11,18 +13,29 @@ export class CredentialError extends Error {
   }
 }
 
-export interface OAuthTokens {
+export type OAuthTokens = {
   accessToken: string;
   refreshToken: string;
-  /** Unix epoch milliseconds, matching Claude Code's credential format. */
   expiresAt: number;
+};
+
+export function parseProfile(profile: string): Result<string> {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(profile) || profile === "env") {
+    return fail("profile must be 1–64 letters, numbers, dots, underscores or hyphens, start with a letter or number, and not be 'env'.");
+  }
+  return ok(profile);
 }
 
 export function validateProfile(profile: string): string {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(profile) || profile === "env") {
-    throw new Error("profile must be 1–64 letters, numbers, dots, underscores or hyphens, start with a letter or number, and not be 'env'.");
-  }
-  return profile;
+  const parsed = parseProfile(profile);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return parsed.data;
+}
+
+const errnoShape = z.object({ code: z.string() });
+export function errnoCode(error: unknown): string | undefined {
+  const parsed = errnoShape.safeParse(error);
+  return parsed.success ? parsed.data.code : undefined;
 }
 
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>;
@@ -30,7 +43,6 @@ export type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 export async function writeTokens(path: string, tokens: unknown, signal?: AbortSignal): Promise<void> {
   const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
   try {
-    // Private from creation, including during replacement of an existing file.
     const file = await open(temporary, "wx", 0o600);
     try {
       await file.writeFile(JSON.stringify(tokens) + "\n");
@@ -45,29 +57,23 @@ export async function writeTokens(path: string, tokens: unknown, signal?: AbortS
   }
 }
 
-/** True when a process with this pid exists (EPERM means it exists but is not ours). */
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
-  catch (err) { return (err as NodeJS.ErrnoException).code === "EPERM"; }
+  catch (err) { return errnoCode(err) === "EPERM"; }
 }
 
-/** A held lock whose owner pid is dead is stale: break it, so a crashed or killed process never blocks
- * login forever. The break is claimed by an atomic rename, so two reapers cannot both proceed and one
- * cannot delete a lock the other just re-acquired. A lock with no pid yet (its owner is between mkdir and
- * the pid write) or a live owner is left alone. Returns true when this call broke the lock. */
 export async function breakStaleLock(lock: string): Promise<boolean> {
   let pid: number;
   try { pid = Number((await Bun.file(join(lock, "pid")).text()).trim()); }
-  catch { return false; } // no pid file (mid-acquisition) or the lock vanished: treat as held
+  catch { return false; }
   if (!Number.isInteger(pid) || pid <= 0 || pidAlive(pid)) return false;
   const staging = `${lock}.stale-${process.pid}-${Date.now()}`;
-  try { await rename(lock, staging); } // atomic: only one reaper wins, and only for this exact dir
-  catch { return false; } // another reaper won, or the owner cleared it first
+  try { await rename(lock, staging); }
+  catch { return false; }
   await rm(staging, { recursive: true, force: true });
   return true;
 }
 
-/** Serialize login/refresh across the orchestrator and its tmux processes. */
 export async function withCredentialLock<T>(path: string, action: () => Promise<T>): Promise<T> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const lock = `${path}.lock`;
@@ -77,9 +83,7 @@ export async function withCredentialLock<T>(path: string, action: () => Promise<
       await mkdir(lock, { mode: 0o700 });
       break;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      // Never steal a live lock on a timer: a paused worker can still own it. But a lock whose owner
-      // pid is dead is stale — break it and retry at once rather than waiting out the deadline.
+      if (errnoCode(err) !== "EEXIST") throw err;
       if (await breakStaleLock(lock)) continue;
       if (Date.now() >= deadline) throw new CredentialError("credential-lock", `subscription credential lock timed out: ${lock}. if a process was killed, stop the agents and remove this lock directory before retrying.`);
       await Bun.sleep(50);
@@ -93,21 +97,21 @@ export async function withCredentialLock<T>(path: string, action: () => Promise<
   }
 }
 
-export interface LoginOptions {
+export type LoginOptions = {
   write: (text: string) => void;
   openBrowser?: (url: string) => void | Promise<void>;
   signal?: AbortSignal;
   port?: number;
   fetcher?: Fetch;
-}
+};
 
 function openBrowser(url: string): void {
   const command = process.platform === "darwin" ? ["open", url]
     : process.platform === "win32" ? ["rundll32", "url.dll,FileProtocolHandler", url] : ["xdg-open", url];
-  try { Bun.spawn(command, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref(); } catch { /* Printed URL remains usable. */ }
+  try { Bun.spawn(command, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref(); } catch { }
 }
 
-export interface OAuthLoginConfig {
+export type OAuthLoginConfig = {
   label: string;
   authorizeURL: string;
   clientId: string;
@@ -116,22 +120,17 @@ export interface OAuthLoginConfig {
   callbackPath: string;
   extraParams?: Record<string, string>;
   exchange: (body: Record<string, string>, fetcher: Fetch, signal: AbortSignal) => Promise<void>;
-}
+};
 
-/** The short, copyable entry point that redirects to the long authorize URL. */
 function isShortLink(request: Request, url: URL, nonce: string): boolean {
   return request.method === "GET" && url.pathname === `/login/${nonce}`;
 }
 
-/**
- * The full authorize URL is too long to copy from a terminal, so keep it in a private file as a
- * fallback. Returns whether the file now holds the URL; a failed or partial write is removed.
- */
 async function writeLoginUrlFile(path: string, url: string): Promise<boolean> {
   try {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     await rm(path, { force: true });
-    const file = await open(path, "wx", 0o600); // private from creation
+    const file = await open(path, "wx", 0o600);
     try { await file.writeFile(url + "\n"); } finally { await file.close(); }
     return true;
   } catch {
@@ -140,15 +139,16 @@ async function writeLoginUrlFile(path: string, url: string): Promise<boolean> {
   }
 }
 
+const present = (value: string | undefined): boolean => value !== undefined && value !== "";
+
 function loginMessage(label: string, shortLink: string, port: number | undefined, urlFile?: string): string {
   const lines = [`sign in with your ${label} subscription in your browser:`, shortLink];
-  if (process.env.SSH_CONNECTION || process.env.SSH_TTY) lines.push(`over ssh, first run: ssh -L ${port}:localhost:${port} <this-host>`);
-  if (urlFile) lines.push(`if the link does not work, the full url is in ${urlFile}`);
+  if (present(process.env.SSH_CONNECTION) || present(process.env.SSH_TTY)) lines.push(`over ssh, first run: ssh -L ${port}:localhost:${port} <this-host>`);
+  if (urlFile !== undefined && urlFile !== "") lines.push(`if the link does not work, the full url is in ${urlFile}`);
   lines.push("waiting for login…");
   return lines.join("\n");
 }
 
-/** Browser PKCE login with state validation and a loopback-only callback. */
 export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions): Promise<void> {
   const verifier = randomBytes(32).toString("base64url");
   const state = randomBytes(32).toString("base64url");
@@ -168,7 +168,7 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
       if (url.searchParams.get("state") !== state) return new Response("invalid oauth state", { status: 400 });
       if (received) return new Response("login already received", { status: 409 });
       const code = url.searchParams.get("code");
-      if (!code || url.searchParams.has("error")) {
+      if (code === null || code === "" || url.searchParams.has("error")) {
         result.reject(new Error(`${config.label} login was cancelled or denied; try logging in again.`));
         return new Response("login was not completed.", { status: 400 });
       }
@@ -202,13 +202,12 @@ export async function loginOAuth(config: OAuthLoginConfig, options: LoginOptions
   const timer = setTimeout(() => fail(`${config.label} login timed out; try logging in again.`), 5 * 60_000);
   options.signal?.addEventListener("abort", cancel, { once: true });
   try {
-    if (options.signal?.aborted) cancel();
+    if (options.signal?.aborted === true) cancel();
     else {
       urlFileAttempted = true;
       const savedUrl = await writeLoginUrlFile(urlFile, authorizeURL);
       options.write(loginMessage(config.label, shortLink, server.port, savedUrl ? urlFile : undefined));
-      // Do not await browser completion before observing the login promise.
-      Promise.resolve().then(() => (options.openBrowser ?? openBrowser)(authorizeURL)).catch(() => {});
+      void Promise.resolve().then(() => (options.openBrowser ?? openBrowser)(authorizeURL)).catch(() => {});
     }
     await result.promise;
   } finally {

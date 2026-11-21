@@ -13,6 +13,8 @@ const toolContext = (signal: AbortSignal): Omit<ToolContext, "provider" | "model
 import { codexSSE, fakeCodexTokens } from "../../test/codex";
 import { claudeSearchFixture, codexSearchFixture, codexStreamSearchFixture } from "../../test/web-search";
 import type { Provider } from "../provider";
+import type { Message } from "@anthropic-ai/sdk/resources/messages";
+import type { ResponseOutputItem } from "openai/resources/responses/responses";
 import { CLAUDE_BETAS } from "../anthropic";
 
 let mockFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
@@ -20,7 +22,7 @@ afterEach(() => { mockFetch?.mockRestore(); mockFetch = undefined; });
 function intercept(handler: (request: Request) => Promise<Response> | Response) {
   mockFetch?.mockRestore();
   mockFetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(
-    async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => handler(input instanceof Request ? new Request(input, init as RequestInit) : new Request(String(input), init as RequestInit)),
+    async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => handler(input instanceof Request ? new Request(input, init) : new Request(String(input), init)),
     { preconnect: fetch.preconnect },
   ));
 }
@@ -34,21 +36,35 @@ function invoke(provider: Provider, signal?: AbortSignal) {
     ...toolContext(signal ?? new AbortController().signal), provider, model: provider.name === "openai" ? "gpt-6-astra" : "claude-opus-5", settings: { effort: "high", fast: true },
   });
 }
+async function caught(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(() => undefined, (error: unknown) => error);
+}
+function first<T>(items: readonly T[]): T {
+  const item = items[0];
+  if (item === undefined) throw new Error("fixture is empty");
+  return item;
+}
+function at<T>(items: readonly T[], index: number): T {
+  const item = items.at(index);
+  if (item === undefined) throw new Error(`fixture has no item ${index}`);
+  return item;
+}
 function codexSuccess() { return codexSSE([{ type: "response.completed", response: { status: "completed", output: codexSearchFixture() } }]); }
 
 test("Claude native search uses existing subscription auth, selected model/settings and only query input", async () => {
-  let incoming!: Request;
-  intercept(request => { incoming = request; return Response.json(claudeSearchFixture()); });
+  const requests: Request[] = [];
+  intercept(request => { requests.push(request); return Response.json(claudeSearchFixture()); });
   const text = await invoke(claude());
+  const incoming = first(requests);
   expect(incoming.url).toBe("https://api.anthropic.com/v1/messages");
   expect(incoming.headers.get("authorization")).toBe("Bearer test-only-oauth");
   expect(incoming.headers.get("x-api-key")).toBeNull();
   expect(incoming.headers.get("anthropic-beta")).toBe(`${CLAUDE_BETAS},fast-mode-2026-02-01`);
-  const body = await incoming.json() as any;
+  const body: unknown = await incoming.json();
   expect(body).toMatchObject({ model: "claude-opus-5", output_config: { effort: "high" }, speed: "fast", max_tokens: 2048,
     tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }],
     messages: [{ role: "user", content: JSON.stringify({ query: "public docs", max_results: 2 }) }] });
-  expect(body.system[0].text).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
+  expect(body).toHaveProperty(["system", 0, "text"], "You are Claude Code, Anthropic's official CLI for Claude.");
   expect(JSON.stringify(body)).not.toContain("private-project");
   expect(text).toContain("An actual quoted excerpt.");
   expect(text).toContain("https://example.com/docs");
@@ -56,14 +72,15 @@ test("Claude native search uses existing subscription auth, selected model/setti
 });
 
 test("Codex native search uses only subscription Responses and keeps structured URL citations, not fake snippets", async () => {
-  let incoming!: Request;
-  intercept(request => { incoming = request; return codexSuccess(); });
+  const requests: Request[] = [];
+  intercept(request => { requests.push(request); return codexSuccess(); });
   const text = await invoke(codex());
+  const incoming = first(requests);
   expect(incoming.url).toBe("https://chatgpt.com/backend-api/codex/responses");
   expect(incoming.headers.get("authorization")).toBe(`Bearer ${fakeCodexTokens().accessToken}`);
   expect(incoming.headers.get("chatgpt-account-id")).toBe("test-account");
   expect(incoming.headers.get("x-api-key")).toBeNull();
-  const body = await incoming.json() as any;
+  const body: unknown = await incoming.json();
   expect(body).toMatchObject({ model: "gpt-6-astra", store: false, stream: true, reasoning: { effort: "high", summary: "auto" }, service_tier: "priority",
     tools: [{ type: "web_search", external_web_access: true, search_context_size: "low" }],
     input: [{ role: "user", content: JSON.stringify({ query: "public docs", max_results: 2 }) }] });
@@ -85,44 +102,47 @@ test("Codex search reconstruction accepts done events only with terminal complet
 test("Claude only returns zero results after a completed native search with an explicit empty result list", async () => {
   const fixture = claudeSearchFixture();
   fixture.content = fixture.content.slice(0, 2);
-  (fixture.content[1] as any).content = [];
+  Object.assign(at(fixture.content, 1), { content: [] });
   intercept(() => Response.json(fixture));
   expect(await invoke(claude())).toStartWith("Web search: 0 sources.");
 });
 
 test("native parsers reject unfinished, errored, missing and unsupported output without fabricating hits", () => {
-  const badClaude: any[] = [];
-  for (const stop_reason of ["pause_turn", "max_tokens", "tool_use", "refusal", null]) badClaude.push({ ...claudeSearchFixture(), stop_reason });
+  const badClaude: Message[] = [];
+  const stops: Message["stop_reason"][] = ["pause_turn", "max_tokens", "tool_use", "refusal", null];
+  for (const stop_reason of stops) badClaude.push({ ...claudeSearchFixture(), stop_reason });
   for (const error_code of ["unavailable", "too_many_requests", "max_uses_exceeded", "invalid_tool_input"]) {
     const fixture = claudeSearchFixture();
-    (fixture.content[1] as any).content = { type: "web_search_tool_result_error", error_code };
+    Object.assign(at(fixture.content, 1), { content: { type: "web_search_tool_result_error", error_code } });
     badClaude.push(fixture);
   }
-  badClaude.push({ ...claudeSearchFixture(), content: [claudeSearchFixture().content[2]] });
-  badClaude.push({ ...claudeSearchFixture(), content: [claudeSearchFixture().content[0]] });
-  const wrongID = claudeSearchFixture(); (wrongID.content[1] as any).tool_use_id = "other"; badClaude.push(wrongID);
-  for (const fixture of badClaude) expect(() => claudeSearchResults(fixture)).toThrow();
+  badClaude.push({ ...claudeSearchFixture(), content: claudeSearchFixture().content.slice(2, 3) });
+  badClaude.push({ ...claudeSearchFixture(), content: claudeSearchFixture().content.slice(0, 1) });
+  const wrongID = claudeSearchFixture(); Object.assign(at(wrongID.content, 1), { tool_use_id: "other" }); badClaude.push(wrongID);
+  for (const fixture of badClaude) expect(claudeSearchResults(fixture).ok).toBe(false);
 
-  const badCodex: any[] = [[], codexSearchFixture().slice(1), codexSearchFixture().slice(0, 1)];
+  const badCodex: ResponseOutputItem[][] = [[], codexSearchFixture().slice(1), codexSearchFixture().slice(0, 1)];
   for (const status of ["failed", "in_progress", "incomplete", "searching", undefined]) {
-    const fixture = codexSearchFixture(); (fixture[0] as any).status = status; badCodex.push(fixture);
+    const fixture = codexSearchFixture(); Object.assign(first(fixture), { status }); badCodex.push(fixture);
   }
-  const openPage = codexSearchFixture(); (openPage[0] as any).action = { type: "open_page", url: "https://example.com" }; badCodex.push(openPage);
-  const refused = codexSearchFixture(); (refused[1] as any).content = [{ type: "refusal", refusal: "no search" }]; badCodex.push(refused);
-  badCodex.push([...codexSearchFixture(), { type: "function_call", name: "bash", arguments: "{}" }]);
-  for (const fixture of badCodex) expect(() => codexSearchResults(fixture)).toThrow();
+  const openPage = codexSearchFixture(); Object.assign(first(openPage), { action: { type: "open_page", url: "https://example.com" } }); badCodex.push(openPage);
+  const refused = codexSearchFixture(); Object.assign(at(refused, 1), { content: [{ type: "refusal", refusal: "no search" }] }); badCodex.push(refused);
+  badCodex.push([...codexSearchFixture(), { type: "function_call", call_id: "call", name: "bash", arguments: "{}" }]);
+  for (const fixture of badCodex) expect(codexSearchResults(fixture).ok).toBe(false);
 });
 
 test("Codex supplied action source URLs survive without inventing a title or excerpt", () => {
   const fixture = codexSearchFixture().slice(0, 1);
-  (fixture[0] as any).action.sources = [{ type: "url", url: "https://example.org/source" }];
-  expect(codexSearchResults(fixture)).toEqual({ sources: [{ url: "https://example.org/source" }] });
+  const search = first(fixture);
+  if (search.type !== "web_search_call" || search.action.type !== "search") throw new Error("fixture is not a search call");
+  search.action.sources = [{ type: "url", url: "https://example.org/source" }];
+  expect(codexSearchResults(fixture)).toEqual({ ok: true, data: { sources: [{ url: "https://example.org/source" }] } });
 });
 
 for (const terminal of ["response.failed", "response.incomplete", "error", "missing", "no-status", "unfinished-item"]) {
   test(`Codex search rejects ${terminal} instead of returning partial hits`, async () => {
     const fixture = codexSearchFixture();
-    if (terminal === "unfinished-item") (fixture[1] as any).status = "in_progress";
+    if (terminal === "unfinished-item") Object.assign(at(fixture, 1), { status: "in_progress" });
     const events: unknown[] = [{ type: "response.output_item.done", output_index: 0, item: fixture[0] }];
     if (terminal === "no-status" || terminal === "unfinished-item") events.push({ type: "response.completed", response: { ...(terminal === "unfinished-item" ? { status: "completed" } : {}), output: fixture } });
     else if (terminal !== "missing") events.push({ type: terminal, message: "SECRET-provider-error", error: { message: "SECRET-provider-error" } });
@@ -144,18 +164,18 @@ for (const make of [claude, codex]) {
     for (const status of [200, 500]) {
       let cancelled = false;
       intercept(() => new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(SEARCH_RESPONSE_BYTES + 1)); }, cancel() { cancelled = true; } }), { status, headers: { "content-type": "application/json" } }));
-      const error = await invoke(make()).catch(e => e);
-      expect(error).toBeInstanceOf(Error); expect(error.message).toContain("web_search:");
+      const error = await caught(invoke(make()));
+      expect(error).toBeInstanceOf(Error); expect(error instanceof Error ? error.message : "").toContain("web_search:");
       expect(cancelled).toBe(true);
     }
   });
   test(`${make.name} abort disconnects a stalled body promptly`, async () => {
-    let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
+    const started = Promise.withResolvers<void>();
     let cancelled = false;
-    intercept(() => { entered(); return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { headers: { "content-type": "text/event-stream" } }); });
+    intercept(() => { started.resolve(); return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { headers: { "content-type": "text/event-stream" } }); });
     const controller = new AbortController();
     const pending = invoke(make(), controller.signal);
-    await started; await Bun.sleep(0); controller.abort();
+    await started.promise; await Bun.sleep(0); controller.abort();
     await expect(pending).rejects.toThrow("cancelled");
     expect(cancelled).toBe(true);
   });
@@ -171,19 +191,17 @@ test("bounded transport explicitly reports its byte limit and disconnects at the
 });
 
 for (const name of ["claude", "codex"]) test(`${name} cancellation during delayed credentials cannot dispatch a later model request`, async () => {
-  let release!: () => void, entered!: () => void;
-  const started = new Promise<void>(resolve => { entered = resolve; });
-  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = Promise.withResolvers<void>(), gate = Promise.withResolvers<void>();
   let calls = 0;
   intercept(() => { calls++; return codexSuccess(); });
-  const provider = name === "codex" ? openai(async () => { entered(); await gate; return fakeCodexTokens(); })
+  const provider = name === "codex" ? openai(async () => { started.resolve(); await gate.promise; return fakeCodexTokens(); })
     : anthropic(new Anthropic({ apiKey: null, authToken: null, baseURL: "https://api.anthropic.com",
-      credentials: async () => { entered(); await gate; return { token: "test-only", expiresAt: null }; } }));
+      credentials: async () => { started.resolve(); await gate.promise; return { token: "test-only", expiresAt: null }; } }));
   const controller = new AbortController();
   const pending = invoke(provider, controller.signal);
-  await started; controller.abort();
+  await started.promise; controller.abort();
   await expect(pending).rejects.toThrow("cancelled");
-  release(); await Bun.sleep(10);
+  gate.resolve(); await Bun.sleep(10);
   expect(calls).toBe(0);
 });
 
@@ -195,8 +213,8 @@ test("Codex search refreshes only the same account once on initial 401", async (
     return requests.length === 1 ? Response.json({ error: { message: "SECRET initial authentication failure" } }, { status: 401 }) : codexSuccess();
   });
   const provider = openai(async options => {
-    refresh.push(!!options?.forceRefresh);
-    return fakeCodexTokens("same-account", Date.now() + 3600000, options?.forceRefresh ? "refreshed" : "original");
+    refresh.push(options?.forceRefresh === true);
+    return fakeCodexTokens("same-account", Date.now() + 3600000, options?.forceRefresh === true ? "refreshed" : "original");
   });
   expect(await invoke(provider)).toContain("https://example.com/docs");
   expect(refresh).toEqual([false, true]);
@@ -204,7 +222,8 @@ test("Codex search refreshes only the same account once on initial 401", async (
   for (const request of requests) {
     expect(request.url).toBe("https://chatgpt.com/backend-api/codex/responses");
     expect(request.headers.get("chatgpt-account-id")).toBe("same-account");
-    expect((await request.json() as any).model).toBe("gpt-6-astra");
+    const body: unknown = await request.json();
+    expect(body).toHaveProperty("model", "gpt-6-astra");
   }
 });
 
@@ -230,7 +249,8 @@ for (const type of ["response.completed", "response.done"]) test(`live-shaped Co
   intercept(() => codexSSE([...events, { ...terminal, type }]));
   const text = String(await invoke(codex()));
   expect(text).toStartWith("Web search: 2 sources (limited).");
-  expect(JSON.parse(text.split("\n")[2]!)).toEqual({ limited: true, sources: [
+  const payload: unknown = JSON.parse(text.split("\n")[2] ?? "");
+  expect(payload).toEqual({ limited: true, sources: [
     { url: "https://example.org/docs/0", title: "Public docs 0" },
     { url: "https://example.org/docs/1", title: "Public docs 1" },
   ] });
@@ -240,8 +260,9 @@ for (const type of ["response.completed", "response.done"]) test(`live-shaped Co
 
 async function expectSearchCode(events: unknown[], code: SearchError["code"]) {
   intercept(() => codexSSE(events));
-  const error = await invoke(codex()).catch(error => error);
+  const error = await caught(invoke(codex()));
   expect(error).toBeInstanceOf(SearchError);
+  if (!(error instanceof SearchError)) return;
   expect(error.code).toBe(code);
   expect(error.message).toBe(new SearchError(code).message);
   expect(error.message).not.toContain("SECRET");
@@ -256,13 +277,12 @@ test("live-shaped done items need terminal success, not just citations or search
   const { events, terminal } = codexStreamSearchFixture();
   await expectSearchCode(events, "incomplete");
   for (const type of ["response.failed", "response.incomplete", "error"]) {
-    // The SDK consumes generic error events itself before yielding them.
     const failure = type === "error" ? { type, error: { message: "SECRET" } }
       : { type, response: { status: type.slice(9), error: { message: "SECRET" } } };
     await expectSearchCode([...events, failure], type === "error" ? "failed" : "incomplete");
   }
   await expectSearchCode([terminal], "no_search");
-  await expectSearchCode(events.filter(e => e.type !== "response.output_item.done").concat(terminal as any), "no_search");
+  await expectSearchCode([...events.filter(e => e.type !== "response.output_item.done"), terminal], "no_search");
 });
 
 for (const status of ["failed", "in_progress", "searching", "incomplete", undefined]) test(`a ${status} native done action cannot be hidden by later successful final output`, async () => {
@@ -312,18 +332,18 @@ test("no-search, missing-attribution and refusal have distinct safe error classi
 
 test("cancellation after live-shaped done items does not return partial sources or wait for the terminal event", async () => {
   const { events } = codexStreamSearchFixture();
-  let cancelled = false, started!: () => void;
-  const entered = new Promise<void>(resolve => { started = resolve; });
+  let cancelled = false;
+  const entered = Promise.withResolvers<void>();
   intercept(() => new Response(new ReadableStream({
     start(controller) {
       controller.enqueue(new TextEncoder().encode(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join("")));
-      started();
+      entered.resolve();
     },
     cancel() { cancelled = true; },
   }), { headers: { "content-type": "text/event-stream" } }));
   const controller = new AbortController();
   const pending = invoke(codex(), controller.signal);
-  await entered; await Bun.sleep(0); controller.abort(new Error("SECRET"));
+  await entered.promise; await Bun.sleep(0); controller.abort(new Error("SECRET"));
   await expect(pending).rejects.toThrow(new SearchError("cancelled").message);
   expect(cancelled).toBe(true);
 });

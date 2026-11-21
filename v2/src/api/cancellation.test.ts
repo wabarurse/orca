@@ -2,8 +2,6 @@ import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
 
-// Exercise the actual SDK's HTTP/stream abort path, not a provider that merely
-// stops emitting text. No subscription credentials or external network needed.
 test("Claude cancellation disconnects an in-progress HTTP stream", async () => {
   let disconnected = false;
   const events = [

@@ -1,5 +1,5 @@
-// Conservative protocol snapshot, not a claim of account entitlement. See
-// docs/MODEL_SETTINGS.md for official sources and intentionally unsupported values.
+import { z } from "zod";
+
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 const full: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 const claudeFull = new Set([
@@ -12,38 +12,39 @@ const codexFull = new Set([
   "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol",
   "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review",
 ]);
-const levels = new Set<string>(full);
-/** Effort levels reported by provider model catalogs, in memory per process. Empty or
- * unrecognized lists are ignored so the hardcoded table below remains the fallback. */
+const codexLevel = z.object({ effort: z.unknown().optional() });
+const supportedFlag = z.object({ supported: z.literal(true) });
+const claudeCapability = z.object({ effort: z.record(z.string(), z.unknown()) });
 const catalogEfforts = new Map<string, Effort[]>();
 export function rememberCatalogEfforts(entries: Iterable<readonly [string, unknown]>): void {
   for (const [model, reported] of entries) {
     if (!Array.isArray(reported)) continue;
     const known = full.filter((level) => reported.includes(level));
-    if (known.length) catalogEfforts.set(model, known);
+    if (known.length > 0) catalogEfforts.set(model, known);
   }
 }
 export function clearCatalogEfforts(): void { catalogEfforts.clear(); }
-/** Codex catalog `supported_reasoning_levels`: [{ effort }, …]. */
 export function codexCatalogEfforts(levelList: unknown): Effort[] {
   if (!Array.isArray(levelList)) return [];
-  return levelList.map((l) => (l as { effort?: unknown } | null)?.effort).filter((e): e is Effort => typeof e === "string" && levels.has(e));
+  return levelList.flatMap((l) => {
+    const parsed = codexLevel.safeParse(l);
+    if (!parsed.success) return [];
+    const level = parsed.data.effort;
+    return full.filter(known => known === level);
+  });
 }
-/** Anthropic models API `capabilities.effort`: one `{ supported }` flag per level. */
 export function claudeCatalogEfforts(capability: unknown): Effort[] {
-  const effort = (capability as { effort?: Record<string, { supported?: unknown } | null> & { supported?: unknown } } | null | undefined)?.effort;
-  if (!effort || effort.supported !== true) return [];
-  return full.filter((level) => effort[level]?.supported === true);
+  const parsed = claudeCapability.safeParse(capability);
+  if (!parsed.success) return [];
+  const effort = parsed.data.effort;
+  if (effort.supported !== true) return [];
+  return full.filter((level) => supportedFlag.safeParse(effort[level]).success);
 }
-/** The current list: catalog-reported levels when known in this process, else the built-in table.
- * Time-varying (the catalog lands in the background) and per process, so request paths must not throw on it. */
 export function modelCapabilities(model: string): { effort: Effort[]; fast: boolean } {
   const base = hardcodedCapabilities(model);
   const reported = catalogEfforts.get(model);
-  return reported ? { ...base, effort: [...reported] } : base;
+  return reported !== undefined ? { ...base, effort: [...reported] } : base;
 }
-/** Every level either source has reported for the model: what a request may still carry
- * when the catalog lands between settings resolution and the provider's own check. */
 export function knownEfforts(model: string): Effort[] {
   const table = hardcodedCapabilities(model).effort;
   const reported = catalogEfforts.get(model) ?? [];
