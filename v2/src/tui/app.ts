@@ -34,6 +34,7 @@ export type AppDeps = {
   now: () => number;
   ensureDaemon: (conversation: string) => Promise<Result<number>>;
   clipboard: () => Promise<Result<Uint8Array>>;
+  open: (path: string) => Promise<void>;
   exit: (code: number) => void;
 };
 
@@ -199,7 +200,8 @@ export class App {
       confirm: question => this.ask({ kind: "confirm", question }),
       input: (prompt, initial) => this.ask({ kind: "input", prompt, initial }),
       pick: (title, options) => this.ask({ kind: "pick", title, options }),
-      say: async text => { await say(this.conversation.id, text, [], "steer"); await this.startDaemon(this.conversation.id); } };
+      say: async text => { await say(this.conversation.id, text, [], "steer"); await this.startDaemon(this.conversation.id); },
+      open: async path => { await this.deps.open(path); } };
   }
 
   private async startDaemon(conversation: string): Promise<boolean> {
@@ -327,7 +329,11 @@ export class App {
     try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${errorMessage(error)}`); }
   }
 
-  private commands(): { name: string }[] { return this.uis.flatMap(bound => bound.ui.commands); }
+  private commands(): { name: string }[] {
+    const seen = new Map<string, { name: string }>();
+    for (const command of this.uis.flatMap(bound => bound.ui.commands)) if (!seen.has(command.name)) seen.set(command.name, command);
+    return [...seen.values()];
+  }
 
   private async pluginsMenu(): Promise<void> {
     const { plugins, problems } = await availablePlugins(this.deps.directory, await trustState(this.deps.directory) === "trusted");
@@ -494,6 +500,7 @@ export async function startTui(directory: string): Promise<number> {
     const app = new App({ terminal, directory, now: () => Date.now(),
       ensureDaemon: conversation => ensureDaemon(conversation, null),
       clipboard: async () => { const image = await readClipboardImage(); return image.ok ? ok(image.data.bytes) : image; },
+      open: async path => { await Bun.spawn(process.platform === "darwin" ? ["open", path] : ["xdg-open", path], { stdout: "ignore", stderr: "ignore" }).exited; },
       exit: code => { (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }, () => { resolve(code); }); } });
     const abandon = (error: string): void => { app.stop(); process.stderr.write(`orca2: ${error}\n`); resolve(1); };
     terminal.launched.then(launched => { if (!launched.ok) abandon(launched.error); }, (error: unknown) => { abandon(errorMessage(error)); });

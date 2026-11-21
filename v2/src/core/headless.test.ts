@@ -21,7 +21,7 @@ test("-p prints the final answer; --json streams every event and ends with the a
     out: t => { lines += t; }, resolve: async () => ok({ model: "claude-sonnet-5-5", provider: json, settings: null, contextLimit: null }) });
   const Event = z.looseObject({ kind: z.string(), text: z.string().optional(), outcome: z.object({ text: z.string() }).optional() });
   const events = lines.trim().split("\n").map(line => Event.parse(JSON.parse(line)));
-  expect(events.map(e => e.kind)).toEqual(["start", "input", "text", "tool_start", "tool_end", "text", "end"]);
+  expect(events.map(e => e.kind).filter(kind => kind !== "notice")).toEqual(["start", "input", "text", "tool_start", "tool_end", "text", "end"]);
   expect(events.find(e => e.kind === "tool_end")?.outcome?.text).toBe("hi");
   expect(events.at(-1)).toMatchObject({ kind: "end", text: "done: hi" });
 });

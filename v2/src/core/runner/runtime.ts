@@ -76,7 +76,7 @@ export function runtimeFor(conversation: string, self: string, confirm: (questio
       const meta = await readConversation(conversation);
       if (meta === null) throw new Error(`no conversation ${conversation}`);
       const trusted = await trustState(meta.directory) === "trusted";
-      const shape = settled(await assemble({ conversation, agent: "check", bundle: request.bundle, cwd: meta.directory, directory: meta.directory, trusted }));
+      const shape = settled(await assemble({ conversation, agent: "check", bundle: request.bundle, branch: request.branch, cwd: meta.directory, directory: meta.directory, trusted }));
       const prefix = shape.bundle.name === "orchestrator" ? null : shape.bundle.name;
       if (prefix === null) throw new Error("the orchestrator bundle cannot be spawned");
       const agent = `${prefix}-${slug(request.branch)}`;
