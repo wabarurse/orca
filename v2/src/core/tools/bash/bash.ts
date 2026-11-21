@@ -7,7 +7,6 @@ import { hint } from "./hints";
 import { readOnly } from "./readonly";
 
 export const MAX_TIMEOUT_MS = 10 * 60 * 1000;
-const SUDO = /\bsudo\b/;
 
 export function truncateMiddle(text: string, max: number): string {
   const bytes = Buffer.from(text);
@@ -30,7 +29,7 @@ export const bash: Tool = {
   parallel: input => typeof input.command === "string" && readOnly(input.command),
   spec: {
     name: "bash",
-    description: `Run a non-interactive shell command in the working directory. No sudo. Change files with edit or write rather than sed -i. Set timeout_ms (default and maximum 600000) for checks that may stall. Use web_search to look things up, curl only for a known URL. Save evidence (screenshots, logs) in $ORCA_ARTIFACTS. ${DATA_SENTENCE} Large output is saved whole and the result shows its head, tail and path. Send independent read-only commands together in one response; they run concurrently.`,
+    description: `Run a non-interactive shell command in the working directory. Some commands are refused with a replacement (recursive grep → rg, editors, unbounded git log/diff, secrets, broad deletes and hard resets, sudo, curl|sh). Change files with edit or write rather than sed -i. Set timeout_ms (default and maximum 600000) for checks that may stall. Use web_search to look things up, curl only for a known URL. Save evidence (screenshots, logs) in $ORCA_ARTIFACTS. ${DATA_SENTENCE} Large output is saved whole and the result shows its head, tail and path. Send independent read-only commands together in one response; they run concurrently.`,
     input_schema: { type: "object", properties: {
       command: { type: "string" },
       timeout_ms: { type: "integer", minimum: 1, maximum: MAX_TIMEOUT_MS },
@@ -39,7 +38,6 @@ export const bash: Tool = {
   async run(input, ctx) {
     const command = typeof input.command === "string" ? input.command : "";
     if (command.trim().length === 0) throw new Error("command must be a non-empty string");
-    if (SUDO.test(command)) return "refused: sudo is not allowed";
     const timeoutMs = typeof input.timeout_ms === "number" && input.timeout_ms > 0 ? Math.min(MAX_TIMEOUT_MS, Math.floor(input.timeout_ms)) : MAX_TIMEOUT_MS;
     const config = await loadConfig();
     const env = agentEnv(ctx.conversation, ctx.agent, ctx.data);

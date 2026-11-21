@@ -63,6 +63,7 @@ export async function assemble(input: AssembleInput): Promise<Result<Assembled>>
   const hooks: LoopHooks = {
     beforeTool: bind(l => l.plugin.hooks.beforeTool), afterTool: bind(l => l.plugin.hooks.afterTool),
     beforeRequest: bind(l => l.plugin.hooks.beforeRequest), onInput: bind(l => l.plugin.hooks.onInput),
+    guard: used.flatMap(l => l.plugin.guard),
   };
 
   const additions = used.flatMap(loaded => loaded.plugin.prompt.filter(p => p.role === role).map(p => `[${loaded.plugin.name}] ${p.text}`));

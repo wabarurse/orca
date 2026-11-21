@@ -5,6 +5,7 @@ import { asRecord, errorMessage, fail, loadConfig, ok, paths, type Result } from
 import { CORE_TOOL_NAMES } from "../tools/registry";
 import { z } from "zod";
 import type { Tool } from "../tools/registry";
+import type { GuardInput } from "../guard";
 import type { AfterTool, BeforeRequest, BeforeTool, OnInput, Plugin, PluginBackground, PluginUi } from "./types";
 
 export type PluginSource = "builtin" | "user" | "repo";
@@ -59,6 +60,8 @@ const PluginRecord = z.object({
   skills: z.array(z.string()),
   storage: z.array(z.object({ scope: z.enum(["conversation", "bubble", "global"]), about: z.string() })),
   hooks: z.object({ beforeTool: z.array(fn<BeforeTool>()), afterTool: z.array(fn<AfterTool>()), beforeRequest: z.array(fn<BeforeRequest>()), onInput: z.array(fn<OnInput>()) }),
+  guard: z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), group: z.enum(["efficiency", "security"]), test: fn<(call: GuardInput) => boolean>(),
+    reason: z.string().min(1), suggest: fn<(call: GuardInput) => string>() })).default([]),
   bundles: z.array(z.object({ name: z.string(), role: RoleName, prompt: z.string(), plugins: z.array(z.string()) })),
   ui: z.string().nullable(), background: z.string().nullable(),
 });

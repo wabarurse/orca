@@ -1,4 +1,5 @@
 import type { MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
+import type { GuardRule } from "../guard";
 import type { MemorySection } from "../loop/rolling";
 import type { AgentInfo, Tool, ToolResult } from "../tools/registry";
 import type { Message, Role } from "../types";
@@ -42,6 +43,7 @@ export type Plugin = {
   skills: string[];
   storage: { scope: StorageScope; about: string }[];
   hooks: PluginHooks;
+  guard: GuardRule[];
   bundles: Bundle[];
   ui: string | null;
   background: string | null;
@@ -110,4 +112,5 @@ export function defineBackground(background: PluginBackground): PluginBackground
   return background;
 }
 
-export type { MemorySection, Result };
+export type { GuardInput, ShellCommand } from "../guard";
+export type { GuardRule, MemorySection, Result };
