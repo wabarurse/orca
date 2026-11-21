@@ -37,6 +37,7 @@ const plugin: Plugin = definePlugin({
   storage: [],
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
   bundles: [],
+  guard: [],
   ui: "./ui.ts",
   background: null,
 });

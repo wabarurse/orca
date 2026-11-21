@@ -83,6 +83,7 @@ const plugin: Plugin = definePlugin({
   storage: [{ scope: "conversation", about: "processes/<id>.json the record, <id>.log the output, <id>.exit the exit code" }],
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
   bundles: [],
+  guard: [],
   ui: "./ui.ts",
   background: "./background.ts",
 });

@@ -16,7 +16,7 @@ const fakeRunner = (name: string): Runner => ({ name, start: async () => ({ hand
 function register(names: string[]): void {
   registerBuiltins(names.map(name => ({
     name, dir: join(home.path(), name),
-    index: async () => ({ default: definePlugin({ name, description: name, tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), bundles: [], ui: null, background: "./background.ts" }) }),
+    index: async () => ({ default: definePlugin({ name, description: name, tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), bundles: [], guard: [], ui: null, background: "./background.ts" }) }),
     ui: null,
     background: async () => ({ default: defineBackground({ watchers: [], memory: null, runner: fakeRunner(name), stop: null, remove: null }) }),
   })));

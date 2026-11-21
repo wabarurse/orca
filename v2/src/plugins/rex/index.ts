@@ -9,6 +9,7 @@ const plugin: Plugin = definePlugin({
   storage: [{ scope: "global", about: "rex/used: written when orca2 first opens a Rex session, so Rex is asked only after that" }],
   hooks: noHooks(),
   bundles: [],
+  guard: [],
   ui: null,
   background: "./background.ts",
 });

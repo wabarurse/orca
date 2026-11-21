@@ -82,6 +82,7 @@ const plugin: Plugin = definePlugin({
   storage: [{ scope: "conversation", about: "sandbox/<id>/: each run's scratch folder, the only place it could write" }],
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
   bundles: [],
+  guard: [],
   ui: "./ui.ts",
   background: null,
 });

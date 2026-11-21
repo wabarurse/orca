@@ -87,12 +87,12 @@ describe("plugins", () => {
     registerBuiltins([{ name: "guarded", dir: "/x/guarded", index: async () => ({ default: guarded }), ui: null, background: null }]);
     await saveConfig({ plugins: ["guarded"] });
     const c = await createConversation(home.path(), "g");
-    const worker = await assembled({ conversation: c.id, agent: "worker-g", bundle: "worker", cwd: home.path(), directory: home.path(), trusted: false });
+    const worker = await assembled({ conversation: c.id, agent: "worker-g", bundle: "worker", cwd: home.path(), directory: home.path(), trusted: false, branch: null });
     const no = async () => false;
     expect(await beforeTool(worker.hooks, "bash", { command: "make all" }, home.path(), no)).toEqual({ action: "block", reason: "refused (no-make): this repo builds with bun. Use: bun run build", refused: "no-make" });
     expect(await beforeTool(worker.hooks, "bash", { command: "sudo ls" }, home.path(), no)).toMatchObject({ action: "block", refused: "sudo" });
     expect(await beforeTool(worker.hooks, "bash", { command: "bun run build" }, home.path(), no)).toEqual({ action: "run", input: { command: "bun run build" } });
-    const ctx: PluginContext = { plugin: "rewrite", conversation: c.id, agent: "worker-g", role: "worker", cwd: home.path(), data: async () => ok("") };
+    const ctx: PluginContext = { plugin: "rewrite", conversation: c.id, agent: "worker-g", role: "worker", cwd: home.path(), branch: null, data: async () => ok("") };
     const rewrite: BeforeTool = async () => ({ action: "run", input: { command: "sudo ls" } });
     const rewriting: LoopHooks = { ...worker.hooks, beforeTool: [{ ctx, hook: rewrite }] };
     expect(await beforeTool(rewriting, "bash", { command: "ls" }, home.path(), no)).toMatchObject({ action: "block", refused: "sudo" });

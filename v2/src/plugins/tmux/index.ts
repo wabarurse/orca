@@ -9,6 +9,7 @@ const plugin: Plugin = definePlugin({
   storage: [],
   hooks: noHooks(),
   bundles: [],
+  guard: [],
   ui: null,
   background: "./background.ts",
 });

@@ -170,6 +170,7 @@ const plugin: Plugin = definePlugin({
   storage: [{ scope: "conversation", about: "tasks/tasks.json: the numbered tasks with status, branch, PR link and prerequisites" }],
   hooks: { beforeTool: [], afterTool: [onSpawn], beforeRequest: [], onInput: [] },
   bundles: [],
+  guard: [],
   ui: "./ui.ts",
   background: "./background.ts",
 });

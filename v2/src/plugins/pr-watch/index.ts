@@ -9,6 +9,7 @@ const plugin: Plugin = definePlugin({
   storage: [{ scope: "conversation", about: "pr-watch/prs.json: the latest observation of each watched PR" }],
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
   bundles: [],
+  guard: [],
   ui: "./ui.ts",
   background: "./background.ts",
 });

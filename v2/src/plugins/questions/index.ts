@@ -79,6 +79,7 @@ const plugin: Plugin = definePlugin({
   storage: [{ scope: "conversation", about: "questions/<id>.json: each question with its options, status and answer" }],
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
   bundles: [],
+  guard: [],
   ui: "./ui.ts",
   background: null,
 });
