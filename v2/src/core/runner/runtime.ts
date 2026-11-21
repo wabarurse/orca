@@ -17,8 +17,11 @@ import { plainRunner } from "./plain";
 import { listRuns, live, newRun, readRun, updateRun, writeRun, type RunRecord } from "./runs";
 import { slug, workspaceFor } from "./worktree";
 
-/** The command that runs orca2 itself: the compiled binary, or bun with the entry script in development. */
+/** The command that runs orca2 itself: the compiled binary, or bun with the entry script in development
+ * (ORCA2_SELF, a JSON argv, overrides it for tests that run orca2 from a test file). */
 export function selfCommand(): string[] {
+  const forced = process.env.ORCA2_SELF;
+  if (forced !== undefined && forced.length > 0) return JSON.parse(forced) as string[];
   const script = process.argv[1];
   return script !== undefined && script.endsWith(".ts") ? [process.execPath, script] : [process.execPath];
 }

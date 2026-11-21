@@ -17,6 +17,7 @@ import { trustState } from "./trust";
 import type { AgentEvent } from "./types";
 import { put } from "./inbox";
 import { pluginData } from "./bubbles";
+import { scriptedProvider } from "./scripted";
 
 export type SessionInput = {
   conversation: string;
@@ -46,6 +47,8 @@ export async function resolveModel(conversation: string, override: string | null
   const config = await loadConfig();
   const meta = await readConversation(conversation);
   const model = override ?? meta?.model ?? config.model;
+  const scripted = process.env.ORCA2_SCRIPTED;
+  if (scripted !== undefined && scripted.length > 0) return { model, provider: scriptedProvider(scripted), settings: null, contextLimit: null };
   const name = providerFor(model);
   const provider = await loadProvider(name, { profile: name === "anthropic" ? config.account : config.openaiAccount });
   return { model, provider, settings: null, contextLimit: null };

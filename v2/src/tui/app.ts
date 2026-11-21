@@ -1,0 +1,482 @@
+// The TUI shell: one conversation's chat (header, conversation, composer with counts) and the work page (Agents plus
+// every plugin tab). It never runs a turn: it reads the transcript and the daemon's live file, writes to the inbox,
+// and draws what plugins return.
+import { readFile } from "node:fs/promises";
+import { loadConfig, paths } from "../config";
+import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
+import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
+import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
+import { cancel, compactNow, ensureDaemon, say, stopDaemon, unsay } from "../core/daemon/client";
+import { readLive } from "../core/daemon/live";
+import { saveImage } from "../core/images";
+import { pending } from "../core/inbox";
+import { enabledNames } from "../core/plugins/enable";
+import { availablePlugins } from "../core/plugins/loader";
+import type { Fold, Row, Section, UiHost } from "../core/plugins/types";
+import { setBubblePlugin, ensureBubble } from "../core/bubbles";
+import { stopAgent } from "../core/runner/runtime";
+import { listRuns, live } from "../core/runner/runs";
+import { openTranscript, type Transcript } from "../core/transcript";
+import { setTrust, trustQuestion, trustState } from "../core/trust";
+import type { AgentEvent, Message } from "../core/types";
+import { dim, editor, fit, readClipboardImage, screens, type Key, type Terminal } from "./components";
+import { loadUis, type BoundUi } from "./plugins";
+import { composerRows, items, pieces, tail } from "./view";
+import { renderWork, type WorkTab } from "./work";
+
+type Modal =
+  | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
+  | { kind: "input"; prompt: string; state: editor.EditState; resolve: (text: string | null) => void }
+  | { kind: "pick"; title: string; options: string[]; index: number; resolve: (index: number | null) => void };
+
+type Page = { tab: number; index: number; detailTop: number; rows: Row[]; details: Section[]; error: string | null; status: string };
+
+export type AppDeps = {
+  terminal: Terminal;
+  directory: string;
+  now: () => number;
+  ensureDaemon: (conversation: string) => Promise<void>;
+  clipboard: () => Promise<Uint8Array | null>;
+  exit: (code: number) => void;
+};
+
+const POLL_MS = 250;
+const SLOW_MS = 2000;
+
+export class App {
+  private conversation!: Conversation;
+  private transcript!: Transcript;
+  private head: string | null = "unset";
+  private cached: screens.ScreenItem[] = [];
+  private lastText = "";
+  private events: AgentEvent[] = [];
+  private liveTurn = -1;
+  private liveOffset = 0;
+  private status: DaemonStatus | null = null;
+  private busy = false;
+  private composer: editor.EditState = { text: "", cursor: 0 };
+  private images: string[] = [];
+  private queued: Message[] = [];
+  private confirms: Confirm[] = [];
+  private note = "";
+  private open = new Set<string>();
+  private modal: Modal | null = null;
+  private page: Page | null = null;
+  private uis: BoundUi[] = [];
+  private folds = new Map<string, Fold>();
+  private counts = "";
+  private account = "";
+  private model = "";
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private lastSlow = 0;
+  private quitting = false;
+
+  constructor(private readonly deps: AppDeps) {}
+
+  async start(): Promise<void> {
+    const existing = (await listConversations()).find(c => c.directory === this.deps.directory);
+    await this.switchTo(existing ?? await createConversation(this.deps.directory, null));
+    this.deps.terminal.onKey(key => { void this.key(key); });
+    this.deps.terminal.onResize(() => { this.head = "unset"; this.draw(); });
+    this.deps.terminal.onAction(action => { this.action(action); });
+    this.deps.terminal.open();
+    if (await trustState(this.deps.directory) === "unknown") {
+      const yes = await this.ask({ kind: "confirm", question: trustQuestion(this.deps.directory) });
+      await setTrust(this.deps.directory, yes);
+      this.flash(yes ? "folder trusted" : "folder not trusted: its instructions, skills and plugins stay off");
+    }
+    this.timer = setInterval(() => { void this.poll(); }, POLL_MS);
+    await this.poll();
+  }
+
+  stop(): void {
+    if (this.timer !== null) clearInterval(this.timer);
+    this.deps.terminal.close();
+  }
+
+  // ---- data ----
+
+  private async switchTo(conversation: Conversation): Promise<void> {
+    this.conversation = conversation;
+    this.transcript = openTranscript(paths.transcript(conversation.id, "orchestrator"));
+    this.head = "unset";
+    this.events = [];
+    this.liveTurn = -1;
+    this.page = null;
+    const loaded = await loadUis(conversation.id);
+    this.uis = loaded.uis;
+    this.folds = loaded.folds;
+    if (loaded.problems.length > 0) this.flash(loaded.problems.join("; "));
+    this.deps.terminal.setTitle?.(`orca2 · ${conversation.name}`);
+    await this.deps.ensureDaemon(conversation.id).catch((error: unknown) => { this.flash(`daemon: ${error instanceof Error ? error.message : String(error)}`); });
+  }
+
+  private async poll(): Promise<void> {
+    if (this.quitting) return;
+    const id = this.conversation.id;
+    this.transcript.refresh();
+    if (this.transcript.head() !== this.head) {
+      this.head = this.transcript.head();
+      const all = this.transcript.all();
+      const list = pieces(all);
+      this.cached = items(list, { cols: this.deps.terminal.cols, open: this.open, folds: this.folds });
+      const last = [...list].reverse().find(p => p.kind === "text");
+      this.lastText = last?.kind === "text" ? last.text : "";
+    }
+    this.status = await readStatus(id);
+    const pid = await daemonPid(id);
+    this.busy = this.status !== null && this.status.state === "turn" && pid !== null;
+    if (this.busy && this.status !== null) {
+      if (this.status.turns !== this.liveTurn) { this.liveTurn = this.status.turns; this.liveOffset = 0; this.events = []; }
+      const read = await readLive(id, this.liveTurn, this.liveOffset);
+      this.liveOffset = read.offset;
+      this.events.push(...read.events);
+      for (const event of read.events) if (event.kind === "notice") this.flash(event.text);
+    } else this.events = [];
+    this.queued = (await pending(id, "orchestrator")).map(item => item.message).filter(m => m.from === "user");
+    this.confirms = await pendingConfirms(id);
+    if (this.confirms.length > 0 && this.modal === null) void this.answerConfirms();
+    if (this.deps.now() - this.lastSlow > SLOW_MS) {
+      this.lastSlow = this.deps.now();
+      await this.slow(pid);
+    }
+    this.draw();
+  }
+
+  private async slow(pid: number | null): Promise<void> {
+    const id = this.conversation.id;
+    if (pid === null && this.queued.length > 0) await this.deps.ensureDaemon(id).catch(() => {});
+    const runs = await listRuns(id);
+    const running = runs.filter(r => r.agent !== "orchestrator" && live(r)).length;
+    const parts = [`${running} agent${running === 1 ? "" : "s"} running`];
+    for (const bound of this.uis) for (const count of bound.ui.counts) {
+      const n = await count.count(bound.ctx).catch(() => null);
+      if (n !== null && n > 0) parts.push(count.label(n));
+    }
+    this.counts = parts.join(" │ ");
+    const config = await loadConfig();
+    const meta = await readConversation(id);
+    this.model = meta?.model ?? config.model;
+    this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
+    if (this.page !== null) await this.loadPage();
+  }
+
+  private async answerConfirms(): Promise<void> {
+    for (const confirm of this.confirms) {
+      const yes = await this.ask({ kind: "confirm", question: `${confirm.agent} asks: ${confirm.question}` });
+      await answerConfirm(this.conversation.id, confirm.id, yes);
+    }
+  }
+
+  // ---- modals and plugin hosts ----
+
+  private ask(modal: { kind: "confirm"; question: string }): Promise<boolean>;
+  private ask(modal: { kind: "input"; prompt: string; initial: string }): Promise<string | null>;
+  private ask(modal: { kind: "pick"; title: string; options: string[] }): Promise<number | null>;
+  private ask(modal: { kind: "confirm"; question: string } | { kind: "input"; prompt: string; initial: string } | { kind: "pick"; title: string; options: string[] }): Promise<boolean | string | number | null> {
+    return new Promise(resolve => {
+      if (modal.kind === "confirm") this.modal = { kind: "confirm", question: modal.question, resolve: yes => { this.modal = null; resolve(yes); this.draw(); } };
+      else if (modal.kind === "input") this.modal = { kind: "input", prompt: modal.prompt, state: { text: modal.initial, cursor: modal.initial.length }, resolve: text => { this.modal = null; resolve(text); this.draw(); } };
+      else this.modal = { kind: "pick", title: modal.title, options: modal.options, index: 0, resolve: index => { this.modal = null; resolve(index); this.draw(); } };
+      this.draw();
+    });
+  }
+
+  private host(bound: BoundUi): UiHost {
+    return { ...bound.ctx, note: text => { this.flash(text); },
+      confirm: question => this.ask({ kind: "confirm", question }),
+      input: (prompt, initial) => this.ask({ kind: "input", prompt, initial }),
+      pick: (title, options) => this.ask({ kind: "pick", title, options }),
+      say: async text => { await say(this.conversation.id, text, [], "steer"); await this.deps.ensureDaemon(this.conversation.id); } };
+  }
+
+  private flash(text: string): void { this.note = text.replace(/\s+/g, " ").trim(); this.draw(); }
+
+  // ---- keys ----
+
+  private async key(key: Key): Promise<void> {
+    if (this.modal !== null) { this.modalKey(this.modal, key); return; }
+    if (this.page !== null) { await this.pageKey(key); return; }
+    this.note = "";
+    const id = this.conversation.id;
+    if (key.ctrl === true) {
+      if (key.name === "c") { if (this.busy) { await cancel(id); this.flash("cancelling…"); } else if (this.composer.text.length > 0) this.composer = { text: "", cursor: 0 }; else this.flash("Ctrl+D quits"); }
+      else if (key.name === "d" && this.composer.text.length === 0) { await this.quit(); return; }
+      else if (key.name === "a") await this.openPage(0);
+      else if (key.name === "n") await this.switchTo(await createConversation(this.deps.directory, null));
+      else if (key.name === "v") await this.pasteImage();
+      else if (key.name === "j") this.composer = editor.newline(this.composer);
+      else if (key.name === "u") this.composer = editor.killToStart(this.composer);
+      else if (key.name === "k") this.composer = editor.killToEnd(this.composer);
+      else if (key.name === "w") this.composer = editor.deleteWordBack(this.composer);
+      else {
+        const tab = this.tabs().findIndex(t => t.chord === key.name);
+        if (tab !== -1) await this.openPage(tab);
+      }
+      this.draw();
+      return;
+    }
+    if (key.alt === true && (key.name === "left" || key.name === "right")) { await this.cycle(key.name === "left" ? -1 : 1); return; }
+    switch (key.name) {
+      case "enter": await this.submit("steer"); break;
+      case "tab": await this.submit(this.busy ? "follow" : "steer"); break;
+      case "escape": await this.takeBack(); break;
+      case "pageup": case "wheelup": this.deps.terminal.scroll(key.name === "pageup" ? "page-up" : "up"); break;
+      case "pagedown": case "wheeldown": this.deps.terminal.scroll(key.name === "pagedown" ? "page-down" : "down"); break;
+      default: this.composer = edit(this.composer, key);
+    }
+    this.draw();
+  }
+
+  private modalKey(modal: Modal, key: Key): void {
+    if (modal.kind === "confirm") {
+      if (key.name === "char" && (key.text === "y" || key.text === "Y")) modal.resolve(true);
+      else if ((key.name === "char" && (key.text === "n" || key.text === "N")) || key.name === "escape") modal.resolve(false);
+      return;
+    }
+    if (modal.kind === "pick") {
+      if (key.name === "escape") modal.resolve(null);
+      else if (key.name === "enter") modal.resolve(modal.index);
+      else if (key.name === "up" || (key.name === "char" && key.text === "k")) modal.index = Math.max(0, modal.index - 1);
+      else if (key.name === "down" || (key.name === "char" && key.text === "j")) modal.index = Math.min(modal.options.length - 1, modal.index + 1);
+      this.draw();
+      return;
+    }
+    if (key.name === "escape") modal.resolve(null);
+    else if (key.name === "enter") modal.resolve(modal.state.text);
+    else modal.state = edit(modal.state, key);
+    this.draw();
+  }
+
+  private async submit(delivery: "steer" | "follow"): Promise<void> {
+    const text = this.composer.text.trim();
+    if (text.length === 0 && this.images.length === 0) return;
+    this.composer = { text: "", cursor: 0 };
+    if (text.startsWith("/")) { await this.command(text); return; }
+    await say(this.conversation.id, text, this.images, delivery);
+    this.images = [];
+    await this.deps.ensureDaemon(this.conversation.id).catch((error: unknown) => { this.flash(`daemon: ${error instanceof Error ? error.message : String(error)}`); });
+    await this.poll();
+  }
+
+  /** Esc: the newest queued message the orchestrator has not read goes back into the composer. */
+  private async takeBack(): Promise<void> {
+    const last = this.queued.at(-1);
+    if (last === undefined) return;
+    const message = await unsay(this.conversation.id, last.id);
+    if (message === null) return;
+    this.composer = { text: message.text, cursor: message.text.length };
+    this.images = message.images;
+    await this.poll();
+  }
+
+  private async pasteImage(): Promise<void> {
+    try {
+      const bytes = await this.deps.clipboard();
+      if (bytes === null) { this.flash("no image on the clipboard"); return; }
+      this.images.push(await saveImage(this.conversation.id, bytes));
+      this.flash(`image attached (${this.images.length})`);
+    } catch (error) { this.flash(`paste failed: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+
+  private async cycle(step: number): Promise<void> {
+    const all = (await listConversations()).filter(c => c.directory === this.deps.directory);
+    const at = all.findIndex(c => c.id === this.conversation.id);
+    const next = all[(at + step + all.length) % all.length];
+    if (next !== undefined && next.id !== this.conversation.id) await this.switchTo(next);
+    this.draw();
+  }
+
+  private async command(text: string): Promise<void> {
+    const [name = "", ...rest] = text.slice(1).split(/\s+/);
+    const args = rest.join(" ");
+    const id = this.conversation.id;
+    if (name === "quit" || name === "exit") { await this.quit(); return; }
+    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+V image · Ctrl+N new · Alt+←/→ switch · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "compact") { await compactNow(id); await this.deps.ensureDaemon(id); this.flash("compacting…"); return; }
+    if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
+    if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted (restart agents to load its instructions)"); return; }
+    if (name === "model") {
+      const model = args.trim().length > 0 ? args.trim() : await this.ask({ kind: "input", prompt: "model ", initial: this.model });
+      if (model === null || model.length === 0) return;
+      await saveConversation({ ...this.conversation, model });
+      this.conversation = { ...this.conversation, model };
+      this.flash(`model ${model} from the next request`);
+      return;
+    }
+    if (name === "plugins") { await this.pluginsMenu(); return; }
+    const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
+    if (own === undefined) { this.flash(`unknown command /${name}`); return; }
+    try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+
+  private commands(): { name: string }[] { return this.uis.flatMap(bound => bound.ui.commands); }
+
+  private async pluginsMenu(): Promise<void> {
+    const { plugins, problems } = await availablePlugins(this.deps.directory, await trustState(this.deps.directory) === "trusted");
+    const enabled = await enabledNames(this.conversation.id);
+    const names = [...plugins.keys()].sort();
+    const options = [...names.map(n => `${enabled.includes(n) ? "[on] " : "[off]"} ${n} — ${plugins.get(n)?.plugin.description ?? ""}`), ...problems.map(p => `[!!]  ${p.name} — ${p.problem}`)];
+    if (options.length === 0) { this.flash("no plugins installed"); return; }
+    const choice = await this.ask({ kind: "pick", title: "plugins for this bubble (Enter toggles; config.toml holds the defaults)", options });
+    const name = choice === null ? undefined : names[choice];
+    if (name === undefined) return;
+    const bubble = this.conversation.bubble ?? (await ensureBubble(this.conversation.id)).id;
+    await setBubblePlugin(bubble, name, enabled.includes(name) ? "off" : "on");
+    this.conversation = (await readConversation(this.conversation.id)) ?? this.conversation;
+    await this.switchTo(this.conversation);
+    this.flash(`${name} ${enabled.includes(name) ? "off" : "on"} for this bubble (from the next turn)`);
+  }
+
+  private async quit(): Promise<void> {
+    this.quitting = true;
+    this.stop();
+    this.deps.exit(0);
+  }
+
+  private action(action: screens.ScreenAction): void {
+    if (action.kind === "toggle") {
+      if (this.open.has(action.key)) this.open.delete(action.key); else this.open.add(action.key);
+      this.head = "unset";
+      void this.poll();
+    } else if (action.kind === "open") {
+      const tab = this.tabs().findIndex(t => t.id === action.tab);
+      if (tab !== -1) void this.openPage(tab);
+    }
+  }
+
+  // ---- work page ----
+
+  private tabs(): (WorkTab & { chord: string | null; plugin: BoundUi | null })[] {
+    return [{ id: "agents", title: "Agents", count: null, chord: "a", plugin: null },
+      ...this.uis.flatMap(bound => bound.ui.tabs.map(tab => ({ id: tab.id, title: tab.title, count: null, chord: tab.chord, plugin: bound })))];
+  }
+
+  private async openPage(tab: number): Promise<void> {
+    this.page = { tab, index: 0, detailTop: 0, rows: [], details: [], error: null, status: "" };
+    await this.loadPage();
+    this.draw();
+  }
+
+  private async loadPage(): Promise<void> {
+    const page = this.page;
+    if (page === null) return;
+    const tab = this.tabs()[page.tab];
+    if (tab === undefined) return;
+    try {
+      if (tab.plugin === null) {
+        const runs = await listRuns(this.conversation.id);
+        page.rows = runs.map(r => ({ id: r.agent, name: r.agent, status: r.state === "running" && !live(r) ? "exited" : r.state, info: `${r.bundle} · ${r.lastTool ?? "-"} · ${r.startedAt.slice(11, 16)}`,
+          tone: live(r) ? "good" : r.state === "failed" ? "bad" : "dim" }));
+      } else {
+        const def = tab.plugin.ui.tabs.find(t => t.id === tab.id);
+        page.rows = def === undefined ? [] : await def.rows(tab.plugin.ctx);
+      }
+      page.index = Math.min(page.index, Math.max(0, page.rows.length - 1));
+      page.error = null;
+      const row = page.rows[page.index];
+      page.details = row === undefined ? [] : await this.details(tab, row);
+    } catch (error) { page.error = error instanceof Error ? error.message : String(error); page.rows = []; page.details = []; }
+  }
+
+  private async details(tab: ReturnType<App["tabs"]>[number], row: Row): Promise<Section[]> {
+    if (tab.plugin !== null) return tab.plugin.ui.tabs.find(t => t.id === tab.id)?.details(row, tab.plugin.ctx) ?? [];
+    const run = (await listRuns(this.conversation.id)).find(r => r.agent === row.id);
+    if (run === undefined) return [];
+    const log = await readFile(run.log, "utf8").catch(() => "");
+    return [{ title: "Run", lines: [`state ${run.state}${live(run) ? " (live)" : ""}`, `bundle ${run.bundle} · branch ${run.branch} · runner ${run.runner}`, `started ${run.startedAt}${run.endedAt === null ? "" : ` · ended ${run.endedAt}`}`, ...(run.error === null ? [] : [`error ${run.error}`]), `log ${run.log}`] },
+      { title: "Log (last lines)", lines: log.split("\n").slice(-30) }];
+  }
+
+  private async pageKey(key: Key): Promise<void> {
+    const page = this.page;
+    if (page === null) return;
+    const tabs = this.tabs();
+    const tab = tabs[page.tab];
+    const char = key.name === "char" ? key.text ?? "" : "";
+    if (key.name === "escape" || char === "q") { this.page = null; this.draw(); return; }
+    if (key.name === "down" || char === "j") page.index = Math.min(page.rows.length - 1, page.index + 1);
+    else if (key.name === "up" || char === "k") page.index = Math.max(0, page.index - 1);
+    else if (key.name === "tab" || key.name === "right" || char === "l") { page.tab = (page.tab + 1) % tabs.length; page.index = 0; }
+    else if (key.name === "left" || char === "h") { page.tab = (page.tab - 1 + tabs.length) % tabs.length; page.index = 0; }
+    else if (/^[1-9]$/.test(char) && Number(char) <= tabs.length) { page.tab = Number(char) - 1; page.index = 0; }
+    else if (key.name === "pagedown") page.detailTop += 10;
+    else if (key.name === "pageup") page.detailTop = Math.max(0, page.detailTop - 10);
+    else if (char === "r") page.status = "";
+    else if (tab !== undefined && tab.plugin === null && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
+    else if (tab?.plugin != null) {
+      const def = tab.plugin.ui.tabs.find(t => t.id === tab.id);
+      const action = def?.actions.find(a => a.key === char);
+      if (action !== undefined) {
+        try { await action.run(page.rows[page.index] ?? null, this.host(tab.plugin)); } catch (error) { page.status = `${action.label}: ${error instanceof Error ? error.message : String(error)}`; }
+      }
+    }
+    await this.loadPage();
+    this.draw();
+  }
+
+  // ---- drawing ----
+
+  private draw(): void {
+    const t = this.deps.terminal;
+    if (this.page !== null) {
+      const tabs = this.tabs();
+      const tab = tabs[this.page.tab];
+      const actions = tab?.plugin === null ? "s stop" : tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`).join(" · ") ?? "";
+      const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
+        : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
+      t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,
+        details: this.page.details, detailTop: this.page.detailTop, status, error: this.page.error }, t.cols, t.rows), cursor: 0, col: 0 });
+      return;
+    }
+    const cols = t.cols;
+    const footer: string[] = [];
+    if (this.note.length > 0) footer.push(dim(fit(this.note, cols)));
+    for (const m of this.queued.slice(-4)) footer.push(dim(fit(`queued (${m.delivery === "follow" ? "after the work" : "next"}): ${m.text.replace(/\s+/g, " ")}`, cols)));
+    if (this.images.length > 0) footer.push(dim(`${this.images.length} image${this.images.length === 1 ? "" : "s"} attached`));
+    let cursor: { row: number; col: number } | null = null;
+    if (this.modal !== null && this.modal.kind !== "input") {
+      footer.push(fit(this.modalLine(this.modal), cols));
+      if (this.modal.kind === "pick") this.modal.options.forEach((option, i) => { if (this.modal?.kind === "pick") footer.push(fit(`${i === this.modal.index ? "❯" : " "} ${option}`, cols)); });
+    }
+    const composing = this.modal?.kind === "input" ? { prompt: this.modal.prompt, state: this.modal.state } : { prompt: "› ", state: this.composer };
+    const box = composerRows(composing, this.counts, cols, Math.max(1, Math.floor(t.rows / 3)));
+    cursor = { row: footer.length + box.row, col: box.col };
+    footer.push(...box.rows);
+    const fin = { time: this.deps.now(), active: this.busy };
+    const header: screens.ScreenHeader = { tabs: [{ label: this.conversation.name, active: true, busy: this.busy }], bubble: this.conversation.bubble,
+      account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [`${this.deps.directory}${this.status?.error != null ? ` · last turn failed: ${this.status.error}` : ""}`], fin };
+    t.show({ kind: "chat", header, items: this.cached, tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy), welcome: [], footer, cursor });
+  }
+
+  private modalLine(modal: Modal): string {
+    if (modal.kind === "confirm") return `${modal.question}  y yes · n/esc no`;
+    if (modal.kind === "pick") return `${modal.title}  ↑↓ choose · enter · esc`;
+    return `${modal.prompt}${modal.state.text}`;
+  }
+}
+
+function edit(state: editor.EditState, key: Key): editor.EditState {
+  switch (key.name) {
+    case "char": case "paste": return editor.insert(state, key.text ?? "");
+    case "backspace": return key.alt === true ? editor.deleteWordBack(state) : editor.backspace(state);
+    case "delete": return editor.deleteForward(state);
+    case "left": return key.alt === true ? editor.wordLeft(state) : editor.left(state);
+    case "right": return key.alt === true ? editor.wordRight(state) : editor.right(state);
+    case "home": return editor.home(state);
+    case "end": return editor.end(state);
+    default: return state;
+  }
+}
+
+export async function startTui(directory: string): Promise<number> {
+  const { openTuiTerminal } = await import("./otui");
+  const terminal = openTuiTerminal();
+  return new Promise<number>(resolve => {
+    const app = new App({ terminal, directory, now: () => Date.now(),
+      ensureDaemon: async conversation => { await ensureDaemon(conversation, null); },
+      clipboard: async () => { const image = await readClipboardImage(); return image.bytes; },
+      exit: code => { void (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }); } });
+    app.start().catch((error: unknown) => { app.stop(); process.stderr.write(`orca2: ${error instanceof Error ? error.message : String(error)}\n`); resolve(1); });
+  });
+}
