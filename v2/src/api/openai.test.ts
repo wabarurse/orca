@@ -1,0 +1,361 @@
+import { afterEach, expect, spyOn, test } from "bun:test";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ResponseFunctionToolCall, ResponseOutputItem } from "openai/resources/responses/responses";
+import { z } from "zod";
+import type { CompleteRequest } from "./provider";
+import type { Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
+import { fromResponses, openai, toResponses, toResponseTools } from "./openai";
+import { providerFor } from "./model/provider-for";
+import { clearCatalogLimits, contextWindow } from "./model/context-window";
+import { modelCapabilities } from "./model/capabilities";
+import { codexSSE, fakeCodexTokens } from "../test/codex";
+import { png } from "../test/image-fixture";
+
+let mockFetch: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
+afterEach(() => { mockFetch?.mockRestore(); mockFetch = undefined; clearCatalogLimits(); });
+function intercept(handler: (request: Request) => Promise<Response>) {
+  mockFetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(
+    async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      return handler(input instanceof Request ? new Request(input, init) : new Request(String(input), init));
+    }, { preconnect: fetch.preconnect },
+  ));
+}
+const call: ResponseOutputItem = { type: "function_call", id: "fc_1", call_id: "call_1", name: "bash", arguments: '{"command":"pwd"}', status: "completed" };
+const reasoning: ResponseOutputItem = { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "Checking the directory." }], encrypted_content: "test-encrypted-reasoning" };
+const message: ResponseOutputItem = { type: "message", id: "msg_1", role: "assistant", status: "completed", content: [{ type: "output_text", text: "hello", annotations: [] }] };
+const bodyShape = z.record(z.string(), z.unknown());
+async function json(req: Request): Promise<Record<string, unknown>> {
+  const body: unknown = await req.json();
+  return bodyShape.parse(body);
+}
+const request = (onText = (_: string) => {}): CompleteRequest => ({ model: "gpt-test", messages: [{ role: "user", content: "hi" }], tools: [], maxTokens: 100, onText });
+
+test("providerFor routes claude models to Claude Code and the rest to Codex", () => {
+  expect(providerFor("claude-opus-5-5")).toBe("anthropic");
+  expect(providerFor("gpt-test")).toBe("openai");
+});
+
+test("Responses translation preserves tool IDs, errors, text order and encrypted Codex reasoning", () => {
+  const messages: MessageParam[] = [
+    { role: "user", content: "run pwd" },
+    { role: "assistant", content: [{ type: "thinking", thinking: "Claude thinking", signature: "claude-signature" }, ...fromResponses([reasoning, message, call])] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "failed", is_error: true }, { type: "text", text: "try again" }] },
+  ];
+  expect(toResponses(messages)).toEqual([
+    { role: "user", content: [{ type: "input_text", text: "run pwd" }] },
+    { type: "reasoning", id: "rs_1", summary: [], encrypted_content: "test-encrypted-reasoning" },
+    { type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "hello", annotations: [] }] },
+    { type: "function_call", call_id: "call_1", name: "bash", arguments: '{"command":"pwd"}' },
+    { type: "function_call_output", call_id: "call_1", output: "Error: failed" },
+    { role: "user", content: [{ type: "input_text", text: "try again" }] },
+  ]);
+});
+
+test("tools use Responses function schemas", () => {
+  const schema: ApiTool["input_schema"] = { type: "object", properties: { command: { type: "string" } }, required: ["command"] };
+  expect(toResponseTools([{ name: "bash", description: "run", input_schema: schema }])).toEqual([
+    { type: "function", name: "bash", description: "run", parameters: schema, strict: false },
+  ]);
+});
+
+test("Codex streams text and tool calls through its subscription endpoint", async () => {
+  const tokens = fakeCodexTokens();
+  let incoming: Request | undefined;
+  intercept(async (req) => {
+    incoming = req;
+    return codexSSE([
+      { type: "response.output_text.delta", delta: "hello" },
+      { type: "response.completed", response: { status: "completed", output: [reasoning, message, call] } },
+    ]);
+  });
+  let text = "";
+  const result = await openai(async () => tokens).complete(request((delta) => { text += delta; }));
+  expect(text).toBe("hello");
+  expect(result.stop).toBe("tool_use");
+  expect(result.content).toEqual(fromResponses([reasoning, message, call]));
+  if (incoming === undefined) throw new Error("no request was sent");
+  expect(incoming.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+  expect(incoming.headers.get("authorization")).toBe(`Bearer ${tokens.accessToken}`);
+  expect(incoming.headers.get("chatgpt-account-id")).toBe(tokens.accountId);
+  expect(incoming.headers.get("originator")).toBe("codex_cli_rs");
+  expect(incoming.headers.get("openai-beta")).toBe("responses=experimental");
+  expect(incoming.headers.get("x-api-key")).toBeNull();
+  const body = await json(incoming);
+  expect(body).toMatchObject({ model: "gpt-test", store: false, stream: true, instructions: "You are Codex, an AI coding agent.", include: ["reasoning.encrypted_content"] });
+  expect(body).not.toHaveProperty("max_output_tokens");
+  expect(body).not.toHaveProperty("messages");
+});
+
+test.each([
+  "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna",
+  "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "codex-auto-review",
+])("%s sends image bytes to Codex with the selected model and settings", async model => {
+  const data = png().toString("base64");
+  let calls = 0;
+  intercept(async req => {
+    calls++;
+    expect(req.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    const body = await json(req);
+    expect(body.model).toBe(model);
+    expect(body.reasoning).toEqual({ summary: "auto", effort: "high" });
+    expect(body.service_tier).toBe("priority");
+    expect(body.input).toEqual([{ role: "user", content: [
+      { type: "input_text", text: "Inspect this screenshot" },
+      { type: "input_image", image_url: `data:image/png;base64,${data}`, detail: "auto" },
+    ] }]);
+    return codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]);
+  });
+  const messages: MessageParam[] = [{ role: "user", content: [
+    { type: "text", text: "Inspect this screenshot" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data } },
+  ] }];
+  await openai(async () => fakeCodexTokens()).complete({ ...request(), model, messages, settings: { effort: "high", fast: true } });
+  expect(calls).toBe(1);
+});
+
+test.each(["gpt-unknown", "gpt-6-astra-unverified", "gpt-6-astra-2099-01-01", "gpt-3.5-turbo"])(
+  "%s attempts image input without changing models", async model => {
+    let credentials = 0, calls = 0;
+    intercept(async req => {
+      calls++;
+      const body = await json(req);
+      expect(body.model).toBe(model);
+      expect(body).toHaveProperty(["input", 0, "content", 0], { type: "input_image", image_url: `data:image/png;base64,${png().toString("base64")}`, detail: "auto" });
+      return codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]);
+    });
+    const provider = openai(async () => { credentials++; return fakeCodexTokens(); });
+    const messages: MessageParam[] = [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: "image/png", data: png().toString("base64") } },
+    ] }];
+    await provider.complete({ ...request(), model, messages });
+    expect(credentials).toBe(1);
+    expect(calls).toBe(1);
+  },
+);
+
+test("Codex retries an initial 401 once using refreshed subscription credentials", async () => {
+  const tokens = fakeCodexTokens();
+  const rotated = fakeCodexTokens("test-account", Date.now() + 3_600_000, "rotated");
+  const credentialsCalls: boolean[] = [];
+  const authorizations: (string | null)[] = [];
+  intercept(async (req) => {
+    authorizations.push(req.headers.get("authorization"));
+    if (authorizations.length === 1) return Response.json({ error: { message: "expired" } }, { status: 401 });
+    return codexSSE([{ type: "response.completed", response: { output: [message] } }]);
+  });
+  const result = await openai(async (opts) => {
+    credentialsCalls.push(opts?.forceRefresh === true);
+    return opts?.forceRefresh === true ? rotated : tokens;
+  }).complete(request());
+  expect(result.stop).toBe("end");
+  expect(credentialsCalls).toEqual([false, true]);
+  expect(authorizations).toEqual([`Bearer ${tokens.accessToken}`, `Bearer ${rotated.accessToken}`]);
+});
+
+test("a second 401 fails instead of falling back to API billing", async () => {
+  let requests = 0;
+  intercept(async (req) => {
+    requests++;
+    expect(req.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    return Response.json({ error: { message: "expired" } }, { status: 401 });
+  });
+  await expect(openai(async () => fakeCodexTokens()).complete(request())).rejects.toThrow();
+  expect(requests).toBe(2);
+});
+
+test("model discovery uses the Codex catalog rather than the platform model API", async () => {
+  intercept(async (req) => {
+    const url = new URL(req.url);
+    expect(url.origin + url.pathname).toBe("https://chatgpt.com/backend-api/codex/models");
+    expect(url.searchParams.get("client_version")).toBeTruthy();
+    return Response.json({ models: [{ slug: "later", priority: 2 }, { slug: "hidden", visibility: "hide" }, { slug: "first", priority: 1 }] });
+  });
+  expect(await openai(async () => fakeCodexTokens()).models()).toEqual(["first", "later"]);
+});
+
+test("codex catalog context_window fills gaps; absent, null and invalid values are ignored", async () => {
+  intercept(async () => Response.json({ models: [{ slug: "gpt-a", context_window: 300000 }, { slug: "gpt-b" }, { slug: "gpt-c", context_window: null },
+    { slug: "gpt-d", context_window: -1 }, { slug: "gpt-e", context_window: "1" }, { slug: "gpt-5.5", context_window: 1000000 }] }));
+  await openai(async () => fakeCodexTokens()).models();
+  expect(contextWindow({}, "gpt-a")).toEqual({ limit: 300000, estimated: false });
+  for (const m of ["gpt-b", "gpt-c", "gpt-d", "gpt-e"]) expect(contextWindow({}, m)).toEqual({ limit: 128000, estimated: true });
+  expect(contextWindow({}, "gpt-5.5").limit).toBe(272000);
+});
+
+test("codex catalog supported_reasoning_levels feed modelCapabilities; models without them keep the table", async () => {
+  intercept(async () => Response.json({ models: [{ slug: "gpt-5.5", supported_reasoning_levels: [{ effort: "medium" }, { effort: "high" }] }, { slug: "gpt-6-astra" }, { slug: "gpt-x", supported_reasoning_levels: "low" }] }));
+  await openai(async () => fakeCodexTokens()).models();
+  expect(modelCapabilities("gpt-5.5").effort).toEqual(["medium", "high"]);
+  expect(modelCapabilities("gpt-6-astra").effort).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  expect(modelCapabilities("gpt-x").effort).toEqual([]);
+});
+
+test("completed streams can reconstruct output from done items in wire order", async () => {
+  intercept(async () => codexSSE([
+    { type: "response.output_item.done", output_index: 1, item: call },
+    { type: "response.output_item.done", output_index: 0, item: message },
+    { type: "response.completed", response: { status: "completed" } },
+  ]));
+  const result = await openai(async () => fakeCodexTokens()).complete(request());
+  expect(result.content).toEqual(fromResponses([message, call]));
+});
+
+test("empty terminal output preserves streamed tool calls exactly once", async () => {
+  intercept(async () => codexSSE([
+    { type: "response.output_item.done", output_index: 0, item: call },
+    { type: "response.completed", response: { status: "completed", output: [] } },
+  ]));
+  const result = await openai(async () => fakeCodexTokens()).complete(request());
+  expect(result.stop).toBe("tool_use"); expect(result.content).toEqual(fromResponses([call]));
+});
+
+test("a gap in streamed output fails without returning executable calls", async () => {
+  intercept(async () => codexSSE([
+    { type: "response.output_item.done", output_index: 1, item: call },
+    { type: "response.completed", response: { status: "completed", output: [] } },
+  ]));
+  await expect(openai(async () => fakeCodexTokens()).complete(request())).rejects.toThrow();
+});
+
+test("Codex response.done is accepted only with a successful completion status", async () => {
+  intercept(async () => codexSSE([{ type: "response.done", response: { status: "completed", output: [message] } }]));
+  expect((await openai(async () => fakeCodexTokens()).complete(request())).stop).toBe("end");
+  mockFetch?.mockRestore();
+  intercept(async () => codexSSE([{ type: "response.done", response: { status: "incomplete", output: [call] } }]));
+  await expect(openai(async () => fakeCodexTokens()).complete(request())).rejects.toThrow("did not complete");
+});
+
+test("failed, incomplete and truncated streams never return executable tool calls", async () => {
+  for (const terminal of ["response.failed", "response.incomplete", null]) {
+    let attempts = 0;
+    intercept(async () => {
+      attempts++;
+      return codexSSE([
+        { type: "response.output_item.done", output_index: 0, item: call },
+        ...(terminal !== null ? [{ type: terminal, response: { status: "failed" } }] : []),
+      ]);
+    });
+    await expect(openai(async () => fakeCodexTokens()).complete(request())).rejects.toThrow();
+    expect(attempts).toBe(1);
+    mockFetch?.mockRestore();
+  }
+});
+
+test("malformed tool arguments fail instead of being executed as an empty command", () => {
+  const tool = (patch: Partial<ResponseFunctionToolCall>): ResponseFunctionToolCall => ({ type: "function_call", id: "fc_1", call_id: "call_1", name: "bash", arguments: '{"command":"pwd"}', status: "completed", ...patch });
+  expect(() => fromResponses([tool({ arguments: "not-json" })])).toThrow("invalid tool arguments");
+  expect(() => fromResponses([tool({ arguments: "[]" })])).toThrow("invalid tool call");
+  expect(() => fromResponses([tool({ status: "incomplete" })])).toThrow("unfinished");
+});
+
+test("Codex subscription wire payload sends selected effort/priority, omits them by default", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  intercept(async (req) => {
+    expect(req.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    bodies.push(await json(req));
+    return codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]);
+  });
+  const provider = openai(async () => fakeCodexTokens());
+  await provider.complete({ ...request(), model: "gpt-6-astra", settings: { effort: "max", fast: true } });
+  await provider.complete({ ...request(), model: "gpt-6-astra" });
+  expect(bodies[0]).toMatchObject({ reasoning: { summary: "auto", effort: "max" }, service_tier: "priority" });
+  expect(bodies[1]).toMatchObject({ reasoning: { summary: "auto" } });
+  expect(bodies[1]).not.toHaveProperty("service_tier");
+  expect(bodies[1]?.reasoning).not.toHaveProperty("effort");
+});
+test("Codex terminal metadata distinguishes refusal and omitted nontext output for summary safety", async () => {
+  const refusal: ResponseOutputItem = { type: "message", id: "refused", role: "assistant", status: "completed", content: [{ type: "refusal", refusal: "cannot comply" }] };
+  let output: ResponseOutputItem[] = [message, refusal];
+  intercept(async () => codexSSE([{ type: "response.completed", response: { status: "completed", output } }]));
+  const p = openai(async () => fakeCodexTokens());
+  expect(await p.complete(request())).toMatchObject({ completion: "refusal", stop: "refusal" });
+  output = [message, { ...reasoning, encrypted_content: undefined }];
+  expect((await p.complete(request())).completion).toBe("completed");
+  output = [reasoning, message]; expect((await p.complete(request())).completion).toBe("completed");
+  output = [message, call]; expect((await p.complete(request())).completion).toBe("nontext");
+  output = [message]; expect((await p.complete(request())).completion).toBe("completed");
+});
+
+test("Codex cancellation aborts the HTTP request and never retries it", async () => {
+  const ready = Promise.withResolvers<void>();
+  let requests = 0, aborted = false;
+  intercept(async req => {
+    requests++;
+    ready.resolve();
+    return new Promise((_resolve, reject) => {
+      req.signal.addEventListener("abort", () => { aborted = true; reject(req.signal.reason); }, { once: true });
+    });
+  });
+  const controller = new AbortController();
+  const result = openai(async () => fakeCodexTokens()).complete({ ...request(), signal: controller.signal });
+  await ready.promise;
+  controller.abort();
+  await expect(result).rejects.toThrow();
+  expect(aborted).toBe(true);
+  expect(requests).toBe(1);
+});
+
+test("Codex cancellation aborts a partially consumed stream", async () => {
+  let aborted = false;
+  intercept(async req => new Response(new ReadableStream({ start(controller) {
+    req.signal.addEventListener("abort", () => { aborted = true; controller.error(req.signal.reason); }, { once: true });
+    controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"partial"}\n\n'));
+  } }), { headers: { "content-type": "text/event-stream" } }));
+  const controller = new AbortController();
+  const result = openai(async () => fakeCodexTokens()).complete({ ...request(() => controller.abort()), signal: controller.signal });
+  await expect(result).rejects.toThrow();
+  expect(aborted).toBe(true);
+});
+
+
+test("Codex terminal usage retains cached context and optional reasoning metrics", async () => {
+  for (const terminal of ["response.completed", "response.done"]) {
+    intercept(async () => codexSSE([{ type: terminal, response: { status: "completed", output: [message], usage: {
+      input_tokens: 1000, input_tokens_details: { cached_tokens: 800 }, output_tokens: 40, output_tokens_details: { reasoning_tokens: 30 },
+    } } }]));
+    const result = await openai(async () => fakeCodexTokens()).complete(request());
+    expect(result.usage).toEqual({ input: 1000, cachedInput: 800, output: 40, reasoning: 30 });
+    expect(result.inputTokens).toBe(1000);
+    mockFetch?.mockRestore(); mockFetch = undefined;
+  }
+  intercept(async () => codexSSE([{ type: "response.completed", response: { status: "completed", output: [message] } }]));
+  const missing = await openai(async () => fakeCodexTokens()).complete(request());
+  expect(missing.usage).toBeUndefined(); expect(missing.inputTokens).toBeUndefined();
+});
+
+test("cache grouping follows the stable prefix, not changing messages or local trace IDs", async () => {
+  const tokens=fakeCodexTokens(),sent:Record<string,unknown>[]=[];
+  intercept(async req=>{sent.push(await json(req));return codexSSE([{type:'response.completed',response:{status:'completed',output:[message]}}]);});
+  const p=openai(async()=>tokens),base={...request(),system:'stable role'};
+  await p.complete({...base,trace:{project:'one',run:'first'}});
+  await p.complete({...base,messages:[{role:'user',content:'new assignment'}],trace:{project:'two',run:'second'}});
+  await p.complete({...base,system:'changed role'});
+  expect(sent[0]?.prompt_cache_key).toBe(sent[1]?.prompt_cache_key);
+  expect(sent[2]?.prompt_cache_key).not.toBe(sent[0]?.prompt_cache_key);
+  expect(sent[0]).not.toHaveProperty('prompt_cache_options');
+  expect(JSON.stringify(sent[0]?.input)).not.toContain('prompt_cache_breakpoint');
+});
+
+test("Codex cache-write usage is recorded when present and never subtracted from occupied input", async () => {
+  intercept(async()=>codexSSE([{type:'response.completed',response:{status:'completed',output:[message],usage:{input_tokens:1000,
+    input_tokens_details:{cached_tokens:800,cache_write_tokens:150},output_tokens:40,output_tokens_details:{reasoning_tokens:30}}}}]));
+  const turn=await openai(async()=>fakeCodexTokens()).complete(request());
+  expect(turn.inputTokens).toBe(1000);
+  expect(turn.usage).toEqual({input:1000,cachedInput:800,cacheWriteInput:150,output:40,reasoning:30});
+});
+
+test("Codex cache affinity uses an opaque session header stable across provider reloads and distinct per transcript", async () => {
+  const tokens=fakeCodexTokens(),sent:{body:Record<string,unknown>;session:string|null;thread:string|null}[]=[];
+  intercept(async req=>{sent.push({body:await json(req),session:req.headers.get('session-id'),thread:req.headers.get('thread-id')});
+    return codexSSE([{type:'response.completed',response:{status:'completed',output:[message]}}]);});
+  const base={...request(),system:'stable',cacheScope:'/private/local/transcript-one.jsonl'};
+  await openai(async()=>tokens).complete(base);
+  await openai(async()=>tokens).complete({...base,messages:[{role:'user',content:'next task'}],trace:{run:'new-run'}});
+  await openai(async()=>tokens).complete({...base,cacheScope:'/private/local/transcript-two.jsonl'});
+  expect(sent[0]?.session).toMatch(/^[a-f0-9]{64}$/);
+  expect(sent[0]?.body).toHaveProperty("prompt_cache_key", sent[0]?.session);
+  expect(sent[0]?.thread).toBe(sent[0]?.session);
+  expect(sent[1]?.session).toBe(sent[0]?.session);
+  expect(sent[2]?.session).not.toBe(sent[0]?.session);
+  expect(JSON.stringify(sent)).not.toContain('/private/local');expect(JSON.stringify(sent)).not.toContain('new-run');
+});
