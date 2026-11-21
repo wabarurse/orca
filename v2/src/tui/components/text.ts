@@ -105,7 +105,7 @@ function* pieces(s: string): Generator<{ esc: string } | { space: number } | { w
     ESC.lastIndex = i;
     const m = s[i] === "\x1b" ? ESC.exec(s) : null;
     if (m !== null) { yield { esc: m[0] }; i += m[0].length; continue; }
-    let j = i;
+    let j = i + 1;
     while (j < s.length && s[j] !== "\x1b") j++;
     yield* words(s.slice(i, j));
     i = j;
