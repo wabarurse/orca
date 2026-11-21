@@ -1,0 +1,55 @@
+// The example plugin: every slot in one small, working plugin. Agents pin short notes with the `pin` tool; the TUI
+// shows them in a Pins tab with a count, a /pin command and a fold; the daemon keeps them in rolling memory.
+import { join } from "node:path";
+import { definePlugin, type Plugin } from "../../core/plugins";
+import { readPins, writePins } from "./store";
+
+const MAX = 200;
+
+const plugin: Plugin = definePlugin({
+  name: "example",
+  description: "Pins: short notes agents keep for the conversation (a worked example of every plugin slot).",
+  tools: [{
+    roles: ["orchestrator", "worker", "reviewer"],
+    replaces: false,
+    tool: {
+      parallel: input => input.action === "list",
+      spec: { name: "pin", description: "Pin a short note for this conversation (a decision, a link, a reminder), list pins, or unpin one by id. Pins survive compaction.",
+        input_schema: { type: "object", properties: { action: { type: "string", enum: ["add", "list", "remove"] }, text: { type: "string" }, id: { type: "string" } }, required: ["action"] } },
+      async run(input, ctx) {
+        const dir = join(ctx.data, "example");
+        await Bun.write(join(dir, ".keep"), "");
+        const pins = await readPins(dir);
+        if (input.action === "list") return pins.length === 0 ? "no pins" : pins.map(p => `${p.id}: ${p.text}`).join("\n");
+        if (input.action === "remove") {
+          const left = pins.filter(p => p.id !== input.id);
+          if (left.length === pins.length) return `refused: no pin ${String(input.id)}`;
+          await writePins(dir, left);
+          return `unpinned ${String(input.id)}`;
+        }
+        const text = typeof input.text === "string" ? input.text.trim() : "";
+        if (text.length === 0) return "refused: a pin needs text";
+        const pin = { id: `p${pins.length + 1}`, text, by: ctx.agent, at: new Date().toISOString() };
+        await writePins(dir, [...pins, pin]);
+        return `pinned ${pin.id}`;
+      },
+    },
+  }],
+  prompt: [{ role: "orchestrator", text: "Pin decisions and links the user will want to find again with the pin tool." }],
+  skills: ["skills/pins"],
+  storage: [{ scope: "conversation", about: "example/pins.json: the pinned notes" }],
+  hooks: {
+    beforeTool: [async (call) => {
+      if (call.name === "pin" && typeof call.input.text === "string" && call.input.text.length > MAX) return { action: "block", reason: `a pin is at most ${MAX} characters` };
+      return { action: "run", input: call.input };
+    }],
+    afterTool: [],
+    beforeRequest: [],
+    onInput: [],
+  },
+  bundles: [],
+  ui: "./ui.ts",
+  background: "./background.ts",
+});
+
+export default plugin;
