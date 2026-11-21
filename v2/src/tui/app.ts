@@ -15,7 +15,7 @@ import { stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustQuestion, trustState } from "../core/trust";
-import type { AgentEvent, Message } from "../core/types";
+import type { AgentEvent, Message, OpenSpan } from "../core/types";
 import { dim, editor, fit, readClipboardImage, screens, type Key, type Terminal } from "./components";
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
@@ -50,6 +50,7 @@ export class App {
   private liveOffset = 0;
   private status: DaemonStatus | null = null;
   private busy = false;
+  private waiting: OpenSpan | null = null;
   private composer: editor.EditState = { text: "", cursor: 0 };
   private images: string[] = [];
   private queued: Message[] = [];
@@ -139,6 +140,7 @@ export class App {
     this.status = await readStatus(id);
     const pid = await daemonPid(id);
     this.busy = this.status !== null && this.status.state === "turn" && pid !== null;
+    this.waiting = pid !== null && this.status !== null && this.status.state === "idle" ? this.status.phase : null;
     if (this.busy && this.status !== null) {
       if (this.status.turns !== this.liveTurn) { this.liveTurn = this.status.turns; this.liveOffset = 0; this.events = []; }
       const read = await readLive(id, this.liveTurn, this.liveOffset);
@@ -462,7 +464,7 @@ export class App {
     const fin = { time: this.deps.now(), active: this.busy };
     const header: screens.ScreenHeader = { tabs: [{ label: this.conversation.name, active: true, busy: this.busy }], bubble: this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
       account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [`${this.deps.directory}${this.status?.error != null ? ` · last turn failed: ${this.status.error}` : ""}`], fin };
-    t.show({ kind: "chat", header, items: this.cached, tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy), welcome: [], footer, cursor });
+    t.show({ kind: "chat", header, items: this.cached, tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting), welcome: [], footer, cursor });
   }
 
   private modalLine(modal: Modal): string {

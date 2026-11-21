@@ -27,6 +27,7 @@ export const paths = {
   runs: (id: string): string => join(conversation(id), "runs"),
   logs: (id: string): string => join(conversation(id), "logs"),
   daemon: (id: string): string => join(conversation(id), "daemon"),
+  spans: (id: string): string => join(conversation(id), "spans.jsonl"),
   images: (id: string): string => join(conversation(id), "images"),
   data: (id: string): string => join(conversation(id), "data"),
   worktree: (id: string, slug: string): string => join(root(), "worktrees", id, slug),

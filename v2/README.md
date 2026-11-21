@@ -28,7 +28,10 @@ bun run check && bun run lint && bun test
   replaces is archived in `archive.sqlite` first, and `memory search` finds it.
 - **Bubbles**: conversations that share memory nodes, notebook pages, behavior lines and plugin switches.
 - **Headless**: `orca2 -p "task"` runs the orchestrator in-process until its subagents finish and prints the answer;
-  `--json` prints every event (start, input, text, tool_start, tool_end, notice, usage, end) as JSON lines.
+  `--json` prints every event (start, input, text, tool_start, tool_end, notice, usage, span_start, span_end, end) as JSON lines.
+- **Spans**: every model request, tool call, wait (for a worker, for input), worker launch, blocking compaction and
+  request preparation is appended to the conversation's `spans.jsonl` (never model-visible); the TUI's activity line
+  names the open one with its elapsed time, and `orca2 spans [conversation] [--json]` breaks the wall time down.
 - **Project trust**: a folder's AGENTS.md/CLAUDE.md, skills and `.orca2/plugins/` load only once the user trusted it
   (asked once in the TUI; `orca2 trust`, or `--trust` for one headless run).
 

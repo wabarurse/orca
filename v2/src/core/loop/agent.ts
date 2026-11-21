@@ -6,6 +6,8 @@ import { asRecord, errorMessage, fail, ok, type Result, usageEvent } from "../..
 import { materialize, withImages } from "../images";
 import { consume, format } from "../inbox";
 import type { Runtime, Tool, ToolContext, ToolResult } from "../tools/registry";
+import { cut, flushSpans, type Spans } from "../spans";
+import { toolArgs } from "../toolview";
 import { closeInterrupted, type Transcript } from "../transcript";
 import type { AgentEvent, Message, Role, ToolCall } from "../types";
 import { type Window } from "./budget";
@@ -40,11 +42,13 @@ export type AgentSetup = {
   rolling: RollingCompactor | null;
   requireInput: boolean;
   compactRequested: () => boolean;
+  spans: Spans;
 };
 
 export type RunResult = { status: "done" | "cancelled" | "failed"; text: string; error: string | null };
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
+type Prepared = { model: Resolved; estimated: number; shaped: { system: string; messages: MessageParam[]; tools: Window["tools"] }; delivered: MessageParam[] };
 
 const RESTART_WAIT_MS = [2_000, 8_000];
 
@@ -106,35 +110,59 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
     window.contextLimit = next.contextLimit;
     const query = [...setup.transcript.chain()].reverse().find(message => message.role === "user" && typeof message.content === "string");
     await appendContext(setup.transcript, await setup.context(typeof query?.content === "string" ? query.content.slice(-4000) : ""));
-    if (setup.rolling !== null) await setup.rolling.boundary({ window, provider: next.provider, signal: setup.signal, notice }, manual);
-    else if (manual || !failedCompaction) {
-      const compactor: Compactor = { window, provider: next.provider, settings: next.settings, transcript: setup.transcript, signal: setup.signal, trace: { conversation: setup.conversation, agent: setup.agent }, notice };
-      const result = await compact(compactor, manual);
-      if (result !== null) failedCompaction = !result;
+    const compacting = Date.now();
+    let worked = false;
+    try {
+      if (setup.rolling !== null) worked = await setup.rolling.boundary({ window, provider: next.provider, signal: setup.signal, notice }, manual);
+      else if (manual || !failedCompaction) {
+        const compactor: Compactor = { window, provider: next.provider, settings: next.settings, transcript: setup.transcript, signal: setup.signal, trace: { conversation: setup.conversation, agent: setup.agent }, notice };
+        const result = await compact(compactor, manual);
+        if (result !== null) { failedCompaction = !result; worked = true; }
+      }
+    } finally {
+      if (worked) setup.spans.begin("compaction", setup.rolling !== null ? "rolling memory" : "context", compacting, null).end({ manual: manual ? 1 : 0 });
     }
     requireFits(window, setup.transcript.chain(), "model request");
     return ok(next);
   }
 
-  async function ask(model: Resolved): Promise<Turn> {
-    const messages = setup.transcript.chain();
-    const estimated = budget(window, messages);
-    const shaped = await beforeRequest(setup.hooks, { system: setup.system, messages, tools: window.tools });
-    const delivered = await materialize(setup.conversation, shaped.messages);
+  async function prepare(manual: boolean): Promise<Result<Prepared>> {
+    const prep = setup.spans.begin("prep", "request", null, null);
+    try {
+      const loaded = await boundary(manual);
+      if (!loaded.ok) return loaded;
+      const messages = setup.transcript.chain();
+      const estimated = budget(window, messages);
+      const shaped = await beforeRequest(setup.hooks, { system: setup.system, messages, tools: window.tools });
+      const delivered = await materialize(setup.conversation, shaped.messages);
+      return ok({ model: loaded.data, estimated, shaped, delivered });
+    } finally { prep.end({}); }
+  }
+
+  async function ask(prepared: Prepared): Promise<Turn> {
+    const { model, estimated, shaped, delivered } = prepared;
     let streamed = "";
-    const turn = await completeRestarting(model.provider, {
-      signal: setup.signal,
-      trace: { project: setup.conversation, agent: setup.agent, purpose: "agent" },
-      cacheScope: setup.transcript.path,
-      model: model.model,
-      settings: model.settings ?? undefined,
-      system: shaped.system,
-      maxTokens: replyCap(window, shaped.messages),
-      messages: delivered,
-      tools: shaped.tools,
-      onText: text => { streamed += text; setup.emit({ kind: "text", text }); },
-      onNotice: notice,
-    });
+    const asking = setup.spans.begin("model", model.model, null, null);
+    let turn: Turn;
+    try {
+      turn = await completeRestarting(model.provider, {
+        signal: setup.signal,
+        trace: { project: setup.conversation, agent: setup.agent, purpose: "agent" },
+        cacheScope: setup.transcript.path,
+        model: model.model,
+        settings: model.settings ?? undefined,
+        system: shaped.system,
+        maxTokens: replyCap(window, shaped.messages),
+        messages: delivered,
+        tools: shaped.tools,
+        onText: text => { streamed += text; setup.emit({ kind: "text", text }); },
+        onNotice: notice,
+      });
+    } catch (error) {
+      asking.end({ error: cut(errorMessage(error), 200) });
+      throw error;
+    }
+    asking.end(turn.usage === undefined ? { stop: turn.stop } : { stop: turn.stop, input: turn.usage.input, output: turn.usage.output, cached: turn.usage.cachedInput ?? 0 });
     setup.signal.throwIfAborted();
     if (turn.inputTokens !== undefined) window.measured = { input: turn.inputTokens, estimated, model: model.model };
     if (turn.usage !== undefined) setup.emit({ kind: "usage", model: model.model, input: turn.usage.input, cached: turn.usage.cachedInput ?? 0, output: turn.usage.output });
@@ -148,30 +176,35 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
   async function runTool(model: Resolved, block: ToolUse): Promise<ToolResultBlockParam> {
     const call: ToolCall = { id: block.id, name: block.name, input: block.input };
     setup.emit({ kind: "tool_start", call });
+    const args = toolArgs(block.name, block.input);
+    const timing = setup.spans.begin("tool", args.length > 0 ? `${block.name}: ${cut(args, 80)}` : block.name, null, block.id);
     const started = performance.now();
-    const raw = asRecord(block.input) ?? {};
-    let result: { ok: boolean; content: ToolResult };
-    const tool = byName.get(block.name);
-    if (tool === undefined) result = { ok: false, content: `unknown tool: ${block.name}` };
-    else {
-      const decision = await beforeTool(setup.hooks, block.name, raw, question => setup.runtime.confirm(question));
-      if (decision.action === "block") result = { ok: false, content: decision.reason };
+    try {
+      const raw = asRecord(block.input) ?? {};
+      let result: { ok: boolean; content: ToolResult };
+      const tool = byName.get(block.name);
+      if (tool === undefined) result = { ok: false, content: `unknown tool: ${block.name}` };
       else {
-        const ctx: ToolContext = { conversation: setup.conversation, agent: setup.agent, role: setup.role, branch: setup.branch, cwd: setup.cwd, data: setup.data,
-          trusted: setup.trusted, pluginSkills: setup.pluginSkills, callId: block.id, signal: setup.signal, model: model.model, provider: model.provider, settings: model.settings, runtime: setup.runtime };
-        try {
-          const content = await tool.run(decision.input, ctx);
-          result = { ok: !(typeof content === "string" && content.startsWith("refused:")), content };
-        } catch (error) {
-          if (setup.signal.aborted) throw error;
-          result = { ok: false, content: errorMessage(error) };
+        const decision = await beforeTool(setup.hooks, block.name, raw, question => setup.spans.time("wait-inbox", "user confirmation", () => setup.runtime.confirm(question), yes => ({ answer: yes ? "yes" : "no" })));
+        if (decision.action === "block") result = { ok: false, content: decision.reason };
+        else {
+          const ctx: ToolContext = { conversation: setup.conversation, agent: setup.agent, role: setup.role, branch: setup.branch, cwd: setup.cwd, data: setup.data,
+            trusted: setup.trusted, pluginSkills: setup.pluginSkills, callId: block.id, signal: setup.signal, model: model.model, provider: model.provider, settings: model.settings, runtime: setup.runtime };
+          try {
+            const content = await tool.run(decision.input, ctx);
+            result = { ok: !(typeof content === "string" && content.startsWith("refused:")), content };
+          } catch (error) {
+            if (setup.signal.aborted) throw error;
+            result = { ok: false, content: errorMessage(error) };
+          }
+          result = await afterTool(setup.hooks, block.name, decision.input, result);
         }
-        result = await afterTool(setup.hooks, block.name, decision.input, result);
       }
-    }
-    await usageEvent({ kind: "tool", project: setup.conversation, agent: setup.agent, tool: block.name, call: block.id, ok: result.ok, durationMs: Math.round(performance.now() - started) });
-    setup.emit({ kind: "tool_end", call, outcome: { id: block.id, ok: result.ok, text: resultText(result.content) } });
-    return { type: "tool_result", tool_use_id: block.id, content: result.content, ...(result.ok ? {} : { is_error: true }) };
+      timing.end({ tool: block.name, ok: result.ok ? "yes" : "no" });
+      await usageEvent({ kind: "tool", project: setup.conversation, agent: setup.agent, tool: block.name, call: block.id, ok: result.ok, durationMs: Math.round(performance.now() - started) });
+      setup.emit({ kind: "tool_end", call, outcome: { id: block.id, ok: result.ok, text: resultText(result.content) } });
+      return { type: "tool_result", tool_use_id: block.id, content: result.content, ...(result.ok ? {} : { is_error: true }) };
+    } finally { timing.end({ tool: block.name, ok: "interrupted" }); }
   }
 
   async function loop(): Promise<Result<null>> {
@@ -179,10 +212,10 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
     if (setup.requireInput && !started) return ok(null);
     let pauses = 0, limits = 0;
     for (;;) {
-      const prepared = await boundary(setup.compactRequested());
+      const prepared = await prepare(setup.compactRequested());
       if (!prepared.ok) return prepared;
-      const model = prepared.data;
-      const turn = await ask(model);
+      const model = prepared.data.model;
+      const turn = await ask(prepared.data);
       const calls = turn.content.filter((block): block is ToolUse => block.type === "tool_use");
       if (turn.stop === "limit" && limits++ < 2) {
         notice("output limit reached; asking the model to continue in smaller pieces");
@@ -217,6 +250,8 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
       } catch (error) {
         if (setup.signal.aborted) return { status: "cancelled", text: lastText, error: null };
         return { status: "failed", text: lastText, error: errorMessage(error) };
+      } finally {
+        await flushSpans();
       }
     },
   };

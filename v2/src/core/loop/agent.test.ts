@@ -10,6 +10,7 @@ import type { Runtime, Tool } from "../tools/registry";
 import type { PluginContext } from "../plugins/types";
 import { openTranscript } from "../transcript";
 import type { AgentEvent } from "../types";
+import { spanRecorder } from "../spans";
 import { createAgent, type AgentSetup } from "./agent";
 import { emptyHooks, type LoopHooks } from "./hooks";
 
@@ -31,7 +32,7 @@ async function setup(script: ContentBlock[][], tools: Tool[], hooks: LoopHooks =
     conversation: conversation.id, agent: "orchestrator", role: "orchestrator", branch: null, cwd: home.path(), data: home.path(), trusted: false, pluginSkills: [],
     transcript, tools, system: "test", resolve: async () => ok({ model: "claude-sonnet-5-5", provider, settings: null, contextLimit: null }),
     context: async () => ({}), hooks, runtime: { ...runtime, confirm }, emit: event => { events.push(event); }, signal: new AbortController().signal,
-    concurrency: 1, rolling: null, requireInput: true, compactRequested: () => false,
+    concurrency: 1, rolling: null, requireInput: true, compactRequested: () => false, spans: spanRecorder(conversation.id, "orchestrator", event => { events.push(event); }),
   };
   return { conversation: conversation.id, provider, events, transcript, agent: createAgent(config) };
 }

@@ -6,7 +6,10 @@ import { tempHome } from "../test/home";
 import { createConversation } from "./conversations";
 import { ensureDaemon, say, stopDaemon } from "./daemon/client";
 import { readRun } from "./runner/runs";
+import { spanReport } from "./span-report";
+import { readSpans } from "./spans";
 import { openTranscript } from "./transcript";
+import type { Span } from "./types";
 
 const home = tempHome("e2e");
 let conversation = "";
@@ -51,4 +54,30 @@ test("orchestrator → worker → report → orchestrator, through the daemon an
   expect((await readRun(c.id, "worker-fix"))?.state).toBe("reported");
   const inbox = transcript.all().flatMap(e => e.type === "message" ? e.inbox : []).map(m => `${m.from}: ${m.text}`);
   expect(inbox).toEqual(["user: please add hello.txt", "worker-fix: done: wrote hello.txt"]);
+
+  let spans: Span[] = [];
+  for (let i = 0; i < 50; i++) {
+    const read = await readSpans(c.id);
+    spans = read.ok ? read.data : [];
+    if (spans.some(span => span.agent === "worker-fix" && span.kind === "tool" && span.label.startsWith("inbox"))) break;
+    await Bun.sleep(100);
+  }
+  const has = (agent: string, kind: string, label: string): boolean => spans.some(span => span.agent === agent && span.kind === kind && span.label.startsWith(label));
+  expect(has("orchestrator", "tool", "subagent: fix, worker")).toBe(true);
+  expect(has("orchestrator", "model", "claude")).toBe(true);
+  expect(has("orchestrator", "wait-worker", "worker-fix")).toBe(true);
+  expect(has("worker-fix", "spawn", "worker-fix")).toBe(true);
+  expect(has("worker-fix", "tool", "write: hello.txt")).toBe(true);
+  expect(has("worker-fix", "tool", "inbox: orchestrator")).toBe(true);
+  expect(spans.filter(span => span.agent === "worker-fix" && span.kind === "model").every(span => span.detail.input === 10 && span.detail.output === 5)).toBe(true);
+  for (const agent of ["orchestrator", "worker-fix"]) {
+    const flat = spans.filter(span => span.agent === agent && (span.kind === "model" || span.kind === "tool" || span.kind === "spawn"))
+      .map(span => [Date.parse(span.startedAt), Date.parse(span.endedAt)]).sort((x, y) => (x[0] ?? 0) - (y[0] ?? 0));
+    for (let i = 1; i < flat.length; i++) expect(flat[i]?.[0] ?? 0).toBeGreaterThanOrEqual(flat[i - 1]?.[1] ?? 0);
+  }
+  const report = spanReport(c.id, spans);
+  const total = (kinds: Record<string, number>): number => Object.values(kinds).reduce((a, b) => a + b, 0);
+  expect(total(report.kinds)).toBe(report.wallMs);
+  for (const agent of report.agents) expect(total(agent.kinds)).toBe(agent.wallMs);
+  expect(report.agents.map(agent => agent.agent).sort()).toEqual(["orchestrator", "worker-fix"]);
 }, 30_000);

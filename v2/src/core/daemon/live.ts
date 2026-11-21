@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { parseJson, paths } from "../../config";
 import { z } from "zod";
 import { MessageRecord } from "../inbox";
+import { OpenSpanRecord, SpanRecord } from "../spans";
 import type { AgentEvent } from "../types";
 
 const Call = z.object({ id: z.string(), name: z.string(), input: z.unknown() });
@@ -16,6 +17,8 @@ const EventRecord: z.ZodType<AgentEvent> = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("notice"), text: z.string() }),
   z.object({ kind: z.literal("usage"), model: z.string(), input: z.number(), cached: z.number(), output: z.number() }),
   z.object({ kind: z.literal("compaction"), before: z.number(), after: z.number() }),
+  z.object({ kind: z.literal("span_start"), span: OpenSpanRecord }),
+  z.object({ kind: z.literal("span_end"), span: SpanRecord }),
   z.object({ kind: z.literal("end"), status: Status, error: z.string().nullable(), text: z.string() }),
 ]);
 const LineRecord = z.object({ seq: z.number(), turn: z.number(), event: EventRecord.nullable() });

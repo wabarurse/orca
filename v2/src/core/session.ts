@@ -18,6 +18,7 @@ import { put } from "./inbox";
 import { pluginData } from "./bubbles";
 import { scriptedProvider } from "./scripted";
 import { ensureBuiltinSkills } from "./builtin-skills";
+import { spanRecorder, type Spans } from "./spans";
 
 export type SessionInput = {
   conversation: string;
@@ -50,6 +51,13 @@ export async function resolveModel(conversation: string, override: string | null
 }
 
 export async function openSession(input: SessionInput): Promise<Result<Session>> {
+  const spans = spanRecorder(input.conversation, input.agent, input.emit);
+  const opening = spans.begin("prep", "session", null, null);
+  try { return await assembleSession(input, spans); }
+  finally { opening.end({}); }
+}
+
+async function assembleSession(input: SessionInput, spans: Spans): Promise<Result<Session>> {
   const meta = await readConversation(input.conversation);
   if (meta === null) return fail(`no conversation ${input.conversation}`);
   const cwd = input.cwd ?? meta.directory;
@@ -97,7 +105,7 @@ export async function openSession(input: SessionInput): Promise<Result<Session>>
     resolve,
     context: query => referenceSections({ conversation: input.conversation, role: assembled.bundle.role, cwd, trusted, pluginSkills: skills, query }),
     hooks: assembled.hooks, runtime: input.runtime, emit: input.emit, signal: input.signal, concurrency: config.toolConcurrency,
-    rolling, requireInput: input.requireInput, compactRequested: input.compactRequested,
+    rolling, requireInput: input.requireInput, compactRequested: input.compactRequested, spans,
   });
   return ok({ assembled, transcript, run: agent.run, rolling });
 }

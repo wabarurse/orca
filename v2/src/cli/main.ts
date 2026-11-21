@@ -12,12 +12,14 @@ import { BUILTINS } from "../plugins";
 import { runAccounts, runLogin } from "./login";
 import { runMcp } from "./mcp";
 import { PLUGIN_USAGE, runPlugin } from "./plugin";
+import { runSpans } from "./spans";
 
 const USAGE = `orca2 [start] [folder]            open the TUI for a folder's conversation
   orca2 -p "task" [--json] [--model m] [--cwd folder] [--conversation id] [--bundle name] [--yes] [--trust]
   orca2 msg "text" [--conversation id]  send input to a conversation's orchestrator
   orca2 stop [--conversation id]        stop its daemon
   orca2 list                            conversations
+  orca2 spans [conversation] [--json]   where the wall-clock time went
   orca2 delete --conversation id        stop its agents and remove it
   orca2 login anthropic|openai [profile] [--import]
   orca2 accounts
@@ -94,6 +96,12 @@ export async function main(argv: string[]): Promise<number> {
     if (!removed.ok) return refuse(removed.error);
     out(`deleted ${conversation}\n`);
     return 0;
+  }
+  if (command === "spans") {
+    const named = args[0] !== undefined && !args[0].startsWith("-") ? args[0] : null;
+    const picked = named !== null ? ok(named) : await conversationArg(args);
+    if (!picked.ok) return refuse(picked.error);
+    return runSpans(picked.data, args.includes("--json"), out);
   }
   if (command === "list") { for (const c of await listConversations()) out(`${c.id}  ${c.name.padEnd(16)} ${c.directory}\n`); return 0; }
   if (command === "login") return runLogin(args, out);
