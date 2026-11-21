@@ -12,7 +12,7 @@ export const skill: Tool = {
     } } },
   async run(input, ctx) {
     if (input.name !== undefined && input.search !== undefined) throw new Error("use either name or search");
-    if (input.search !== undefined && (typeof input.search !== "string" || !input.search.trim() || input.search.length > 160)) {
+    if (input.search !== undefined && (typeof input.search !== "string" || input.search.trim() === "" || input.search.length > 160)) {
       throw new Error("search must be nonempty text of at most 160 characters");
     }
     const skills = await discoverSkills(ctx.cwd, ctx.trusted, ctx.pluginSkills);
@@ -27,7 +27,7 @@ export const skill: Tool = {
       return JSON.stringify({ total: skills.length, matches: matches.length, skills: matches.slice(0, SKILL_RESULT_LIMIT) });
     }
     const found = skills.find(s => s.name === input.name);
-    if (!found) throw new Error("unknown skill; use skill search with workflow keywords to find its exact name");
+    if (found === undefined) throw new Error("unknown skill; use skill search with workflow keywords to find its exact name");
     if (Bun.file(found.path).size > 32000) throw new Error(`skill is too large for one result; read it in bounded sections: ${found.path}`);
     return `Skill source: ${found.path}\n${await Bun.file(found.path).text()}`;
   },

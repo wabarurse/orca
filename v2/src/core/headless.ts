@@ -1,5 +1,3 @@
-// Headless mode: `orca2 -p "task"` runs the orchestrator in this process until the work is done (its subagents
-// finished, its inbox empty) and prints the final answer; `--json` prints every event as one JSON line instead.
 import { mkdir } from "node:fs/promises";
 import { paths } from "../config";
 import { createConversation, readConversation, saveConversation } from "./conversations";
@@ -18,17 +16,13 @@ import type { Resolved } from "./loop/agent";
 export type HeadlessOptions = {
   prompt: string;
   json: boolean;
-  /** null uses the config's model. */
   model: string | null;
   cwd: string;
-  /** Continue this conversation; null starts a new one. */
   conversation: string | null;
   bundle: string;
-  /** Answer yes to plugin hooks that ask (there is nobody to ask). */
   yes: boolean;
   trust: boolean;
   out: (text: string) => void;
-  /** null signs in with the configured account; tests pass a fake. */
   resolve: (() => Promise<Resolved>) | null;
 };
 
@@ -42,7 +36,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
   if (options.model !== null && conversation.model !== options.model) await saveConversation({ ...conversation, model: options.model });
   await mkdir(paths.daemon(conversation.id), { recursive: true });
   const release = await tryStorageLock(lockPath(conversation.id), conversation.id);
-  if (release === undefined) { options.out(`conversation ${conversation.id} is held by a running daemon\n`); return 70; }
+  if (release === null) { options.out(`conversation ${conversation.id} is held by a running daemon\n`); return 70; }
   const abort = new AbortController();
   const stop = (): void => { abort.abort(new Error("interrupted")); };
   process.on("SIGINT", stop);
@@ -57,9 +51,11 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
     await put(conversation.id, agent, "user", options.prompt, { images: [], delivery: "steer" });
     for (;;) {
       if ((await pending(conversation.id, agent)).length > 0) {
-        const session = await openSession({ conversation: conversation.id, agent, bundle: options.bundle, branch: null, cwd: options.cwd, fresh: false, requireInput: true,
+        const opened = await openSession({ conversation: conversation.id, agent, bundle: options.bundle, branch: null, cwd: options.cwd, fresh: false, requireInput: true,
           emit, signal: abort.signal, runtime: runtimeFor(conversation.id, agent, async () => options.yes), compactRequested: () => false,
           model: options.model, keep: agent === "orchestrator" ? { transcript, rolling } : null, resolve: options.resolve });
+        if (!opened.ok) { status = "failed"; error = opened.error; break; }
+        const session = opened.data;
         rolling = session.rolling;
         const result = await session.run();
         if (result.text.length > 0) answer = result.text;

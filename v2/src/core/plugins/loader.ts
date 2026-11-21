@@ -1,16 +1,15 @@
-// Finding and loading plugins. Built-in plugins are registered by the CLI (src/plugins/index.ts); user plugins live
-// in ~/.orca2/plugins/<name>/ and load only once the user approved that exact content; a trusted folder's plugins
-// (.orca2/plugins/<name>/) load because the user trusted the folder. A plugin runs with the user's permissions.
 import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { loadConfig, paths } from "../../config";
 import { CORE_TOOL_NAMES } from "../tools/registry";
-import type { Plugin, PluginBackground, PluginUi } from "./types";
+import { z } from "zod";
+import { asRecord, errorMessage, fail, ok, type Result } from "../result";
+import type { Tool } from "../tools/registry";
+import type { AfterTool, BeforeRequest, BeforeTool, OnInput, Plugin, PluginBackground, PluginUi } from "./types";
 
 export type PluginSource = "builtin" | "user" | "repo";
 
-/** A built-in plugin: its modules are imported statically so the compiled binary carries them. */
 export type BuiltinPlugin = {
   name: string;
   dir: string;
@@ -35,11 +34,10 @@ export function builtinPlugins(): BuiltinPlugin[] { return builtins; }
 
 const NAME = /^[a-z][a-z0-9-]{0,39}$/;
 
-/** sha256 over every file of the plugin folder (paths and contents, node_modules excluded): what approval pins. */
 export async function pluginHash(dir: string): Promise<string> {
   const hash = createHash("sha256");
   const walk = async (folder: string): Promise<void> => {
-    for (const name of (await readdir(folder).catch(() => [] as string[])).sort()) {
+    for (const name of (await readdir(folder).catch((): string[] => [])).sort()) {
       if (name === "node_modules" || name.startsWith(".")) continue;
       const path = join(folder, name);
       const info = await stat(path);
@@ -52,43 +50,86 @@ export async function pluginHash(dir: string): Promise<string> {
 }
 
 const isFn = (value: unknown): boolean => typeof value === "function";
-const isList = (value: unknown): value is unknown[] => Array.isArray(value);
+const fn = <T>() => z.custom<T>(isFn);
+const RoleName = z.enum(["orchestrator", "worker", "reviewer"]);
+const ToolShape = z.object({ spec: z.looseObject({ name: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/) }), run: z.custom(isFn), parallel: z.custom(isFn) });
+const PluginRecord = z.object({
+  name: z.string(), description: z.string(),
+  tools: z.array(z.object({ tool: z.custom<Tool>(value => ToolShape.safeParse(value).success), roles: z.array(RoleName), replaces: z.boolean().catch(false) })),
+  prompt: z.array(z.object({ role: RoleName, text: z.string() })),
+  skills: z.array(z.string()),
+  storage: z.array(z.object({ scope: z.enum(["conversation", "bubble", "global"]), about: z.string() })),
+  hooks: z.object({ beforeTool: z.array(fn<BeforeTool>()), afterTool: z.array(fn<AfterTool>()), beforeRequest: z.array(fn<BeforeRequest>()), onInput: z.array(fn<OnInput>()) }),
+  bundles: z.array(z.object({ name: z.string(), role: RoleName, prompt: z.string(), plugins: z.array(z.string()) })),
+  ui: z.string().nullable(), background: z.string().nullable(),
+});
+const UiShape = z.object({ tabs: z.array(z.unknown()), counts: z.array(z.unknown()), commands: z.array(z.unknown()), toolLines: z.record(z.string(), z.unknown()), folds: z.record(z.string(), z.unknown()) });
+const BackgroundShape = z.object({ watchers: z.array(z.unknown()), memory: z.unknown(), runner: z.unknown(), stop: z.unknown(), remove: z.unknown() });
+const UiModule = z.custom<PluginUi>(value => UiShape.safeParse(value).success);
+const BackgroundModule = z.custom<PluginBackground>(value => BackgroundShape.safeParse(value).success);
 
-/** Structural check of what index.ts exported: every field present, names and tools well-formed. */
-export function validatePlugin(value: unknown, folder: string): Plugin {
-  const p = value as Partial<Plugin> | null;
-  if (p === null || typeof p !== "object") throw new Error("index.ts must default-export definePlugin({...})");
-  if (typeof p.name !== "string" || !NAME.test(p.name)) throw new Error("name must be lowercase letters, digits and dashes");
-  if (p.name !== folder) throw new Error(`name "${p.name}" must match its folder "${folder}"`);
-  if (typeof p.description !== "string" || p.description.length === 0) throw new Error("description is required");
-  for (const key of ["tools", "prompt", "skills", "storage", "bundles"] as const) if (!isList(p[key])) throw new Error(`${key} must be a list`);
-  const hooks = p.hooks as Record<string, unknown> | undefined;
-  if (hooks === undefined || ["beforeTool", "afterTool", "beforeRequest", "onInput"].some(key => !isList(hooks[key]) || !(hooks[key] as unknown[]).every(isFn))) throw new Error("hooks must have beforeTool, afterTool, beforeRequest and onInput lists of functions");
-  if (p.ui !== null && typeof p.ui !== "string") throw new Error("ui must be a path or null");
-  if (p.background !== null && typeof p.background !== "string") throw new Error("background must be a path or null");
+const listOf = (value: unknown): unknown[] | null => Array.isArray(value) ? value : null;
+const field = (value: unknown, key: string): unknown => {
+  const record = asRecord(value);
+  return record === null ? undefined : record[key];
+};
+
+function pluginProblem(p: Record<string, unknown>, folder: string): string | null {
+  if (typeof p.name !== "string" || !NAME.test(p.name)) return "name must be lowercase letters, digits and dashes";
+  if (p.name !== folder) return `name "${p.name}" must match its folder "${folder}"`;
+  if (typeof p.description !== "string" || p.description.length === 0) return "description is required";
+  for (const key of ["tools", "prompt", "skills", "storage", "bundles"]) if (listOf(p[key]) === null) return `${key} must be a list`;
+  const hooks = asRecord(p.hooks);
+  if (hooks === null || ["beforeTool", "afterTool", "beforeRequest", "onInput"].some(key => !(listOf(hooks[key])?.every(isFn) ?? false))) return "hooks must have beforeTool, afterTool, beforeRequest and onInput lists of functions";
+  if (p.ui !== null && typeof p.ui !== "string") return "ui must be a path or null";
+  if (p.background !== null && typeof p.background !== "string") return "background must be a path or null";
   const names = new Set<string>();
-  for (const entry of p.tools ?? []) {
-    const name = entry.tool?.spec?.name;
-    if (typeof name !== "string" || !/^[a-z][a-z0-9_]{0,39}$/.test(name)) throw new Error("each tool needs a spec.name of lowercase letters, digits and underscores");
-    if (!isFn(entry.tool.run) || !isFn(entry.tool.parallel)) throw new Error(`tool ${name} needs run and parallel functions`);
-    if (!isList(entry.roles) || entry.roles.length === 0) throw new Error(`tool ${name} needs at least one role`);
-    if ((CORE_TOOL_NAMES as readonly string[]).includes(name) && entry.replaces !== true) throw new Error(`tool ${name} has a core tool's name; set replaces: true to replace it`);
-    if (names.has(name)) throw new Error(`tool ${name} is defined twice`);
+  for (const entry of listOf(p.tools) ?? []) {
+    const tool = field(entry, "tool");
+    const name = field(field(tool, "spec"), "name");
+    if (typeof name !== "string" || !/^[a-z][a-z0-9_]{0,39}$/.test(name)) return "each tool needs a spec.name of lowercase letters, digits and underscores";
+    if (!isFn(field(tool, "run")) || !isFn(field(tool, "parallel"))) return `tool ${name} needs run and parallel functions`;
+    const roles = listOf(field(entry, "roles"));
+    if (roles === null || roles.length === 0) return `tool ${name} needs at least one role`;
+    if (CORE_TOOL_NAMES.some(core => core === name) && field(entry, "replaces") !== true) return `tool ${name} has a core tool's name; set replaces: true to replace it`;
+    if (names.has(name)) return `tool ${name} is defined twice`;
     names.add(name);
   }
-  for (const bundle of p.bundles ?? []) if (typeof bundle.name !== "string" || !NAME.test(bundle.name) || !["orchestrator", "worker", "reviewer"].includes(bundle.role)) throw new Error("each bundle needs a name and a role");
-  return p as Plugin;
+  for (const bundle of listOf(p.bundles) ?? []) {
+    const name = field(bundle, "name"), role = field(bundle, "role");
+    if (typeof name !== "string" || !NAME.test(name) || typeof role !== "string" || !["orchestrator", "worker", "reviewer"].includes(role)) return "each bundle needs a name and a role";
+  }
+  return null;
 }
 
-async function loadFolder(dir: string, name: string, source: PluginSource): Promise<LoadedPlugin> {
-  const module = await import(join(dir, "index.ts")) as { default?: unknown };
-  const plugin = validatePlugin(module.default, name);
-  const sub = <T>(path: string | null) => async (): Promise<T | null> => path === null ? null : ((await import(join(dir, path)) as { default: T }).default);
-  return { plugin, dir, source, ui: sub<PluginUi>(plugin.ui), background: sub<PluginBackground>(plugin.background) };
+export function validatePlugin(value: unknown, folder: string): Result<Plugin> {
+  const p = typeof value === "object" && value !== null ? asRecord({ ...value }) : null;
+  if (p === null) return fail("index.ts must default-export definePlugin({...})");
+  const problem = pluginProblem(p, folder);
+  if (problem !== null) return fail(problem);
+  const parsed = PluginRecord.safeParse(p);
+  if (!parsed.success) return fail(`invalid plugin: ${parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+  return ok(parsed.data);
+}
+
+const moduleDefault = (module: unknown): unknown => typeof module === "object" && module !== null && "default" in module ? module.default : undefined;
+
+async function loadFolder(dir: string, name: string, source: PluginSource): Promise<Result<LoadedPlugin>> {
+  const module: unknown = await import(join(dir, "index.ts"));
+  const plugin = validatePlugin(moduleDefault(module), name);
+  if (!plugin.ok) return plugin;
+  const sub = <T>(path: string | null, schema: z.ZodType<T>, what: string) => async (): Promise<T | null> => {
+    if (path === null) return null;
+    const loaded: unknown = await import(join(dir, path));
+    const parsed = schema.safeParse(moduleDefault(loaded));
+    if (!parsed.success) throw new Error(`${name}: ${path} must default-export ${what}({...})`);
+    return parsed.data;
+  };
+  return ok({ plugin: plugin.data, dir, source, ui: sub(plugin.data.ui, UiModule, "defineUi"), background: sub(plugin.data.background, BackgroundModule, "defineBackground") });
 }
 
 async function folders(root: string): Promise<string[]> {
-  const names = await readdir(root).catch(() => [] as string[]);
+  const names = await readdir(root).catch((): string[] => []);
   const out: string[] = [];
   for (const name of names.sort()) if (NAME.test(name) && await Bun.file(join(root, name, "index.ts")).exists()) out.push(name);
   return out;
@@ -96,7 +137,6 @@ async function folders(root: string): Promise<string[]> {
 
 export type Available = { plugins: Map<string, LoadedPlugin>; problems: PluginProblem[] };
 
-/** Every plugin that can load here: built-ins, approved user plugins and (when trusted) the folder's own. */
 export async function availablePlugins(directory: string | null, trusted: boolean): Promise<Available> {
   const plugins = new Map<string, LoadedPlugin>();
   const problems: PluginProblem[] = [];
@@ -104,10 +144,11 @@ export async function availablePlugins(directory: string | null, trusted: boolea
   for (const builtin of builtins) {
     try {
       const plugin = validatePlugin((await builtin.index()).default, builtin.name);
+      if (!plugin.ok) { problems.push({ name: builtin.name, dir: builtin.dir, problem: plugin.error }); continue; }
       const ui = builtin.ui, background = builtin.background;
-      plugins.set(builtin.name, { plugin, dir: builtin.dir, source: "builtin",
+      plugins.set(builtin.name, { plugin: plugin.data, dir: builtin.dir, source: "builtin",
         ui: async () => ui === null ? null : (await ui()).default, background: async () => background === null ? null : (await background()).default });
-    } catch (error) { problems.push({ name: builtin.name, dir: builtin.dir, problem: error instanceof Error ? error.message : String(error) }); }
+    } catch (error) { problems.push({ name: builtin.name, dir: builtin.dir, problem: errorMessage(error) }); }
   }
   const roots: { root: string; source: PluginSource }[] = [{ root: paths.plugins, source: "user" }];
   if (trusted && directory !== null) roots.push({ root: join(directory, ".orca2", "plugins"), source: "repo" });
@@ -119,14 +160,18 @@ export async function availablePlugins(directory: string | null, trusted: boolea
         problems.push({ name, dir, problem: `not approved (new or changed): run orca2 plugin enable ${name}` });
         continue;
       }
-      try { plugins.set(name, await loadFolder(dir, name, source)); }
-      catch (error) { problems.push({ name, dir, problem: error instanceof Error ? error.message : String(error) }); }
+      try {
+        const loaded = await loadFolder(dir, name, source);
+        if (loaded.ok) plugins.set(name, loaded.data);
+        else problems.push({ name, dir, problem: loaded.error });
+      } catch (error) { problems.push({ name, dir, problem: errorMessage(error) }); }
     }
   }
   return { plugins, problems };
 }
 
-/** Load one plugin folder for checking, without approval (orca2 plugin check). */
 export async function loadForCheck(dir: string, name: string): Promise<LoadedPlugin> {
-  return loadFolder(dir, name, "user");
+  const loaded = await loadFolder(dir, name, "user");
+  if (!loaded.ok) throw new Error(loaded.error);
+  return loaded.data;
 }

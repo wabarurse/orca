@@ -1,4 +1,3 @@
-// What a plugin may import, type-only: `import type { Plugin } from "orca2/plugin"` (plugin check maps the path here).
 export type {
   AfterTool, BackgroundContext, BackgroundHook, BeforeRequest, BeforeTool, BeforeToolResult, Bundle, Command, Count, Fold, Launch, OnInput,
   Plugin, PluginBackground, PluginContext, PluginHooks, PluginMemory, PluginTool, PluginUi, RequestShape, Row, Runner, Section, StorageScope,

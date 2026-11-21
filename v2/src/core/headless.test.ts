@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { z } from "zod";
 import { fakeProvider, text, toolUse } from "../test/fake-provider";
 import { tempHome } from "../test/home";
 import { runHeadless } from "./headless";
@@ -17,7 +18,8 @@ test("-p prints the final answer; --json streams every event and ends with the a
   const json = fakeProvider([[text("checking"), toolUse("t1", "bash", { command: "echo hi" })], [text("done: hi")]]);
   await runHeadless({ prompt: "run echo", json: true, model: null, cwd: home.path(), conversation: null, bundle: "orchestrator", yes: false, trust: false,
     out: t => { lines += t; }, resolve: async () => ({ model: "claude-sonnet-5-5", provider: json, settings: null, contextLimit: null }) });
-  const events = lines.trim().split("\n").map(line => JSON.parse(line) as { kind: string; text?: string; outcome?: { text: string } });
+  const Event = z.looseObject({ kind: z.string(), text: z.string().optional(), outcome: z.object({ text: z.string() }).optional() });
+  const events = lines.trim().split("\n").map(line => Event.parse(JSON.parse(line)));
   expect(events.map(e => e.kind)).toEqual(["start", "input", "text", "tool_start", "tool_end", "text", "end"]);
   expect(events.find(e => e.kind === "tool_end")?.outcome?.text).toBe("hi");
   expect(events.at(-1)).toMatchObject({ kind: "end", text: "done: hi" });
@@ -29,6 +31,6 @@ test("a worker bundle runs headless too, with write tools", async () => {
   await runHeadless({ prompt: "x", json: false, model: null, cwd: home.path(), conversation: null, bundle: "worker", yes: false, trust: false,
     out: t => { printed += t; }, resolve: async () => ({ model: "claude-sonnet-5-5", provider, settings: null, contextLimit: null }) });
   expect(printed).toBe("ok\n");
-  expect(provider.calls[0]!.tools).toContain("write");
-  expect(provider.calls[0]!.tools).not.toContain("subagent");
+  expect(provider.calls[0]?.tools).toContain("write");
+  expect(provider.calls[0]?.tools).not.toContain("subagent");
 });

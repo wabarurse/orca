@@ -1,4 +1,3 @@
-// The 12 core tools by name.
 import { bash } from "./bash";
 import { behaviorTool } from "./behavior";
 import { edit, read, write } from "./files";

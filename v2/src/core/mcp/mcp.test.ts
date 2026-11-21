@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { z } from "zod";
 import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,7 +21,6 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 const write = (mcpServers: Record<string, unknown>) => writeFileSync(paths.mcp, JSON.stringify({ mcpServers }, null, 2));
-/** A minimal local server: `echo` answers its text or its own pid, `slow` takes 10s, `nope` is refused by the server. */
 const script = `import { createInterface } from 'node:readline';
 createInterface({input:process.stdin}).on('line', async line=> { const r=JSON.parse(line); if(r.id===undefined)return;
 if(r.method==='tools/call'&&r.params.name==='nope'){console.log(JSON.stringify({jsonrpc:'2.0',id:r.id,error:{code:-32602,message:'Unknown tool: nope'}}));return;}
@@ -31,7 +31,7 @@ r.method==='resources/list'?{resources:[]}:{prompts:[]};
 if(r.params?.name==='slow')await new Promise(resolve=>setTimeout(resolve,10000));
 console.log(JSON.stringify({jsonrpc:'2.0',id:r.id,result})); });`;
 const local = (extra: Record<string, unknown> = {}) => ({ command: process.execPath, args: ["-e", script], ...extra });
-const pid = () => withServer("local", home, undefined, async (client, options) => Number(((await client.callTool({ name: "echo", arguments: {} }, undefined, options)).content as { text: string }[])[0]!.text));
+const pid = () => withServer("local", home, undefined, async (client, options) => Number(z.array(z.looseObject({ text: z.string() })).parse((await client.callTool({ name: "echo", arguments: {} }, undefined, options)).content)[0]?.text));
 const ctxFor = (role: "orchestrator" | "worker"): ToolContext => ({ conversation: "c-00000000", agent: role, role, branch: null, cwd: home, data: home, trusted: false, pluginSkills: [],
   callId: "call", signal: new AbortController().signal, model: "m", provider: { name: "anthropic", complete: async () => { throw new Error("no"); }, models: async () => [] }, settings: null,
   runtime: { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", confirm: async () => false } });
@@ -57,23 +57,21 @@ test("mcp.json: a command or a url per server, ${VAR} from the environment, and 
   const { entries, problem } = readServers(), by = Object.fromEntries(entries.map(e => [e.name, e]));
   expect(problem).toBeUndefined();
   expect(entries.map(e => e.name)).toEqual(["files", "linear", "api", "off", "both", "neither", "typo", "plain", "secret", "old", "unset", "bad name"]);
-  expect(by.files!.server).toEqual({ name: "files", command: "npx", args: ["-y", "a  b"], env: { TOKEN: "private-token", PLAIN: "literal" }, headers: {}, timeoutMs: 5000 });
-  expect(by.linear!.server).toEqual({ name: "linear", url: "https://mcp.linear.app/mcp", args: [], env: {}, headers: {}, timeoutMs: 60000 });
-  expect(by.api!.server!.headers).toEqual({ Authorization: "Bearer private-token" });
+  expect(by.files?.server).toEqual({ name: "files", command: "npx", args: ["-y", "a  b"], env: { TOKEN: "private-token", PLAIN: "literal" }, headers: {}, timeoutMs: 5000 });
+  expect(by.linear?.server).toEqual({ name: "linear", url: "https://mcp.linear.app/mcp", args: [], env: {}, headers: {}, timeoutMs: 60000 });
+  expect(by.api?.server?.headers).toEqual({ Authorization: "Bearer private-token" });
   expect(by.off).toEqual({ name: "off", disabled: true });
-  expect(by.both!.problem).toContain("either a command");
-  expect(by.neither!.problem).toContain("either a command");
-  expect(by.typo!.problem).toContain('unknown setting "arg"');
-  expect(by.plain!.problem).toContain("https");
-  expect(by.secret!.problem).toContain("headers");
-  expect(by.old!.problem).toContain("SSE");
-  expect(by.unset!.problem).toContain("${ORCA_TEST_UNSET_VARIABLE}");
-  expect(by["bad name"]!.problem).toContain("letters, digits");
-  // What the user is told names the file and the reason.
+  expect(by.both?.problem).toContain("either a command");
+  expect(by.neither?.problem).toContain("either a command");
+  expect(by.typo?.problem).toContain('unknown setting "arg"');
+  expect(by.plain?.problem).toContain("https");
+  expect(by.secret?.problem).toContain("headers");
+  expect(by.old?.problem).toContain("SSE");
+  expect(by.unset?.problem).toContain("${ORCA_TEST_UNSET_VARIABLE}");
+  expect(by["bad name"]?.problem).toContain("letters, digits");
   expect(() => usableServer("off")).toThrow(`disabled in ${paths.mcp}`);
   expect(() => usableServer("typo")).toThrow("unknown setting");
   expect(() => usableServer("missing")).toThrow("it has: files, linear");
-  // The file as a whole.
   writeFileSync(paths.mcp, "{ not json");
   expect(readServers().problem).toContain("is not valid JSON");
   expect(() => usableServer("files")).toThrow("is not valid JSON");
@@ -86,12 +84,10 @@ test("a local server keeps running between calls and after a refused request; an
   const first = await pid();
   expect(await pid()).toBe(first);
   expect(connected("local")).toBe(true);
-  // The server saying no, and a mistake in the request, are answers: its state survives them.
   await expect(withServer("local", home, undefined, (client, options) => client.callTool({ name: "nope", arguments: {} }, undefined, options))).rejects.toThrow("Unknown tool");
   await expect(mcp.run({ action: "schema", server: "local", name: "absent" }, ctxFor("orchestrator"))).rejects.toThrow("no tool named absent");
   await expect(mcp.run({ action: "call", server: "local" }, ctxFor("orchestrator"))).rejects.toThrow("name is required");
   expect(await pid()).toBe(first);
-  // Editing the entry applies to the next call, with no restart of orca.
   write({ local: local({ env: { CHANGED: "1" } }) });
   const second = await pid();
   expect(second).not.toBe(first);
@@ -136,9 +132,9 @@ test("a url server gets its headers, with the token taken from the environment a
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     authorization.push(req.headers.get("authorization"));
     if (req.method !== "POST") return new Response(null, { status: 405 });
-    const r = await req.json() as { id?: number; method: string; params: { protocolVersion: string } };
+    const r = z.object({ id: z.number().optional(), method: z.string(), params: z.looseObject({ protocolVersion: z.string().optional() }).optional() }).parse(await req.json());
     if (r.id === undefined) return new Response(null, { status: 202 });
-    return Response.json({ jsonrpc: "2.0", id: r.id, result: r.method === "initialize" ? { protocolVersion: r.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "http", version: "1" } } : { tools: [] } });
+    return Response.json({ jsonrpc: "2.0", id: r.id, result: r.method === "initialize" ? { protocolVersion: r.params?.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "http", version: "1" } } : { tools: [] } });
   }});
   process.env.ORCA_TEST_MCP_TOKEN = "test-private-token";
   try {
@@ -149,7 +145,7 @@ test("a url server gets its headers, with the token taken from the environment a
     expect(lines.join("\n")).toContain("connected, 0 tools");
     expect(authorization).toContain("Bearer test-private-token");
     expect(readFileSync(paths.mcp, "utf8")).not.toContain("test-private-token");
-  } finally { server.stop(true); }
+  } finally { await server.stop(true); }
 });
 
 test("orca mcp creates the file to edit, lists each server's state, and reports a failing one without stopping", async () => {
@@ -166,7 +162,7 @@ test("orca mcp creates the file to edit, lists each server's state, and reports 
   expect(lines.join("\n")).toMatch(/local\s+connected, 1 tool: echo/);
   expect(lines.join("\n")).toMatch(/wrong\s+failed: MCP server wrong/);
   expect(lines.join("\n")).not.toContain("off");
-  expect(connected("local")).toBe(false); // the command leaves nothing running
+  expect(connected("local")).toBe(false);
   await expect(runMcp(["save"], out)).rejects.toThrow("usage:");
   await expect(runMcp(["login", "local"], out)).rejects.toThrow("only a url server has a sign-in");
 });
@@ -177,32 +173,31 @@ test("sign-in uses PKCE and checks state; tokens stay out of mcp.json, survive a
     const origin = new URL(req.url).origin, path = new URL(req.url).pathname;
     if (path.includes("oauth-protected-resource")) return Response.json({ resource: `${origin}/mcp`, authorization_servers: [origin] });
     if (path.includes("oauth-authorization-server")) return Response.json({ issuer: origin, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`, registration_endpoint: `${origin}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"] });
-    if (path === "/register") return Response.json({ ...await req.json() as object, client_id: "orca-test" });
+    if (path === "/register") return Response.json({ ...z.record(z.string(), z.unknown()).parse(await req.json()), client_id: "orca-test" });
     if (path === "/token") { const form = new URLSearchParams(await req.text()); expect(form.get("code")).toBe("test-code"); expect(form.get("code_verifier")).toBeTruthy(); tokenRequests++; return Response.json({ access_token: "private-oauth-token", token_type: "Bearer", refresh_token: "private-refresh" }); }
     return new Response(null, { status: 401, headers: { "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"` } });
   }});
   try {
     write({ oauth: { url: `http://127.0.0.1:${server.port}/mcp` } });
     const s = usableServer("oauth");
-    // Before a sign-in, using the server says which command to run.
     await expect(withServer("oauth", home, undefined, async () => true)).rejects.toThrow("orca2 mcp login oauth");
     let callback!: Promise<void>;
     await loginServer(s, url => { callback = (async () => {
-      const u = new URL(url); challenge = u.searchParams.get("code_challenge")!;
-      const target = new URL(u.searchParams.get("redirect_uri")!); target.searchParams.set("code", "test-code"); target.searchParams.set("state", "wrong");
+      const u = new URL(url); challenge = u.searchParams.get("code_challenge") ?? "";
+      const target = new URL(u.searchParams.get("redirect_uri") ?? ""); target.searchParams.set("code", "test-code"); target.searchParams.set("state", "wrong");
       expect((await fetch(target)).status).toBe(400);
-      target.searchParams.set("state", u.searchParams.get("state")!); expect((await fetch(target)).status).toBe(200);
+      target.searchParams.set("state", u.searchParams.get("state") ?? ""); expect((await fetch(target)).status).toBe(200);
     })(); });
     await callback; expect(challenge).toBeTruthy(); expect(tokenRequests).toBe(1);
     expect(await signedIn(s)).toBe(true);
     expect((await oauthProvider(s).tokens())?.access_token).toBe("private-oauth-token");
     expect(readFileSync(paths.mcp, "utf8")).not.toContain("private-oauth-token");
     expect(existsSync(join(paths.runtime, "mcp-auth", `${loginKey(s)}.json`))).toBe(true);
-    // A new timeout is a new connection but the same sign-in; a new address is neither.
     expect(serverKey({ ...s, timeoutMs: 1 })).toBe(serverKey(s));
     expect(serverKey({ ...s, headers: { X: "1" } })).not.toBe(serverKey(s));
-    expect(loginKey({ ...s, headers: { X: "1" } } as typeof s)).toBe(loginKey(s));
+    const edited: typeof s = { ...s, headers: { X: "1" } };
+    expect(loginKey(edited)).toBe(loginKey(s));
     expect(loginKey({ ...s, url: s.url + "/other" })).not.toBe(loginKey(s));
     await logoutServer(s); expect(await signedIn(s)).toBe(false);
-  } finally { server.stop(true); }
+  } finally { await server.stop(true); }
 });

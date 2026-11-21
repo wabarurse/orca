@@ -1,6 +1,3 @@
-// The reference sections an agent sees at each request boundary: behavior lines (user-wide and the bubble's),
-// the bubble's memory (index for the orchestrator, overview for workers, matches for the latest message),
-// repository instructions and the skill list. Only a changed section is re-sent (loop/context.ts).
 import { join } from "node:path";
 import { behavior, bubbleDir, listPages, memoryNodes, overviewText, readBubble, renderHits, renderIndex, renderPages, searchNodes } from "./bubbles";
 import { listConversations, readConversation } from "./conversations";

@@ -1,7 +1,3 @@
-// The agent loop. Orchestrator, workers, reviewers and plugin bundles are all this loop with a different prompt and
-// tool set. It reads its inbox, asks the model, runs the tools it calls (through the plugins' hooks), and repeats
-// until the model stops with nothing new in the inbox. Queued user input is "steer" (taken after the current tool
-// batch) or "follow" (taken only once the work is done).
 import type { ContentBlock, MessageParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { CompleteRequest, Provider, Turn } from "../../api";
 import { restartable } from "../../api/errors";
@@ -19,6 +15,7 @@ import { afterTool, beforeRequest, beforeTool, onInput, type LoopHooks } from ".
 import type { RollingCompactor } from "./rolling";
 import { budget, replyCap, requireFits } from "./budget";
 import { scheduleTools } from "./schedule";
+import { asRecord, errorMessage, fail, ok, type Result } from "../result";
 
 export type Resolved = { model: string; provider: Provider; settings: RequestSettings | null; contextLimit: number | null };
 
@@ -34,18 +31,14 @@ export type AgentSetup = {
   transcript: Transcript;
   tools: Tool[];
   system: string;
-  /** The model, provider and settings for the next request; resolved at every safe boundary. */
   resolve: () => Promise<Resolved>;
-  /** Reference sections (behavior, bubble, instructions…), appended when they change. */
   context: (query: string) => Promise<Record<string, string>>;
   hooks: LoopHooks;
   runtime: Runtime;
   emit: (event: AgentEvent) => void;
   signal: AbortSignal;
   concurrency: number;
-  /** The orchestrator's background memory; null runs foreground compaction instead. */
   rolling: RollingCompactor | null;
-  /** True when a run without new inbox input does nothing (the orchestrator never replays history unasked). */
   requireInput: boolean;
   compactRequested: () => boolean;
 };
@@ -56,7 +49,6 @@ type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
 const RESTART_WAIT_MS = [2_000, 8_000];
 
-/** A reply that broke after it began left nothing behind (a reply is recorded only once complete), so it is asked again. */
 export async function completeRestarting(provider: Provider, request: CompleteRequest, waits = RESTART_WAIT_MS): Promise<Turn> {
   for (let restarts = 0; ; restarts++) {
     try { return await provider.complete(request); }
@@ -82,7 +74,6 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
 
   const notice = (text: string): void => { setup.emit({ kind: "notice", text }); };
 
-  /** Take inbox messages (all, or steer only mid-work), through onInput hooks, and record them with `results`. */
   async function readInbox(results: ToolResultBlockParam[], all: boolean): Promise<boolean> {
     const taken = await consume(setup.conversation, setup.agent, seen, message => all || message.delivery === "steer", async messages => {
       const kept: Message[] = [];
@@ -104,7 +95,6 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
     return taken.length > 0;
   }
 
-  /** The safe boundary before a request: recover an interrupted batch, resolve the model, refresh context, compact. */
   async function boundary(manual: boolean): Promise<Resolved> {
     setup.signal.throwIfAborted();
     await closeInterrupted(setup.transcript);
@@ -158,7 +148,7 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
     const call: ToolCall = { id: block.id, name: block.name, input: block.input };
     setup.emit({ kind: "tool_start", call });
     const started = performance.now();
-    const raw = typeof block.input === "object" && block.input !== null ? block.input as Record<string, unknown> : {};
+    const raw = asRecord(block.input) ?? {};
     let result: { ok: boolean; content: ToolResult };
     const tool = byName.get(block.name);
     if (tool === undefined) result = { ok: false, content: `unknown tool: ${block.name}` };
@@ -173,7 +163,7 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
           result = { ok: !(typeof content === "string" && content.startsWith("refused:")), content };
         } catch (error) {
           if (setup.signal.aborted) throw error;
-          result = { ok: false, content: error instanceof Error ? error.message : String(error) };
+          result = { ok: false, content: errorMessage(error) };
         }
         result = await afterTool(setup.hooks, block.name, decision.input, result);
       }
@@ -183,9 +173,9 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
     return { type: "tool_result", tool_use_id: block.id, content: result.content, ...(result.ok ? {} : { is_error: true }) };
   }
 
-  async function loop(): Promise<void> {
+  async function loop(): Promise<Result<null>> {
     const started = await readInbox([], true);
-    if (setup.requireInput && !started) return;
+    if (setup.requireInput && !started) return ok(null);
     let pauses = 0, limits = 0;
     for (;;) {
       const model = await boundary(setup.compactRequested());
@@ -204,26 +194,26 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
       }
       if (turn.stop === "tool_use") {
         limits = 0;
-        const results = await scheduleTools(calls, call => byName.get(call.name)?.parallel(typeof call.input === "object" && call.input !== null ? call.input as Record<string, unknown> : {}) ?? false,
+        const results = await scheduleTools(calls, call => byName.get(call.name)?.parallel(asRecord(call.input) ?? {}) ?? false,
           call => runTool(model, call), setup.concurrency);
         setup.signal.throwIfAborted();
         await readInbox(results, false);
         continue;
       }
-      if (turn.stop !== "end") throw new Error(`model stopped (${turn.completion ?? turn.stop}); partial response kept`);
+      if (turn.stop !== "end") return fail(`model stopped (${turn.completion ?? turn.stop}); partial response kept`);
       if (await readInbox([], true)) continue;
-      return;
+      return ok(null);
     }
   }
 
   return {
     async run() {
       try {
-        await loop();
-        return { status: "done", text: lastText, error: null };
+        const outcome = await loop();
+        return outcome.ok ? { status: "done", text: lastText, error: null } : { status: "failed", text: lastText, error: outcome.error };
       } catch (error) {
         if (setup.signal.aborted) return { status: "cancelled", text: lastText, error: null };
-        return { status: "failed", text: lastText, error: error instanceof Error ? error.message : String(error) };
+        return { status: "failed", text: lastText, error: errorMessage(error) };
       }
     },
   };

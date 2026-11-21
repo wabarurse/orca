@@ -1,5 +1,3 @@
-// Project trust: a folder's own instructions (AGENTS.md, CLAUDE.md), skills and plugins load only after the user
-// trusted it. Asked once per folder; the answer is saved in config.toml (`trusted` / `untrusted`).
 import { resolve, sep } from "node:path";
 import { loadConfig, saveConfig } from "../config";
 
@@ -7,7 +5,6 @@ export type TrustState = "trusted" | "untrusted" | "unknown";
 
 const within = (folder: string, root: string): boolean => folder === root || folder.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 
-/** Trust a folder for this process only (headless --trust); nothing is saved. */
 export function trustForRun(directory: string): void { process.env.ORCA2_TRUST_RUN = resolve(directory); }
 
 export async function trustState(directory: string): Promise<TrustState> {
@@ -28,6 +25,5 @@ export async function setTrust(directory: string, trusted: boolean): Promise<voi
     : { untrusted: [...without(config.untrusted), folder], trusted: without(config.trusted) });
 }
 
-/** The question a TUI or terminal asks before the first run in a folder. */
 export const trustQuestion = (directory: string): string =>
   `Trust ${directory}? Its AGENTS.md/CLAUDE.md instructions, skills (.agents/skills, .claude/skills) and plugins (.orca2/plugins) will load into agents.`;

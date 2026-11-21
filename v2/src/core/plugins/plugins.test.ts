@@ -13,6 +13,11 @@ import { definePlugin, noHooks, type Plugin } from "./types";
 const home = tempHome("plugins");
 
 const shell = (name: string, extra: Partial<Plugin>): Plugin => definePlugin({ name, description: name, tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), bundles: [], ui: null, background: null, ...extra });
+const assembled = async (input: Parameters<typeof assemble>[0]) => {
+  const result = await assemble(input);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+};
 const tool = (name: string) => ({ parallel: () => false, spec: { name, description: name, input_schema: { type: "object" as const, properties: {} } }, run: async () => name });
 
 describe("plugins", () => {
@@ -33,14 +38,14 @@ describe("plugins", () => {
     registerBuiltins([{ name: "rep", dir: "/x/rep", index: async () => ({ default: replacing }), ui: null, background: null }]);
     await saveConfig({ plugins: ["rep"] });
     const c = await createConversation(home.path(), "b");
-    const worker = await assemble({ conversation: c.id, agent: "worker-x", bundle: "worker", cwd: home.path(), directory: home.path(), trusted: false });
-    expect(worker.tools.find(t => t.spec.name === "bash")).toBe(replacing.tools[0]!.tool);
+    const worker = await assembled({ conversation: c.id, agent: "worker-x", bundle: "worker", cwd: home.path(), directory: home.path(), trusted: false });
+    expect(worker.tools.find(t => t.spec.name === "bash")).toBe(replacing.tools[0]?.tool);
     expect(worker.tools.map(t => t.spec.name)).not.toContain("extra");
     expect(worker.system).toContain("[rep] use the new bash");
-    const orc = await assemble({ conversation: c.id, agent: "orchestrator", bundle: "orchestrator", cwd: home.path(), directory: home.path(), trusted: false });
+    const orc = await assembled({ conversation: c.id, agent: "orchestrator", bundle: "orchestrator", cwd: home.path(), directory: home.path(), trusted: false });
     expect(orc.tools.map(t => t.spec.name)).toContain("extra");
     expect(orc.tools.map(t => t.spec.name)).not.toContain("write");
-    const scout = await assemble({ conversation: c.id, agent: "scout-y", bundle: "scout", cwd: home.path(), directory: home.path(), trusted: false });
+    const scout = await assembled({ conversation: c.id, agent: "scout-y", bundle: "scout", cwd: home.path(), directory: home.path(), trusted: false });
     expect(scout.plugins).toEqual([]);
     expect(scout.system).toBe("scout things");
   });

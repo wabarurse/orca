@@ -1,5 +1,3 @@
-// End to end across real processes: the daemon runs the orchestrator, which spawns a worker process in a Git
-// worktree; the worker writes a file and reports; the report wakes the orchestrator for a second turn.
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";

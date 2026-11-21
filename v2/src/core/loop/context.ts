@@ -1,5 +1,3 @@
-// Reference context: named sections (behavior, bubble, instructions, skills, plugins) appended to the transcript as
-// a user message only when a section changed, so the stable prefix stays in the provider's prompt cache.
 import type { Transcript } from "../transcript";
 
 const HEADER = /^\[orca reference: ([a-z][a-z0-9-]{0,63})\]\n/;

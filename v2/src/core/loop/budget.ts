@@ -1,16 +1,12 @@
-// How much of a model's window a request uses, and how much room its reply gets. Estimates are deliberately
-// conservative (UTF-8 bytes / 3); a provider's own count, once known, corrects later estimates.
 import type { MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import { contextWindow } from "../../api/model";
 
-/** The last provider-reported input count, and what we estimated for the same request. */
 export type Measured = { input: number; estimated: number; model: string };
 
 export type Window = {
   model: string;
   system: string;
   tools: ApiTool[];
-  /** An explicit window size; null uses the model's known window. */
   contextLimit: number | null;
   measured: Measured | null;
 };
@@ -18,7 +14,7 @@ export type Window = {
 export const estimate = (value: unknown): number => {
   let images = 0;
   const text = JSON.stringify(value, (_key, item: unknown) => {
-    if (typeof item === "object" && item !== null && (item as { type?: unknown }).type === "image") { images++; return { type: "image" }; }
+    if (typeof item === "object" && item !== null && "type" in item && item.type === "image") { images++; return { type: "image" }; }
     return item;
   }) ?? "";
   return Math.ceil(Buffer.byteLength(text) / 3) + 32 + images * 6000;
@@ -33,7 +29,6 @@ export function budget(window: Window, messages: MessageParam[]): number {
   return measured !== null && measured.model === window.model ? Math.max(estimated, measured.input + estimated - measured.estimated) : estimated;
 }
 
-/** A request's reply cap: at most 64k, and at most a fifth of the window. */
 export function outputCap(window: Window): number {
   const limit = limitOf(window);
   return Math.max(1, Math.min(64000, Math.floor(limit * 0.2), Math.floor(limit - 1)));

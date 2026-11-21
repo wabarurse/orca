@@ -1,4 +1,3 @@
-// Which plugins are on: the config's default list, then each bubble's own on/off switches.
 import { loadConfig } from "../../config";
 import { readBubble } from "../bubbles";
 import { readConversation } from "../conversations";

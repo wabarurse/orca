@@ -1,22 +1,33 @@
-// Run records: runs/<agent>.json says what each agent of a conversation is doing, for `subagent list`, the Agents
-// tab and the exit watchdog. Written by the agent process itself (and by whoever starts or stops it).
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../config";
 import { writeAtomic } from "../conversations";
 import { pidAlive } from "../lock";
 import type { AgentInfo } from "../tools/registry";
+import { z } from "zod";
+import { parseJson } from "../result";
 import type { Role } from "../types";
 
 export type RunState = AgentInfo["state"];
 export type RunRecord = AgentInfo & { run: string; conversation: string; handle: string; reported: boolean; error: string | null };
+
+const RunFile = z.object({
+  agent: z.string(), role: z.enum(["orchestrator", "worker", "reviewer"]), bundle: z.string(), branch: z.string(),
+  state: z.enum(["starting", "running", "reported", "exited", "failed", "stopped"]), pid: z.number().nullable(), runner: z.string(),
+  startedAt: z.string(), endedAt: z.string().nullable(), log: z.string(), lastTool: z.string().nullable(),
+  run: z.string(), conversation: z.string(), handle: z.string(), reported: z.boolean(), error: z.string().nullable(),
+});
 
 const file = (conversation: string, agent: string): string => join(paths.runs(conversation), `${agent}.json`);
 
 export async function readRun(conversation: string, agent: string): Promise<RunRecord | null> {
   const f = Bun.file(file(conversation, agent));
   if (!(await f.exists())) return null;
-  try { return await f.json() as RunRecord; } catch { return null; }
+  let text: string;
+  try { text = await f.text(); } catch { return null; }
+  const json = parseJson(text);
+  const record = json.ok ? RunFile.safeParse(json.data) : null;
+  return record !== null && record.success ? record.data : null;
 }
 
 export async function writeRun(record: RunRecord): Promise<void> {
@@ -33,7 +44,7 @@ export async function updateRun(conversation: string, agent: string, patch: Part
 }
 
 export async function listRuns(conversation: string): Promise<RunRecord[]> {
-  const names = (await readdir(paths.runs(conversation)).catch(() => [] as string[])).filter(name => name.endsWith(".json"));
+  const names = (await readdir(paths.runs(conversation)).catch((): string[] => [])).filter(name => name.endsWith(".json"));
   const runs = await Promise.all(names.map(name => readRun(conversation, name.slice(0, -5))));
   return runs.filter((r): r is RunRecord => r !== null).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
 }

@@ -1,9 +1,25 @@
-// The turn's live events (streamed text, tool starts and ends, notices) in daemon/live.jsonl, so every TUI can show
-// a turn as it happens. Replaced at each turn's start; the transcript stays the durable record.
 import { appendFile, mkdir, open, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../config";
+import { z } from "zod";
+import { MessageRecord } from "../inbox";
+import { parseJson } from "../result";
 import type { AgentEvent } from "../types";
+
+const Call = z.object({ id: z.string(), name: z.string(), input: z.unknown() });
+const Status = z.enum(["done", "cancelled", "failed"]);
+const EventRecord: z.ZodType<AgentEvent> = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("start"), agent: z.string(), role: z.enum(["orchestrator", "worker", "reviewer"]), model: z.string() }),
+  z.object({ kind: z.literal("input"), messages: z.array(MessageRecord) }),
+  z.object({ kind: z.literal("text"), text: z.string() }),
+  z.object({ kind: z.literal("tool_start"), call: Call }),
+  z.object({ kind: z.literal("tool_end"), call: Call, outcome: z.object({ id: z.string(), ok: z.boolean(), text: z.string() }) }),
+  z.object({ kind: z.literal("notice"), text: z.string() }),
+  z.object({ kind: z.literal("usage"), model: z.string(), input: z.number(), cached: z.number(), output: z.number() }),
+  z.object({ kind: z.literal("compaction"), before: z.number(), after: z.number() }),
+  z.object({ kind: z.literal("end"), status: Status, error: z.string().nullable(), text: z.string() }),
+]);
+const LineRecord = z.object({ seq: z.number(), turn: z.number(), event: EventRecord.nullable() });
 
 export type LiveLine = { seq: number; turn: number; event: AgentEvent | null };
 const file = (conversation: string): string => join(paths.daemon(conversation), "live.jsonl");
@@ -26,7 +42,6 @@ export function liveWriter(conversation: string, turn: number): { emit: (event: 
   };
 }
 
-/** Complete lines appended since `offset` for `turn`, and the next offset; a file for another turn reads as empty. */
 export async function readLive(conversation: string, turn: number, offset: number): Promise<{ events: AgentEvent[]; offset: number }> {
   let handle;
   try { handle = await open(file(conversation), "r"); } catch { return { events: [], offset: 0 }; }
@@ -39,11 +54,11 @@ export async function readLive(conversation: string, turn: number, offset: numbe
     const events: AgentEvent[] = [];
     for (const raw of bytes.subarray(0, end).toString("utf8").split("\n")) {
       if (raw.length === 0) continue;
-      try {
-        const line = JSON.parse(raw) as LiveLine;
-        if (line.turn !== turn) return { events: [], offset: 0 };
-        if (line.event !== null) events.push(line.event);
-      } catch { /* torn line */ }
+      const json = parseJson(raw);
+      const line = json.ok ? LineRecord.safeParse(json.data) : null;
+      if (line === null || !line.success) continue;
+      if (line.data.turn !== turn) return { events: [], offset: 0 };
+      if (line.data.event !== null) events.push(line.data.event);
     }
     return { events, offset: offset + end };
   } finally { await handle.close(); }

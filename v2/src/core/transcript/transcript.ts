@@ -1,9 +1,9 @@
-// An agent's transcript: append-only JSONL (storage.ts appends and fsyncs each record in place), one writer per file.
-// Entries link to their parent; the context sent to the model walks back from the head to the root or the latest
-// summary. Readers (the TUI) refresh by reading only what was appended since their last look.
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { z } from "zod";
+import { MessageRecord } from "../inbox";
+import { parseJson } from "../result";
 import type { Entry, NewEntry } from "../types";
 import { publish } from "./storage";
 import { paired } from "./pairs";
@@ -12,26 +12,42 @@ export type Transcript = {
   path: string;
   head: () => string | null;
   append: (entry: NewEntry) => Promise<Entry>;
-  /** The current context's entries, oldest first: from the latest summary (or the root) to the head. */
   branch: () => Entry[];
-  /** Every entry from the root to the head, summaries included, for the page and the archive. */
   all: () => Entry[];
-  /** The messages the model gets. */
   chain: () => MessageParam[];
-  /** Pick up records another process appended. */
   refresh: () => void;
 };
+
+const MessageShape = z.object({ role: z.enum(["user", "assistant"]), content: z.union([z.string(), z.array(z.looseObject({ type: z.string() }))]) });
+const Message = z.custom<MessageParam>(value => MessageShape.safeParse(value).success);
+const Base = { uuid: z.string(), parent: z.string().nullable(), ts: z.string() };
+const Role = z.enum(["orchestrator", "worker", "reviewer"]);
+const EntryRecord: z.ZodType<Entry> = z.discriminatedUnion("type", [
+  z.object({ ...Base, type: z.literal("message"), message: Message, inbox: z.array(MessageRecord) }),
+  z.object({ ...Base, type: z.literal("summary"), text: z.string(), retained: z.array(Message), memory: z.object({ summary: z.array(z.string()), pending: z.array(z.string()) }).nullable() }),
+  z.object({ ...Base, type: z.literal("meta"), role: Role, agent: z.string(), model: z.string(), plugins: z.array(z.string()) }),
+  z.object({ ...Base, type: z.literal("replies"), messages: z.array(z.object({ from: z.string(), text: z.string() })) }),
+]);
 
 function parse(text: string): Map<string, Entry> {
   const entries = new Map<string, Entry>();
   for (const line of text.split("\n")) {
     if (line.length === 0) continue;
-    try {
-      const entry = JSON.parse(line) as Entry;
-      if (typeof entry.uuid === "string" && typeof entry.type === "string") entries.set(entry.uuid, entry);
-    } catch { /* a torn last line is never replayed */ }
+    const raw = parseJson(line);
+    const entry = raw.ok ? EntryRecord.safeParse(raw.data) : null;
+    if (entry !== null && entry.success) entries.set(entry.data.uuid, entry.data);
   }
   return entries;
+}
+
+function stamp(partial: NewEntry, parent: string | null): Entry {
+  const base = { uuid: crypto.randomUUID(), parent, ts: new Date().toISOString() };
+  switch (partial.type) {
+    case "message": return { ...partial, ...base };
+    case "summary": return { ...partial, ...base };
+    case "meta": return { ...partial, ...base };
+    case "replies": return { ...partial, ...base };
+  }
 }
 
 function walk(byUuid: Map<string, Entry>, head: string | null, stopAtSummary: boolean): Entry[] {
@@ -77,7 +93,7 @@ export function openTranscript(path: string): Transcript {
     chain: () => contextMessages(branch()),
     refresh,
     async append(partial) {
-      const entry = { ...partial, uuid: crypto.randomUUID(), parent: head, ts: new Date().toISOString() } as Entry;
+      const entry = stamp(partial, head);
       await publish(path, JSON.stringify(entry), undefined, () => { byUuid.set(entry.uuid, entry); head = entry.uuid; });
       size = -1;
       return entry;
@@ -85,8 +101,6 @@ export function openTranscript(path: string): Transcript {
   };
 }
 
-/** The last assistant batch's calls that never got a result (the process died mid-batch): each gets an error
- * result saying the outcome is unknown, so the context is valid again. Nothing is re-run. */
 export async function closeInterrupted(transcript: Transcript): Promise<void> {
   const messages = transcript.chain();
   if (paired(messages)) return;

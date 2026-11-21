@@ -1,5 +1,3 @@
-// The client side of a conversation's daemon (TUI, `orca2 msg`): start it when none runs, send input, ask it to
-// cancel, compact or stop. Nothing here runs a turn or writes the orchestrator's transcript.
 import { pidAlive } from "../lock";
 import { readConversation } from "../conversations";
 import { put, withdraw } from "../inbox";
@@ -10,7 +8,6 @@ import { daemonPid, readStatus, request } from "./channel";
 
 export const STOP_WAIT_MS = 10_000;
 
-/** Start the conversation's daemon unless one is alive; returns its pid. */
 export async function ensureDaemon(conversation: string, model: string | null): Promise<number> {
   const running = await daemonPid(conversation);
   if (running !== null) return running;
@@ -33,7 +30,6 @@ export async function say(conversation: string, text: string, images: string[], 
   return put(conversation, "orchestrator", "user", text, { images, delivery });
 }
 
-/** Take back queued input the orchestrator has not read yet. */
 export async function unsay(conversation: string, id: string): Promise<Message | null> {
   return withdraw(conversation, "orchestrator", id);
 }
@@ -50,7 +46,7 @@ export async function stopDaemon(conversation: string): Promise<void> {
     if (!pidAlive(pid)) return;
     await Bun.sleep(100);
   }
-  try { process.kill(pid, "SIGTERM"); } catch { /* gone */ }
+  try { process.kill(pid, "SIGTERM"); } catch {}
 }
 
 export async function busy(conversation: string): Promise<boolean> {

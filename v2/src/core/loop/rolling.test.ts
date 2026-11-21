@@ -1,6 +1,3 @@
-// What the brief (v1's `context` tool) held must survive rolling memory: the goal and decisions go into the
-// summary, plugin sections stay verbatim, the newest exchange stays word for word, and archived messages stay
-// searchable through memory search.
 import { expect, test } from "bun:test";
 import { paths } from "../../config";
 import { fakeProvider, text } from "../../test/fake-provider";

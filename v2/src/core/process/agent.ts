@@ -1,11 +1,10 @@
-// The `orca2 agent` process: one worker, reviewer or bundle run, supervised. It records its state in its run
-// record, writes its output to its log (stdout), and tells the orchestrator when it stopped without reporting.
 import { put } from "../inbox";
 import { callText, resultText } from "../toolview";
 import { fileConfirm, runtimeFor } from "../runner/runtime";
 import { readRun, updateRun } from "../runner/runs";
 import { openSession } from "../session";
 import type { AgentEvent } from "../types";
+import { asRecord } from "../result";
 
 export type AgentArgs = { conversation: string; agent: string; run: string; bundle: string; branch: string; cwd: string; fresh: boolean };
 
@@ -18,24 +17,27 @@ export async function agentProcess(args: AgentArgs, out: (text: string) => void 
   const emit = (event: AgentEvent): void => {
     if (event.kind === "text") out(event.text);
     else if (event.kind === "notice") out(`\n${event.text}\n`);
-    else if (event.kind === "tool_start") { out(`\n${callText(event.call)}\n`); lastTool = event.call.name; void updateRun(args.conversation, args.agent, { lastTool, state: "running" }); }
+    else if (event.kind === "tool_start") { out(`\n${callText(event.call)}\n`); lastTool = event.call.name; void updateRun(args.conversation, args.agent, { lastTool, state: "running" }).catch(() => {}); }
     else if (event.kind === "tool_end") {
       out(`${resultText(event.call.name, event.outcome)}\n`);
-      const input = event.call.input as { to?: unknown } | null;
-      if (event.call.name === "inbox" && event.outcome.ok && input?.to === "orchestrator") { reported = true; void updateRun(args.conversation, args.agent, { reported: true, state: "reported" }); }
-    } else if (event.kind === "input") { reported = false; void updateRun(args.conversation, args.agent, { reported: false, state: "running" }); }
+      const input = asRecord(event.call.input);
+      if (event.call.name === "inbox" && event.outcome.ok && input?.to === "orchestrator") { reported = true; void updateRun(args.conversation, args.agent, { reported: true, state: "reported" }).catch(() => {}); }
+    } else if (event.kind === "input") { reported = false; void updateRun(args.conversation, args.agent, { reported: false, state: "running" }).catch(() => {}); }
   };
   const record = await readRun(args.conversation, args.agent);
   if (record === null || record.run !== args.run) { out(`no run record ${args.run} for ${args.agent}\n`); return 70; }
   await updateRun(args.conversation, args.agent, { state: "running", pid: process.pid });
   let status: "done" | "cancelled" | "failed" = "failed", error: string | null = null;
   try {
-    const session = await openSession({ conversation: args.conversation, agent: args.agent, bundle: args.bundle, branch: args.branch, cwd: args.cwd,
+    const opened = await openSession({ conversation: args.conversation, agent: args.agent, bundle: args.bundle, branch: args.branch, cwd: args.cwd,
       fresh: args.fresh, requireInput: false, emit, signal: abort.signal, runtime: runtimeFor(args.conversation, args.agent, fileConfirm(args.conversation, args.agent, abort.signal)),
       compactRequested: () => false, model: null, keep: null, resolve: null });
-    const result = await session.run();
-    status = result.status;
-    error = result.error;
+    if (!opened.ok) error = opened.error;
+    else {
+      const result = await opened.data.run();
+      status = result.status;
+      error = result.error;
+    }
   } catch (cause) { error = cause instanceof Error ? cause.message : String(cause); }
   const endedAt = new Date().toISOString();
   const state = status === "cancelled" ? "stopped" : status === "failed" ? "failed" : reported ? "reported" : "exited";

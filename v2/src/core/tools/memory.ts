@@ -1,8 +1,10 @@
-// The memory tool: the bubble's shared memory tree, plus archived messages (what compaction replaced), labelled.
 import { readArchived, searchArchive } from "../archive";
 import { BRANCHES, ensureBubble, memoryNodes, peekBubble, readNode, renderHits, searchNodes, writeNode, type MemoryNode } from "../bubbles";
 import { listConversations } from "../conversations";
-import type { Tool } from "./registry";
+import { z } from "zod";
+import { settled, type Tool } from "./registry";
+
+const AddedEntry = z.object({ text: z.string(), sources: z.unknown().optional() });
 
 const strings = (value: unknown, max: number, what: string): string[] => {
   if (!Array.isArray(value) || value.length === 0 || value.length > max || value.some(v => typeof v !== "string" || v.trim().length === 0)) throw new Error(`${what} must be 1-${max} non-empty strings`);
@@ -15,7 +17,6 @@ function render(node: MemoryNode): string {
   return [`${node.id} (rev ${node.revision}) ${node.title}`, node.summary, ...rows, ...(retired > 0 ? [`(${retired} retired entr${retired === 1 ? "y" : "ies"} kept as history)`] : [])].join("\n");
 }
 
-/** The conversations whose archived messages this one may search: its bubble's, or itself alone. */
 async function scope(conversation: string, bubble: string | null): Promise<string[]> {
   if (bubble === null) return [conversation];
   return (await listConversations()).filter(c => c.bubble === bubble).map(c => c.id);
@@ -45,14 +46,14 @@ export const memory: Tool = {
       if (ctx.role !== "orchestrator") throw new Error("workers report findings to the orchestrator, which writes memory; put bulky material in the notebook");
       if (typeof input.node !== "string") throw new Error("write needs a node id");
       const add = Array.isArray(input.add) ? input.add.map((entry: unknown) => {
-        const e = entry as { text?: unknown; sources?: unknown } | null;
-        if (typeof e?.text !== "string") throw new Error("each added entry needs text");
-        return { text: e.text, sources: e.sources === undefined ? [] : strings(e.sources, 8, "sources") };
+        const e = AddedEntry.safeParse(entry);
+        if (!e.success) throw new Error("each added entry needs text");
+        return { text: e.data.text, sources: e.data.sources === undefined ? [] : strings(e.data.sources, 8, "sources") };
       }) : [];
       const id = bubble ?? (await ensureBubble(ctx.conversation)).id;
-      const node = await writeNode(id, { node: input.node, title: typeof input.title === "string" ? input.title : null, summary: typeof input.summary === "string" ? input.summary : null,
+      const node = settled(await writeNode(id, { node: input.node, title: typeof input.title === "string" ? input.title : null, summary: typeof input.summary === "string" ? input.summary : null,
         keywords: input.keywords === undefined ? null : strings(input.keywords, 12, "keywords"), add,
-        retire: Array.isArray(input.retire) ? input.retire.map(Number) : [], revision: typeof input.revision === "number" ? input.revision : null }, ctx.agent);
+        retire: Array.isArray(input.retire) ? input.retire.map(Number) : [], revision: typeof input.revision === "number" ? input.revision : null }, ctx.agent));
       return `wrote ${node.id} (rev ${node.revision}, ${node.entries.filter(e => e.retired === null).length} current entries): ${node.summary}`;
     }
     const nodes = bubble === null ? [] : await memoryNodes(bubble);
@@ -69,7 +70,7 @@ export const memory: Tool = {
           const page = readArchived(id, typeof input.offset === "number" ? input.offset : 0, 4000);
           return page === null ? `${id}: no such archived message` : `${id} (archived)\n${page.text}${page.next === null ? "" : `\n[continues: read with offset ${page.next}]`}`;
         }
-        const node = bubble === null ? null : await readNode(bubble, id);
+        const node = bubble === null ? null : settled(await readNode(bubble, id));
         return node === null ? `${id}: no such node` : render(node);
       }));
       return out.join("\n\n");

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 import type { ContentBlock } from "@anthropic-ai/sdk/resources/messages";
 import { paths } from "../../config";
 import { fakeProvider, text, toolUse } from "../../test/fake-provider";
@@ -55,12 +56,11 @@ describe("agent loop", () => {
     conversation = s.conversation;
     await put(conversation, "orchestrator", "user", "go", { images: [], delivery: "steer" });
     expect((await s.agent.run()).text).toBe("follow handled");
-    const second = s.provider.calls[1]!.messages.at(-1)!;
-    const blocks = second.content as { type: string; text?: string }[];
+    const blocks = z.array(z.looseObject({ type: z.string(), text: z.string().optional() })).parse(s.provider.calls[1]?.messages.at(-1)?.content);
     expect(blocks.map(b => b.type)).toEqual(["tool_result", "text"]);
-    expect(blocks[1]!.text).toBe("[user] also this");
-    expect(JSON.stringify(s.provider.calls[1]!.messages)).not.toContain("later please");
-    expect(JSON.stringify(s.provider.calls[2]!.messages.at(-1))).toContain("later please");
+    expect(blocks[1]?.text).toBe("[user] also this");
+    expect(JSON.stringify(s.provider.calls[1]?.messages)).not.toContain("later please");
+    expect(JSON.stringify(s.provider.calls[2]?.messages.at(-1))).toContain("later please");
   });
 
   test("hooks change input, block, ask, rewrite results, shape requests and filter input", async () => {
@@ -75,12 +75,12 @@ describe("agent loop", () => {
     await put(s.conversation, "orchestrator", "user", "spam spam", { images: [], delivery: "steer" });
     await put(s.conversation, "orchestrator", "user", "run it", { images: [], delivery: "steer" });
     await s.agent.run();
-    expect(JSON.stringify(s.provider.calls[0]!.messages)).toContain("[user] RUN IT");
-    expect(JSON.stringify(s.provider.calls[0]!.messages)).not.toContain("spam");
-    const results = s.provider.calls[1]!.messages.at(-1)!.content as { content: string; is_error?: boolean }[];
-    expect(results[0]!.content).toBe("echo: hi! (checked)");
+    expect(JSON.stringify(s.provider.calls[0]?.messages)).toContain("[user] RUN IT");
+    expect(JSON.stringify(s.provider.calls[0]?.messages)).not.toContain("spam");
+    const results = z.array(z.looseObject({ content: z.string(), is_error: z.boolean().optional() })).parse(s.provider.calls[1]?.messages.at(-1)?.content);
+    expect(results[0]?.content).toBe("echo: hi! (checked)");
     expect(results[1]).toMatchObject({ is_error: true, content: "blocked by plugin p: no secrets" });
-    expect(results[2]!.content).toContain("the user declined");
+    expect(results[2]?.content).toContain("the user declined");
     expect(s.events.some(e => e.kind === "notice" && e.text.includes("dropped"))).toBe(true);
   });
 
@@ -89,7 +89,7 @@ describe("agent loop", () => {
     const s = await setup([[toolUse("a", "nope", {}), toolUse("b", "boom", {})], [text("recovered")]], [broken]);
     await put(s.conversation, "orchestrator", "user", "go", { images: [], delivery: "steer" });
     expect((await s.agent.run()).text).toBe("recovered");
-    const results = s.provider.calls[1]!.messages.at(-1)!.content as { content: string }[];
+    const results = z.array(z.looseObject({ content: z.string() })).parse(s.provider.calls[1]?.messages.at(-1)?.content);
     expect(results.map(r => r.content)).toEqual(["unknown tool: nope", "kaput"]);
   });
 });

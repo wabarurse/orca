@@ -1,6 +1,4 @@
-// Images a conversation holds (pasted with Ctrl+V, read by a tool, returned by MCP): stored once under images/<id>,
-// referenced from transcripts as `orca-image:<id>` and turned into base64 just before a request.
-import type { ImageBlockParam, MessageParam, TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ContentBlockParam, ImageBlockParam, MessageParam, TextBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { sniffImage, validateImage, type ImageMime } from "../api";
@@ -8,8 +6,18 @@ import { paths } from "../config";
 
 const ID = /^img-[a-f0-9]{16}$/;
 const EXT: Record<ImageMime, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
-/** The most images one request carries; older ones become text markers (read the id again to see one). */
 export const MAX_REQUEST_IMAGES = 20;
+type ResultItem = Exclude<ToolResultBlockParam["content"], string | undefined>[number];
+
+function mapImages(messages: MessageParam[], image: (block: ImageBlockParam) => ImageBlockParam | TextBlockParam, keep: (block: ContentBlockParam) => boolean): MessageParam[] {
+  const item = (part: ResultItem): ResultItem => part.type === "image" ? image(part) : part;
+  const block = (part: ContentBlockParam): ContentBlockParam => {
+    if (part.type === "image") return image(part);
+    if (part.type === "tool_result" && Array.isArray(part.content)) return { ...part, content: part.content.map(item) };
+    return part;
+  };
+  return messages.map(message => typeof message.content === "string" ? message : { ...message, content: message.content.filter(keep).map(block) });
+}
 
 export async function saveImage(conversation: string, bytes: Uint8Array): Promise<string> {
   const mime = sniffImage(bytes);
@@ -34,7 +42,6 @@ export const imageBlock = (id: string): ImageBlockParam => ({ type: "image", sou
 export const imageId = (block: ImageBlockParam): string | null =>
   block.source.type === "url" && block.source.url.startsWith("orca-image:") ? block.source.url.slice("orca-image:".length) : null;
 
-/** A user turn's content: its text, then each image with a line naming its id. */
 export function withImages(text: string, ids: string[]): MessageParam["content"] {
   if (ids.length === 0) return text;
   return [{ type: "text", text: text.length > 0 ? text : "[image-only message]" }, ...ids.flatMap(id => [{ type: "text" as const, text: `[image ${id}]` }, imageBlock(id)])];
@@ -42,7 +49,6 @@ export function withImages(text: string, ids: string[]): MessageParam["content"]
 
 const marker = (id: string | null): TextBlockParam => ({ type: "text", text: `[image ${id ?? "unknown"}: not shown in this request; read it by id to see it again]` });
 
-/** References become base64, newest first up to the cap; the rest become markers. */
 export async function materialize(conversation: string, messages: MessageParam[]): Promise<MessageParam[]> {
   const blocks: ImageBlockParam[] = [];
   for (const message of messages) {
@@ -63,15 +69,9 @@ export async function materialize(conversation: string, messages: MessageParam[]
     const mime = sniffImage(bytes) ?? "image/png";
     loaded.set(block, { type: "image", source: { type: "base64", media_type: mime, data: Buffer.from(bytes).toString("base64") } });
   }
-  const swap = <T extends { type: string }>(block: T): T | ImageBlockParam | TextBlockParam => block.type === "image" ? loaded.get(block as unknown as ImageBlockParam) ?? block : block;
-  return messages.map(message => typeof message.content === "string" ? message : { ...message, content: message.content.map(block =>
-    block.type === "tool_result" && Array.isArray(block.content) ? { ...block, content: block.content.map(item => swap(item) as typeof item) } : swap(block) as typeof block) });
+  return mapImages(messages, block => loaded.get(block) ?? block, () => true);
 }
 
-/** Messages with every image as a text marker: what summaries and the archive see. */
 export function historicalMessages(messages: MessageParam[]): MessageParam[] {
-  const plain = <T extends { type: string }>(block: T): T | TextBlockParam => block.type === "image" ? marker(imageId(block as unknown as ImageBlockParam)) : block;
-  return messages.map(message => typeof message.content === "string" ? message : { ...message, content: message.content
-    .filter(block => block.type !== "thinking" && block.type !== "redacted_thinking")
-    .map(block => block.type === "tool_result" && Array.isArray(block.content) ? { ...block, content: block.content.map(item => plain(item) as typeof item) } : plain(block) as typeof block) });
+  return mapImages(messages, block => marker(imageId(block)), block => block.type !== "thinking" && block.type !== "redacted_thinking");
 }

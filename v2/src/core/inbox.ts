@@ -1,21 +1,24 @@
-// One FIFO inbox per agent: inbox/<agent>/, a file per message, named so a directory listing is send order.
-// Its one reader (the agent) consumes messages by committing them to its transcript first and removing the
-// files after, so a crash in between re-reads them; the transcript's own record of consumed ids drops repeats.
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { paths } from "../config";
 import { writeAtomic } from "./conversations";
 import type { Delivery, Message } from "./types";
 
 let sequence = 0;
 
+export const MessageRecord = z.object({ id: z.string(), from: z.string(), text: z.string(), ts: z.string(),
+  images: z.array(z.string()).catch([]), delivery: z.enum(["steer", "follow"]).catch("steer") });
+
+const MessageFile = z.object({ id: z.string(), from: z.string(), text: z.string(), ts: z.string(), images: z.unknown(), delivery: z.unknown() });
+
 const parse = (text: string): Message | null => {
-  try {
-    const raw = JSON.parse(text) as Partial<Message>;
-    if (typeof raw.id !== "string" || typeof raw.from !== "string" || typeof raw.text !== "string" || typeof raw.ts !== "string") return null;
-    return { id: raw.id, from: raw.from, text: raw.text, ts: raw.ts, images: Array.isArray(raw.images) ? raw.images.filter((i): i is string => typeof i === "string") : [],
-      delivery: raw.delivery === "follow" ? "follow" : "steer" };
-  } catch { return null; }
+  let json: unknown;
+  try { json = JSON.parse(text); } catch { return null; }
+  const raw = MessageFile.safeParse(json);
+  if (!raw.success) return null;
+  const images = Array.isArray(raw.data.images) ? raw.data.images.filter((i): i is string => typeof i === "string") : [];
+  return { id: raw.data.id, from: raw.data.from, text: raw.data.text, ts: raw.data.ts, images, delivery: raw.data.delivery === "follow" ? "follow" : "steer" };
 };
 
 export async function put(conversation: string, agent: string, from: string, text: string, options: { images: string[]; delivery: Delivery }): Promise<Message> {
@@ -27,10 +30,9 @@ export async function put(conversation: string, agent: string, from: string, tex
   return message;
 }
 
-/** The waiting messages, oldest first, with their files. */
 export async function pending(conversation: string, agent: string, claimed = false): Promise<{ file: string; message: Message }[]> {
   const dir = paths.inbox(conversation, agent);
-  const names = (await readdir(dir).catch(() => [] as string[])).filter(name => name.endsWith(".json") || (claimed && name.endsWith(".taken"))).sort();
+  const names = (await readdir(dir).catch((): string[] => [])).filter(name => name.endsWith(".json") || (claimed && name.endsWith(".taken"))).sort();
   const out: { file: string; message: Message }[] = [];
   for (const name of names) {
     const file = join(dir, name);
@@ -40,10 +42,6 @@ export async function pending(conversation: string, agent: string, claimed = fal
   return out;
 }
 
-/**
- * Take the messages `which` selects (oldest first; the ones it skips stay queued, in order), hand them to
- * `commit` (which records them durably), then remove their files. `seen` holds ids already committed earlier.
- */
 export async function consume(conversation: string, agent: string, seen: Set<string>, which: (message: Message) => boolean,
   commit: (messages: Message[]) => Promise<void>): Promise<Message[]> {
   const waiting = await pending(conversation, agent, true);
@@ -53,7 +51,6 @@ export async function consume(conversation: string, agent: string, seen: Set<str
   for (const item of waiting) {
     if (seen.has(item.message.id)) continue;
     if (!which(item.message)) continue;
-    // Claimed by rename, so a message the user withdraws at the same moment is either taken or withdrawn, never both.
     const claimedFile = item.file.endsWith(".taken") ? item.file : item.file.replace(/\.json$/, ".taken");
     if (claimedFile !== item.file && !await rename(item.file, claimedFile).then(() => true, () => false)) continue;
     taken.push({ file: claimedFile, message: item.message });
@@ -66,12 +63,10 @@ export async function consume(conversation: string, agent: string, seen: Set<str
   return messages;
 }
 
-/** Messages as one user turn, each tagged with its sender. */
 export function format(messages: Message[]): string {
   return messages.map(message => `[${message.from}] ${message.text}`).join("\n\n");
 }
 
-/** Remove a waiting message the user took back (Esc returns queued input to the composer). */
 export async function withdraw(conversation: string, agent: string, id: string): Promise<Message | null> {
   for (const item of await pending(conversation, agent)) {
     if (item.message.id !== id) continue;

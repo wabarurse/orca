@@ -1,7 +1,3 @@
-// The orchestrator's background memory. Once its context passes a quarter of the window, the older part is
-// summarized in the background (on the account's small model) while turns go on; the summary is published at the
-// next safe boundary only if the summarized prefix is still exactly the start of the context, so nothing newer is
-// ever lost. A recent tail of ~50k tokens stays verbatim, the newest exchange always whole.
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider } from "../../api";
 import { providerFor, smallModel } from "../../api/model";
@@ -16,11 +12,9 @@ export const TAIL_TOKENS = 50_000;
 const RETRY_MS = 30_000;
 const PART_TIMEOUT_MS = 300_000;
 
-/** A section a plugin keeps beside the summary, verbatim (background.ts `memory`). */
 export type MemorySection = { title: string; text: () => Promise<string> };
 
 export type RollingOptions = {
-  /** Summarize with the provider's small model; false keeps it on the conversation's model. */
   small: boolean;
   triggerTokens: number | null;
   tailTokens: number | null;
@@ -31,7 +25,6 @@ export type Boundary = { window: Window; provider: Provider; signal: AbortSignal
 
 type Job = { abort: AbortController; source: MessageParam[]; cut: number; head: string | null; memory: RollingMemory | null; error: unknown; settled: boolean; promise: Promise<void> };
 
-/** Keep a recent tail near the target, always the newest complete exchange. */
 export function rollingCut(messages: MessageParam[], tailTokens: number): number {
   if (!paired(messages)) throw new Error("invalid tool batch grammar");
   let size = 0, cut = messages.length;
@@ -71,7 +64,6 @@ export class RollingCompactor {
     return Math.min(this.options.triggerTokens ?? limit * TRIGGER_FRACTION, inputRoom(limit, outputCap(window)));
   }
 
-  /** Called by the loop between complete tool batches. Starts, publishes or (when the context no longer fits) waits. */
   async boundary(b: Boundary, manual: boolean): Promise<void> {
     try {
       if (this.job?.settled === true) await this.publish(b, this.job);

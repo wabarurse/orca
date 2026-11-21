@@ -1,5 +1,3 @@
-// Starting, listing and stopping agents: the Runtime tools see. New agents start through the selected runner
-// (config `runner`: "plain" or an enabled runner plugin); stop and liveness ask the runner that started each one.
 import { mkdir } from "node:fs/promises";
 import { loadConfig, paths } from "../../config";
 import { askUser } from "../confirm";
@@ -9,24 +7,28 @@ import { assemble } from "../plugins/assemble";
 import { availablePlugins } from "../plugins/loader";
 import { enabledNames } from "../plugins/enable";
 import type { Runner } from "../plugins/types";
-import type { AgentInfo, Runtime, SpawnRequest } from "../tools/registry";
+import { settled, type AgentInfo, type Runtime, type SpawnRequest } from "../tools/registry";
 import { agentEnv } from "../tools/bash";
 import { ensureDataDirs } from "../bubbles";
 import { trustState } from "../trust";
 import { plainRunner } from "./plain";
 import { listRuns, live, newRun, readRun, updateRun, writeRun, type RunRecord } from "./runs";
 import { slug, workspaceFor } from "./worktree";
+import { z } from "zod";
+import { parseJson } from "../result";
 
-/** The command that runs orca2 itself: the compiled binary, or bun with the entry script in development
- * (ORCA2_SELF, a JSON argv, overrides it for tests that run orca2 from a test file). */
 export function selfCommand(): string[] {
   const forced = process.env.ORCA2_SELF;
-  if (forced !== undefined && forced.length > 0) return JSON.parse(forced) as string[];
+  if (forced !== undefined && forced.length > 0) {
+    const json = parseJson(forced);
+    const command = json.ok ? z.array(z.string()).min(1).safeParse(json.data) : null;
+    if (command === null || !command.success) throw new Error("ORCA2_SELF must be a JSON list of strings (the command that runs orca2)");
+    return command.data;
+  }
   const script = process.argv[1];
   return script !== undefined && script.endsWith(".ts") ? [process.execPath, script] : [process.execPath];
 }
 
-/** Every runner that may hold agents of this conversation: plain, plus enabled runner plugins. */
 export async function runners(conversation: string): Promise<Runner[]> {
   const meta = await readConversation(conversation);
   const directory = meta?.directory ?? null;
@@ -48,7 +50,6 @@ export async function selectedRunner(conversation: string): Promise<Runner> {
 export const toInfo = (run: RunRecord): AgentInfo => ({ agent: run.agent, role: run.role, bundle: run.bundle, branch: run.branch, state: run.state, pid: run.pid,
   runner: run.runner, startedAt: run.startedAt, endedAt: run.endedAt, log: run.log, lastTool: run.lastTool });
 
-/** Start an agent process for a run record already written; the record gets its pid and handle. */
 export async function launch(record: RunRecord, cwd: string, extra: string[], command: "agent" | "daemon" = "agent"): Promise<RunRecord> {
   const runner = (await runners(record.conversation)).find(r => r.name === record.runner) ?? plainRunner;
   const data = await ensureDataDirs(record.conversation);
@@ -68,14 +69,13 @@ export async function stopAgent(conversation: string, agent: string): Promise<st
   return `stopped ${agent}`;
 }
 
-/** The Runtime an agent's tools use. */
 export function runtimeFor(conversation: string, self: string, confirm: (question: string) => Promise<boolean>): Runtime {
   return {
     async spawn(request: SpawnRequest): Promise<AgentInfo> {
       const meta = await readConversation(conversation);
       if (meta === null) throw new Error(`no conversation ${conversation}`);
       const trusted = await trustState(meta.directory) === "trusted";
-      const shape = await assemble({ conversation, agent: "check", bundle: request.bundle, cwd: meta.directory, directory: meta.directory, trusted });
+      const shape = settled(await assemble({ conversation, agent: "check", bundle: request.bundle, cwd: meta.directory, directory: meta.directory, trusted }));
       const prefix = shape.bundle.name === "orchestrator" ? null : shape.bundle.name;
       if (prefix === null) throw new Error("the orchestrator bundle cannot be spawned");
       const agent = `${prefix}-${slug(request.branch)}`;
@@ -84,7 +84,7 @@ export function runtimeFor(conversation: string, self: string, confirm: (questio
         await put(conversation, agent, self, request.brief, { images: request.images, delivery: "steer" });
         return { ...toInfo(existing), state: "running" };
       }
-      const cwd = await workspaceFor(conversation, meta.directory, request.branch);
+      const cwd = settled(await workspaceFor(conversation, meta.directory, request.branch));
       await put(conversation, agent, self, request.brief, { images: request.images, delivery: "steer" });
       const record = newRun({ conversation, agent, role: shape.bundle.role, bundle: shape.bundle.name, branch: request.branch, runner: (await selectedRunner(conversation)).name });
       await writeRun(record);
@@ -99,5 +99,4 @@ export function runtimeFor(conversation: string, self: string, confirm: (questio
   };
 }
 
-/** The confirm a daemon-run agent uses: a question file the TUI answers. */
 export const fileConfirm = (conversation: string, agent: string, signal: AbortSignal) => (question: string): Promise<boolean> => askUser(conversation, agent, question, signal);

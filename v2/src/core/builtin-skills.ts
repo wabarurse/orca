@@ -1,5 +1,3 @@
-// Skills that ship with orca2 (the orca-plugin skill). They are part of the binary and written out under
-// ~/.orca2/.runtime/skills on first use, so the skill tool and `read` see them as files.
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import orcaPlugin from "../../skills/orca-plugin/SKILL.md" with { type: "text" };

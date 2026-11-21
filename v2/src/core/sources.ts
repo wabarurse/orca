@@ -1,4 +1,3 @@
-// The user's own messages in a conversation: the only sources an explicit behavior line may cite.
 import { paths } from "../config";
 import { openTranscript } from "./transcript";
 
@@ -16,7 +15,6 @@ export function humanMessages(conversation: string): HumanMessage[] {
 
 const squash = (text: string): string => text.replace(/\s+/g, " ").trim().toLowerCase();
 
-/** The message a source names by id, or quotes verbatim (8+ characters, whitespace-insensitive). */
 export function resolveSource(source: string, candidates: HumanMessage[]): { id: string; quote: string } | null {
   const trimmed = source.trim();
   const byId = candidates.find(message => trimmed.includes(message.id));
