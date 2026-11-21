@@ -13,6 +13,7 @@ import { openSession } from "./session";
 import { openTranscript } from "./transcript";
 import { trustForRun } from "./trust";
 import type { AgentEvent } from "./types";
+import type { Resolved } from "./loop/agent";
 
 export type HeadlessOptions = {
   prompt: string;
@@ -27,6 +28,8 @@ export type HeadlessOptions = {
   yes: boolean;
   trust: boolean;
   out: (text: string) => void;
+  /** null signs in with the configured account; tests pass a fake. */
+  resolve: (() => Promise<Resolved>) | null;
 };
 
 const IDLE_POLL_MS = 500;
@@ -56,7 +59,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
       if ((await pending(conversation.id, agent)).length > 0) {
         const session = await openSession({ conversation: conversation.id, agent, bundle: options.bundle, branch: null, cwd: options.cwd, fresh: false, requireInput: true,
           emit, signal: abort.signal, runtime: runtimeFor(conversation.id, agent, async () => options.yes), compactRequested: () => false,
-          model: options.model, keep: agent === "orchestrator" ? { transcript, rolling } : null });
+          model: options.model, keep: agent === "orchestrator" ? { transcript, rolling } : null, resolve: options.resolve });
         rolling = session.rolling;
         const result = await session.run();
         if (result.text.length > 0) answer = result.text;

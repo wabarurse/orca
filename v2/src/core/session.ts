@@ -35,6 +35,8 @@ export type SessionInput = {
   model: string | null;
   /** The daemon keeps its transcript and background memory across turns; null opens them fresh. */
   keep: { transcript: Transcript; rolling: RollingCompactor | null } | null;
+  /** Resolves the model for each request; null signs in with the configured account (tests pass a fake). */
+  resolve: (() => Promise<Resolved>) | null;
 };
 
 export type Session = { assembled: Assembled; transcript: Transcript; run: () => Promise<RunResult>; rolling: RollingCompactor | null };
@@ -75,7 +77,8 @@ export async function openSession(input: SessionInput): Promise<Session> {
     }
     rolling = new RollingCompactor(input.conversation, transcript, { small: config.smallSummaries, triggerTokens: null, tailTokens: null, sections });
   }
-  const first = await resolveModel(input.conversation, input.model);
+  const resolve = input.resolve ?? (() => resolveModel(input.conversation, input.model));
+  const first = await resolve();
   const plugins = assembled.plugins.map(p => p.plugin.name);
   const last = transcript.all().findLast(entry => entry.type === "meta");
   if (last?.type !== "meta" || last.model !== first.model || last.plugins.join(",") !== plugins.join(","))
@@ -84,7 +87,7 @@ export async function openSession(input: SessionInput): Promise<Session> {
   const agent = createAgent({
     conversation: input.conversation, agent: input.agent, role: assembled.bundle.role, branch: input.branch, cwd, data, trusted,
     pluginSkills: assembled.skills, transcript, tools: assembled.tools, system: assembled.system,
-    resolve: () => resolveModel(input.conversation, input.model),
+    resolve,
     context: query => referenceSections({ conversation: input.conversation, role: assembled.bundle.role, cwd, trusted, pluginSkills: assembled.skills, query }),
     hooks: assembled.hooks, runtime: input.runtime, emit: input.emit, signal: input.signal, concurrency: config.toolConcurrency,
     rolling, requireInput: input.requireInput, compactRequested: input.compactRequested,

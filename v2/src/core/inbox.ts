@@ -41,7 +41,7 @@ export async function pending(conversation: string, agent: string, claimed = fal
 }
 
 /**
- * Take the messages `which` selects (oldest first, stopping at the first it rejects so order holds), hand them to
+ * Take the messages `which` selects (oldest first; the ones it skips stay queued, in order), hand them to
  * `commit` (which records them durably), then remove their files. `seen` holds ids already committed earlier.
  */
 export async function consume(conversation: string, agent: string, seen: Set<string>, which: (message: Message) => boolean,
@@ -52,10 +52,10 @@ export async function consume(conversation: string, agent: string, seen: Set<str
   const taken: { file: string; message: Message }[] = [];
   for (const item of waiting) {
     if (seen.has(item.message.id)) continue;
-    if (!which(item.message)) break;
+    if (!which(item.message)) continue;
     // Claimed by rename, so a message the user withdraws at the same moment is either taken or withdrawn, never both.
     const claimedFile = item.file.endsWith(".taken") ? item.file : item.file.replace(/\.json$/, ".taken");
-    if (claimedFile !== item.file && !await rename(item.file, claimedFile).then(() => true, () => false)) break;
+    if (claimedFile !== item.file && !await rename(item.file, claimedFile).then(() => true, () => false)) continue;
     taken.push({ file: claimedFile, message: item.message });
   }
   if (taken.length === 0) return [];

@@ -32,7 +32,7 @@ export async function agentProcess(args: AgentArgs, out: (text: string) => void 
   try {
     const session = await openSession({ conversation: args.conversation, agent: args.agent, bundle: args.bundle, branch: args.branch, cwd: args.cwd,
       fresh: args.fresh, requireInput: false, emit, signal: abort.signal, runtime: runtimeFor(args.conversation, args.agent, fileConfirm(args.conversation, args.agent, abort.signal)),
-      compactRequested: () => false, model: null, keep: null });
+      compactRequested: () => false, model: null, keep: null, resolve: null });
     const result = await session.run();
     status = result.status;
     error = result.error;

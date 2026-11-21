@@ -127,7 +127,7 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
           const session = await openSession({ conversation, agent: "orchestrator", bundle: "orchestrator", branch: null, cwd: null, fresh: false, requireInput: !manual,
             emit: event => { writer.emit(event); if (event.kind === "text") options.log(event.text); }, signal: turnAbort.signal,
             runtime: runtimeFor(conversation, "orchestrator", fileConfirm(conversation, "orchestrator", turnAbort.signal)),
-            compactRequested: () => manual, model: options.model, keep: { transcript, rolling } });
+            compactRequested: () => manual, model: options.model, keep: { transcript, rolling }, resolve: null });
           rolling = session.rolling;
           const result = await session.run();
           await setStatus({ error: result.error });

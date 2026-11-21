@@ -53,7 +53,7 @@ export async function main(argv: string[]): Promise<number> {
     const prompt = args[0];
     if (prompt === undefined || prompt.length === 0) { out(`usage:\n  ${USAGE}\n`); return 2; }
     return runHeadless({ prompt, json: args.includes("--json"), model: option(args, "--model"), cwd: option(args, "--cwd") ?? process.cwd(),
-      conversation: option(args, "--conversation"), bundle: option(args, "--bundle") ?? "orchestrator", yes: args.includes("--yes"), trust: args.includes("--trust"), out });
+      conversation: option(args, "--conversation"), bundle: option(args, "--bundle") ?? "orchestrator", yes: args.includes("--yes"), trust: args.includes("--trust"), out, resolve: null });
   }
   if (command === "agent") {
     const get = (flag: string): string => option(args, flag) ?? "";
