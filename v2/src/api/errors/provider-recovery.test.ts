@@ -99,7 +99,7 @@ for (const name of ["claude", "codex"] as const) {
     const provider = make(fetcher(async () => {
       calls++;
       return new Response(new ReadableStream({ pull(c) {
-        if (pulls++) c.error(new TypeError("network disconnected"));
+        if (pulls++ > 0) c.error(new TypeError("network disconnected"));
         else c.enqueue(encoder.encode(name === "claude" ? sse(claudeEvents.slice(0, 1)) : 'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'));
       } }), { headers: { "content-type": "text/event-stream", "request-id": "safe-test-id" } });
     }));
