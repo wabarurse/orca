@@ -13,7 +13,7 @@ import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Fold, Row, Section, UiHost } from "../core/plugins/types";
-import { setBubblePlugin, ensureBubble } from "../core/bubbles";
+import { ensureBubble, readBubble, setBubblePlugin } from "../core/bubbles";
 import { stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
@@ -66,6 +66,7 @@ export class App {
   private folds = new Map<string, Fold>();
   private counts = "";
   private account = "";
+  private bubbleName: string | null = null;
   private model = "";
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastSlow = 0;
@@ -157,6 +158,7 @@ export class App {
     const config = await loadConfig();
     const meta = await readConversation(id);
     this.model = meta?.model ?? config.model;
+    this.bubbleName = meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
     this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
     if (this.page !== null) await this.loadPage();
   }
@@ -444,7 +446,7 @@ export class App {
     cursor = { row: footer.length + box.row, col: box.col };
     footer.push(...box.rows);
     const fin = { time: this.deps.now(), active: this.busy };
-    const header: screens.ScreenHeader = { tabs: [{ label: this.conversation.name, active: true, busy: this.busy }], bubble: this.conversation.bubble,
+    const header: screens.ScreenHeader = { tabs: [{ label: this.conversation.name, active: true, busy: this.busy }], bubble: this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
       account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [`${this.deps.directory}${this.status?.error != null ? ` · last turn failed: ${this.status.error}` : ""}`], fin };
     t.show({ kind: "chat", header, items: this.cached, tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy), welcome: [], footer, cursor });
   }

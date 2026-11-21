@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // orca2: argument parsing and dispatch.
 import { BUILD_ID } from "../config";
-import { conversationFor, readConversation } from "../core/conversations";
+import { conversationFor, listConversations, readConversation } from "../core/conversations";
+import { removeConversation } from "../core/lifecycle";
 import { runDaemon } from "../core/daemon/daemon";
 import { ensureDaemon, say, stopDaemon } from "../core/daemon/client";
 import { runHeadless } from "../core/headless";
@@ -17,6 +18,8 @@ const USAGE = `orca2 [start] [folder]            open the TUI for a folder's con
   orca2 -p "task" [--json] [--model m] [--cwd folder] [--conversation id] [--bundle name] [--yes] [--trust]
   orca2 msg "text" [--conversation id]  send input to a conversation's orchestrator
   orca2 stop [--conversation id]        stop its daemon
+  orca2 list                            conversations
+  orca2 delete --conversation id        stop its agents and remove it
   orca2 login anthropic|openai [profile] [--import]
   orca2 accounts
   orca2 trust [folder] | orca2 untrust [folder]
@@ -72,6 +75,14 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (command === "stop") { await stopDaemon(await conversationArg(args)); return 0; }
+  if (command === "delete") {
+    const conversation = option(args, "--conversation");
+    if (conversation === null) { out("usage: orca2 delete --conversation <id>  (stops its agents, removes its folder, $ORCA_DATA and worktrees)\n"); return 2; }
+    await removeConversation(conversation, out);
+    out(`deleted ${conversation}\n`);
+    return 0;
+  }
+  if (command === "list") { for (const c of await listConversations()) out(`${c.id}  ${c.name.padEnd(16)} ${c.directory}\n`); return 0; }
   if (command === "login") return runLogin(args, out);
   if (command === "accounts") return runAccounts(out);
   if (command === "trust" || command === "untrust") { await setTrust(args[0] ?? process.cwd(), command === "trust"); out(`${command}ed ${args[0] ?? process.cwd()}\n`); return 0; }

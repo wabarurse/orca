@@ -19,6 +19,7 @@ import { openTranscript, type Transcript } from "../transcript";
 import { trustState } from "../trust";
 import { lockPath, takeCommands, writeStatus, type DaemonStatus } from "./channel";
 import { liveWriter } from "./live";
+import { runBackgroundHooks } from "../lifecycle";
 
 export const POLL_MS = 1000;
 const WATCH_MS = 2000;
@@ -150,6 +151,7 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
   } finally {
     for (const w of watchers_) w.close();
     rolling?.dispose();
+    await runBackgroundHooks(conversation, "stop", options.log);
     await setStatus({ state: "stopped" });
     await updateRun(conversation, "orchestrator", { state: "stopped", endedAt: new Date().toISOString() });
     await release();
