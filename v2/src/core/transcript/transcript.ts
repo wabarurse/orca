@@ -112,6 +112,6 @@ export async function closeInterrupted(transcript: Transcript): Promise<void> {
   const missing = batch.content.filter(block => block.type === "tool_use" && !answered.has(block.id));
   if (missing.length === 0) return;
   await transcript.append({ type: "message", inbox: [], message: { role: "user", content: missing.map(block => ({
-    type: "tool_result" as const, tool_use_id: block.type === "tool_use" ? block.id : "", is_error: true,
+    type: "tool_result", tool_use_id: block.type === "tool_use" ? block.id : "", is_error: true,
     content: "interrupted; outcome unknown, check before retrying" })) } });
 }

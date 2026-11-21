@@ -138,7 +138,7 @@ test("caller cancellation wins same-turn timeout and already-aborted never execu
   expect(await pending).toBe("ok"); expect(calls).toBe(2); expect(timers.size).toBe(0);
 });
 
-for (const override of [undefined, null, "live"] as const) test(`Request preabort and init precedence: ${override}`, async () => {
+for (const override of [undefined, null, "live"]) test(`Request preabort and init precedence: ${override}`, async () => {
   clock(); const request = new AbortController(); request.abort("request cancelled"); let calls = 0;
   const init = override === undefined ? undefined : { signal: override === null ? null : new AbortController().signal };
   const outcome = await result(boundedModelRequest(async scope => {
@@ -177,7 +177,7 @@ test("delayed body cancellation settles before retry; each attempt HTTP is abort
   expect(signals.every(signal => signal?.aborted === true)).toBe(true); expect(timers.size).toBe(0);
 });
 
-for (const end of ["total", "caller"] as const) test(`hung cleanup ends on ${end} without replacement`, async () => {
+for (const end of ["total", "caller"]) test(`hung cleanup ends on ${end} without replacement`, async () => {
   clock(); const caller = new AbortController(); let calls = 0;
   const pending = result(boundedModelRequest(async scope => {
     calls++; await scope.fetch("https://mock.invalid"); throw fail(503);

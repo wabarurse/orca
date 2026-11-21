@@ -5,28 +5,32 @@ import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./sear
 import { claudeSearchResults } from "./search";
 import { validateSettings, type RequestSettings } from "./model";
 import Anthropic, { type Middleware, type MiddlewareNext } from "@anthropic-ai/sdk";
-import type { Message, MessageParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { Message, MessageParam, MessageCreateParamsBase, TextBlockParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./model";
 import { claudeCatalogEfforts, rememberCatalogEfforts } from "./model";
 
 export const CLAUDE_BETAS = "claude-code-20250219,oauth-2025-04-20";
 
+function textBlock(text: string, cache: Pick<TextBlockParam, "cache_control">): TextBlockParam {
+  return { type: "text", text, ...cache };
+}
+
 export function anthropic(client: Anthropic, options: { recovery?: RecoveryPolicy; promptCache?: boolean; retry?: Pick<RetryOptions, "backoffMs"> } = {}): Provider {
   return {
     name: "anthropic",
     async complete(req) {
       const settings = claudeRequestSettings(req.model, req.settings);
-      const params = {
+      const cache: Pick<TextBlockParam, "cache_control"> = options.promptCache === true ? { cache_control: { type: "ephemeral" } } : {};
+      const params: MessageCreateParamsBase = {
         ...settings,
         model: req.model,
         max_tokens: req.maxTokens,
-        ...(options.promptCache === true ? { cache_control: { type: "ephemeral" as const } } : {}),
+        ...cache,
         messages: claudeMessages(req.messages),
         system: [
-          { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
-          ...(req.system !== undefined && req.system !== "" ? [{ type: "text" as const, text: req.system,
-            ...(options.promptCache === true ? { cache_control: { type: "ephemeral" as const } } : {}) }] : []),
+          textBlock("You are Claude Code, Anthropic's official CLI for Claude.", {}),
+          ...(req.system !== undefined && req.system !== "" ? [textBlock(req.system, cache)] : []),
         ],
         ...(req.tools.length > 0 ? { tools: req.tools } : {}),
       };
@@ -167,11 +171,11 @@ function imageProblem(messages: MessageParam[]): string | undefined {
   return undefined;
 }
 
-export function claudeRequestSettings(model: string, settings: RequestSettings = {}) {
+export function claudeRequestSettings(model: string, settings: RequestSettings = {}): Pick<MessageCreateParamsBase, "output_config" | "speed"> {
   const checked = validateSettings(model, settings);
   if (!checked.ok) throw new Error(checked.error);
   return {
     ...(settings.effort !== undefined ? { output_config: { effort: settings.effort } } : {}),
-    ...(settings.fast === true ? { speed: "fast" as const } : {}),
+    ...(settings.fast === true ? { speed: "fast" } : {}),
   };
 }

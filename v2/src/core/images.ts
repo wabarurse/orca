@@ -43,9 +43,13 @@ export const imageBlock = (id: string): ImageBlockParam => ({ type: "image", sou
 export const imageId = (block: ImageBlockParam): string | null =>
   block.source.type === "url" && block.source.url.startsWith("orca-image:") ? block.source.url.slice("orca-image:".length) : null;
 
+function textPart(text: string): TextBlockParam {
+  return { type: "text", text };
+}
+
 export function withImages(text: string, ids: string[]): MessageParam["content"] {
   if (ids.length === 0) return text;
-  return [{ type: "text", text: text.length > 0 ? text : "[image-only message]" }, ...ids.flatMap(id => [{ type: "text" as const, text: `[image ${id}]` }, imageBlock(id)])];
+  return [textPart(text.length > 0 ? text : "[image-only message]"), ...ids.flatMap(id => [textPart(`[image ${id}]`), imageBlock(id)])];
 }
 
 const marker = (id: string | null): TextBlockParam => ({ type: "text", text: `[image ${id ?? "unknown"}: not shown in this request; read it by id to see it again]` });

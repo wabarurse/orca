@@ -5,6 +5,7 @@ import { openai } from "../openai";
 import { codexSSE, fakeCodexTokens } from "../../test/codex";
 import { CredentialError } from "../auth/oauth";
 import type { RecoveryPolicy } from "./provider-recovery";
+import type { CompleteRequest } from "../provider";
 import { ModelRequestError } from "./model-diagnostics";
 
 const caught = (promise: Promise<unknown>): Promise<unknown> => promise.then(() => undefined, (error: unknown) => error);
@@ -13,7 +14,7 @@ const messageOf = (value: unknown): string => value instanceof Error ? value.mes
 let mock: { mockRestore(): void } | undefined;
 afterEach(() => { mock?.mockRestore(); });
 const encoder = new TextEncoder();
-const req = { model: "test", messages: [{ role: "user" as const, content: "hi" }], tools: [], maxTokens: 100, onText() {} };
+const req: CompleteRequest = { model: "test", messages: [{ role: "user", content: "hi" }], tools: [], maxTokens: 100, onText() {} };
 const policy: RecoveryPolicy = { enabled: true, idleMs: 100, totalMs: 1000 };
 const claudeEvents = [
   { type: "message_start", message: { id: "m", type: "message", role: "assistant", content: [], model: "test", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
@@ -21,7 +22,7 @@ const claudeEvents = [
   { type: "message_stop" },
 ];
 const sse = (events: typeof claudeEvents) => events.map(e => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
-for (const name of ["claude", "codex"] as const) {
+for (const name of ["claude", "codex"]) {
   const success = () => name === "claude" ? new Response(sse(claudeEvents), { headers: { "content-type": "text/event-stream" } }) : codexSSE([{ type: "response.completed", response: { status: "completed", output: [] } }]);
   const make = (transport: typeof fetch, recovery: RecoveryPolicy | undefined = policy) => {
     if (name === "claude") return anthropic(new Anthropic({ apiKey: "test", fetch: transport }), { recovery, retry: { backoffMs: [0, 0] } });
@@ -62,7 +63,8 @@ for (const name of ["claude", "codex"] as const) {
     await expect(provider.complete(req)).rejects.toMatchObject({ kind: "quota", reason: "quota", status: 429 });
     expect(calls).toBe(1);
   });
-  for (const [status, reason] of [[403, "permission"], [404, "model-unavailable"], [413, "input-too-large"], [429, "rate-limit"]] as const) {
+  const statusReasons: [number, string][] = [[403, "permission"], [404, "model-unavailable"], [413, "input-too-large"], [429, "rate-limit"]];
+  for (const [status, reason] of statusReasons) {
     test(`${name}: diagnoses HTTP ${status} without exposing the response body`, async () => {
       const provider = make(fetcher(async () => Response.json({ error: { message: "SECRET" } }, { status })));
       const error = await caught(provider.complete(req));
@@ -81,7 +83,7 @@ for (const name of ["claude", "codex"] as const) {
     expect(error instanceof ModelRequestError && error.status === undefined).toBe(true);
     expect(messageOf(error)).not.toContain("SECRET");
   });
-  for (const stage of ["headers", "body", "partial"] as const) test(`${name}: stalled ${stage} is terminal, no replay`, async () => {
+  for (const stage of ["headers", "body", "partial"]) test(`${name}: stalled ${stage} is terminal, no replay`, async () => {
     let calls = 0;
     let signal: AbortSignal | null | undefined;
     const provider = make(fetcher(async (_, init) => {
@@ -168,7 +170,7 @@ const refreshScenarios = [
   { outcome: "rejected", statuses: [401, 401], flags: [undefined, true] },
   { outcome: "transient", statuses: [401, 503, 401], flags: [undefined, true, undefined] },
   { outcome: "cancelled", statuses: [401], flags: [undefined, true] },
-] as const;
+];
 async function expectRefreshResult(result: ReturnType<ReturnType<typeof openai>["complete"]>, outcome: string, reason: Error) {
   if (outcome === "success") expect((await result).stop).toBe("end");
   else if (outcome === "cancelled") await expect(result).rejects.toBe(reason);

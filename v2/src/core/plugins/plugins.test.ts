@@ -8,6 +8,7 @@ import { createConversation } from "../conversations";
 import { assemble } from "./assemble";
 import { enabledNames } from "./enable";
 import { availablePlugins, pluginHash, registerBuiltins } from "./loader";
+import type { Tool } from "../tools/registry";
 import { definePlugin, noHooks, type Plugin } from "./types";
 
 const home = tempHome("plugins");
@@ -18,7 +19,7 @@ const assembled = async (input: Parameters<typeof assemble>[0]) => {
   if (!result.ok) throw new Error(result.error);
   return result.data;
 };
-const tool = (name: string) => ({ parallel: () => false, spec: { name, description: name, input_schema: { type: "object" as const, properties: {} } }, run: async () => name });
+const tool = (name: string): Tool => ({ parallel: () => false, spec: { name, description: name, input_schema: { type: "object", properties: {} } }, run: async () => name });
 
 describe("plugins", () => {
   test("enablement: config defaults, then the bubble's on and off", async () => {

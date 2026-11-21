@@ -8,7 +8,7 @@ import OpenAI from "openai";
 import type { Stream } from "openai/streaming";
 import { z } from "zod";
 import type { FunctionTool, ResponseCreateParamsStreaming, ResponseFunctionCallOutputItem, ResponseOutputItemDoneEvent, ResponseCompletedEvent, ResponseInputItem, ResponseOutputItem, ResponseOutputMessage, ResponseStreamEvent } from "openai/resources/responses/responses";
-import type { ContentBlock, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
+import type { ContentBlock, ContentBlockParam, MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { codexCredentials, CodexTokens } from "./auth";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./model";
@@ -48,7 +48,7 @@ export function toResponses(messages: MessageParam[]): CodexInputItem[] {
       if (user === undefined) { user = { role: "user", content: [] }; input.push(user); }
       user.content.push(part);
     };
-    const blocks = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
+    const blocks: ContentBlockParam[] = typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content;
     for (const block of blocks) {
       if (block.type === "text") {
         if (message.role === "user") addUser({ type: "input_text", text: block.text });
@@ -141,7 +141,7 @@ export function openai(credentials: ReturnType<typeof codexCredentials>, options
         store: false, stream: true, parallel_tool_calls: true,
         prompt_cache_key: cacheKey,
         ...settings, include: ["reasoning.encrypted_content"],
-        ...(req.tools.length > 0 ? { tools: toResponseTools(req.tools), tool_choice: "auto" as const } : {}),
+        ...(req.tools.length > 0 ? { tools: toResponseTools(req.tools), tool_choice: "auto" } : {}),
       };
       let refreshed = false;
       return providerRequest(options.recovery, async (started, scope) => {
@@ -202,12 +202,12 @@ export function openai(credentials: ReturnType<typeof codexCredentials>, options
   };
 }
 
-export function codexRequestSettings(model: string, settings: RequestSettings = {}) {
+export function codexRequestSettings(model: string, settings: RequestSettings = {}): Pick<CodexRequestBody, "reasoning" | "service_tier"> {
   const checked = validateSettings(model, settings);
   if (!checked.ok) throw new Error(checked.error);
   return {
-    reasoning: { summary: "auto" as const, ...(settings.effort !== undefined ? { effort: settings.effort } : {}) },
-    ...(settings.fast === true ? { service_tier: "priority" as const } : {}),
+    reasoning: { summary: "auto", ...(settings.effort !== undefined ? { effort: settings.effort } : {}) },
+    ...(settings.fast === true ? { service_tier: "priority" } : {}),
   };
 }
 

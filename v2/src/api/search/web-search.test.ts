@@ -324,11 +324,12 @@ test("reconstruction rejects sparse, duplicate and invalid indices or a malforme
 
 test("no-search, missing-attribution and refusal have distinct safe error classifications", async () => {
   const { terminal, output } = codexStreamSearchFixture();
-  for (const [items, code] of [
+  const cases: [unknown[], SearchError["code"]][] = [
     [[output.at(-1)], "no_search"],
     [[output[1]], "sources"],
     [[{ ...output.at(-1), content: [{ type: "refusal", refusal: "SECRET" }] }], "refusal"],
-  ] as const) await expectSearchCode([{ ...terminal, response: { status: "completed", output: items } }], code);
+  ];
+  for (const [items, code] of cases) await expectSearchCode([{ ...terminal, response: { status: "completed", output: items } }], code);
 });
 
 test("cancellation after live-shaped done items does not return partial sources or wait for the terminal event", async () => {

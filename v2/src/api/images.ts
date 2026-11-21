@@ -9,8 +9,8 @@ function crc32(bytes: Uint8Array): number {
   for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) === 1 ? 0xedb88320 : 0); }
   return (crc ^ 0xffffffff) >>> 0;
 }
-export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
-export type ImageMime = typeof IMAGE_MIMES[number];
+export type ImageMime = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+export const IMAGE_MIMES: readonly ImageMime[] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 type Size = { width: number; height: number };
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const PNG_DEPTHS: Record<number, number[] | undefined> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };

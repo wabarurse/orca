@@ -2,6 +2,8 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { ResponseFunctionToolCall, ResponseOutputItem } from "openai/resources/responses/responses";
 import { z } from "zod";
+import type { CompleteRequest } from "./provider";
+import type { Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import { fromResponses, openai, toResponses, toResponseTools } from "./openai";
 import { providerFor } from "./model/provider-for";
 import { clearCatalogLimits, contextWindow } from "./model/context-window";
@@ -26,7 +28,7 @@ async function json(req: Request): Promise<Record<string, unknown>> {
   const body: unknown = await req.json();
   return bodyShape.parse(body);
 }
-const request = (onText = (_: string) => {}) => ({ model: "gpt-test", messages: [{ role: "user" as const, content: "hi" }], tools: [], maxTokens: 100, onText });
+const request = (onText = (_: string) => {}): CompleteRequest => ({ model: "gpt-test", messages: [{ role: "user", content: "hi" }], tools: [], maxTokens: 100, onText });
 
 test("providerFor routes claude models to Claude Code and the rest to Codex", () => {
   expect(providerFor("claude-opus-5-5")).toBe("anthropic");
@@ -50,7 +52,7 @@ test("Responses translation preserves tool IDs, errors, text order and encrypted
 });
 
 test("tools use Responses function schemas", () => {
-  const schema = { type: "object" as const, properties: { command: { type: "string" } }, required: ["command"] };
+  const schema: ApiTool["input_schema"] = { type: "object", properties: { command: { type: "string" } }, required: ["command"] };
   expect(toResponseTools([{ name: "bash", description: "run", input_schema: schema }])).toEqual([
     { type: "function", name: "bash", description: "run", parameters: schema, strict: false },
   ]);

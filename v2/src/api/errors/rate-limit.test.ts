@@ -6,6 +6,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { paths, readState, updateState } from "../../config";
 import { anthropic } from "../anthropic";
+import type { CompleteRequest } from "../provider";
 import { coordinatedTransport, lockoutUntil } from "./rate-limit";
 
 const caught = (promise: Promise<unknown>): Promise<unknown> => promise.then(() => undefined, (error: unknown) => error);
@@ -51,7 +52,7 @@ test("a lockout is one request, reported as a rate limit with its end time", asy
   let calls = 0;
   const transport = Object.assign(async () => { calls++; return locked(); }, { preconnect: fetch.preconnect });
   const provider = anthropic(new Anthropic({ apiKey: "test", fetch: transport }), { recovery: { enabled: true, account: "report", idleMs: 100, totalMs: 2000 }, retry: { backoffMs: [0, 0] } });
-  const request = { model: "test", messages: [{ role: "user" as const, content: "hi" }], tools: [], maxTokens: 100, onText() {} };
+  const request: CompleteRequest = { model: "test", messages: [{ role: "user", content: "hi" }], tools: [], maxTokens: 100, onText() {} };
   const error = await caught(provider.complete(request));
   expect(error).toMatchObject({ reason: "rate-limit", status: 429 });
   expect(messageOf(error)).toMatch(/^The provider rate limited this account until \w{3} \d+\D+\d+:\d\d [AP]M\. Switch accounts/);

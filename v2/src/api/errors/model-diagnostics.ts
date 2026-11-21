@@ -27,7 +27,7 @@ const guidance = {
   connection: "The model connection failed before a usable response. Check connectivity and retry.",
   response: "The model response failed or was incomplete. Resume to try again.",
   setup: "The request failed during setup. Check local credentials, model settings and inputs.",
-} as const;
+};
 
 type Reason = keyof typeof guidance;
 type Kind = "total-timeout" | "idle-timeout" | "quota" | "interrupted" | "exhausted" | "permanent";

@@ -1,4 +1,4 @@
-import type { ContentBlock, MessageParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ContentBlock, ContentBlockParam, MessageParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { CompleteRequest, Provider, Turn } from "../../api";
 import { restartable } from "../../api/errors";
 import type { RequestSettings } from "../../api/model";
@@ -85,7 +85,7 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
       const text = kept.length > 0 ? format(kept) : "";
       const turn = withImages(text, images);
       const content: MessageParam["content"] = results.length === 0 ? turn
-        : [...results, ...(typeof turn === "string" ? (turn.length > 0 ? [{ type: "text" as const, text: turn }] : []) : turn)];
+        : [...results, ...(typeof turn === "string" ? (turn.length > 0 ? [textOnly(turn)] : []) : turn)];
       if (results.length > 0 || kept.length > 0) await setup.transcript.append({ type: "message", inbox: messages, message: { role: "user", content } });
       else await setup.transcript.append({ type: "message", inbox: messages, message: { role: "user", content: "[input withdrawn by a plugin]" } });
       if (kept.length > 0) setup.emit({ kind: "input", messages: kept });
@@ -187,7 +187,7 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
       if (turn.stop === "limit" && limits++ < 2) {
         notice("output limit reached; asking the model to continue in smaller pieces");
         await setup.transcript.append({ type: "message", inbox: [], message: { role: "user", content: calls.length > 0
-          ? calls.map(call => ({ type: "tool_result" as const, tool_use_id: call.id, is_error: true, content: "not run: the response was cut off at the output limit. Re-issue this call with complete arguments, in smaller pieces if needed." }))
+          ? calls.map(call => ({ type: "tool_result", tool_use_id: call.id, is_error: true, content: "not run: the response was cut off at the output limit. Re-issue this call with complete arguments, in smaller pieces if needed." }))
           : "The response reached the output limit. Continue from where it stopped, in smaller pieces." } });
         continue;
       }
@@ -220,4 +220,8 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
       }
     },
   };
+}
+
+function textOnly(text: string): ContentBlockParam {
+  return { type: "text", text };
 }

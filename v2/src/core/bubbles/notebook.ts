@@ -7,7 +7,7 @@ import { fail, ok, type Result } from "../../config";
 
 export type Page = { id: string; title: string; summary: string; bytes: number; author: string; createdAt: string; usedAt: string; archivedAt: string | null };
 const PageRow = z.object({ id: z.string(), title: z.string(), summary: z.string(), bytes: z.number(), author: z.string(), createdAt: z.string(), usedAt: z.string(), archivedAt: z.string().nullable() });
-export const NOTEBOOK = { pages: 200, bytes: 256 * 1024 * 1024, page: 8 * 1024 * 1024, title: 120, summary: 240, read: 24_000, matches: 60 } as const;
+export const NOTEBOOK = { pages: 200, bytes: 256 * 1024 * 1024, page: 8 * 1024 * 1024, title: 120, summary: 240, read: 24_000, matches: 60 };
 export const ARCHIVE_DAYS = 14;
 
 const dir = (bubble: string) => join(bubbleDir(bubble), "notebook");

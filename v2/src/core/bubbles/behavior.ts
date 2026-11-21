@@ -6,7 +6,7 @@ import { bubbleDir, readJson, rows as validRows, writeFileAtomic } from "./store
 
 export type BehaviorLine = { key: string; text: string; confidence: "explicit" | "tentative"; source: string; quote: string; at: string };
 export type BehaviorScope = { kind: "user" } | { kind: "bubble"; bubble: string };
-export const BEHAVIOR = { lines: 20, text: 200 } as const;
+export const BEHAVIOR = { lines: 20, text: 200 };
 
 const file = (scope: BehaviorScope): string => scope.kind === "user" ? join(paths.root, "behavior.json") : join(bubbleDir(scope.bubble), "behavior.json");
 

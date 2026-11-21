@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fail, ok, paths, type Result } from "../../config";
 import { readConversation } from "../conversations";
 
-export const RESERVED_DATA = ["bubble", "global"] as const;
+export const RESERVED_DATA = ["bubble", "global"];
 
 async function pointLink(link: string, target: string): Promise<Result<null>> {
   const current = await lstat(link).catch(() => null);

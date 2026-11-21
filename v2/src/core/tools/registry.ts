@@ -58,7 +58,7 @@ export const CORE_TOOLS: Record<Role, string[]> = {
   reviewer: ["bash", "read", "write", "edit", "inbox", "memory", "notebook", "skill", "web_search", "mcp"],
 };
 
-export const CORE_TOOL_NAMES = ["bash", "read", "write", "edit", "subagent", "inbox", "memory", "notebook", "behavior", "skill", "web_search", "mcp"] as const;
+export const CORE_TOOL_NAMES = ["bash", "read", "write", "edit", "subagent", "inbox", "memory", "notebook", "behavior", "skill", "web_search", "mcp"];
 
 export function settled<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);

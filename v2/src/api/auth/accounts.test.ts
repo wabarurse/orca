@@ -7,7 +7,7 @@ import { accounts } from "./accounts";
 import { provider as loadProvider } from "../account";
 import { CLAUDE_TOKEN_URL, saveClaudeTokens } from "./claude";
 import { CLAUDE_BETAS } from "../anthropic";
-import type { Provider } from "../provider";
+import type { CompleteRequest, Provider } from "../provider";
 import { clearCatalogEfforts, modelCapabilities } from "../model/capabilities";
 import { saveCodexTokens } from "./codex";
 import { fakeCodexTokens } from "../../test/codex";
@@ -75,9 +75,9 @@ function streamResponse(): Response {
   return new Response(events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 }
 
-const turn = (onText = (_: string) => {}) => ({
-  model: "claude-test", messages: [{ role: "user" as const, content: "hi" }],
-  tools: [{ name: "bash", input_schema: { type: "object" as const, properties: { command: { type: "string" } } } }],
+const turn = (onText = (_: string) => {}): CompleteRequest => ({
+  model: "claude-test", messages: [{ role: "user", content: "hi" }],
+  tools: [{ name: "bash", input_schema: { type: "object", properties: { command: { type: "string" } } } }],
   maxTokens: 100, onText,
 });
 

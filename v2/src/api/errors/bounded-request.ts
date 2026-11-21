@@ -3,7 +3,7 @@ import { withTransientRetries, type RetryOptions } from "./retry";
 import { diagnoseModelError, ModelRequestError, type RequestStage } from "./model-diagnostics";
 export { ModelRequestError } from "./model-diagnostics";
 
-export const MODEL_REQUEST_LIMITS = { totalMs: 600_000, idleMs: 90_000 } as const;
+export const MODEL_REQUEST_LIMITS = { totalMs: 600_000, idleMs: 90_000 };
 type Options = Pick<RetryOptions, "signal" | "backoffMs" | "onRetry"> & { totalMs?: number; idleMs?: number };
 
 function requestDeadline(options: Options) {

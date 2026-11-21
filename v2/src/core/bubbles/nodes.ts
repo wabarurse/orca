@@ -23,7 +23,7 @@ export const BRANCHES: Record<string, string> = {
   "work-log": "pull requests and tickets: what each does, its base, its state, anything unusual",
 };
 export const OVERVIEW = "overview";
-export const LIMITS = { title: 80, summary: 200, entry: 700, keywords: 12, keyword: 40, sources: 8, source: 200, active: 40 } as const;
+export const LIMITS = { title: 80, summary: 200, entry: 700, keywords: 12, keyword: 40, sources: 8, source: 200, active: 40 };
 const SLUG = "[a-z0-9][a-z0-9-]{0,60}";
 const NODE_ID = new RegExp(`^(?:${OVERVIEW}|(?:${Object.keys(BRANCHES).join("|")})(?:/${SLUG}){1,3})$`);
 
@@ -47,7 +47,7 @@ export function parseNode(text: string): MemoryNode | null {
   const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
   if (match === null) return null;
   const [, front = "", body = ""] = match;
-  const head = new Map(front.split("\n").map(row => { const at = row.indexOf(":"); return [row.slice(0, at).trim(), row.slice(at + 1).trim()] as const; }));
+  const head = new Map(front.split("\n").map(row => { const at = row.indexOf(":"); return [row.slice(0, at).trim(), row.slice(at + 1).trim()]; }));
   const id = head.get("id") ?? "", revision = Number(head.get("revision"));
   if (!NODE_ID.test(id) || !Number.isSafeInteger(revision)) return null;
   const rows: { n: number; entry: Entry }[] = [];

@@ -1,3 +1,4 @@
+import type { TextBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Transcript } from "../transcript";
 
 const HEADER = /^\[orca reference: ([a-z][a-z0-9-]{0,63})\]\n/;
@@ -14,10 +15,10 @@ export async function appendContext(transcript: Transcript, sections: Record<str
       if (match?.[1] !== undefined) previous.set(match[1], block.text);
     }
   }
-  const changes = [...new Set([...Object.keys(sections), ...previous.keys()])].sort().flatMap(key => {
+  const changes: TextBlockParam[] = [...new Set([...Object.keys(sections), ...previous.keys()])].sort().flatMap((key): TextBlockParam[] => {
     const value = sections[key] ?? "";
     const text = note(key, value);
-    return previous.get(key) === text || (value.length === 0 && !previous.has(key)) ? [] : [{ type: "text" as const, text }];
+    return previous.get(key) === text || (value.length === 0 && !previous.has(key)) ? [] : [{ type: "text", text }];
   });
   if (changes.length === 0) return;
   await transcript.append({ type: "message", inbox: [], message: { role: "user", content: changes } });

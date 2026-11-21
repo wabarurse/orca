@@ -130,7 +130,8 @@ function cleanSource(entry: unknown): { source?: SearchSource; limited: boolean 
   if (!sourceURL(item.url)) return { limited: true };
   const source: SearchSource = { url: item.url };
   let limited = false;
-  for (const [key, cap] of [["title", 512], ["excerpt", 1200]] as const) {
+  const caps: ["title" | "excerpt", number][] = [["title", 512], ["excerpt", 1200]];
+  for (const [key, cap] of caps) {
     const value = item[key];
     if (typeof value !== "string") continue;
     const clean = clipped(value, cap);

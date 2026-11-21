@@ -26,7 +26,8 @@ export async function legacyProfile(name: ProviderName): Promise<string> {
 
 export async function accounts(selected?: AccountRef): Promise<Account[]> {
   const out: Account[] = [];
-  for (const name of ["anthropic", "openai"] as const) {
+  const names: ProviderName[] = ["anthropic", "openai"];
+  for (const name of names) {
     const profiles = name === "anthropic" ? claudeProfiles() : codexProfiles();
     const read = name === "anthropic" ? readClaudeTokens : readCodexTokens;
     const extra = selected?.provider === name ? [validateProfile(selected.profile)] : [];
