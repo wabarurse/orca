@@ -1,4 +1,3 @@
-// Plugin hooks as the loop runs them: each hook with the plugin context it belongs to, in plugin order.
 import type { Tool as ApiTool, MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { AfterTool, BeforeRequest, BeforeTool, OnInput, PluginContext } from "../plugins/types";
 import type { ToolResult } from "../tools/registry";
@@ -13,7 +12,6 @@ const named = (ctx: PluginContext, error: unknown): Error => new Error(`plugin $
 
 export type ToolDecision = { action: "run"; input: Record<string, unknown> } | { action: "block"; reason: string };
 
-/** Every beforeTool hook in turn: each may change the input, block the call, or ask the user. A hook that throws blocks. */
 export async function beforeTool(hooks: LoopHooks, name: string, input: Record<string, unknown>, confirm: (question: string) => Promise<boolean>): Promise<ToolDecision> {
   let current = input;
   for (const { hook, ctx } of hooks.beforeTool) {
@@ -48,7 +46,6 @@ export async function beforeRequest(hooks: LoopHooks, request: { system: string;
   return current;
 }
 
-/** User input through every onInput hook: kept (perhaps rewritten) or dropped with a reason. Agent messages pass. */
 export async function onInput(hooks: LoopHooks, message: Message): Promise<{ message: Message; dropped: string | null }> {
   if (message.from !== "user") return { message, dropped: null };
   let current = message;

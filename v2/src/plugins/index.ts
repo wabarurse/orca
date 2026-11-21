@@ -1,4 +1,3 @@
-// The built-in plugins, imported statically so the compiled binary carries them.
 import { join } from "node:path";
 import type { BuiltinPlugin } from "../core/plugins";
 

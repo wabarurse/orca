@@ -1,6 +1,6 @@
 import { ensureBubble, listPages, peekBubble, putPage, queryPage, readPage, renderPages } from "../bubbles";
 import { filePath } from "./files";
-import type { Tool } from "./registry";
+import { settled, type Tool } from "./registry";
 
 export const notebook: Tool = {
   parallel: input => input.action !== "put",
@@ -18,17 +18,17 @@ export const notebook: Tool = {
   async run(input, ctx) {
     if (input.action === "put") {
       if ((input.content === undefined) === (input.path === undefined)) throw new Error("put needs exactly one of content or path");
-      const content = typeof input.content === "string" ? input.content : await Bun.file(await filePath(input.path, ctx)).text();
+      const content = typeof input.content === "string" ? input.content : await Bun.file(settled(await filePath(input.path, ctx))).text();
       const bubble = await peekBubble(ctx.conversation) ?? (await ensureBubble(ctx.conversation)).id;
-      const page = await putPage(bubble, { title: String(input.title ?? ""), summary: String(input.summary ?? ""), content }, ctx.agent);
+      const page = settled(await putPage(bubble, { title: String(input.title ?? ""), summary: String(input.summary ?? ""), content }, ctx.agent));
       return `saved ${page.id} "${page.title}" (${page.bytes} bytes)`;
     }
     const bubble = await peekBubble(ctx.conversation);
     if (bubble === null) return "the notebook is empty";
     if (input.action === "list") { const pages = await listPages(bubble); return pages.length > 0 ? renderPages(pages, 100) : "the notebook is empty"; }
     if (typeof input.id !== "string") throw new Error("read and query need a page id");
-    if (input.action === "read") return readPage(bubble, input.id, typeof input.start_line === "number" ? input.start_line : 1, typeof input.lines === "number" ? input.lines : 400);
-    if (input.action === "query") return queryPage(bubble, input.id, String(input.pattern ?? ""));
+    if (input.action === "read") return settled(await readPage(bubble, input.id, typeof input.start_line === "number" ? input.start_line : 1, typeof input.lines === "number" ? input.lines : 400));
+    if (input.action === "query") return settled(await queryPage(bubble, input.id, typeof input.pattern === "string" ? input.pattern : ""));
     throw new Error("unknown notebook action");
   },
 };

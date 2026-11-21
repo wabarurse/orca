@@ -1,5 +1,3 @@
-// The core runner: an agent is a detached child process whose output goes to its log file. Runner plugins (tmux,
-// rex) start the same command in a window you can watch.
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import { pidAlive } from "../lock";
@@ -23,6 +21,6 @@ export const plainRunner: Runner = {
   async stop(conversation: string, agent: string) {
     const run = (await listRuns(conversation)).find(r => r.agent === agent);
     if (run?.pid == null) return;
-    try { process.kill(-run.pid, "SIGTERM"); } catch { try { process.kill(run.pid, "SIGTERM"); } catch { /* gone */ } }
+    try { process.kill(-run.pid, "SIGTERM"); } catch { try { process.kill(run.pid, "SIGTERM"); } catch {} }
   },
 };

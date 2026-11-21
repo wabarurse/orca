@@ -1,5 +1,3 @@
-// The ends of a conversation: its plugins' background `stop` (the daemon stopping) and `remove` (the conversation
-// deleted) hooks, and deletion itself: daemon and agents stopped, hooks run, folders and worktrees removed.
 import { pluginData } from "./bubbles";
 import { deleteConversation, readConversation } from "./conversations";
 import { stopDaemon } from "./daemon/client";
@@ -10,9 +8,9 @@ import type { BackgroundContext, BackgroundHook } from "./plugins/types";
 import { stopAgent } from "./runner/runtime";
 import { listRuns, live } from "./runner/runs";
 import { pruneWorktrees } from "./runner/worktree";
+import { errorMessage } from "./result";
 import { trustState } from "./trust";
 
-/** Run one background hook of every enabled plugin; a failing hook is reported, never fatal. */
 export async function runBackgroundHooks(conversation: string, which: "stop" | "remove", log: (text: string) => void): Promise<void> {
   const meta = await readConversation(conversation);
   if (meta === null) return;
@@ -23,7 +21,7 @@ export async function runBackgroundHooks(conversation: string, which: "stop" | "
     if (hook === null) continue;
     const ctx: BackgroundContext = { plugin: name, conversation, directory: meta.directory, data: scope => pluginData(conversation, name, scope),
       notify: async text => { await put(conversation, "orchestrator", name, text, { images: [], delivery: "steer" }); } };
-    await hook(ctx).catch((error: unknown) => { log(`${name} ${which}: ${error instanceof Error ? error.message : String(error)}\n`); });
+    await hook(ctx).catch((error: unknown) => { log(`${name} ${which}: ${errorMessage(error)}\n`); });
   }
 }
 
@@ -33,6 +31,7 @@ export async function removeConversation(conversation: string, log: (text: strin
   await stopDaemon(conversation);
   for (const run of await listRuns(conversation)) if (live(run)) await stopAgent(conversation, run.agent);
   await runBackgroundHooks(conversation, "remove", log);
-  await deleteConversation(conversation);
+  const deleted = await deleteConversation(conversation);
+  if (!deleted.ok) throw new Error(deleted.error);
   await pruneWorktrees(meta.directory);
 }

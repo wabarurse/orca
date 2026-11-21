@@ -1,4 +1,3 @@
-// A temporary ORCA2_HOME per test file, removed afterwards.
 import { afterAll, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

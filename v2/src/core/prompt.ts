@@ -1,5 +1,3 @@
-// The role prompts: short lists, stable across a run so the prompt cache holds. Plugins add their own lines only for
-// bundles that use them (plugins/bundles.ts).
 import type { Role } from "./types";
 
 export const RESPONSE_STYLE = "Answer the current question briefly in plain language: by default 1-3 sentences. Include only what is needed to answer or act; keep failures, blockers and uncertainty.";

@@ -1,4 +1,3 @@
-// One agent run, assembled: its conversation, bundle, plugins, transcript, model and loop.
 import { rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { provider as loadProvider } from "../api";
@@ -19,13 +18,13 @@ import { put } from "./inbox";
 import { pluginData } from "./bubbles";
 import { scriptedProvider } from "./scripted";
 import { ensureBuiltinSkills } from "./builtin-skills";
+import { fail, ok, type Result } from "./result";
 
 export type SessionInput = {
   conversation: string;
   agent: string;
   bundle: string;
   branch: string | null;
-  /** The working folder; null uses the conversation's folder. */
   cwd: string | null;
   fresh: boolean;
   requireInput: boolean;
@@ -33,17 +32,13 @@ export type SessionInput = {
   signal: AbortSignal;
   runtime: Runtime;
   compactRequested: () => boolean;
-  /** Overrides the model for this run (headless --model); null uses the conversation's or the config's. */
   model: string | null;
-  /** The daemon keeps its transcript and background memory across turns; null opens them fresh. */
   keep: { transcript: Transcript; rolling: RollingCompactor | null } | null;
-  /** Resolves the model for each request; null signs in with the configured account (tests pass a fake). */
   resolve: (() => Promise<Resolved>) | null;
 };
 
 export type Session = { assembled: Assembled; transcript: Transcript; run: () => Promise<RunResult>; rolling: RollingCompactor | null };
 
-/** The model, provider and settings a request uses now. */
 export async function resolveModel(conversation: string, override: string | null): Promise<Resolved> {
   const config = await loadConfig();
   const meta = await readConversation(conversation);
@@ -55,12 +50,14 @@ export async function resolveModel(conversation: string, override: string | null
   return { model, provider, settings: null, contextLimit: null };
 }
 
-export async function openSession(input: SessionInput): Promise<Session> {
+export async function openSession(input: SessionInput): Promise<Result<Session>> {
   const meta = await readConversation(input.conversation);
-  if (meta === null) throw new Error(`no conversation ${input.conversation}`);
+  if (meta === null) return fail(`no conversation ${input.conversation}`);
   const cwd = input.cwd ?? meta.directory;
   const trusted = await trustState(meta.directory) === "trusted";
-  const assembled = await assemble({ conversation: input.conversation, agent: input.agent, bundle: input.bundle, cwd, directory: meta.directory, trusted });
+  const shaped = await assemble({ conversation: input.conversation, agent: input.agent, bundle: input.bundle, cwd, directory: meta.directory, trusted });
+  if (!shaped.ok) return shaped;
+  const assembled = shaped.data;
   for (const problem of assembled.problems) input.emit({ kind: "notice", text: `plugin ${problem.name}: ${problem.problem}` });
   const path = paths.transcript(input.conversation, input.agent);
   if (input.fresh && existsSync(path)) await rename(path, path.replace(/\.jsonl$/, `.${Date.now()}.jsonl`));
@@ -97,5 +94,5 @@ export async function openSession(input: SessionInput): Promise<Session> {
     hooks: assembled.hooks, runtime: input.runtime, emit: input.emit, signal: input.signal, concurrency: config.toolConcurrency,
     rolling, requireInput: input.requireInput, compactRequested: input.compactRequested,
   });
-  return { assembled, transcript, run: agent.run, rolling };
+  return ok({ assembled, transcript, run: agent.run, rolling });
 }

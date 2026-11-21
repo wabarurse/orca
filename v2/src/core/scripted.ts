@@ -1,10 +1,12 @@
-// A provider that replays scripted replies from files, for end-to-end tests that cross processes (the daemon starts
-// real worker processes). Selected only by ORCA2_SCRIPTED=<folder>: <folder>/<agent>.json holds a list of replies,
-// each a list of content blocks; every request takes the first. Never used otherwise.
 import type { ContentBlock } from "@anthropic-ai/sdk/resources/messages";
 import { join } from "node:path";
 import type { Provider } from "../api";
+import { z } from "zod";
 import { withStorageLock } from "./lock";
+import { parseJson } from "./result";
+
+const Block = z.looseObject({ type: z.string() });
+const Replies = z.array(z.array(z.custom<ContentBlock>(value => Block.safeParse(value).success)));
 
 export function scriptedProvider(folder: string): Provider {
   return {
@@ -14,7 +16,9 @@ export function scriptedProvider(folder: string): Provider {
       const agent = request.trace?.agent ?? "unknown";
       const file = join(folder, `${agent}.json`);
       const reply = await withStorageLock(`${file}.lock`, async (): Promise<ContentBlock[]> => {
-        const replies = await Bun.file(file).json().catch(() => []) as ContentBlock[][];
+        const json = parseJson(await Bun.file(file).text().catch(() => "[]"));
+        const parsed = json.ok ? Replies.safeParse(json.data) : null;
+        const replies = parsed !== null && parsed.success ? parsed.data : [];
         const next = replies.shift();
         await Bun.write(file, JSON.stringify(replies));
         const exhausted: ContentBlock = { type: "text", text: `(script for ${agent} exhausted)`, citations: null };

@@ -15,7 +15,7 @@ export const COLOURS = {
   red: "#ffafaf",
   ink: "#1c1c1c",
   fin: "#eeeeee",
-} as const;
+};
 
 const { FIN_COLS, FIN_MIN_COLS } = screens;
 
@@ -136,7 +136,6 @@ export class ChatView {
     this.body.marginBottom = this.ctx.height >= 8 ? 1 : 0;
   }
 
-  /** The footer's rows as last shown; OpenTUI's own height reads the previous layout until the next render. */
   footerRows(): number {
     return this.footerHeight;
   }
@@ -158,7 +157,6 @@ export class ChatView {
     if (sig === this.headerSig) return;
     this.headerSig = sig;
     for (const child of this.info.getChildren()) child.destroyRecursively();
-    // The tabs that fit beside the fin, shifted so the active one always shows; "…" marks the ones left out.
     const labels = header.tabs.map(tab => tab.active ? ` ${tab.label} ` : tab.busy ? `${tab.label} •` : tab.label);
     const active = Math.max(0, header.tabs.findIndex(tab => tab.active));
     const [start, end] = tabWindow(labels, active, Math.max(1, cols - 4 - (wide ? FIN_COLS : 0)));

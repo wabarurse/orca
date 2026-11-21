@@ -1,6 +1,3 @@
-// Run one shell command in the agent's folder, in its own process group, with a timeout. Output beyond the
-// result cap is saved whole under the conversation's folder and the result shows its head, tail and path.
-// Background commands are the processes plugin's (it replaces this tool).
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig, paths } from "../../../config";
@@ -12,7 +9,6 @@ import { readOnly } from "./readonly";
 export const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const SUDO = /\bsudo\b/;
 
-/** Keep both ends of output that is over `max` bytes. */
 export function truncateMiddle(text: string, max: number): string {
   const bytes = Buffer.from(text);
   if (bytes.length <= max) return text;
@@ -21,10 +17,9 @@ export function truncateMiddle(text: string, max: number): string {
 }
 
 function killGroup(pid: number): void {
-  try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+  try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch {} }
 }
 
-/** The environment every command an agent runs gets. */
 export function agentEnv(conversation: string, agent: string, data: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;

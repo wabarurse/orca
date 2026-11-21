@@ -1,4 +1,3 @@
-// v2 is self-contained: no file under v2/src imports anything outside v2 (in particular nothing from v1's src/).
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";

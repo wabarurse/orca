@@ -1,11 +1,11 @@
-// Yes/no questions an agent's plugin hook asks the user ("ask" from beforeTool). The agent writes
-// daemon/confirms/<id>.json and waits; the TUI shows it and writes <id>.answer. Unanswered means no.
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { paths } from "../config";
 import { writeAtomic } from "./conversations";
 
 export type Confirm = { id: string; agent: string; question: string; at: string };
+const ConfirmFile = z.object({ id: z.string(), agent: z.string(), question: z.string(), at: z.string() });
 const dir = (conversation: string): string => join(paths.daemon(conversation), "confirms");
 export const CONFIRM_TIMEOUT_MS = 10 * 60_000;
 
@@ -26,10 +26,13 @@ export async function askUser(conversation: string, agent: string, question: str
 }
 
 export async function pendingConfirms(conversation: string): Promise<Confirm[]> {
-  const names = (await readdir(dir(conversation)).catch(() => [] as string[])).filter(name => name.endsWith(".json")).sort();
+  const names = (await readdir(dir(conversation)).catch((): string[] => [])).filter(name => name.endsWith(".json")).sort();
   const out: Confirm[] = [];
   for (const name of names) {
-    try { out.push(await Bun.file(join(dir(conversation), name)).json() as Confirm); } catch { /* being written or removed */ }
+    let raw: unknown;
+    try { raw = JSON.parse(await Bun.file(join(dir(conversation), name)).text()); } catch { continue; }
+    const confirm = ConfirmFile.safeParse(raw);
+    if (confirm.success) out.push(confirm.data);
   }
   return out.sort((a, b) => a.at.localeCompare(b.at));
 }

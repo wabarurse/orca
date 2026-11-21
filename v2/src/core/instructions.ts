@@ -1,9 +1,8 @@
-// Repository instructions (AGENTS.md / CLAUDE.md, root to target) and skills (repository, personal and plugin),
-// loaded only for trusted folders (trust.ts). Inspired by Codex's hierarchical AGENTS.md and Claude Code's skills.
 import { createHash } from "node:crypto";
 import { access, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { paths } from "../config";
+import { errorCode } from "./result";
 
 export async function repositoryRoot(base: string): Promise<string> {
   for (let dir = base; ; dir = dirname(dir)) {
@@ -12,9 +11,8 @@ export async function repositoryRoot(base: string): Promise<string> {
   }
 }
 
-const missing = (error: unknown): boolean => ["ENOENT", "ENOTDIR"].includes((error as { code?: string }).code ?? "");
+const missing = (error: unknown): boolean => ["ENOENT", "ENOTDIR"].includes(errorCode(error) ?? "");
 
-/** The instruction files from the repository root down to `target`; `belowCwd` keeps only those under cwd (read). */
 export async function repositoryInstructions(cwd: string, target: string, belowCwd: boolean): Promise<string> {
   const base = await realpath(cwd).catch((error: unknown) => { if (missing(error)) return null; throw error; });
   if (base === null) return "";
@@ -46,7 +44,6 @@ export async function repositoryInstructions(cwd: string, target: string, belowC
 export type SkillEntry = { name: string; path: string; description: string };
 export const SKILL_RESULT_LIMIT = 8;
 
-/** Skills from (in order of precedence) the repository when trusted, plugin skill folders, then ~/.orca2/skills. */
 export async function discoverSkills(cwd: string, trusted: boolean, pluginRoots: string[]): Promise<SkillEntry[]> {
   const roots: string[] = [];
   if (trusted) {
@@ -68,10 +65,10 @@ export async function discoverSkills(cwd: string, trusted: boolean, pluginRoots:
     found.set(name, { name, path, description: description !== undefined && description.length > 0 ? description : "Read SKILL.md for instructions" });
   };
   for (const root of roots) {
-    const names = await readdir(root).catch(() => [] as string[]);
+    const names = await readdir(root).catch((): string[] => []);
     for (const name of names.sort()) await add(name, join(root, name, "SKILL.md"));
   }
   for (const dir of pluginRoots) await add(dir.split("/").at(-1) ?? "", join(dir, "SKILL.md"));
-  for (const name of (await readdir(paths.skills).catch(() => [] as string[])).sort()) await add(name, join(paths.skills, name, "SKILL.md"));
+  for (const name of (await readdir(paths.skills).catch((): string[] => [])).sort()) await add(name, join(paths.skills, name, "SKILL.md"));
   return [...found.values()];
 }

@@ -1,6 +1,3 @@
-// The orchestrator as a long-lived process, one per conversation: it holds the daemon lock, answers commands,
-// runs a turn whenever the orchestrator's inbox has input, runs the plugins' background watchers, and notices agents
-// that died without a word. Everything durable is on disk; any number of TUIs read it and write to the inbox.
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { paths } from "../../config";
@@ -43,7 +40,6 @@ async function backgroundWatchers(conversation: string, directory: string): Prom
   return out;
 }
 
-/** Agents whose process died while their record says running: marked exited, the orchestrator told once. */
 async function exitWatchdog(conversation: string): Promise<void> {
   for (const run of await listRuns(conversation)) {
     if (run.agent === "orchestrator" || (run.state !== "running" && run.state !== "starting") || run.pid === null || live(run)) continue;
@@ -53,7 +49,6 @@ async function exitWatchdog(conversation: string): Promise<void> {
   }
 }
 
-/** What agents sent the user since the last look, recorded in the orchestrator's transcript as a replies entry. */
 async function drainUser(conversation: string, transcript: Transcript, seen: Set<string>): Promise<void> {
   await consume(conversation, "user", seen, () => true, async messages => {
     await transcript.append({ type: "replies", messages: messages.map(m => ({ from: m.from, text: m.text })) });
@@ -66,7 +61,7 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
   if (meta === null) { options.log(`no conversation ${conversation}\n`); return 1; }
   await mkdir(paths.daemon(conversation), { recursive: true, mode: 0o700 });
   const release = await tryStorageLock(lockPath(conversation), conversation);
-  if (release === undefined) { options.log("another daemon holds this conversation\n"); return 70; }
+  if (release === null) { options.log("another daemon holds this conversation\n"); return 70; }
   const transcript = openTranscript(paths.transcript(conversation, "orchestrator"));
   const userSeen = new Set<string>();
   let rolling: RollingCompactor | null = null;
@@ -108,7 +103,7 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
   const watchers_: FSWatcher[] = [];
   for (const dir of [paths.inbox(conversation, "orchestrator"), `${paths.daemon(conversation)}/commands`]) {
     await mkdir(dir, { recursive: true });
-    try { watchers_.push(watch(dir, () => { wake?.(); })); } catch { /* polling still works */ }
+    try { watchers_.push(watch(dir, () => { wake?.(); })); } catch {}
   }
 
   try {
@@ -120,19 +115,22 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
         const turn = status.turns + 1;
         const writer = liveWriter(conversation, turn);
         turnAbort = new AbortController();
-        const poll = setInterval(() => { void handleCommands(); }, 100);
+        const poll = setInterval(() => { void handleCommands().catch((error: unknown) => { options.log(`commands: ${String(error)}\n`); }); }, 100);
         await setStatus({ state: "turn", turns: turn, error: null });
         try {
           const manual = compactRequested;
           compactRequested = false;
-          const session = await openSession({ conversation, agent: "orchestrator", bundle: "orchestrator", branch: null, cwd: null, fresh: false, requireInput: !manual,
+          const opened = await openSession({ conversation, agent: "orchestrator", bundle: "orchestrator", branch: null, cwd: null, fresh: false, requireInput: !manual,
             emit: event => { writer.emit(event); if (event.kind === "text") options.log(event.text); }, signal: turnAbort.signal,
             runtime: runtimeFor(conversation, "orchestrator", fileConfirm(conversation, "orchestrator", turnAbort.signal)),
             compactRequested: () => manual, model: options.model, keep: { transcript, rolling }, resolve: null });
-          rolling = session.rolling;
-          const result = await session.run();
-          await setStatus({ error: result.error });
-          if (result.error !== null) options.log(`\nturn failed: ${result.error}\n`);
+          if (!opened.ok) await setStatus({ error: opened.error });
+          else {
+            rolling = opened.data.rolling;
+            const result = await opened.data.run();
+            await setStatus({ error: result.error });
+            if (result.error !== null) options.log(`\nturn failed: ${result.error}\n`);
+          }
         } catch (error) {
           await setStatus({ error: error instanceof Error ? error.message : String(error) });
         } finally {

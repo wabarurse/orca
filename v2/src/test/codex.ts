@@ -1,6 +1,5 @@
 import type { CodexTokens } from "../api/auth/codex";
 
-/** Deliberately unsigned test token. Never valid against a real service. */
 export function fakeCodexTokens(accountId = "test-account", expiresAt = Date.now() + 3_600_000, marker = "test"): CodexTokens {
   const payload = { exp: Math.floor(expiresAt / 1000), marker, "https://api.openai.com/auth": { chatgpt_account_id: accountId } };
   return { accessToken: `test.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.signature`,

@@ -1,6 +1,3 @@
-// The TUI shell: one conversation's chat (header, conversation, composer with counts) and the work page (Agents plus
-// every plugin tab). It never runs a turn: it reads the transcript and the daemon's live file, writes to the inbox,
-// and draws what plugins return.
 import { readFile } from "node:fs/promises";
 import { loadConfig, paths } from "../config";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
@@ -19,7 +16,7 @@ import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustQuestion, trustState } from "../core/trust";
 import type { AgentEvent, Message } from "../core/types";
-import { dim, editor, fit, readClipboardImage, screens, type Key, type Terminal } from "./components";
+import { dim, editor, fit, readClipboardImage, screens, type Clipboard, type Key, type Terminal } from "./components";
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
 import { renderWork, type WorkTab } from "./work";
@@ -36,7 +33,7 @@ export type AppDeps = {
   directory: string;
   now: () => number;
   ensureDaemon: (conversation: string) => Promise<void>;
-  clipboard: () => Promise<Uint8Array | null>;
+  clipboard: () => Promise<Clipboard<Uint8Array>>;
   exit: (code: number) => void;
 };
 
@@ -44,8 +41,7 @@ const POLL_MS = 250;
 const SLOW_MS = 2000;
 
 export class App {
-  private conversation!: Conversation;
-  private transcript!: Transcript;
+  private current: { conversation: Conversation; transcript: Transcript } | null = null;
   private head: string | null = "unset";
   private cached: screens.ScreenItem[] = [];
   private lastText = "";
@@ -74,10 +70,29 @@ export class App {
 
   constructor(private readonly deps: AppDeps) {}
 
+  private get conversation(): Conversation {
+    if (this.current === null) throw new Error("the TUI used its conversation before start()");
+    return this.current.conversation;
+  }
+
+  private get transcript(): Transcript {
+    if (this.current === null) throw new Error("the TUI used its transcript before start()");
+    return this.current.transcript;
+  }
+
+  conversationId(): string { return this.conversation.id; }
+
+  async refresh(): Promise<void> {
+    this.lastSlow = Number.NEGATIVE_INFINITY;
+    await this.poll();
+  }
+
+  private failed(error: unknown): void { this.flash(error instanceof Error ? error.message : String(error)); }
+
   async start(): Promise<void> {
     const existing = (await listConversations()).find(c => c.directory === this.deps.directory);
     await this.switchTo(existing ?? await createConversation(this.deps.directory, null));
-    this.deps.terminal.onKey(key => { void this.key(key); });
+    this.deps.terminal.onKey(key => { this.key(key).catch((error: unknown) => { this.failed(error); }); });
     this.deps.terminal.onResize(() => { this.head = "unset"; this.draw(); });
     this.deps.terminal.onAction(action => { this.action(action); });
     this.deps.terminal.open();
@@ -86,7 +101,7 @@ export class App {
       await setTrust(this.deps.directory, yes);
       this.flash(yes ? "folder trusted" : "folder not trusted: its instructions, skills and plugins stay off");
     }
-    this.timer = setInterval(() => { void this.poll(); }, POLL_MS);
+    this.timer = setInterval(() => { this.poll().catch((error: unknown) => { this.failed(error); }); }, POLL_MS);
     await this.poll();
   }
 
@@ -95,11 +110,8 @@ export class App {
     this.deps.terminal.close();
   }
 
-  // ---- data ----
-
   private async switchTo(conversation: Conversation): Promise<void> {
-    this.conversation = conversation;
-    this.transcript = openTranscript(paths.transcript(conversation.id, "orchestrator"));
+    this.current = { conversation, transcript: openTranscript(paths.transcript(conversation.id, "orchestrator")) };
     this.head = "unset";
     this.events = [];
     this.liveTurn = -1;
@@ -112,7 +124,7 @@ export class App {
     await this.deps.ensureDaemon(conversation.id).catch((error: unknown) => { this.flash(`daemon: ${error instanceof Error ? error.message : String(error)}`); });
   }
 
-  private async poll(): Promise<void> {
+  async poll(): Promise<void> {
     if (this.quitting) return;
     const id = this.conversation.id;
     this.transcript.refresh();
@@ -136,7 +148,7 @@ export class App {
     } else this.events = [];
     this.queued = (await pending(id, "orchestrator")).map(item => item.message).filter(m => m.from === "user");
     this.confirms = await pendingConfirms(id);
-    if (this.confirms.length > 0 && this.modal === null) void this.answerConfirms();
+    if (this.confirms.length > 0 && this.modal === null) this.answerConfirms().catch((error: unknown) => { this.failed(error); });
     if (this.deps.now() - this.lastSlow > SLOW_MS) {
       this.lastSlow = this.deps.now();
       await this.slow(pid);
@@ -170,8 +182,6 @@ export class App {
     }
   }
 
-  // ---- modals and plugin hosts ----
-
   private ask(modal: { kind: "confirm"; question: string }): Promise<boolean>;
   private ask(modal: { kind: "input"; prompt: string; initial: string }): Promise<string | null>;
   private ask(modal: { kind: "pick"; title: string; options: string[] }): Promise<number | null>;
@@ -193,8 +203,6 @@ export class App {
   }
 
   private flash(text: string): void { this.note = text.replace(/\s+/g, " ").trim(); this.draw(); }
-
-  // ---- keys ----
 
   private async key(key: Key): Promise<void> {
     if (this.modal !== null) { this.modalKey(this.modal, key); return; }
@@ -261,7 +269,6 @@ export class App {
     await this.poll();
   }
 
-  /** Esc: the newest queued message the orchestrator has not read goes back into the composer. */
   private async takeBack(): Promise<void> {
     const last = this.queued.at(-1);
     if (last === undefined) return;
@@ -274,9 +281,9 @@ export class App {
 
   private async pasteImage(): Promise<void> {
     try {
-      const bytes = await this.deps.clipboard();
-      if (bytes === null) { this.flash("no image on the clipboard"); return; }
-      this.images.push(await saveImage(this.conversation.id, bytes));
+      const read = await this.deps.clipboard();
+      if (!read.ok) { this.flash(`paste failed: ${read.error}`); return; }
+      this.images.push(await saveImage(this.conversation.id, read.data));
       this.flash(`image attached (${this.images.length})`);
     } catch (error) { this.flash(`paste failed: ${error instanceof Error ? error.message : String(error)}`); }
   }
@@ -302,7 +309,7 @@ export class App {
       const model = args.trim().length > 0 ? args.trim() : await this.ask({ kind: "input", prompt: "model ", initial: this.model });
       if (model === null || model.length === 0) return;
       await saveConversation({ ...this.conversation, model });
-      this.conversation = { ...this.conversation, model };
+      this.current = { conversation: { ...this.conversation, model }, transcript: this.transcript };
       this.flash(`model ${model} from the next request`);
       return;
     }
@@ -325,8 +332,7 @@ export class App {
     if (name === undefined) return;
     const bubble = this.conversation.bubble ?? (await ensureBubble(this.conversation.id)).id;
     await setBubblePlugin(bubble, name, enabled.includes(name) ? "off" : "on");
-    this.conversation = (await readConversation(this.conversation.id)) ?? this.conversation;
-    await this.switchTo(this.conversation);
+    await this.switchTo((await readConversation(this.conversation.id)) ?? this.conversation);
     this.flash(`${name} ${enabled.includes(name) ? "off" : "on"} for this bubble (from the next turn)`);
   }
 
@@ -340,14 +346,12 @@ export class App {
     if (action.kind === "toggle") {
       if (this.open.has(action.key)) this.open.delete(action.key); else this.open.add(action.key);
       this.head = "unset";
-      void this.poll();
+      this.poll().catch((error: unknown) => { this.failed(error); });
     } else if (action.kind === "open") {
       const tab = this.tabs().findIndex(t => t.id === action.tab);
-      if (tab !== -1) void this.openPage(tab);
+      if (tab !== -1) this.openPage(tab).catch((error: unknown) => { this.failed(error); });
     }
   }
-
-  // ---- work page ----
 
   private tabs(): (WorkTab & { chord: string | null; plugin: BoundUi | null })[] {
     return [{ id: "agents", title: "Agents", count: null, chord: "a", plugin: null },
@@ -417,8 +421,6 @@ export class App {
     this.draw();
   }
 
-  // ---- drawing ----
-
   private draw(): void {
     const t = this.deps.terminal;
     if (this.page !== null) {
@@ -473,12 +475,14 @@ function edit(state: editor.EditState, key: Key): editor.EditState {
 
 export async function startTui(directory: string): Promise<number> {
   const { openTuiTerminal } = await import("./otui");
-  const terminal = openTuiTerminal();
+  const opened = openTuiTerminal();
+  if (!opened.ok) { process.stderr.write(`orca2: ${opened.error}\n`); return 1; }
+  const terminal = opened.data;
   return new Promise<number>(resolve => {
     const app = new App({ terminal, directory, now: () => Date.now(),
       ensureDaemon: async conversation => { await ensureDaemon(conversation, null); },
-      clipboard: async () => { const image = await readClipboardImage(); return image.bytes; },
-      exit: code => { void (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }); } });
+      clipboard: async () => { const image = await readClipboardImage(); return image.ok ? { ok: true, data: image.data.bytes } : image; },
+      exit: code => { (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }, () => { resolve(code); }); } });
     app.start().catch((error: unknown) => { app.stop(); process.stderr.write(`orca2: ${error instanceof Error ? error.message : String(error)}\n`); resolve(1); });
   });
 }

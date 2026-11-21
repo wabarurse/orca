@@ -1,13 +1,25 @@
-// The files between the daemon and its clients (TUIs, `orca2 msg`), under conversations/<id>/daemon/:
-// status.json (what the daemon is doing), commands/ (requests, oldest first, each read once) and live.jsonl.
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "../../config";
 import { writeAtomic } from "../conversations";
+import { z } from "zod";
 import { lockOwner, pidAlive } from "../lock";
+import { parseJson } from "../result";
 
 export type DaemonStatus = { pid: number; run: string; state: "idle" | "turn" | "stopped"; since: string; turns: number; error: string | null; contextTokens: number | null };
 export type Command = { id: string; kind: "cancel" | "compact" | "stop"; at: string };
+const StatusRecord = z.object({ pid: z.number(), run: z.string(), state: z.enum(["idle", "turn", "stopped"]), since: z.string(), turns: z.number(),
+  error: z.string().nullable(), contextTokens: z.number().nullable() });
+const CommandRecord = z.object({ id: z.string(), kind: z.enum(["cancel", "compact", "stop"]), at: z.string() });
+
+async function readRecord<T>(path: string, schema: z.ZodType<T>): Promise<T | null> {
+  let text: string;
+  try { text = await Bun.file(path).text(); } catch { return null; }
+  const json = parseJson(text);
+  if (!json.ok) return null;
+  const parsed = schema.safeParse(json.data);
+  return parsed.success ? parsed.data : null;
+}
 
 const dir = (conversation: string): string => paths.daemon(conversation);
 export const lockPath = (conversation: string): string => join(dir(conversation), "lock");
@@ -18,15 +30,14 @@ export async function writeStatus(conversation: string, status: DaemonStatus): P
 }
 
 export async function readStatus(conversation: string): Promise<DaemonStatus | null> {
-  const file = Bun.file(join(dir(conversation), "status.json"));
-  if (!(await file.exists())) return null;
-  try { return await file.json() as DaemonStatus; } catch { return null; }
+  const path = join(dir(conversation), "status.json");
+  if (!(await Bun.file(path).exists())) return null;
+  return readRecord(path, StatusRecord);
 }
 
-/** The pid holding the daemon lock, when that process is alive. */
 export async function daemonPid(conversation: string): Promise<number | null> {
   const owner = await lockOwner(lockPath(conversation));
-  return owner !== undefined && pidAlive(owner.pid) ? owner.pid : null;
+  return owner !== null && pidAlive(owner.pid) ? owner.pid : null;
 }
 
 let sequence = 0;
@@ -40,11 +51,12 @@ export async function request(conversation: string, kind: Command["kind"]): Prom
 
 export async function takeCommands(conversation: string): Promise<Command[]> {
   const commands = join(dir(conversation), "commands");
-  const names = (await readdir(commands).catch(() => [] as string[])).filter(name => name.endsWith(".json")).sort();
+  const names = (await readdir(commands).catch((): string[] => [])).filter(name => name.endsWith(".json")).sort();
   const out: Command[] = [];
   for (const name of names) {
     const file = join(commands, name);
-    try { out.push(await Bun.file(file).json() as Command); } catch { /* half-written by an older client */ }
+    const command = await readRecord(file, CommandRecord);
+    if (command !== null) out.push(command);
     await rm(file, { force: true });
   }
   return out;

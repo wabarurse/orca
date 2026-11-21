@@ -35,9 +35,11 @@ export function hexColor(hex: string): { r: number; g: number; b: number } | nul
 
 const size = (value: number | undefined, fallback: number): number => value !== undefined && value > 0 ? value : fallback;
 
-export function openTuiTerminal(launch: Launch = createCliRenderer, stdin: Input = process.stdin, stdout: Output = process.stdout, proc: Proc = realProc): PaintingTerminal {
-  if (stdin.isTTY !== true || stdout.isTTY !== true) throw new Error("orca2 start needs a terminal; run it from an interactive shell");
-  return new OpenTuiTerminal(launch, stdout, proc);
+export type Opened = { ok: true; data: PaintingTerminal } | { ok: false; error: string };
+
+export function openTuiTerminal(launch: Launch = createCliRenderer, stdin: Input = process.stdin, stdout: Output = process.stdout, proc: Proc = realProc): Opened {
+  if (stdin.isTTY !== true || stdout.isTTY !== true) return { ok: false, error: "orca2 start needs a terminal; run it from an interactive shell" };
+  return { ok: true, data: new OpenTuiTerminal(launch, stdout, proc) };
 }
 
 class OpenTuiTerminal implements PaintingTerminal {

@@ -1,5 +1,3 @@
-// The work page: one full-screen page with a tab per list (Agents from the core, then each plugin's tabs), a table
-// of rows, the selected row's details, and one status line. Pure rendering; app.ts owns keys and data.
 import type { Row, Section, Tone } from "../core/plugins/types";
 import { bold, dim, fit, pastel, sanitize, visibleLength } from "./components";
 

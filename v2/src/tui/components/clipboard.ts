@@ -1,13 +1,11 @@
-/** On-demand only. Embedded JXA uses system AppKit; no desktop automation,
- * Swift compilation, helper download, Bun runtime or native addon at runtime. */
 import { MAX_IMAGE_BYTES, validateImage } from "../../api";
-export interface ClipboardImage { bytes: Uint8Array; mime: string }
-export interface ClipboardAdapter {
+export type ClipboardImage = { bytes: Uint8Array; mime: string };
+export type ClipboardAdapter = {
   platform: string;
   env: Record<string, string | undefined>;
   which(name: string): string | null;
-  run(argv: string[], limit: number): Promise<Uint8Array>;
-}
+  run(argv: string[], limit: number): Promise<Clipboard<Uint8Array>>;
+};
 export const MAC_CLIPBOARD_SCRIPT = `ObjC.import('AppKit');
 ObjC.import('Foundation');
 function run() {
@@ -30,85 +28,99 @@ function run() {
   if (Number(p.changeCount) !== before) throw Error('clipboard changed while reading; try ctrl+v again.');
   return ObjC.unwrap(data.base64EncodedStringWithOptions(0));
 }`;
-/** Bounded subprocess streams and lifetime; stderr is never image output. */
-export async function clipboardCommand(argv: string[], limit: number): Promise<Uint8Array> {
+export type Clipboard<T> = { ok: true; data: T } | { ok: false; error: string };
+const failed = (error: string): { ok: false; error: string } => ({ ok: false, error });
+const present = (value: string | undefined): boolean => value !== undefined && value !== "";
+const overSsh = (env: Record<string, string | undefined>): boolean => present(env.SSH_CONNECTION) || present(env.SSH_TTY);
+const toolFor = (adapter: { env: Record<string, string | undefined>; which(name: string): string | null }, display: string, name: string): string | null =>
+  present(adapter.env[display]) ? adapter.which(name) : null;
+
+export async function clipboardCommand(argv: string[], limit: number): Promise<Clipboard<Uint8Array>> {
   const child = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => child.kill(), 5000);
-  const read = async (stream: ReadableStream<Uint8Array>, max: number) => {
+  const read = async (stream: ReadableStream<Uint8Array>, max: number): Promise<Buffer | null> => {
     const reader = stream.getReader(); const chunks: Uint8Array[] = []; let size = 0;
-    try { for (;;) { const next = await reader.read(); if (next.done) break; size += next.value.length; if (size > max) { child.kill(); throw new Error("clipboard output exceeded size limit."); } chunks.push(next.value); } }
+    try { for (;;) { const next = await reader.read(); if (next.done) break; size += next.value.length; if (size > max) { child.kill(); return null; } chunks.push(next.value); } }
     finally { reader.releaseLock(); }
     return Buffer.concat(chunks);
   };
   try {
     const [out, err, code] = await Promise.all([read(child.stdout, limit), read(child.stderr, 8192), child.exited]);
-    if (code !== 0) throw new Error(`clipboard read failed: ${err.toString().replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 1000) || "clipboard service unavailable or timed out"}`);
-    return out;
+    if (out === null || err === null) return failed("clipboard output exceeded size limit.");
+    const reason = err.toString().replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 1000);
+    if (code !== 0) return failed(`clipboard read failed: ${reason !== "" ? reason : "clipboard service unavailable or timed out"}`);
+    return { ok: true, data: out };
   } finally { clearTimeout(timer); child.kill(); }
 }
 const native: ClipboardAdapter = { platform: process.platform, env: process.env, which: name => Bun.which(name), run: clipboardCommand };
-export async function readClipboardImage(adapter: ClipboardAdapter = native): Promise<ClipboardImage> {
-  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error("image clipboard is unavailable over ssh. run orca in the local desktop session; terminal text paste still works.");
-  let bytes: Uint8Array;
-  if (adapter.platform === "darwin") {
-    const encoded = Buffer.from(await adapter.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_CLIPBOARD_SCRIPT], Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 16)).toString().trim();
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error("native clipboard returned invalid image data.");
-    bytes = Buffer.from(encoded, "base64");
-  } else if (adapter.platform === "linux") {
-    const wl = adapter.env.WAYLAND_DISPLAY && adapter.which("wl-paste");
-    const xclip = adapter.env.DISPLAY && adapter.which("xclip");
-    if (!wl && !xclip) throw new Error("no local image clipboard available. use an existing wl-paste (wayland) or xclip (x11) in a desktop session; nothing was installed.");
-    const command = wl ? [wl, "--list-types"] : [xclip as string, "-selection", "clipboard", "-t", "TARGETS", "-o"];
-    const types = Buffer.from(await adapter.run(command, 16384)).toString().split(/\s+/).filter(Boolean);
-    if (!types.includes("image/png")) throw new Error(types.some(t => t.startsWith("image/")) ? "unsupported clipboard image; linux supports image/png. copy a png." : "clipboard is empty or has no image. use terminal text paste for text.");
-    bytes = await adapter.run(wl ? [wl, "--no-newline", "--type", "image/png"] : [xclip as string, "-selection", "clipboard", "-t", "image/png", "-o"], MAX_IMAGE_BYTES);
-  } else throw new Error("image clipboard is supported only on local macos or linux desktops.");
-  validateImage(bytes);
-  return { bytes, mime: "image/png" };
+
+function checkedImage(bytes: Uint8Array): Clipboard<ClipboardImage> {
+  try { validateImage(bytes); }
+  catch (error) { return failed(error instanceof Error ? error.message : String(error)); }
+  return { ok: true, data: { bytes, mime: "image/png" } };
 }
 
-/** Bounded text copy. Fixed argv + stdin, never a shell or OSC 52.
- * SSH cannot address the local desktop. */
-export interface ClipboardWriter {
+async function macImage(adapter: ClipboardAdapter): Promise<Clipboard<Uint8Array>> {
+  const run = await adapter.run(["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_CLIPBOARD_SCRIPT], Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 16);
+  if (!run.ok) return run;
+  const encoded = Buffer.from(run.data).toString().trim();
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return failed("native clipboard returned invalid image data.");
+  return { ok: true, data: Buffer.from(encoded, "base64") };
+}
+
+async function linuxImage(adapter: ClipboardAdapter): Promise<Clipboard<Uint8Array>> {
+  const wl = toolFor(adapter, "WAYLAND_DISPLAY", "wl-paste");
+  const xclip = toolFor(adapter, "DISPLAY", "xclip");
+  const tool = wl ?? xclip;
+  if (tool === null) return failed("no local image clipboard available. use an existing wl-paste (wayland) or xclip (x11) in a desktop session; nothing was installed.");
+  const listed = await adapter.run(wl !== null ? [tool, "--list-types"] : [tool, "-selection", "clipboard", "-t", "TARGETS", "-o"], 16384);
+  if (!listed.ok) return listed;
+  const types = Buffer.from(listed.data).toString().split(/\s+/).filter(t => t !== "");
+  if (!types.includes("image/png")) return failed(types.some(t => t.startsWith("image/")) ? "unsupported clipboard image; linux supports image/png. copy a png." : "clipboard is empty or has no image. use terminal text paste for text.");
+  return adapter.run(wl !== null ? [tool, "--no-newline", "--type", "image/png"] : [tool, "-selection", "clipboard", "-t", "image/png", "-o"], MAX_IMAGE_BYTES);
+}
+
+export async function readClipboardImage(adapter: ClipboardAdapter = native): Promise<Clipboard<ClipboardImage>> {
+  if (overSsh(adapter.env)) return failed("image clipboard is unavailable over ssh. run orca in the local desktop session; terminal text paste still works.");
+  const bytes = adapter.platform === "darwin" ? await macImage(adapter) : adapter.platform === "linux" ? await linuxImage(adapter) : failed("image clipboard is supported only on local macos or linux desktops.");
+  return bytes.ok ? checkedImage(bytes.data) : bytes;
+}
+
+export type ClipboardWriter = {
   platform: string;
   env: Record<string, string | undefined>;
   which(name: string): string | null;
-  run(argv: string[], text: string): Promise<void>;
-}
-/** Deadline includes an explicit failure state: a TERM handler exiting zero is
- * still a timeout. Escalate after a short grace period, then await exit to reap.
- * The optional deadline is for isolated subprocess tests, not user input. */
-export async function clipboardWriteCommand(argv: string[], text: string, timeoutMs = 5000): Promise<void> {
-  const child = Bun.spawn(argv, { stdin: new Blob([text]), stdout: 'ignore', stderr: 'ignore' });
+  run(argv: string[], text: string): Promise<Clipboard<null>>;
+};
+export async function clipboardWriteCommand(argv: string[], text: string, timeoutMs = 5000): Promise<Clipboard<null>> {
+  const child = Bun.spawn(argv, { stdin: new Blob([text]), stdout: "ignore", stderr: "ignore" });
   let timedOut = false;
   let escalation: ReturnType<typeof setTimeout> | undefined;
   const timer = setTimeout(() => {
     timedOut = true;
-    child.kill('SIGTERM');
-    escalation = setTimeout(() => child.kill('SIGKILL'), 100);
+    child.kill("SIGTERM");
+    escalation = setTimeout(() => child.kill("SIGKILL"), 100);
   }, timeoutMs);
   try {
     const code = await child.exited;
-    if (timedOut) throw new Error('clipboard service timed out.');
-    if (code !== 0) throw new Error('clipboard service failed.');
+    if (timedOut) return failed("clipboard service timed out.");
+    if (code !== 0) return failed("clipboard service failed.");
+    return { ok: true, data: null };
   } finally {
     clearTimeout(timer);
     clearTimeout(escalation);
-    if (child.exitCode === null) child.kill('SIGKILL');
+    if (child.exitCode === null) child.kill("SIGKILL");
     await child.exited;
   }
 }
-export async function writeClipboardText(text: string, adapter: ClipboardWriter = { ...native, run: clipboardWriteCommand }): Promise<void> {
-  if (adapter.env.SSH_CONNECTION || adapter.env.SSH_TTY) throw new Error('text copy requires a local desktop session; unavailable over ssh.');
-  if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error('selection exceeds the 4 mib copy limit.');
-  let argv: string[];
-  if (adapter.platform === 'darwin') argv = ['/usr/bin/pbcopy'];
-  else if (adapter.platform === 'linux') {
-    const wl = adapter.env.WAYLAND_DISPLAY && adapter.which('wl-copy');
-    const xclip = adapter.env.DISPLAY && adapter.which('xclip');
-    if (wl) argv = [wl, '--type', 'text/plain;charset=utf-8'];
-    else if (xclip) argv = [xclip, '-selection', 'clipboard', '-in'];
-    else throw new Error('no local clipboard writer; use existing wl-copy or xclip. nothing was installed.');
-  } else throw new Error('text copy is supported only on local macos or linux desktops.');
-  await adapter.run(argv, text);
+export async function writeClipboardText(text: string, adapter: ClipboardWriter = { ...native, run: clipboardWriteCommand }): Promise<Clipboard<null>> {
+  if (overSsh(adapter.env)) return failed("text copy requires a local desktop session; unavailable over ssh.");
+  if (Buffer.byteLength(text) > 4 * 1024 * 1024) return failed("selection exceeds the 4 mib copy limit.");
+  if (adapter.platform === "darwin") return adapter.run(["/usr/bin/pbcopy"], text);
+  if (adapter.platform !== "linux") return failed("text copy is supported only on local macos or linux desktops.");
+  const wl = toolFor(adapter, "WAYLAND_DISPLAY", "wl-copy");
+  if (wl !== null) return adapter.run([wl, "--type", "text/plain;charset=utf-8"], text);
+  const xclip = toolFor(adapter, "DISPLAY", "xclip");
+  if (xclip !== null) return adapter.run([xclip, "-selection", "clipboard", "-in"], text);
+  return failed("no local clipboard writer; use existing wl-copy or xclip. nothing was installed.");
 }

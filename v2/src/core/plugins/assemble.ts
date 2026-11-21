@@ -1,5 +1,3 @@
-// What one agent run gets from its bundle and the enabled plugins: tools (core, added, replaced), the system prompt,
-// bound hooks and skill folders. Fixed for the run, so the prompt cache holds; changes apply to the next run.
 import { join } from "node:path";
 import { pluginData } from "../bubbles";
 import type { Bound, LoopHooks } from "../loop/hooks";
@@ -10,6 +8,7 @@ import type { Role } from "../types";
 import { enabledNames } from "./enable";
 import { availablePlugins, type LoadedPlugin, type PluginProblem } from "./loader";
 import type { Bundle, PluginContext } from "./types";
+import { fail, ok, type Result } from "../result";
 
 export const BUILTIN_BUNDLES: Bundle[] = [
   { name: "orchestrator", role: "orchestrator", prompt: rolePrompt("orchestrator"), plugins: ["*"] },
@@ -29,7 +28,7 @@ export type Assembled = {
 
 export type AssembleInput = { conversation: string; agent: string; bundle: string; cwd: string; directory: string; trusted: boolean };
 
-export async function assemble(input: AssembleInput): Promise<Assembled> {
+export async function assemble(input: AssembleInput): Promise<Result<Assembled>> {
   const { plugins: available, problems } = await availablePlugins(input.directory, input.trusted);
   const enabled = (await enabledNames(input.conversation)).flatMap(name => {
     const loaded = available.get(name);
@@ -38,7 +37,7 @@ export async function assemble(input: AssembleInput): Promise<Assembled> {
   });
   const bundles = [...BUILTIN_BUNDLES, ...enabled.flatMap(p => p.plugin.bundles)];
   const bundle = bundles.find(b => b.name === input.bundle);
-  if (bundle === undefined) throw new Error(`no bundle ${input.bundle}; known: ${bundles.map(b => b.name).join(", ")}`);
+  if (bundle === undefined) return fail(`no bundle ${input.bundle}; known: ${bundles.map(b => b.name).join(", ")}`);
   const used = bundle.plugins.includes("*") ? enabled : enabled.filter(p => bundle.plugins.includes(p.plugin.name));
   const role: Role = bundle.role;
 
@@ -70,5 +69,5 @@ export async function assemble(input: AssembleInput): Promise<Assembled> {
   const storage = used.flatMap(loaded => loaded.plugin.storage.map(s => `- ${loaded.plugin.name} (${s.scope}): ${s.about}`));
   const system = [bundle.prompt, ...(additions.length > 0 ? ["Plugins:", ...additions] : []), ...(storage.length > 0 ? ["Plugin data under $ORCA_DATA:", ...storage] : [])].join("\n\n");
   const skills = used.flatMap(loaded => loaded.plugin.skills.map(skill => join(loaded.dir, skill)));
-  return { bundle, plugins: used, tools: [...tools.values()].map(t => t.tool), system, hooks, skills, problems };
+  return ok({ bundle, plugins: used, tools: [...tools.values()].map(t => t.tool), system, hooks, skills, problems });
 }

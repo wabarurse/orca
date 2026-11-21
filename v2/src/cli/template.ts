@@ -1,11 +1,8 @@
-// The files `orca2 plugin new` writes. The template is complete (every field present) so a new plugin loads and
-// passes `orca2 plugin check` before anything is changed.
 export function pluginTemplate(name: string): Record<string, string> {
   const tool = name.replaceAll("-", "_");
   return {
     "index.ts": `import type { Plugin } from "orca2/plugin";
 
-// ${name}: say in one line what it is for.
 const plugin: Plugin = {
   name: "${name}",
   description: "What ${name} adds, in one line.",

@@ -1,5 +1,3 @@
-// The example plugin: every slot in one small, working plugin. Agents pin short notes with the `pin` tool; the TUI
-// shows them in a Pins tab with a count, a /pin command and a fold; the daemon keeps them in rolling memory.
 import { join } from "node:path";
 import { definePlugin, type Plugin } from "../../core/plugins";
 import { readPins, writePins } from "./store";
@@ -19,7 +17,9 @@ const plugin: Plugin = definePlugin({
       async run(input, ctx) {
         const dir = join(ctx.data, "example");
         await Bun.write(join(dir, ".keep"), "");
-        const pins = await readPins(dir);
+        const read = await readPins(dir);
+        if (!read.ok) return `refused: ${read.error}`;
+        const pins = read.data;
         if (input.action === "list") return pins.length === 0 ? "no pins" : pins.map(p => `${p.id}: ${p.text}`).join("\n");
         if (input.action === "remove") {
           const left = pins.filter(p => p.id !== input.id);

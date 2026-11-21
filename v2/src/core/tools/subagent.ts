@@ -1,4 +1,3 @@
-// The subagent tool (v1's spawn and runtime): start a bundle on a branch, list subagents, stop one, see siblings.
 import { listConversations, readConversation } from "../conversations";
 import type { Tool } from "./registry";
 

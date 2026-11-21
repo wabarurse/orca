@@ -1,7 +1,6 @@
-// The behavior tool (v1's `remember`): how the user wants agents to act, user-wide or for this bubble.
 import { behavior, ensureBubble, peekBubble, setBehavior, type BehaviorScope } from "../bubbles";
 import { humanMessages, resolveSource, sourceChoices } from "../sources";
-import type { Tool } from "./registry";
+import { settled, type Tool } from "./registry";
 
 export const behaviorTool: Tool = {
   parallel: input => input.action === "list",
@@ -24,18 +23,18 @@ export const behaviorTool: Tool = {
     const key = typeof input.key === "string" ? input.key : "";
     if (!/^[a-zA-Z0-9._-]{1,100}$/.test(key)) throw new Error("invalid behavior key");
     const scope: BehaviorScope = input.scope === "user" ? { kind: "user" } : { kind: "bubble", bubble: existing ?? (await ensureBubble(ctx.conversation)).id };
-    if (input.action === "forget") { await setBehavior(scope, { key, text: null }); return `forgot ${input.scope} behavior ${key}`; }
+    if (input.action === "forget") { settled(await setBehavior(scope, { key, text: null })); return `forgot ${input.scope} behavior ${key}`; }
     if (input.action !== "save" || typeof input.text !== "string") throw new Error("save needs text");
     const at = new Date().toISOString();
     if (input.confidence === "tentative") {
-      const rows = await setBehavior(scope, { key, text: input.text, confidence: "tentative", source: typeof input.source === "string" ? input.source.slice(0, 200) : "inferred", quote: "", at });
+      const rows = settled(await setBehavior(scope, { key, text: input.text, confidence: "tentative", source: typeof input.source === "string" ? input.source.slice(0, 200) : "inferred", quote: "", at }));
       return `saved ${input.scope} behavior ${key} (tentative; ${rows.length} of 20 lines)`;
     }
     const candidates = humanMessages(ctx.conversation);
     const source = typeof input.source === "string" ? input.source : candidates.at(-1)?.id ?? "";
     const found = source.length > 0 && source.length <= 1000 ? resolveSource(source, candidates) : null;
     if (found === null) throw new Error(`an explicit line needs a source that traces to a real user message, and ${JSON.stringify(source.slice(0, 120))} names or quotes none. Use one of these ids, or save it as tentative:\n${sourceChoices(candidates)}`);
-    const rows = await setBehavior(scope, { key, text: input.text, confidence: "explicit", source: found.id, quote: found.quote, at });
+    const rows = settled(await setBehavior(scope, { key, text: input.text, confidence: "explicit", source: found.id, quote: found.quote, at }));
     return `saved ${input.scope} behavior ${key} (${rows.length} of 20 lines; from ${found.id}: "${found.quote}")`;
   },
 };

@@ -1,4 +1,3 @@
-// The inbox tool: messages between agents and to the user. Messages only; questions are the questions plugin's.
 import { put } from "../inbox";
 import { imageFile } from "../images";
 import type { Tool } from "./registry";

@@ -1,15 +1,13 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
-/** Supported grammar: assistant tool batch immediately followed by user results.
- * Text may accompany results (inbox notes); IDs are unique throughout this context. */
 export function paired(messages: MessageParam[]): boolean {
   const seen = new Set<string>();
   let pending = new Set<string>();
   for (const message of messages) {
     if (message.role !== "user" && message.role !== "assistant") return false;
     const blocks = typeof message.content === "string" ? [] : message.content;
-    if (pending.size && message.role !== "user") return false;
+    if (pending.size > 0 && message.role !== "user") return false;
     const next = validateBlocks(message.role, blocks, seen, pending);
-    if (!next) return false;
+    if (next === null) return false;
     pending = next;
   }
   return pending.size === 0;
@@ -23,7 +21,7 @@ function validateBlocks(role: string, blocks: Exclude<MessageParam["content"], s
     }
     if (block.type === "tool_result" && (role !== "user" || !pending.delete(block.tool_use_id))) return null;
   }
-  if (pending.size) return null;
+  if (pending.size > 0) return null;
   return uses;
 }
 
