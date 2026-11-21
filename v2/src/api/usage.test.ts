@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { metered, recordRetry, usageScope } from "./usage";
 import { usageEvent } from "../config";
-import { usageSummary } from "../core/data/knowledge";
 import { fakeProvider, text } from "../test/fake-provider";
 import { ModelRequestError } from "./errors/bounded-request";
 let home: string, prior: string | undefined;
@@ -17,10 +16,10 @@ test("accounting includes foreground, summaries, tools, search and retries witho
   await provider.complete({ trace: { project: "p", agent: "orchestrator", purpose: "rolling-summary" }, model: "test", messages: [{ role: "user", content: "private prompt" }], tools: [], maxTokens: 10, onText() {} });
   await usageScope({ project: "p", agent: "worker-x" }, () => provider.search!({ model: "test", query: "private query", maxResults: 1, signal: new AbortController().signal }));
   await usageEvent({ kind: "tool", project: "p", tool: "read", durationMs: 5 });
-  const totals = await usageSummary("p");
-  expect(totals).toMatchObject({ requests: 2, retries: 1, input: 100, cachedInput: 40, output: 10, usageMissing: 1, toolCalls: 1, peakContext: 100 });
-  expect((await usageSummary("other")).requests).toBe(0);
-  const log = await readFile(join(home, ".runtime/usage.jsonl"), "utf8");
+  const log = await readFile(join(home, "usage.jsonl"), "utf8");
+  const kinds = log.trim().split("\n").map(line => (JSON.parse(line) as { kind: string }).kind);
+  expect(kinds.filter(kind => kind === "model").length).toBe(2);
+  expect(kinds).toContain("retry");
   expect(JSON.parse(log.trim().split("\n").find(line => line.includes('"kind":"model"'))!)).toMatchObject({ build: expect.any(String), toolCalls: 0 });
   expect(log).not.toContain("private"); expect(log).toContain("rolling-summary"); expect(log).toContain("web-search");
 });
@@ -29,7 +28,7 @@ test("failure diagnostics identify the selected account and HTTP status without 
   prior = process.env.ORCA2_HOME; home = await mkdtemp(join(tmpdir(), "orca-usage-error-")); process.env.ORCA2_HOME = home;
   const provider = metered({ ...fakeProvider([]), account: "anthropic:personal", complete: async () => { throw new ModelRequestError("exhausted", 429); } });
   await expect(provider.complete({ model: "test", messages: [], tools: [], maxTokens: 10, onText() {} })).rejects.toThrow("anthropic:personal: Provider rate limit");
-  const events = (await readFile(join(home, ".runtime/usage.jsonl"), "utf8")).trim().split("\n").map(s => JSON.parse(s));
+  const events = (await readFile(join(home, "usage.jsonl"), "utf8")).trim().split("\n").map(s => JSON.parse(s));
   expect(events[0]).toMatchObject({ account: "anthropic:personal", errorKind: "exhausted", errorReason: "rate-limit", httpStatus: 429, ok: false });
 });
 

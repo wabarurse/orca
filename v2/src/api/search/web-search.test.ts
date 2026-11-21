@@ -5,6 +5,11 @@ import { openai } from "../openai";
 import { claudeSearchResults, codexSearchResults } from "./search-results";
 import { boundedSearchResponse, SEARCH_RESPONSE_BYTES, SearchError, searchOperation } from "./web-search";
 import { web_search } from "../../core/tools/web-search";
+import type { ToolContext } from "../../core/tools/registry";
+
+const toolContext = (signal: AbortSignal): Omit<ToolContext, "provider" | "model" | "settings"> => ({ conversation: "c-00000000", agent: "reviewer-x", role: "reviewer", branch: "x",
+  cwd: "/private-project", data: "/never", trusted: false, pluginSkills: [], callId: "call", signal,
+  runtime: { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", confirm: async () => false } });
 import { codexSSE, fakeCodexTokens } from "../../test/codex";
 import { claudeSearchFixture, codexSearchFixture, codexStreamSearchFixture } from "../../test/web-search";
 import type { Provider } from "../provider";
@@ -26,8 +31,7 @@ function claude() {
 const codex = () => openai(async () => fakeCodexTokens());
 function invoke(provider: Provider, signal?: AbortSignal) {
   return web_search.run({ query: "public docs", max_results: 2 }, {
-    project: "private-project", role: "reviewer", cwd: "/private-project", signal,
-    selected: { provider, model: provider.name === "openai" ? "gpt-6-astra" : "claude-opus-5", settings: { effort: "high", fast: true } },
+    ...toolContext(signal ?? new AbortController().signal), provider, model: provider.name === "openai" ? "gpt-6-astra" : "claude-opus-5", settings: { effort: "high", fast: true },
   });
 }
 function codexSuccess() { return codexSSE([{ type: "response.completed", response: { status: "completed", output: codexSearchFixture() } }]); }
@@ -215,8 +219,8 @@ test("Codex search fails safely after a second 401 without another account or bi
 for (const make of [claude, codex]) test(`${make.name} invalid explicit settings fail before dispatch rather than silently using defaults`, async () => {
   let calls = 0;
   intercept(() => { calls++; return codexSuccess(); });
-  await expect(web_search.run({ query: "public docs" }, { project: "p", role: "worker", cwd: "/never-read",
-    selected: { provider: make(), model: "unknown-model", settings: { fast: true } },
+  await expect(web_search.run({ query: "public docs" }, { ...toolContext(new AbortController().signal),
+    provider: make(), model: "unknown-model", settings: { fast: true },
   })).rejects.toThrow("web_search:");
   expect(calls).toBe(0);
 });
@@ -224,7 +228,7 @@ for (const make of [claude, codex]) test(`${make.name} invalid explicit settings
 for (const type of ["response.completed", "response.done"]) test(`live-shaped Codex ${type} output: [] retains completed done items and citations`, async () => {
   const { events, terminal } = codexStreamSearchFixture();
   intercept(() => codexSSE([...events, { ...terminal, type }]));
-  const text = await invoke(codex());
+  const text = String(await invoke(codex()));
   expect(text).toStartWith("Web search: 2 sources (limited).");
   expect(JSON.parse(text.split("\n")[2]!)).toEqual({ limited: true, sources: [
     { url: "https://example.org/docs/0", title: "Public docs 0" },

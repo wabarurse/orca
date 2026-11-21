@@ -8,13 +8,14 @@ import { readServers, usableServer, serverKey, loginKey } from "./config";
 import { connected, disconnectServers, withServer } from "./client";
 import { loginServer, logoutServer, oauthProvider, signedIn } from "./auth";
 import { mcp } from "../tools/mcp";
-import { runMcp } from "../../cli/scripts/mcp";
+import type { ToolContext } from "../tools/registry";
+import { runMcp } from "../../cli/mcp";
 
 let home: string, previous: string | undefined;
-beforeEach(async () => { previous = process.env.ORCA_HOME; home = await mkdtemp(join(tmpdir(), "orca-mcp-")); process.env.ORCA_HOME = home; });
+beforeEach(async () => { previous = process.env.ORCA2_HOME; home = await mkdtemp(join(tmpdir(), "orca-mcp-")); process.env.ORCA2_HOME = home; });
 afterEach(async () => {
   await disconnectServers();
-  if (previous === undefined) delete process.env.ORCA_HOME; else process.env.ORCA_HOME = previous;
+  if (previous === undefined) delete process.env.ORCA2_HOME; else process.env.ORCA2_HOME = previous;
   delete process.env.ORCA_TEST_MCP_TOKEN;
   await rm(home, { recursive: true, force: true });
 });
@@ -31,6 +32,9 @@ if(r.params?.name==='slow')await new Promise(resolve=>setTimeout(resolve,10000))
 console.log(JSON.stringify({jsonrpc:'2.0',id:r.id,result})); });`;
 const local = (extra: Record<string, unknown> = {}) => ({ command: process.execPath, args: ["-e", script], ...extra });
 const pid = () => withServer("local", home, undefined, async (client, options) => Number(((await client.callTool({ name: "echo", arguments: {} }, undefined, options)).content as { text: string }[])[0]!.text));
+const ctxFor = (role: "orchestrator" | "worker"): ToolContext => ({ conversation: "c-00000000", agent: role, role, branch: null, cwd: home, data: home, trusted: false, pluginSkills: [],
+  callId: "call", signal: new AbortController().signal, model: "m", provider: { name: "anthropic", complete: async () => { throw new Error("no"); }, models: async () => [] }, settings: null,
+  runtime: { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", confirm: async () => false } });
 const alive = (id: number) => { try { process.kill(id, 0); return true; } catch { return false; } };
 
 test("mcp.json: a command or a url per server, ${VAR} from the environment, and one bad entry never hides the others", () => {
@@ -84,8 +88,8 @@ test("a local server keeps running between calls and after a refused request; an
   expect(connected("local")).toBe(true);
   // The server saying no, and a mistake in the request, are answers: its state survives them.
   await expect(withServer("local", home, undefined, (client, options) => client.callTool({ name: "nope", arguments: {} }, undefined, options))).rejects.toThrow("Unknown tool");
-  await expect(mcp.run({ action: "schema", server: "local", name: "absent" }, { project: "p", role: "orchestrator", cwd: home })).rejects.toThrow("no tool named absent");
-  await expect(mcp.run({ action: "call", server: "local" }, { project: "p", role: "orchestrator", cwd: home })).rejects.toThrow("name is required");
+  await expect(mcp.run({ action: "schema", server: "local", name: "absent" }, ctxFor("orchestrator"))).rejects.toThrow("no tool named absent");
+  await expect(mcp.run({ action: "call", server: "local" }, ctxFor("orchestrator"))).rejects.toThrow("name is required");
   expect(await pid()).toBe(first);
   // Editing the entry applies to the next call, with no restart of orca.
   write({ local: local({ env: { CHANGED: "1" } }) });
@@ -116,7 +120,7 @@ test("a server that cannot start says what it printed; a cancelled call closes t
 
 test("the agent's mcp tool lists servers, finds schemas on demand and calls a tool", async () => {
   write({ local: local(), off: { url: "https://example.com/mcp", disabled: true }, wrong: {} });
-  const ctx = { project: "p", role: "worker" as const, cwd: home };
+  const ctx = ctxFor("worker");
   expect(JSON.parse(String(await mcp.run({ action: "servers" }, ctx)))).toEqual({ file: paths.mcp, servers: [
     { name: "local", state: "ready", kind: "local command" }, { name: "off", state: "disabled" },
     { name: "wrong", state: "unusable: needs either a command (a local program) or a url, not both" }] });

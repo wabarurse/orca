@@ -73,5 +73,5 @@ export async function loginServer(s: Server, show: (url: string) => void, signal
     const provider = oauthProvider(s, { redirect: `http://127.0.0.1:${server.port}/callback`, state, show });
     const fetchFn = (input: string | URL | Request, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal ? AbortSignal.any([abort, init.signal]) : abort });
     if (await auth(provider, { serverUrl: s.url, fetchFn }) === "REDIRECT") await auth(provider, { serverUrl: s.url, authorizationCode: await code, fetchFn });
-  } finally { abort.removeEventListener("abort", cancelled); server.stop(true); }
+  } finally { abort.removeEventListener("abort", cancelled); void server.stop(true); }
 }

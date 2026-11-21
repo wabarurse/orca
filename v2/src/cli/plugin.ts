@@ -82,18 +82,20 @@ export async function checkPlugin(args: string[], out: Out): Promise<number> {
       catch (error) { fail(`ui/background: ${error instanceof Error ? error.message : String(error)}`); }
       for (const skill of loaded.plugin.skills) if (!existsSync(join(dir, skill, "SKILL.md"))) fail(`skill folder ${skill} has no SKILL.md`);
     }
-    const tsc = join(APP_ROOT, "node_modules", "typescript", "bin", "tsc");
-    if (existsSync(tsc)) {
+    const tsc = ["tsc", "tsc6"].map(name => join(APP_ROOT, "node_modules", "typescript", "bin", name)).find(path => existsSync(path)) ?? "";
+    if (tsc.length > 0) {
       const config = join(home, "tsconfig.json");
       await writeFile(config, JSON.stringify({ compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true,
         noUncheckedIndexedAccess: true, allowImportingTsExtensions: true, verbatimModuleSyntax: true, types: ["bun"], typeRoots: [join(APP_ROOT, "node_modules", "@types")],
-        baseUrl: APP_ROOT, paths: { "orca2/plugin": [join(APP_ROOT, "src/core/plugins/api.ts")], "*": [join(APP_ROOT, "node_modules", "*")] } }, include: [join(dir, "**/*.ts")] }));
-      const result = await run([process.execPath, tsc, "-p", config], dir, { ...process.env, ORCA2_HOME: home } as Record<string, string>);
+        paths: { "orca2/plugin": [join(APP_ROOT, "src/core/plugins/api.ts")] } }, include: [join(dir, "**/*.ts"), join(APP_ROOT, "src/md.d.ts")] }));
+      const result = await run([process.execPath.endsWith("bun") ? process.execPath : Bun.which("bun") ?? process.execPath, tsc, "-p", config], dir, { ...process.env, ORCA2_HOME: home } as Record<string, string>);
       if (result.code === 0) out("ok   types\n"); else fail(`types:\n${result.out}`);
     } else out("skip types (no TypeScript next to this orca2)\n");
     const tests = (await readdir(dir, { recursive: true })).filter(file => String(file).endsWith(".test.ts") && !String(file).includes("node_modules"));
-    if (tests.length > 0) {
-      const result = await run([process.execPath, "test", ...tests.map(file => `./${String(file)}`)], dir, { ...process.env, ORCA2_HOME: home } as Record<string, string>);
+    const bun = process.execPath.endsWith("bun") ? process.execPath : Bun.which("bun");
+    if (tests.length > 0 && bun === null) out("skip tests (bun is not on PATH)\n");
+    else if (tests.length > 0 && bun !== null) {
+      const result = await run([bun, "test", ...tests.map(file => `./${String(file)}`)], dir, { ...process.env, ORCA2_HOME: home } as Record<string, string>);
       if (result.code === 0) out(`ok   tests (${tests.length} file${tests.length === 1 ? "" : "s"})\n`); else fail(`tests:\n${result.out}`);
     } else out("note no tests (add <name>.test.ts beside index.ts)\n");
   } finally {

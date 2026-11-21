@@ -26,5 +26,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
-  }
+  },
+  // v2/ is its own application with its own tsconfig.
+  "exclude": ["node_modules", "v2"]
 }

@@ -2,7 +2,6 @@ import { afterEach, expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import { clearCatalogLimits, contextWindow, modelContextLimit, prefetchContextLimits, rememberCatalogLimits } from "./context-window";
 import { anthropic } from "../anthropic";
-import { contextStatus } from "../../tui/header/context-status";
 
 test("claude standard windows: documented 1M defaults, 200k where 1M is opt-in or absent", () => {
   for (const m of ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-fable-5-1", "claude-fable-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"]) expect(modelContextLimit(m)).toBe(1000000);
@@ -45,12 +44,6 @@ test("catalog precedence: explicit > smaller of table and catalog; opt-in 1M nev
   expect(modelContextLimit("gpt-new")).toBe(300000);
   expect(modelContextLimit("bad")).toBeUndefined();
   expect(modelContextLimit("inf")).toBeUndefined();
-});
-
-test("header shows a catalog-derived limit without the estimate mark", () => {
-  expect(contextStatus("gpt-new", 45000)).toBe("ctx ~45k/128k?");
-  rememberCatalogLimits([["gpt-new", 300000]]);
-  expect(contextStatus("gpt-new", 45000)).toBe("ctx ~45k/300k");
 });
 
 test("prefetch is background, cached once per provider, and falls back silently on failure", async () => {

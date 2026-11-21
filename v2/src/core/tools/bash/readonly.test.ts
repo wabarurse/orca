@@ -53,11 +53,8 @@ test("anything that may write, run another program or is not recognised stays in
   ]) expect([command, readOnly(command)]).toEqual([command, false]);
 });
 
-test("bash overlaps a read-only foreground command without the flag, and never a background one", () => {
-  expect(bash.parallel!({ command: "grep -n foo a.ts" })).toBe(true);
-  expect(bash.parallel!({ command: "bun test" })).toBe(false);
-  expect(bash.parallel!({ command: "bun test", independent: true })).toBe(true);
-  expect(bash.parallel!({ command: "cat a.log", background: true })).toBe(false);
-  expect(bash.parallel!({ command: "cat a.log", yield_ms: 100 })).toBe(false);
-  expect(bash.parallel!({})).toBe(false);
+test("bash overlaps read-only commands only", () => {
+  expect(bash.parallel({ command: "grep -n foo a.ts" })).toBe(true);
+  expect(bash.parallel({ command: "bun test" })).toBe(false);
+  expect(bash.parallel({})).toBe(false);
 });

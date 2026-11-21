@@ -18,6 +18,7 @@ import type { AgentEvent } from "./types";
 import { put } from "./inbox";
 import { pluginData } from "./bubbles";
 import { scriptedProvider } from "./scripted";
+import { ensureBuiltinSkills } from "./builtin-skills";
 
 export type SessionInput = {
   conversation: string;
@@ -66,6 +67,7 @@ export async function openSession(input: SessionInput): Promise<Session> {
   const transcript = input.keep?.transcript ?? openTranscript(path);
   transcript.refresh();
   const data = await ensureDataDirs(input.conversation);
+  const skills = [...assembled.skills, ...await ensureBuiltinSkills()];
   const config = await loadConfig();
   let rolling: RollingCompactor | null = input.keep?.rolling ?? null;
   if (assembled.bundle.role === "orchestrator" && rolling === null) {
@@ -89,9 +91,9 @@ export async function openSession(input: SessionInput): Promise<Session> {
   input.emit({ kind: "start", agent: input.agent, role: assembled.bundle.role, model: first.model });
   const agent = createAgent({
     conversation: input.conversation, agent: input.agent, role: assembled.bundle.role, branch: input.branch, cwd, data, trusted,
-    pluginSkills: assembled.skills, transcript, tools: assembled.tools, system: assembled.system,
+    pluginSkills: skills, transcript, tools: assembled.tools, system: assembled.system,
     resolve,
-    context: query => referenceSections({ conversation: input.conversation, role: assembled.bundle.role, cwd, trusted, pluginSkills: assembled.skills, query }),
+    context: query => referenceSections({ conversation: input.conversation, role: assembled.bundle.role, cwd, trusted, pluginSkills: skills, query }),
     hooks: assembled.hooks, runtime: input.runtime, emit: input.emit, signal: input.signal, concurrency: config.toolConcurrency,
     rolling, requireInput: input.requireInput, compactRequested: input.compactRequested,
   });
