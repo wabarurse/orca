@@ -67,7 +67,7 @@ describe("agent loop", () => {
 
   test("hooks change input, block, ask, rewrite results, shape requests and filter input", async () => {
     const hooks = emptyHooks();
-    const ctx: PluginContext = { plugin: "p", conversation: "", agent: "orchestrator", role: "orchestrator", cwd: "", data: async () => ok("") };
+    const ctx: PluginContext = { plugin: "p", conversation: "", agent: "orchestrator", role: "orchestrator", branch: null, cwd: "", data: async () => ok("") };
     hooks.beforeTool.push({ ctx, hook: async call => call.input.text === "secret" ? { action: "block", reason: "no secrets" }
       : call.input.text === "ask" ? { action: "ask", question: "ok?" } : { action: "run", input: { text: `${String(call.input.text)}!` } } });
     hooks.afterTool.push({ ctx, hook: async (_call, result) => ({ ...result, content: `${String(result.content)} (checked)` }) });

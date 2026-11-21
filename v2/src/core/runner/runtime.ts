@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { loadConfig, ok, parseJson, paths, type Result } from "../../config";
+import { fail, loadConfig, ok, parseJson, paths, saveConfig, type Result } from "../../config";
 import { askUser } from "../confirm";
 import { readConversation } from "../conversations";
 import { put } from "../inbox";
@@ -42,6 +42,17 @@ export async function runners(conversation: string): Promise<Runner[]> {
   return out;
 }
 
+export async function runnerNames(conversation: string): Promise<string[]> {
+  return [...new Set((await runners(conversation)).map(r => r.name))];
+}
+
+export async function chooseRunner(conversation: string, name: string): Promise<Result<string>> {
+  const names = await runnerNames(conversation);
+  if (!names.includes(name)) return fail(`unknown runner ${name}; choose ${names.join(", ")}`);
+  await saveConfig({ runner: name });
+  return ok(name);
+}
+
 export async function selectedRunner(conversation: string): Promise<Runner> {
   const wanted = (await loadConfig()).runner;
   return (await runners(conversation)).find(r => r.name === wanted) ?? plainRunner;
@@ -76,7 +87,7 @@ export function runtimeFor(conversation: string, self: string, confirm: (questio
       const meta = await readConversation(conversation);
       if (meta === null) throw new Error(`no conversation ${conversation}`);
       const trusted = await trustState(meta.directory) === "trusted";
-      const shape = settled(await assemble({ conversation, agent: "check", bundle: request.bundle, cwd: meta.directory, directory: meta.directory, trusted }));
+      const shape = settled(await assemble({ conversation, agent: "check", bundle: request.bundle, branch: request.branch, cwd: meta.directory, directory: meta.directory, trusted }));
       const prefix = shape.bundle.name === "orchestrator" ? null : shape.bundle.name;
       if (prefix === null) throw new Error("the orchestrator bundle cannot be spawned");
       const agent = `${prefix}-${slug(request.branch)}`;

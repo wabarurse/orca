@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { saveConfig } from "../config";
+import { loadConfig, saveConfig } from "../config";
 import { askUser, pendingConfirms } from "../core/confirm";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
@@ -33,7 +33,7 @@ function fakeTerminal() {
 async function app(dir: string) {
   const t = fakeTerminal();
   const started: string[] = [];
-  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), open: async () => {}, exit: () => {} });
   await a.start();
   return { ...t, app: a, started };
 }
@@ -63,7 +63,7 @@ describe("tui", () => {
     await saveConfig({ plugins: ["example"] });
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-folder-"));
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), open: async () => {}, exit: () => {} });
     const starting = a.start();
     await Bun.sleep(50);
     expect(t.text()).toContain(`Trust ${dir}?`);
@@ -79,6 +79,21 @@ describe("tui", () => {
     expect(t.text()).toContain("[Pins]");
     expect(t.text()).toContain("buy milk");
     a.stop();
+  });
+
+  test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {
+    registerBuiltins(BUILTINS);
+    await saveConfig({ plugins: ["tmux"], runner: "plain" });
+    const t = await app(home.path());
+    await t.type("/mux rex");
+    await t.press({ name: "enter" });
+    expect(t.text()).toContain("unknown runner rex; choose plain, tmux");
+    await t.type("/mux tmux");
+    await t.press({ name: "enter" });
+    expect((await loadConfig()).runner).toBe("tmux");
+    expect(t.text()).toContain("new agents start in tmux");
+    await saveConfig({ plugins: [], runner: "plain" });
+    t.app.stop();
   });
 
   test("a plugin hook's question is shown and answered from the TUI", async () => {

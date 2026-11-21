@@ -1,7 +1,7 @@
 import type { MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { GuardRule } from "../guard";
 import type { MemorySection } from "../loop/rolling";
-import type { Tool, ToolResult } from "../tools/registry";
+import type { AgentInfo, Tool, ToolResult } from "../tools/registry";
 import type { Message, Role } from "../types";
 import type { Result } from "../../config";
 
@@ -12,6 +12,7 @@ export type PluginContext = {
   conversation: string;
   agent: string;
   role: Role;
+  branch: string | null;
   cwd: string;
   data: (scope: StorageScope) => Promise<Result<string>>;
 };
@@ -64,6 +65,7 @@ export type UiHost = PluginContext & {
   input: (prompt: string, initial: string) => Promise<string | null>;
   pick: (title: string, options: string[]) => Promise<number | null>;
   say: (text: string) => Promise<void>;
+  open: (path: string) => Promise<void>;
 };
 
 export type TabAction = { key: string; label: string; run: (row: Row | null, host: UiHost) => Promise<void> };
@@ -86,9 +88,11 @@ export function defineUi(ui: PluginUi): PluginUi {
   return ui;
 }
 
-export type BackgroundContext = Omit<PluginContext, "agent" | "role" | "cwd"> & {
+export type BackgroundContext = Omit<PluginContext, "agent" | "role" | "cwd" | "branch"> & {
   directory: string;
   notify: (text: string) => Promise<void>;
+  tell: (agent: string, text: string) => Promise<void>;
+  agents: () => Promise<AgentInfo[]>;
 };
 export type Watcher = { name: string; everyMs: number; run: (ctx: BackgroundContext) => Promise<void> };
 
