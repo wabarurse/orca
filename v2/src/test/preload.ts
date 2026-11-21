@@ -1,4 +1,3 @@
-// Every test process starts with a temporary ORCA2_HOME, so no test can reach the real ~/.orca2.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

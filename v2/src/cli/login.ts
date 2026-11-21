@@ -1,4 +1,3 @@
-// `orca2 login <anthropic|openai> [profile]` and `orca2 accounts`: subscription sign-in, kept under ~/.orca2.
 import { accounts, importClaudeCode, importCodex, loginClaude, loginCodex } from "../api/auth";
 import { saveConfig } from "../config";
 

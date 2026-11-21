@@ -1,5 +1,3 @@
-// The TUI's view of the conversation's plugins: their ui.ts slots, bound to the conversation, and their tool lines
-// registered so tool calls show the way the plugin wants.
 import { pluginData } from "../core/bubbles";
 import { readConversation } from "../core/conversations";
 import { availablePlugins } from "../core/plugins/loader";

@@ -1,31 +1,25 @@
-// config.toml: the user's settings, edited by hand or by orca2 commands.
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { z } from "zod";
 import { paths } from "./paths";
+
+const Table = z.record(z.string(), z.unknown());
 
 export type Runner = "plain" | string;
 
 export type Config = {
   model: string;
-  /** Claude subscription profile; "" is "default". */
   account: string;
-  /** Codex subscription profile; "" is "default". */
   openaiAccount: string;
   anthropicPromptCache: boolean;
-  /** Background summaries on the account's small model (Haiku, Luna). */
   smallSummaries: boolean;
   toolConcurrency: number;
   maxToolResultBytes: number;
   maxToolOutputBytes: number;
-  /** Plugins switched on everywhere; a bubble's own on/off lists change this per bubble. */
   plugins: string[];
-  /** Plugins orca wrote that the user approved; any other user plugin is refused until approved. */
   approved: string[];
-  /** Folders whose instructions, skills and plugins load without asking (project trust). */
   trusted: string[];
-  /** Folders the user said not to trust. */
   untrusted: string[];
-  /** Which runner starts new agents: "plain" (child processes) or an enabled runner plugin's name. */
   runner: Runner;
 };
 
@@ -54,7 +48,6 @@ const integer = (value: unknown, min: number, max: number, fallback: number): nu
 const text = (value: unknown, fallback: string): string => typeof value === "string" ? value : fallback;
 const flag = (value: unknown, fallback: boolean): boolean => typeof value === "boolean" ? value : fallback;
 
-/** Parse saved settings; a value of the wrong shape reads as its default. */
 export function parseConfig(raw: Record<string, unknown>): Config {
   return {
     model: text(raw.model, defaults.model),
@@ -78,7 +71,8 @@ export async function loadConfig(): Promise<Config> {
   if (!(await file.exists())) return { ...defaults };
   try {
     const parsed: unknown = Bun.TOML.parse(await file.text());
-    return parseConfig(typeof parsed === "object" && parsed !== null ? parsed as Record<string, unknown> : {});
+    const table = Table.safeParse(parsed);
+    return parseConfig(table.success ? table.data : {});
   } catch (error) {
     const warning = `orca2: ignoring ${paths.config}: ${error instanceof Error ? error.message : String(error)}`;
     if (warning !== warned) console.error(warning);
@@ -87,7 +81,6 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
-/** Write changed keys back, keeping the others. */
 export async function saveConfig(patch: Partial<Config>): Promise<Config> {
   const next = { ...(await loadConfig()), ...patch };
   await mkdir(dirname(paths.config), { recursive: true, mode: 0o700 });

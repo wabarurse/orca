@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-// orca2: argument parsing and dispatch.
 import { BUILD_ID } from "../config";
 import { conversationFor, listConversations, readConversation } from "../core/conversations";
 import { removeConversation } from "../core/lifecycle";
@@ -40,13 +39,20 @@ async function ask(question: string): Promise<boolean> {
   return false;
 }
 
-async function conversationArg(args: string[]): Promise<string> {
+type Picked = { ok: true; data: string } | { ok: false; error: string };
+
+async function conversationArg(args: string[]): Promise<Picked> {
   const given = option(args, "--conversation");
   if (given !== null) {
-    if (await readConversation(given) === null) throw new Error(`no conversation ${given}`);
-    return given;
+    if (await readConversation(given) === null) return { ok: false, error: `no conversation ${given}` };
+    return { ok: true, data: given };
   }
-  return (await conversationFor(process.cwd())).id;
+  return { ok: true, data: (await conversationFor(process.cwd())).id };
+}
+
+function refuse(error: string): number {
+  process.stderr.write(`orca2: ${error}\n`);
+  return 1;
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -68,13 +74,20 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "msg") {
     const text = args[0] ?? "";
     if (text.length === 0) { out("usage: orca2 msg \"text\" [--conversation id]\n"); return 2; }
-    const conversation = await conversationArg(args);
+    const picked = await conversationArg(args);
+    if (!picked.ok) return refuse(picked.error);
+    const conversation = picked.data;
     await say(conversation, text, [], "steer");
     await ensureDaemon(conversation, null);
     out(`sent to ${conversation}\n`);
     return 0;
   }
-  if (command === "stop") { await stopDaemon(await conversationArg(args)); return 0; }
+  if (command === "stop") {
+    const picked = await conversationArg(args);
+    if (!picked.ok) return refuse(picked.error);
+    await stopDaemon(picked.data);
+    return 0;
+  }
   if (command === "delete") {
     const conversation = option(args, "--conversation");
     if (conversation === null) { out("usage: orca2 delete --conversation <id>  (stops its agents, removes its folder, $ORCA_DATA and worktrees)\n"); return 2; }

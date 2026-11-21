@@ -1,7 +1,9 @@
-// Small transactional records shared by every orca2 process (the provider rate-limit cooldown).
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { z } from "zod";
+
+const Row = z.object({ value: z.string() }).nullable();
 
 const connections = new Map<string, Database>();
 process.on("exit", () => { for (const db of connections.values()) db.close(); connections.clear(); });
@@ -18,11 +20,12 @@ function connect(file: string): Database {
 }
 
 export function readState<T>(file: string, scope: string, key: string): T | undefined {
-  const row = connect(file).query("SELECT value FROM state WHERE scope=? AND key=?").get(scope, key) as { value: string } | null;
-  return row === null ? undefined : JSON.parse(row.value) as T;
+  const row = Row.parse(connect(file).query("SELECT value FROM state WHERE scope=? AND key=?").get(scope, key));
+  if (row === null) return undefined;
+  const value: unknown = JSON.parse(row.value);
+  return z.custom<T>().parse(value);
 }
 
-/** One immediate transaction, so concurrent processes never lose an update. Returning undefined deletes. */
 export function updateState<T>(file: string, scope: string, key: string, update: (old: T | undefined) => T | undefined): T | undefined {
   const db = connect(file);
   return db.transaction(() => {

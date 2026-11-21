@@ -1,14 +1,16 @@
-// What the chat shows, as data: transcript entries and the live turn become screen items, the composer and counts
-// become footer rows. Pure, so tests read it directly; app.ts turns it into frames.
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Fold } from "../core/plugins/types";
 import { RESULT_MARK, TOOL_MARK, toolView, type ToolView } from "../core/toolview";
 import type { AgentEvent, Entry, ToolCall, ToolOutcome } from "../core/types";
+import { z } from "zod";
 import { dim, editor, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, userFill, visibleLength, wordWrap } from "./components";
 
 type Item = screens.ScreenItem;
 type Call = { call: ToolCall; outcome: ToolOutcome | null };
 type Piece = { kind: "text"; text: string } | { kind: "call"; call: Call } | { kind: "user"; text: string } | { kind: "from"; from: string; text: string } | { kind: "note"; text: string };
+
+const InputRecord = z.record(z.string(), z.unknown());
+const inputRecord = (input: unknown): Record<string, unknown> => { const parsed = InputRecord.safeParse(input); return parsed.success ? parsed.data : {}; };
 
 const REFERENCE = /^\[orca reference: /;
 const bold = (s: string): string => `\x1b[1m${s}\x1b[0m`;
@@ -17,7 +19,6 @@ const red = (s: string): string => `\x1b[${pastel.red}m${s}\x1b[0m`;
 const blockText = (content: MessageParam["content"]): string => typeof content === "string" ? content
   : content.map(block => block.type === "text" ? block.text : "").filter(text => text.length > 0).join("\n");
 
-/** The conversation as pieces in order: user turns, agent messages, assistant text, tool calls with outcomes. */
 export function pieces(entries: Entry[]): Piece[] {
   const out: Piece[] = [];
   const calls = new Map<string, Call>();
@@ -65,7 +66,6 @@ export function tally(views: ToolView[]): string {
 
 export type ViewState = { cols: number; open: Set<string>; folds: Map<string, Fold> };
 
-/** Pieces as screen items: consecutive finished calls fold into "N tool calls"; calls of a plugin fold become its items. */
 export function items(list: Piece[], state: ViewState): Item[] {
   const out: Item[] = [];
   const width = Math.max(10, state.cols - 2);
@@ -75,7 +75,7 @@ export function items(list: Piece[], state: ViewState): Item[] {
     const key = `calls-${run[0]?.call.id ?? out.length}`;
     const plugin = state.folds.get(run[0]?.call.name ?? "");
     if (plugin !== undefined) {
-      const rows = run.flatMap(c => c.outcome === null ? [] : plugin.items(c.call.input as Record<string, unknown>, { ok: c.outcome.ok, text: c.outcome.text }));
+      const rows = run.flatMap(c => c.outcome === null ? [] : plugin.items(inputRecord(c.call.input), { ok: c.outcome.ok, text: c.outcome.text }));
       if (rows.length > 0) out.push({ kind: "fold", key, gap: true, title: `+ ${plugin.title(rows.length)}`, failed: "", open: state.open.has(key), rows: rows.map(r => `● ${sanitize(r)}  open`), opens: plugin.opens });
       else out.push({ kind: "rows", key, gap: true, rows: run.flatMap(c => callRows(viewOf(c), width)) });
     } else if (run.length === 1 && run[0] !== undefined) out.push({ kind: "rows", key, gap: true, rows: callRows(viewOf(run[0]), width) });
@@ -104,7 +104,6 @@ export function items(list: Piece[], state: ViewState): Item[] {
   return out;
 }
 
-/** The live turn's events: the reply streaming now and the calls still running. */
 export function tail(events: AgentEvent[], lastDurableText: string, cols: number, now: number, busy: boolean): string[] {
   let text = "";
   const running = new Map<string, ToolCall>();
@@ -122,7 +121,6 @@ export function tail(events: AgentEvent[], lastDurableText: string, cols: number
 
 export type Composer = { prompt: string; state: editor.EditState };
 
-/** The boxed composer with the counts inside its bottom rail; returns rows and the cursor within them. */
 export function composerRows(c: Composer, counts: string, cols: number, maxRows: number): { rows: string[]; row: number; col: number } {
   const inner = Math.max(4, cols - 4);
   const prompt = fit(sanitize(c.prompt), Math.max(0, inner - 4));

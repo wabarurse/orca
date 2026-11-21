@@ -33,7 +33,7 @@ function fakeTerminal() {
 async function app(dir: string) {
   const t = fakeTerminal();
   const started: string[] = [];
-  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); }, clipboard: async () => null, exit: () => {} });
+  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
   await a.start();
   return { ...t, app: a, started };
 }
@@ -46,11 +46,11 @@ describe("tui", () => {
     await t.press({ name: "enter" });
     await t.type("later");
     await t.press({ name: "tab" });
-    const id = (t.app as unknown as { conversation: { id: string } }).conversation.id;
+    const id = t.app.conversationId();
     const queued = (await pending(id, "orchestrator")).map(i => `${i.message.delivery}:${i.message.text}`);
     expect(queued).toEqual(["steer:hello", "steer:later"]);
     expect(t.started.length).toBeGreaterThan(0);
-    await (t.app as unknown as { poll: () => Promise<void> }).poll();
+    await t.app.poll();
     expect(t.text()).toContain("queued (next): hello");
     await t.press({ name: "escape" });
     expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["hello"]);
@@ -63,7 +63,7 @@ describe("tui", () => {
     await saveConfig({ plugins: ["example"] });
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-folder-"));
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => {}, clipboard: async () => null, exit: () => {} });
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => {}, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
     const starting = a.start();
     await Bun.sleep(50);
     expect(t.text()).toContain(`Trust ${dir}?`);
@@ -71,8 +71,7 @@ describe("tui", () => {
     await starting;
     await t.type("/pin buy milk");
     await t.press({ name: "enter" });
-    (a as unknown as { lastSlow: number }).lastSlow = -10_000;
-    await (a as unknown as { poll: () => Promise<void> }).poll();
+    await a.refresh();
     expect(t.text()).toContain("1 pin");
     await t.press({ name: "a", ctrl: true });
     expect(t.text()).toContain("[Agents]");
@@ -84,10 +83,10 @@ describe("tui", () => {
 
   test("a plugin hook's question is shown and answered from the TUI", async () => {
     const t = await app(home.path());
-    const id = (t.app as unknown as { conversation: { id: string } }).conversation.id;
+    const id = t.app.conversationId();
     const answer = askUser(id, "worker-x", "deploy to staging?", new AbortController().signal, 5000);
     await Bun.sleep(50);
-    await (t.app as unknown as { poll: () => Promise<void> }).poll();
+    await t.app.poll();
     expect(t.text()).toContain("worker-x asks: deploy to staging?");
     await t.press({ name: "char", text: "y" });
     expect(await answer).toBe(true);
