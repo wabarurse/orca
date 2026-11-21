@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { errorMessage, fail, ok, paths, type Result } from "../../config";
-import type { Launch } from "../../core/plugins";
+import type { Launch } from "../plugins/types";
 
 export type Answer = { code: number; out: string; err: string };
 
@@ -24,9 +24,9 @@ const SKIP = new Set([...WINDOW_ENV, "PWD", "OLDPWD", "SHLVL", "_"]);
 const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 const BOOTSTRAP = `exec /usr/bin/env -i ${WINDOW_ENV.map(k => `${k}="$${k}"`).join(" ")} /bin/sh "$@"`;
 
-export type WindowCommand = { argv: string[]; cleanup: () => Promise<void> };
+export type LaunchCommand = { argv: string[]; cleanup: () => Promise<void> };
 
-export async function windowCommand(launch: Launch): Promise<WindowCommand> {
+export async function launchCommand(launch: Launch): Promise<LaunchCommand> {
   const dir = join(paths.runtime, "launches");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = join(dir, `${crypto.randomUUID()}.sh`);
@@ -36,5 +36,3 @@ export async function windowCommand(launch: Launch): Promise<WindowCommand> {
   await writeFile(file, [...exports, ...unsetEmpty, ...run, ""].join("\n"), { mode: 0o600, flag: "wx" });
   return { argv: ["/bin/sh", "-c", BOOTSTRAP, "sh", file, launch.log, ...launch.argv], cleanup: () => rm(file, { force: true }) };
 }
-
-export const sessionName = (conversation: string): string => `orca2-${conversation}`;

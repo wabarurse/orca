@@ -11,7 +11,7 @@ import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Fold, Row, Section, UiHost } from "../core/plugins/types";
 import { ensureBubble, readBubble, setBubblePlugin } from "../core/bubbles";
-import { stopAgent } from "../core/runner/runtime";
+import { chooseRunner, runnerNames, stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustQuestion, trustState } from "../core/trust";
@@ -311,7 +311,7 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+V image · Ctrl+N new · Alt+←/→ switch · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+V image · Ctrl+N new · Alt+←/→ switch · /compact /model /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
     if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted (restart agents to load its instructions)"); return; }
@@ -324,6 +324,7 @@ export class App {
       return;
     }
     if (name === "plugins") { await this.pluginsMenu(); return; }
+    if (name === "mux") { await this.mux(args.trim()); return; }
     const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
     if (own === undefined) { this.flash(`unknown command /${name}`); return; }
     try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${errorMessage(error)}`); }
@@ -333,6 +334,21 @@ export class App {
     const seen = new Map<string, { name: string }>();
     for (const command of this.uis.flatMap(bound => bound.ui.commands)) if (!seen.has(command.name)) seen.set(command.name, command);
     return [...seen.values()];
+  }
+
+  private async mux(wanted: string): Promise<void> {
+    const id = this.conversation.id;
+    const name = wanted.length > 0 ? wanted : await this.pickRunner(id);
+    if (name === null) return;
+    const chosen = await chooseRunner(id, name);
+    this.flash(chosen.ok ? `new agents start in ${chosen.data}; running ones stay where they are` : chosen.error);
+  }
+
+  private async pickRunner(conversation: string): Promise<string | null> {
+    const names = await runnerNames(conversation);
+    const current = (await loadConfig()).runner;
+    const picked = await this.ask({ kind: "pick", title: "runner for new agents", options: names.map(n => n === current ? `${n} (current)` : n) });
+    return picked === null ? null : names[picked] ?? null;
   }
 
   private async pluginsMenu(): Promise<void> {

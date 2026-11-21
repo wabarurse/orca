@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { fail, ok, paths, type Result } from "../../config";
-import type { Launch, Runner } from "../../core/plugins";
+import { exec, launchCommand, which, type Answer, type Launch, type Runner } from "../../core/plugins";
 import { settled } from "../../core/tools/registry";
-import { exec, sessionName, which, windowCommand, type Answer } from "./launch";
 
 const SOCKET_MAX = 100;
+
+export const sessionName = (conversation: string): string => `orca2-${conversation}`;
 
 export function socketArgs(): string[] {
   const socket = join(paths.runtime, "tmux.sock");
@@ -39,7 +40,7 @@ async function openWindow(launch: Launch, argv: string[]): Promise<Result<string
 export const tmuxRunner: Runner = {
   name: "tmux",
   async start(launch) {
-    const command = await windowCommand(launch);
+    const command = await launchCommand(launch);
     const pane = await openWindow(launch, command.argv);
     if (!pane.ok) await command.cleanup();
     return { handle: settled(pane), pid: null };

@@ -2,9 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { fail, ok, parseJson, paths, type Result } from "../../config";
-import type { Launch, Runner } from "../../core/plugins";
+import { exec, launchCommand, which, type Launch, type Runner } from "../../core/plugins";
 import { settled } from "../../core/tools/registry";
-import { exec, sessionName, which, windowCommand } from "../tmux/launch";
 
 const APP_CLI = "/Applications/Rex.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex";
 
@@ -13,6 +12,8 @@ export function rexBinary(): string | null {
   if (dir !== undefined && dir.length > 0 && existsSync(join(dir, "rex"))) return join(dir, "rex");
   return which("rex") ?? (existsSync(APP_CLI) ? APP_CLI : null);
 }
+
+export const sessionName = (conversation: string): string => `orca2-${conversation}`;
 
 const marker = (): string => join(paths.globalData, "rex", "used");
 export const rexUsed = (): boolean => existsSync(marker());
@@ -94,7 +95,7 @@ async function startBlock(launch: Launch): Promise<Result<string>> {
   const sid = await ensureSession(sessionName(launch.conversation), launch.cwd);
   if (!sid.ok) return sid;
   for (const block of await blocksOf(sid.data) ?? []) if (block.label === launch.agent && !block.live) await rex(["block", "close", block.id]);
-  const command = await windowCommand(launch);
+  const command = await launchCommand(launch);
   const res = await rex(["run", "-s", sid.data, "--label", launch.agent, "-c", launch.cwd, "--keep-open", "--focus=false", "--shell=none", "--json", "--", ...command.argv]);
   const made = res.ok ? parse(res.out, RunSchema) : null;
   const block = made?.block_ids?.[0] ?? "";

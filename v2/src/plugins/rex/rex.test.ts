@@ -8,7 +8,6 @@ import { present } from "../../core/plugins/testing";
 import background from "./background";
 import plugin from "./index";
 import { rexBinary, rexUsed } from "./runner";
-import ui from "./ui";
 
 const SID = "session:01a1fa88-cf9f-715b-9e42-dab8643b9b2d";
 const FAKE = `#!/bin/sh
@@ -93,7 +92,7 @@ test("alive is the agent-labelled blocks still running; the idle shell and block
   expect(await runner.alive("c1")).toBeNull();
 });
 
-test("the plugin shares /mux and declares its global marker", () => {
-  expect(ui.commands.map(c => c.name)).toEqual(["mux"]);
+test("the plugin declares its global marker and has no UI of its own", () => {
+  expect(plugin.ui).toBeNull();
   expect(plugin.storage.map(s => s.scope)).toEqual(["global"]);
 });

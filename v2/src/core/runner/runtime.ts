@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { loadConfig, ok, parseJson, paths, type Result } from "../../config";
+import { fail, loadConfig, ok, parseJson, paths, saveConfig, type Result } from "../../config";
 import { askUser } from "../confirm";
 import { readConversation } from "../conversations";
 import { put } from "../inbox";
@@ -40,6 +40,17 @@ export async function runners(conversation: string): Promise<Runner[]> {
     if (runner !== null) out.push(runner);
   }
   return out;
+}
+
+export async function runnerNames(conversation: string): Promise<string[]> {
+  return [...new Set((await runners(conversation)).map(r => r.name))];
+}
+
+export async function chooseRunner(conversation: string, name: string): Promise<Result<string>> {
+  const names = await runnerNames(conversation);
+  if (!names.includes(name)) return fail(`unknown runner ${name}; choose ${names.join(", ")}`);
+  await saveConfig({ runner: name });
+  return ok(name);
 }
 
 export async function selectedRunner(conversation: string): Promise<Runner> {

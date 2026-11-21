@@ -11,6 +11,6 @@ export const BUILTINS: BuiltinPlugin[] = [
   { name: "processes", dir: dir("processes"), index: () => import("./processes/index"), ui: () => import("./processes/ui"), background: () => import("./processes/background") },
   { name: "images", dir: dir("images"), index: () => import("./images/index"), ui: () => import("./images/ui"), background: null },
   { name: "sandbox", dir: dir("sandbox"), index: () => import("./sandbox/index"), ui: () => import("./sandbox/ui"), background: null },
-  { name: "tmux", dir: dir("tmux"), index: () => import("./tmux/index"), ui: () => import("./tmux/ui"), background: () => import("./tmux/background") },
-  { name: "rex", dir: dir("rex"), index: () => import("./rex/index"), ui: () => import("./rex/ui"), background: () => import("./rex/background") },
+  { name: "tmux", dir: dir("tmux"), index: () => import("./tmux/index"), ui: null, background: () => import("./tmux/background") },
+  { name: "rex", dir: dir("rex"), index: () => import("./rex/index"), ui: null, background: () => import("./rex/background") },
 ];

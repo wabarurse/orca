@@ -2,16 +2,12 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, paths, saveConfig } from "../../config";
-import { createConversation } from "../../core/conversations";
-import { registerBuiltins } from "../../core/plugins";
-import type { Launch } from "../../core/plugins";
-import { item, pluginContext, present, recordingHost } from "../../core/plugins/testing";
+import { paths } from "../../config";
+import { which, type Launch } from "../../core/plugins";
+import { item, present } from "../../core/plugins/testing";
 import background from "./background";
 import plugin from "./index";
-import { which } from "./launch";
 import { socketArgs } from "./runner";
-import ui from "./ui";
 
 const FAKE = `#!/bin/sh
 for a in "$@"; do printf '%s\\037' "$a"; done >> "$TMUX_FAKE/log"; echo >> "$TMUX_FAKE/log"
@@ -87,25 +83,7 @@ test("alive lists window names, [] when the session is gone, null when tmux cann
   expect(present(calls().at(-1), "last call").slice(-3)).toEqual(["kill-window", "-t", "=orca2-c1:=worker-a"]);
 });
 
-test("/mux offers plain and every enabled runner, and saves the choice as runner", async () => {
-  const dir = (name: string): string => join(import.meta.dir, "..", name);
-  registerBuiltins([
-    { name: "tmux", dir: dir("tmux"), index: () => import("./index"), ui: () => import("./ui"), background: () => import("./background") },
-    { name: "rex", dir: dir("rex"), index: () => import("../rex/index"), ui: () => import("../rex/ui"), background: () => import("../rex/background") },
-  ]);
-  await saveConfig({ plugins: ["tmux", "rex"] });
-  const conversation = await createConversation(cwd, "t");
-  const picks: string[][] = [];
-  const { host, notes } = recordingHost(pluginContext(conversation.id, "tmux", cwd), { pick: 1, input: null, confirm: true });
-  host.pick = async (_title, options) => { picks.push(options); return 1; };
-  const mux = present(ui.commands.find(c => c.name === "mux"), "mux");
-  await mux.run("rex", host);
-  expect((await loadConfig()).runner).toBe("rex");
-  await mux.run("", host);
-  expect(picks[0]).toEqual(["plain", "rex (current)", "tmux"]);
-  expect((await loadConfig()).runner).toBe("rex");
-  await mux.run("screen", host);
-  expect(notes.at(-1)).toBe("unknown runner screen; choose plain, rex, tmux");
-  expect((await loadConfig()).runner).toBe("rex");
+test("the plugin is a runner and a skill, with no UI of its own", () => {
   expect(plugin.skills).toEqual(["skills/tmux"]);
+  expect(plugin.ui).toBeNull();
 });

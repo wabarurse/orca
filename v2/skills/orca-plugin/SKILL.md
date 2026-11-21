@@ -41,8 +41,11 @@ lowercase letters, digits and underscores, unique across enabled plugins.
 A user plugin imports types only: `import type { Plugin } from "orca2/plugin";`. It must not import orca2's runtime
 modules (they are not on its path); everything it needs comes through the context arguments. A built-in plugin in
 `v2/src/plugins/` imports from `../../core/plugins`: `definePlugin`, `defineUi`, `defineBackground`, the types, and
-the helpers `writeAtomic(file, text)` (whole-file write) and `withStorageLock(path, fn)` (one writer at a time across
-processes). It may import other core modules, but prefer what the contexts give.
+the helpers `writeAtomic(file, text)` (whole-file write), `withStorageLock(path, fn)` (one writer at a time across
+processes), `exec(argv)` and `which(name)` (run a CLI from orca2's home; a program on the current PATH) and
+`launchCommand(launch)` (the agent launch command every runner uses). It may import other core modules (`src/core`,
+`src/config`, `src/api`), but prefer what the contexts give. It never imports another plugin, not even a built-in
+one: `src/independence.test.ts` fails on it. What two plugins would share belongs in the core.
 
 ## index.ts: the Plugin
 
@@ -192,7 +195,10 @@ export default background;
   credentials: never put it in argv or the multiplexer's options (write a 0600 file the command sources and deletes).
   `alive(conversation)` lists the agent ids the runner still holds (null when it cannot tell) and `stop(conversation,
   agent)` ends one; the core calls `stop` for agents this runner started. `name` should equal the plugin name: the
-  user selects it with `runner = "<name>"` in config.toml (or a `/mux` command).
+  user selects it with `/mux` in the TUI (a core command listing plain and every enabled plugin runner) or
+  `runner = "<name>"` in config.toml; with none enabled the core's plain runner starts agents. Build `start` on
+  `launchCommand(launch)`: it puts `launch.env` in a 0600 file the command sources and deletes, and tees the output
+  to `launch.log`; run its `argv` and call its `cleanup()` when the window never opened.
 - `stop` runs when the daemon stops (an `orca2 stop`, a deletion, or a signal; not after a crash): processes you
   started may keep running and the next daemon's watcher can pick them up. `remove` runs when the conversation is
   deleted, for anything kept outside `$ORCA_DATA` (and to kill what you started).
