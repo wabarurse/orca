@@ -1,7 +1,8 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Fold } from "../core/plugins/types";
 import { RESULT_MARK, TOOL_MARK, toolView, type ToolView } from "../core/toolview";
-import type { AgentEvent, Entry, ToolCall, ToolOutcome } from "../core/types";
+import { clock, phaseText } from "../core/spans";
+import type { AgentEvent, Entry, OpenSpan, ToolCall, ToolOutcome } from "../core/types";
 import { z } from "zod";
 import { dim, editor, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, userFill, visibleLength, wordWrap } from "./components";
 
@@ -104,18 +105,28 @@ export function items(list: Piece[], state: ViewState): Item[] {
   return out;
 }
 
-export function tail(events: AgentEvent[], lastDurableText: string, cols: number, now: number, busy: boolean): string[] {
+export function tail(events: AgentEvent[], lastDurableText: string, cols: number, now: number, busy: boolean, waiting: OpenSpan | null): string[] {
   let text = "";
   const running = new Map<string, ToolCall>();
+  const open = new Map<string, OpenSpan>();
   for (const event of events) {
     if (event.kind === "text") text += event.text;
     if (event.kind === "tool_start") { running.set(event.call.id, event.call); text = ""; }
     if (event.kind === "tool_end") running.delete(event.call.id);
+    if (event.kind === "span_start") open.set(event.span.id, event.span);
+    if (event.kind === "span_end") open.delete(event.span.id);
   }
   const width = Math.max(10, cols - 2);
   const shown = text.trim().length > 0 && text.trim() !== lastDurableText.trim() ? renderMarkdown(text, width) : [];
-  const calls = [...running.values()].map(call => shimmer(fit(`${TOOL_MARK} ${toolView(call.name, call.input, { ok: true, text: "" }).tool}`, width), now));
-  const activity = busy && calls.length === 0 && shown.length === 0 ? [dim(shimmer("thinking…", now))] : [];
+  const calls = [...running.values()].map(call => {
+    const span = open.get(call.id);
+    const elapsed = span === undefined ? "" : ` (${clock(now - Date.parse(span.startedAt))})`;
+    return shimmer(fit(`${TOOL_MARK} ${toolView(call.name, call.input, { ok: true, text: "" }).tool}${elapsed}`, width), now);
+  });
+  if (!busy) return waiting !== null && waiting.kind !== "wait-inbox" ? [...shown, dim(fit(phaseText(waiting, now), width))] : shown;
+  const phase = [...open.values()].filter(span => span.kind !== "tool").at(-1) ?? null;
+  const activity = phase !== null ? [dim(shimmer(fit(phaseText(phase, now), width), now))]
+    : calls.length === 0 && shown.length === 0 ? [dim(shimmer("thinking…", now))] : [];
   return [...shown, ...calls, ...activity];
 }
 

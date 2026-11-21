@@ -65,17 +65,20 @@ export class RollingCompactor {
     return Math.min(this.options.triggerTokens ?? limit * TRIGGER_FRACTION, inputRoom(limit, outputCap(window)));
   }
 
-  async boundary(b: Boundary, manual: boolean): Promise<void> {
+  async boundary(b: Boundary, manual: boolean): Promise<boolean> {
+    let worked = false;
     try {
-      if (this.job?.settled === true) await this.publish(b, this.job);
+      if (this.job?.settled === true) { worked = true; await this.publish(b, this.job); }
       const messages = this.transcript.chain();
       const trigger = this.trigger(b.window);
       if (this.job === null && (manual || (budget(b.window, messages) >= trigger && Date.now() >= this.retryAfter))) {
         const tail = Math.min(this.options.tailTokens ?? TAIL_TOKENS, Math.floor(trigger / 2));
+        worked = true;
         await this.start(b, messages, tail);
       }
       const job = this.job;
       if (job !== null && (manual || !fits(b.window, messages))) {
+        worked = true;
         const cancel = (): void => { job.abort.abort(b.signal.reason); };
         b.signal.addEventListener("abort", cancel, { once: true });
         try { await job.promise; } finally { b.signal.removeEventListener("abort", cancel); }
@@ -91,6 +94,7 @@ export class RollingCompactor {
     if (this.failure !== null && !fits(b.window, this.transcript.chain())) {
       throw new ContextBlocked(`context blocked: compaction failed: ${this.failure}. History is kept; /compact retries, or choose a larger model.`);
     }
+    return worked;
   }
 
   private async start(b: Boundary, messages: MessageParam[], tailTokens: number): Promise<void> {

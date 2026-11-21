@@ -10,6 +10,7 @@ import { listRuns, live, updateRun } from "./runner/runs";
 import { openSession } from "./session";
 import { openTranscript } from "./transcript";
 import { trustForRun } from "./trust";
+import { flushSpans, phaseTracker, spanRecorder } from "./spans";
 import type { AgentEvent } from "./types";
 import type { Resolved } from "./loop/agent";
 
@@ -44,6 +45,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
   const started = Date.now();
   const emit = (event: AgentEvent): void => { if (options.json) options.out(JSON.stringify({ ...event, conversation: conversation.id, ms: Date.now() - started }) + "\n"); };
   const transcript = openTranscript(paths.transcript(conversation.id, "orchestrator"));
+  const idle = phaseTracker(spanRecorder(conversation.id, options.bundle === "orchestrator" ? "orchestrator" : `${options.bundle}-headless`, emit));
   let rolling: RollingCompactor | null = null;
   let answer = "", status: "done" | "cancelled" | "failed" = "done", error: string | null = null;
   try {
@@ -51,6 +53,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
     await put(conversation.id, agent, "user", options.prompt, { images: [], delivery: "steer" });
     for (;;) {
       if ((await pending(conversation.id, agent)).length > 0) {
+        idle.close();
         const opened = await openSession({ conversation: conversation.id, agent, bundle: options.bundle, branch: null, cwd: options.cwd, fresh: false, requireInput: true,
           emit, signal: abort.signal, runtime: runtimeFor(conversation.id, agent, async () => options.yes), compactRequested: () => false,
           model: options.model, keep: agent === "orchestrator" ? { transcript, rolling } : null, resolve: options.resolve });
@@ -69,7 +72,9 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
         await updateRun(conversation.id, run.agent, { state: "exited", endedAt: new Date().toISOString() });
         await put(conversation.id, "orchestrator", run.agent, `[agent-exit] ${run.agent} stopped unexpectedly (log: ${run.log})`, { images: [], delivery: "steer" });
       }
-      if (!runs.some(live) && (await pending(conversation.id, agent)).length === 0) break;
+      const waiting = runs.filter(live).map(run => run.agent);
+      if (waiting.length === 0 && (await pending(conversation.id, agent)).length === 0) break;
+      if (waiting.length > 0) idle.observe("wait-worker", waiting.join(", "));
       if (abort.signal.aborted) { status = "cancelled"; break; }
       await Bun.sleep(IDLE_POLL_MS);
     }
@@ -77,6 +82,8 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
     status = abort.signal.aborted ? "cancelled" : "failed";
     error = errorMessage(cause);
   } finally {
+    idle.close();
+    await flushSpans();
     rolling?.dispose();
     await release();
     process.off("SIGINT", stop);

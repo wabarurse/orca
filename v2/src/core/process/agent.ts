@@ -3,6 +3,7 @@ import { callText, resultText } from "../toolview";
 import { fileConfirm, runtimeFor } from "../runner/runtime";
 import { readRun, updateRun } from "../runner/runs";
 import { openSession } from "../session";
+import { flushSpans, spanRecorder } from "../spans";
 import type { AgentEvent } from "../types";
 import { asRecord, errorMessage } from "../../config";
 
@@ -26,6 +27,8 @@ export async function agentProcess(args: AgentArgs, out: (text: string) => void 
   };
   const record = await readRun(args.conversation, args.agent);
   if (record === null || record.run !== args.run) { out(`no run record ${args.run} for ${args.agent}\n`); return 70; }
+  const launched = Date.parse(record.startedAt);
+  spanRecorder(args.conversation, args.agent, emit).begin("spawn", args.agent, Number.isFinite(launched) ? launched : null, null).end({ runner: record.runner, bundle: record.bundle });
   await updateRun(args.conversation, args.agent, { state: "running", pid: process.pid });
   let status: "done" | "cancelled" | "failed" = "failed", error: string | null = null;
   try {
@@ -43,6 +46,7 @@ export async function agentProcess(args: AgentArgs, out: (text: string) => void 
   const state = status === "cancelled" ? "stopped" : status === "failed" ? "failed" : reported ? "reported" : "exited";
   await updateRun(args.conversation, args.agent, { state, endedAt, error, lastTool });
   if (status === "failed") out(`\n${args.agent} failed: ${error ?? "unknown error"}\n`);
+  await flushSpans();
   if (!reported && status !== "cancelled") {
     const why = status === "failed" ? `failed: ${error ?? "unknown error"}` : "finished without reporting";
     await put(args.conversation, "orchestrator", args.agent, `[agent-exit] ${args.agent} ${why} (last tool: ${lastTool ?? "none"}; log: ${record.log})`, { images: [], delivery: "steer" });

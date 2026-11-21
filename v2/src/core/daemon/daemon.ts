@@ -17,6 +17,7 @@ import { trustState } from "../trust";
 import { lockPath, takeCommands, writeStatus, type DaemonStatus } from "./channel";
 import { liveWriter } from "./live";
 import { runBackgroundHooks } from "../lifecycle";
+import { flushSpans, phaseTracker, spanRecorder } from "../spans";
 
 export const POLL_MS = 1000;
 const WATCH_MS = 2000;
@@ -66,11 +67,12 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
   const transcript = openTranscript(paths.transcript(conversation, "orchestrator"));
   const userSeen = new Set<string>();
   let rolling: RollingCompactor | null = null;
-  let status: DaemonStatus = { pid: process.pid, run: options.run, state: "idle", since: new Date().toISOString(), turns: 0, error: null, contextTokens: null };
+  let status: DaemonStatus = { pid: process.pid, run: options.run, state: "idle", since: new Date().toISOString(), turns: 0, error: null, contextTokens: null, phase: null };
   const setStatus = async (patch: Partial<DaemonStatus>): Promise<void> => { status = { ...status, ...patch, since: new Date().toISOString() }; await writeStatus(conversation, status); };
   await setStatus({});
   await updateRun(conversation, "orchestrator", { state: "running", pid: process.pid });
   const watchers = await backgroundWatchers(conversation, meta.directory);
+  const idle = phaseTracker(spanRecorder(conversation, "orchestrator", event => { if (event.kind === "notice") options.log(`${event.text}\n`); }));
   let compactRequested = false, stopping = false;
   let turnAbort: AbortController | null = null;
   const stopSignals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP", "SIGINT"];
@@ -117,7 +119,8 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
         const writer = liveWriter(conversation, turn);
         turnAbort = new AbortController();
         const poll = setInterval(() => { void handleCommands().catch((error: unknown) => { options.log(`commands: ${String(error)}\n`); }); }, 100);
-        await setStatus({ state: "turn", turns: turn, error: null });
+        idle.close();
+        await setStatus({ state: "turn", turns: turn, error: null, phase: null });
         try {
           const manual = compactRequested;
           compactRequested = false;
@@ -143,15 +146,22 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
         }
         continue;
       }
-      if (options.exitWhenIdle && (await listRuns(conversation)).every(run => run.agent === "orchestrator" || !live(run))) break;
+      const runs = await listRuns(conversation);
+      if (options.exitWhenIdle && runs.every(run => run.agent === "orchestrator" || !live(run))) break;
+      const waiting = runs.filter(run => run.agent !== "orchestrator" && live(run)).map(run => run.agent);
+      const before = idle.current();
+      const phase = idle.observe(waiting.length > 0 ? "wait-worker" : "wait-inbox", waiting.length > 0 ? waiting.join(", ") : "input");
+      if (before !== phase) { status = { ...status, phase }; await writeStatus(conversation, status); }
       await new Promise<void>(resolve => { const timer = setTimeout(resolve, POLL_MS); wake = () => { clearTimeout(timer); resolve(); }; });
       wake = null;
     }
   } finally {
     for (const w of watchers_) w.close();
+    idle.close();
+    await flushSpans();
     rolling?.dispose();
     await runBackgroundHooks(conversation, "stop", options.log);
-    await setStatus({ state: "stopped" });
+    await setStatus({ state: "stopped", phase: null });
     await updateRun(conversation, "orchestrator", { state: "stopped", endedAt: new Date().toISOString() });
     await release();
   }

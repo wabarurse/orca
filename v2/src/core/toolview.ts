@@ -36,9 +36,10 @@ export function registerToolLine(name: string, label: (input: Input) => string, 
 
 const asInput = (input: unknown): Input => asRecord(input) ?? {};
 
+export const toolArgs = (name: string, input: unknown): string => oneLine(plain((pluginLabels.get(name) ?? ARGS[name] ?? firstString)(asInput(input))));
+
 export function toolLabel(name: string, input: unknown): string {
-  const args = (pluginLabels.get(name) ?? ARGS[name] ?? firstString)(asInput(input));
-  return oneLine(plain(`${display(name)}(${args})`));
+  return oneLine(plain(`${display(name)}(${toolArgs(name, input)})`));
 }
 
 const EXIT = /\n?\[exit (\d+)\]$/;
