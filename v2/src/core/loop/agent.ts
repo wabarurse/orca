@@ -182,11 +182,12 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
     try {
       const raw = asRecord(block.input) ?? {};
       let result: { ok: boolean; content: ToolResult };
+      let refused: string | null = null;
       const tool = byName.get(block.name);
       if (tool === undefined) result = { ok: false, content: `unknown tool: ${block.name}` };
       else {
-        const decision = await beforeTool(setup.hooks, block.name, raw, question => setup.spans.time("wait-inbox", "user confirmation", () => setup.runtime.confirm(question), yes => ({ answer: yes ? "yes" : "no" })));
-        if (decision.action === "block") result = { ok: false, content: decision.reason };
+        const decision = await beforeTool(setup.hooks, block.name, raw, setup.cwd, question => setup.spans.time("wait-inbox", "user confirmation", () => setup.runtime.confirm(question), yes => ({ answer: yes ? "yes" : "no" })));
+        if (decision.action === "block") { result = { ok: false, content: decision.reason }; refused = decision.refused; }
         else {
           const ctx: ToolContext = { conversation: setup.conversation, agent: setup.agent, role: setup.role, branch: setup.branch, cwd: setup.cwd, data: setup.data,
             trusted: setup.trusted, pluginSkills: setup.pluginSkills, callId: block.id, signal: setup.signal, model: model.model, provider: model.provider, settings: model.settings, runtime: setup.runtime };
@@ -200,7 +201,7 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
           result = await afterTool(setup.hooks, block.name, decision.input, result);
         }
       }
-      timing.end({ tool: block.name, ok: result.ok ? "yes" : "no" });
+      timing.end({ tool: block.name, ok: result.ok ? "yes" : "no", ...(refused === null ? {} : { refused }) });
       await usageEvent({ kind: "tool", project: setup.conversation, agent: setup.agent, tool: block.name, call: block.id, ok: result.ok, durationMs: Math.round(performance.now() - started) });
       setup.emit({ kind: "tool_end", call, outcome: { id: block.id, ok: result.ok, text: resultText(result.content) } });
       return { type: "tool_result", tool_use_id: block.id, content: result.content, ...(result.ok ? {} : { is_error: true }) };

@@ -94,4 +94,19 @@ describe("agent loop", () => {
     const results = z.array(z.looseObject({ content: z.string() })).parse(s.provider.calls[1]?.messages.at(-1)?.content);
     expect(results.map(r => r.content)).toEqual(["unknown tool: nope", "kaput"]);
   });
+
+  test("a guarded command reaches the model as a refused tool result, nothing runs, and the span records it", async () => {
+    const ran: string[] = [];
+    const shell: Tool = { parallel: () => false, spec: { name: "bash", description: "bash", input_schema: { type: "object", properties: { command: { type: "string" } } } },
+      async run(input) { ran.push(String(input.command)); return "ran"; } };
+    const s = await setup([[toolUse("g", "bash", { command: "grep -ril 'agent notes' ." })], [toolUse("h", "bash", { command: "rg -n -i -l 'agent notes'" })], [text("found")]], [shell]);
+    await put(s.conversation, "orchestrator", "user", "find agent notes", { images: [], delivery: "steer" });
+    expect((await s.agent.run()).text).toBe("found");
+    const results = z.array(z.looseObject({ content: z.string(), is_error: z.boolean().optional() })).parse(s.provider.calls[1]?.messages.at(-1)?.content);
+    expect(results[0]).toMatchObject({ is_error: true, content: "refused (recursive-grep): recursive grep walks node_modules, build output and .git, and can take minutes. Use: rg -n -i -l 'agent notes' (or git grep -n -i -l 'agent notes')" });
+    expect(ran).toEqual(["rg -n -i -l 'agent notes'"]);
+    const spans = s.events.flatMap(e => e.kind === "span_end" && e.span.kind === "tool" ? [e.span.detail] : []);
+    expect(spans[0]).toMatchObject({ tool: "bash", ok: "no", refused: "recursive-grep" });
+    expect(spans[1]?.refused).toBeUndefined();
+  });
 });

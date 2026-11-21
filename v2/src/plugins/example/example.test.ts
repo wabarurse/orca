@@ -38,3 +38,10 @@ test("the beforeTool hook blocks an over-long pin", async () => {
   const result = await hook?.({ name: "pin", input: { action: "add", text: "x".repeat(201) } }, pctx);
   expect(result?.action).toBe("block");
 });
+
+test("the guard rule sends reads of the pins file to the pin tool", () => {
+  const rule = plugin.guard[0];
+  const command = { program: "cat", args: ["data/example/pins.json"], env: {}, wrappers: [], cwd: home, stdin: false, reads: [], before: [], after: [], inner: [] };
+  expect(rule?.test({ tool: "bash", input: {}, command, root: home })).toBe(true);
+  expect(rule?.test({ tool: "bash", input: {}, command: { ...command, program: "ls" }, root: home })).toBe(false);
+});

@@ -22,6 +22,7 @@ const plugin: Plugin = {
   skills: [],
   storage: [],
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
+  guard: [],
   bundles: [],
   ui: null,
   background: null,

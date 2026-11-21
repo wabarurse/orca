@@ -47,6 +47,12 @@ const plugin: Plugin = definePlugin({
     beforeRequest: [],
     onInput: [],
   },
+  guard: [{
+    id: "pins-file", group: "efficiency",
+    test: call => call.command !== null && ["cat", "head", "tail"].includes(call.command.program) && call.command.args.some(arg => arg.endsWith("example/pins.json")),
+    reason: "pins are kept by the pin tool",
+    suggest: () => "pin with action list",
+  }],
   bundles: [],
   ui: "./ui.ts",
   background: "./background.ts",

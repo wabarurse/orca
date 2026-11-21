@@ -53,6 +53,7 @@ const plugin: Plugin = {
   skills: ["skills/notes"],
   storage: [{ scope: "conversation", about: "notes/notes.json: the notes" }],
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
+  guard: [],
   bundles: [],
   ui: "./ui.ts",          // or null
   background: null,       // or "./background.ts"
@@ -109,6 +110,14 @@ Each hook gets the call and a context (`plugin`, `conversation`, `agent`, `role`
 - `onInput(message, ctx)` → `{ action: "keep", text }` or `{ action: "drop", reason }` for each user message.
 
 A hook that throws blocks the call (beforeTool) or fails the result; keep hooks fast and total.
+
+### Guard
+
+`guard` adds commands agents must never run to the core's list (recursive grep, editors, unbounded git log/diff,
+secrets, broad deletes, sudo, curl|sh). Each rule is `{ id, group: "efficiency" | "security", test, reason, suggest }`;
+`test(call)` gets `{ tool, input, command, root }` once per simple command of a bash call (`command.program`, `args`,
+`env`, `cwd`, `before`/`after` in its pipeline; null for other tools) and returns true to refuse. The model reads
+`refused (<id>): <reason>. Use: <suggest(call)>` as the tool result and nothing runs. Keep tests fast and pure.
 
 ### Bundles
 

@@ -38,6 +38,7 @@ export async function describePlugin(loaded: LoadedPlugin): Promise<Result<strin
     `${p.name}: ${p.description}`,
     `  tools: ${p.tools.length > 0 ? p.tools.map(t => `${t.tool.spec.name} (${t.roles.join(", ")}${t.replaces ? ", replaces core" : ""})`).join("; ") : "none"}`,
     `  hooks: ${hooks.length > 0 ? hooks.join(", ") : "none"}`,
+    `  guard: ${listed(p.guard.map(rule => rule.id))}`,
     `  storage: ${p.storage.length > 0 ? p.storage.map(s => `${s.scope}: ${s.about}`).join("; ") : "none"}`,
     `  bundles: ${p.bundles.length > 0 ? p.bundles.map(b => `${b.name} (${b.role})`).join(", ") : "none"}`,
     `  ui: ${ui === null ? "none" : `tabs ${listed(ui.tabs.map(t => t.title))}; commands ${listed(ui.commands.map(c => `/${c.name}`))}; counts ${ui.counts.length}`}`,
