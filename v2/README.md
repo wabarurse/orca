@@ -64,6 +64,14 @@ runner, stop/remove hooks). Types: `src/core/plugins/types.ts`; the full guide i
 - **Dev loop**: `orca2 plugin new <name> [--dir]`, `orca2 plugin check <name|folder>` (load, type-check against
   orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]`.
 
+### Built-in plugins
+
+On by default: `questions` (`ask` tool, Questions tab on Ctrl+Q), `tasks` (`task` tool, Tasks tab on Ctrl+T, a task
+per spawned branch, the Tasks section of rolling memory), `pr-watch` (merged/blocked notices for linked PRs, PRs
+tab), `processes` (`process` tool for long commands, Processes tab), `images` (`images` tool, Images tab),
+`sandbox` (`sandbox` tool: writes confined to a scratch folder, sandbox-exec or bwrap). Opt-in: `tmux` and `rex`
+(runners: agents in windows you can watch; `/mux` or `runner = "tmux"`), `example`.
+
 ## Layout
 
 ```

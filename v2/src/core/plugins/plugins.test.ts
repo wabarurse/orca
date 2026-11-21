@@ -33,14 +33,14 @@ describe("plugins", () => {
     registerBuiltins([{ name: "rep", dir: "/x/rep", index: async () => ({ default: replacing }), ui: null, background: null }]);
     await saveConfig({ plugins: ["rep"] });
     const c = await createConversation(home.path(), "b");
-    const worker = await assemble({ conversation: c.id, agent: "worker-x", bundle: "worker", cwd: home.path(), directory: home.path(), trusted: false });
+    const worker = await assemble({ conversation: c.id, agent: "worker-x", bundle: "worker", branch: null, cwd: home.path(), directory: home.path(), trusted: false });
     expect(worker.tools.find(t => t.spec.name === "bash")).toBe(replacing.tools[0]!.tool);
     expect(worker.tools.map(t => t.spec.name)).not.toContain("extra");
     expect(worker.system).toContain("[rep] use the new bash");
-    const orc = await assemble({ conversation: c.id, agent: "orchestrator", bundle: "orchestrator", cwd: home.path(), directory: home.path(), trusted: false });
+    const orc = await assemble({ conversation: c.id, agent: "orchestrator", bundle: "orchestrator", branch: null, cwd: home.path(), directory: home.path(), trusted: false });
     expect(orc.tools.map(t => t.spec.name)).toContain("extra");
     expect(orc.tools.map(t => t.spec.name)).not.toContain("write");
-    const scout = await assemble({ conversation: c.id, agent: "scout-y", bundle: "scout", cwd: home.path(), directory: home.path(), trusted: false });
+    const scout = await assemble({ conversation: c.id, agent: "scout-y", bundle: "scout", branch: null, cwd: home.path(), directory: home.path(), trusted: false });
     expect(scout.plugins).toEqual([]);
     expect(scout.system).toBe("scout things");
   });

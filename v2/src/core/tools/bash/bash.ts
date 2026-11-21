@@ -1,6 +1,6 @@
 // Run one shell command in the agent's folder, in its own process group, with a timeout. Output beyond the
 // result cap is saved whole under the conversation's folder and the result shows its head, tail and path.
-// Background commands are the processes plugin's (it replaces this tool).
+// Long-running commands are the processes plugin's `process` tool.
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig, paths } from "../../../config";

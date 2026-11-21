@@ -37,6 +37,8 @@ export type AppDeps = {
   now: () => number;
   ensureDaemon: (conversation: string) => Promise<void>;
   clipboard: () => Promise<Uint8Array | null>;
+  /** Open a file in the desktop viewer. */
+  open: (path: string) => Promise<void>;
   exit: (code: number) => void;
 };
 
@@ -189,7 +191,8 @@ export class App {
       confirm: question => this.ask({ kind: "confirm", question }),
       input: (prompt, initial) => this.ask({ kind: "input", prompt, initial }),
       pick: (title, options) => this.ask({ kind: "pick", title, options }),
-      say: async text => { await say(this.conversation.id, text, [], "steer"); await this.deps.ensureDaemon(this.conversation.id); } };
+      say: async text => { await say(this.conversation.id, text, [], "steer"); await this.deps.ensureDaemon(this.conversation.id); },
+      open: async path => { await this.deps.open(path); } };
   }
 
   private flash(text: string): void { this.note = text.replace(/\s+/g, " ").trim(); this.draw(); }
@@ -312,7 +315,8 @@ export class App {
     try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${error instanceof Error ? error.message : String(error)}`); }
   }
 
-  private commands(): { name: string }[] { return this.uis.flatMap(bound => bound.ui.commands); }
+  /** Plugin commands by name; when two plugins define one name (tmux and rex both offer /mux) the first wins. */
+  private commands(): { name: string }[] { return [...new Map(this.uis.flatMap(bound => bound.ui.commands).map(c => [c.name, c] as const)).values()]; }
 
   private async pluginsMenu(): Promise<void> {
     const { plugins, problems } = await availablePlugins(this.deps.directory, await trustState(this.deps.directory) === "trusted");
@@ -478,6 +482,7 @@ export async function startTui(directory: string): Promise<number> {
     const app = new App({ terminal, directory, now: () => Date.now(),
       ensureDaemon: async conversation => { await ensureDaemon(conversation, null); },
       clipboard: async () => { const image = await readClipboardImage(); return image.bytes; },
+      open: async path => { await Bun.spawn(process.platform === "darwin" ? ["open", path] : ["xdg-open", path], { stdout: "ignore", stderr: "ignore" }).exited; },
       exit: code => { void (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }); } });
     app.start().catch((error: unknown) => { app.stop(); process.stderr.write(`orca2: ${error instanceof Error ? error.message : String(error)}\n`); resolve(1); });
   });

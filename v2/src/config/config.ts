@@ -38,7 +38,7 @@ export const defaults: Config = {
   toolConcurrency: 4,
   maxToolResultBytes: 16 * 1024,
   maxToolOutputBytes: 64 * 1024 * 1024,
-  plugins: [],
+  plugins: ["images", "pr-watch", "processes", "questions", "sandbox", "tasks"],
   approved: [],
   trusted: [],
   untrusted: [],

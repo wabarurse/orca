@@ -1,12 +1,11 @@
 // The ends of a conversation: its plugins' background `stop` (the daemon stopping) and `remove` (the conversation
 // deleted) hooks, and deletion itself: daemon and agents stopped, hooks run, folders and worktrees removed.
-import { pluginData } from "./bubbles";
 import { deleteConversation, readConversation } from "./conversations";
 import { stopDaemon } from "./daemon/client";
-import { put } from "./inbox";
 import { enabledNames } from "./plugins/enable";
 import { availablePlugins } from "./plugins/loader";
-import type { BackgroundContext, BackgroundHook } from "./plugins/types";
+import type { BackgroundHook } from "./plugins/types";
+import { backgroundContext } from "./plugins/context";
 import { stopAgent } from "./runner/runtime";
 import { listRuns, live } from "./runner/runs";
 import { pruneWorktrees } from "./runner/worktree";
@@ -21,8 +20,7 @@ export async function runBackgroundHooks(conversation: string, which: "stop" | "
     const background = await plugins.get(name)?.background().catch(() => null) ?? null;
     const hook: BackgroundHook | null = background === null ? null : background[which];
     if (hook === null) continue;
-    const ctx: BackgroundContext = { plugin: name, conversation, directory: meta.directory, data: scope => pluginData(conversation, name, scope),
-      notify: async text => { await put(conversation, "orchestrator", name, text, { images: [], delivery: "steer" }); } };
+    const ctx = backgroundContext(conversation, name, meta.directory);
     await hook(ctx).catch((error: unknown) => { log(`${name} ${which}: ${error instanceof Error ? error.message : String(error)}\n`); });
   }
 }

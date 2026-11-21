@@ -18,7 +18,6 @@ const plugin: Plugin = definePlugin({
         input_schema: { type: "object", properties: { action: { type: "string", enum: ["add", "list", "remove"] }, text: { type: "string" }, id: { type: "string" } }, required: ["action"] } },
       async run(input, ctx) {
         const dir = join(ctx.data, "example");
-        await Bun.write(join(dir, ".keep"), "");
         const pins = await readPins(dir);
         if (input.action === "list") return pins.length === 0 ? "no pins" : pins.map(p => `${p.id}: ${p.text}`).join("\n");
         if (input.action === "remove") {

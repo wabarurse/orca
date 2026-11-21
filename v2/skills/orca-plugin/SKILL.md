@@ -11,8 +11,11 @@ yourself.
 
 ## The loop
 
-1. `orca2 plugin new <name> --dir <folder>`: a complete plugin that already loads and passes its test. Use your
-   working directory (a worktree) for `--dir`; a built-in plugin goes to `v2/src/plugins/<name>`.
+1. `orca2 plugin new <name> --dir <folder>`: a complete plugin (index.ts, a test, README.md, an empty skills/) that
+   already loads and passes its test. Use your working directory (a worktree) for `--dir`; a built-in plugin goes to
+   `v2/src/plugins/<name>`, and there you replace the template's `import type … from "orca2/plugin"` with
+   `../../core/plugins` (the `orca2/plugin` path exists only inside `plugin check`, so the repository's own type
+   check fails on it). Delete the template's placeholder tool.
 2. Edit `index.ts` (and `ui.ts` / `background.ts` if the plugin has them).
 3. `orca2 plugin check <folder>`: loads it, type-checks it against orca2's types and runs its `*.test.ts` against a
    temporary home. Fix everything it reports. Run it again after every change.
@@ -32,11 +35,14 @@ lowercase letters, digits and underscores, unique across enabled plugins.
   background.ts   daemon only (optional): export default the PluginBackground
   skills/<skill>/SKILL.md   skills agents using the plugin can load
   <name>.test.ts  bun:test tests; plugin check runs them
+  README.md       what it adds and why
 ```
 
 A user plugin imports types only: `import type { Plugin } from "orca2/plugin";`. It must not import orca2's runtime
 modules (they are not on its path); everything it needs comes through the context arguments. A built-in plugin in
-`v2/src/plugins/` may import `../../core/...` and use `definePlugin`, `defineUi`, `defineBackground`.
+`v2/src/plugins/` imports from `../../core/plugins`: `definePlugin`, `defineUi`, `defineBackground`, the types, and
+the helpers `writeAtomic(file, text)` (whole-file write) and `withStorageLock(path, fn)` (one writer at a time across
+processes). It may import other core modules, but prefer what the contexts give.
 
 ## index.ts: the Plugin
 
@@ -71,9 +77,10 @@ const tool = {
 ```
 
 `run` returns a string (or text and image blocks). Throwing becomes an error result the model sees; return
-`"refused: why"` for a refusal that is not a crash. `ctx` gives: `conversation`, `agent`, `role`, `branch`, `cwd`
-(the agent's folder), `data` (`$ORCA_DATA`), `signal` (stop when aborted), `model`, `provider`, `settings`, and
-`runtime` (`spawn`, `agents`, `stop`, `confirm`). Keep descriptions precise and stable: they are in every request
+`"refused: why"` for a refusal that is not a crash. `ctx` gives: `conversation`, `agent`, `role`, `branch` (null for
+the orchestrator), `cwd` (the agent's folder), `data` (the `$ORCA_DATA` root: your folder is `join(ctx.data, "<name>")`
+and may not exist yet, so create it), `trusted`, `pluginSkills`, `callId`, `signal` (stop when aborted), `model`,
+`provider`, `settings`, and `runtime` (`spawn`, `agents`, `stop`, `confirm`). Keep descriptions precise and stable: they are in every request
 and the prompt cache depends on them not changing.
 
 `roles` decides which agents get the tool. `replaces: true` takes the place of a core tool with the same name
@@ -92,13 +99,24 @@ skill (`skills/<skill>/SKILL.md` with a `description:` line); agents find it wit
 - `$ORCA_DATA/global/<plugin>/`: shared by everything (`global`)
 
 Declare each scope you use in `storage` with what is kept there. In a tool, `join(ctx.data, "<plugin>")` is the
-conversation folder; in hooks, UI and background code call `await ctx.data("conversation" | "bubble" | "global")`
-(it creates the folder). Agents may read these folders; change them only through your tools. Write files whole
-(write a temp file, then rename) so a reader never sees half a file. Deleting a conversation deletes its folder.
+conversation folder (create it); in hooks, UI and background code call `await ctx.data("conversation" | "bubble" |
+"global")`, which creates it. Agents may read these folders; change them only through your tools. Deleting a
+conversation deletes its folder.
+
+Writing: write files whole (a temp file in the same folder, then rename) so a reader never sees half a file. That
+alone does not stop two processes (a worker's tool and the daemon's watcher) from losing each other's update in a
+read-modify-write: built-ins wrap it in `withStorageLock`; a user plugin keeps one writer per file (for example one
+file per record, named by its id).
+
+Another plugin's data: reading `$ORCA_DATA/<other>/` is allowed (from `ctx.data("conversation")` that is
+`join(dir, "..", "<other>")`); writing it is not, so change it by telling the orchestrator, whose tools do.
+Say in your description which plugin you read; there is no dependency field, so handle its absence.
 
 ### Hooks
 
-Each hook gets the call and a context (`plugin`, `conversation`, `agent`, `role`, `cwd`, `data(scope)`).
+Each hook gets the call and a context (`plugin`, `conversation`, `agent`, `role`, `branch`, `cwd`, `data(scope)`).
+`afterTool` sees the tool's result as the model got it (text): for a core `subagent spawn`, read the branch and
+bundle from the call's input, not from the result.
 
 - `beforeTool(call, ctx)` → `{ action: "run", input }` (maybe changed), `{ action: "block", reason }`, or
   `{ action: "ask", question }` (the user answers yes/no in the TUI; headless runs answer no unless `--yes`).
@@ -134,11 +152,17 @@ const ui: PluginUi = {
 export default ui;
 ```
 
-Tabs appear on the work page after Agents (Ctrl+A, then Tab); `chord: "q"` also opens it with Ctrl+Q (avoid
-a, c, d, j, k, n, u, v, w: the core uses them). `tone` is normal, good, warn, bad or dim. Action keys must not be
-j, k, h, l, q, r or digits. The host offers `note`, `confirm`, `input`, `pick` and `say` (send text to the
-orchestrator as the user). Counts show in the composer only when above zero; keep them cheap (they run every 2s).
-A fold turns finished calls of a tool into "+ N <title>" with one line per item; `opens` is the tab an item opens.
+Tabs appear on the work page after Agents (Ctrl+A, then Tab); `chord: "q"` also opens it with Ctrl+Q. The core
+uses Ctrl+ a, c, d, j, k, n, u, v, w; built-ins take q (questions) and t (tasks). On the page the core uses j, k, h,
+l, q, r, the digits, Tab, Esc, PgUp/PgDn, and s on the Agents tab; any other single character is yours for actions.
+`tone` is normal, good, warn, bad or dim. A tab belongs to one plugin: rows cannot be added to another plugin's tab.
+
+The host is the tab's `PluginContext` (so `host.conversation`, `host.data(scope)` work) plus `note`, `confirm`,
+`input`, `pick`, `say` (text to the orchestrator as the user, queued as steer input; there is no receipt) and
+`open(path)` (the desktop viewer). Commands are global: if two enabled plugins define the same name, the first
+wins. Counts show in the composer only when above zero; keep them cheap (they run every 2s). A fold turns
+finished calls of a tool into "+ <title(n)>" with one line per item (`title(n)` includes the number:
+`n => \`${n} notes\``); `opens` is the tab an item opens.
 
 ## background.ts: the PluginBackground
 
@@ -156,21 +180,36 @@ const background: PluginBackground = {
 export default background;
 ```
 
-- A watcher runs every `everyMs` (never two at once). `ctx.notify(text)` puts a message in the orchestrator's
-  inbox from the plugin, which wakes it: send one notice per real change, never on every poll.
+- A watcher runs every `everyMs` (never two at once), in the daemon, while it runs. `ctx.notify(text)` puts a
+  message in the orchestrator's inbox from the plugin, which wakes it; `ctx.tell(agent, text)` messages one agent
+  (rerouted to the orchestrator when that agent is not running); `ctx.agents()` lists the agents and their states.
+  Send one notice per real change, never on every poll; record what you already told.
 - `memory` is kept verbatim beside the orchestrator's rolling memory at each compaction (a task list, say).
-- `runner` starts agents somewhere you can watch them (`start(launch)` runs `launch.argv` in `launch.cwd` with
-  `launch.env`, writing to `launch.log`; `alive(conversation)` lists live agent ids or null when unknown;
-  `stop(conversation, agent)`). The user picks a runner with `runner = "<name>"` in config.toml.
-- `stop` runs when the daemon stops; `remove` when the conversation is deleted, for anything kept outside
-  `$ORCA_DATA`.
+- `runner` starts agents somewhere you can watch them. `start(launch)` runs `launch.argv` in `launch.cwd` with
+  `launch.env`, writing output to `launch.log`, and returns `{ handle, pid }`; `pid: null` is fine, since every agent
+  records its own pid and the core judges liveness by it. `launch.env` is the whole environment and may hold
+  credentials: never put it in argv or the multiplexer's options (write a 0600 file the command sources and deletes).
+  `alive(conversation)` lists the agent ids the runner still holds (null when it cannot tell) and `stop(conversation,
+  agent)` ends one; the core calls `stop` for agents this runner started. `name` should equal the plugin name: the
+  user selects it with `runner = "<name>"` in config.toml (or a `/mux` command).
+- `stop` runs when the daemon stops (an `orca2 stop`, a deletion, or a signal; not after a crash): processes you
+  started may keep running and the next daemon's watcher can pick them up. `remove` runs when the conversation is
+  deleted, for anything kept outside `$ORCA_DATA` (and to kill what you started).
+- There is no hook for an agent ending; a watcher can notice it through `ctx.agents()`.
 
 ## Tests
 
-`<name>.test.ts` beside `index.ts`, with `bun:test`. Call tools with a small context object, hooks with a context
-whose `data` returns a temporary folder, tabs and counts the same way. `plugin check` sets a temporary
-`ORCA2_HOME`; never touch `~/.orca2` or the user's files. Test what is expensive when wrong: storage round trips,
-refusals, the hook decisions.
+`<name>.test.ts` beside `index.ts`, with `bun:test`. Every test process already runs with a temporary `ORCA2_HOME`
+(the repository's test preload, and `plugin check`); never touch `~/.orca2` or the user's files. Create a
+conversation with `createConversation(dir, name)` (built-ins) and call tools with a small context object, hooks and
+tabs with a `PluginContext` whose `data` is `scope => pluginData(conversation, "<name>", scope)`, background code
+with `backgroundContext(conversation, "<name>", dir)` or a recording fake. Test what is expensive when wrong:
+storage round trips, refusals, the hook decisions.
+
+Faking a CLI (tmux, gh): prefer an injectable runner. If you put a fake binary on PATH, look the program up with
+`Bun.which(name, { PATH: process.env.PATH })` (plain `Bun.which` ignores PATH changed at runtime and finds the real
+one) and assert the fake was the one found. eslint runs with inline config disabled: `// eslint-disable` comments
+do nothing, fix the code instead.
 
 ## Mistakes to avoid
 

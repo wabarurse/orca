@@ -18,7 +18,7 @@ test("-p prints the final answer; --json streams every event and ends with the a
   await runHeadless({ prompt: "run echo", json: true, model: null, cwd: home.path(), conversation: null, bundle: "orchestrator", yes: false, trust: false,
     out: t => { lines += t; }, resolve: async () => ({ model: "claude-sonnet-5-5", provider: json, settings: null, contextLimit: null }) });
   const events = lines.trim().split("\n").map(line => JSON.parse(line) as { kind: string; text?: string; outcome?: { text: string } });
-  expect(events.map(e => e.kind)).toEqual(["start", "input", "text", "tool_start", "tool_end", "text", "end"]);
+  expect(events.map(e => e.kind).filter(kind => kind !== "notice")).toEqual(["start", "input", "text", "tool_start", "tool_end", "text", "end"]);
   expect(events.find(e => e.kind === "tool_end")?.outcome?.text).toBe("hi");
   expect(events.at(-1)).toMatchObject({ kind: "end", text: "done: hi" });
 });

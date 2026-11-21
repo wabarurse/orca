@@ -3,7 +3,7 @@
 // only: watchers, a memory section, a runner, cleanup). UI is data: a plugin returns rows and text, orca draws them.
 import type { MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
 import type { MemorySection } from "../loop/rolling";
-import type { Tool, ToolResult } from "../tools/registry";
+import type { AgentInfo, Tool, ToolResult } from "../tools/registry";
 import type { Message, Role } from "../types";
 
 export type StorageScope = "conversation" | "bubble" | "global";
@@ -14,6 +14,8 @@ export type PluginContext = {
   conversation: string;
   agent: string;
   role: Role;
+  /** The agent's branch; null for the orchestrator and the TUI. */
+  branch: string | null;
   cwd: string;
   /** This plugin's folder in a storage scope, created on first use. */
   data: (scope: StorageScope) => Promise<string>;
@@ -74,8 +76,10 @@ export type UiHost = PluginContext & {
   confirm: (question: string) => Promise<boolean>;
   input: (prompt: string, initial: string) => Promise<string | null>;
   pick: (title: string, options: string[]) => Promise<number | null>;
-  /** Send text to the conversation's orchestrator as the user. */
+  /** Send text to the conversation's orchestrator as the user (queued as steer input, read after its current tool batch). */
   say: (text: string) => Promise<void>;
+  /** Open a file in the desktop viewer (macOS `open`, `xdg-open` elsewhere). */
+  open: (path: string) => Promise<void>;
 };
 
 export type TabAction = { key: string; label: string; run: (row: Row | null, host: UiHost) => Promise<void> };
@@ -102,10 +106,14 @@ export function defineUi(ui: PluginUi): PluginUi {
 
 // ---- background.ts ----
 
-export type BackgroundContext = Omit<PluginContext, "agent" | "role" | "cwd"> & {
+export type BackgroundContext = Omit<PluginContext, "agent" | "role" | "cwd" | "branch"> & {
   directory: string;
-  /** Send a notice to the orchestrator's inbox, from this plugin. */
+  /** Send a notice to the orchestrator's inbox, from this plugin (it wakes the orchestrator). */
   notify: (text: string) => Promise<void>;
+  /** Send a notice to one agent's inbox; when that agent is not running it goes to the orchestrator instead. */
+  tell: (agent: string, text: string) => Promise<void>;
+  /** The conversation's agents and their states. */
+  agents: () => Promise<AgentInfo[]>;
 };
 export type Watcher = { name: string; everyMs: number; run: (ctx: BackgroundContext) => Promise<void> };
 

@@ -10,13 +10,11 @@ import { referenceSections } from "./knowledge";
 import { createAgent, type Resolved, type RunResult } from "./loop/agent";
 import { RollingCompactor } from "./loop/rolling";
 import { assemble, type Assembled } from "./plugins/assemble";
-import type { BackgroundContext } from "./plugins/types";
+import { backgroundContext } from "./plugins/context";
 import type { Runtime } from "./tools/registry";
 import { openTranscript, type Transcript } from "./transcript";
 import { trustState } from "./trust";
 import type { AgentEvent } from "./types";
-import { put } from "./inbox";
-import { pluginData } from "./bubbles";
 import { scriptedProvider } from "./scripted";
 import { ensureBuiltinSkills } from "./builtin-skills";
 
@@ -60,7 +58,7 @@ export async function openSession(input: SessionInput): Promise<Session> {
   if (meta === null) throw new Error(`no conversation ${input.conversation}`);
   const cwd = input.cwd ?? meta.directory;
   const trusted = await trustState(meta.directory) === "trusted";
-  const assembled = await assemble({ conversation: input.conversation, agent: input.agent, bundle: input.bundle, cwd, directory: meta.directory, trusted });
+  const assembled = await assemble({ conversation: input.conversation, agent: input.agent, bundle: input.bundle, branch: input.branch, cwd, directory: meta.directory, trusted });
   for (const problem of assembled.problems) input.emit({ kind: "notice", text: `plugin ${problem.name}: ${problem.problem}` });
   const path = paths.transcript(input.conversation, input.agent);
   if (input.fresh && existsSync(path)) await rename(path, path.replace(/\.jsonl$/, `.${Date.now()}.jsonl`));
@@ -75,9 +73,7 @@ export async function openSession(input: SessionInput): Promise<Session> {
     for (const loaded of assembled.plugins) {
       const memory = (await loaded.background())?.memory ?? null;
       if (memory === null) continue;
-      const ctx: BackgroundContext = { plugin: loaded.plugin.name, conversation: input.conversation, directory: meta.directory,
-        data: scope => pluginData(input.conversation, loaded.plugin.name, scope),
-        notify: async text => { await put(input.conversation, "orchestrator", loaded.plugin.name, text, { images: [], delivery: "steer" }); } };
+      const ctx = backgroundContext(input.conversation, loaded.plugin.name, meta.directory);
       sections.push({ title: memory.title, text: () => memory.text(ctx) });
     }
     rolling = new RollingCompactor(input.conversation, transcript, { small: config.smallSummaries, triggerTokens: null, tailTokens: null, sections });
