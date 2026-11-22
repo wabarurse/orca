@@ -2,6 +2,8 @@
 
 A light-context agent harness with one adaptive tool loop and focused workers. Delegation, review and publication are independent capabilities. One tmux session per project contains agent windows; persistent state and process supervision supply continuity. See docs/ADAPTIVE_RUNTIME.md for current behavior.
 
+`v2/` is the separate v2 application (its own package, home `~/.orca2` and binary `orca2`; see `v2/CLAUDE.md`). Nothing in v1 imports it.
+
 Bun + TypeScript. Use `bun` for everything (`bun test`, `bun run check`, `bun src/cli/main.ts`). No Node, npm or vite.
 
 The terminal layer is OpenTUI (`@opentui/core`, `src/tui/otui/`). Code in `src/tui/otui/` follows strict rules, enforced by `bun run lint` (`eslint.config.ts`, scoped to that folder only): no `any`, `as` or `!` (use `unknown` and check it), `type` not `interface`, explicit boolean checks, every promise awaited or handled, Zod for outside data, result unions instead of throwing for expected failures, and no comments. Its gate is `bun run check && bun run lint` plus its tests. `typescript` is aliased to TypeScript 6's API (`@typescript/typescript6`) only so typescript-eslint can load; `tsc` is TypeScript 7 (`@typescript/native`).
