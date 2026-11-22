@@ -5,7 +5,8 @@ import type { RequestSettings } from "../../api/model";
 import { asRecord, errorMessage, fail, ok, type Result, usageEvent } from "../../config";
 import { materialize, withImages } from "../images";
 import { consume, format } from "../inbox";
-import type { Runtime, Tool, ToolContext, ToolResult } from "../tools/registry";
+import type { GuardRule } from "../tools/bash/guard";
+import { ToolRefusal, type Runtime, type Tool, type ToolContext, type ToolResult } from "../tools/registry";
 import { cut, flushSpans, type Spans } from "../spans";
 import { toolArgs } from "../toolview";
 import { closeInterrupted, type Transcript } from "../transcript";
@@ -35,6 +36,7 @@ export type AgentSetup = {
   resolve: () => Promise<Result<Resolved>>;
   context: (query: string) => Promise<Record<string, string>>;
   hooks: LoopHooks;
+  guard: GuardRule[];
   runtime: Runtime;
   emit: (event: AgentEvent) => void;
   signal: AbortSignal;
@@ -186,19 +188,20 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
       const tool = byName.get(block.name);
       if (tool === undefined) result = { ok: false, content: `unknown tool: ${block.name}` };
       else {
-        const decision = await beforeTool(setup.hooks, block.name, raw, setup.cwd, question => setup.spans.time("wait-inbox", "user confirmation", () => setup.runtime.confirm(question), yes => ({ answer: yes ? "yes" : "no" })));
-        if (decision.action === "block") { result = { ok: false, content: decision.reason }; refused = decision.refused; }
+        const decision = await beforeTool(setup.hooks, block.name, raw, question => setup.spans.time("wait-inbox", "user confirmation", () => setup.runtime.confirm(question), yes => ({ answer: yes ? "yes" : "no" })));
+        if (decision.action === "block") result = { ok: false, content: decision.reason };
         else {
           const ctx: ToolContext = { conversation: setup.conversation, agent: setup.agent, role: setup.role, branch: setup.branch, cwd: setup.cwd, data: setup.data,
-            trusted: setup.trusted, pluginSkills: setup.pluginSkills, callId: block.id, signal: setup.signal, model: model.model, provider: model.provider, settings: model.settings, runtime: setup.runtime };
+            trusted: setup.trusted, pluginSkills: setup.pluginSkills, guard: setup.guard, callId: block.id, signal: setup.signal, model: model.model, provider: model.provider, settings: model.settings, runtime: setup.runtime };
           try {
             const content = await tool.run(decision.input, ctx);
             result = { ok: !(typeof content === "string" && content.startsWith("refused:")), content };
           } catch (error) {
             if (setup.signal.aborted) throw error;
             result = { ok: false, content: errorMessage(error) };
+            if (error instanceof ToolRefusal) refused = error.rule;
           }
-          result = await afterTool(setup.hooks, block.name, decision.input, result);
+          if (refused === null) result = await afterTool(setup.hooks, block.name, decision.input, result);
         }
       }
       timing.end({ tool: block.name, ok: result.ok ? "yes" : "no", ...(refused === null ? {} : { refused }) });

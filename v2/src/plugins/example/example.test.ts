@@ -20,7 +20,7 @@ test("pin, list and the tab, count and memory section agree", async () => {
   const data = join(home, "conversations", conversation.id, "data");
   const tool = plugin.tools[0]?.tool;
   if (tool === undefined) throw new Error("the example plugin has no tool");
-  const ctx: ToolContext = { conversation: conversation.id, agent: "orchestrator", role: "orchestrator", branch: null, cwd: home, data, trusted: false, pluginSkills: [],
+  const ctx: ToolContext = { conversation: conversation.id, agent: "orchestrator", role: "orchestrator", branch: null, cwd: home, data, trusted: false, pluginSkills: [], guard: [],
     callId: "c1", signal: new AbortController().signal, model: "fake-model", provider: fakeProvider([]), settings: null,
     runtime: { spawn: async () => { throw new Error("no spawn"); }, agents: async () => [], stop: async () => "", confirm: async () => false } };
   expect(await tool.run({ action: "add", text: "ship on friday" }, ctx)).toBe("pinned p1");

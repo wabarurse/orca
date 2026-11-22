@@ -8,7 +8,7 @@ import { web_search } from "../../core/tools/web-search";
 import type { ToolContext } from "../../core/tools/registry";
 
 const toolContext = (signal: AbortSignal): Omit<ToolContext, "provider" | "model" | "settings"> => ({ conversation: "c-00000000", agent: "reviewer-x", role: "reviewer", branch: "x",
-  cwd: "/private-project", data: "/never", trusted: false, pluginSkills: [], callId: "call", signal,
+  cwd: "/private-project", data: "/never", trusted: false, pluginSkills: [], guard: [], callId: "call", signal,
   runtime: { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", confirm: async () => false } });
 import { codexSSE, fakeCodexTokens } from "../../test/codex";
 import { claudeSearchFixture, codexSearchFixture, codexStreamSearchFixture } from "../../test/web-search";

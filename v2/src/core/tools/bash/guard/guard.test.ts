@@ -12,7 +12,7 @@ writeFileSync(join(root, "a.ts"), "");
 writeFileSync(join(root, "src", "b.ts"), "");
 afterAll(() => { rmSync(root, { recursive: true, force: true }); });
 
-const bash = (command: string, extra: GuardRule[] = []) => refusal(extra, "bash", { command }, root);
+const bash = (command: string, extra: GuardRule[] = []) => refusal(extra, { command }, root);
 const id = (command: string): string | null => bash(command)?.id ?? null;
 
 const cases: Record<string, { refused: string[]; allowed: string[] }> = {
@@ -87,13 +87,6 @@ describe("guard rules", () => {
     expect(bash("git log --stat")?.text).toContain("Use: git log --oneline -n 20 --stat");
     expect(bash("git diff main")?.text).toContain("Use: git diff main --stat first, then git diff main -- <file>");
     expect(bash("sudo apt install x")?.text).toBe("refused (sudo): sudo waits for a password nobody can type. Use: ask the user to run it");
-  });
-
-  test("the read tool refuses secret files and nothing else", () => {
-    expect(refusal([], "read", { path: ".env" }, root)?.id).toBe("secret-file");
-    expect(refusal([], "read", { files: [{ path: "a.ts" }, { path: "/home/x/.ssh/id_ed25519" }] }, root)?.id).toBe("secret-file");
-    expect(refusal([], "read", { path: "a.ts" }, root)).toBeNull();
-    expect(refusal([], "write", { path: ".env" }, root)).toBeNull();
   });
 
   test("an extra rule applies, and one that throws refuses rather than crashing", () => {

@@ -6,7 +6,7 @@ import { RESERVED_DATA } from "../bubbles";
 import { CORE_TOOL_NAMES } from "../tools/registry";
 import { z } from "zod";
 import type { Tool } from "../tools/registry";
-import type { GuardInput } from "../guard";
+import type { GuardInput } from "../tools/bash/guard";
 import type { AfterTool, BeforeRequest, BeforeTool, OnInput, Plugin, PluginBackground, PluginUi } from "./types";
 
 export type PluginSource = "builtin" | "user" | "repo";

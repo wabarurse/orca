@@ -8,9 +8,10 @@ import { createConversation } from "../conversations";
 import { assemble } from "./assemble";
 import { enabledNames } from "./enable";
 import { availablePlugins, pluginHash, registerBuiltins } from "./loader";
-import { beforeTool, type LoopHooks } from "../loop/hooks";
-import type { Tool } from "../tools/registry";
-import { definePlugin, noHooks, type BeforeTool, type Plugin, type PluginContext } from "./types";
+import { bash } from "../tools/bash";
+import type { Tool, ToolContext } from "../tools/registry";
+import { fakeProvider } from "../../test/fake-provider";
+import { definePlugin, noHooks, type Plugin } from "./types";
 
 const home = tempHome("plugins");
 
@@ -88,20 +89,19 @@ describe("plugins", () => {
     expect((await availablePlugins(repo, true)).plugins.get("local")?.source).toBe("repo");
   });
 
-  test("a plugin's guard rule is assembled and enforced beside the core table", async () => {
+  test("a plugin's guard rule is assembled and enforced by bash beside the core table", async () => {
     const guarded = shell("guarded", { guard: [{ id: "no-make", group: "efficiency", test: call => call.command?.program === "make", reason: "this repo builds with bun", suggest: () => "bun run build" }] });
     registerBuiltins([{ name: "guarded", dir: "/x/guarded", index: async () => ({ default: guarded }), ui: null, background: null }]);
     await saveConfig({ plugins: ["guarded"] });
     const c = await createConversation(home.path(), "g");
     const worker = await assembled({ conversation: c.id, agent: "worker-g", bundle: "worker", cwd: home.path(), directory: home.path(), trusted: false });
-    const no = async () => false;
-    expect(await beforeTool(worker.hooks, "bash", { command: "make all" }, home.path(), no)).toEqual({ action: "block", reason: "refused (no-make): this repo builds with bun. Use: bun run build", refused: "no-make" });
-    expect(await beforeTool(worker.hooks, "bash", { command: "sudo ls" }, home.path(), no)).toMatchObject({ action: "block", refused: "sudo" });
-    expect(await beforeTool(worker.hooks, "bash", { command: "bun run build" }, home.path(), no)).toEqual({ action: "run", input: { command: "bun run build" } });
-    const ctx: PluginContext = { plugin: "rewrite", conversation: c.id, agent: "worker-g", role: "worker", cwd: home.path(), data: async () => ok("") };
-    const rewrite: BeforeTool = async () => ({ action: "run", input: { command: "sudo ls" } });
-    const rewriting: LoopHooks = { ...worker.hooks, beforeTool: [{ ctx, hook: rewrite }] };
-    expect(await beforeTool(rewriting, "bash", { command: "ls" }, home.path(), no)).toMatchObject({ action: "block", refused: "sudo" });
+    expect(worker.guard.map(rule => rule.id)).toEqual(["no-make"]);
+    const ctx: ToolContext = { conversation: c.id, agent: "worker-g", role: "worker", branch: null, cwd: home.path(), data: home.path(), trusted: false, pluginSkills: [], guard: worker.guard,
+      callId: "call", signal: new AbortController().signal, model: "fake-model", provider: fakeProvider([]), settings: null,
+      runtime: { spawn: async () => { throw new Error("no spawn"); }, agents: async () => [], stop: async () => "", confirm: async () => false } };
+    await expect(bash.run({ command: "make all" }, ctx)).rejects.toMatchObject({ rule: "no-make", message: "refused (no-make): this repo builds with bun. Use: bun run build" });
+    await expect(bash.run({ command: "sudo ls" }, ctx)).rejects.toMatchObject({ rule: "sudo" });
+    expect(await bash.run({ command: "echo built" }, ctx)).toBe("built");
   });
 
   test("a plugin guard rule without a valid id fails validation", async () => {

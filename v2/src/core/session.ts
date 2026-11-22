@@ -104,7 +104,7 @@ async function assembleSession(input: SessionInput, spans: Spans): Promise<Resul
     pluginSkills: skills, transcript, tools: assembled.tools, system: assembled.system,
     resolve,
     context: query => referenceSections({ conversation: input.conversation, role: assembled.bundle.role, cwd, trusted, pluginSkills: skills, query }),
-    hooks: assembled.hooks, runtime: input.runtime, emit: input.emit, signal: input.signal, concurrency: config.toolConcurrency,
+    hooks: assembled.hooks, guard: assembled.guard, runtime: input.runtime, emit: input.emit, signal: input.signal, concurrency: config.toolConcurrency,
     rolling, requireInput: input.requireInput, compactRequested: input.compactRequested, spans,
   });
   return ok({ assembled, transcript, run: agent.run, rolling });

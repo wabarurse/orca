@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { basename, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
+import { SECRET_REASON, SECRET_SUGGESTION, secretPath } from "./secret";
 import { expandPath, parseArgs, quote, SHELLS, type Args, type ShellCommand } from "./shell";
 
 export type GuardInput = { tool: string; input: Record<string, unknown>; command: ShellCommand | null; root: string };
@@ -123,27 +124,8 @@ function dumpsEnv(command: ShellCommand): boolean {
   return names.length === 0;
 }
 
-const KEYS = /^id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?!.*\.pub$)/;
-const SAFE_ENV = new Set(["example", "sample", "template", "dist"]);
-export function secretPath(path: string): boolean {
-  const expanded = path === "~" || path.startsWith("~/") ? (expandPath(path, process.env) ?? path) : path;
-  const parts = expanded.split("/").filter(p => p.length > 0);
-  const base = basename(expanded);
-  if (parts.includes(".ssh")) return true;
-  if (base === ".env") return true;
-  if (base.startsWith(".env.") && !SAFE_ENV.has(base.slice(5))) return true;
-  if (base === "credentials" && parts.at(-2) === ".aws") return true;
-  if (base === ".netrc" || base === "_netrc") return true;
-  return base.endsWith(".pem") || KEYS.test(base);
-}
-
 const READERS = new Set(["cat", "head", "tail", "less", "more", "sed", "grep", "egrep", "fgrep", "rg", "bat", "awk", "nl", "xxd", "od", "strings", "base64"]);
 function readsSecret(call: GuardInput): boolean {
-  if (call.tool === "read") {
-    const files = Array.isArray(call.input.files) ? call.input.files : [];
-    const listed: unknown[] = [call.input.path, ...files.map((f: unknown) => typeof f === "object" && f !== null && "path" in f ? f.path : null)];
-    return listed.some(p => typeof p === "string" && secretPath(p));
-  }
   const command = call.command;
   if (command === null) return false;
   if (command.reads.some(secretPath)) return true;
@@ -205,8 +187,8 @@ export const GUARD: GuardRule[] = [
   {
     id: "secret-file", group: "security",
     test: readsSecret,
-    reason: "keys, .env files and credentials must not enter the transcript",
-    suggest: () => "printenv NAME for one variable, or ask the user for what you need",
+    reason: SECRET_REASON,
+    suggest: () => SECRET_SUGGESTION,
   },
   {
     id: "broad-delete", group: "security",

@@ -4,9 +4,10 @@ import { asRecord, errorMessage, fail, ok, type Result } from "../../config";
 import { MAX_IMAGE_BYTES, sniffImage, validateImage, type ImageMime } from "../../api";
 import { imageBlock, imageFile, saveImage } from "../images";
 import { repositoryInstructions } from "../instructions";
+import { SECRET_REFUSAL, secretPath } from "./bash/guard";
 import { contents, MAX_FILE, mib, q, revision, utf8 } from "./contents";
 import { filePath } from "./path";
-import { settled, type Tool, type ToolContext, type ToolResult } from "./registry";
+import { settled, ToolRefusal, type Tool, type ToolContext, type ToolResult } from "./registry";
 
 async function head(path: string): Promise<Buffer> {
   const file = await open(path, "r");
@@ -67,6 +68,9 @@ export const read: Tool = {
       files: { type: "array", minItems: 1, maxItems: 4, items: { type: "object", properties: readRange, required: ["path"] } },
     } } },
   async run(input, ctx) {
+    const ranges = Array.isArray(input.files) ? input.files : [];
+    const listed: unknown[] = [input.path, ...ranges.map((f: unknown) => asRecord(f)?.path)];
+    if (listed.some(p => typeof p === "string" && secretPath(p))) throw new ToolRefusal(SECRET_REFUSAL.id, SECRET_REFUSAL.text);
     if (input.image_id !== undefined) {
       if ([input.path, input.files, input.start_line, input.lines].some(v => v !== undefined)) throw new Error("use image_id alone, or path/files with optional line ranges");
       if (typeof input.image_id !== "string") throw new Error("image_id must be a string");

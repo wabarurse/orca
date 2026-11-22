@@ -1,5 +1,5 @@
 import type { MessageParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
-import type { GuardRule } from "../guard";
+import type { GuardRule } from "../tools/bash/guard";
 import type { MemorySection } from "../loop/rolling";
 import type { Tool, ToolResult } from "../tools/registry";
 import type { Message, Role } from "../types";
@@ -108,5 +108,5 @@ export function defineBackground(background: PluginBackground): PluginBackground
   return background;
 }
 
-export type { GuardInput, ShellCommand } from "../guard";
+export type { GuardInput, ShellCommand } from "../tools/bash/guard";
 export type { GuardRule, MemorySection, Result };

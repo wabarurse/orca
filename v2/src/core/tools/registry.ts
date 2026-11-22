@@ -2,6 +2,7 @@ import type { ImageBlockParam, TextBlockParam, Tool as ApiTool } from "@anthropi
 import type { Provider } from "../../api";
 import type { RequestSettings } from "../../api/model";
 import type { Role } from "../types";
+import type { GuardRule } from "./bash/guard";
 import { type Result } from "../../config";
 
 export type AgentInfo = {
@@ -36,6 +37,7 @@ export type ToolContext = {
   data: string;
   trusted: boolean;
   pluginSkills: string[];
+  guard: GuardRule[];
   callId: string;
   signal: AbortSignal;
   model: string;
@@ -59,6 +61,14 @@ export const CORE_TOOLS: Record<Role, string[]> = {
 };
 
 export const CORE_TOOL_NAMES = ["bash", "read", "write", "edit", "subagent", "inbox", "memory", "notebook", "behavior", "skill", "web_search", "mcp"];
+
+export class ToolRefusal extends Error {
+  readonly rule: string;
+  constructor(rule: string, text: string) {
+    super(text);
+    this.rule = rule;
+  }
+}
 
 export function settled<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);

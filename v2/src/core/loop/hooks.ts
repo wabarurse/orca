@@ -2,38 +2,31 @@ import type { Tool as ApiTool, MessageParam } from "@anthropic-ai/sdk/resources/
 import type { AfterTool, BeforeRequest, BeforeTool, OnInput, PluginContext } from "../plugins/types";
 import type { ToolResult } from "../tools/registry";
 import type { Message } from "../types";
-import { refusal, type GuardRule } from "../guard";
 import { errorMessage } from "../../config";
 
 export type Bound<H> = { hook: H; ctx: PluginContext };
-export type LoopHooks = { beforeTool: Bound<BeforeTool>[]; afterTool: Bound<AfterTool>[]; beforeRequest: Bound<BeforeRequest>[]; onInput: Bound<OnInput>[]; guard: GuardRule[] };
+export type LoopHooks = { beforeTool: Bound<BeforeTool>[]; afterTool: Bound<AfterTool>[]; beforeRequest: Bound<BeforeRequest>[]; onInput: Bound<OnInput>[] };
 
-export const emptyHooks = (): LoopHooks => ({ beforeTool: [], afterTool: [], beforeRequest: [], onInput: [], guard: [] });
+export const emptyHooks = (): LoopHooks => ({ beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] });
 
 const named = (ctx: PluginContext, error: unknown): Error => new Error(`plugin ${ctx.plugin}: ${errorMessage(error)}`);
 
-export type ToolDecision = { action: "run"; input: Record<string, unknown> } | { action: "block"; reason: string; refused: string | null };
+export type ToolDecision = { action: "run"; input: Record<string, unknown> } | { action: "block"; reason: string };
 
-export async function beforeTool(hooks: LoopHooks, name: string, input: Record<string, unknown>, cwd: string, confirm: (question: string) => Promise<boolean>): Promise<ToolDecision> {
-  const guarded = (checked: Record<string, unknown>): ToolDecision | null => {
-    const refused = refusal(hooks.guard, name, checked, cwd);
-    return refused === null ? null : { action: "block", reason: refused.text, refused: refused.id };
-  };
-  const first = guarded(input);
-  if (first !== null) return first;
+export async function beforeTool(hooks: LoopHooks, name: string, input: Record<string, unknown>, confirm: (question: string) => Promise<boolean>): Promise<ToolDecision> {
   let current = input;
   for (const { hook, ctx } of hooks.beforeTool) {
     let result;
     try { result = await hook({ name, input: current }, ctx); }
-    catch (error) { return { action: "block", reason: named(ctx, error).message, refused: null }; }
-    if (result.action === "block") return { action: "block", reason: `blocked by plugin ${ctx.plugin}: ${result.reason}`, refused: null };
+    catch (error) { return { action: "block", reason: named(ctx, error).message }; }
+    if (result.action === "block") return { action: "block", reason: `blocked by plugin ${ctx.plugin}: ${result.reason}` };
     if (result.action === "ask") {
-      if (!await confirm(`${ctx.plugin}: ${result.question}`)) return { action: "block", reason: `the user declined (plugin ${ctx.plugin} asked: ${result.question})`, refused: null };
+      if (!await confirm(`${ctx.plugin}: ${result.question}`)) return { action: "block", reason: `the user declined (plugin ${ctx.plugin} asked: ${result.question})` };
       continue;
     }
     current = result.input;
   }
-  return current === input ? { action: "run", input } : guarded(current) ?? { action: "run", input: current };
+  return { action: "run", input: current };
 }
 
 export async function afterTool(hooks: LoopHooks, name: string, input: Record<string, unknown>, result: { ok: boolean; content: ToolResult }): Promise<{ ok: boolean; content: ToolResult }> {

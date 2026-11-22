@@ -2,7 +2,8 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig, paths } from "../../../config";
 import { DATA_SENTENCE } from "../../bubbles";
-import type { Tool } from "../registry";
+import { ToolRefusal, type Tool } from "../registry";
+import { refusal } from "./guard";
 import { hint } from "./hints";
 import { readOnly } from "./readonly";
 
@@ -38,6 +39,8 @@ export const bash: Tool = {
   async run(input, ctx) {
     const command = typeof input.command === "string" ? input.command : "";
     if (command.trim().length === 0) throw new Error("command must be a non-empty string");
+    const refused = refusal(ctx.guard, input, ctx.cwd);
+    if (refused !== null) throw new ToolRefusal(refused.id, refused.text);
     const timeoutMs = typeof input.timeout_ms === "number" && input.timeout_ms > 0 ? Math.min(MAX_TIMEOUT_MS, Math.floor(input.timeout_ms)) : MAX_TIMEOUT_MS;
     const config = await loadConfig();
     const env = agentEnv(ctx.conversation, ctx.agent, ctx.data);

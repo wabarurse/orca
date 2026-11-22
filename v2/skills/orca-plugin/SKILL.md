@@ -115,10 +115,12 @@ A hook that throws blocks the call (beforeTool) or fails the result; keep hooks 
 ### Guard
 
 `guard` adds commands agents must never run to the core's list (recursive grep, editors, unbounded git log/diff,
-secrets, broad deletes, sudo, curl|sh). Each rule is `{ id, group: "efficiency" | "security", test, reason, suggest }`;
-`test(call)` gets `{ tool, input, command, root }` once per simple command of a bash call (`command.program`, `args`,
-`env`, `cwd`, `before`/`after` in its pipeline; null for other tools) and returns true to refuse. The model reads
-`refused (<id>): <reason>. Use: <suggest(call)>` as the tool result and nothing runs. Keep tests fast and pure.
+secrets, broad deletes, sudo, curl|sh). The bash tool checks every command it is about to run, after the `beforeTool`
+hooks, against both lists (`core/tools/bash/guard/`). Each rule is `{ id, group: "efficiency" | "security", test,
+reason, suggest }`; `test(call)` gets `{ tool: "bash", input, command, root }` once per simple command of the bash call
+(`command.program`, `args`, `env`, `cwd`, `before`/`after` in its pipeline) and returns true to refuse. The model reads
+`refused (<id>): <reason>. Use: <suggest(call)>` as the tool result and nothing runs. Rules see bash commands only; to
+stop another tool's call, use a `beforeTool` hook. Keep tests fast and pure.
 
 ### Bundles
 

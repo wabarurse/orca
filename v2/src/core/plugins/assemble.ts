@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { pluginData } from "../bubbles";
 import type { Bound, LoopHooks } from "../loop/hooks";
 import { rolePrompt } from "../prompt";
+import type { GuardRule } from "../tools/bash/guard";
 import { CORE_TOOLS, type Tool } from "../tools/registry";
 import { coreTools } from "../tools/mount";
 import type { Role } from "../types";
@@ -22,6 +23,7 @@ export type Assembled = {
   tools: Tool[];
   system: string;
   hooks: LoopHooks;
+  guard: GuardRule[];
   skills: string[];
   problems: PluginProblem[];
 };
@@ -63,12 +65,11 @@ export async function assemble(input: AssembleInput): Promise<Result<Assembled>>
   const hooks: LoopHooks = {
     beforeTool: bind(l => l.plugin.hooks.beforeTool), afterTool: bind(l => l.plugin.hooks.afterTool),
     beforeRequest: bind(l => l.plugin.hooks.beforeRequest), onInput: bind(l => l.plugin.hooks.onInput),
-    guard: used.flatMap(l => l.plugin.guard),
   };
 
   const additions = used.flatMap(loaded => loaded.plugin.prompt.filter(p => p.role === role).map(p => `[${loaded.plugin.name}] ${p.text}`));
   const storage = used.flatMap(loaded => loaded.plugin.storage.map(s => `- ${loaded.plugin.name} (${s.scope}): ${s.about}`));
   const system = [bundle.prompt, ...(additions.length > 0 ? ["Plugins:", ...additions] : []), ...(storage.length > 0 ? ["Plugin data under $ORCA_DATA:", ...storage] : [])].join("\n\n");
   const skills = used.flatMap(loaded => loaded.plugin.skills.map(skill => join(loaded.dir, skill)));
-  return ok({ bundle, plugins: used, tools: [...tools.values()].map(t => t.tool), system, hooks, skills, problems });
+  return ok({ bundle, plugins: used, tools: [...tools.values()].map(t => t.tool), system, hooks, guard: used.flatMap(l => l.plugin.guard), skills, problems });
 }

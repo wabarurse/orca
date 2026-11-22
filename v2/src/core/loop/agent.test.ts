@@ -6,6 +6,8 @@ import { fakeProvider, text, toolUse } from "../../test/fake-provider";
 import { tempHome } from "../../test/home";
 import { createConversation } from "../conversations";
 import { pending, put } from "../inbox";
+import { bash } from "../tools/bash";
+import type { GuardRule } from "../tools/bash/guard";
 import type { Runtime, Tool } from "../tools/registry";
 import type { PluginContext } from "../plugins/types";
 import { openTranscript } from "../transcript";
@@ -23,13 +25,13 @@ function echoTool(onRun: () => Promise<void> = async () => {}): Tool {
     async run(input) { await onRun(); return `echo: ${String(input.text)}`; } };
 }
 
-async function setup(script: ContentBlock[][], tools: Tool[], hooks: LoopHooks = emptyHooks(), confirm = async () => false) {
+async function setup(script: ContentBlock[][], tools: Tool[], hooks: LoopHooks = emptyHooks(), confirm = async () => false, guard: GuardRule[] = []) {
   const conversation = await createConversation(home.path(), "t");
   const provider = fakeProvider(script);
   const events: AgentEvent[] = [];
   const transcript = openTranscript(paths.transcript(conversation.id, "orchestrator"));
   const config: AgentSetup = {
-    conversation: conversation.id, agent: "orchestrator", role: "orchestrator", branch: null, cwd: home.path(), data: home.path(), trusted: false, pluginSkills: [],
+    conversation: conversation.id, agent: "orchestrator", role: "orchestrator", branch: null, cwd: home.path(), data: home.path(), trusted: false, pluginSkills: [], guard,
     transcript, tools, system: "test", resolve: async () => ok({ model: "claude-sonnet-5-5", provider, settings: null, contextLimit: null }),
     context: async () => ({}), hooks, runtime: { ...runtime, confirm }, emit: event => { events.push(event); }, signal: new AbortController().signal,
     concurrency: 1, rolling: null, requireInput: true, compactRequested: () => false, spans: spanRecorder(conversation.id, "orchestrator", event => { events.push(event); }),
@@ -96,17 +98,37 @@ describe("agent loop", () => {
   });
 
   test("a guarded command reaches the model as a refused tool result, nothing runs, and the span records it", async () => {
-    const ran: string[] = [];
-    const shell: Tool = { parallel: () => false, spec: { name: "bash", description: "bash", input_schema: { type: "object", properties: { command: { type: "string" } } } },
-      async run(input) { ran.push(String(input.command)); return "ran"; } };
-    const s = await setup([[toolUse("g", "bash", { command: "grep -ril 'agent notes' ." })], [toolUse("h", "bash", { command: "rg -n -i -l 'agent notes'" })], [text("found")]], [shell]);
+    const hooks = emptyHooks();
+    const seen: string[] = [];
+    const ctx: PluginContext = { plugin: "p", conversation: "c", agent: "orchestrator", role: "orchestrator", cwd: home.path(), data: async () => ok(home.path()) };
+    hooks.afterTool.push({ ctx, hook: async (call, result) => { seen.push(String(call.input.command)); return result; } });
+    const s = await setup([[toolUse("g", "bash", { command: "grep -ril 'agent notes' . > ran.txt" })], [toolUse("h", "bash", { command: "echo found-it" })], [text("found")]], [bash], hooks);
     await put(s.conversation, "orchestrator", "user", "find agent notes", { images: [], delivery: "steer" });
     expect((await s.agent.run()).text).toBe("found");
-    const results = z.array(z.looseObject({ content: z.string(), is_error: z.boolean().optional() })).parse(s.provider.calls[1]?.messages.at(-1)?.content);
-    expect(results[0]).toMatchObject({ is_error: true, content: "refused (recursive-grep): recursive grep walks node_modules, build output and .git, and can take minutes. Use: rg -n -i -l 'agent notes' (or git grep -n -i -l 'agent notes')" });
-    expect(ran).toEqual(["rg -n -i -l 'agent notes'"]);
+    const first = z.array(z.looseObject({ content: z.string(), is_error: z.boolean().optional() })).parse(s.provider.calls[1]?.messages.at(-1)?.content);
+    expect(first[0]).toMatchObject({ is_error: true, content: "refused (recursive-grep): recursive grep walks node_modules, build output and .git, and can take minutes. Use: rg -n -i -l 'agent notes' (or git grep -n -i -l 'agent notes')" });
+    const second = z.array(z.looseObject({ content: z.string(), is_error: z.boolean().optional() })).parse(s.provider.calls[2]?.messages.at(-1)?.content);
+    expect(second[0]).toMatchObject({ content: "found-it" });
+    expect(second[0]?.is_error).toBeUndefined();
+    expect(await Bun.file(`${home.path()}/ran.txt`).exists()).toBe(false);
+    expect(seen).toEqual(["echo found-it"]);
     const spans = s.events.flatMap(e => e.kind === "span_end" && e.span.kind === "tool" ? [e.span.detail] : []);
     expect(spans[0]).toMatchObject({ tool: "bash", ok: "no", refused: "recursive-grep" });
     expect(spans[1]?.refused).toBeUndefined();
+  });
+
+  test("a plugin hook that rewrites a command into a guarded one is refused by bash, and plugin rules apply", async () => {
+    const hooks = emptyHooks();
+    const ctx: PluginContext = { plugin: "rewrite", conversation: "c", agent: "orchestrator", role: "orchestrator", cwd: home.path(), data: async () => ok(home.path()) };
+    hooks.beforeTool.push({ ctx, hook: async call => call.input.command === "ls" ? { action: "run", input: { command: "sudo ls" } } : { action: "run", input: call.input } });
+    const noMake: GuardRule = { id: "no-make", group: "efficiency", test: call => call.command?.program === "make", reason: "this repo builds with bun", suggest: () => "bun run build" };
+    const s = await setup([[toolUse("a", "bash", { command: "ls" }), toolUse("b", "bash", { command: "make all" })], [text("done")]], [bash], hooks, async () => false, [noMake]);
+    await put(s.conversation, "orchestrator", "user", "list", { images: [], delivery: "steer" });
+    expect((await s.agent.run()).text).toBe("done");
+    const results = z.array(z.looseObject({ content: z.string(), is_error: z.boolean().optional() })).parse(s.provider.calls[1]?.messages.at(-1)?.content);
+    expect(results[0]).toMatchObject({ is_error: true, content: "refused (sudo): sudo waits for a password nobody can type. Use: ask the user to run it" });
+    expect(results[1]).toMatchObject({ is_error: true, content: "refused (no-make): this repo builds with bun. Use: bun run build" });
+    const spans = s.events.flatMap(e => e.kind === "span_end" && e.span.kind === "tool" ? [e.span.detail] : []);
+    expect(spans.map(span => span.refused)).toEqual(["sudo", "no-make"]);
   });
 });
