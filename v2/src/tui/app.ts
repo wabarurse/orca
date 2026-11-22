@@ -460,7 +460,8 @@ export class App {
     const cols = t.cols;
     const footer: string[] = [];
     if (this.note.length > 0) for (const line of wordWrap(this.note, cols).slice(0, NOTE_ROWS)) footer.push(this.noteError ? errorText(line) : dim(line));
-    for (const m of this.queued.slice(-4)) footer.push(dim(fit(`queued (${m.delivery === "follow" ? "after the work" : "next"}): ${m.text.replace(/\s+/g, " ")}`, cols)));
+    const waiting = this.busy ? this.queued : [];
+    for (const m of waiting.slice(-4)) footer.push(dim(fit(`queued (${m.delivery === "follow" ? "after the work" : "next"}): ${m.text.replace(/\s+/g, " ")}`, cols)));
     if (this.images.length > 0) footer.push(dim(`${this.images.length} image${this.images.length === 1 ? "" : "s"} attached`));
     let cursor: { row: number; col: number } | null = null;
     if (this.modal !== null && this.modal.kind !== "input") {
@@ -474,7 +475,8 @@ export class App {
     const fin = { time: this.deps.now(), active: this.busy };
     const header: screens.ScreenHeader = { tabs: [{ label: this.conversation.name, active: true, busy: this.busy }], bubble: this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
       account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [this.deps.directory], fin };
-    t.show({ kind: "chat", header, items: this.cached, tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting), welcome: [], footer, cursor });
+    const sent = this.busy ? [] : this.queued.flatMap(m => items([{ kind: "user", text: m.text }], { cols, open: this.open, folds: this.folds }).map(item => ({ ...item, key: `sent-${m.id}` })));
+    t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting), welcome: [], footer, cursor });
   }
 
   private modalLine(modal: Modal): string {

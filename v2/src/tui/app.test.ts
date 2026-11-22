@@ -40,7 +40,7 @@ async function app(dir: string) {
 }
 
 describe("tui", () => {
-  test("Enter queues input for the orchestrator, Tab queues it for after the work, Esc takes the newest back", async () => {
+  test("Enter sends input to the orchestrator, shown at once in the chat while nothing runs; Tab queues it for after the work; Esc takes the newest back", async () => {
     await setTrust(home.path(), false);
     const t = await app(home.path());
     await t.type("hello");
@@ -52,7 +52,9 @@ describe("tui", () => {
     expect(queued).toEqual(["steer:hello", "steer:later"]);
     expect(t.started.length).toBeGreaterThan(0);
     await t.app.poll();
-    expect(t.text()).toContain("queued (next): hello");
+    expect(t.text()).not.toContain("queued");
+    const screen = t.screen();
+    expect(screen?.kind === "chat" ? screen.items.filter(item => item.kind === "user").map(item => item.rows.join(" ")) : []).toEqual(["hello", "later"]);
     await t.press({ name: "escape" });
     expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["hello"]);
     expect(t.text()).toContain("› later");
