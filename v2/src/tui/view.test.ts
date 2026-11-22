@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { AgentEvent, OpenSpan } from "../core/types";
-import { tail } from "./view";
+import { CORE_FOLDS, items, tail, type Piece } from "./view";
 
 const NOW = Date.parse("2026-01-01T00:10:00.000Z");
 const at = (secondsAgo: number): string => new Date(NOW - secondsAgo * 1000).toISOString();
@@ -24,4 +24,20 @@ test("the activity line names the current phase and its elapsed time", () => {
 test("between turns the orchestrator shows what it waits for, but not an idle wait for input", () => {
   expect(plain(tail([], "", 80, NOW, false, open("w", "wait-worker", "worker-fix-x", 72)))).toBe("waiting for worker-fix-x (1m12s)");
   expect(tail([], "", 80, NOW, false, open("i", "wait-inbox", "input", 72))).toEqual([]);
+});
+
+test("tool calls, agent messages and spawned agents fold the way the sketch shows", () => {
+  const call = (id: string, name: string, input: Record<string, unknown>, text: string): Piece => ({ kind: "call", call: { call: { id, name, input }, outcome: { id, ok: true, text } } });
+  const list: Piece[] = [
+    call("a", "bash", { command: "ls" }, "x"), call("b", "read", { path: "a.ts" }, "y"),
+    { kind: "text", text: "between" },
+    call("c", "subagent", { action: "spawn", branch: "fix-a" }, "worker-fix-a started (bundle worker, log l)"),
+    call("d", "subagent", { action: "spawn", branch: "fix-b" }, "worker-fix-b got the brief as a message (bundle worker, log l)"),
+    { kind: "from", from: "worker-fix-a", text: "done" },
+  ];
+  const out = items(list, { cols: 80, open: new Set<string>(), folds: new Map(CORE_FOLDS) });
+  const titles = out.flatMap(item => item.kind === "fold" ? [Bun.stripANSI(item.title)] : []);
+  expect(titles).toEqual(["⚒ 2 tool calls · bash ×1, read ×1", "+ 2 agents", "✉ from agent worker-fix-a"]);
+  const agents = out.find(item => item.kind === "fold" && item.title === "+ 2 agents");
+  expect(agents?.kind === "fold" ? [agents.opens, agents.rows.map(r => Bun.stripANSI(r))] : null).toEqual(["agents", ["● worker-fix-a  open", "● worker-fix-b  open"]]);
 });

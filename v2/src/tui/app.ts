@@ -169,7 +169,7 @@ export class App {
     if (pid === null && this.queued.length > 0) await this.deps.ensureDaemon(id).catch((error: unknown) => fail(errorMessage(error)));
     const runs = await listRuns(id);
     const running = runs.filter(r => r.agent !== "orchestrator" && live(r)).length;
-    const parts = [`${running} agent${running === 1 ? "" : "s"} running`];
+    const parts = [`${running} agent${running === 1 ? "" : "s"}`];
     for (const bound of this.uis) for (const count of bound.ui.counts) {
       const n = await count.count(bound.ctx).catch(() => null);
       if (n !== null && n > 0) parts.push(count.label(n));

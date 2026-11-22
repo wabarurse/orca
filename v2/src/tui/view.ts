@@ -8,7 +8,7 @@ import { dim, editor, fit, pastel, railMark, renderMarkdown, sanitize, screens, 
 
 type Item = screens.ScreenItem;
 type Call = { call: ToolCall; outcome: ToolOutcome | null };
-type Piece = { kind: "text"; text: string } | { kind: "call"; call: Call } | { kind: "user"; text: string } | { kind: "from"; from: string; text: string } | { kind: "note"; text: string };
+export type Piece = { kind: "text"; text: string } | { kind: "call"; call: Call } | { kind: "user"; text: string } | { kind: "from"; from: string; text: string } | { kind: "note"; text: string };
 
 const InputRecord = z.record(z.string(), z.unknown());
 const inputRecord = (input: unknown): Record<string, unknown> => { const parsed = InputRecord.safeParse(input); return parsed.success ? parsed.data : {}; };
@@ -67,6 +67,15 @@ export function tally(views: ToolView[]): string {
 
 export type ViewState = { cols: number; open: Set<string>; folds: Map<string, Fold> };
 
+export const TOOLS_MARK = "⚒";
+export const FROM_MARK = "✉";
+
+export const CORE_FOLDS: ReadonlyMap<string, Fold> = new Map<string, Fold>([["subagent", {
+  title: n => `${n} agent${n === 1 ? "" : "s"}`,
+  items: (input, outcome) => input.action === "spawn" && outcome.ok ? [outcome.text.split(" ")[0] ?? ""].filter(agent => agent.length > 0) : [],
+  opens: "agents",
+}]]);
+
 export function items(list: Piece[], state: ViewState): Item[] {
   const out: Item[] = [];
   const width = Math.max(10, state.cols - 2);
@@ -83,7 +92,7 @@ export function items(list: Piece[], state: ViewState): Item[] {
     else {
       const views = run.map(viewOf);
       const failed = views.filter(v => v.failed).length;
-      out.push({ kind: "fold", key, gap: true, title: `${run.length} tool calls · ${tally(views)}`, failed: failed > 0 ? ` · ${failed} failed` : "", open: state.open.has(key), rows: views.flatMap(v => callRows(v, width - 2)), opens: null });
+      out.push({ kind: "fold", key, gap: true, title: `${TOOLS_MARK} ${run.length} tool calls · ${tally(views)}`, failed: failed > 0 ? ` · ${failed} failed` : "", open: state.open.has(key), rows: views.flatMap(v => callRows(v, width - 2)), opens: null });
     }
     run = [];
   };
@@ -98,7 +107,7 @@ export function items(list: Piece[], state: ViewState): Item[] {
     const key = `p-${index}`;
     if (piece.kind === "user") out.push({ kind: "user", key, gap: true, rows: wordWrap(sanitize(piece.text), Math.max(10, Math.floor(state.cols * 0.78) - 4)), fill: userFill() });
     else if (piece.kind === "text") out.push({ kind: "rows", key, gap: true, rows: renderMarkdown(piece.text, width) });
-    else if (piece.kind === "from") out.push({ kind: "fold", key, gap: true, title: `from ${piece.from}`, failed: "", open: state.open.has(key), rows: renderMarkdown(piece.text, width - 2), opens: null });
+    else if (piece.kind === "from") out.push({ kind: "fold", key, gap: true, title: `${FROM_MARK} from agent ${piece.from}`, failed: "", open: state.open.has(key), rows: renderMarkdown(piece.text, width - 2), opens: null });
     else out.push({ kind: "rows", key, gap: true, rows: [dim(fit(`· ${sanitize(piece.text)}`, width))] });
   });
   flush();
