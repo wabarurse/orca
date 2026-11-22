@@ -16,7 +16,7 @@ import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
-import { dim, editor, fit, readClipboardImage, screens, type Key, type Terminal } from "./components";
+import { dim, editor, fit, noColour, pastel, readClipboardImage, screens, wordWrap, type Key, type Terminal } from "./components";
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
 import { renderWork, type WorkTab } from "./work";
@@ -38,6 +38,8 @@ export type AppDeps = {
 };
 
 const POLL_MS = 250;
+const NOTE_ROWS = 4;
+const errorText = (line: string): string => noColour() ? line : `\x1b[${pastel.red}m${line}\x1b[0m`;
 const SLOW_MS = 2000;
 
 export class App {
@@ -56,6 +58,8 @@ export class App {
   private queued: Message[] = [];
   private confirms: Confirm[] = [];
   private note = "";
+  private noteError = false;
+  private shownError: string | null = null;
   private open = new Set<string>();
   private modal: Modal | null = null;
   private page: Page | null = null;
@@ -88,7 +92,7 @@ export class App {
     await this.poll();
   }
 
-  private failed(error: unknown): void { this.flash(errorMessage(error)); }
+  private failed(error: unknown): void { this.flash(errorMessage(error), true); }
 
   async start(): Promise<void> {
     const existing = (await listConversations()).find(c => c.directory === this.deps.directory);
@@ -133,6 +137,9 @@ export class App {
       this.lastText = last?.kind === "text" ? last.text : "";
     }
     this.status = await readStatus(id);
+    const turnError = this.status?.error ?? null;
+    if (turnError !== null && turnError !== this.shownError) this.flash(`last turn failed: ${turnError}`, true);
+    this.shownError = turnError;
     const pid = await daemonPid(id);
     this.busy = this.status !== null && this.status.state === "turn" && pid !== null;
     this.waiting = pid !== null && this.status !== null && this.status.state === "idle" ? this.status.phase : null;
@@ -201,11 +208,11 @@ export class App {
 
   private async startDaemon(conversation: string): Promise<boolean> {
     const started = await this.deps.ensureDaemon(conversation).catch((error: unknown) => fail(errorMessage(error)));
-    if (!started.ok) this.flash(`daemon: ${started.error}`);
+    if (!started.ok) this.flash(`daemon: ${started.error}`, true);
     return started.ok;
   }
 
-  private flash(text: string): void { this.note = text.replace(/\s+/g, " ").trim(); this.draw(); }
+  private flash(text: string, error = false): void { this.note = text.replace(/\s+/g, " ").trim(); this.noteError = error; this.draw(); }
 
   private async key(key: Key): Promise<void> {
     if (this.modal !== null) { this.modalKey(this.modal, key); return; }
@@ -285,12 +292,12 @@ export class App {
   private async pasteImage(): Promise<void> {
     try {
       const read = await this.deps.clipboard();
-      if (!read.ok) { this.flash(`paste failed: ${read.error}`); return; }
+      if (!read.ok) { this.flash(`paste failed: ${read.error}`, true); return; }
       const saved = await saveImage(this.conversation.id, read.data);
-      if (!saved.ok) { this.flash(`paste failed: ${saved.error}`); return; }
+      if (!saved.ok) { this.flash(`paste failed: ${saved.error}`, true); return; }
       this.images.push(saved.data);
       this.flash(`image attached (${this.images.length})`);
-    } catch (error) { this.flash(`paste failed: ${errorMessage(error)}`); }
+    } catch (error) { this.flash(`paste failed: ${errorMessage(error)}`, true); }
   }
 
   private async cycle(step: number): Promise<void> {
@@ -321,7 +328,7 @@ export class App {
     if (name === "plugins") { await this.pluginsMenu(); return; }
     const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
     if (own === undefined) { this.flash(`unknown command /${name}`); return; }
-    try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${errorMessage(error)}`); }
+    try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${errorMessage(error)}`, true); }
   }
 
   private commands(): { name: string }[] { return this.uis.flatMap(bound => bound.ui.commands); }
@@ -336,7 +343,7 @@ export class App {
     const name = choice === null ? undefined : names[choice];
     if (name === undefined) return;
     const ensured = this.conversation.bubble === null ? await ensureBubble(this.conversation.id) : null;
-    if (ensured !== null && !ensured.ok) { this.flash(ensured.error); return; }
+    if (ensured !== null && !ensured.ok) { this.flash(ensured.error, true); return; }
     const bubble = ensured === null ? this.conversation.bubble : ensured.data.id;
     if (bubble === null) return;
     const switched = await setBubblePlugin(bubble, name, enabled.includes(name) ? "off" : "on");
@@ -444,7 +451,7 @@ export class App {
     }
     const cols = t.cols;
     const footer: string[] = [];
-    if (this.note.length > 0) footer.push(dim(fit(this.note, cols)));
+    if (this.note.length > 0) for (const line of wordWrap(this.note, cols).slice(0, NOTE_ROWS)) footer.push(this.noteError ? errorText(line) : dim(line));
     for (const m of this.queued.slice(-4)) footer.push(dim(fit(`queued (${m.delivery === "follow" ? "after the work" : "next"}): ${m.text.replace(/\s+/g, " ")}`, cols)));
     if (this.images.length > 0) footer.push(dim(`${this.images.length} image${this.images.length === 1 ? "" : "s"} attached`));
     let cursor: { row: number; col: number } | null = null;
@@ -458,7 +465,7 @@ export class App {
     footer.push(...box.rows);
     const fin = { time: this.deps.now(), active: this.busy };
     const header: screens.ScreenHeader = { tabs: [{ label: this.conversation.name, active: true, busy: this.busy }], bubble: this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
-      account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [`${this.deps.directory}${this.status?.error != null ? ` · last turn failed: ${this.status.error}` : ""}`], fin };
+      account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [this.deps.directory], fin };
     t.show({ kind: "chat", header, items: this.cached, tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting), welcome: [], footer, cursor });
   }
 

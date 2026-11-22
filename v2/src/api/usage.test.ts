@@ -41,5 +41,5 @@ test("failure diagnostics identify the selected account and HTTP status without 
 test("account-specific authentication guidance survives metering", async () => {
   prior = process.env.ORCA2_HOME; home = await mkdtemp(join(tmpdir(), "orca-usage-auth-")); process.env.ORCA2_HOME = home;
   const provider = metered({ ...fakeProvider([]), account: "openai:work", complete: async () => { throw new ModelRequestError("permanent", 401, "authentication"); } });
-  await expect(provider.complete({ model: "test", messages: [], tools: [], maxTokens: 10, onText() {} })).rejects.toThrow("Run /login openai work.");
+  await expect(provider.complete({ model: "test", messages: [], tools: [], maxTokens: 10, onText() {} })).rejects.toThrow("Sign in again with: orca2 login openai work");
 });

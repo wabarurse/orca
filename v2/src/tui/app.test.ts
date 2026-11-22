@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "../config";
 import { askUser, pendingConfirms } from "../core/confirm";
+import { writeStatus } from "../core/daemon/channel";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
 import { setTrust } from "../core/trust";
@@ -27,7 +28,7 @@ function fakeTerminal() {
     const plain = (rows: string[]): string => Bun.stripANSI(rows.join("\n"));
     return s.kind === "page" ? plain(s.rows) : plain([...s.items.flatMap(i => i.kind === "fold" ? [i.title, ...i.rows] : i.rows), ...s.tail, ...s.footer]);
   };
-  return { terminal, press, type, text };
+  return { terminal, press, type, text, screen: (): screens.Screen | null => state.screen };
 }
 
 async function app(dir: string) {
@@ -88,6 +89,24 @@ describe("tui", () => {
     await t.press({ name: "char", text: "y" });
     expect(await answer).toBe(true);
     expect(await pendingConfirms(id)).toEqual([]);
+    t.app.stop();
+  });
+
+  test("a failed turn's error shows in full above the input, in red, never in the header", async () => {
+    const t = await app(home.path());
+    const error = "anthropic:default: The sign-in service rejected the credential exchange. Sign in again. Sign-in HTTP 400. Sign in again with: orca2 login anthropic default";
+    await writeStatus(t.app.conversationId(), { pid: 1, run: "r", state: "idle", since: "", turns: 1, error, contextTokens: null, phase: null });
+    await t.app.poll();
+    const screen = t.screen();
+    expect(screen?.kind).toBe("chat");
+    if (screen?.kind !== "chat") return;
+    expect(JSON.stringify(screen.header)).not.toContain("failed");
+    const footer = Bun.stripANSI(screen.footer.join(" "));
+    expect(footer).toContain("last turn failed:");
+    expect(footer.replace(/\s+/g, " ")).toContain("orca2 login anthropic default");
+    expect(screen.footer.some(row => row.includes("\x1b[38;5;217m"))).toBe(true);
+    await t.press({ name: "char", text: "x" });
+    expect(Bun.stripANSI((t.screen()?.kind === "chat" ? t.text() : ""))).not.toContain("last turn failed");
     t.app.stop();
   });
 });

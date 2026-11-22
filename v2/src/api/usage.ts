@@ -22,7 +22,7 @@ export function metered(provider: Provider): Provider {
       const signIn = error.reason === "authentication" || error.reason === "credentials-invalid"
         || (error.reason === "oauth-http" && [400, 401, 403].includes(error.oauthStatus ?? 0));
       const [name, profile] = account.split(":");
-      const hint = signIn && profile !== undefined && profile !== "" ? ` Run /login ${name} ${profile}.` : "";
+      const hint = signIn && profile !== undefined && profile !== "" ? ` Sign in again with: orca2 login ${name} ${profile}` : "";
       error.message = `${account}: ${error.message}${hint}`;
     }
     return error;
