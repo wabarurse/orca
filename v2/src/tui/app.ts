@@ -77,6 +77,7 @@ export class App {
   private frame: ReturnType<typeof setInterval> | null = null;
   private lastSlow = 0;
   private quitting = false;
+  private openTabs: { id: string; name: string; busy: boolean }[] = [];
   private bubbles: Awaited<ReturnType<typeof bubbleEntries>> = { entries: [], loose: [] };
 
   constructor(private readonly deps: AppDeps) {}
@@ -119,6 +120,9 @@ export class App {
   }
 
   private async switchTo(conversation: Conversation): Promise<void> {
+    const known = this.openTabs.find(tab => tab.id === conversation.id);
+    if (known === undefined) this.openTabs.push({ id: conversation.id, name: conversation.name, busy: false });
+    else known.name = conversation.name;
     this.current = { conversation, transcript: openTranscript(paths.transcript(conversation.id, "orchestrator")) };
     this.head = "unset";
     this.events = [];
@@ -184,6 +188,11 @@ export class App {
     this.model = meta?.model ?? config.model;
     this.bubbleName = meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
     this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
+    for (const tab of this.openTabs) {
+      if (tab.id === id) { tab.busy = this.busy; continue; }
+      const status = await readStatus(tab.id);
+      tab.busy = status !== null && status.state === "turn" && await daemonPid(tab.id) !== null;
+    }
     if (this.page !== null) await this.loadPage();
   }
 
@@ -313,10 +322,18 @@ export class App {
   }
 
   private async cycle(step: number): Promise<void> {
-    const all = (await listConversations()).filter(c => c.directory === this.deps.directory);
-    const at = all.findIndex(c => c.id === this.conversation.id);
-    const next = all[(at + step + all.length) % all.length];
-    if (next !== undefined && next.id !== this.conversation.id) await this.switchTo(next);
+    const at = this.openTabs.findIndex(tab => tab.id === this.conversation.id);
+    const next = this.openTabs[(at + step + this.openTabs.length) % this.openTabs.length];
+    const conversation = next === undefined || next.id === this.conversation.id ? null : await readConversation(next.id);
+    if (conversation !== null) await this.switchTo(conversation);
+    this.draw();
+  }
+
+  private async closeTab(): Promise<void> {
+    if (this.openTabs.length < 2) { this.flash("the last open chat stays open"); return; }
+    const at = this.openTabs.findIndex(tab => tab.id === this.conversation.id);
+    await this.cycle(at === this.openTabs.length - 1 ? -1 : 1);
+    this.openTabs.splice(at, 1);
     this.draw();
   }
 
@@ -344,8 +361,9 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+V image · Ctrl+N new · Alt+←/→ switch · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /close · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
+    if (name === "close") { await this.closeTab(); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
     if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }
     if (name === "model") {
@@ -518,7 +536,7 @@ export class App {
     cursor = { row: footer.length + box.row, col: box.col };
     footer.push(...box.rows);
     const fin = this.cached.length === 0 && this.queued.length === 0 && !this.busy ? null : { time: this.deps.now(), active: this.busy };
-    const header: screens.ScreenHeader = { tabs: [{ label: this.conversation.name, active: true, busy: this.busy }], bubble: this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
+    const header: screens.ScreenHeader = { tabs: this.openTabs.map(tab => ({ label: tab.name, active: tab.id === this.conversation.id, busy: tab.id === this.conversation.id ? this.busy : tab.busy })), bubble: this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
       account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [this.conversation.directory], fin };
     const sent = this.busy ? [] : this.queued.flatMap(m => items([{ kind: "user", text: m.text }], { cols, open: this.open, folds: this.folds }).map(item => ({ ...item, key: `sent-${m.id}` })));
     t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
