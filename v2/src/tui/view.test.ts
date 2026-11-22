@@ -37,7 +37,15 @@ test("tool calls, agent messages and spawned agents fold the way the sketch show
   ];
   const out = items(list, { cols: 80, open: new Set<string>(), folds: new Map(CORE_FOLDS) });
   const titles = out.flatMap(item => item.kind === "fold" ? [Bun.stripANSI(item.title)] : []);
-  expect(titles).toEqual(["⚒ 2 tool calls · bash ×1, read ×1", "+ 2 agents", "✉ from agent worker-fix-a"]);
+  expect(titles).toEqual(["⚒ 2 tool calls · bash ×1, read ×1", "⚒ 2 tool calls · subagent ×2", "+ 2 agents", "✉ from agent worker-fix-a"]);
   const agents = out.find(item => item.kind === "fold" && item.title === "+ 2 agents");
   expect(agents?.kind === "fold" ? [agents.opens, agents.rows.map(r => Bun.stripANSI(r))] : null).toEqual(["agents", ["● worker-fix-a  open", "● worker-fix-b  open"]]);
+});
+
+test("one step's calls collapse together, whatever the tools, and a single call folds too", () => {
+  const call = (id: string, name: string, input: Record<string, unknown>, text: string): Piece => ({ kind: "call", call: { call: { id, name, input }, outcome: { id, ok: true, text } } });
+  const titles = (list: Piece[]): string[] => items(list, { cols: 80, open: new Set<string>(), folds: new Map(CORE_FOLDS) }).flatMap(item => item.kind === "fold" ? [Bun.stripANSI(item.title)] : []);
+  expect(titles([call("a", "bash", { command: "ls" }, "x"), call("b", "subagent", { action: "spawn", branch: "fix" }, "worker-fix started (bundle worker, log l)")]))
+    .toEqual(["⚒ 2 tool calls · bash ×1, subagent ×1", "+ 1 agent"]);
+  expect(titles([call("a", "memory", { action: "write" }, "wrote")])).toEqual(["⚒ 1 tool call · memory ×1"]);
 });

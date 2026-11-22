@@ -83,26 +83,27 @@ export function items(list: Piece[], state: ViewState): Item[] {
   const flush = (): void => {
     if (run.length === 0) return;
     const key = `calls-${run[0]?.call.id ?? out.length}`;
-    const plugin = state.folds.get(run[0]?.call.name ?? "");
-    if (plugin !== undefined) {
-      const rows = run.flatMap(c => c.outcome === null ? [] : plugin.items(inputRecord(c.call.input), { ok: c.outcome.ok, text: c.outcome.text }));
-      if (rows.length > 0) out.push({ kind: "fold", key, gap: true, title: `+ ${plugin.title(rows.length)}`, failed: "", open: state.open.has(key), rows: rows.map(r => `● ${sanitize(r)}  open`), opens: plugin.opens });
-      else out.push({ kind: "rows", key, gap: true, rows: run.flatMap(c => callRows(viewOf(c), width)) });
-    } else if (run.length === 1 && run[0] !== undefined) out.push({ kind: "rows", key, gap: true, rows: callRows(viewOf(run[0]), width) });
-    else {
-      const views = run.map(viewOf);
-      const failed = views.filter(v => v.failed).length;
-      out.push({ kind: "fold", key, gap: true, title: `${TOOLS_MARK} ${run.length} tool calls · ${tally(views)}`, failed: failed > 0 ? ` · ${failed} failed` : "", open: state.open.has(key), rows: views.flatMap(v => callRows(v, width - 2)), opens: null });
+    const views = run.map(viewOf);
+    const failed = views.filter(v => v.failed).length;
+    out.push({ kind: "fold", key, gap: true, title: `${TOOLS_MARK} ${run.length} tool call${run.length === 1 ? "" : "s"} · ${tally(views)}`, failed: failed > 0 ? ` · ${failed} failed` : "", open: state.open.has(key), rows: views.flatMap(v => callRows(v, width - 2)), opens: null });
+    const groups = new Map<string, { fold: Fold; rows: string[] }>();
+    for (const c of run) {
+      const fold = state.folds.get(c.call.name);
+      if (fold === undefined || c.outcome === null) continue;
+      const found = fold.items(inputRecord(c.call.input), { ok: c.outcome.ok, text: c.outcome.text });
+      if (found.length === 0) continue;
+      const group = groups.get(c.call.name) ?? { fold, rows: [] };
+      group.rows.push(...found);
+      groups.set(c.call.name, group);
+    }
+    for (const [tool, group] of groups) {
+      const groupKey = `${key}-${tool}`;
+      out.push({ kind: "fold", key: groupKey, gap: false, title: `+ ${group.fold.title(group.rows.length)}`, failed: "", open: state.open.has(groupKey), rows: group.rows.map(r => `● ${sanitize(r)}  open`), opens: group.fold.opens });
     }
     run = [];
   };
   list.forEach((piece, index) => {
-    if (piece.kind === "call") {
-      const fold = state.folds.has(piece.call.call.name);
-      if (run.length > 0 && (state.folds.has(run[0]?.call.name ?? "") || fold) && run[0]?.call.name !== piece.call.call.name) flush();
-      run.push(piece.call);
-      return;
-    }
+    if (piece.kind === "call") { run.push(piece.call); return; }
     flush();
     const key = `p-${index}`;
     if (piece.kind === "user") out.push({ kind: "user", key, gap: true, rows: wordWrap(sanitize(piece.text), Math.max(10, Math.floor(state.cols * 0.78) - 4)), fill: userFill() });
