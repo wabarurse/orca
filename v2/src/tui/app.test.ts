@@ -99,7 +99,7 @@ describe("tui", () => {
   test("a failed turn's error shows in full above the input, in red, never in the header", async () => {
     const t = await app(home.path());
     const error = "anthropic:default: The sign-in service rejected the credential exchange. Sign in again. Sign-in HTTP 400. Sign in again with: orca2 login anthropic default";
-    await writeStatus(t.app.conversationId(), { pid: 1, run: "r", state: "idle", since: "", turns: 1, error, contextTokens: null, phase: null });
+    await writeStatus(t.app.conversationId(), { pid: 1, run: "r", build: "test", state: "idle", since: "", turns: 1, error, contextTokens: null, phase: null });
     await t.app.poll();
     const screen = t.screen();
     expect(screen?.kind).toBe("chat");

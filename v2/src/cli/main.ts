@@ -13,6 +13,9 @@ import { runAccounts, runLogin } from "./login";
 import { runMcp } from "./mcp";
 import { PLUGIN_USAGE, runPlugin } from "./plugin";
 import { runSpans } from "./spans";
+import { runClean } from "./scripts/clean";
+import { pull } from "./scripts/pull";
+import { reloadRunningDaemons } from "../core/install";
 
 const USAGE = `orca2 [start] [folder]            open the TUI for a folder's conversation
   orca2 -p "task" [--json] [--model m] [--cwd folder] [--conversation id] [--bundle name] [--yes]
@@ -26,6 +29,8 @@ const USAGE = `orca2 [start] [folder]            open the TUI for a folder's con
   orca2 untrust [folder] | orca2 trust [folder]     keep a folder's instructions, skills and plugins off (trust undoes it)
   orca2 mcp [test|login|logout] [name]
   ${PLUGIN_USAGE}
+  orca2 clean [--preview] [--yes] [--json]  delete leftover storage after asking; --preview lists without deleting, --yes skips the question
+  orca2 pull                            update ~/.orca2/.runtime/app from origin/main and reinstall ~/.local/bin/orca2
   orca2 version`;
 
 const out = (text: string): void => { process.stdout.write(text); };
@@ -109,6 +114,17 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "trust" || command === "untrust") { await setTrust(args[0] ?? process.cwd(), command === "trust"); out(`${command}ed ${args[0] ?? process.cwd()}\n`); return 0; }
   if (command === "mcp") return runMcp(args, line => { out(`${line}\n`); });
   if (command === "plugin") return runPlugin(args, out, ask, process.stdin.isTTY === true);
+  if (command === "clean") return runClean(args, out);
+  if (command === "pull") {
+    if (args.length > 0) { out("pull takes no arguments; it only updates ~/.orca2/.runtime/app\n"); return 2; }
+    const colour = process.stdout.isTTY && process.env.NO_COLOR === undefined;
+    return pull({ write: text => process.stdout.write(text), isTTY: process.stdout.isTTY }, { write: text => process.stderr.write(text), isTTY: process.stderr.isTTY }, colour);
+  }
+  if (command === "reload") {
+    if (args.length > 0) { out("reload takes no arguments\n"); return 2; }
+    await reloadRunningDaemons();
+    return 0;
+  }
   if (command === "version" || command === "--version") { out(`orca2 ${BUILD_ID}\n`); return 0; }
   if (command === "help" || command === "--help" || command === "-h") { out(`usage:\n  ${USAGE}\n`); return 0; }
   if (command === undefined || command === "start" || !command.startsWith("-")) {
