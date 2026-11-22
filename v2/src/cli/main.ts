@@ -13,6 +13,7 @@ import { runAccounts, runLogin } from "./login";
 import { runMcp } from "./mcp";
 import { PLUGIN_USAGE, runPlugin } from "./plugin";
 import { runSpans } from "./spans";
+import { listBubbles, setBubbleDirectory } from "../core/bubbles";
 import { runClean } from "./scripts/clean";
 import { pull } from "./scripts/pull";
 import { reloadRunningDaemons } from "../core/install";
@@ -24,6 +25,8 @@ const USAGE = `orca2 [start] [folder]            open the TUI for a folder's con
   orca2 list                            conversations
   orca2 spans [conversation] [--json]   where the wall-clock time went
   orca2 delete --conversation id        stop its agents and remove it
+  orca2 bubbles                         bubbles and the folder each belongs to
+  orca2 bubble <name|id> --dir <folder>  point a bubble at a folder (chats there are offered it)
   orca2 rename "name" [--conversation id]  rename a conversation (and its bubble while that still has the old name)
   orca2 login anthropic|openai [profile] [--import]
   orca2 accounts
@@ -111,6 +114,22 @@ export async function main(argv: string[]): Promise<number> {
     const renamed = await renameConversation(picked.data, name);
     if (!renamed.ok) return refuse(renamed.error);
     out(`renamed ${picked.data} to ${renamed.data.conversation.name}${renamed.data.bubble === null ? "" : " (its bubble too)"}\n`);
+    return 0;
+  }
+  if (command === "bubbles") {
+    for (const b of await listBubbles()) out(`${b.id}  ${b.name.padEnd(20)} ${b.directory ?? "(no folder: offered nowhere)"}\n`);
+    return 0;
+  }
+  if (command === "bubble") {
+    const which = args[0], dir = option(args, "--dir");
+    if (which === undefined || which.startsWith("--") || dir === null) { out("usage: orca2 bubble <name|id> --dir <folder>\n"); return 2; }
+    const matches = (await listBubbles()).filter(b => b.id === which || b.name === which);
+    if (matches.length !== 1) return refuse(matches.length === 0 ? `no bubble ${which}` : `${matches.length} bubbles are named ${which}; use its id`);
+    const target = matches[0];
+    if (target === undefined) return refuse(`no bubble ${which}`);
+    const moved = await setBubbleDirectory(target.id, dir);
+    if (!moved.ok) return refuse(moved.error);
+    out(`${moved.data.name} → ${moved.data.directory ?? ""}\n`);
     return 0;
   }
   if (command === "spans") {
