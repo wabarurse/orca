@@ -140,4 +140,25 @@ describe("tui", () => {
     expect(t.text()).toContain("2 chats");
     a.stop();
   });
+
+  test("Ctrl+N opens a new chat as another header tab; Alt+← switches back; /close closes the open one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-tabs-"));
+    const t = fakeTerminal();
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    await a.start();
+    const tabs = (): { label: string; active: boolean }[] => { const s = t.screen(); return s?.kind === "chat" && s.header !== null ? s.header.tabs.map(x => ({ label: x.label, active: x.active })) : []; };
+    const first = a.conversationId();
+    await t.press({ name: "n", ctrl: true }, { name: "enter" });
+    const second = a.conversationId();
+    await t.press({ name: "n", ctrl: true }, { name: "enter" });
+    expect(tabs().map(x => x.label)).toEqual([first, second, a.conversationId()]);
+    expect(tabs().findIndex(x => x.active)).toBe(2);
+    await t.press({ name: "left", alt: true });
+    expect(a.conversationId()).toBe(second);
+    await t.type("/close");
+    await t.press({ name: "enter" });
+    expect(tabs().length).toBe(2);
+    expect(tabs().map(x => x.label)).not.toContain(second);
+    a.stop();
+  });
 });
