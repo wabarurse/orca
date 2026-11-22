@@ -11,7 +11,7 @@ import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Fold, Row, Section, UiHost } from "../core/plugins/types";
-import { ensureBubble, joinBubble, listBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
+import { bubblesFor, ensureBubble, joinBubble, readBubble, setBubblePlugin } from "../core/bubbles";
 import { stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
@@ -180,7 +180,7 @@ export class App {
     if (pid === null && this.queued.length > 0) await this.deps.ensureDaemon(id).catch((error: unknown) => fail(errorMessage(error)));
     const runs = await listRuns(id);
     const running = runs.filter(r => r.agent !== "orchestrator" && live(r)).length;
-    const bubbles = (await listBubbles()).length;
+    const bubbles = (await bubblesFor(this.conversation.directory)).length;
     const parts = [`${running} agent${running === 1 ? "" : "s"}`, `${bubbles} bubble${bubbles === 1 ? "" : "s"}`];
     for (const bound of this.uis) for (const count of bound.ui.counts) {
       const n = await count.count(bound.ctx).catch(() => null);
@@ -358,7 +358,7 @@ export class App {
   private async newConversation(bubble: string | null = null): Promise<void> {
     let chosen = bubble;
     if (chosen === null) {
-      const choices = await bubbleChoices();
+      const choices = await bubbleChoices(this.deps.directory);
       if (choices.ids.length > 1) {
         const pick = await this.ask({ kind: "pick", title: "bubble for the new chat", options: choices.options });
         if (pick === null) return;
@@ -375,7 +375,7 @@ export class App {
   }
 
   private async offerBubble(): Promise<void> {
-    const choices = await bubbleChoices();
+    const choices = await bubbleChoices(this.deps.directory);
     if (choices.ids.length < 2) return;
     const pick = await this.ask({ kind: "pick", title: "bubble for this chat", options: choices.options });
     const chosen = pick === null ? null : choices.ids[pick] ?? null;
@@ -492,7 +492,7 @@ export class App {
     if (tab === undefined) return;
     try {
       if (tab.plugin === null && tab.id === "bubbles") {
-        this.bubbles = await bubbleEntries();
+        this.bubbles = await bubbleEntries(this.conversation.directory);
         page.rows = bubbleRows(this.bubbles, this.conversation.id);
       } else if (tab.plugin === null) {
         const runs = await listRuns(this.conversation.id);

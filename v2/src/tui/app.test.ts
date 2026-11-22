@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { saveConfig } from "../config";
 import { askUser, pendingConfirms } from "../core/confirm";
 import { writeStatus } from "../core/daemon/channel";
-import { ensureBubble, readBubble } from "../core/bubbles";
+import { ensureBubble, readBubble, setBubbleDirectory } from "../core/bubbles";
 import { createConversation, readConversation } from "../core/conversations";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
@@ -183,17 +183,20 @@ describe("tui", () => {
     a.stop();
   });
 
-  test("a folder's first chat asks which bubble it joins; d on the Bubbles tab deletes a chat after y", async () => {
+  test("a folder's first chat asks which of that folder's bubbles it joins (never another folder's); d on the Bubbles tab deletes a chat after y", async () => {
     const elsewhere = await createConversation(mkdtempSync(join(tmpdir(), "orca2-tui-other-")), "shared notes");
     const shared = await ensureBubble(elsewhere.id);
     expect(shared.ok).toBe(true);
     if (!shared.ok) return;
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-first-"));
+    const foreign = await ensureBubble((await createConversation(mkdtempSync(join(tmpdir(), "orca2-tui-foreign-")), "foreign")).id);
+    expect((await setBubbleDirectory(shared.data.id, dir)).ok).toBe(true);
     const t = fakeTerminal();
     const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
     await a.start();
     await Bun.sleep(50);
     expect(t.text()).toContain("bubble for this chat");
+    expect(foreign.ok && t.text().includes(foreign.data.name)).toBe(false);
     const options = t.text().split("\n").filter(line => line.includes("· ") && line.includes("chats"));
     const at = options.findIndex(line => line.includes(shared.data.name));
     await t.press(...Array.from({ length: at + 1 }, () => ({ name: "down" })), { name: "enter" });
@@ -201,7 +204,7 @@ describe("tui", () => {
     const first = a.conversationId();
     expect((await readConversation(first))?.bubble).toBe(shared.data.id);
     await a.refresh();
-    expect(t.text()).toMatch(/0 agents │ \d+ bubbles/);
+    expect(t.text()).toContain("0 agents │ 1 bubble");
     await t.press({ name: "b", ctrl: true });
     for (let i = 0; i < 40 && !t.text().split("\n").some(line => line.startsWith("› ") && /[├└]─ shared notes/.test(line)); i++) await t.press({ name: "char", text: "j" });
     await t.press({ name: "char", text: "d" });

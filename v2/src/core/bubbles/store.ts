@@ -1,5 +1,5 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { z } from "zod";
 import { fail, ok, parseJson, paths, type Result } from "../../config";
 import { readConversation, saveConversation, writeAtomic } from "../conversations";
@@ -7,7 +7,7 @@ import { withStorageLock } from "../lock";
 import { ensureDataDirs } from "./data";
 
 export type PluginSwitches = { on: string[]; off: string[] };
-export type Bubble = { id: string; name: string; createdAt: string; plugins: PluginSwitches };
+export type Bubble = { id: string; name: string; directory: string | null; createdAt: string; plugins: PluginSwitches };
 const ID = /^bubble-[a-f0-9]{8}$/;
 
 export function bubbleDir(id: string): string {
@@ -29,7 +29,7 @@ export function rows<T>(raw: unknown, schema: z.ZodType<T>): T[] {
 }
 
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
-const BubbleFile = z.object({ name: z.string(), createdAt: z.unknown(), plugins: z.object({ on: z.unknown(), off: z.unknown() }).partial().nullish() });
+const BubbleFile = z.object({ name: z.string(), directory: z.string().nullish(), createdAt: z.unknown(), plugins: z.object({ on: z.unknown(), off: z.unknown() }).partial().nullish() });
 
 export async function readBubble(id: string): Promise<Bubble | null> {
   if (!ID.test(id)) return null;
@@ -37,7 +37,7 @@ export async function readBubble(id: string): Promise<Bubble | null> {
   if (!json.ok) return null;
   const raw = BubbleFile.safeParse(json.data);
   if (!raw.success) return null;
-  return { id, name: raw.data.name, createdAt: typeof raw.data.createdAt === "string" ? raw.data.createdAt : "",
+  return { id, name: raw.data.name, directory: typeof raw.data.directory === "string" ? raw.data.directory : null, createdAt: typeof raw.data.createdAt === "string" ? raw.data.createdAt : "",
     plugins: { on: strings(raw.data.plugins?.on), off: strings(raw.data.plugins?.off) } };
 }
 
@@ -56,7 +56,7 @@ export async function ensureBubble(conversation: string): Promise<Result<Bubble>
     if (current === null) return fail(`no conversation ${conversation}`);
     const existing = current.bubble === null ? null : await readBubble(current.bubble);
     if (existing !== null) return ok(existing);
-    const bubble: Bubble = { id: current.bubble ?? `bubble-${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`, name: current.name, createdAt: new Date().toISOString(), plugins: { on: [], off: [] } };
+    const bubble: Bubble = { id: current.bubble ?? `bubble-${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`, name: current.name, directory: current.directory, createdAt: new Date().toISOString(), plugins: { on: [], off: [] } };
     await writeBubble(bubble);
     await saveConversation({ ...current, bubble: bubble.id });
     await ensureDataDirs(conversation);
@@ -78,6 +78,24 @@ export async function listBubbles(): Promise<Bubble[]> {
   const names = await readdir(paths.bubbles).catch((): string[] => []);
   const found = await Promise.all(names.filter(name => ID.test(name)).map(readBubble));
   return found.filter((b): b is Bubble => b !== null).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function bubbleServes(bubble: Bubble, directory: string): boolean {
+  if (bubble.directory === null) return false;
+  const root = resolve(bubble.directory), folder = resolve(directory);
+  return folder === root || folder.startsWith(`${root}${sep}`);
+}
+
+export async function bubblesFor(directory: string): Promise<Bubble[]> {
+  return (await listBubbles()).filter(bubble => bubbleServes(bubble, directory));
+}
+
+export async function setBubbleDirectory(id: string, directory: string): Promise<Result<Bubble>> {
+  const bubble = await readBubble(id);
+  if (bubble === null) return fail(`no bubble ${id}`);
+  const next = { ...bubble, directory: resolve(directory) };
+  await writeBubble(next);
+  return ok(next);
 }
 
 export async function setBubblePlugin(id: string, plugin: string, state: "on" | "off" | null): Promise<Result<Bubble>> {
