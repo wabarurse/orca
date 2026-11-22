@@ -111,7 +111,10 @@ const VERB: Record<SpanKind, string> = {
   "spawn": "starting", "compaction": "compacting", "prep": "preparing",
 };
 
-export const phaseText = (span: OpenSpan, now: number): string => `${VERB[span.kind]} ${span.label} (${clock(now - Date.parse(span.startedAt))})`;
+export const phaseText = (span: OpenSpan, now: number): string => {
+  const elapsed = clock(now - Date.parse(span.startedAt));
+  return span.kind === "model" || span.kind === "prep" ? `thinking… (${elapsed})` : `${VERB[span.kind]} ${span.label} (${elapsed})`;
+};
 
 export function cut(text: string, max: number): string {
   const line = text.replace(/\s+/g, " ").trim();

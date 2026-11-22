@@ -9,7 +9,7 @@ const plain = (rows: string[]): string => Bun.stripANSI(rows.join("\n"));
 
 test("the activity line names the current phase and its elapsed time", () => {
   const model: AgentEvent[] = [{ kind: "span_start", span: open("m", "model", "claude-opus-5-5", 8) }];
-  expect(plain(tail(model, "", 80, NOW, true, null))).toContain("model claude-opus-5-5 (8s)");
+  expect(plain(tail(model, "", 80, NOW, true, null))).toContain("thinking… (8s)");
 
   const call = { id: "t1", name: "bash", input: { command: "bun test src/core" } };
   const tool: AgentEvent[] = [{ kind: "tool_start", call }, { kind: "span_start", span: open("t1", "tool", "bash: bun test src/core", 34) }];
