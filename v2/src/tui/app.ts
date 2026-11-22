@@ -3,7 +3,7 @@ import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../confi
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
 import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
-import { renameConversation } from "../core/lifecycle";
+import { removeConversation, renameConversation } from "../core/lifecycle";
 import { cancel, compactNow, ensureDaemon, say, stopDaemon, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
@@ -11,7 +11,7 @@ import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Fold, Row, Section, UiHost } from "../core/plugins/types";
-import { ensureBubble, joinBubble, readBubble, setBubblePlugin } from "../core/bubbles";
+import { ensureBubble, joinBubble, listBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
 import { stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
@@ -105,6 +105,7 @@ export class App {
   async start(): Promise<void> {
     const existing = (await listConversations()).find(c => c.directory === this.deps.directory);
     await this.switchTo(existing ?? await createConversation(this.deps.directory, null));
+    const fresh = existing === undefined;
     this.deps.terminal.onKey(key => { this.key(key).catch((error: unknown) => { this.failed(error); }); });
     this.deps.terminal.onResize(() => { this.head = "unset"; this.draw(); });
     this.deps.terminal.onAction(action => { this.action(action); });
@@ -112,6 +113,7 @@ export class App {
     this.timer = setInterval(() => { this.poll().catch((error: unknown) => { this.failed(error); }); }, POLL_MS);
     this.frame = setInterval(() => { if (this.animating()) this.draw(); }, FRAME_MS);
     await this.poll();
+    if (fresh) this.offerBubble().catch((error: unknown) => { this.failed(error); });
   }
 
   stop(): void {
@@ -178,7 +180,8 @@ export class App {
     if (pid === null && this.queued.length > 0) await this.deps.ensureDaemon(id).catch((error: unknown) => fail(errorMessage(error)));
     const runs = await listRuns(id);
     const running = runs.filter(r => r.agent !== "orchestrator" && live(r)).length;
-    const parts = [`${running} agent${running === 1 ? "" : "s"}`];
+    const bubbles = (await listBubbles()).length;
+    const parts = [`${running} agent${running === 1 ? "" : "s"}`, `${bubbles} bubble${bubbles === 1 ? "" : "s"}`];
     for (const bound of this.uis) for (const count of bound.ui.counts) {
       const n = await count.count(bound.ctx).catch(() => null);
       if (n !== null && n > 0) parts.push(count.label(n));
@@ -371,6 +374,42 @@ export class App {
     await this.switchTo((await readConversation(created.id)) ?? created);
   }
 
+  private async offerBubble(): Promise<void> {
+    const choices = await bubbleChoices();
+    if (choices.ids.length < 2) return;
+    const pick = await this.ask({ kind: "pick", title: "bubble for this chat", options: choices.options });
+    const chosen = pick === null ? null : choices.ids[pick] ?? null;
+    if (chosen === null) return;
+    const id = this.conversation.id;
+    const joined = await joinBubble(id, chosen);
+    if (!joined.ok) { this.flash(joined.error, true); return; }
+    const conversation = await readConversation(id);
+    if (conversation !== null && this.conversation.id === id) await this.switchTo(conversation);
+    this.lastSlow = Number.NEGATIVE_INFINITY;
+    await this.poll();
+  }
+
+  private async deleteChat(row: Row | undefined): Promise<void> {
+    const target = bubbleTarget(row);
+    if (target.kind !== "conversation") { this.flash("d deletes a chat: select one under its bubble"); return; }
+    const meta = await readConversation(target.id);
+    if (meta === null) return;
+    const yes = await this.ask({ kind: "confirm", question: `delete chat ${meta.name}? its transcript, agents, worktrees and data go (the bubble stays)` });
+    if (!yes) return;
+    const notes: string[] = [];
+    const removed = await removeConversation(meta.id, text => { notes.push(text.trim()); });
+    if (!removed.ok) { this.flash(`delete: ${removed.error}`, true); return; }
+    this.openTabs = this.openTabs.filter(tab => tab.id !== meta.id);
+    if (meta.id === this.conversation.id) {
+      const page = this.page;
+      const next = this.openTabs[0];
+      const other = next === undefined ? null : await readConversation(next.id);
+      await this.switchTo(other ?? await createConversation(this.deps.directory, null));
+      this.page = page;
+    }
+    this.flash(`deleted ${meta.name}${notes.length > 0 ? ` (${notes.join("; ")})` : ""}`);
+  }
+
   private async command(text: string): Promise<void> {
     const [name = "", ...rest] = text.slice(1).split(/\s+/);
     const args = rest.join(" ");
@@ -496,6 +535,7 @@ export class App {
     else if (key.name === "pageup") page.detailTop = Math.max(0, page.detailTop - 10);
     else if (char === "r") page.status = "";
     else if (tab?.id === "bubbles" && (key.name === "enter" || char === "n")) { await this.bubbleEnter(page.rows[page.index]); return; }
+    else if (tab?.id === "bubbles" && char === "d") await this.deleteChat(page.rows[page.index]);
     else if (tab?.id === "agents" && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
     else if (tab?.plugin != null) {
       const def = tab.plugin.ui.tabs.find(t => t.id === tab.id);
@@ -524,7 +564,7 @@ export class App {
     if (this.page !== null) {
       const tabs = this.tabs();
       const tab = tabs[this.page.tab];
-      const actions = tab?.id === "agents" ? "s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble" : tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`).join(" · ") ?? "";
+      const actions = tab?.id === "agents" ? "s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`).join(" · ") ?? "";
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,

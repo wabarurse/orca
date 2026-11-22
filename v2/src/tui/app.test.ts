@@ -167,6 +167,8 @@ describe("tui", () => {
     const t = fakeTerminal();
     const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
     await a.start();
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
     const bubble = await ensureBubble(a.conversationId());
     expect(bubble.ok).toBe(true);
     await t.type("/rename   raven  work ");
@@ -178,6 +180,36 @@ describe("tui", () => {
     await t.type("/rename");
     await t.press({ name: "enter" });
     expect(t.text()).toContain("rename to raven work");
+    a.stop();
+  });
+
+  test("a folder's first chat asks which bubble it joins; d on the Bubbles tab deletes a chat after y", async () => {
+    const elsewhere = await createConversation(mkdtempSync(join(tmpdir(), "orca2-tui-other-")), "shared notes");
+    const shared = await ensureBubble(elsewhere.id);
+    expect(shared.ok).toBe(true);
+    if (!shared.ok) return;
+    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-first-"));
+    const t = fakeTerminal();
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    await a.start();
+    await Bun.sleep(50);
+    expect(t.text()).toContain("bubble for this chat");
+    const options = t.text().split("\n").filter(line => line.includes("· ") && line.includes("chats"));
+    const at = options.findIndex(line => line.includes(shared.data.name));
+    await t.press(...Array.from({ length: at + 1 }, () => ({ name: "down" })), { name: "enter" });
+    await Bun.sleep(50);
+    const first = a.conversationId();
+    expect((await readConversation(first))?.bubble).toBe(shared.data.id);
+    await a.refresh();
+    expect(t.text()).toMatch(/0 agents │ \d+ bubbles/);
+    await t.press({ name: "b", ctrl: true });
+    for (let i = 0; i < 40 && !t.text().split("\n").some(line => line.startsWith("› ") && /[├└]─ shared notes/.test(line)); i++) await t.press({ name: "char", text: "j" });
+    await t.press({ name: "char", text: "d" });
+    expect(t.text()).toContain("delete chat shared notes?");
+    await t.press({ name: "char", text: "y" });
+    await Bun.sleep(50);
+    expect(await readConversation(elsewhere.id)).toBeNull();
+    expect(a.conversationId()).toBe(first);
     a.stop();
   });
 });
