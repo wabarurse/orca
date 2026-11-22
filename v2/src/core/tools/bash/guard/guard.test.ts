@@ -38,7 +38,8 @@ const cases: Record<string, { refused: string[]; allowed: string[] }> = {
   },
   "git-diff-whole": {
     refused: ["git diff", "git diff --cached", "git diff main", "git show", "git show HEAD~1", "git diff HEAD~3 HEAD"],
-    allowed: ["git diff -- a.ts", "git diff a.ts", "git diff src/b.ts", "git diff --stat", "git diff --name-only main", "git diff --shortstat", "git diff --name-status", "git show --stat HEAD", "git show HEAD:a.ts", "git diff main -- src", "git diff | head -50", "git diff --quiet", "git show -s --format=%H"],
+    allowed: ["git diff -- a.ts", "git diff a.ts", "git diff src/b.ts", "git diff --stat", "git diff --name-only main", "git diff --shortstat", "git diff --name-status", "git show --stat HEAD", "git show HEAD:a.ts", "git diff main -- src", "git diff | head -50", "git diff --quiet", "git show -s --format=%H",
+      "git diff --stat 7b0500e", "git diff 7b0500e --stat", "git diff --unified --stat 7b0500e", "git diff -U --stat 7b0500e", "git show --pretty --stat HEAD", "git diff 7b0500e --dirstat=files", "git diff 7b0500e -s", "git diff --no-patch 7b0500e", "git diff 7b0500e --check", "git diff 7b0500e --numstat"],
   },
   "env-dump": {
     refused: ["env", "printenv", "set", "env | grep KEY", "export", "export -p", "declare -p"],

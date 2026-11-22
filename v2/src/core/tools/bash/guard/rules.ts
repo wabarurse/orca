@@ -103,10 +103,11 @@ function unboundedLog(call: GuardInput): Git | null {
 }
 
 const SUMMARIES = ["stat", "shortstat", "numstat", "name-only", "name-status", "dirstat", "summary", "quiet", "check", "no-patch", "raw"];
+const summarized = (args: string[]): boolean => args.some(arg => arg === "-s" || SUMMARIES.some(name => arg === `--${name}` || arg.startsWith(`--${name}=`)));
 function wholeDiff(call: GuardInput): Git | null {
   const diff = gitSub(call, ["diff", "show"]);
   const command = call.command;
-  if (diff === null || command === null || pipedToHead(call)) return null;
+  if (diff === null || command === null || pipedToHead(call) || summarized(diff.args)) return null;
   const args = parseArgs(diff.args, "UO", ["output", "src-prefix", "dst-prefix", "format", "pretty", "diff-filter", "unified"]);
   if (has(args, "s", SUMMARIES) || args.dashed.length > 0) return null;
   const cwd = command.cwd ?? call.root;
