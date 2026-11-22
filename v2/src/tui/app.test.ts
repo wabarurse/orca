@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { saveConfig } from "../config";
 import { askUser, pendingConfirms } from "../core/confirm";
 import { writeStatus } from "../core/daemon/channel";
-import { ensureBubble } from "../core/bubbles";
+import { ensureBubble, readBubble } from "../core/bubbles";
 import { createConversation, readConversation } from "../core/conversations";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
@@ -159,6 +159,25 @@ describe("tui", () => {
     await t.press({ name: "enter" });
     expect(tabs().length).toBe(2);
     expect(tabs().map(x => x.label)).not.toContain(second);
+    a.stop();
+  });
+
+  test("/rename renames the open chat everywhere it shows, and its bubble while that still has the old name", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-rename-"));
+    const t = fakeTerminal();
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    await a.start();
+    const bubble = await ensureBubble(a.conversationId());
+    expect(bubble.ok).toBe(true);
+    await t.type("/rename   raven  work ");
+    await t.press({ name: "enter" });
+    expect((await readConversation(a.conversationId()))?.name).toBe("raven work");
+    const screen = t.screen();
+    expect(screen?.kind === "chat" && screen.header !== null ? screen.header.tabs.map(x => x.label) : []).toEqual(["raven work"]);
+    expect(bubble.ok ? (await readBubble(bubble.data.id))?.name : "").toBe("raven work");
+    await t.type("/rename");
+    await t.press({ name: "enter" });
+    expect(t.text()).toContain("rename to raven work");
     a.stop();
   });
 });

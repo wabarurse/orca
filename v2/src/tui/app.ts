@@ -3,6 +3,7 @@ import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../confi
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
 import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
+import { renameConversation } from "../core/lifecycle";
 import { cancel, compactNow, ensureDaemon, say, stopDaemon, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
@@ -329,6 +330,20 @@ export class App {
     this.draw();
   }
 
+  private async rename(args: string): Promise<void> {
+    const requested = args.trim().length > 0 ? args : await this.ask({ kind: "input", prompt: "rename to ", initial: this.conversation.name });
+    if (requested === null) return;
+    const renamed = await renameConversation(this.conversation.id, requested);
+    if (!renamed.ok) { this.flash(`/rename: ${renamed.error}`, true); return; }
+    const { conversation, bubble } = renamed.data;
+    this.current = { conversation, transcript: this.transcript };
+    const tab = this.openTabs.find(t => t.id === conversation.id);
+    if (tab !== undefined) tab.name = conversation.name;
+    if (bubble !== null) this.bubbleName = bubble;
+    this.deps.terminal.setTitle?.(`orca2 · ${conversation.name}`);
+    this.flash(`renamed to ${conversation.name}${bubble === null ? "" : " (its bubble too)"}`);
+  }
+
   private async closeTab(): Promise<void> {
     if (this.openTabs.length < 2) { this.flash("the last open chat stays open"); return; }
     const at = this.openTabs.findIndex(tab => tab.id === this.conversation.id);
@@ -361,8 +376,9 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /close · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /rename · /close · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
+    if (name === "rename") { await this.rename(args); return; }
     if (name === "close") { await this.closeTab(); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
     if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }
