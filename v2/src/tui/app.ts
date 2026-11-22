@@ -38,6 +38,7 @@ export type AppDeps = {
 };
 
 const POLL_MS = 250;
+const FRAME_MS = 40;
 const NOTE_ROWS = 4;
 const errorText = (line: string): string => noColour() ? line : `\x1b[${pastel.red}m${line}\x1b[0m`;
 const SLOW_MS = 2000;
@@ -70,6 +71,7 @@ export class App {
   private bubbleName: string | null = null;
   private model = "";
   private timer: ReturnType<typeof setInterval> | null = null;
+  private frame: ReturnType<typeof setInterval> | null = null;
   private lastSlow = 0;
   private quitting = false;
 
@@ -102,11 +104,13 @@ export class App {
     this.deps.terminal.onAction(action => { this.action(action); });
     this.deps.terminal.open();
     this.timer = setInterval(() => { this.poll().catch((error: unknown) => { this.failed(error); }); }, POLL_MS);
+    this.frame = setInterval(() => { if (this.animating()) this.draw(); }, FRAME_MS);
     await this.poll();
   }
 
   stop(): void {
     if (this.timer !== null) clearInterval(this.timer);
+    if (this.frame !== null) clearInterval(this.frame);
     this.deps.terminal.close();
   }
 
@@ -210,6 +214,10 @@ export class App {
     const started = await this.deps.ensureDaemon(conversation).catch((error: unknown) => fail(errorMessage(error)));
     if (!started.ok) this.flash(`daemon: ${started.error}`, true);
     return started.ok;
+  }
+
+  private animating(): boolean {
+    return this.page === null && this.modal === null && (this.busy || (this.waiting !== null && this.waiting.kind !== "wait-inbox"));
   }
 
   private flash(text: string, error = false): void { this.note = text.replace(/\s+/g, " ").trim(); this.noteError = error; this.draw(); }
