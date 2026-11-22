@@ -1,6 +1,8 @@
 export { CORE_TOOL_NAMES, CORE_TOOLS, type AgentInfo, type Runtime, type SpawnRequest, type Tool, type ToolContext, type ToolResult } from "./registry";
 export { agentEnv, bash } from "./bash";
-export { edit, read, write } from "./files";
+export { edit } from "./edit";
+export { read } from "./read";
+export { write } from "./write";
 export { behaviorTool } from "./behavior";
 export { inbox } from "./inbox";
 export { mcp } from "./mcp";

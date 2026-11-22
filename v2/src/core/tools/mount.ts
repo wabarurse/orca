@@ -1,6 +1,8 @@
 import { bash } from "./bash";
 import { behaviorTool } from "./behavior";
-import { edit, read, write } from "./files";
+import { edit } from "./edit";
+import { read } from "./read";
+import { write } from "./write";
 import { inbox } from "./inbox";
 import { mcp } from "./mcp";
 import { memory } from "./memory";

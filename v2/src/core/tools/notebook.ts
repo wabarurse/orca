@@ -1,5 +1,5 @@
 import { ensureBubble, listPages, peekBubble, putPage, queryPage, readPage, renderPages } from "../bubbles";
-import { filePath } from "./files";
+import { filePath } from "./path";
 import { settled, type Tool } from "./registry";
 
 export const notebook: Tool = {
