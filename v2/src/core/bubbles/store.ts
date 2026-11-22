@@ -94,6 +94,14 @@ export async function setBubblePlugin(id: string, plugin: string, state: "on" | 
   });
 }
 
+export async function renameBubble(id: string, name: string): Promise<Result<Bubble>> {
+  const bubble = await readBubble(id);
+  if (bubble === null) return fail(`no bubble ${id}`);
+  const next = { ...bubble, name };
+  await writeBubble(next);
+  return ok(next);
+}
+
 export async function removeBubble(id: string): Promise<void> {
   await rm(bubbleDir(id), { recursive: true, force: true });
 }

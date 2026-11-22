@@ -1,5 +1,5 @@
-import { pluginData } from "./bubbles";
-import { deleteConversation, readConversation } from "./conversations";
+import { pluginData, readBubble, renameBubble } from "./bubbles";
+import { deleteConversation, readConversation, saveConversation, type Conversation } from "./conversations";
 import { stopDaemon } from "./daemon/client";
 import { put } from "./inbox";
 import { enabledNames } from "./plugins/enable";
@@ -25,6 +25,28 @@ export async function runBackgroundHooks(conversation: string, which: "stop" | "
       notify: async text => { await put(conversation, "orchestrator", name, text, { images: [], delivery: "steer" }); } };
     await hook(ctx).catch((error: unknown) => { log(`${name} ${which}: ${errorMessage(error)}\n`); });
   }
+}
+
+export const NAME_MAX = 60;
+
+export function nameProblem(name: string): string | null {
+  if (name.length === 0) return "a name cannot be empty";
+  if (name.length > NAME_MAX) return `a name is at most ${NAME_MAX} characters`;
+  return /[\u0000-\u001f\u007f]/.test(name) ? "a name cannot hold control characters" : null;
+}
+
+export async function renameConversation(conversation: string, requested: string): Promise<Result<{ conversation: Conversation; bubble: string | null }>> {
+  const name = requested.replace(/\s+/g, " ").trim();
+  const problem = nameProblem(name);
+  if (problem !== null) return fail(problem);
+  const meta = await readConversation(conversation);
+  if (meta === null) return fail(`no conversation ${conversation}`);
+  const renamed = { ...meta, name };
+  await saveConversation(renamed);
+  const bubble = meta.bubble === null ? null : await readBubble(meta.bubble);
+  if (bubble === null || (bubble.name !== meta.name && bubble.name !== meta.id)) return ok({ conversation: renamed, bubble: null });
+  const moved = await renameBubble(bubble.id, name);
+  return ok({ conversation: renamed, bubble: moved.ok ? moved.data.name : null });
 }
 
 export async function removeConversation(conversation: string, log: (text: string) => void): Promise<Result<null>> {

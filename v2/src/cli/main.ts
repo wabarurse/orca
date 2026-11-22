@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { BUILD_ID, errorMessage, fail, ok, type Result } from "../config";
 import { conversationFor, listConversations, readConversation } from "../core/conversations";
-import { removeConversation } from "../core/lifecycle";
+import { removeConversation, renameConversation } from "../core/lifecycle";
 import { runDaemon } from "../core/daemon/daemon";
 import { ensureDaemon, say, stopDaemon } from "../core/daemon/client";
 import { runHeadless } from "../core/headless";
@@ -24,6 +24,7 @@ const USAGE = `orca2 [start] [folder]            open the TUI for a folder's con
   orca2 list                            conversations
   orca2 spans [conversation] [--json]   where the wall-clock time went
   orca2 delete --conversation id        stop its agents and remove it
+  orca2 rename "name" [--conversation id]  rename a conversation (and its bubble while that still has the old name)
   orca2 login anthropic|openai [profile] [--import]
   orca2 accounts
   orca2 untrust [folder] | orca2 trust [folder]     keep a folder's instructions, skills and plugins off (trust undoes it)
@@ -100,6 +101,16 @@ export async function main(argv: string[]): Promise<number> {
     const removed = await removeConversation(conversation, out);
     if (!removed.ok) return refuse(removed.error);
     out(`deleted ${conversation}\n`);
+    return 0;
+  }
+  if (command === "rename") {
+    const name = args[0];
+    if (name === undefined || name.startsWith("--")) { out("usage: orca2 rename \"name\" [--conversation id]\n"); return 2; }
+    const picked = await conversationArg(args.slice(1));
+    if (!picked.ok) return refuse(picked.error);
+    const renamed = await renameConversation(picked.data, name);
+    if (!renamed.ok) return refuse(renamed.error);
+    out(`renamed ${picked.data} to ${renamed.data.conversation.name}${renamed.data.bubble === null ? "" : " (its bubble too)"}\n`);
     return 0;
   }
   if (command === "spans") {
