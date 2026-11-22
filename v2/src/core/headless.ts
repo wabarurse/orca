@@ -9,7 +9,6 @@ import { runtimeFor } from "./runner/runtime";
 import { listRuns, live, updateRun } from "./runner/runs";
 import { openSession } from "./session";
 import { openTranscript } from "./transcript";
-import { trustForRun } from "./trust";
 import { flushSpans, phaseTracker, spanRecorder } from "./spans";
 import type { AgentEvent } from "./types";
 import type { Resolved } from "./loop/agent";
@@ -22,7 +21,6 @@ export type HeadlessOptions = {
   conversation: string | null;
   bundle: string;
   yes: boolean;
-  trust: boolean;
   out: (text: string) => void;
   resolve: (() => Promise<Result<Resolved>>) | null;
 };
@@ -30,7 +28,6 @@ export type HeadlessOptions = {
 const IDLE_POLL_MS = 500;
 
 export async function runHeadless(options: HeadlessOptions): Promise<number> {
-  if (options.trust) trustForRun(options.cwd);
   const existing = options.conversation === null ? null : await readConversation(options.conversation);
   if (options.conversation !== null && existing === null) { options.out(`no conversation ${options.conversation}\n`); return 1; }
   const conversation = existing ?? await createConversation(options.cwd, "headless");

@@ -14,7 +14,7 @@ import { ensureBubble, readBubble, setBubblePlugin } from "../core/bubbles";
 import { stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
-import { setTrust, trustQuestion, trustState } from "../core/trust";
+import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
 import { dim, editor, fit, readClipboardImage, screens, type Key, type Terminal } from "./components";
 import { loadUis, type BoundUi } from "./plugins";
@@ -97,11 +97,6 @@ export class App {
     this.deps.terminal.onResize(() => { this.head = "unset"; this.draw(); });
     this.deps.terminal.onAction(action => { this.action(action); });
     this.deps.terminal.open();
-    if (await trustState(this.deps.directory) === "unknown") {
-      const yes = await this.ask({ kind: "confirm", question: trustQuestion(this.deps.directory) });
-      await setTrust(this.deps.directory, yes);
-      this.flash(yes ? "folder trusted" : "folder not trusted: its instructions, skills and plugins stay off");
-    }
     this.timer = setInterval(() => { this.poll().catch((error: unknown) => { this.failed(error); }); }, POLL_MS);
     await this.poll();
   }
@@ -314,7 +309,7 @@ export class App {
     if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+V image · Ctrl+N new · Alt+←/→ switch · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
-    if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted (restart agents to load its instructions)"); return; }
+    if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }
     if (name === "model") {
       const model = args.trim().length > 0 ? args.trim() : await this.ask({ kind: "input", prompt: "model ", initial: this.model });
       if (model === null || model.length === 0) return;

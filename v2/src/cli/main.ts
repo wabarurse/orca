@@ -15,7 +15,7 @@ import { PLUGIN_USAGE, runPlugin } from "./plugin";
 import { runSpans } from "./spans";
 
 const USAGE = `orca2 [start] [folder]            open the TUI for a folder's conversation
-  orca2 -p "task" [--json] [--model m] [--cwd folder] [--conversation id] [--bundle name] [--yes] [--trust]
+  orca2 -p "task" [--json] [--model m] [--cwd folder] [--conversation id] [--bundle name] [--yes]
   orca2 msg "text" [--conversation id]  send input to a conversation's orchestrator
   orca2 stop [--conversation id]        stop its daemon
   orca2 list                            conversations
@@ -23,7 +23,7 @@ const USAGE = `orca2 [start] [folder]            open the TUI for a folder's con
   orca2 delete --conversation id        stop its agents and remove it
   orca2 login anthropic|openai [profile] [--import]
   orca2 accounts
-  orca2 trust [folder] | orca2 untrust [folder]
+  orca2 untrust [folder] | orca2 trust [folder]     keep a folder's instructions, skills and plugins off (trust undoes it)
   orca2 mcp [test|login|logout] [name]
   ${PLUGIN_USAGE}
   orca2 version`;
@@ -62,7 +62,7 @@ export async function main(argv: string[]): Promise<number> {
     const prompt = args[0];
     if (prompt === undefined || prompt.length === 0) { out(`usage:\n  ${USAGE}\n`); return 2; }
     return runHeadless({ prompt, json: args.includes("--json"), model: option(args, "--model"), cwd: option(args, "--cwd") ?? process.cwd(),
-      conversation: option(args, "--conversation"), bundle: option(args, "--bundle") ?? "orchestrator", yes: args.includes("--yes"), trust: args.includes("--trust"), out, resolve: null });
+      conversation: option(args, "--conversation"), bundle: option(args, "--bundle") ?? "orchestrator", yes: args.includes("--yes"), out, resolve: null });
   }
   if (command === "agent") {
     const get = (flag: string): string => option(args, flag) ?? "";

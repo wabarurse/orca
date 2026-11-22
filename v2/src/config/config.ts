@@ -19,7 +19,6 @@ export type Config = {
   maxToolOutputBytes: number;
   plugins: string[];
   approved: string[];
-  trusted: string[];
   untrusted: string[];
   runner: Runner;
 };
@@ -35,7 +34,6 @@ export const defaults: Config = {
   maxToolOutputBytes: 64 * 1024 * 1024,
   plugins: [],
   approved: [],
-  trusted: [],
   untrusted: [],
   runner: "plain",
 };
@@ -61,7 +59,6 @@ export function parseConfig(raw: Record<string, unknown>): Config {
     maxToolOutputBytes: integer(raw.maxToolOutputBytes, 1024, 256 * 1024 * 1024, defaults.maxToolOutputBytes),
     plugins: strings(raw.plugins, defaults.plugins),
     approved: strings(raw.approved, defaults.approved),
-    trusted: strings(raw.trusted, defaults.trusted),
     untrusted: strings(raw.untrusted, defaults.untrusted),
     runner: text(raw.runner, defaults.runner),
   };

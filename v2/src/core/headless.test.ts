@@ -11,14 +11,14 @@ const home = tempHome("headless");
 test("-p prints the final answer; --json streams every event and ends with the answer", async () => {
   let printed = "";
   const plain = fakeProvider([[text("42")]]);
-  const code = await runHeadless({ prompt: "what is 6*7", json: false, model: null, cwd: home.path(), conversation: null, bundle: "orchestrator", yes: false, trust: false,
+  const code = await runHeadless({ prompt: "what is 6*7", json: false, model: null, cwd: home.path(), conversation: null, bundle: "orchestrator", yes: false,
     out: t => { printed += t; }, resolve: async () => ok({ model: "claude-sonnet-5-5", provider: plain, settings: null, contextLimit: null }) });
   expect(code).toBe(0);
   expect(printed).toBe("42\n");
 
   let lines = "";
   const json = fakeProvider([[text("checking"), toolUse("t1", "bash", { command: "echo hi" })], [text("done: hi")]]);
-  await runHeadless({ prompt: "run echo", json: true, model: null, cwd: home.path(), conversation: null, bundle: "orchestrator", yes: false, trust: false,
+  await runHeadless({ prompt: "run echo", json: true, model: null, cwd: home.path(), conversation: null, bundle: "orchestrator", yes: false,
     out: t => { lines += t; }, resolve: async () => ok({ model: "claude-sonnet-5-5", provider: json, settings: null, contextLimit: null }) });
   const Event = z.looseObject({ kind: z.string(), conversation: z.string(), text: z.string().optional(), outcome: z.object({ text: z.string() }).optional(),
     span: z.object({ id: z.string(), kind: z.string(), label: z.string(), agent: z.string(), startedAt: z.string(), durationMs: z.number().optional() }).optional() });
@@ -45,7 +45,7 @@ test("-p prints the final answer; --json streams every event and ends with the a
 test("a worker bundle runs headless too, with write tools", async () => {
   let printed = "";
   const provider = fakeProvider([[text("ok")]]);
-  await runHeadless({ prompt: "x", json: false, model: null, cwd: home.path(), conversation: null, bundle: "worker", yes: false, trust: false,
+  await runHeadless({ prompt: "x", json: false, model: null, cwd: home.path(), conversation: null, bundle: "worker", yes: false,
     out: t => { printed += t; }, resolve: async () => ok({ model: "claude-sonnet-5-5", provider, settings: null, contextLimit: null }) });
   expect(printed).toBe("ok\n");
   expect(provider.calls[0]?.tools).toContain("write");

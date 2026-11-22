@@ -32,8 +32,8 @@ bun run check && bun run lint && bun test
 - **Spans**: every model request, tool call, wait (for a worker, for input), worker launch, blocking compaction and
   request preparation is appended to the conversation's `spans.jsonl` (never model-visible); the TUI's activity line
   names the open one with its elapsed time, and `orca2 spans [conversation] [--json]` breaks the wall time down.
-- **Project trust**: a folder's AGENTS.md/CLAUDE.md, skills and `.orca2/plugins/` load only once the user trusted it
-  (asked once in the TUI; `orca2 trust`, or `--trust` for one headless run).
+- **Project trust**: every folder is trusted, with no question asked. `orca2 untrust [folder]` (or `/trust` and
+  `orca2 trust` to undo it) keeps a folder's AGENTS.md/CLAUDE.md, skills and `.orca2/plugins/` out of its agents.
 
 ### The 12 tools
 
@@ -56,7 +56,7 @@ runner, stop/remove hooks). Types: `src/core/plugins/types.ts`; the full guide i
 (`skills/orca-plugin/SKILL.md`, shipped in the binary). `src/plugins/example/` uses every slot.
 
 - **Where**: built-in in `src/plugins/` (listed in `src/plugins/index.ts`), user plugins in `~/.orca2/plugins/`,
-  a trusted folder's own in `.orca2/plugins/`.
+  a folder's own in `.orca2/plugins/` (unless the folder is untrusted).
 - **Enablement**: `plugins = [...]` in `~/.orca2/config.toml`, then each bubble's on/off lists (`/plugins` in the TUI,
   `orca2 plugin enable|disable <name> --bubble`). Read when an agent starts, so tools and prompt stay fixed for a run.
 - **Approval**: a user plugin loads only while its exact content (a hash of its files) is approved. `orca2 plugin

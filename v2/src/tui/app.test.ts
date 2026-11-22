@@ -58,17 +58,14 @@ describe("tui", () => {
     t.app.stop();
   });
 
-  test("an unknown folder asks for trust first; a plugin tab, its count and its command work", async () => {
+  test("a new folder opens without a trust question; a plugin tab, its count and its command work", async () => {
     registerBuiltins(BUILTINS);
     await saveConfig({ plugins: ["example"] });
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-folder-"));
     const t = fakeTerminal();
     const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
-    const starting = a.start();
-    await Bun.sleep(50);
-    expect(t.text()).toContain(`Trust ${dir}?`);
-    await t.press({ name: "char", text: "y" });
-    await starting;
+    await a.start();
+    expect(t.text()).not.toContain("Trust ");
     await t.type("/pin buy milk");
     await t.press({ name: "enter" });
     await a.refresh();
