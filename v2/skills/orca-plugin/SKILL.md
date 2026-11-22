@@ -20,7 +20,8 @@ yourself.
    `orca2 plugin enable <name> --from <folder>`. That command shows the user what the plugin adds and asks.
    For a built-in plugin, add it to `v2/src/plugins/index.ts` and open a PR instead.
 
-Names: lowercase letters, digits and dashes (`pr-watch`); the folder name and `name` must match. Tool names:
+Names: lowercase letters, digits and dashes (`pr-watch`); the folder name and `name` must match; `bubble` and `global`
+are reserved (they are `$ORCA_DATA`'s shared folders). Tool names:
 lowercase letters, digits and underscores, unique across enabled plugins.
 
 ## Folder

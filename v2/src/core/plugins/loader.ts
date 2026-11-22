@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { asRecord, errorMessage, fail, loadConfig, ok, paths, type Result } from "../../config";
+import { RESERVED_DATA } from "../bubbles";
 import { CORE_TOOL_NAMES } from "../tools/registry";
 import { z } from "zod";
 import type { Tool } from "../tools/registry";
@@ -78,6 +79,7 @@ const field = (value: unknown, key: string): unknown => {
 
 function pluginProblem(p: Record<string, unknown>, folder: string): string | null {
   if (typeof p.name !== "string" || !NAME.test(p.name)) return "name must be lowercase letters, digits and dashes";
+  if (RESERVED_DATA.includes(p.name)) return `name "${p.name}" is reserved for $ORCA_DATA/${p.name}`;
   if (p.name !== folder) return `name "${p.name}" must match its folder "${folder}"`;
   if (typeof p.description !== "string" || p.description.length === 0) return "description is required";
   for (const key of ["tools", "prompt", "skills", "storage", "bundles"]) if (listOf(p[key]) === null) return `${key} must be a list`;

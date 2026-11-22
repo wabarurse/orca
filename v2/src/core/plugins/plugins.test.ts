@@ -61,6 +61,12 @@ describe("plugins", () => {
     expect(problems[0]?.problem).toContain("set replaces: true");
   });
 
+  test("a plugin named after a reserved $ORCA_DATA folder fails validation", async () => {
+    registerBuiltins([{ name: "global", dir: "/x/global", index: async () => ({ default: shell("global", {}) }), ui: null, background: null }]);
+    const { problems } = await availablePlugins(null, false);
+    expect(problems[0]?.problem).toContain("reserved");
+  });
+
   test("a user plugin loads only once this exact content is approved", async () => {
     registerBuiltins([]);
     const dir = join(paths.plugins, "mine");
