@@ -53,10 +53,9 @@ export const toInfo = (run: RunRecord): AgentInfo => ({ agent: run.agent, role: 
 export async function launch(record: RunRecord, cwd: string, extra: string[], command: "agent" | "daemon" = "agent"): Promise<Result<RunRecord>> {
   const runner = (await runners(record.conversation)).find(r => r.name === record.runner) ?? plainRunner;
   const data = await ensureDataDirs(record.conversation);
-  if (!data.ok) return data;
   const argv = [...selfCommand(), command, "--conversation", record.conversation, "--agent", record.agent, "--run", record.run, ...extra];
   await mkdir(paths.logs(record.conversation), { recursive: true, mode: 0o700 });
-  const { handle, pid } = await runner.start({ conversation: record.conversation, agent: record.agent, argv, cwd, env: agentEnv(record.conversation, record.agent, data.data), log: record.log });
+  const { handle, pid } = await runner.start({ conversation: record.conversation, agent: record.agent, argv, cwd, env: agentEnv(record.conversation, record.agent, data.ok ? data.data : paths.data(record.conversation)), log: record.log });
   return ok((await updateRun(record.conversation, record.agent, { handle, pid: pid ?? record.pid })) ?? record);
 }
 

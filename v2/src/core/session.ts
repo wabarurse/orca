@@ -71,8 +71,8 @@ async function assembleSession(input: SessionInput, spans: Spans): Promise<Resul
   const transcript = input.keep?.transcript ?? openTranscript(path);
   transcript.refresh();
   const dataDirs = await ensureDataDirs(input.conversation);
-  if (!dataDirs.ok) return dataDirs;
-  const data = dataDirs.data;
+  if (!dataDirs.ok) input.emit({ kind: "notice", text: dataDirs.error });
+  const data = dataDirs.ok ? dataDirs.data : paths.data(input.conversation);
   const skills = [...assembled.skills, ...await ensureBuiltinSkills()];
   const config = await loadConfig();
   let rolling: RollingCompactor | null = input.keep?.rolling ?? null;

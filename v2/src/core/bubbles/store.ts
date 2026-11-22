@@ -4,6 +4,7 @@ import { z } from "zod";
 import { fail, ok, parseJson, paths, type Result } from "../../config";
 import { readConversation, saveConversation, writeAtomic } from "../conversations";
 import { withStorageLock } from "../lock";
+import { ensureDataDirs } from "./data";
 
 export type PluginSwitches = { on: string[]; off: string[] };
 export type Bubble = { id: string; name: string; createdAt: string; plugins: PluginSwitches };
@@ -58,6 +59,7 @@ export async function ensureBubble(conversation: string): Promise<Result<Bubble>
     const bubble: Bubble = { id: current.bubble ?? `bubble-${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`, name: current.name, createdAt: new Date().toISOString(), plugins: { on: [], off: [] } };
     await writeBubble(bubble);
     await saveConversation({ ...current, bubble: bubble.id });
+    await ensureDataDirs(conversation);
     return ok(bubble);
   });
 }
@@ -68,6 +70,7 @@ export async function joinBubble(conversation: string, id: string): Promise<Resu
   const current = await readConversation(conversation);
   if (current === null) return fail(`no conversation ${conversation}`);
   await saveConversation({ ...current, bubble: id });
+  await ensureDataDirs(conversation);
   return ok(bubble);
 }
 

@@ -4,7 +4,10 @@ import { fakeProvider, text, toolUse } from "../test/fake-provider";
 import { tempHome } from "../test/home";
 import { runHeadless } from "./headless";
 import { readSpans } from "./spans";
-import { ok } from "../config";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { ok, paths } from "../config";
+import { createConversation } from "./conversations";
 
 const home = tempHome("headless");
 
@@ -50,4 +53,18 @@ test("a worker bundle runs headless too, with write tools", async () => {
   expect(printed).toBe("ok\n");
   expect(provider.calls[0]?.tools).toContain("write");
   expect(provider.calls[0]?.tools).not.toContain("subagent");
+});
+
+test("a real folder under a reserved $ORCA_DATA name is a notice; the session still runs and bash still sees $ORCA_DATA", async () => {
+  const conversation = await createConversation(home.path(), "reserved");
+  await mkdir(join(paths.data(conversation.id), "global"), { recursive: true });
+  let lines = "";
+  const provider = fakeProvider([[toolUse("t1", "bash", { command: "printf %s \"$ORCA_DATA\"" })], [text("done")]]);
+  const code = await runHeadless({ prompt: "where", json: true, model: null, cwd: home.path(), conversation: conversation.id, bundle: "orchestrator", yes: false,
+    out: t => { lines += t; }, resolve: async () => ok({ model: "claude-sonnet-5-5", provider, settings: null, contextLimit: null }) });
+  expect(code).toBe(0);
+  const Event = z.looseObject({ kind: z.string(), text: z.string().optional(), outcome: z.object({ text: z.string() }).optional() });
+  const events = lines.trim().split("\n").map(line => Event.parse(JSON.parse(line)));
+  expect(events.filter(e => e.kind === "notice").map(e => e.text ?? "").filter(notice => notice.includes("$ORCA_DATA/global is reserved"))).toHaveLength(1);
+  expect(events.find(e => e.kind === "tool_end")?.outcome?.text).toBe(paths.data(conversation.id));
 });

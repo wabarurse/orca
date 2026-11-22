@@ -62,6 +62,8 @@ runner, stop/remove hooks). Types: `src/core/plugins/types.ts`; the full guide i
 - **Approval**: a user plugin loads only while its exact content (a hash of its files) is approved. `orca2 plugin
   enable` shows what it adds and asks at a terminal; without one it refuses, so an agent cannot enable a plugin.
 - **Storage**: `$ORCA_DATA/<plugin>/` (conversation), `$ORCA_DATA/bubble/<plugin>/`, `$ORCA_DATA/global/<plugin>/`.
+  `bubble/` links to the bubble's `data/` (made or moved when the conversation gets or joins a bubble) and `global/`
+  to `~/.orca2/global/`; both names are reserved, and a real folder under either is reported, never replaced.
 - **Hooks**: `beforeTool` (run with changed input, block, or ask the user), `afterTool`, `beforeRequest`, `onInput`,
   and replacing a core tool (`replaces: true`).
 - **Dev loop**: `orca2 plugin new <name> [--dir]`, `orca2 plugin check <name|folder>` (load, type-check against
