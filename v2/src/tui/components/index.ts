@@ -10,3 +10,4 @@ export { imageProtocol } from "./images";
 export { tabWindow } from "./tabs";
 export { renderMarkdown } from "./markdown";
 export * as editor from "./editor";
+export { whaleRows } from "./whale";

@@ -10,13 +10,14 @@ import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Fold, Row, Section, UiHost } from "../core/plugins/types";
-import { ensureBubble, readBubble, setBubblePlugin } from "../core/bubbles";
+import { ensureBubble, joinBubble, readBubble, setBubblePlugin } from "../core/bubbles";
 import { stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
-import { dim, editor, fit, noColour, pastel, readClipboardImage, screens, wordWrap, type Key, type Terminal } from "./components";
+import { dim, editor, fit, noColour, pastel, readClipboardImage, screens, whaleRows, wordWrap, type Key, type Terminal } from "./components";
+import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget } from "./bubbles";
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
 import { renderWork, type WorkTab } from "./work";
@@ -42,6 +43,8 @@ const FRAME_MS = 40;
 const NOTE_ROWS = 4;
 const errorText = (line: string): string => noColour() ? line : `\x1b[${pastel.red}m${line}\x1b[0m`;
 const SLOW_MS = 2000;
+const PICK_ROWS = 8;
+const HEADER_ROWS = 7;
 
 export class App {
   private current: { conversation: Conversation; transcript: Transcript } | null = null;
@@ -74,6 +77,7 @@ export class App {
   private frame: ReturnType<typeof setInterval> | null = null;
   private lastSlow = 0;
   private quitting = false;
+  private bubbles: Awaited<ReturnType<typeof bubbleEntries>> = { entries: [], loose: [] };
 
   constructor(private readonly deps: AppDeps) {}
 
@@ -231,7 +235,7 @@ export class App {
       if (key.name === "c") { if (this.busy) { await cancel(id); this.flash("cancelling…"); } else if (this.composer.text.length > 0) this.composer = { text: "", cursor: 0 }; else this.flash("Ctrl+D quits"); }
       else if (key.name === "d" && this.composer.text.length === 0) { await this.quit(); return; }
       else if (key.name === "a") await this.openPage(0);
-      else if (key.name === "n") await this.switchTo(await createConversation(this.deps.directory, null));
+      else if (key.name === "n") await this.newConversation();
       else if (key.name === "v") await this.pasteImage();
       else if (key.name === "j") this.composer = editor.newline(this.composer);
       else if (key.name === "u") this.composer = editor.killToStart(this.composer);
@@ -316,12 +320,31 @@ export class App {
     this.draw();
   }
 
+  private async newConversation(bubble: string | null = null): Promise<void> {
+    let chosen = bubble;
+    if (chosen === null) {
+      const choices = await bubbleChoices();
+      if (choices.ids.length > 1) {
+        const pick = await this.ask({ kind: "pick", title: "bubble for the new chat", options: choices.options });
+        if (pick === null) return;
+        chosen = choices.ids[pick] ?? null;
+      }
+    }
+    const created = await createConversation(this.deps.directory, null);
+    if (chosen !== null) {
+      const joined = await joinBubble(created.id, chosen);
+      if (!joined.ok) { this.flash(joined.error, true); return; }
+    }
+    this.page = null;
+    await this.switchTo((await readConversation(created.id)) ?? created);
+  }
+
   private async command(text: string): Promise<void> {
     const [name = "", ...rest] = text.slice(1).split(/\s+/);
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+V image · Ctrl+N new · Alt+←/→ switch · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+V image · Ctrl+N new · Alt+←/→ switch · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
     if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }
@@ -379,7 +402,8 @@ export class App {
 
   private tabs(): (WorkTab & { chord: string | null; plugin: BoundUi | null })[] {
     return [{ id: "agents", title: "Agents", count: null, chord: "a", plugin: null },
-      ...this.uis.flatMap(bound => bound.ui.tabs.map(tab => ({ id: tab.id, title: tab.title, count: null, chord: tab.chord, plugin: bound })))];
+      ...this.uis.flatMap(bound => bound.ui.tabs.map(tab => ({ id: tab.id, title: tab.title, count: null, chord: tab.chord, plugin: bound }))),
+      { id: "bubbles", title: "Bubbles", count: null, chord: "b", plugin: null }];
   }
 
   private async openPage(tab: number): Promise<void> {
@@ -394,7 +418,10 @@ export class App {
     const tab = this.tabs()[page.tab];
     if (tab === undefined) return;
     try {
-      if (tab.plugin === null) {
+      if (tab.plugin === null && tab.id === "bubbles") {
+        this.bubbles = await bubbleEntries();
+        page.rows = bubbleRows(this.bubbles, this.conversation.id);
+      } else if (tab.plugin === null) {
         const runs = await listRuns(this.conversation.id);
         page.rows = runs.map(r => ({ id: r.agent, name: r.agent, status: r.state === "running" && !live(r) ? "exited" : r.state, info: `${r.bundle} · ${r.lastTool ?? "-"} · ${r.startedAt.slice(11, 16)}`,
           tone: live(r) ? "good" : r.state === "failed" ? "bad" : "dim" }));
@@ -411,6 +438,7 @@ export class App {
 
   private async details(tab: ReturnType<App["tabs"]>[number], row: Row): Promise<Section[]> {
     if (tab.plugin !== null) return tab.plugin.ui.tabs.find(t => t.id === tab.id)?.details(row, tab.plugin.ctx) ?? [];
+    if (tab.id === "bubbles") return bubbleDetails(this.bubbles, row);
     const run = (await listRuns(this.conversation.id)).find(r => r.agent === row.id);
     if (run === undefined) return [];
     const log = await readFile(run.log, "utf8").catch(() => "");
@@ -433,7 +461,8 @@ export class App {
     else if (key.name === "pagedown") page.detailTop += 10;
     else if (key.name === "pageup") page.detailTop = Math.max(0, page.detailTop - 10);
     else if (char === "r") page.status = "";
-    else if (tab !== undefined && tab.plugin === null && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
+    else if (tab?.id === "bubbles" && (key.name === "enter" || char === "n")) { await this.bubbleEnter(page.rows[page.index]); return; }
+    else if (tab?.id === "agents" && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
     else if (tab?.plugin != null) {
       const def = tab.plugin.ui.tabs.find(t => t.id === tab.id);
       const action = def?.actions.find(a => a.key === char);
@@ -445,12 +474,23 @@ export class App {
     this.draw();
   }
 
+  private async bubbleEnter(row: Row | undefined): Promise<void> {
+    const target = bubbleTarget(row);
+    if (target.kind === "bubble") { await this.newConversation(target.id); return; }
+    if (target.kind !== "conversation") return;
+    const conversation = await readConversation(target.id);
+    if (conversation === null) return;
+    this.page = null;
+    if (conversation.id !== this.conversation.id) await this.switchTo(conversation);
+    this.draw();
+  }
+
   private draw(): void {
     const t = this.deps.terminal;
     if (this.page !== null) {
       const tabs = this.tabs();
       const tab = tabs[this.page.tab];
-      const actions = tab?.plugin === null ? "s stop" : tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`).join(" · ") ?? "";
+      const actions = tab?.id === "agents" ? "s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble" : tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`).join(" · ") ?? "";
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,
@@ -466,17 +506,23 @@ export class App {
     let cursor: { row: number; col: number } | null = null;
     if (this.modal !== null && this.modal.kind !== "input") {
       footer.push(fit(this.modalLine(this.modal), cols));
-      if (this.modal.kind === "pick") this.modal.options.forEach((option, i) => { if (this.modal?.kind === "pick") footer.push(fit(`${i === this.modal.index ? "❯" : " "} ${option}`, cols)); });
+      if (this.modal.kind === "pick") {
+        const pick = this.modal;
+        const start = Math.max(0, Math.min(pick.index - Math.floor(PICK_ROWS / 2), pick.options.length - PICK_ROWS));
+        pick.options.slice(start, start + PICK_ROWS).forEach((option, i) => { footer.push(fit(`${start + i === pick.index ? "❯" : " "} ${option}`, cols)); });
+        if (pick.options.length > PICK_ROWS) footer.push(dim(`${pick.index + 1} of ${pick.options.length}`));
+      }
     }
     const composing = this.modal?.kind === "input" ? { prompt: this.modal.prompt, state: this.modal.state } : { prompt: "› ", state: this.composer };
     const box = composerRows(composing, this.counts, cols, Math.max(1, Math.floor(t.rows / 3)));
     cursor = { row: footer.length + box.row, col: box.col };
     footer.push(...box.rows);
-    const fin = { time: this.deps.now(), active: this.busy };
+    const fin = this.cached.length === 0 && this.queued.length === 0 && !this.busy ? null : { time: this.deps.now(), active: this.busy };
     const header: screens.ScreenHeader = { tabs: [{ label: this.conversation.name, active: true, busy: this.busy }], bubble: this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
-      account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [this.deps.directory], fin };
+      account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [this.conversation.directory], fin };
     const sent = this.busy ? [] : this.queued.flatMap(m => items([{ kind: "user", text: m.text }], { cols, open: this.open, folds: this.folds }).map(item => ({ ...item, key: `sent-${m.id}` })));
-    t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting), welcome: [], footer, cursor });
+    t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
+      welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
   }
 
   private modalLine(modal: Modal): string {
