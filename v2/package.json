@@ -11,7 +11,8 @@
     "check": "tsc --noEmit",
     "test": "bun test",
     "lint": "bun --bun eslint . --max-warnings 0",
-    "build": "bun build --compile --outfile dist/orca2 src/cli/main.ts"
+    "build": "bun src/cli/scripts/build.ts",
+    "install:local": "bun src/cli/scripts/install.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",

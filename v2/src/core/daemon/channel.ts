@@ -7,9 +7,9 @@ import { lockOwner, pidAlive } from "../lock";
 import { OpenSpanRecord } from "../spans";
 import type { OpenSpan } from "../types";
 
-export type DaemonStatus = { pid: number; run: string; state: "idle" | "turn" | "stopped"; since: string; turns: number; error: string | null; contextTokens: number | null; phase: OpenSpan | null };
+export type DaemonStatus = { pid: number; run: string; build: string; state: "idle" | "turn" | "stopped"; since: string; turns: number; error: string | null; contextTokens: number | null; phase: OpenSpan | null };
 export type Command = { id: string; kind: "cancel" | "compact" | "stop"; at: string };
-const StatusRecord = z.object({ pid: z.number(), run: z.string(), state: z.enum(["idle", "turn", "stopped"]), since: z.string(), turns: z.number(),
+const StatusRecord = z.object({ pid: z.number(), run: z.string(), build: z.string().default("unknown"), state: z.enum(["idle", "turn", "stopped"]), since: z.string(), turns: z.number(),
   error: z.string().nullable(), contextTokens: z.number().nullable(), phase: OpenSpanRecord.nullable().default(null) });
 const CommandRecord = z.object({ id: z.string(), kind: z.enum(["cancel", "compact", "stop"]), at: z.string() });
 

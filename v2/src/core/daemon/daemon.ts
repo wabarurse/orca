@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { errorMessage, paths } from "../../config";
+import { BUILD_ID, errorMessage, paths } from "../../config";
 import { pluginData } from "../bubbles";
 import { readConversation } from "../conversations";
 import { consume, pending, put } from "../inbox";
@@ -68,7 +68,7 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
   const transcript = openTranscript(paths.transcript(conversation, "orchestrator"));
   const userSeen = new Set<string>();
   let rolling: RollingCompactor | null = null;
-  let status: DaemonStatus = { pid: process.pid, run: options.run, state: "idle", since: new Date().toISOString(), turns: 0, error: null, contextTokens: null, phase: null };
+  let status: DaemonStatus = { pid: process.pid, run: options.run, build: BUILD_ID, state: "idle", since: new Date().toISOString(), turns: 0, error: null, contextTokens: null, phase: null };
   const setStatus = async (patch: Partial<DaemonStatus>): Promise<void> => { status = { ...status, ...patch, since: new Date().toISOString() }; await writeStatus(conversation, status); };
   await setStatus({});
   await updateRun(conversation, "orchestrator", { state: "running", pid: process.pid });

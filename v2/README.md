@@ -4,8 +4,20 @@ orca v2: a small core harness plus plugins. It lives beside v1 and shares nothin
 package, tests, binary (`orca2`), home (`~/.orca2`, `ORCA2_HOME` in tests) and sign-in. The design is
 `docs/PLUGINS.md` on branch `docs/plugins-plan`.
 
+Install (a dedicated clone in `~/.orca2/.runtime/app`, the compiled binary in `~/.local/bin/orca2`), then update and
+tidy up:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wabarurse/orca/main/v2/install.sh | sh
+orca2 pull                 # fast-forward the clone to origin/main, rebuild, reinstall, hand running daemons over
+orca2 clean --preview      # list leftover storage; orca2 clean removes it after asking (--yes skips, --json for scripts)
+```
+
+From a checkout instead:
+
 ```bash
 cd v2 && bun install
+bun run install:local                        # build dist/orca2 and install it to ~/.local/bin/orca2
 bun src/cli/main.ts login anthropic          # or openai; --import copies an existing Claude Code / Codex login
 bun src/cli/main.ts                          # TUI for the current folder's conversation
 bun src/cli/main.ts -p "fix the failing test" --json
